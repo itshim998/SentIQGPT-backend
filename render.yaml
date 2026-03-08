@@ -25,6 +25,8 @@ services:
         sync: false
       - key: FLUX_API_KEY
         sync: false
+      - key: POLLINATIONS_API_KEY
+        sync: false
       - key: HUGGINGFACE_API_TOKEN
         sync: false
       - key: STABILITY_API_KEY

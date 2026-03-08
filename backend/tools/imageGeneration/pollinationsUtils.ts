@@ -1,12 +1,24 @@
 // SentIQGPT v2 — Pollinations Shared Utilities
 //
 // Common helpers for all Pollinations-based image providers.
-// Handles prompt enhancement, URL construction, and reachability verification.
+// Handles prompt enhancement, URL construction, and authenticated image fetching.
 //
-// FLUX_API_KEY (optional) — If set, passed to Pollinations for premium/priority access.
-// The API works without a key (free tier), but providing one unlocks higher limits.
+// Reads API key from POLLINATIONS_API_KEY (preferred) or FLUX_API_KEY (legacy).
+// The key is sent as:
+//   1. Authorization: Bearer <key>  header  (primary — registered by dashboard)
+//   2. &token=<key>                 query param (backup)
+//
+// Without a key, Pollinations free tier is used (strict rate limits → 429).
 
 const QUALITY_SUFFIX = "cinematic lighting, ultra detailed, sharp focus, 8k";
+
+/**
+ * Get the Pollinations API key from environment.
+ * Checks POLLINATIONS_API_KEY first, falls back to FLUX_API_KEY.
+ */
+export function getPollinationsApiKey(): string | undefined {
+  return process.env.POLLINATIONS_API_KEY || process.env.FLUX_API_KEY || undefined;
+}
 
 /**
  * Enhance a user prompt with quality modifiers.
@@ -23,6 +35,7 @@ export function enhancePrompt(prompt: string): string {
 
 /**
  * Build a Pollinations image URL for the given model.
+ * Includes the API key as a token query param (backup auth).
  */
 export function buildPollinationsUrl(
   prompt: string,
@@ -38,10 +51,9 @@ export function buildPollinationsUrl(
     `&width=${width || 1024}&height=${height || 1024}` +
     `&nologo=true&seed=${Date.now()}`;
 
-  // FLUX_API_KEY required here — appended as token if configured
-  const fluxKey = process.env.FLUX_API_KEY;
-  if (fluxKey) {
-    url += `&token=${encodeURIComponent(fluxKey)}`;
+  const apiKey = getPollinationsApiKey();
+  if (apiKey) {
+    url += `&token=${encodeURIComponent(apiKey)}`;
   }
 
   return url;
@@ -49,8 +61,8 @@ export function buildPollinationsUrl(
 
 /**
  * Download a Pollinations image via GET and return it as base64.
- * Using GET instead of HEAD avoids double-hitting the API (HEAD triggers generation,
- * then the browser's GET triggers it again), which causes 429 rate limits.
+ * Sends the API key as an Authorization header (primary auth method)
+ * and as a query param in the URL (backup).
  */
 export async function fetchPollinationsImage(
   imageUrl: string,
@@ -59,9 +71,18 @@ export async function fetchPollinationsImage(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+  const headers: Record<string, string> = {};
+  const apiKey = getPollinationsApiKey();
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+
+  console.log(`[POLLINATIONS] request url=${imageUrl.slice(0, 120)}... auth=${!!apiKey}`);
+
   try {
     const response = await fetch(imageUrl, {
       method: "GET",
+      headers,
       signal: controller.signal,
       redirect: "follow",
     });

@@ -2,13 +2,10 @@
 //
 // Flux Schnell model via Pollinations.
 // Primary image generation provider — fastest FLUX model available.
-// Automatically enhances prompts for higher quality output.
-//
-// FLUX_API_KEY (optional) — passed via pollinationsUtils.buildPollinationsUrl()
-// Works without a key on free tier; key enables premium/priority access.
+// Requires POLLINATIONS_API_KEY (or legacy FLUX_API_KEY) in environment.
 
 import type { ImageProvider, ImageProviderResult } from "../types";
-import { enhancePrompt, buildPollinationsUrl, fetchPollinationsImage } from "../pollinationsUtils";
+import { enhancePrompt, buildPollinationsUrl, fetchPollinationsImage, getPollinationsApiKey } from "../pollinationsUtils";
 
 const SCHNELL_TIMEOUT_MS = 30_000;
 
@@ -16,7 +13,7 @@ export class FluxSchnellProvider implements ImageProvider {
   readonly name = "flux-schnell";
 
   isAvailable(): boolean {
-    return true;
+    return Boolean(getPollinationsApiKey());
   }
 
   async generate(prompt: string, size?: string): Promise<ImageProviderResult> {

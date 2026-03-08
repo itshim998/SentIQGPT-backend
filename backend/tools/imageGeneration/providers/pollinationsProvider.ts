@@ -1,13 +1,10 @@
 // SentIQGPT v2 — Z-Image Turbo Provider (SECONDARY FALLBACK)
 //
 // Z-Image Turbo model via Pollinations.
-// Secondary fallback if both Flux Schnell and FLUX.2 Dev fail.
-//
-// FLUX_API_KEY (optional) — passed via pollinationsUtils.buildPollinationsUrl()
-// Works without a key on free tier; key enables premium/priority access.
+// Requires POLLINATIONS_API_KEY (or legacy FLUX_API_KEY) in environment.
 
 import type { ImageProvider, ImageProviderResult } from "../types";
-import { enhancePrompt, buildPollinationsUrl, fetchPollinationsImage } from "../pollinationsUtils";
+import { enhancePrompt, buildPollinationsUrl, fetchPollinationsImage, getPollinationsApiKey } from "../pollinationsUtils";
 
 const TURBO_TIMEOUT_MS = 30_000;
 
@@ -15,7 +12,7 @@ export class PollinationsProvider implements ImageProvider {
   readonly name = "z-image-turbo";
 
   isAvailable(): boolean {
-    return true;
+    return Boolean(getPollinationsApiKey());
   }
 
   async generate(prompt: string, size?: string): Promise<ImageProviderResult> {

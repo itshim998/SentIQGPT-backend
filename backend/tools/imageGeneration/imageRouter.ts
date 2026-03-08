@@ -13,11 +13,12 @@
 //   - Global queue: max 1 concurrent job, max 10 queued requests
 //   - Strictly sequential provider execution (never parallel)
 //   - 30-second cooldown on HTTP 429
-//   - 20-second AbortController timeout per Pollinations attempt
+//   - 30-45 second timeout per Pollinations attempt
 //   - 60-second timeout for HuggingFace (slow inference)
 //   - Single retry after 1-second wait on 429
+//   - Auth: Bearer header + token query param on Pollinations requests
 //
-// FLUX_API_KEY is optional — Pollinations works on free tier without it.
+// Requires POLLINATIONS_API_KEY (or legacy FLUX_API_KEY) for Pollinations providers.
 // If ALL providers fail, returns a structured error — never crashes.
 
 import type { ImageProvider, ImageGenerationResult } from "./types";
