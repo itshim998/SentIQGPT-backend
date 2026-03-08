@@ -1,0 +1,46 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+.venv/
+
+# Cache
+*.db
+sentiq_cache.db*
+
+# Frontend (hosted separately on Hostinger)
+frontend/
+healthiq_frontend.html
+
+# Backups
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+npm-debug.log*

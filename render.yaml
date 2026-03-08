@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: sentiqgpt-backend
+    runtime: node
+    buildCommand: pip3 install -r requirements.txt && npm install && npm run build
+    startCommand: python backend/llm_service.py & sleep 3 && node dist/backend/server.js
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: LLM_SERVICE_PORT
+        value: "3002"
+      - key: LLM_SERVICE_URL
+        value: "http://localhost:3002"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY_2
+        sync: false
+      - key: GEMINI_API_KEY_3
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_API_KEY_2
+        sync: false
+      - key: GROQ_API_KEY_3
+        sync: false
+      - key: FLUX_API_KEY
+        sync: false
+      - key: HUGGINGFACE_API_TOKEN
+        sync: false
+      - key: STABILITY_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: "https://sentiqgpt.sentiqlabs.com"

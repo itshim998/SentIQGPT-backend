@@ -1,0 +1,11 @@
+{
+  "strict_json_tasks": [
+    "chat",
+    "memory_classify",
+    "memory_summarize",
+    "memory_compress",
+    "route_classify",
+    "file_extract",
+    "image_generate"
+  ]
+}
