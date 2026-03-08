@@ -9,7 +9,7 @@
 import type { ImageProvider, ImageProviderResult } from "../types";
 import { enhancePrompt, buildPollinationsUrl, verifyPollinationsUrl } from "../pollinationsUtils";
 
-const FLUX_DEV_TIMEOUT_MS = 60_000;
+const FLUX_DEV_TIMEOUT_MS = 20_000;
 
 export class FluxDevProvider implements ImageProvider {
   readonly name = "flux-dev";

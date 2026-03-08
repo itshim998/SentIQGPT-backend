@@ -10,7 +10,7 @@
 import type { ImageProvider, ImageProviderResult } from "../types";
 import { enhancePrompt, buildPollinationsUrl, verifyPollinationsUrl } from "../pollinationsUtils";
 
-const SCHNELL_TIMEOUT_MS = 45_000;
+const SCHNELL_TIMEOUT_MS = 20_000;
 
 export class FluxSchnellProvider implements ImageProvider {
   readonly name = "flux-schnell";

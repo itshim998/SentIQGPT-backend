@@ -9,7 +9,7 @@
 import type { ImageProvider, ImageProviderResult } from "../types";
 import { enhancePrompt, buildPollinationsUrl, verifyPollinationsUrl } from "../pollinationsUtils";
 
-const TURBO_TIMEOUT_MS = 45_000;
+const TURBO_TIMEOUT_MS = 20_000;
 
 export class PollinationsProvider implements ImageProvider {
   readonly name = "z-image-turbo";
