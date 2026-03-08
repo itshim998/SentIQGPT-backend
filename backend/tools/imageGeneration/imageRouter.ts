@@ -1,18 +1,20 @@
 // SentIQGPT v2 — Image Router
 //
-// Sequential fallback router with per-provider cooldowns and retry.
+// Sequential fallback router with per-provider cooldowns, retry, and queue.
 // Tries each provider in priority order; returns as soon as one succeeds.
 //
-// Provider chain (Pollinations-first):
-//   1. Flux Schnell  (primary — uses FLUX_API_KEY if set)
-//   2. FLUX.2 Dev    (fallback — uses FLUX_API_KEY if set)
-//   3. Z-Image Turbo (secondary fallback — uses FLUX_API_KEY if set)
-//   4. HuggingFace   (requires HUGGINGFACE_API_TOKEN)
+// Provider chain:
+//   1. Pollinations Flux Schnell  (primary — Pollinations CDN)
+//   2. HuggingFace SDXL           (requires HUGGINGFACE_API_TOKEN)
+//   3. FLUX.2 Dev                 (Pollinations fallback)
+//   4. Z-Image Turbo              (Pollinations fallback)
 //
 // Features:
-//   - Strictly sequential execution (never parallel)
+//   - Global queue: max 1 concurrent job, max 10 queued requests
+//   - Strictly sequential provider execution (never parallel)
 //   - 30-second cooldown on HTTP 429
-//   - 20-second AbortController timeout per attempt
+//   - 20-second AbortController timeout per Pollinations attempt
+//   - 60-second timeout for HuggingFace (slow inference)
 //   - Single retry after 1-second wait on 429
 //
 // FLUX_API_KEY is optional — Pollinations works on free tier without it.
@@ -30,9 +32,9 @@ import { HuggingFaceProvider } from "./providers/huggingfaceProvider";
 
 const providers: readonly ImageProvider[] = [
   new FluxSchnellProvider(),   // 1. Pollinations Flux Schnell (primary)
-  new FluxDevProvider(),        // 2. Pollinations FLUX.2 Dev   (fallback)
-  new PollinationsProvider(),   // 3. Pollinations Z-Image Turbo (secondary fallback)
-  new HuggingFaceProvider(),    // 4. HuggingFace SDXL          (API key fallback)
+  new HuggingFaceProvider(),   // 2. HuggingFace SDXL (fast fallback with API key)
+  new FluxDevProvider(),        // 3. Pollinations FLUX.2 Dev
+  new PollinationsProvider(),   // 4. Pollinations Z-Image Turbo
 ];
 
 // ==============================
@@ -67,17 +69,44 @@ function sleep(ms: number): Promise<void> {
 }
 
 // ==============================
-// Router
+// Image Generation Queue
+// ==============================
+
+const MAX_QUEUE_SIZE = 10;
+let isProcessing = false;
+
+interface QueueItem {
+  args: { readonly prompt: string; readonly size?: string };
+  resolve: (result: ImageGenerationResult) => void;
+  reject: (err: Error) => void;
+}
+
+const imageQueue: QueueItem[] = [];
+
+async function processQueue(): Promise<void> {
+  if (isProcessing) return;
+  isProcessing = true;
+
+  while (imageQueue.length > 0) {
+    const item = imageQueue.shift()!;
+    try {
+      const result = await executeImageGeneration(item.args);
+      item.resolve(result);
+    } catch (err) {
+      item.reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  }
+
+  isProcessing = false;
+}
+
+// ==============================
+// Router (public entry point)
 // ==============================
 
 /**
- * Route an image generation request through the provider chain.
- *
- * Iterates providers **sequentially** in priority order. For each:
- *   1. Skip if on cooldown or `isAvailable()` returns false.
- *   2. Call `generate()` — return on success.
- *   3. On 429: wait 1 s, retry once. If still 429, set 30 s cooldown.
- *   4. On any failure: log and try next provider.
+ * Route an image generation request through the queue and provider chain.
+ * Only one image generation job runs at a time. Max queue size: 10.
  */
 export async function routeImageGeneration(args: {
   readonly prompt: string;
@@ -87,10 +116,35 @@ export async function routeImageGeneration(args: {
     return { success: false, prompt: args.prompt, error: "Prompt is required" };
   }
 
+  if (imageQueue.length >= MAX_QUEUE_SIZE) {
+    return {
+      success: false,
+      prompt: args.prompt,
+      error: "Image generation queue is full. Please try again in a moment.",
+    };
+  }
+
+  return new Promise<ImageGenerationResult>((resolve, reject) => {
+    imageQueue.push({ args, resolve, reject });
+    processQueue();
+  });
+}
+
+// ==============================
+// Provider chain execution
+// ==============================
+
+/**
+ * Execute the provider fallback chain for a single request.
+ * Called sequentially by the queue processor.
+ */
+async function executeImageGeneration(args: {
+  readonly prompt: string;
+  readonly size?: string;
+}): Promise<ImageGenerationResult> {
   const errors: string[] = [];
-  const hasFluxKey = Boolean(process.env.FLUX_API_KEY);
   const startTime = Date.now();
-  console.log(`[IMAGE] routing prompt="${args.prompt.slice(0, 60)}..." flux_key=${hasFluxKey ? "configured" : "free_tier"}`);
+  console.log(`[IMAGE] routing prompt="${args.prompt.slice(0, 60)}..." providers=${providers.length}`);
 
   for (const provider of providers) {
     // Skip unavailable providers (missing API keys, etc.)

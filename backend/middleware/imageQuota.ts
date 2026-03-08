@@ -1,7 +1,7 @@
 // SentIQGPT v2 — Image Quota & Cooldown Middleware
 //
 // Enforces:
-//   • 5 image generations per IP per 24 hours
+//   • 30 image generations per IP per 24 hours
 //   • 5-second cooldown between image requests per IP
 //
 // Also exports:
@@ -13,7 +13,7 @@ import type { Request, Response, NextFunction } from "express";
 // Configuration
 // ==============================
 
-const MAX_IMAGES_PER_DAY = 5;
+const MAX_IMAGES_PER_DAY = 30;
 const COOLDOWN_MS = 5_000; // 5 seconds
 const WINDOW_MS = 24 * 60 * 60 * 1_000; // 24 hours
 

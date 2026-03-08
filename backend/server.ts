@@ -502,7 +502,7 @@ app.get("/api/config", (_req, res) => {
       max_file_size_mb: 10,
       allowed_file_types: ["pdf", "txt", "png", "jpg", "jpeg", "webp"],
       max_image_prompt_length: 2000,
-      image_quota_per_day: 5,
+      image_quota_per_day: 30,
       image_cooldown_seconds: 5,
     },
   });
