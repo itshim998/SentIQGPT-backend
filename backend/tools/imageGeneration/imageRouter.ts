@@ -16,7 +16,7 @@
 //   - 30-45 second timeout per Pollinations attempt
 //   - 60-second timeout for HuggingFace (slow inference)
 //   - Single retry after 1-second wait on 429
-//   - Auth: Bearer header + token query param on Pollinations requests
+//   - Auth: &key= query parameter on Pollinations requests (gen.pollinations.ai API v2)
 //
 // Requires POLLINATIONS_API_KEY (or legacy FLUX_API_KEY) for Pollinations providers.
 // If ALL providers fail, returns a structured error — never crashes.

@@ -18,7 +18,7 @@ export class FluxDevProvider implements ImageProvider {
 
   async generate(prompt: string, size?: string): Promise<ImageProviderResult> {
     const enhanced = enhancePrompt(prompt);
-    const imageUrl = buildPollinationsUrl(enhanced, "flux-dev", size);
+    const imageUrl = buildPollinationsUrl(enhanced, "flux-2-dev", size);
     const base64 = await fetchPollinationsImage(imageUrl, FLUX_DEV_TIMEOUT_MS);
     return { base64 };
   }

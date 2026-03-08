@@ -4,9 +4,10 @@
 // Handles prompt enhancement, URL construction, and authenticated image fetching.
 //
 // Reads API key from POLLINATIONS_API_KEY (preferred) or FLUX_API_KEY (legacy).
-// The key is sent as:
-//   1. Authorization: Bearer <key>  header  (primary — registered by dashboard)
-//   2. &token=<key>                 query param (backup)
+// The key is sent as a &key= query parameter (Pollinations API v2 format).
+//
+// Endpoint: https://gen.pollinations.ai/image/{prompt}
+// Auth: &key=<api_key> query parameter
 //
 // Without a key, Pollinations free tier is used (strict rate limits → 429).
 
@@ -35,7 +36,8 @@ export function enhancePrompt(prompt: string): string {
 
 /**
  * Build a Pollinations image URL for the given model.
- * Includes the API key as a token query param (backup auth).
+ * Uses the gen.pollinations.ai/image/ endpoint (API v2).
+ * Includes the API key as a &key= query parameter.
  */
 export function buildPollinationsUrl(
   prompt: string,
@@ -46,14 +48,14 @@ export function buildPollinationsUrl(
   const encoded = encodeURIComponent(prompt);
 
   let url =
-    `https://image.pollinations.ai/prompt/${encoded}` +
+    `https://gen.pollinations.ai/image/${encoded}` +
     `?model=${encodeURIComponent(model)}` +
     `&width=${width || 1024}&height=${height || 1024}` +
-    `&nologo=true&seed=${Date.now()}`;
+    `&nologo=true&seed=${Date.now() % 2147483647}`;
 
   const apiKey = getPollinationsApiKey();
   if (apiKey) {
-    url += `&token=${encodeURIComponent(apiKey)}`;
+    url += `&key=${encodeURIComponent(apiKey)}`;
   }
 
   return url;
@@ -61,8 +63,7 @@ export function buildPollinationsUrl(
 
 /**
  * Download a Pollinations image via GET and return it as base64.
- * Sends the API key as an Authorization header (primary auth method)
- * and as a query param in the URL (backup).
+ * Auth is handled via the &key= query parameter in the URL.
  */
 export async function fetchPollinationsImage(
   imageUrl: string,
@@ -71,18 +72,12 @@ export async function fetchPollinationsImage(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  const headers: Record<string, string> = {};
   const apiKey = getPollinationsApiKey();
-  if (apiKey) {
-    headers["Authorization"] = `Bearer ${apiKey}`;
-  }
-
   console.log(`[POLLINATIONS] request url=${imageUrl.slice(0, 120)}... auth=${!!apiKey}`);
 
   try {
     const response = await fetch(imageUrl, {
       method: "GET",
-      headers,
       signal: controller.signal,
       redirect: "follow",
     });

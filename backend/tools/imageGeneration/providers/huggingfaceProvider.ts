@@ -27,7 +27,7 @@ export class HuggingFaceProvider implements ImageProvider {
 
     try {
       const response = await fetch(
-        `https://router.huggingface.co/models/${HF_MODEL}`,
+        `https://router.huggingface.co/hf-inference/models/${HF_MODEL}`,
         {
           method: "POST",
           headers: {
