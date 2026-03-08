@@ -48,19 +48,20 @@ export function buildPollinationsUrl(
 }
 
 /**
- * Verify that a Pollinations URL is reachable with a HEAD request.
- * Throws on failure so the router can try the next provider.
+ * Download a Pollinations image via GET and return it as base64.
+ * Using GET instead of HEAD avoids double-hitting the API (HEAD triggers generation,
+ * then the browser's GET triggers it again), which causes 429 rate limits.
  */
-export async function verifyPollinationsUrl(
+export async function fetchPollinationsImage(
   imageUrl: string,
   timeoutMs: number,
-): Promise<void> {
+): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(imageUrl, {
-      method: "HEAD",
+      method: "GET",
       signal: controller.signal,
       redirect: "follow",
     });
@@ -74,6 +75,9 @@ export async function verifyPollinationsUrl(
     if (!contentType.startsWith("image/")) {
       throw new Error(`Expected image content-type, got: ${contentType}`);
     }
+
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer).toString("base64");
   } finally {
     clearTimeout(timer);
   }

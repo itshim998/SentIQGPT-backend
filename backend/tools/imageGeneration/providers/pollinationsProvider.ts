@@ -7,14 +7,13 @@
 // Works without a key on free tier; key enables premium/priority access.
 
 import type { ImageProvider, ImageProviderResult } from "../types";
-import { enhancePrompt, buildPollinationsUrl, verifyPollinationsUrl } from "../pollinationsUtils";
+import { enhancePrompt, buildPollinationsUrl, fetchPollinationsImage } from "../pollinationsUtils";
 
-const TURBO_TIMEOUT_MS = 20_000;
+const TURBO_TIMEOUT_MS = 30_000;
 
 export class PollinationsProvider implements ImageProvider {
   readonly name = "z-image-turbo";
 
-  // FLUX_API_KEY required here — checked at URL build time in pollinationsUtils
   isAvailable(): boolean {
     return true;
   }
@@ -22,7 +21,7 @@ export class PollinationsProvider implements ImageProvider {
   async generate(prompt: string, size?: string): Promise<ImageProviderResult> {
     const enhanced = enhancePrompt(prompt);
     const imageUrl = buildPollinationsUrl(enhanced, "turbo", size);
-    await verifyPollinationsUrl(imageUrl, TURBO_TIMEOUT_MS);
-    return { url: imageUrl };
+    const base64 = await fetchPollinationsImage(imageUrl, TURBO_TIMEOUT_MS);
+    return { base64 };
   }
 }
