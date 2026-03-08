@@ -17,10 +17,32 @@ export interface FileExtractionResult {
 const ALLOWED_TYPES: Record<string, "pdf" | "txt" | "image"> = {
   "application/pdf": "pdf",
   "text/plain": "txt",
+  "text/html": "txt",
+  "text/css": "txt",
+  "text/javascript": "txt",
+  "application/javascript": "txt",
+  "text/typescript": "txt",
+  "application/typescript": "txt",
+  "application/json": "txt",
+  "text/xml": "txt",
+  "application/xml": "txt",
+  "text/markdown": "txt",
+  "text/x-python": "txt",
+  "text/x-java-source": "txt",
+  "text/x-c": "txt",
+  "text/x-c++src": "txt",
+  "text/x-rustsrc": "txt",
+  "text/x-go": "txt",
   "image/png": "image",
   "image/jpeg": "image",
   "image/webp": "image",
 };
+
+// Extension-based fallback for code files that browsers send as octet-stream
+const TEXT_EXTENSIONS = new Set([
+  ".html", ".css", ".js", ".ts", ".json", ".xml", ".md",
+  ".txt", ".py", ".java", ".cpp", ".c", ".rs", ".go",
+]);
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -38,7 +60,16 @@ export function validateFileUpload(
     return { valid: false, error: `File too large. Maximum ${MAX_FILE_SIZE / 1024 / 1024}MB.` };
   }
 
-  const fileType = ALLOWED_TYPES[mimetype];
+  let fileType = ALLOWED_TYPES[mimetype];
+
+  // Fallback: check extension for code files sent as octet-stream
+  if (!fileType) {
+    const ext = filename.lastIndexOf(".") >= 0 ? filename.slice(filename.lastIndexOf(".")).toLowerCase() : "";
+    if (TEXT_EXTENSIONS.has(ext)) {
+      fileType = "txt";
+    }
+  }
+
   if (!fileType) {
     return { valid: false, error: `Unsupported file type: ${mimetype}` };
   }
