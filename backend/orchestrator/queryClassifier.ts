@@ -6,7 +6,7 @@
 // Categories:
 //   general_knowledge    — answerable from training data
 //   real_time_information — current events, scores, news, live data
-//   factual_lookup       — medicines, products, entities, documentation
+//   factual_lookup       — medicines, products, entities with dates
 //   personal_context     — references the user's own data / memory
 //   image_generation     — explicit image creation request
 //
@@ -33,37 +33,61 @@ export interface QueryClassification {
 }
 
 // ==============================
+// No-search exclusion patterns
+// ==============================
+// These match FIRST and short-circuit to general_knowledge, preventing
+// false-positive search triggers for trivial / knowledge-based queries.
+
+const NO_SEARCH_PATTERNS: readonly RegExp[] = [
+  // Basic definitions / explanations (no entity or date attached)
+  /\b(?:what\s+is\s+(?:the\s+)?(?:current\s+)?(?:year|time|date|day))\b/i,
+  /\b(?:explain|define|describe)\s+(?:the\s+)?(?:concept\s+of\s+)?(?:encapsulation|polymorphism|inheritance|abstraction|recursion|closure|hoisting|scope|prototype|class|interface|generics?|mutex|semaphore|deadlock|thread)/i,
+  // Math / logic / calculations
+  /\b(?:calculate|compute|solve|simplify|evaluate|what\s+is\s+\d)/i,
+  /\b(?:factorial|fibonacci|prime|sqrt|square\s+root|logarithm|derivative|integral)\b/i,
+  // Coding / programming questions
+  /\b(?:write\s+(?:a\s+)?(?:code|program|function|script|class|method)|how\s+to\s+(?:code|implement|write)|fix\s+(?:this|my)\s+(?:code|bug|error))\b/i,
+  /\b(?:syntax\s+(?:of|for|error)|compile|runtime\s+error|debug|refactor)\b/i,
+  // General knowledge that doesn't need search
+  /\b(?:how\s+(?:does|do)\s+(?:a\s+)?(?:computer|cpu|ram|cache|compiler|interpreter|operating\s+system|database|server|network|internet)\s+work)\b/i,
+];
+
+// ==============================
 // Pattern banks
 // ==============================
 
-/** Time-sensitive / current-events patterns */
+/** Time-sensitive / current-events patterns — require a real-world signal */
 const REALTIME_PATTERNS: readonly RegExp[] = [
-  /\b(?:current|latest|recent|today|yesterday|tonight|this\s+(?:week|month|year)|right\s+now|as\s+of)\b/i,
-  /\b(?:who\s+won|who\s+is\s+winning|score|results?\s+of|standings?|live|breaking\s+news)\b/i,
-  /\b(?:world\s+cup|ipl|olympics|super\s+bowl|grammy|oscar|emmy|ballon\s+d'or|grand\s+slam)\b/i,
-  /\b(?:election|president\s+of|prime\s+minister\s+of|leader\s+of)\b/i,
+  // Current events — require an entity or topic alongside the time signal
+  /\b(?:latest|recent)\s+(?:\w+\s+){0,3}(?:announcements?|news|updates?|releases?|launches?)\b/i,
+  /\b(?:announcements?|news|updates?)\s+(?:from|on|about|by)\s+/i,
+  /\b(?:who\s+won|who\s+is\s+winning|score\s+of|results?\s+of|standings?\s+of|live\s+score)\b/i,
   /\b(?:stock\s+price|share\s+price|market\s+cap|exchange\s+rate|bitcoin\s+price|crypto\s+price)\b/i,
+  /\b(?:trending|viral)\s+\w+/i,
+  /\b(?:just\s+(?:happened|announced|released|launched))\b/i,
+  /\b(?:breaking\s+news)\b/i,
+  // Sports events
+  /\b(?:world\s+cup|ipl|olympics|super\s+bowl|grammy|oscar|emmy|grand\s+slam)\b/i,
+  // Elections / politics with specificity
+  /\b(?:election\s+results?|who\s+(?:is|was)\s+(?:elected|president|prime\s+minister))\b/i,
+  // Product launches with brand names
+  /\b(?:new\s+(?:iphone|galaxy|pixel|macbook|playstation|xbox))\b/i,
+  // Weather requests (always real-time)
   /\b(?:weather\s+(?:in|for|today|forecast)|temperature\s+in)\b/i,
-  /\b(?:trending|viral|(?:just\s+)?(?:happened|announced|released|launched))\b/i,
-  /\b(?:announcements?|updates?\s+(?:from|on|about)|news\s+(?:from|on|about|of))\b/i,
-  /\b(?:20(?:2[3-9]|[3-9]\d))\b/i, // years 2023+
-  /\b(?:t20|odi|test\s+match|cricket|football|soccer|nba|nfl|f1|formula\s+1)\b/i,
-  /\b(?:new\s+(?:iphone|galaxy|pixel|macbook|playstation|xbox|nvidia|amd|tesla))\b/i,
-  /\b(?:what(?:'s|\s+is)\s+(?:new|happening|going\s+on))\b/i,
 ];
 
-/** Factual lookup patterns — medicines, products, entities, documentation */
+/** Year pattern: years >= 2026 paired with an entity or keyword */
+const YEAR_WITH_ENTITY_RE = /\b(?:\w+\s+){0,5}(20(?:2[6-9]|[3-9]\d))\b/i;
+
+/** Factual lookup — medicines, specific products, statistics */
 const FACTUAL_PATTERNS: readonly RegExp[] = [
-  /\b(?:medicine|medication|drug|tablet|capsule|syrup|supplement|dosage|side\s+effects?|used\s+for|prescribed\s+for|treats?)\b/i,
-  /\b(?:what\s+is|what\s+are|who\s+is|who\s+are|where\s+is|when\s+(?:was|did|is)|how\s+(?:does|do|did|is|was))\b.*\b[A-Z][a-zA-Z]{2,}/,
-  /\b(?:product|specification|specs?|review|price\s+of|cost\s+of|features?\s+of)\b/i,
-  /\b(?:documentation|api\s+(?:for|docs?)|library\s+(?:for|called)|framework\s+(?:for|called)|package\s+(?:for|called))\b/i,
-  /\b(?:company|brand|manufacturer|founded|headquarter|ceo\s+of)\b/i,
-  /\b(?:population\s+of|capital\s+of|gdp\s+of|area\s+of|currency\s+of)\b/i,
-  /\b(?:release\s+date|launch\s+date|when\s+(?:was|is).*released)\b/i,
-  /\b(?:ingredients?\s+(?:of|in)|composition\s+of|made\s+(?:of|from))\b/i,
+  /\b(?:medicine|medication|drug|tablet|capsule|syrup|supplement|dosage|side\s+effects?|prescribed\s+for)\b/i,
   /\b(?:symptoms?\s+of|causes?\s+of|treatment\s+for|cure\s+for)\b/i,
-  /\b(?:compare|comparison|difference\s+between|vs\.?\b|versus)\b/i,
+  /\b(?:price\s+of|cost\s+of|specs?\s+of|specifications?\s+of|features?\s+of)\b/i,
+  /\b(?:statistics|stat)\s+(?:of|for|on|about)\b/i,
+  /\b(?:population\s+of|gdp\s+of|capital\s+of)\b/i,
+  /\b(?:release\s+date|launch\s+date)\s+(?:of|for)\b/i,
+  /\b(?:ingredients?\s+(?:of|in)|composition\s+of)\b/i,
 ];
 
 /** Personal context patterns — refer to user's own data */
@@ -95,17 +119,24 @@ export function classifyQueryType(query: string): QueryClassification {
     return { category: "general_knowledge", needsWebSearch: false, matchedRule: "empty" };
   }
 
-  // 1. Image generation (highest priority — explicit user intent)
+  // 0. Image generation (highest priority — explicit user intent)
   for (const pat of IMAGE_PATTERNS) {
     if (pat.test(trimmed)) {
       return { category: "image_generation", needsWebSearch: false, matchedRule: `image:${pat.source.slice(0, 40)}` };
     }
   }
 
-  // 2. Personal context
+  // 1. Personal context
   for (const pat of PERSONAL_PATTERNS) {
     if (pat.test(trimmed)) {
       return { category: "personal_context", needsWebSearch: false, matchedRule: `personal:${pat.source.slice(0, 40)}` };
+    }
+  }
+
+  // 2. No-search exclusions — catch trivial / knowledge queries early
+  for (const pat of NO_SEARCH_PATTERNS) {
+    if (pat.test(trimmed)) {
+      return { category: "general_knowledge", needsWebSearch: false, matchedRule: `no_search:${pat.source.slice(0, 40)}` };
     }
   }
 
@@ -116,26 +147,22 @@ export function classifyQueryType(query: string): QueryClassification {
     }
   }
 
+  // 3b. Year >= 2026 paired with at least one non-stopword entity
+  if (YEAR_WITH_ENTITY_RE.test(trimmed)) {
+    // Ensure there's a meaningful entity word besides the year
+    const withoutYear = trimmed.replace(/\b20\d{2}\b/g, "").trim();
+    const entityWords = withoutYear
+      .split(/\s+/)
+      .filter(w => w.length > 2 && !STOPWORDS.has(w.toLowerCase()));
+    if (entityWords.length >= 1) {
+      return { category: "real_time_information", needsWebSearch: true, matchedRule: "year_with_entity" };
+    }
+  }
+
   // 4. Factual lookup (needs web search)
   for (const pat of FACTUAL_PATTERNS) {
     if (pat.test(trimmed)) {
       return { category: "factual_lookup", needsWebSearch: true, matchedRule: `factual:${pat.source.slice(0, 40)}` };
-    }
-  }
-
-  // 5. Heuristic: questions about unknown/proper-noun entities
-  //    "What is Tricium Joints?" — contains a capitalized multi-word entity
-  //    that likely isn't in training data
-  const unknownEntityMatch = trimmed.match(
-    /(?:what\s+is|what\s+are|tell\s+me\s+about|explain|describe|define)\s+(.+?)[\?\.\!]?$/i,
-  );
-  if (unknownEntityMatch) {
-    const subject = unknownEntityMatch[1].trim();
-    // If the subject has words starting with uppercase beyond normal sentence start
-    const words = subject.split(/\s+/);
-    const capitalizedCount = words.filter(w => /^[A-Z]/.test(w)).length;
-    if (capitalizedCount >= 1 && words.length <= 8) {
-      return { category: "factual_lookup", needsWebSearch: true, matchedRule: "entity_heuristic" };
     }
   }
 
@@ -147,38 +174,78 @@ export function classifyQueryType(query: string): QueryClassification {
 // Fallback safeguard
 // ==============================
 
-/** Year pattern: matches years >= current year (2026+) */
-const FALLBACK_YEAR_RE = /\b(20(?:2[6-9]|[3-9]\d))\b/;
-/** Emergency recency keywords — if the classifier missed these, force search */
-const FALLBACK_KEYWORD_RE = /\b(?:latest|today|recent|current|right\s+now|breaking|just\s+(?:now|happened|released)|announcements?|this\s+(?:week|month|year))\b/i;
-
 /**
  * Safety-net check: should web search be forced even if the classifier
  * returned `needsWebSearch: false`?
  *
- * Returns `true` when the query contains a year >= current year OR
- * obvious recency keywords, indicating the model's training data
- * is almost certainly stale for this query.
+ * Only forces search when the query contains BOTH a year >= 2026 AND
+ * a meaningful entity keyword — prevents triggering on "what year is it".
  */
 export function shouldForceWebSearch(query: string): boolean {
-  if (FALLBACK_YEAR_RE.test(query)) return true;
-  if (FALLBACK_KEYWORD_RE.test(query)) return true;
-  return false;
+  if (!YEAR_WITH_ENTITY_RE.test(query)) return false;
+  const withoutYear = query.replace(/\b20\d{2}\b/g, "").trim();
+  const entityWords = withoutYear
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !STOPWORDS.has(w.toLowerCase()));
+  return entityWords.length >= 1;
 }
 
+// ==============================
+// Search query builder
+// ==============================
+
+/** Words to strip from search queries */
+const STOPWORDS = new Set([
+  "what", "which", "who", "whom", "where", "when", "why", "how",
+  "is", "are", "was", "were", "be", "been", "being",
+  "the", "a", "an", "and", "or", "but", "in", "on", "at", "to",
+  "for", "of", "with", "by", "from", "as", "into", "about",
+  "that", "this", "these", "those", "it", "its",
+  "do", "does", "did", "will", "would", "could", "should", "can", "may", "might",
+  "has", "have", "had", "shall",
+  "i", "me", "my", "we", "our", "you", "your", "he", "she", "they", "them",
+  "tell", "explain", "list", "please", "give", "show", "describe",
+  "latest", "major", "most", "some", "any", "very", "really", "just",
+  "so", "far", "around", "currently", "right", "now",
+]);
+
 /**
- * Build a web-search-optimized query from the user message.
- * Strips conversational filler and focuses on the factual question.
+ * Convert a natural-language user message into a concise search query.
+ *
+ * Steps:
+ *   1. Strip punctuation.
+ *   2. Tokenise on whitespace.
+ *   3. Remove stopwords / filler.
+ *   4. Keep 5–8 keyword tokens max.
+ *
+ * Examples:
+ *   "What are the latest major announcements from NVIDIA in 2026 so far?"
+ *   → "announcements nvidia 2026"
+ *
+ *   "Which are the most trending AI apps around the world?"
+ *   → "trending ai apps world"
  */
 export function buildSearchQuery(userMessage: string): string {
-  // Remove conversational prefixes
-  let q = userMessage
-    .replace(/^(?:hey|hi|hello|please|can\s+you|could\s+you|i\s+want\s+to\s+know|tell\s+me|do\s+you\s+know)\s*/i, "")
-    .replace(/[?.!]+$/, "")
-    .trim();
+  // Strip punctuation
+  const cleaned = userMessage.replace(/[?!.,;:'"()\[\]{}]/g, "");
 
-  // If the cleaned query is too short, use the original
-  if (q.length < 5) q = userMessage.trim();
+  const tokens = cleaned
+    .split(/\s+/)
+    .filter(Boolean);
 
-  return q;
+  const keywords: string[] = [];
+  for (const token of tokens) {
+    if (STOPWORDS.has(token.toLowerCase())) continue;
+    keywords.push(token);
+    if (keywords.length >= 8) break;
+  }
+
+  // If we stripped too aggressively, fall back to first 6 words
+  if (keywords.length < 2) {
+    return tokens.slice(0, 6).join(" ");
+  }
+
+  const query = keywords.join(" ");
+  console.log(`[SearchQuery] generated: "${query}" (from: "${userMessage.slice(0, 60)}")`);
+  return query;
 }

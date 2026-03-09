@@ -22,7 +22,7 @@ import { routeWebSearch } from "../tools/webSearch/webSearchRouter";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
-import { classifyQueryType } from "./queryClassifier";
+import { classifyQueryType, buildSearchQuery } from "./queryClassifier";
 import { selectModelForPrompt } from "./modelRouter";
 
 // ==============================
@@ -173,19 +173,36 @@ async function execWebSearch(
   priorContext: string,
 ): Promise<StepResult> {
   const modelOverride = selectModelForPrompt(input, "factual_lookup");
-  const searchResult = await routeWebSearch({ query: input });
+  const cleanedQuery = buildSearchQuery(input);
+  console.log(`[SearchQuery] generated: "${cleanedQuery}" (executor)`);
+  const searchResult = await routeWebSearch({ query: cleanedQuery });
 
   if (!searchResult.success || searchResult.results.length === 0) {
+    console.log(`[SearchResults] count: 0 (executor)`);
     return {
       step: 0,
       tool: "web_search",
       searchResults: searchResult,
-      reply: `I wasn't able to find web results for "${input}". ${searchResult.error ?? ""}`.trim(),
+      reply: `I wasn't able to find web results for "${cleanedQuery}". ${searchResult.error ?? ""}`.trim(),
     };
   }
 
+  console.log(`[SearchResults] count: ${searchResult.results.length} (executor)`);
+
+  // Filter results: keep only those whose title/snippet contain a query keyword
+  const queryKeywords = cleanedQuery
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+  const filtered = searchResult.results.filter(r => {
+    const hay = `${r.title} ${r.snippet}`.toLowerCase();
+    return queryKeywords.some(kw => hay.includes(kw));
+  });
+  const relevantResults = filtered.length > 0 ? filtered : searchResult.results.slice(0, 2);
+  console.log(`[SearchFiltered] count: ${relevantResults.length} (executor)`);
+
   // Build a context block from search results for the LLM
-  const searchContext = searchResult.results
+  const searchContext = relevantResults
     .map((r, i) => {
       const body = (r as { body?: string }).body;
       const content = body ?? r.snippet;
@@ -197,11 +214,10 @@ async function execWebSearch(
   const chatResult = await handleChat({
     userMessage:
       `The user asked: "${input}"\n\n` +
-      `Here are web search results to base your answer on:\n\n${searchContext}\n\n` +
-      `Provide a comprehensive answer using ONLY these sources. ` +
-      `Cite sources using [Source N] notation. ` +
-      `Do NOT say your training data or knowledge cutoff prevents you from answering. ` +
-      `These search results ARE real-time data — use them.` +
+      `Here are web search results you can reference:\n\n${searchContext}\n\n` +
+      `Provide a comprehensive answer. If the search results are relevant, use them ` +
+      `and cite sources using [Source N] notation. ` +
+      `If the results are irrelevant or incomplete, use your own knowledge to answer.` +
       (priorContext ? `\n\n[Previous step context]: ${priorContext}` : ""),
     recentMessages: ctx.recentMessages,
     memories: ctx.memories,
@@ -216,8 +232,8 @@ async function execWebSearch(
     reply: chatResult.reply,
     searchResults: {
       success: true,
-      query: searchResult.query,
-      results: searchResult.results.map(r => ({
+      query: cleanedQuery,
+      results: relevantResults.map(r => ({
         title: r.title,
         url: r.url,
         snippet: r.snippet,

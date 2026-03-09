@@ -249,9 +249,23 @@ app.post(
         console.log(`[Search] executing web search: "${searchQuery.slice(0, 80)}"`);
         const searchResult = await routeWebSearch({ query: searchQuery });
         if (searchResult.success && searchResult.results.length > 0) {
-          console.log(`[Search] sources returned: ${searchResult.results.length}`);
+          console.log(`[SearchResults] count: ${searchResult.results.length}`);
+
+          // ── Result filtering: keep only results whose title or snippet
+          //    contains at least one keyword from the search query ──
+          const queryKeywords = searchQuery
+            .toLowerCase()
+            .split(/\s+/)
+            .filter(w => w.length > 2);
+          const filtered = searchResult.results.filter(r => {
+            const hay = `${r.title} ${r.snippet}`.toLowerCase();
+            return queryKeywords.some(kw => hay.includes(kw));
+          });
+          const relevantResults = filtered.length > 0 ? filtered : searchResult.results.slice(0, 2);
+          console.log(`[SearchFiltered] count: ${relevantResults.length}`);
+
           // Compress search results into a context block (max ~2000 chars)
-          webSearchContext = searchResult.results
+          webSearchContext = relevantResults
             .slice(0, 4)
             .map((r, i) => {
               const body = (r as { body?: string }).body;
@@ -261,7 +275,7 @@ app.post(
             .join("\n\n");
           searchResultsPayload = {
             query: searchQuery,
-            results: searchResult.results.slice(0, 4).map(r => ({
+            results: relevantResults.slice(0, 4).map(r => ({
               title: r.title,
               url: r.url,
               snippet: r.snippet,
@@ -272,13 +286,7 @@ app.post(
             res.write(`data: ${JSON.stringify({ type: "search", search: searchResultsPayload })}\n\n`);
           }
         } else {
-          console.log(`[Search] no results returned for query: "${searchQuery.slice(0, 60)}"`);
-          // Even when search returns nothing, tell the model a search was attempted
-          // so it doesn't fall back to "I don't have data past my training cutoff."
-          webSearchContext = `[Web search was performed for "${searchQuery}" but returned no results. ` +
-            `Inform the user that you searched the web but could not find relevant results ` +
-            `for their query. Do NOT say your training data or knowledge cutoff prevents you ` +
-            `from answering — instead say the search did not return relevant information.]`;
+          console.log(`[SearchResults] count: 0 for query: "${searchQuery.slice(0, 60)}"`);
         }
       } catch (searchErr) {
         console.log(`[Search] web search failed: ${searchErr instanceof Error ? searchErr.message : searchErr}`);
