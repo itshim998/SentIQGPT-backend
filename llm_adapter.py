@@ -28,6 +28,8 @@ import logging
 import importlib
 from typing import Optional
 
+import requests as _requests_lib
+
 # ==============================
 # Optional SDK imports
 # ==============================
@@ -82,6 +84,10 @@ GEMINI_SEARCH_MODEL = os.getenv("SMART_MODEL_GEMINI_SEARCH", GEMINI_FAST_MODEL)
 CODING_MODEL = os.getenv("SMART_MODEL_CODING", "qwen3-coder-30b")
 LIGHTWEIGHT_MODEL = os.getenv("SMART_MODEL_LIGHTWEIGHT", "gpt-5-nano")
 
+# --- Pollinations provider ---
+POLLINATIONS_BASE_URL = os.getenv("POLLINATIONS_BASE_URL", "https://text.pollinations.ai")
+POLLINATIONS_TIMEOUT = int(os.getenv("POLLINATIONS_TIMEOUT", "90"))
+
 # --- Cache & Rate Limits ---
 _CACHE_FILE_ENV = os.getenv("SENTIQ_CACHE_FILE", "sentiq_cache.db")
 CACHE_FILE = _CACHE_FILE_ENV if os.path.isabs(_CACHE_FILE_ENV) else os.path.join(BASE_DIR, _CACHE_FILE_ENV)
@@ -121,6 +127,7 @@ class TokenBucket:
 
 gemini_bucket = TokenBucket(RPM)
 groq_bucket = TokenBucket(RPM)
+pollinations_bucket = TokenBucket(RPM)
 
 # ==============================
 # Cache helpers
@@ -189,9 +196,13 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     """
     Resolve logical model names to concrete provider/model pairs.
 
-    The TypeScript router emits lightweight logical names. This resolver maps
-    them to concrete runtime targets and degrades safely to Gemini when a
-    requested target is not available in the current gateway/provider stack.
+    Routing table:
+        gemini-fast        → gemini  (GEMINI_FAST_MODEL)
+        gemini-search      → gemini  (GEMINI_SEARCH_MODEL)
+        qwen3-coder-30b    → pollinations
+        gpt-5-nano         → pollinations
+        gemini-*           → gemini  (passthrough)
+        unknown            → default_provider (passthrough)
     """
     if not model_override:
         return default_provider, None
@@ -205,15 +216,14 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
         return "gemini", GEMINI_SEARCH_MODEL
 
     if logical == "qwen3-coder-30b":
-        # Prefer Groq for coding-specialized routing when available.
-        # If the configured model is unsupported upstream, runtime fallback
-        # below will gracefully degrade to Gemini.
-        return "groq", CODING_MODEL
+        return "pollinations", CODING_MODEL
 
     if logical == "gpt-5-nano":
-        # No native GPT-5 provider exists in the current gateway, so keep the
-        # lightweight routing intent but fall back to the fast Gemini path.
-        return "gemini", GEMINI_FAST_MODEL
+        return "pollinations", LIGHTWEIGHT_MODEL
+
+    # Any other gemini-prefixed model stays on Gemini
+    if logical.startswith("gemini"):
+        return "gemini", model_override
 
     return default_provider, model_override
 
@@ -322,6 +332,99 @@ def _invoke_groq(prompt: str, model_override: Optional[str] = None) -> str:
     raise RuntimeError(f"All {len(GROQ_API_KEYS)} Groq keys failed: {last_error}")
 
 # ==============================
+# Pollinations invocation (HTTP)
+# ==============================
+def _call_pollinations(prompt: str, model: str, temperature: float = 0.7) -> str:
+    """Call Pollinations text API for non-Gemini/non-Groq models."""
+    if not pollinations_bucket.consume():
+        raise RuntimeError("Pollinations rate limit exceeded")
+
+    url = f"{POLLINATIONS_BASE_URL}/{model}"
+    payload = {
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "stream": False,
+    }
+
+    logger.info("[Provider] Pollinations (non-stream) → model=%s", model)
+    resp = _requests_lib.post(url, json=payload, timeout=POLLINATIONS_TIMEOUT)
+    resp.raise_for_status()
+
+    # OpenAI-compatible JSON response
+    try:
+        data = resp.json()
+        if isinstance(data, dict) and "choices" in data:
+            return data["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError):
+        pass
+
+    # Fallback: raw text body
+    return resp.text
+
+
+def _call_pollinations_stream(prompt: str, model: str, temperature: float = 0.7):
+    """
+    Streaming variant for Pollinations.
+    Attempts native SSE streaming first; if the response is not SSE,
+    buffers it and yields simulated token chunks.
+    """
+    if not pollinations_bucket.consume():
+        raise RuntimeError("Pollinations rate limit exceeded")
+
+    url = f"{POLLINATIONS_BASE_URL}/{model}"
+    payload = {
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "stream": True,
+    }
+
+    logger.info("[Provider] Pollinations (stream) → model=%s", model)
+    resp = _requests_lib.post(
+        url, json=payload, timeout=POLLINATIONS_TIMEOUT, stream=True,
+    )
+    resp.raise_for_status()
+
+    content_type = resp.headers.get("content-type", "")
+
+    # Path A: native SSE / streaming response
+    if "text/event-stream" in content_type or "stream" in content_type:
+        for raw_line in resp.iter_lines(decode_unicode=True):
+            if not raw_line or not raw_line.startswith("data: "):
+                continue
+            data_str = raw_line[6:].strip()
+            if data_str == "[DONE]":
+                return
+            try:
+                chunk = json.loads(data_str)
+                delta = (
+                    chunk.get("choices", [{}])[0]
+                    .get("delta", {})
+                    .get("content", "")
+                )
+                if delta:
+                    yield delta
+            except (ValueError, KeyError, IndexError):
+                continue
+        return
+
+    # Path B: non-streaming JSON response — simulate streaming
+    full_text = ""
+    try:
+        data = resp.json()
+        if isinstance(data, dict) and "choices" in data:
+            full_text = data["choices"][0]["message"]["content"]
+        else:
+            full_text = resp.text
+    except ValueError:
+        full_text = resp.text
+
+    # Yield in small chunks to simulate token-by-token streaming
+    CHUNK_SIZE = 24
+    for i in range(0, len(full_text), CHUNK_SIZE):
+        yield full_text[i : i + CHUNK_SIZE]
+
+
+# ==============================
 # Unified Router
 # ==============================
 def call_llm_router(
@@ -354,6 +457,8 @@ def call_llm_router(
     provider, resolved_override = resolve_model_override(model_override, default_provider)
     model = resolved_override or (GROQ_MODEL if provider == "groq" else GEMINI_MODEL)
 
+    logger.info("[Router] Model: %s → Provider: %s (task=%s)", model, provider, task)
+
     # Check cache
     key = _cache_key(prompt, task, model, provider, user_id or "")
     cached = _cache_get(key)
@@ -371,7 +476,9 @@ def call_llm_router(
 
     # Invoke the correct provider
     try:
-        if provider == "groq":
+        if provider == "pollinations":
+            result = _call_pollinations(effective_prompt, resolved_override or model)
+        elif provider == "groq":
             result = _invoke_groq(effective_prompt, resolved_override)
         else:
             result = _invoke_gemini(effective_prompt, resolved_override)
@@ -383,11 +490,12 @@ def call_llm_router(
     except Exception as e:
         logger.error("Provider=%s failed for task=%s: %s", provider, task, e)
 
-        # Smart-router fallback: if a logical override resolved to an upstream
-        # model that is unavailable, degrade to the default Gemini path.
+        # Safety fallback: if any non-Gemini provider fails, degrade to
+        # Gemini (gemini-fast) so the user always gets an answer.
         if provider != "gemini":
             try:
-                fallback_result = _invoke_gemini(effective_prompt, GEMINI_MODEL)
+                logger.info("[Fallback] %s failed — falling back to Gemini (%s)", provider, GEMINI_FAST_MODEL)
+                fallback_result = _invoke_gemini(effective_prompt, GEMINI_FAST_MODEL)
                 _cache_set(key, fallback_result)
                 logger.info("Fallback Gemini path succeeded for task=%s", task)
                 return fallback_result
@@ -414,7 +522,7 @@ def call_llm(
 
 
 # ==============================
-# Streaming Router (Gemini only)
+# Streaming Router (multi-provider)
 # ==============================
 def stream_llm_router(
     prompt: str,
@@ -422,14 +530,32 @@ def stream_llm_router(
     model_override: Optional[str] = None,
 ):
     """
-    Streaming variant — yields text chunks from Gemini.
-    Only supports Gemini (streaming not available from Groq free tier).
+    Streaming variant — yields text chunks.
+    Routes to Pollinations or Gemini based on model_override.
+    Falls back to Gemini (gemini-fast) if Pollinations fails.
     """
+    provider, resolved_override = resolve_model_override(model_override, "gemini")
+    model = resolved_override or GEMINI_MODEL
+
+    logger.info("[Router] Stream — Model: %s → Provider: %s", model, provider)
+
+    # --- Pollinations streaming path ---
+    if provider == "pollinations":
+        try:
+            yield from _call_pollinations_stream(prompt, resolved_override or model)
+            logger.info("[Provider] Pollinations stream succeeded for model=%s", model)
+            return
+        except Exception as e:
+            logger.warning(
+                "[Fallback] Pollinations stream failed (%s) — falling back to Gemini (%s)",
+                e, GEMINI_FAST_MODEL,
+            )
+            # Fall through to Gemini below
+            model = GEMINI_FAST_MODEL
+
+    # --- Gemini streaming path ---
     if not GEMINI_API_KEYS:
         raise RuntimeError("No Gemini API keys configured")
-
-    _provider, resolved_override = resolve_model_override(model_override, "gemini")
-    model = resolved_override or GEMINI_MODEL
 
     last_error = None
     for idx, api_key in enumerate(GEMINI_API_KEYS, 1):
