@@ -81,8 +81,18 @@ function buildPlannerPrompt(
     "- Only choose image_generation if the user EXPLICITLY asks to create/generate an image.\n" +
     "- Only choose file_analysis if uploaded files exist in context.\n" +
     "- Only choose memory_update when the user says remember/forget.\n" +
-    "- Choose web_search when the user asks about current events, latest news, recent updates, today's information, real-time data, or anything requiring up-to-date facts.\n" +
-    "- Default ambiguous requests to a single conversation step.\n" +
+    "- Choose web_search when the user asks about:\n" +
+    "    • Current events, latest news, recent updates, today\'s information, real-time data\n" +
+    "    • Sports: scores, tournaments, world cups, match results, standings, IPL, T20, Olympics\n" +
+    "    • Medicines, drugs, supplements, health products, or any pharmaceutical name\n" +
+    "    • Products, prices, releases, reviews, specifications, comparisons\n" +
+    "    • Companies, brands, people, or any proper noun / named entity you are unsure about\n" +
+    "    • Technical documentation, APIs, libraries, frameworks\n" +
+    "    • Population, GDP, statistics, or any fact that may have changed recently\n" +
+    "    • Anything you are NOT 100% confident exists in your training data\n" +
+    "- IMPORTANT: When in doubt between conversation and web_search, PREFER web_search.\n" +
+    "  It is better to search and provide accurate info than to guess from stale knowledge.\n" +
+    "- Default truly ambiguous requests to a single conversation step.\n" +
     "- Steps run in order. Later steps may use results of earlier ones.\n\n" +
     "USER MESSAGE:\n" +
     userMessage +

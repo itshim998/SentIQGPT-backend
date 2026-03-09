@@ -31,6 +31,10 @@ import { buildContext } from "./context/contextBuilder";
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
 
+// v2 Query Classifier (deterministic pre-classification for web search)
+import { classifyQueryType, buildSearchQuery } from "./orchestrator/queryClassifier";
+import { routeWebSearch } from "./tools/webSearch/webSearchRouter";
+
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
 import { auditMiddleware, getRecentAuditEntries } from "./middleware/audit";
@@ -228,6 +232,48 @@ app.post(
     let clientDisconnected = false;
     req.on("close", () => { clientDisconnected = true; });
 
+    // --- Query Classification: detect if web search is needed ---
+    const classification = classifyQueryType(parsed.data.message);
+    console.log(`[STREAM] query classification: ${classification.category} (rule: ${classification.matchedRule})`);
+
+    let webSearchContext = "";
+    let searchResultsPayload: { query: string; results: { title: string; url: string; snippet: string }[] } | null = null;
+
+    if (classification.needsWebSearch) {
+      try {
+        const searchQuery = buildSearchQuery(parsed.data.message);
+        console.log(`[STREAM] performing web search: "${searchQuery.slice(0, 60)}"`);
+        const searchResult = await routeWebSearch({ query: searchQuery });
+        if (searchResult.success && searchResult.results.length > 0) {
+          // Compress search results into a context block (max ~2000 chars)
+          webSearchContext = searchResult.results
+            .slice(0, 4)
+            .map((r, i) => {
+              const body = (r as { body?: string }).body;
+              const content = (body ?? r.snippet).slice(0, 400);
+              return `[Source ${i + 1}] ${r.title}\nURL: ${r.url}\n${content}`;
+            })
+            .join("\n\n");
+          searchResultsPayload = {
+            query: searchQuery,
+            results: searchResult.results.slice(0, 4).map(r => ({
+              title: r.title,
+              url: r.url,
+              snippet: r.snippet,
+            })),
+          };
+          // Send search results event so the frontend can display sources
+          if (!clientDisconnected) {
+            res.write(`data: ${JSON.stringify({ type: "search", search: searchResultsPayload })}\n\n`);
+          }
+          console.log(`[STREAM] web search returned ${searchResult.results.length} result(s)`);
+        }
+      } catch (searchErr) {
+        console.log(`[STREAM] web search failed: ${searchErr instanceof Error ? searchErr.message : searchErr}`);
+        // Non-fatal — continue without search results
+      }
+    }
+
     // Build context
     const ctx = await buildContext({
       recent_messages: parsed.data.context?.recent_messages,
@@ -242,6 +288,7 @@ app.post(
       memories: ctx.memories,
       fileReferences: ctx.fileReferences,
       conversationSummary: ctx.conversationSummary,
+      webSearchContext: webSearchContext || undefined,
     };
 
     const call = buildChatPrompt(chatCtx);

@@ -33,6 +33,7 @@ import { improveAnswer } from "../reflection/answerImprover";
 import { getCachedAnswer, setCachedAnswer } from "../cache/cacheManager";
 import type { RawMessageContext } from "../context/contextBuilder";
 import type { DetectedTool } from "./toolDetector";
+import { classifyQueryType, buildSearchQuery } from "./queryClassifier";
 import type { PlanTool } from "./planner";
 import type { StepResult } from "./toolExecutor";
 
@@ -231,6 +232,20 @@ async function _orchestrateInner(
   console.log(`[ORCHESTRATOR] plan: ${plan.steps.length} step(s)`);
   console.log(`[ORCHESTRATOR] memory stored: ${memoryResult.stored}`);
 
+  // 2b. Query classifier safety net — override planner if it missed web search
+  const classification = classifyQueryType(userMessage);
+  let finalPlan = plan;
+  if (classification.needsWebSearch) {
+    const hasWebSearchStep = plan.steps.some(s => s.tool === "web_search");
+    if (!hasWebSearchStep) {
+      console.log(`[ORCHESTRATOR] classifier override: forcing web_search (rule: ${classification.matchedRule})`);
+      const searchQuery = buildSearchQuery(userMessage);
+      finalPlan = {
+        steps: [{ step: 1, tool: "web_search" as PlanTool, input: searchQuery }],
+      };
+    }
+  }
+
   const memoryPayload = memoryResult.stored
     ? {
         stored: true,
@@ -241,7 +256,7 @@ async function _orchestrateInner(
     : { stored: false };
 
   // 3. Execute the plan
-  const execution = await executePlan(plan.steps, ctx);
+  const execution = await executePlan(finalPlan.steps, ctx);
 
   // 4. Merge step results into a single response
   const merged = mergeResults(execution.steps, memoryPayload);
