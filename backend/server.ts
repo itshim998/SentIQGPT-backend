@@ -32,7 +32,7 @@ import { buildContext } from "./context/contextBuilder";
 import { orchestrate } from "./orchestrator/aiOrchestrator";
 
 // v2 Query Classifier (deterministic pre-classification for web search)
-import { classifyQueryType, buildSearchQuery } from "./orchestrator/queryClassifier";
+import { classifyQueryType, buildSearchQuery, shouldForceWebSearch } from "./orchestrator/queryClassifier";
 import { selectModelForPrompt } from "./orchestrator/modelRouter";
 import { routeWebSearch } from "./tools/webSearch/webSearchRouter";
 
@@ -235,18 +235,21 @@ app.post(
 
     // --- Query Classification: detect if web search is needed ---
     const classification = classifyQueryType(parsed.data.message);
-    console.log(`[STREAM] query classification: ${classification.category} (rule: ${classification.matchedRule})`);
+    const fallbackForce = shouldForceWebSearch(parsed.data.message);
+    const needsSearch = classification.needsWebSearch || fallbackForce;
+    console.log(`[Classifier] queryType: ${classification.category} (rule: ${classification.matchedRule}, needsSearch: ${needsSearch}, fallbackForce: ${fallbackForce})`);
     const modelOverride = selectModelForPrompt(parsed.data.message, classification.category);
 
     let webSearchContext = "";
     let searchResultsPayload: { query: string; results: { title: string; url: string; snippet: string }[] } | null = null;
 
-    if (classification.needsWebSearch) {
+    if (needsSearch) {
       try {
         const searchQuery = buildSearchQuery(parsed.data.message);
-        console.log(`[STREAM] performing web search: "${searchQuery.slice(0, 60)}"`);
+        console.log(`[Search] executing web search: "${searchQuery.slice(0, 80)}"`);
         const searchResult = await routeWebSearch({ query: searchQuery });
         if (searchResult.success && searchResult.results.length > 0) {
+          console.log(`[Search] sources returned: ${searchResult.results.length}`);
           // Compress search results into a context block (max ~2000 chars)
           webSearchContext = searchResult.results
             .slice(0, 4)
@@ -268,10 +271,11 @@ app.post(
           if (!clientDisconnected) {
             res.write(`data: ${JSON.stringify({ type: "search", search: searchResultsPayload })}\n\n`);
           }
-          console.log(`[STREAM] web search returned ${searchResult.results.length} result(s)`);
+        } else {
+          console.log(`[Search] no results returned for query: "${searchQuery.slice(0, 60)}"`);
         }
       } catch (searchErr) {
-        console.log(`[STREAM] web search failed: ${searchErr instanceof Error ? searchErr.message : searchErr}`);
+        console.log(`[Search] web search failed: ${searchErr instanceof Error ? searchErr.message : searchErr}`);
         // Non-fatal — continue without search results
       }
     }

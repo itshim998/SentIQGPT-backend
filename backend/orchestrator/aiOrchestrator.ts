@@ -33,7 +33,7 @@ import { improveAnswer } from "../reflection/answerImprover";
 import { getCachedAnswer, setCachedAnswer } from "../cache/cacheManager";
 import type { RawMessageContext } from "../context/contextBuilder";
 import type { DetectedTool } from "./toolDetector";
-import { classifyQueryType, buildSearchQuery } from "./queryClassifier";
+import { classifyQueryType, buildSearchQuery, shouldForceWebSearch } from "./queryClassifier";
 import type { PlanTool } from "./planner";
 import type { StepResult } from "./toolExecutor";
 
@@ -197,9 +197,17 @@ async function _orchestrateInner(
 
   console.log(`[ORCHESTRATOR] Processing: "${userMessage.slice(0, 80)}..."`);
 
-  // 0. Check LLM answer cache (skip for requests with file/image context)
+  // Pre-classify to decide if this query needs real-time data
+  const preClassification = classifyQueryType(userMessage);
+  const forceSearch = preClassification.needsWebSearch || shouldForceWebSearch(userMessage);
+
+  console.log(`[Classifier] queryType: ${preClassification.category} (rule: ${preClassification.matchedRule}, forceSearch: ${forceSearch})`);
+
+  // 0. Check LLM answer cache
+  //    SKIP cache for queries that need web search — cached answers would
+  //    contain stale training-data responses, not real-time information.
   const hasRawFiles = (rawContext?.file_references?.length ?? 0) > 0;
-  if (!hasRawFiles) {
+  if (!hasRawFiles && !forceSearch) {
     const cachedReply = getCachedAnswer(userMessage);
     if (cachedReply) {
       console.log(`[ORCHESTRATOR] returning cached answer`);
@@ -233,12 +241,12 @@ async function _orchestrateInner(
   console.log(`[ORCHESTRATOR] memory stored: ${memoryResult.stored}`);
 
   // 2b. Query classifier safety net — override planner if it missed web search
-  const classification = classifyQueryType(userMessage);
+  //     Uses the pre-classification from step 0 (already computed above)
   let finalPlan = plan;
-  if (classification.needsWebSearch) {
+  if (forceSearch) {
     const hasWebSearchStep = plan.steps.some(s => s.tool === "web_search");
     if (!hasWebSearchStep) {
-      console.log(`[ORCHESTRATOR] classifier override: forcing web_search (rule: ${classification.matchedRule})`);
+      console.log(`[ORCHESTRATOR] classifier override: forcing web_search (rule: ${preClassification.matchedRule})`);
       const searchQuery = buildSearchQuery(userMessage);
       finalPlan = {
         steps: [{ step: 1, tool: "web_search" as PlanTool, input: searchQuery }],
@@ -273,11 +281,14 @@ async function _orchestrateInner(
   };
 
   // 6. Cache the final answer for future identical queries
-  //    Only cache conversation replies (not images, file analysis, or memory updates)
+  //    Only cache conversation replies (not images, file analysis, or memory updates).
+  //    NEVER cache responses for queries that needed web search — real-time
+  //    data goes stale and would prevent future search execution.
   if (
     finalResponse.reply &&
     finalResponse.route === "normal_chat" &&
-    !hasRawFiles
+    !hasRawFiles &&
+    !forceSearch
   ) {
     setCachedAnswer(userMessage, finalResponse.reply);
   }

@@ -44,10 +44,12 @@ const REALTIME_PATTERNS: readonly RegExp[] = [
   /\b(?:election|president\s+of|prime\s+minister\s+of|leader\s+of)\b/i,
   /\b(?:stock\s+price|share\s+price|market\s+cap|exchange\s+rate|bitcoin\s+price|crypto\s+price)\b/i,
   /\b(?:weather\s+(?:in|for|today|forecast)|temperature\s+in)\b/i,
-  /\b(?:trending|viral|just\s+(?:happened|announced|released|launched))\b/i,
-  /\b(?:20(?:2[3-9]|[3-9]\d)\b)/i, // years 2023+
+  /\b(?:trending|viral|(?:just\s+)?(?:happened|announced|released|launched))\b/i,
+  /\b(?:announcements?|updates?\s+(?:from|on|about)|news\s+(?:from|on|about|of))\b/i,
+  /\b(?:20(?:2[3-9]|[3-9]\d))\b/i, // years 2023+
   /\b(?:t20|odi|test\s+match|cricket|football|soccer|nba|nfl|f1|formula\s+1)\b/i,
   /\b(?:new\s+(?:iphone|galaxy|pixel|macbook|playstation|xbox|nvidia|amd|tesla))\b/i,
+  /\b(?:what(?:'s|\s+is)\s+(?:new|happening|going\s+on))\b/i,
 ];
 
 /** Factual lookup patterns — medicines, products, entities, documentation */
@@ -139,6 +141,29 @@ export function classifyQueryType(query: string): QueryClassification {
 
   // Default: general knowledge — LLM can answer from training data
   return { category: "general_knowledge", needsWebSearch: false, matchedRule: "default" };
+}
+
+// ==============================
+// Fallback safeguard
+// ==============================
+
+/** Year pattern: matches years >= current year (2026+) */
+const FALLBACK_YEAR_RE = /\b(20(?:2[6-9]|[3-9]\d))\b/;
+/** Emergency recency keywords — if the classifier missed these, force search */
+const FALLBACK_KEYWORD_RE = /\b(?:latest|today|recent|current|right\s+now|breaking|just\s+(?:now|happened|released)|announcements?|this\s+(?:week|month|year))\b/i;
+
+/**
+ * Safety-net check: should web search be forced even if the classifier
+ * returned `needsWebSearch: false`?
+ *
+ * Returns `true` when the query contains a year >= current year OR
+ * obvious recency keywords, indicating the model's training data
+ * is almost certainly stale for this query.
+ */
+export function shouldForceWebSearch(query: string): boolean {
+  if (FALLBACK_YEAR_RE.test(query)) return true;
+  if (FALLBACK_KEYWORD_RE.test(query)) return true;
+  return false;
 }
 
 /**
