@@ -3,7 +3,12 @@
 // Sequential fallback router for web search providers.
 // Tries each provider in priority order; returns as soon as one succeeds.
 //
-// Provider chain: DuckDuckGo Instant API → Wikipedia → DuckDuckGo HTML
+// Provider chain: DuckDuckGo HTML (real search) → DuckDuckGo Instant API → Wikipedia
+//
+// DuckDuckGo HTML is prioritised because it performs an actual web search
+// and returns current/news results.  The Instant API only exposes
+// encyclopaedic abstracts and Wikipedia is limited to its own articles,
+// so neither reliably surfaces recent or breaking-news content.
 //
 // After results are gathered, the content extractor enriches the top
 // results with extracted body text from the source pages.
@@ -20,9 +25,9 @@ import { getCachedSearchResults, setCachedSearchResults } from "../../cache/cach
 // ==============================
 
 const providers: readonly WebSearchProvider[] = [
-  new DuckDuckGoApiProvider(),
-  new WikipediaProvider(),
-  new DuckDuckGoHtmlProvider(),
+  new DuckDuckGoHtmlProvider(),   // Real web search — best for current events
+  new DuckDuckGoApiProvider(),    // Instant Answer (encyclopaedic)
+  new WikipediaProvider(),        // Wikipedia articles (fallback)
 ];
 
 // Only extract body text for the top N results to limit latency

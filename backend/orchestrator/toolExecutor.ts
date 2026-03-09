@@ -198,9 +198,10 @@ async function execWebSearch(
     userMessage:
       `The user asked: "${input}"\n\n` +
       `Here are web search results to base your answer on:\n\n${searchContext}\n\n` +
-      `Provide a comprehensive answer using these sources. ` +
+      `Provide a comprehensive answer using ONLY these sources. ` +
       `Cite sources using [Source N] notation. ` +
-      `If prior context is available, incorporate it.` +
+      `Do NOT say your training data or knowledge cutoff prevents you from answering. ` +
+      `These search results ARE real-time data — use them.` +
       (priorContext ? `\n\n[Previous step context]: ${priorContext}` : ""),
     recentMessages: ctx.recentMessages,
     memories: ctx.memories,

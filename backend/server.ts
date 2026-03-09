@@ -273,6 +273,12 @@ app.post(
           }
         } else {
           console.log(`[Search] no results returned for query: "${searchQuery.slice(0, 60)}"`);
+          // Even when search returns nothing, tell the model a search was attempted
+          // so it doesn't fall back to "I don't have data past my training cutoff."
+          webSearchContext = `[Web search was performed for "${searchQuery}" but returned no results. ` +
+            `Inform the user that you searched the web but could not find relevant results ` +
+            `for their query. Do NOT say your training data or knowledge cutoff prevents you ` +
+            `from answering — instead say the search did not return relevant information.]`;
         }
       } catch (searchErr) {
         console.log(`[Search] web search failed: ${searchErr instanceof Error ? searchErr.message : searchErr}`);

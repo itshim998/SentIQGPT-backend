@@ -286,6 +286,15 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     parts.push("WEB SEARCH RESULTS (use these to answer the question accurately):");
     parts.push(ctx.webSearchContext);
     parts.push("");
+    parts.push(
+      "IMPORTANT: The above web search results were retrieved just now in response to the " +
+      "user's query. You MUST base your answer primarily on these results. " +
+      "Do NOT say your training data doesn't cover this topic, do NOT mention a knowledge " +
+      "cutoff, and do NOT claim you cannot access real-time information — the search results " +
+      "above ARE real-time information. If the search results do not fully answer the question, " +
+      "summarise what was found and note what is missing."
+    );
+    parts.push("");
   }
 
   // Inject memory context
