@@ -76,6 +76,12 @@ GROQ_API_KEYS = [
 GROQ_API_KEYS = [k for k in GROQ_API_KEYS if k]
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
+# --- Smart model routing aliases ---
+GEMINI_FAST_MODEL = os.getenv("SMART_MODEL_GEMINI_FAST", "gemini-2.5-flash-lite")
+GEMINI_SEARCH_MODEL = os.getenv("SMART_MODEL_GEMINI_SEARCH", GEMINI_FAST_MODEL)
+CODING_MODEL = os.getenv("SMART_MODEL_CODING", "qwen3-coder-30b")
+LIGHTWEIGHT_MODEL = os.getenv("SMART_MODEL_LIGHTWEIGHT", "gpt-5-nano")
+
 # --- Cache & Rate Limits ---
 _CACHE_FILE_ENV = os.getenv("SENTIQ_CACHE_FILE", "sentiq_cache.db")
 CACHE_FILE = _CACHE_FILE_ENV if os.path.isabs(_CACHE_FILE_ENV) else os.path.join(BASE_DIR, _CACHE_FILE_ENV)
@@ -177,6 +183,39 @@ def get_provider_for_task(task: str) -> str:
     if task in GROQ_TASKS:
         return "groq"
     return "gemini"
+
+
+def resolve_model_override(model_override: Optional[str], default_provider: str) -> tuple[str, Optional[str]]:
+    """
+    Resolve logical model names to concrete provider/model pairs.
+
+    The TypeScript router emits lightweight logical names. This resolver maps
+    them to concrete runtime targets and degrades safely to Gemini when a
+    requested target is not available in the current gateway/provider stack.
+    """
+    if not model_override:
+        return default_provider, None
+
+    logical = model_override.strip().lower()
+
+    if logical == "gemini-fast":
+        return "gemini", GEMINI_FAST_MODEL
+
+    if logical == "gemini-search":
+        return "gemini", GEMINI_SEARCH_MODEL
+
+    if logical == "qwen3-coder-30b":
+        # Prefer Groq for coding-specialized routing when available.
+        # If the configured model is unsupported upstream, runtime fallback
+        # below will gracefully degrade to Gemini.
+        return "groq", CODING_MODEL
+
+    if logical == "gpt-5-nano":
+        # No native GPT-5 provider exists in the current gateway, so keep the
+        # lightweight routing intent but fall back to the fast Gemini path.
+        return "gemini", GEMINI_FAST_MODEL
+
+    return default_provider, model_override
 
 # ==============================
 # Simulation (safe dev mode)
@@ -311,8 +350,9 @@ def call_llm_router(
         return simulated_response(prompt, task)
 
     # Determine provider
-    provider = prefer or get_provider_for_task(task)
-    model = model_override or (GROQ_MODEL if provider == "groq" else GEMINI_MODEL)
+    default_provider = prefer or get_provider_for_task(task)
+    provider, resolved_override = resolve_model_override(model_override, default_provider)
+    model = resolved_override or (GROQ_MODEL if provider == "groq" else GEMINI_MODEL)
 
     # Check cache
     key = _cache_key(prompt, task, model, provider, user_id or "")
@@ -332,9 +372,9 @@ def call_llm_router(
     # Invoke the correct provider
     try:
         if provider == "groq":
-            result = _invoke_groq(effective_prompt, model_override)
+            result = _invoke_groq(effective_prompt, resolved_override)
         else:
-            result = _invoke_gemini(effective_prompt, model_override)
+            result = _invoke_gemini(effective_prompt, resolved_override)
 
         _cache_set(key, result)
         logger.info("Provider=%s succeeded for task=%s", provider, task)
@@ -342,6 +382,18 @@ def call_llm_router(
 
     except Exception as e:
         logger.error("Provider=%s failed for task=%s: %s", provider, task, e)
+
+        # Smart-router fallback: if a logical override resolved to an upstream
+        # model that is unavailable, degrade to the default Gemini path.
+        if provider != "gemini":
+            try:
+                fallback_result = _invoke_gemini(effective_prompt, GEMINI_MODEL)
+                _cache_set(key, fallback_result)
+                logger.info("Fallback Gemini path succeeded for task=%s", task)
+                return fallback_result
+            except Exception as fallback_error:
+                logger.error("Fallback Gemini path failed for task=%s: %s", task, fallback_error)
+
         return json.dumps({"error": "provider_failed", "provider": provider, "detail": str(e)})
 
 # ==============================
@@ -376,7 +428,8 @@ def stream_llm_router(
     if not GEMINI_API_KEYS:
         raise RuntimeError("No Gemini API keys configured")
 
-    model = model_override or GEMINI_MODEL
+    _provider, resolved_override = resolve_model_override(model_override, "gemini")
+    model = resolved_override or GEMINI_MODEL
 
     last_error = None
     for idx, api_key in enumerate(GEMINI_API_KEYS, 1):

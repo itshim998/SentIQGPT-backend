@@ -256,6 +256,7 @@ export interface ChatContext {
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
   readonly conversationSummary?: string;
   readonly webSearchContext?: string;
+  readonly modelOverride?: string;
 }
 
 export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
@@ -328,6 +329,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     task: "chat",
     prompt: parts.join("\n"),
     prefer: "gemini",
+    model_override: ctx.modelOverride,
   };
 }
 

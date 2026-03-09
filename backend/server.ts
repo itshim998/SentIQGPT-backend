@@ -33,6 +33,7 @@ import { orchestrate } from "./orchestrator/aiOrchestrator";
 
 // v2 Query Classifier (deterministic pre-classification for web search)
 import { classifyQueryType, buildSearchQuery } from "./orchestrator/queryClassifier";
+import { selectModelForPrompt } from "./orchestrator/modelRouter";
 import { routeWebSearch } from "./tools/webSearch/webSearchRouter";
 
 // Middleware
@@ -235,6 +236,7 @@ app.post(
     // --- Query Classification: detect if web search is needed ---
     const classification = classifyQueryType(parsed.data.message);
     console.log(`[STREAM] query classification: ${classification.category} (rule: ${classification.matchedRule})`);
+    const modelOverride = selectModelForPrompt(parsed.data.message, classification.category);
 
     let webSearchContext = "";
     let searchResultsPayload: { query: string; results: { title: string; url: string; snippet: string }[] } | null = null;
@@ -289,6 +291,7 @@ app.post(
       fileReferences: ctx.fileReferences,
       conversationSummary: ctx.conversationSummary,
       webSearchContext: webSearchContext || undefined,
+      modelOverride,
     };
 
     const call = buildChatPrompt(chatCtx);

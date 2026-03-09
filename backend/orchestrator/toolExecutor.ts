@@ -22,6 +22,8 @@ import { routeWebSearch } from "../tools/webSearch/webSearchRouter";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
+import { classifyQueryType } from "./queryClassifier";
+import { selectModelForPrompt } from "./modelRouter";
 
 // ==============================
 // Types
@@ -82,6 +84,8 @@ async function execConversation(
   ctx: BuiltContext,
   priorContext: string,
 ): Promise<StepResult> {
+  const classification = classifyQueryType(input);
+  const modelOverride = selectModelForPrompt(input, classification.category);
   const augmentedInput = priorContext
     ? `${input}\n\n[Previous step context]: ${priorContext}`
     : input;
@@ -92,6 +96,7 @@ async function execConversation(
     memories: ctx.memories,
     fileReferences: ctx.fileReferences,
     conversationSummary: ctx.conversationSummary,
+    modelOverride,
   });
 
   return { step: 0, tool: "conversation", reply: result.reply };
@@ -121,6 +126,8 @@ async function execFileAnalysis(
   ctx: BuiltContext,
   priorContext: string,
 ): Promise<StepResult> {
+  const classification = classifyQueryType(input);
+  const modelOverride = selectModelForPrompt(input, classification.category);
   const augmentedInput = priorContext
     ? `${input}\n\n[Previous step context]: ${priorContext}`
     : input;
@@ -131,6 +138,7 @@ async function execFileAnalysis(
     memories: ctx.memories,
     fileReferences: ctx.fileReferences,
     conversationSummary: ctx.conversationSummary,
+    modelOverride,
   });
 
   return { step: 0, tool: "file_analysis", reply: result.reply };
@@ -164,6 +172,7 @@ async function execWebSearch(
   ctx: BuiltContext,
   priorContext: string,
 ): Promise<StepResult> {
+  const modelOverride = selectModelForPrompt(input, "factual_lookup");
   const searchResult = await routeWebSearch({ query: input });
 
   if (!searchResult.success || searchResult.results.length === 0) {
@@ -196,6 +205,8 @@ async function execWebSearch(
     recentMessages: ctx.recentMessages,
     memories: ctx.memories,
     conversationSummary: ctx.conversationSummary,
+    webSearchContext: searchContext,
+    modelOverride,
   });
 
   return {
