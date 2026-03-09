@@ -336,100 +336,54 @@ def _invoke_groq(prompt: str, model_override: Optional[str] = None) -> str:
 # Pollinations invocation (HTTP)
 # ==============================
 def _call_pollinations(prompt: str, model: str, temperature: float = 0.7) -> str:
-    """Call Pollinations text API (OpenAI-compatible endpoint)."""
+    """Call Pollinations text API (direct model endpoint)."""
     if not pollinations_bucket.consume():
         raise RuntimeError("Pollinations rate limit exceeded")
 
-    url = f"{POLLINATIONS_BASE_URL}/openai/v1/chat/completions"
+    url = f"{POLLINATIONS_BASE_URL}/{model}"
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if POLLINATIONS_API_KEY:
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
     payload = {
-        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
-        "stream": False,
     }
 
-    logger.info("[LLM Request] provider=Pollinations  model=%s  endpoint=%s  auth=%s",
-                model, url, bool(POLLINATIONS_API_KEY))
+    logger.info("[Pollinations] endpoint=%s  model=%s", url, model)
     resp = _requests_lib.post(url, json=payload, headers=headers, timeout=POLLINATIONS_TIMEOUT)
     resp.raise_for_status()
 
-    # OpenAI-compatible JSON response
-    try:
-        data = resp.json()
-        if isinstance(data, dict) and "choices" in data:
-            return data["choices"][0]["message"]["content"]
-    except (ValueError, KeyError, IndexError):
-        pass
-
-    # Fallback: raw text body
-    return resp.text
+    result = resp.text
+    logger.info("[Pollinations] response length=%d", len(result))
+    return result
 
 
 def _call_pollinations_stream(prompt: str, model: str, temperature: float = 0.7):
     """
-    Streaming variant for Pollinations (OpenAI-compatible endpoint).
-    Attempts native SSE streaming first; if the response is not SSE,
-    buffers it and yields simulated token chunks.
+    Buffered-streaming variant for Pollinations.
+    Pollinations returns a full text response; we split it into
+    small chunks and yield them to simulate token streaming.
     """
     if not pollinations_bucket.consume():
         raise RuntimeError("Pollinations rate limit exceeded")
 
-    url = f"{POLLINATIONS_BASE_URL}/openai/v1/chat/completions"
+    url = f"{POLLINATIONS_BASE_URL}/{model}"
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if POLLINATIONS_API_KEY:
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
     payload = {
-        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
-        "stream": True,
     }
 
-    logger.info("[LLM Request] provider=Pollinations(stream)  model=%s  endpoint=%s  auth=%s",
-                model, url, bool(POLLINATIONS_API_KEY))
-    resp = _requests_lib.post(
-        url, json=payload, headers=headers, timeout=POLLINATIONS_TIMEOUT, stream=True,
-    )
+    logger.info("[Pollinations] stream  endpoint=%s  model=%s", url, model)
+    resp = _requests_lib.post(url, json=payload, headers=headers, timeout=POLLINATIONS_TIMEOUT)
     resp.raise_for_status()
 
-    content_type = resp.headers.get("content-type", "")
-
-    # Path A: native SSE / streaming response
-    if "text/event-stream" in content_type or "stream" in content_type:
-        for raw_line in resp.iter_lines(decode_unicode=True):
-            if not raw_line or not raw_line.startswith("data: "):
-                continue
-            data_str = raw_line[6:].strip()
-            if data_str == "[DONE]":
-                return
-            try:
-                chunk = json.loads(data_str)
-                delta = (
-                    chunk.get("choices", [{}])[0]
-                    .get("delta", {})
-                    .get("content", "")
-                )
-                if delta:
-                    yield delta
-            except (ValueError, KeyError, IndexError):
-                continue
-        return
-
-    # Path B: non-streaming JSON response — simulate streaming
-    full_text = ""
-    try:
-        data = resp.json()
-        if isinstance(data, dict) and "choices" in data:
-            full_text = data["choices"][0]["message"]["content"]
-        else:
-            full_text = resp.text
-    except ValueError:
-        full_text = resp.text
+    full_text = resp.text
+    logger.info("[Pollinations] stream response length=%d", len(full_text))
 
     # Yield in small chunks to simulate token-by-token streaming
     CHUNK_SIZE = 24
