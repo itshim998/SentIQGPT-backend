@@ -92,7 +92,6 @@ async def health_check():
 @app.post("/llm/invoke", response_model=LLMInvokeResponse)
 async def invoke_llm(request: LLMInvokeRequest):
     try:
-        provider = request.prefer or get_provider_for_task(request.task)
         result = call_llm_router(
             prompt=request.prompt,
             task=request.task,
@@ -101,7 +100,11 @@ async def invoke_llm(request: LLMInvokeRequest):
             model_override=request.model_override,
             user_id=request.user_id,
         )
-        return LLMInvokeResponse(result=result, provider=provider)
+        # Resolve the actual provider (not just the prefer hint)
+        from llm_adapter import resolve_model_override, get_provider_for_task
+        default_prov = request.prefer or get_provider_for_task(request.task)
+        resolved_prov, _ = resolve_model_override(request.model_override, default_prov)
+        return LLMInvokeResponse(result=result, provider=resolved_prov)
     except Exception as e:
         logger.error("LLM invocation failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

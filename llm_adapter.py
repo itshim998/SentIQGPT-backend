@@ -85,6 +85,7 @@ CODING_MODEL = os.getenv("SMART_MODEL_CODING", "qwen3-coder-30b")
 LIGHTWEIGHT_MODEL = os.getenv("SMART_MODEL_LIGHTWEIGHT", "gpt-5-nano")
 
 # --- Pollinations provider ---
+POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY", "")
 POLLINATIONS_BASE_URL = os.getenv("POLLINATIONS_BASE_URL", "https://text.pollinations.ai")
 POLLINATIONS_TIMEOUT = int(os.getenv("POLLINATIONS_TIMEOUT", "90"))
 
@@ -335,19 +336,25 @@ def _invoke_groq(prompt: str, model_override: Optional[str] = None) -> str:
 # Pollinations invocation (HTTP)
 # ==============================
 def _call_pollinations(prompt: str, model: str, temperature: float = 0.7) -> str:
-    """Call Pollinations text API for non-Gemini/non-Groq models."""
+    """Call Pollinations text API (OpenAI-compatible endpoint)."""
     if not pollinations_bucket.consume():
         raise RuntimeError("Pollinations rate limit exceeded")
 
-    url = f"{POLLINATIONS_BASE_URL}/{model}"
+    url = f"{POLLINATIONS_BASE_URL}/openai/v1/chat/completions"
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if POLLINATIONS_API_KEY:
+        headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
+
     payload = {
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
         "stream": False,
     }
 
-    logger.info("[Provider] Pollinations (non-stream) → model=%s", model)
-    resp = _requests_lib.post(url, json=payload, timeout=POLLINATIONS_TIMEOUT)
+    logger.info("[LLM Request] provider=Pollinations  model=%s  endpoint=%s  auth=%s",
+                model, url, bool(POLLINATIONS_API_KEY))
+    resp = _requests_lib.post(url, json=payload, headers=headers, timeout=POLLINATIONS_TIMEOUT)
     resp.raise_for_status()
 
     # OpenAI-compatible JSON response
@@ -364,23 +371,29 @@ def _call_pollinations(prompt: str, model: str, temperature: float = 0.7) -> str
 
 def _call_pollinations_stream(prompt: str, model: str, temperature: float = 0.7):
     """
-    Streaming variant for Pollinations.
+    Streaming variant for Pollinations (OpenAI-compatible endpoint).
     Attempts native SSE streaming first; if the response is not SSE,
     buffers it and yields simulated token chunks.
     """
     if not pollinations_bucket.consume():
         raise RuntimeError("Pollinations rate limit exceeded")
 
-    url = f"{POLLINATIONS_BASE_URL}/{model}"
+    url = f"{POLLINATIONS_BASE_URL}/openai/v1/chat/completions"
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if POLLINATIONS_API_KEY:
+        headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
+
     payload = {
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
         "stream": True,
     }
 
-    logger.info("[Provider] Pollinations (stream) → model=%s", model)
+    logger.info("[LLM Request] provider=Pollinations(stream)  model=%s  endpoint=%s  auth=%s",
+                model, url, bool(POLLINATIONS_API_KEY))
     resp = _requests_lib.post(
-        url, json=payload, timeout=POLLINATIONS_TIMEOUT, stream=True,
+        url, json=payload, headers=headers, timeout=POLLINATIONS_TIMEOUT, stream=True,
     )
     resp.raise_for_status()
 
@@ -457,7 +470,7 @@ def call_llm_router(
     provider, resolved_override = resolve_model_override(model_override, default_provider)
     model = resolved_override or (GROQ_MODEL if provider == "groq" else GEMINI_MODEL)
 
-    logger.info("[Router] Model: %s → Provider: %s (task=%s)", model, provider, task)
+    logger.info("[LLM Request] model=%s  provider=%s  task=%s  override=%s", model, provider, task, model_override)
 
     # Check cache
     key = _cache_key(prompt, task, model, provider, user_id or "")
@@ -494,7 +507,7 @@ def call_llm_router(
         # Gemini (gemini-fast) so the user always gets an answer.
         if provider != "gemini":
             try:
-                logger.info("[Fallback] %s failed — falling back to Gemini (%s)", provider, GEMINI_FAST_MODEL)
+                logger.info("[Fallback] %s failed — switching to Gemini (%s)", provider, GEMINI_FAST_MODEL)
                 fallback_result = _invoke_gemini(effective_prompt, GEMINI_FAST_MODEL)
                 _cache_set(key, fallback_result)
                 logger.info("Fallback Gemini path succeeded for task=%s", task)
@@ -537,7 +550,7 @@ def stream_llm_router(
     provider, resolved_override = resolve_model_override(model_override, "gemini")
     model = resolved_override or GEMINI_MODEL
 
-    logger.info("[Router] Stream — Model: %s → Provider: %s", model, provider)
+    logger.info("[LLM Request] stream  model=%s  provider=%s  override=%s", model, provider, model_override)
 
     # --- Pollinations streaming path ---
     if provider == "pollinations":
@@ -547,7 +560,7 @@ def stream_llm_router(
             return
         except Exception as e:
             logger.warning(
-                "[Fallback] Pollinations stream failed (%s) — falling back to Gemini (%s)",
+                "[Fallback] Pollinations stream failed: %s — switching to Gemini (%s)",
                 e, GEMINI_FAST_MODEL,
             )
             # Fall through to Gemini below

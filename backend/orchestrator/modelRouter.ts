@@ -87,15 +87,23 @@ function detectPromptCategory(query: string, classification?: QueryType): Prompt
  * available in the current deployment.
  */
 export function selectModelForPrompt(query: string, classification?: QueryType): string {
-  switch (detectPromptCategory(query, classification)) {
+  const category = detectPromptCategory(query, classification);
+  let model: string;
+  switch (category) {
     case "coding":
-      return "qwen3-coder-30b";
+      model = "qwen3-coder-30b";
+      break;
     case "lightweight":
-      return "gpt-5-nano";
+      model = "gpt-5-nano";
+      break;
     case "search_grounded":
-      return "gemini-search";
+      model = "gemini-search";
+      break;
     case "general_chat":
     default:
-      return "gemini-fast";
+      model = "gemini-fast";
+      break;
   }
+  console.log(`[Router] selected model: ${model} (category: ${category}, query: "${query.slice(0, 60)}...")`);
+  return model;
 }
