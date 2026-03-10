@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { resolve as pathResolve } from "path";
+import { composeContext } from "../orchestrator/contextComposer";
 
 // SentIQGPT v1 — Prompt Builders & LLM Adapter Bridge
 //
@@ -260,10 +261,7 @@ export interface ChatContext {
 }
 
 export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
-  const parts: string[] = [];
-
-  // ── SYSTEM PROMPT ──
-  parts.push(
+  const SYSTEM_PROMPT =
     "SYSTEM: You are SentIQGPT, a knowledgeable and helpful AI assistant.\n" +
     "SAFETY RULES:\n" +
     "- Never generate harmful, illegal, or dangerous content.\n" +
@@ -277,89 +275,25 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     "- For medicines or health products: provide general factual information. " +
     "Do NOT provide diagnosis, treatment instructions, or medical advice.\n" +
     "- If you are unsure about a factual claim and no search results back it up, say so honestly.\n" +
-    "OUTPUT: Respond in clear, helpful natural language.\n"
-  );
+    "OUTPUT: Respond in clear, helpful natural language.\n";
 
-  // ── MEMORY CONTEXT ──
-  if (ctx.memories && ctx.memories.length > 0) {
-    parts.push("MEMORY CONTEXT (things you remember about this user):");
-    for (const mem of ctx.memories) {
-      parts.push(`  [${mem.type}] ${mem.summary}`);
-    }
-    parts.push("");
-  }
-
-  // ── CONVERSATION SUMMARY ──
-  if (ctx.conversationSummary) {
-    parts.push("CONVERSATION SUMMARY (earlier discussion):");
-    parts.push(`  ${ctx.conversationSummary}`);
-    parts.push("");
-  }
-
-  // ── UPLOADED FILES ──
-  if (ctx.fileReferences && ctx.fileReferences.length > 0) {
-    const MAX_FILE_CHARS = 40_000;
-    for (const file of ctx.fileReferences) {
-      const raw = file.extractedText || "";
-      let content: string;
-      if (raw.length <= MAX_FILE_CHARS) {
-        content = raw;
-        console.log(`[Backend] file context injected (chars=${raw.length}) for ${file.filename}`);
-      } else {
-        // Safe truncation: first 20k + last 20k
-        const half = MAX_FILE_CHARS / 2;
-        content = raw.slice(0, half) + "\n\n[... file truncated for analysis ...]\n\n" + raw.slice(-half);
-        console.log(`[Backend] truncated file context (${raw.length} → ${content.length} chars) for ${file.filename}`);
-      }
-      const ext = file.filename.split(".").pop() || "txt";
-      parts.push(
-        `User uploaded file: ${file.filename}\n\n` +
-        `FILE CONTENT START\n\n` +
-        `\`\`\`${ext}\n${content}\n\`\`\`\n\n` +
-        `FILE CONTENT END`
-      );
-      parts.push("");
-    }
-  }
-
-  // ── CONVERSATION HISTORY ──
-  if (ctx.recentMessages && ctx.recentMessages.length > 0) {
-    parts.push("CONVERSATION HISTORY:");
-    for (const msg of ctx.recentMessages) {
-      parts.push(`  ${msg.role.toUpperCase()}: ${msg.content}`);
-    }
-    parts.push("");
-  }
-
-  // ── USER QUESTION ──
-  parts.push(`USER: ${ctx.userMessage}`);
-  parts.push("");
-
-  // ── SEARCH CONTEXT (appended AFTER user question, never replaces it) ──
-  if (ctx.webSearchContext) {
-    parts.push("SEARCH CONTEXT:");
-    parts.push(ctx.webSearchContext);
-    parts.push("");
-    parts.push(
-      "NOTE: The search results above were retrieved just now. " +
-      "If they are relevant, use them to support your answer and cite with [Source N]. " +
-      "If they are incomplete or irrelevant, use your own knowledge to answer the user's question. " +
-      "Do NOT refuse to answer just because search results are insufficient."
-    );
-    parts.push("");
-  }
+  // Delegate prompt assembly + budget enforcement to the Context Composer.
+  const finalPrompt = composeContext({
+    systemPrompt: SYSTEM_PROMPT,
+    userMessage: ctx.userMessage,
+    conversation: ctx.recentMessages,
+    conversationSummary: ctx.conversationSummary,
+    memories: ctx.memories,
+    fileReferences: ctx.fileReferences,
+    webSearchContext: ctx.webSearchContext,
+  });
 
   // Determine the preferred provider based on the model override.
-  // Pollinations models should not carry a `prefer: "gemini"` hint.
-  // Only gemini-vision needs the Gemini direct API.
   const isPollinations =
     ctx.modelOverride === "qwen3-coder" ||
     ctx.modelOverride === "qwen3-coder-30b" ||
     ctx.modelOverride === "gemini-fast" ||
     ctx.modelOverride === "gemini-search";
-
-  const finalPrompt = parts.join("\n");
-  console.log(`[LLM Request] prompt length=${finalPrompt.length}`);
 
   return {
     task: "chat",
