@@ -3095,9 +3095,12 @@ window.SentIQAPI = {
       const memories = await Storage.getTopMemories(10);
       const files = await Storage.getAllFiles();
       const recentMessages = (chat?.messages || []).slice(-20).map((m) => ({ role: m.role, content: m.content }));
-      const fileReferences = files.map((f) => ({
-        filename: f.filename, type: f.type, extracted_text: f.extracted_text?.slice(0, 500),
-      }));
+      const fileReferences = files.map((f) => {
+        const text = f.extracted_text || "";
+        console.log(`[Frontend] attaching extractedText (length=${text.length}) for ${f.filename}`);
+        return { filename: f.filename, extractedText: text };
+      });
+      console.log(`[API Request] file_references count=${fileReferences.length}`);
       const contextPayload = {
         recentMessages,
         memories: memories.map((m) => ({ type: m.type, summary: m.summary })),
