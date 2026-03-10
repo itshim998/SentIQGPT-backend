@@ -1448,6 +1448,143 @@ button, .tool-btn, .btn-send, .welcome-chip, .chat-list-item, .btn-settings, .si
   opacity: 1;
 }
 
+/* ==============================
+   Smart Scroll — "New messages" pill
+   ============================== */
+.scroll-anchor-pill {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--purple-600);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-radius: 20px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 10;
+  box-shadow: 0 2px 12px rgba(139,92,246,0.35);
+  white-space: nowrap;
+}
+.scroll-anchor-pill.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ==============================
+   Error Bubble
+   ============================== */
+.message-error-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.message-error-text {
+  color: #fca5a5;
+}
+.error-retry-btn {
+  align-self: flex-start;
+  background: rgba(239,68,68,0.15);
+  color: #fca5a5;
+  border: 1px solid rgba(239,68,68,0.25);
+  border-radius: var(--radius-sm);
+  padding: 5px 14px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.error-retry-btn:hover {
+  background: rgba(239,68,68,0.25);
+  color: #fecaca;
+}
+
+/* ==============================
+   Toast Notification
+   ============================== */
+.toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  background: rgba(30,30,45,0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 12px 18px;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+  transform: translateX(120%);
+  opacity: 0;
+  transition: transform 0.3s cubic-bezier(0.4,0,0.2,1), opacity 0.3s ease;
+  max-width: 340px;
+}
+.toast.show {
+  transform: translateX(0);
+  opacity: 1;
+}
+.toast.toast-error { border-left: 3px solid var(--danger); }
+.toast.toast-success { border-left: 3px solid var(--success); }
+.toast.toast-info { border-left: 3px solid var(--purple-400); }
+
+/* ==============================
+   Send button ripple
+   ============================== */
+.btn-send {
+  position: relative;
+  overflow: hidden;
+}
+.btn-send::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at var(--ripple-x, 50%) var(--ripple-y, 50%), rgba(255,255,255,0.3) 0%, transparent 60%);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+.btn-send.ripple::after {
+  opacity: 1;
+  animation: rippleFade 0.5s ease-out forwards;
+}
+@keyframes rippleFade {
+  0% { opacity: 1; transform: scale(0.5); }
+  100% { opacity: 0; transform: scale(2.5); }
+}
+
+/* ==============================
+   Enhanced thinking indicator shimmer
+   ============================== */
+.typing-text-shimmer {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  background: linear-gradient(90deg, var(--text-muted) 0%, var(--purple-300) 50%, var(--text-muted) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* content-visibility for older messages */
+.message.offscreen {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 80px;
+}
+
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -1507,14 +1644,17 @@ button, .tool-btn, .btn-send, .welcome-chip, .chat-list-item, .btn-settings, .si
       </div>
 
       <!-- Chat messages -->
-      <div id="chat-messages" class="chat-messages"></div>
+      <div style="position:relative;flex:1;display:flex;flex-direction:column;min-height:0;">
+        <div id="chat-messages" class="chat-messages"></div>
+        <div id="scroll-anchor-pill" class="scroll-anchor-pill">↓ New messages</div>
+      </div>
 
       <!-- Typing indicator -->
       <div id="typing-indicator" class="typing-indicator" style="display: none;">
         <div class="typing-dots">
           <span></span><span></span><span></span>
         </div>
-        <span class="typing-text">Thinking...</span>
+        <span class="typing-text-shimmer" id="typing-text">SentIQGPT is thinking...</span>
       </div>
 
       <!-- Input area -->
@@ -1550,6 +1690,9 @@ button, .tool-btn, .btn-send, .welcome-chip, .chat-list-item, .btn-settings, .si
       </div>
     </main>
   </div>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="toast-container"></div>
 
   <!-- Settings Modal -->
   <div id="settings-modal" class="modal-overlay" style="display: none;">
@@ -2046,6 +2189,60 @@ window.SentIQAPI = {
   const closeSettingsBtn = document.getElementById("close-settings-btn");
   const sidebarToggle = document.getElementById("sidebar-toggle");
   const sidebar = document.getElementById("sidebar");
+  const scrollAnchorPill = document.getElementById("scroll-anchor-pill");
+  const toastContainer = document.getElementById("toast-container");
+  const typingTextEl = document.getElementById("typing-text");
+
+  // ---- Smart scroll: only auto-scroll if user is near bottom ----
+  let _userScrolledUp = false;
+  const SCROLL_THRESHOLD = 120; // px from bottom to count as "at bottom"
+
+  if (chatMessages) {
+    chatMessages.addEventListener("scroll", () => {
+      const distFromBottom = chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight;
+      _userScrolledUp = distFromBottom > SCROLL_THRESHOLD;
+      if (!_userScrolledUp && scrollAnchorPill) scrollAnchorPill.classList.remove("visible");
+    }, { passive: true });
+  }
+  if (scrollAnchorPill) {
+    scrollAnchorPill.addEventListener("click", () => {
+      _userScrolledUp = false;
+      scrollAnchorPill.classList.remove("visible");
+      if (chatMessages) chatMessages.scrollTo({ top: chatMessages.scrollHeight, behavior: "smooth" });
+    });
+  }
+
+  // ---- Toast notification system ----
+  function showToast(message, type = "info", durationMs = 4000) {
+    if (!toastContainer) return;
+    const toast = document.createElement("div");
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    toastContainer.appendChild(toast);
+    requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add("show")));
+    setTimeout(() => {
+      toast.classList.remove("show");
+      toast.addEventListener("transitionend", () => toast.remove(), { once: true });
+      setTimeout(() => toast.remove(), 400); // fallback cleanup
+    }, durationMs);
+  }
+
+  // ---- Thinking indicator elapsed timer ----
+  let _thinkingTimer = null;
+  function startThinkingTimer() {
+    const start = Date.now();
+    if (typingTextEl) typingTextEl.textContent = "SentIQGPT is thinking...";
+    clearInterval(_thinkingTimer);
+    _thinkingTimer = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - start) / 1000);
+      if (elapsed >= 5 && typingTextEl) typingTextEl.textContent = `SentIQGPT is thinking... ${elapsed}s`;
+    }, 1000);
+  }
+  function stopThinkingTimer() {
+    clearInterval(_thinkingTimer);
+    _thinkingTimer = null;
+    if (typingTextEl) typingTextEl.textContent = "SentIQGPT is thinking...";
+  }
 
   // ---- Send / Stop button toggle ----
   const SEND_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
@@ -2068,12 +2265,14 @@ window.SentIQAPI = {
     if (!currentChatId) return;
     const state = getChatState(currentChatId);
     if (!state || !state.isThinking) return;
+    console.log("[UI] abortCurrentGeneration for chat:", currentChatId);
     if (state.abortController) {
       state.abortController.abort();
       state.abortController = null;
     }
     state.requestId = null; // mark stale
     state.isThinking = false;
+    stopThinkingTimer();
     if (typingIndicator) typingIndicator.style.display = "none";
     setSendMode();
   }
@@ -2161,6 +2360,7 @@ window.SentIQAPI = {
   }
 
   function showQuotaWarning(message) {
+    showToast(message, "error", 5000);
     appendMessageBubble("assistant", `⚠️ ${message}`);
   }
 
@@ -2189,6 +2389,7 @@ window.SentIQAPI = {
   }
 
   async function init() {
+    console.log("[UI] init: SentIQGPT Chat UI starting");
     await loadChatList();
     const chats = await Storage.getAllChats();
     if (chats.length > 0) {
@@ -2197,9 +2398,19 @@ window.SentIQAPI = {
       await startNewChat();
     }
 
-    sendBtn?.addEventListener("click", () => {
+    sendBtn?.addEventListener("click", (e) => {
       if (sendBtn.classList.contains("is-stop")) { abortCurrentGeneration(); }
-      else { handleSend(); }
+      else {
+        // Ripple micro-interaction
+        const rect = sendBtn.getBoundingClientRect();
+        sendBtn.style.setProperty("--ripple-x", ((e.clientX - rect.left) / rect.width * 100) + "%");
+        sendBtn.style.setProperty("--ripple-y", ((e.clientY - rect.top) / rect.height * 100) + "%");
+        sendBtn.classList.remove("ripple");
+        void sendBtn.offsetWidth; // force reflow
+        sendBtn.classList.add("ripple");
+        setTimeout(() => sendBtn.classList.remove("ripple"), 500);
+        handleSend();
+      }
     });
     chatInput?.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
@@ -2328,6 +2539,7 @@ window.SentIQAPI = {
   }
 
   async function loadChat(chatId) {
+    console.log("[UI] loadChat:", chatId);
     const chat = await Storage.getChat(chatId);
     if (!chat) return;
     // Invalidate any in-flight request for the chat we're leaving
@@ -2336,6 +2548,9 @@ window.SentIQAPI = {
       if (oldState) oldState.requestId = null;
     }
     currentChatId = chatId;
+    // Reset scroll state for new chat view
+    _userScrolledUp = false;
+    if (scrollAnchorPill) scrollAnchorPill.classList.remove("visible");
     if (chatMessages) { chatMessages.style.opacity = '0'; chatMessages.style.transition = 'opacity 0.15s ease-out'; }
     if (chat.messages.length > 0) { hideWelcome(); renderMessages(chat.messages); }
     else { showWelcome(); if (chatMessages) chatMessages.innerHTML = ""; }
@@ -2351,6 +2566,7 @@ window.SentIQAPI = {
 
   function renderMessages(messages) {
     if (!chatMessages) return;
+    console.log("[UI] renderMessages:", messages.length, "total");
     chatMessages.style.scrollBehavior = 'auto';
     chatMessages.innerHTML = "";
     const total = messages.length;
@@ -2365,7 +2581,7 @@ window.SentIQAPI = {
         for (let i = 0; i < startIdx; i++) {
           const msg = messages[i];
           const { bubble } = appendMessageBubble(msg.role, msg.content, msg.meta) || {};
-          if (bubble) { bubble.classList.add("no-animate"); fragment.appendChild(bubble); }
+          if (bubble) { bubble.classList.add("no-animate", "offscreen"); fragment.appendChild(bubble); }
         }
         chatMessages.insertBefore(fragment, chatMessages.firstChild);
       });
@@ -2373,7 +2589,9 @@ window.SentIQAPI = {
     }
     for (let i = startIdx; i < total; i++) {
       const msg = messages[i];
-      appendMessageBubble(msg.role, msg.content, msg.meta);
+      const result = appendMessageBubble(msg.role, msg.content, msg.meta);
+      // Skip animation for all but the last 2 messages loaded from history
+      if (result?.bubble && i < total - 2) result.bubble.classList.add("no-animate");
     }
     chatMessages.scrollTop = chatMessages.scrollHeight;
     chatMessages.style.scrollBehavior = 'smooth';
@@ -2758,6 +2976,7 @@ window.SentIQAPI = {
   }
 
   function createStreamingBubble() {
+    console.log("[UI] createStreamingBubble");
     if (!chatMessages) return null;
     const bubble = document.createElement("div");
     bubble.className = "message assistant";
@@ -2831,14 +3050,14 @@ window.SentIQAPI = {
     };
   }
 
-  async function handleSend() {
-    if (!chatInput) return;
-    const message = chatInput.value.trim();
+  async function handleSend(retryMessage) {
+    if (!chatInput && !retryMessage) return;
+    const message = retryMessage || chatInput.value.trim();
     if (!message && pendingFiles.length === 0) return;
     if (!currentChatId) await startNewChat();
     hideWelcome();
-    chatInput.value = "";
-    chatInput.style.height = "auto";
+    if (!retryMessage) { chatInput.value = ""; chatInput.style.height = "auto"; }
+    console.log("[UI] handleSend:", message.slice(0, 60));
 
     if (pendingFiles.length > 0) { await processPendingFiles(message); return; }
     if (imageMode && message) { setImageMode(false); await handleImageGeneration(message); return; }
@@ -2858,9 +3077,17 @@ window.SentIQAPI = {
     state.abortController = ac;
     setStopMode();
 
-    appendMessageBubble("user", message);
-    await Storage.addMessageToChat(targetChatId, "user", message);
-    if (targetChatId === currentChatId && typingIndicator) typingIndicator.style.display = "flex";
+    if (!retryMessage) {
+      appendMessageBubble("user", message);
+      await Storage.addMessageToChat(targetChatId, "user", message);
+    }
+    if (targetChatId === currentChatId && typingIndicator) {
+      typingIndicator.style.display = "flex";
+      startThinkingTimer();
+    }
+    // Reset scroll state so new messages auto-scroll
+    _userScrolledUp = false;
+    if (scrollAnchorPill) scrollAnchorPill.classList.remove("visible");
     scrollToBottom();
 
     try {
@@ -2885,22 +3112,26 @@ window.SentIQAPI = {
       if (isRequestStale(targetChatId, requestId)) return;
 
       try {
+        console.log("[UI] Attempting streaming...");
         const streamBubble = (targetChatId === currentChatId) ? createStreamingBubble() : null;
         if (streamBubble && typeof API.sendMessageStream === "function") {
           usedStreaming = true;
           if (targetChatId === currentChatId && typingIndicator) typingIndicator.style.display = "none";
+          stopThinkingTimer();
           await API.sendMessageStream(message, contextPayload, {
             onToken(token) {
               if (!isRequestStale(targetChatId, requestId)) streamBubble.appendToken(token);
             },
             onMemory(memory) { memoryResult = memory; },
-            onError(err) { console.error("[SentIQGPT] Stream error:", err); },
+            onError(err) { console.error("[UI] Stream error:", err); },
           }, ac.signal);
           await streamBubble.finish();
           fullReply = streamBubble.getFullText();
+          console.log("[UI] Streaming complete, length:", fullReply.length);
         }
       } catch (streamErr) {
         if (streamErr.name === "AbortError") {
+          console.log("[UI] Stream aborted by user");
           // User interrupted — finalize partial response
           const orphanContent = chatMessages?.querySelector(".message.assistant:last-child .typing-active");
           if (orphanContent) {
@@ -2915,6 +3146,7 @@ window.SentIQAPI = {
           }
           usedStreaming = true; // skip non-streaming fallback
         } else {
+          console.warn("[UI] Streaming failed, falling back to non-streaming:", streamErr.message);
           usedStreaming = false;
           // Remove orphaned streaming bubble on failure
           const orphan = chatMessages?.querySelector(".message.assistant:last-child .typing-active");
@@ -2929,6 +3161,7 @@ window.SentIQAPI = {
       }
 
       if (!usedStreaming) {
+        console.log("[UI] Using non-streaming fallback");
         const response = await API.sendMessage(message, contextPayload);
         if (isRequestStale(targetChatId, requestId)) {
           if (response.reply) await Storage.addMessageToChat(targetChatId, "assistant", response.reply);
@@ -2952,6 +3185,7 @@ window.SentIQAPI = {
           if (targetChatId === currentChatId) {
             const { contentDiv } = appendMessageBubble("assistant", "");
             if (typingIndicator) typingIndicator.style.display = "none";
+            stopThinkingTimer();
             await typeMessage(fullReply, contentDiv);
           } else {
             appendMessageBubble("assistant", fullReply);
@@ -2968,13 +3202,33 @@ window.SentIQAPI = {
     } catch (err) {
       if (err.name === "AbortError") { /* user-initiated stop — already handled */ }
       else if (!isRequestStale(targetChatId, requestId)) {
+        console.error("[UI] Chat error:", err);
+        // Styled error bubble with retry
         const { contentDiv: errDiv } = appendMessageBubble("assistant", "");
-        typeMessage("Sorry, something went wrong. Please try again.", errDiv);
-        console.error("[SentIQGPT] Chat error:", err);
+        errDiv.innerHTML = "";
+        const wrap = document.createElement("div");
+        wrap.className = "message-error-wrap";
+        const errText = document.createElement("p");
+        errText.className = "message-error-text";
+        errText.textContent = "Sorry, something went wrong. Please try again.";
+        wrap.appendChild(errText);
+        const retryBtn = document.createElement("button");
+        retryBtn.className = "error-retry-btn";
+        retryBtn.textContent = "Retry";
+        const capturedMsg = message;
+        retryBtn.addEventListener("click", () => {
+          // Remove this error bubble and retry
+          errDiv.closest(".message")?.remove();
+          handleSend(capturedMsg);
+        });
+        wrap.appendChild(retryBtn);
+        errDiv.appendChild(wrap);
+        showToast("Failed to get response. You can retry.", "error");
       }
     } finally {
       state.isThinking = false;
       state.abortController = null;
+      stopThinkingTimer();
       if (targetChatId === currentChatId && typingIndicator) typingIndicator.style.display = "none";
       setSendMode();
       await loadChatList();
@@ -3079,7 +3333,7 @@ window.SentIQAPI = {
       } else {
         const { contentDiv: genErrDiv } = appendMessageBubble("assistant", "");
         typeMessage("Sorry, something went wrong generating that image. Please try again.", genErrDiv);
-        console.error("[SentIQGPT] Image generation error:", err);
+        console.error("[UI] Image generation error:", err);
       }
     } finally {
       if (slowHintTimer) clearTimeout(slowHintTimer);
@@ -3152,7 +3406,7 @@ window.SentIQAPI = {
       } catch (err) {
         const { contentDiv: upErrDiv } = appendMessageBubble("assistant", "");
         typeMessage(`Sorry, I couldn\u2019t process that file. Please try again.`, upErrDiv);
-        console.error("[SentIQGPT] Upload error:", err);
+        console.error("[UI] Upload error:", err);
       } finally {
         if (typingIndicator) typingIndicator.style.display = "none";
       }
@@ -3191,6 +3445,7 @@ window.SentIQAPI = {
   }
 
   async function startNewChat() {
+    console.log("[UI] startNewChat");
     const chat = await Storage.createChat("New Chat");
     currentChatId = chat.id;
     if (chatMessages) chatMessages.innerHTML = "";
@@ -3240,7 +3495,15 @@ window.SentIQAPI = {
     } catch { /* non-critical */ }
   }
 
-  function scrollToBottom(instant) { if (chatMessages) chatMessages.scrollTo({ top: chatMessages.scrollHeight, behavior: instant ? 'auto' : 'smooth' }); }
+  function scrollToBottom(instant) {
+    if (!chatMessages) return;
+    if (_userScrolledUp) {
+      // Show "new messages" pill instead of forcing scroll
+      if (scrollAnchorPill) scrollAnchorPill.classList.add("visible");
+      return;
+    }
+    chatMessages.scrollTo({ top: chatMessages.scrollHeight, behavior: instant ? 'auto' : 'smooth' });
+  }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
@@ -3316,7 +3579,7 @@ window.SentIQAPI = {
           for (const item of items) await Storage.deleteMemory(item.id);
           await Storage.storeMemory({ type, summary: result.compressed_summary, importance: result.importance || 5 });
         }
-      } catch (err) { console.error(`[SentIQGPT] Compression failed for type ${type}:`, err); }
+      } catch (err) { console.error(`[UI] Compression failed for type ${type}:`, err); }
     }
     compressBtn.disabled = false;
     compressBtn.textContent = "Compress Memories";
