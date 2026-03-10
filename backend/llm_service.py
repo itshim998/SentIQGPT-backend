@@ -142,7 +142,7 @@ async def stream_llm(request: LLMInvokeRequest):
 # Embedding endpoint
 # ============================
 
-EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
+EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-005")
 
 import threading
 _embed_lock = threading.Lock()
@@ -178,8 +178,9 @@ async def embed_text(request: EmbedRequest):
             last_error = e
             logger.warning("Embedding key #%d failed: %s", idx, e)
 
-    logger.error("All Gemini keys failed for embedding: %s", last_error)
-    raise HTTPException(status_code=500, detail=str(last_error))
+    # Non-fatal: return empty so the pipeline can continue without embeddings
+    logger.warning("All Gemini keys failed for embedding — skipping (non-fatal): %s", last_error)
+    return {"embedding": [], "skipped": True}
 
 
 if __name__ == "__main__":

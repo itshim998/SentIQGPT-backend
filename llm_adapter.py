@@ -81,8 +81,8 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 # --- Smart model routing aliases ---
 GEMINI_FAST_MODEL = os.getenv("SMART_MODEL_GEMINI_FAST", "gemini-2.5-flash-lite")
 GEMINI_SEARCH_MODEL = os.getenv("SMART_MODEL_GEMINI_SEARCH", GEMINI_FAST_MODEL)
-CODING_MODEL = os.getenv("SMART_MODEL_CODING", "qwen3-coder-30b")
-LIGHTWEIGHT_MODEL = os.getenv("SMART_MODEL_LIGHTWEIGHT", "gpt-5-nano")
+CODING_MODEL = os.getenv("SMART_MODEL_CODING", "qwen3-coder")
+LIGHTWEIGHT_MODEL = os.getenv("SMART_MODEL_LIGHTWEIGHT", "gpt-4o-mini")
 
 # --- Pollinations provider ---
 POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY", "")
@@ -200,8 +200,8 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     Routing table:
         gemini-fast        → gemini  (GEMINI_FAST_MODEL)
         gemini-search      → gemini  (GEMINI_SEARCH_MODEL)
-        qwen3-coder-30b    → pollinations
-        gpt-5-nano         → pollinations
+        qwen3-coder-30b    → pollinations  (qwen3-coder)
+        gpt-5-nano         → pollinations  (gpt-4o-mini)
         gemini-*           → gemini  (passthrough)
         unknown            → default_provider (passthrough)
     """
@@ -336,57 +336,82 @@ def _invoke_groq(prompt: str, model_override: Optional[str] = None) -> str:
 # Pollinations invocation (HTTP)
 # ==============================
 def _call_pollinations(prompt: str, model: str, temperature: float = 0.7) -> str:
-    """Call Pollinations text API (direct model endpoint)."""
+    """Call Pollinations text API (OpenAI-compatible /openai endpoint)."""
     if not pollinations_bucket.consume():
         raise RuntimeError("Pollinations rate limit exceeded")
 
-    url = f"{POLLINATIONS_BASE_URL}/{model}"
+    url = f"{POLLINATIONS_BASE_URL}/openai"
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if POLLINATIONS_API_KEY:
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
     payload = {
-        "messages": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": prompt}],
-        "temperature": temperature,
         "model": model,
-        "stream": False,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": temperature,
     }
 
     logger.info("[Pollinations] endpoint=%s  model=%s  prompt_length=%d", url, model, len(prompt))
     resp = _requests_lib.post(url, json=payload, headers=headers, timeout=POLLINATIONS_TIMEOUT)
     resp.raise_for_status()
 
+    # OpenAI-compatible JSON response
+    try:
+        data = resp.json()
+        if isinstance(data, dict) and "choices" in data:
+            result = data["choices"][0]["message"]["content"]
+            logger.info("[Pollinations] response length=%d", len(result))
+            return result
+    except (ValueError, KeyError, IndexError):
+        pass
+
+    # Fallback: plain text body
     result = resp.text.strip()
-    logger.info("[Pollinations] response length=%d", len(result))
+    logger.info("[Pollinations] response length=%d (text fallback)", len(result))
     return result
 
 
 def _call_pollinations_stream(prompt: str, model: str, temperature: float = 0.7):
     """
     Buffered-streaming variant for Pollinations.
-    Pollinations returns a full text response; we split it into
-    small chunks and yield them to simulate token streaming.
+    Fetches full response from /openai endpoint, then yields
+    small chunks to simulate token-by-token streaming.
     """
     if not pollinations_bucket.consume():
         raise RuntimeError("Pollinations rate limit exceeded")
 
-    url = f"{POLLINATIONS_BASE_URL}/{model}"
+    url = f"{POLLINATIONS_BASE_URL}/openai"
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if POLLINATIONS_API_KEY:
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
     payload = {
-        "messages": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": prompt}],
-        "temperature": temperature,
         "model": model,
-        "stream": False,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": temperature,
     }
 
     logger.info("[Pollinations] stream  endpoint=%s  model=%s  prompt_length=%d", url, model, len(prompt))
     resp = _requests_lib.post(url, json=payload, headers=headers, timeout=POLLINATIONS_TIMEOUT)
     resp.raise_for_status()
 
-    full_text = resp.text.strip()
+    # Extract text from OpenAI-compatible JSON, fall back to raw body
+    full_text = ""
+    try:
+        data = resp.json()
+        if isinstance(data, dict) and "choices" in data:
+            full_text = data["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError):
+        pass
+    if not full_text:
+        full_text = resp.text.strip()
+
     logger.info("[Pollinations] stream response length=%d", len(full_text))
 
     # Yield in small chunks to simulate token-by-token streaming
