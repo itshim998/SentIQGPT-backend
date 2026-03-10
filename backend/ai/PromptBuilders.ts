@@ -298,12 +298,28 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
 
   // ── UPLOADED FILES ──
   if (ctx.fileReferences && ctx.fileReferences.length > 0) {
-    parts.push("UPLOADED FILES (relevant file content):");
+    const MAX_FILE_CHARS = 40_000;
     for (const file of ctx.fileReferences) {
-      const preview = file.extractedText.slice(0, 2000);
-      parts.push(`  [${file.filename}]: ${preview}`);
+      const raw = file.extractedText || "";
+      let content: string;
+      if (raw.length <= MAX_FILE_CHARS) {
+        content = raw;
+        console.log(`[Backend] file context injected (chars=${raw.length}) for ${file.filename}`);
+      } else {
+        // Safe truncation: first 20k + last 20k
+        const half = MAX_FILE_CHARS / 2;
+        content = raw.slice(0, half) + "\n\n[... file truncated for analysis ...]\n\n" + raw.slice(-half);
+        console.log(`[Backend] truncated file context (${raw.length} → ${content.length} chars) for ${file.filename}`);
+      }
+      const ext = file.filename.split(".").pop() || "txt";
+      parts.push(
+        `User uploaded file: ${file.filename}\n\n` +
+        `FILE CONTENT START\n\n` +
+        `\`\`\`${ext}\n${content}\n\`\`\`\n\n` +
+        `FILE CONTENT END`
+      );
+      parts.push("");
     }
-    parts.push("");
   }
 
   // ── CONVERSATION HISTORY ──
@@ -342,9 +358,12 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     ctx.modelOverride === "gemini-fast" ||
     ctx.modelOverride === "gemini-search";
 
+  const finalPrompt = parts.join("\n");
+  console.log(`[LLM Request] prompt length=${finalPrompt.length}`);
+
   return {
     task: "chat",
-    prompt: parts.join("\n"),
+    prompt: finalPrompt,
     prefer: isPollinations ? undefined : "gemini",
     model_override: ctx.modelOverride,
   };

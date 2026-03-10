@@ -13,11 +13,9 @@
 
 import type { MemoryReference } from "../memory/memoryTypes";
 import { formatMemoriesForPrompt } from "../memory/memoryStore";
-import { chunkText, selectRelevantChunks } from "./fileChunker";
 import { selectMemoriesForQuery } from "./memorySelector";
 import { compressConversation } from "./contextCompressor";
 import { semanticMemorySearch } from "../memory/semanticSearch";
-import type { TextChunk } from "./fileChunker";
 
 export interface RawMessageContext {
   readonly recent_messages?: readonly { role: string; content: string }[];
@@ -75,34 +73,17 @@ export async function buildContext(raw: RawMessageContext): Promise<BuiltContext
     console.log(`[CONTEXT] memory retrieval: keyword fallback (${memories.length} selected)`);
   }
 
-  // 3. File references — chunk large files and select relevant chunks
+  // 3. File references — pass through full content for prompt-level handling
+  //    (PromptBuilders.ts applies safe truncation at 40k per file)
   const rawFiles = raw.file_references ?? [];
-  let fileReferences: readonly { filename: string; extractedText: string }[];
-
-  if (rawFiles.length > 0 && query) {
-    const allChunks: TextChunk[] = [];
-    for (const file of rawFiles) {
-      const chunks = chunkText(file.extractedText, file.filename);
-      allChunks.push(...chunks);
-    }
-    const relevant = selectRelevantChunks(allChunks, query, 5);
-
-    const grouped = new Map<string, string[]>();
-    for (const chunk of relevant) {
-      const existing = grouped.get(chunk.filename) || [];
-      existing.push(chunk.text);
-      grouped.set(chunk.filename, existing);
-    }
-
-    fileReferences = Array.from(grouped.entries()).map(([filename, texts]) => ({
-      filename,
-      extractedText: texts.join("\n\n---\n\n"),
-    }));
-  } else {
-    fileReferences = rawFiles.map((f) => ({
+  const fileReferences: readonly { filename: string; extractedText: string }[] =
+    rawFiles.map((f) => ({
       filename: f.filename,
-      extractedText: f.extractedText.slice(0, 2000),
+      extractedText: f.extractedText,
     }));
+  if (fileReferences.length > 0) {
+    const totalChars = fileReferences.reduce((s, f) => s + f.extractedText.length, 0);
+    console.log(`[CONTEXT] file pass-through: ${fileReferences.length} file(s), ${totalChars} total chars`);
   }
 
   // 4. Pre-build the memory prompt block

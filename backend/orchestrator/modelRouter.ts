@@ -141,6 +141,12 @@ function detectPromptCategory(
     }
   }
 
+  // 1.5. FILE ANALYSIS — file input forces gemini-fast for large-context handling.
+  if (options?.hasFile) {
+    console.log(`[Router] file_input_detected → gemini-fast`);
+    return "general_chat";
+  }
+
   // 2. CODING — any programming signal routes to qwen3-coder.
   for (const pattern of CODING_PATTERNS) {
     if (pattern.test(query)) {
