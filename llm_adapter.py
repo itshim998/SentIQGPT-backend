@@ -81,8 +81,10 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 # --- Smart model routing aliases (resolved to provider-native model IDs) ---
 GEMINI_FAST_MODEL = os.getenv("SMART_MODEL_GEMINI_FAST", "gemini-2.5-flash-lite")
 GEMINI_SEARCH_MODEL = os.getenv("SMART_MODEL_GEMINI_SEARCH", GEMINI_FAST_MODEL)
+GEMINI_VISION_MODEL = os.getenv("SMART_MODEL_GEMINI_VISION", "gemini-2.5-flash")
 CODING_MODEL = os.getenv("SMART_MODEL_CODING", "qwen-coder")
-LIGHTWEIGHT_MODEL = os.getenv("SMART_MODEL_LIGHTWEIGHT", "gpt-5-nano")
+GENERAL_CHAT_MODEL = os.getenv("SMART_MODEL_GENERAL_CHAT", "gemini-2.5-flash-lite")
+SEARCH_MODEL = os.getenv("SMART_MODEL_SEARCH", "gemini-2.5-flash-lite")
 
 # --- Pollinations provider ---
 POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY", "")
@@ -205,7 +207,7 @@ def _default_model_for_provider(provider: str) -> str:
     if provider == "groq":
         return GROQ_MODEL
     if provider == "pollinations":
-        return CODING_MODEL
+        return GENERAL_CHAT_MODEL
     return GEMINI_MODEL
 
 
@@ -213,32 +215,34 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     """
     Resolve logical model names to concrete provider/model pairs.
 
-    Routing table:
-        gemini-fast        → gemini  (GEMINI_FAST_MODEL)
-        gemini-search      → gemini  (GEMINI_SEARCH_MODEL)
-        qwen3-coder-30b    → pollinations  (qwen-coder)
-        gpt-5-nano         → pollinations  (gpt-5-nano/openai-fast)
-        gemini-*           → gemini  (passthrough)
-        unknown            → default_provider (passthrough)
+    Routing table (Pollinations is always preferred):
+        qwen3-coder-30b    → pollinations  (CODING_MODEL = qwen-coder)
+        qwen3-coder        → pollinations  (CODING_MODEL = qwen-coder)
+        gemini-fast         → pollinations  (GENERAL_CHAT_MODEL)
+        gemini-search       → pollinations  (SEARCH_MODEL)
+        gemini-vision       → gemini        (GEMINI_VISION_MODEL, direct API)
+        gemini-*            → gemini        (passthrough, direct API)
+        unknown             → default_provider (passthrough)
     """
     if not model_override:
         return default_provider, None
 
     logical = model_override.strip().lower()
 
-    if logical == "gemini-fast":
-        return "gemini", GEMINI_FAST_MODEL
-
-    if logical == "gemini-search":
-        return "gemini", GEMINI_SEARCH_MODEL
-
+    # --- Pollinations routes (preferred) ---
     if logical in {"qwen3-coder-30b", "qwen3-coder"}:
         return "pollinations", CODING_MODEL
 
-    if logical == "gpt-5-nano":
-        return "pollinations", LIGHTWEIGHT_MODEL
+    if logical == "gemini-fast":
+        return "pollinations", GENERAL_CHAT_MODEL
 
-    # Any other gemini-prefixed model stays on Gemini
+    if logical == "gemini-search":
+        return "pollinations", SEARCH_MODEL
+
+    # --- Gemini direct routes (vision, explicit gemini models) ---
+    if logical == "gemini-vision":
+        return "gemini", GEMINI_VISION_MODEL
+
     if logical.startswith("gemini"):
         return "gemini", model_override
 
@@ -355,8 +359,8 @@ def _normalize_pollinations_model(model: str) -> str:
     logical = (model or "").strip().lower()
     if logical in {"qwen3-coder-30b", "qwen3-coder", "qwen-coder"}:
         return CODING_MODEL
-    if logical in {"gpt-5-nano", "gpt-4o-mini", "openai-fast"}:
-        return LIGHTWEIGHT_MODEL
+    if logical in {"gemini-2.5-flash-lite", "gemini-fast", "gemini-search"}:
+        return GENERAL_CHAT_MODEL
     return model
 
 
@@ -594,7 +598,7 @@ def call_llm_router(
             # Determine the alternate Pollinations model
             primary_model = (resolved_override or model or "").lower()
             if primary_model == CODING_MODEL.lower() or "coder" in primary_model:
-                alt_pollinations_model = LIGHTWEIGHT_MODEL
+                alt_pollinations_model = GENERAL_CHAT_MODEL
             else:
                 alt_pollinations_model = CODING_MODEL
             try:
@@ -694,7 +698,7 @@ def stream_llm_router(
             # Try alternate Pollinations model before falling back to Gemini
             primary_model = (resolved_override or model or "").lower()
             if primary_model == CODING_MODEL.lower() or "coder" in primary_model:
-                alt_pollinations_model = LIGHTWEIGHT_MODEL
+                alt_pollinations_model = GENERAL_CHAT_MODEL
             else:
                 alt_pollinations_model = CODING_MODEL
             try:

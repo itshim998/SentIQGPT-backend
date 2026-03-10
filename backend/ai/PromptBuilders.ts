@@ -335,10 +335,12 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
 
   // Determine the preferred provider based on the model override.
   // Pollinations models should not carry a `prefer: "gemini"` hint.
+  // Only gemini-vision needs the Gemini direct API.
   const isPollinations =
     ctx.modelOverride === "qwen3-coder" ||
     ctx.modelOverride === "qwen3-coder-30b" ||
-    ctx.modelOverride === "gpt-5-nano";
+    ctx.modelOverride === "gemini-fast" ||
+    ctx.modelOverride === "gemini-search";
 
   return {
     task: "chat",
