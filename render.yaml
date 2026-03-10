@@ -11,6 +11,14 @@ services:
         value: "3002"
       - key: LLM_SERVICE_URL
         value: "http://localhost:3002"
+      - key: GEMINI_EMBEDDING_MODEL
+        value: "gemini-embedding-001"
+      - key: SMART_MODEL_CODING
+        value: "qwen-coder"
+      - key: SMART_MODEL_LIGHTWEIGHT
+        value: "gpt-5-nano"
+      - key: POLLINATIONS_OPENAI_ENDPOINT
+        value: "https://gen.pollinations.ai/v1/chat/completions"
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_API_KEY_2

@@ -78,15 +78,23 @@ GROQ_API_KEYS = [
 GROQ_API_KEYS = [k for k in GROQ_API_KEYS if k]
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-# --- Smart model routing aliases ---
+# --- Smart model routing aliases (resolved to provider-native model IDs) ---
 GEMINI_FAST_MODEL = os.getenv("SMART_MODEL_GEMINI_FAST", "gemini-2.5-flash-lite")
 GEMINI_SEARCH_MODEL = os.getenv("SMART_MODEL_GEMINI_SEARCH", GEMINI_FAST_MODEL)
-CODING_MODEL = os.getenv("SMART_MODEL_CODING", "qwen3-coder")
-LIGHTWEIGHT_MODEL = os.getenv("SMART_MODEL_LIGHTWEIGHT", "gpt-4o-mini")
+CODING_MODEL = os.getenv("SMART_MODEL_CODING", "qwen-coder")
+LIGHTWEIGHT_MODEL = os.getenv("SMART_MODEL_LIGHTWEIGHT", "gpt-5-nano")
 
 # --- Pollinations provider ---
 POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY", "")
-POLLINATIONS_BASE_URL = os.getenv("POLLINATIONS_BASE_URL", "https://text.pollinations.ai")
+POLLINATIONS_BASE_URL = os.getenv("POLLINATIONS_BASE_URL", "https://gen.pollinations.ai")
+POLLINATIONS_OPENAI_ENDPOINT = os.getenv(
+    "POLLINATIONS_OPENAI_ENDPOINT",
+    f"{POLLINATIONS_BASE_URL.rstrip('/')}/v1/chat/completions",
+)
+POLLINATIONS_FALLBACK_OPENAI_ENDPOINT = os.getenv(
+    "POLLINATIONS_FALLBACK_OPENAI_ENDPOINT",
+    "https://gen.pollinations.ai/v1/chat/completions",
+)
 POLLINATIONS_TIMEOUT = int(os.getenv("POLLINATIONS_TIMEOUT", "90"))
 
 # --- Cache & Rate Limits ---
@@ -193,6 +201,14 @@ def get_provider_for_task(task: str) -> str:
     return "gemini"
 
 
+def _default_model_for_provider(provider: str) -> str:
+    if provider == "groq":
+        return GROQ_MODEL
+    if provider == "pollinations":
+        return CODING_MODEL
+    return GEMINI_MODEL
+
+
 def resolve_model_override(model_override: Optional[str], default_provider: str) -> tuple[str, Optional[str]]:
     """
     Resolve logical model names to concrete provider/model pairs.
@@ -200,8 +216,8 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     Routing table:
         gemini-fast        → gemini  (GEMINI_FAST_MODEL)
         gemini-search      → gemini  (GEMINI_SEARCH_MODEL)
-        qwen3-coder-30b    → pollinations  (qwen3-coder)
-        gpt-5-nano         → pollinations  (gpt-4o-mini)
+        qwen3-coder-30b    → pollinations  (qwen-coder)
+        gpt-5-nano         → pollinations  (gpt-5-nano/openai-fast)
         gemini-*           → gemini  (passthrough)
         unknown            → default_provider (passthrough)
     """
@@ -216,7 +232,7 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     if logical == "gemini-search":
         return "gemini", GEMINI_SEARCH_MODEL
 
-    if logical == "qwen3-coder-30b":
+    if logical in {"qwen3-coder-30b", "qwen3-coder"}:
         return "pollinations", CODING_MODEL
 
     if logical == "gpt-5-nano":
@@ -335,84 +351,167 @@ def _invoke_groq(prompt: str, model_override: Optional[str] = None) -> str:
 # ==============================
 # Pollinations invocation (HTTP)
 # ==============================
+def _normalize_pollinations_model(model: str) -> str:
+    logical = (model or "").strip().lower()
+    if logical in {"qwen3-coder-30b", "qwen3-coder", "qwen-coder"}:
+        return CODING_MODEL
+    if logical in {"gpt-5-nano", "gpt-4o-mini", "openai-fast"}:
+        return LIGHTWEIGHT_MODEL
+    return model
+
+
+def _build_pollinations_payload(prompt: str, model: str, temperature: float) -> dict:
+    return {
+        "model": _normalize_pollinations_model(model),
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+    }
+
+
+def _extract_openai_text(content) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "text" and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+                continue
+            if isinstance(item.get("content"), str):
+                parts.append(item["content"])
+        return "".join(parts).strip()
+    return ""
+
+
+def _extract_pollinations_response(resp: _requests_lib.Response) -> str:
+    try:
+        data = resp.json()
+    except ValueError:
+        return resp.text.strip()
+
+    if isinstance(data, dict):
+        choices = data.get("choices")
+        if isinstance(choices, list) and choices:
+            first_choice = choices[0]
+            if isinstance(first_choice, dict):
+                message = first_choice.get("message")
+                if isinstance(message, dict):
+                    text = _extract_openai_text(message.get("content"))
+                    if text:
+                        return text
+                delta = first_choice.get("delta")
+                if isinstance(delta, dict):
+                    text = _extract_openai_text(delta.get("content"))
+                    if text:
+                        return text
+        output_text = data.get("output_text")
+        if isinstance(output_text, str) and output_text.strip():
+            return output_text.strip()
+
+    return resp.text.strip()
+
+
+def _pollinations_candidate_endpoints() -> list[str]:
+    endpoints = [POLLINATIONS_OPENAI_ENDPOINT, POLLINATIONS_FALLBACK_OPENAI_ENDPOINT]
+    deduped: list[str] = []
+    for endpoint in endpoints:
+        cleaned = endpoint.strip()
+        if cleaned and cleaned not in deduped:
+            deduped.append(cleaned)
+    return deduped
+
+
+def _should_retry_pollinations(resp: _requests_lib.Response) -> bool:
+    if resp.status_code != 404:
+        return False
+    body = resp.text.lower()
+    return "model not found" in body or "legacy api" in body or "nothing here" in body
+
+
+def _post_pollinations(payload: dict, headers: dict[str, str]) -> tuple[str, _requests_lib.Response]:
+    candidates = _pollinations_candidate_endpoints()
+    last_response: Optional[_requests_lib.Response] = None
+
+    for index, endpoint in enumerate(candidates):
+        logger.info("[Pollinations] endpoint used=%s", endpoint)
+        logger.info("[Pollinations] request body model=%s", payload["model"])
+        resp = _requests_lib.post(
+            endpoint,
+            json=payload,
+            headers=headers,
+            timeout=POLLINATIONS_TIMEOUT,
+        )
+        if resp.ok:
+            return endpoint, resp
+
+        last_response = resp
+        logger.warning(
+            "[Pollinations] endpoint failed status=%s endpoint=%s body=%s",
+            resp.status_code,
+            endpoint,
+            resp.text[:240],
+        )
+        if index == len(candidates) - 1 or not _should_retry_pollinations(resp):
+            resp.raise_for_status()
+
+    if last_response is not None:
+        last_response.raise_for_status()
+    raise RuntimeError("Pollinations request failed without a response")
+
+
 def _call_pollinations(prompt: str, model: str, temperature: float = 0.7) -> str:
-    """Call Pollinations text API (OpenAI-compatible /openai endpoint)."""
+    """Call Pollinations via its OpenAI-compatible chat completions endpoint."""
     if not pollinations_bucket.consume():
         raise RuntimeError("Pollinations rate limit exceeded")
 
-    url = f"{POLLINATIONS_BASE_URL}/openai"
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if POLLINATIONS_API_KEY:
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": temperature,
-    }
+    payload = _build_pollinations_payload(prompt, model, temperature)
 
-    logger.info("[Pollinations] endpoint=%s  model=%s  prompt_length=%d", url, model, len(prompt))
-    resp = _requests_lib.post(url, json=payload, headers=headers, timeout=POLLINATIONS_TIMEOUT)
-    resp.raise_for_status()
+    endpoint_used, resp = _post_pollinations(payload, headers)
 
-    # OpenAI-compatible JSON response
-    try:
-        data = resp.json()
-        if isinstance(data, dict) and "choices" in data:
-            result = data["choices"][0]["message"]["content"]
-            logger.info("[Pollinations] response length=%d", len(result))
-            return result
-    except (ValueError, KeyError, IndexError):
-        pass
-
-    # Fallback: plain text body
-    result = resp.text.strip()
-    logger.info("[Pollinations] response length=%d (text fallback)", len(result))
+    result = _extract_pollinations_response(resp)
+    logger.info(
+        "[Pollinations] response received status=%s endpoint=%s chars=%d",
+        resp.status_code,
+        endpoint_used,
+        len(result),
+    )
     return result
 
 
 def _call_pollinations_stream(prompt: str, model: str, temperature: float = 0.7):
     """
     Buffered-streaming variant for Pollinations.
-    Fetches full response from /openai endpoint, then yields
-    small chunks to simulate token-by-token streaming.
+    Pollinations is requested as a normal chat completion, then the
+    completed text is chunked into SSE-friendly pieces for the frontend.
     """
     if not pollinations_bucket.consume():
         raise RuntimeError("Pollinations rate limit exceeded")
 
-    url = f"{POLLINATIONS_BASE_URL}/openai"
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if POLLINATIONS_API_KEY:
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": temperature,
-    }
+    payload = _build_pollinations_payload(prompt, model, temperature)
 
-    logger.info("[Pollinations] stream  endpoint=%s  model=%s  prompt_length=%d", url, model, len(prompt))
-    resp = _requests_lib.post(url, json=payload, headers=headers, timeout=POLLINATIONS_TIMEOUT)
-    resp.raise_for_status()
+    logger.info("[Pollinations] buffered stream mode enabled")
+    endpoint_used, resp = _post_pollinations(payload, headers)
 
-    # Extract text from OpenAI-compatible JSON, fall back to raw body
-    full_text = ""
-    try:
-        data = resp.json()
-        if isinstance(data, dict) and "choices" in data:
-            full_text = data["choices"][0]["message"]["content"]
-    except (ValueError, KeyError, IndexError):
-        pass
-    if not full_text:
-        full_text = resp.text.strip()
-
-    logger.info("[Pollinations] stream response length=%d", len(full_text))
+    full_text = _extract_pollinations_response(resp)
+    logger.info(
+        "[Pollinations] response received status=%s endpoint=%s chars=%d",
+        resp.status_code,
+        endpoint_used,
+        len(full_text),
+    )
 
     # Yield in small chunks to simulate token-by-token streaming
     CHUNK_SIZE = 24
@@ -451,8 +550,10 @@ def call_llm_router(
     # Determine provider
     default_provider = prefer or get_provider_for_task(task)
     provider, resolved_override = resolve_model_override(model_override, default_provider)
-    model = resolved_override or (GROQ_MODEL if provider == "groq" else GEMINI_MODEL)
+    model = resolved_override or _default_model_for_provider(provider)
 
+    logger.info("[Router] model=%s provider=%s task=%s override=%s", model, provider, task, model_override)
+    logger.info("[Provider] %s", provider)
     logger.info("[LLM Request] model=%s  provider=%s  task=%s  override=%s", model, provider, task, model_override)
 
     # Check cache
@@ -531,8 +632,10 @@ def stream_llm_router(
     Falls back to Gemini (gemini-fast) if Pollinations fails.
     """
     provider, resolved_override = resolve_model_override(model_override, "gemini")
-    model = resolved_override or GEMINI_MODEL
+    model = resolved_override or _default_model_for_provider(provider)
 
+    logger.info("[Router] model=%s provider=%s task=%s override=%s stream=true", model, provider, task, model_override)
+    logger.info("[Provider] %s", provider)
     logger.info("[LLM Request] stream  model=%s  provider=%s  override=%s", model, provider, model_override)
 
     # --- Pollinations streaming path ---

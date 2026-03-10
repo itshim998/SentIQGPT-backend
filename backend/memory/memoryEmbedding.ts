@@ -4,7 +4,7 @@
 // so the system can retrieve semantically relevant memories even when
 // the user uses completely different wording.
 //
-// Primary model:  Gemini text-embedding-004 (free tier, 768-dim)
+// Primary model:  Gemini embedding model configured by the Python LLM service
 // Invoked via:    POST /llm/embed on the Python LLM service
 //
 // Embeddings are generated:
@@ -19,7 +19,7 @@ const LLM_SERVICE_URL =
 
 /**
  * Generate a vector embedding for a piece of text.
- * Returns a 768-dimension float array, or `undefined` on failure.
+ * Returns a float array, or `undefined` on failure.
  * Checks the embedding cache first to avoid redundant API calls.
  */
 export async function generateEmbedding(
@@ -43,7 +43,12 @@ export async function generateEmbedding(
       return undefined;
     }
 
-    const data = (await response.json()) as { embedding?: number[] };
+    const data = (await response.json()) as { embedding?: number[]; skipped?: boolean; reason?: string };
+
+    if (data.skipped) {
+      console.log(`[EMBEDDING] skipped by service (${data.reason ?? "unavailable"})`);
+      return undefined;
+    }
 
     if (!Array.isArray(data.embedding) || data.embedding.length === 0) {
       console.log(`[EMBEDDING] invalid response shape`);

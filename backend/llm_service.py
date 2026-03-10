@@ -84,6 +84,7 @@ async def health_check():
         "gemini_keys_configured": len(GEMINI_API_KEYS),
         "groq_keys_configured": len(GROQ_API_KEYS),
         "gemini_model": GEMINI_MODEL,
+        "embedding_model": EMBEDDING_MODEL,
         "groq_model": GROQ_MODEL,
         "strict_json_tasks": len(STRICT_JSON_TASKS),
     }
@@ -112,7 +113,7 @@ async def invoke_llm(request: LLMInvokeRequest):
 
 @app.post("/llm/stream")
 async def stream_llm(request: LLMInvokeRequest):
-    """SSE streaming endpoint — streams Gemini responses as text/event-stream."""
+    """SSE streaming endpoint for provider responses as text/event-stream."""
     def event_generator():
         try:
             for chunk in stream_llm_router(
@@ -142,7 +143,7 @@ async def stream_llm(request: LLMInvokeRequest):
 # Embedding endpoint
 # ============================
 
-EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-005")
+EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 
 import threading
 _embed_lock = threading.Lock()
@@ -160,15 +161,22 @@ def _generate_embedding(text: str, api_key: str) -> list:
     return result["embedding"]
 
 
+def _embedding_model_missing(error: Exception) -> bool:
+    message = str(error).lower()
+    return "404" in message or "not found" in message
+
+
 @app.post("/llm/embed")
 async def embed_text(request: EmbedRequest):
     """Generate a vector embedding for the given text using Gemini."""
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="text must be non-empty")
     if not GEMINI_API_KEYS:
-        raise HTTPException(status_code=503, detail="No Gemini API keys configured")
+        logger.warning("No Gemini API keys configured for embeddings - skipping")
+        return {"embedding": [], "skipped": True, "reason": "no_keys"}
 
     last_error = None
+    logger.info("[Embedding] model=%s", EMBEDDING_MODEL)
     for idx, api_key in enumerate(GEMINI_API_KEYS, 1):
         try:
             embedding = _generate_embedding(request.text, api_key)
@@ -177,10 +185,16 @@ async def embed_text(request: EmbedRequest):
         except Exception as e:
             last_error = e
             logger.warning("Embedding key #%d failed: %s", idx, e)
+            if _embedding_model_missing(e):
+                logger.warning(
+                    "Embedding model %s is unavailable - disabling embeddings for this request",
+                    EMBEDDING_MODEL,
+                )
+                break
 
     # Non-fatal: return empty so the pipeline can continue without embeddings
     logger.warning("All Gemini keys failed for embedding — skipping (non-fatal): %s", last_error)
-    return {"embedding": [], "skipped": True}
+    return {"embedding": [], "skipped": True, "reason": "unavailable"}
 
 
 if __name__ == "__main__":
