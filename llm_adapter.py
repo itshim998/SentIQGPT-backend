@@ -587,11 +587,53 @@ def call_llm_router(
     except Exception as e:
         logger.error("Provider=%s failed for task=%s: %s", provider, task, e)
 
-        # Safety fallback: if any non-Gemini provider fails, degrade to
-        # Gemini (gemini-fast) so the user always gets an answer.
-        if provider != "gemini":
+        # Tiered fallback:
+        # 1. If the primary Pollinations model failed, try the secondary Pollinations model.
+        # 2. Only after ALL Pollinations options fail should Gemini be used.
+        if provider == "pollinations":
+            # Determine the alternate Pollinations model
+            primary_model = (resolved_override or model or "").lower()
+            if primary_model == CODING_MODEL.lower() or "coder" in primary_model:
+                alt_pollinations_model = LIGHTWEIGHT_MODEL
+            else:
+                alt_pollinations_model = CODING_MODEL
+            try:
+                logger.info(
+                    "[Fallback] Pollinations %s failed — retrying with Pollinations model %s",
+                    primary_model,
+                    alt_pollinations_model,
+                )
+                fallback_result = _call_pollinations(effective_prompt, alt_pollinations_model)
+                _cache_set(key, fallback_result)
+                logger.info(
+                    "[Fallback] Pollinations alternate model %s succeeded for task=%s",
+                    alt_pollinations_model,
+                    task,
+                )
+                return fallback_result
+            except Exception as alt_error:
+                logger.warning(
+                    "[Fallback] Pollinations alternate model %s also failed: %s — switching to Gemini",
+                    alt_pollinations_model,
+                    alt_error,
+                )
+
+            # Both Pollinations options exhausted — use Gemini as last resort
+            try:
+                logger.info("[Fallback] All Pollinations models failed — switching to Gemini (%s)", GEMINI_FAST_MODEL)
+                logger.info("[Router] fallback provider=gemini")
+                fallback_result = _invoke_gemini(effective_prompt, GEMINI_FAST_MODEL)
+                _cache_set(key, fallback_result)
+                logger.info("Fallback Gemini path succeeded for task=%s", task)
+                return fallback_result
+            except Exception as fallback_error:
+                logger.error("Fallback Gemini path failed for task=%s: %s", task, fallback_error)
+
+        elif provider != "gemini":
+            # Non-Pollinations, non-Gemini provider (e.g., groq) failed — try Gemini
             try:
                 logger.info("[Fallback] %s failed — switching to Gemini (%s)", provider, GEMINI_FAST_MODEL)
+                logger.info("[Router] fallback provider=gemini")
                 fallback_result = _invoke_gemini(effective_prompt, GEMINI_FAST_MODEL)
                 _cache_set(key, fallback_result)
                 logger.info("Fallback Gemini path succeeded for task=%s", task)
@@ -629,9 +671,9 @@ def stream_llm_router(
     """
     Streaming variant — yields text chunks.
     Routes to Pollinations or Gemini based on model_override.
-    Falls back to Gemini (gemini-fast) if Pollinations fails.
+    Prefers Pollinations; falls back to alternate Pollinations model, then Gemini.
     """
-    provider, resolved_override = resolve_model_override(model_override, "gemini")
+    provider, resolved_override = resolve_model_override(model_override, "pollinations")
     model = resolved_override or _default_model_for_provider(provider)
 
     logger.info("[Router] model=%s provider=%s task=%s override=%s stream=true", model, provider, task, model_override)
@@ -646,11 +688,28 @@ def stream_llm_router(
             return
         except Exception as e:
             logger.warning(
-                "[Fallback] Pollinations stream failed: %s — switching to Gemini (%s)",
-                e, GEMINI_FAST_MODEL,
+                "[Fallback] Pollinations stream failed for model=%s: %s — retrying alternate Pollinations model",
+                model, e,
             )
-            # Fall through to Gemini below
-            model = GEMINI_FAST_MODEL
+            # Try alternate Pollinations model before falling back to Gemini
+            primary_model = (resolved_override or model or "").lower()
+            if primary_model == CODING_MODEL.lower() or "coder" in primary_model:
+                alt_pollinations_model = LIGHTWEIGHT_MODEL
+            else:
+                alt_pollinations_model = CODING_MODEL
+            try:
+                logger.info("[Fallback] Trying alternate Pollinations model: %s", alt_pollinations_model)
+                yield from _call_pollinations_stream(prompt, alt_pollinations_model)
+                logger.info("[Fallback] Alternate Pollinations model %s stream succeeded", alt_pollinations_model)
+                return
+            except Exception as alt_error:
+                logger.warning(
+                    "[Fallback] Alternate Pollinations model %s also failed: %s — switching to Gemini (%s)",
+                    alt_pollinations_model, alt_error, GEMINI_FAST_MODEL,
+                )
+                logger.info("[Router] fallback provider=gemini")
+                # Fall through to Gemini below
+                model = GEMINI_FAST_MODEL
 
     # --- Gemini streaming path ---
     if not GEMINI_API_KEYS:

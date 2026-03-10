@@ -335,7 +335,10 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
 
   // Determine the preferred provider based on the model override.
   // Pollinations models should not carry a `prefer: "gemini"` hint.
-  const isPollinations = ctx.modelOverride === "qwen3-coder-30b" || ctx.modelOverride === "gpt-5-nano";
+  const isPollinations =
+    ctx.modelOverride === "qwen3-coder" ||
+    ctx.modelOverride === "qwen3-coder-30b" ||
+    ctx.modelOverride === "gpt-5-nano";
 
   return {
     task: "chat",
