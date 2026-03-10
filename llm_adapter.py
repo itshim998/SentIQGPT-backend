@@ -346,15 +346,17 @@ def _call_pollinations(prompt: str, model: str, temperature: float = 0.7) -> str
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
     payload = {
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": prompt}],
         "temperature": temperature,
+        "model": model,
+        "stream": False,
     }
 
-    logger.info("[Pollinations] endpoint=%s  model=%s", url, model)
+    logger.info("[Pollinations] endpoint=%s  model=%s  prompt_length=%d", url, model, len(prompt))
     resp = _requests_lib.post(url, json=payload, headers=headers, timeout=POLLINATIONS_TIMEOUT)
     resp.raise_for_status()
 
-    result = resp.text
+    result = resp.text.strip()
     logger.info("[Pollinations] response length=%d", len(result))
     return result
 
@@ -374,15 +376,17 @@ def _call_pollinations_stream(prompt: str, model: str, temperature: float = 0.7)
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
     payload = {
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": prompt}],
         "temperature": temperature,
+        "model": model,
+        "stream": False,
     }
 
-    logger.info("[Pollinations] stream  endpoint=%s  model=%s", url, model)
+    logger.info("[Pollinations] stream  endpoint=%s  model=%s  prompt_length=%d", url, model, len(prompt))
     resp = _requests_lib.post(url, json=payload, headers=headers, timeout=POLLINATIONS_TIMEOUT)
     resp.raise_for_status()
 
-    full_text = resp.text
+    full_text = resp.text.strip()
     logger.info("[Pollinations] stream response length=%d", len(full_text))
 
     # Yield in small chunks to simulate token-by-token streaming
