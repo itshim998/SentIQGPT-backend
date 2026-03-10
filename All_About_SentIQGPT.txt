@@ -1,0 +1,839 @@
+SENTIQGPT - FULL PROJECT HANDOFF AND CONTEXT
+
+Purpose
+
+SentIQGPT is a general-purpose AI assistant with:
+- conversational chat
+- streamed responses
+- persistent memory
+- file ingestion and contextual file analysis
+- image generation with provider fallback
+- web search for current/factual lookups
+- local-first client storage via IndexedDB
+
+It is a dual-runtime system:
+- TypeScript/Node.js backend for orchestration, API, tool routing, and app logic
+- Python FastAPI LLM gateway for provider routing, key rotation, and cache-backed model access
+
+Operationally, the project is built around the idea that Gemini does the heavier reasoning/conversation work, while Groq is used for fast classification/planning/summarization tasks.
+
+
+============================================================
+1. CURRENT HIGH-LEVEL ARCHITECTURE
+============================================================
+
+Main layers:
+
+1. Frontend
+- Main UI currently lives in frontend/index.html as a single-file app with inline CSS and inline JS modules.
+- Browser stores chats, memories, files, and config in IndexedDB.
+- Frontend talks directly to backend HTTP endpoints.
+
+2. Backend app server
+- backend/server.ts
+- Express + TypeScript
+- Exposes health, chat, stream, memory, file upload, image generation, config, and audit endpoints.
+- Applies validation, rate limiting, audit logging, image quota enforcement, and prompt injection checks.
+
+3. Orchestration/intelligence layer
+- backend/orchestrator/*
+- Builds context, plans tool usage, executes tools, merges outputs, and optionally reflects on responses.
+
+4. LLM gateway
+- backend/llm_service.py and root llm_adapter.py
+- FastAPI service on port 3002
+- Routes tasks to Gemini or Groq
+- Handles provider key rotation, token buckets, and shelve-based caching.
+
+
+============================================================
+2. PROJECT GOAL AND PRODUCT BEHAVIOR
+============================================================
+
+User-facing capabilities:
+- Ask questions and get streamed AI responses
+- Ask follow-up questions across chat history
+- Store and reuse important user facts/preferences/projects as memories
+- Upload files and use extracted text in chat context
+- Generate images from prompts
+- Generate chat titles automatically from the first exchange
+- Use web search when a question requires current data or factual lookup
+
+The intended behavior is:
+- normal conceptual/general questions should be answerable from model knowledge
+- factual/current/recent/product/medicine/entity questions should be web-searched first
+- image requests should route to image generation
+- explicit personal-memory requests should route to memory logic
+
+
+============================================================
+3. REPOSITORY SHAPE
+============================================================
+
+Top-level important files:
+- llm_adapter.py: unified LLM router and provider manager
+- package.json: Node scripts and dependencies
+- render.yaml: backend deployment config for Render
+- requirements.txt: Python dependencies for llm service
+- task_registry.json: strict JSON task registry shared by Python/TS prompt builders
+- tsconfig.json: TypeScript compiler config
+- docs/ARCHITECTURE.md: older architecture overview, useful but partially stale vs current code
+- All_About_SentIQGPT.txt: this handoff file
+
+Important backend folders:
+- backend/ai
+- backend/cache
+- backend/context
+- backend/memory
+- backend/middleware
+- backend/orchestrator
+- backend/reflection
+- backend/tools
+- backend/validation
+
+Important frontend folders/files:
+- frontend/index.html
+- frontend/scripts/* exists in workspace, but current runtime UI logic is effectively embedded inline in frontend/index.html
+- frontend/styles/sentiqgpt.css exists, but frontend/index.html currently contains the active UI/CSS logic inline
+
+
+============================================================
+4. BACKEND ENTRY POINT AND API SURFACE
+============================================================
+
+Primary backend entry point:
+- backend/server.ts
+
+Main routes in backend/server.ts:
+
+GET /health
+- minimal server status
+
+GET /api/health
+- richer status payload
+- includes architecture/features summary
+
+POST /api/chat
+- main non-streaming orchestrated endpoint
+- validates request with Zod
+- blocks prompt injection
+- routes through orchestrate(...)
+
+POST /api/chat/stream
+- SSE streaming endpoint
+- validates request with Zod
+- blocks prompt injection
+- builds context
+- now performs deterministic query classification before prompt build
+- now performs web search first when classification says it is needed
+- streams token events
+- streams memory events
+- also emits search events
+
+POST /api/memory/classify
+- standalone memory pipeline endpoint
+
+POST /api/memory/compress
+- compresses old memories
+
+POST /api/files/upload
+- multipart upload endpoint
+- validates file type/size/path
+- extracts text or metadata
+
+GET /api/images/quota
+- returns remaining image quota for caller IP
+
+POST /api/images/generate
+- routes image request through provider fallback chain
+- enforces image quota middleware
+
+POST /api/chat/title
+- generates a short chat/session title from first exchange
+
+GET /api/config
+- returns server feature/capability flags and limits
+
+GET /api/audit
+- returns recent audit log entries with IP redacted
+
+
+============================================================
+5. REQUEST/RESPONSE CONTRACTS
+============================================================
+
+Chat request shape (server-side validation in backend/validation/schemas.ts):
+
+POST /api/chat or /api/chat/stream
+{
+	"message": "string, 1..10000 chars",
+	"conversation_id": "optional string",
+	"context": {
+		"recent_messages": [{ "role": "user|assistant", "content": "..." }],
+		"memories": [{ "type": "...", "summary": "..." }],
+		"file_references": [{ "filename": "...", "extractedText": "..." }]
+	}
+}
+
+Non-stream chat response roughly returns:
+{
+	"route": "normal_chat | image_generation | file_analysis | memory_update",
+	"reply": "optional string",
+	"disclaimer": "optional string",
+	"image": { ...optional image payload... },
+	"memory": { stored, type?, summary?, importance? },
+	"confidence": number
+}
+
+Stream endpoint emits SSE events like:
+- token events: { type: "token", text: "..." }
+- memory events: { type: "memory", memory: {...} }
+- search events: { type: "search", search: { query, results[] } }
+- error events: { type: "error", error: "..." }
+- done marker: [DONE]
+
+Image generation request shape:
+{
+	"prompt": "string, 1..2000 chars",
+	"style": "optional string",
+	"size": "256x256 | 512x512 | 1024x1024"
+}
+
+Image generation response shape from /api/images/generate:
+{
+	"type": "image",
+	"url": "data URL or hosted URL",
+	"prompt": "final prompt",
+	"provider_used": "provider name",
+	"success": true,
+	"remaining": number,
+	"limit": number,
+	"image_url": "legacy compatibility field",
+	"image_base64": "legacy compatibility field"
+}
+
+
+============================================================
+6. ORCHESTRATION AND TOOL SELECTION
+============================================================
+
+Main orchestrator:
+- backend/orchestrator/aiOrchestrator.ts
+
+Its job:
+1. build context
+2. run planner and memory pipeline in parallel
+3. execute the plan
+4. merge results
+5. optionally run reflection/improvement
+6. optionally cache final answer
+
+Planner:
+- backend/orchestrator/planner.ts
+- uses Groq via route_classify task
+- generates up to 3 ordered steps
+- available tools:
+	- conversation
+	- image_generation
+	- file_analysis
+	- memory_update
+	- web_search
+
+Executor:
+- backend/orchestrator/toolExecutor.ts
+- sequentially executes plan steps
+- threads prior step context into later steps
+
+Legacy detector:
+- backend/orchestrator/toolDetector.ts
+- older route classifier still exists, but planning/execution path is the newer system
+
+CURRENT IMPORTANT CHANGE:
+- A new deterministic classifier was added in backend/orchestrator/queryClassifier.ts
+- It classifies a query into:
+	- general_knowledge
+	- real_time_information
+	- factual_lookup
+	- personal_context
+	- image_generation
+- If classification says real_time_information or factual_lookup, web search is required before answering.
+
+This classifier now acts as a safety net in two places:
+- non-stream path: after planning, aiOrchestrator can override the planner and force a web_search step
+- stream path: backend/server.ts now classifies first and injects web search results before building the chat prompt
+
+This is important because before this fix, the stream endpoint bypassed the orchestrator and answered directly from model knowledge, which caused bad behavior for current/factual questions.
+
+
+============================================================
+7. QUERY CLASSIFICATION AND WEB SEARCH LOGIC
+============================================================
+
+Current query classification file:
+- backend/orchestrator/queryClassifier.ts
+
+What it does:
+- uses deterministic regex/pattern matching
+- zero LLM cost
+- near-instant routing hint
+
+Queries that should trigger web search include:
+- current events
+- recent news
+- sports scores/tournaments/results
+- medicines/drugs/supplements
+- products/releases/reviews/specifications/prices
+- technical documentation / APIs / frameworks
+- named entities that may not be in training data
+- statistical facts that may have changed
+
+Examples expected to trigger search now:
+- "What is the current T20 cricket world cup?"
+- "Who won the IPL yesterday?"
+- "What is Tricium Joints medicine used for?"
+- "Latest Nvidia GPU release"
+- "What is Ozempic used for?"
+
+The classifier also strips conversational filler for better search terms through buildSearchQuery(...).
+
+
+============================================================
+8. WEB SEARCH STACK
+============================================================
+
+Web search router:
+- backend/tools/webSearch/webSearchRouter.ts
+
+Providers in priority order:
+1. DuckDuckGo Instant API
+2. Wikipedia
+3. DuckDuckGo HTML fallback
+
+Search result types:
+- backend/tools/webSearch/types.ts
+
+Content enrichment:
+- backend/tools/webSearch/contentExtractor.ts
+- top results are enriched with extracted body text
+
+Search caching:
+- backend/cache/cacheManager.ts
+- web searches cached by normalized query hash
+
+Search-to-answer synthesis:
+- toolExecutor.ts builds a search context block from sources and sends it to handleChat(...)
+- PromptBuilders.ts now injects WEB SEARCH RESULTS into the prompt when available
+- prompt explicitly tells the model to use web sources and cite [Source N]
+
+IMPORTANT CURRENT QUIRK:
+- backend stream endpoint now emits SSE search events
+- frontend sendMessageStream parser in frontend/index.html does NOT currently consume parsed.type === "search"
+- result: backend search works, but frontend currently does not display source cards/results from the SSE event
+- the LLM still receives the web search context and can answer from it; only the separate UI consumption of the search event is missing
+
+
+============================================================
+9. CHAT HANDLING AND PROMPT CONSTRUCTION
+============================================================
+
+Main chat handler:
+- backend/ai/ChatHandler.ts
+
+Prompt builder:
+- backend/ai/PromptBuilders.ts
+
+Current ChatContext includes:
+- userMessage
+- recentMessages
+- memories
+- fileReferences
+- conversationSummary
+- webSearchContext
+
+Current system prompt behavior:
+- standard safety rules
+- no harmful or dangerous content
+- no prompt leakage
+- instructs assistant to use web search results when provided
+- explicitly allows factual medicine/product/entity explanations
+- still avoids diagnosis/treatment instructions/medical advice
+- asks for [Source N] citation style when web search results exist
+
+LLM invocation path:
+- PromptBuilders.ts -> callLLMAdapter(...) or callLLMAdapterStream(...)
+- calls Python service at LLM_SERVICE_URL, default localhost:3002
+
+
+============================================================
+10. MEMORY SYSTEM
+============================================================
+
+Memory processor:
+- backend/ai/MemoryProcessor.ts
+
+Pipeline:
+1. classifyMemory(...)
+2. summarizeMemory(...)
+3. generate embedding for semantic retrieval
+
+Memory types:
+- identity
+- preference
+- project
+- knowledge
+
+Storage model:
+- server does not persist long-term memory in a database
+- memories are returned to the client and stored client-side in IndexedDB
+- later requests send memory summaries back as part of context
+
+Memory retrieval path:
+- backend/context/contextBuilder.ts
+- tries semantic search first via embedding cosine similarity
+- falls back to keyword selection when embeddings unavailable
+
+Conversation compression:
+- backend/context/contextCompressor.ts
+- keeps a 6-message recent window
+- summarizes older conversation via Groq into 1-2 sentence summary
+
+Memory significance:
+- this app is effectively local-first for personal context
+- browser storage matters a lot because memories/chats/files live client-side
+
+
+============================================================
+11. FILE INGESTION AND FILE CONTEXT
+============================================================
+
+File handler:
+- backend/ai/FileIngestionHandler.ts
+
+Supported logical file types:
+- pdf
+- txt/plain text
+- images
+
+Accepted MIME/extensions include:
+- pdf
+- txt
+- html
+- css
+- js
+- ts
+- json
+- xml
+- md
+- py
+- java
+- cpp
+- c
+- rs
+- go
+- png
+- jpg
+- jpeg
+- webp
+
+Key safeguards:
+- 10 MB max file size
+- path traversal prevention in filename validation
+- unsupported MIME blocked
+
+Extraction behavior:
+- txt/code-like files: direct utf-8 text extraction
+- pdf: tries pdf-parse, falls back to regex-like text extraction
+- image: stores metadata-style placeholder rather than OCR text
+
+File context building:
+- backend/context/fileChunker.ts and contextBuilder.ts
+- large file text is chunked and relevant chunks selected for a query
+
+IMPORTANT CURRENT QUIRK:
+- backend schemas expect file_references[].extractedText
+- frontend request assembly in frontend/index.html currently sends extracted_text in some paths
+- that naming mismatch is a real integration risk and should be treated as a known bug candidate
+
+
+============================================================
+12. IMAGE GENERATION STACK
+============================================================
+
+Image router:
+- backend/tools/imageGeneration/imageRouter.ts
+
+Provider order:
+1. Flux Schnell (Pollinations primary)
+2. HuggingFace SDXL
+3. FLUX.2 Dev (Pollinations fallback)
+4. Z-Image Turbo (Pollinations fallback)
+
+Behavior:
+- strictly sequential provider fallback
+- max 1 concurrent image generation job
+- max queue size 10
+- retry once on 429 after 1 second
+- provider cooldown 30 seconds after 429
+
+Current important image-generation history:
+- Pollinations API integration was fixed recently
+- correct endpoint/auth model now uses Pollinations API v2 behavior
+- HuggingFace path was also corrected
+
+Quota model:
+- 30 images/day per IP
+- 5 second cooldown between requests
+- exposed via /api/images/quota and enforced by middleware
+
+
+============================================================
+13. CACHING
+============================================================
+
+TypeScript cache manager:
+- backend/cache/cacheManager.ts
+
+Cache categories:
+- llm_answer
+- web_search
+- embedding
+
+Cache key model:
+- SHA-256 hash on normalized inputs
+
+Python llm_adapter cache:
+- shelve-backed disk cache
+- keyed by provider + task + model + user_id + prompt hash
+
+Important behavior:
+- short/error-like replies are not cached as llm_answer
+- search results are cached if successful
+- embeddings are cached if non-empty
+
+
+============================================================
+14. REFLECTION LAYER
+============================================================
+
+Files:
+- backend/reflection/answerCritic.ts
+- backend/reflection/answerImprover.ts
+
+Behavior:
+- critique only runs on long enough text replies
+- critic scores answer and identifies issues
+- improver can rewrite answer if critic says improvement is needed
+- image-only or short replies skip reflection
+
+
+============================================================
+15. FRONTEND - REAL IMPLEMENTATION SHAPE
+============================================================
+
+Current active frontend is frontend/index.html.
+
+This file is a large single-page app containing:
+- the UI layout
+- inline CSS
+- inline JS modules for storage, API, chat UI, memory panel, file upload shim, and settings
+
+Key UI areas:
+- sidebar/chat list
+- welcome screen with prompt chips
+- chat message area
+- typing indicator
+- image generation mode bar
+- file preview area
+- settings modal
+- memory manager tab
+- storage stats tab
+
+The workspace also contains frontend/scripts/* and frontend/styles/*, but the current index.html embeds the active logic inline and should be considered the main source of truth for frontend behavior.
+
+
+============================================================
+16. FRONTEND STORAGE MODEL
+============================================================
+
+IndexedDB database:
+- DB_NAME = SentIQGPT
+- version = 1
+
+Stores:
+- chats
+- memories
+- files
+- config
+
+Defaults in frontend/index.html:
+- chat_limit = 100
+- memory_limit = 500
+- file_storage_mb = 100
+- message_window = 20
+
+Client persistence model:
+- chats store message arrays locally
+- memories store type/summary/importance/timestamp locally
+- files store extracted text and original blob locally
+- config stores per-browser settings locally
+
+
+============================================================
+17. FRONTEND MESSAGE FLOW
+============================================================
+
+Main chat flow in frontend/index.html:
+- handleSend()
+- creates/loads chat
+- appends user bubble
+- gathers recent messages, top memories, and stored files into contextPayload
+- prefers streaming via API.sendMessageStream(...)
+- falls back to non-stream /api/chat if needed
+
+Streaming rendering behavior:
+- createStreamingBubble()
+- uses requestAnimationFrame and a textNode to reveal content incrementally
+- finalizes by converting the full text through renderRichText(...)
+
+Non-stream rendering behavior:
+- typeMessage(...)
+- simulates typing for non-streamed responses
+
+Rich text support:
+- markdown-ish rendering
+- fenced code blocks
+- lightweight syntax highlighting
+- copy-code button support
+
+
+============================================================
+18. FRONTEND IMAGE FLOW
+============================================================
+
+Image mode behavior:
+- explicit image mode bar
+- also auto-detects image requests from normal chat text
+
+Important recent frontend changes:
+- stop/interrupt button added during generation
+- AbortController added for streaming and image generation cancellation
+- technical provider labels removed from image UI
+- user-facing error messages cleaned up
+- image generation messages no longer expose provider internals in the UI
+
+
+============================================================
+19. FRONTEND PERFORMANCE AND UX HARDENING
+============================================================
+
+Recent frontend production-hardening changes now present in frontend/index.html:
+- message virtualization for older history
+	- only recent messages render initially
+	- older messages collapse behind a "Show older messages" placeholder
+- faster streaming chunk rendering for long outputs
+- instant scroll during streaming frames to reduce layout thrash
+- smooth scroll retained for user-facing final state
+- stop/send button toggle during active generation
+- reduced-motion-aware behavior
+- friendly errors replacing raw technical errors
+- improved image load skeleton/fade-in behavior
+
+This work was specifically aimed at mobile stability and long-response performance.
+
+
+============================================================
+20. VALIDATION, SECURITY, AND LIMITS
+============================================================
+
+Validation file:
+- backend/validation/schemas.ts
+
+Current hard limits:
+- message length max 10000
+- file upload max 10 MB
+- image prompt max 2000 chars
+- context recent_messages max 50
+- context memories max 100
+- context file_references max 10
+
+Prompt injection detection:
+- regex patterns for common jailbreak/system-prompt override phrases
+- used on both chat and image routes
+
+Middleware/security:
+- helmet
+- cors allowlist
+- express-rate-limit-based rate limiting
+- audit logging
+- graceful shutdown hooks
+
+
+============================================================
+21. LLM GATEWAY DETAILS
+============================================================
+
+Python gateway files:
+- backend/llm_service.py
+- llm_adapter.py
+
+Provider routing model in llm_adapter.py:
+- Groq handles:
+	- memory_classify
+	- memory_summarize
+	- memory_compress
+	- route_classify
+- Gemini handles:
+	- chat
+	- file_extract
+	- image_generate
+	- general
+
+Provider config:
+- Gemini supports 3-key rotation
+- Groq supports 3-key rotation
+- provider-specific token bucket limiter
+- cached prompt/task/provider results via shelve
+
+Relevant env vars from code/deploy:
+- LLM_SERVICE_PORT
+- LLM_SERVICE_URL
+- GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3
+- GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3
+- GEMINI_MODEL
+- GROQ_MODEL
+- POLLINATIONS_API_KEY
+- FLUX_API_KEY (legacy/fallback usage)
+- HUGGINGFACE_API_TOKEN
+- STABILITY_API_KEY
+- SENTIQ_CACHE_FILE
+- SENTIQ_RPM
+- CORS_ORIGINS
+
+
+============================================================
+22. BUILD, RUN, AND DEPLOYMENT
+============================================================
+
+Node scripts from package.json:
+- npm run build -> tsc
+- npm run start -> node dist/backend/server.js
+- npm run dev -> ts-node backend/server.ts
+- npm run llm-service -> python backend/llm_service.py
+- npm run dev:all -> run backend + llm service together
+- npm run test:pipeline -> ts-node backend/testPipeline.ts
+
+Python dependencies from requirements.txt:
+- python-dotenv
+- google-generativeai
+- groq
+- fastapi
+- uvicorn
+- pydantic
+
+Render deployment from render.yaml:
+- build command installs Python deps, npm deps, then builds TS
+- start command starts python backend/llm_service.py, waits, then starts node dist/backend/server.js
+- backend is designed to run both the TS app and Python service in the same deployment
+
+Current operational context from this project work:
+- backend is deployed on Render
+- frontend is deployed separately as static hosting
+- the production API base used by frontend/index.html points to https://sentiqgpt-backend.onrender.com by default when not on localhost
+
+
+============================================================
+23. TESTING AND DEBUGGING
+============================================================
+
+Pipeline test file:
+- backend/testPipeline.ts
+
+It checks:
+- normal conversation path
+- image generation path
+- memory storage
+- memory retrieval
+
+Useful diagnostics:
+- server and orchestrator log to console extensively
+- cache hits/misses are logged
+- image provider attempts/failures are logged
+- web search provider attempts/failures are logged
+
+
+============================================================
+24. IMPORTANT KNOWN QUIRKS / RISKS / SHARP EDGES
+============================================================
+
+1. frontend SSE parser does not yet handle search events
+- backend emits them
+- frontend currently ignores them
+- source display in UI is incomplete even though backend search context is used
+
+2. possible file reference naming mismatch
+- backend expects extractedText in file_references
+- frontend sometimes builds extracted_text objects from local file store
+- this is a verified integration risk and may affect file-context routing
+
+3. architecture doc is partially stale
+- docs/ARCHITECTURE.md is helpful, but current code has moved beyond it
+- frontend especially is more single-file and more production-hardened than the doc suggests
+
+4. active frontend source of truth is index.html
+- there are split JS/CSS files in workspace, but current UI behavior is embedded inline in index.html
+
+5. client-side storage is critical
+- memories/chats/files are stored locally in the browser
+- clearing browser storage materially changes app behavior/context
+
+6. stream and non-stream paths are not identical
+- /api/chat uses full orchestrator pipeline
+- /api/chat/stream still builds a direct chat prompt after injecting search context and running background memory processing
+- this means behavior parity is improved but still not fully unified
+
+
+============================================================
+25. RECENT IMPORTANT CHANGES YOU MUST NOT REGRESS
+============================================================
+
+Recent backend changes:
+- deterministic query classifier added for web-search forcing
+- planner prompt strengthened to prefer web search for current/factual queries
+- stream endpoint now classifies and web-searches before prompting Gemini
+- system prompt updated to use search results and handle medicine info factually
+
+Recent image/backend changes before that:
+- Pollinations integration fixed to correct API behavior
+- HuggingFace path corrected
+- image provider fallback chain stabilized
+
+Recent frontend changes:
+- mobile/performance hardening in frontend/index.html
+- stop button / interruption support
+- message virtualization
+- scroll/render optimizations
+- technical/debug/provider UI strings removed from user-facing chat
+
+
+============================================================
+26. WHAT ANOTHER AI SHOULD ASSUME WHEN WORKING ON SENTIQGPT
+============================================================
+
+If you are ChatGPT or another AI joining this project, assume the following:
+
+- The real backend intelligence is in backend/server.ts, backend/orchestrator/*, backend/ai/*, backend/tools/*, and llm_adapter.py.
+- The real active frontend is frontend/index.html, even though legacy-style split frontend files also exist.
+- The system is local-first on the client: chats, memories, and files live in IndexedDB and are echoed back to the backend as context.
+- Web search is now a first-class capability and should be used for current/factual/entity/medicine/product questions.
+- Do not remove the deterministic query-classifier safety net.
+- Be careful with schema/property names between frontend and backend; some naming drift exists.
+- Keep stream and non-stream behavior aligned when changing tool-selection logic.
+- Avoid exposing raw internal/provider/debug details to the end user UI.
+- When making architecture changes, verify both TypeScript build health and runtime contract compatibility with the inline frontend.
+
+
+============================================================
+27. SHORT HANDOFF SUMMARY
+============================================================
+
+SentIQGPT is a dual-model AI assistant: Express/TypeScript handles app logic and orchestration, while a Python FastAPI LLM gateway routes tasks to Gemini (reasoning/chat) and Groq (planning/classification/memory summarization). The frontend is currently a single-file IndexedDB-based SPA in frontend/index.html. The system supports chat, memory, file analysis, image generation, and now deterministic web-search triggering for factual/current queries. The most important current realities are: active UI logic is inline in index.html, web search has recently been hardened through query classification, stream and non-stream paths are similar but not identical, and there are still a few integration quirks such as unhandled SSE search events in the frontend and a probable file-reference naming mismatch.
