@@ -42,7 +42,33 @@ const ALLOWED_TYPES: Record<string, "pdf" | "txt" | "image"> = {
 const TEXT_EXTENSIONS = new Set([
   ".html", ".css", ".js", ".ts", ".json", ".xml", ".md",
   ".txt", ".py", ".java", ".cpp", ".c", ".rs", ".go",
+  ".jsx", ".tsx", ".yml", ".yaml", ".toml", ".sh", ".bash",
+  ".sql", ".rb", ".php", ".swift", ".kt", ".scala", ".lua",
+  ".r", ".m", ".h", ".hpp", ".cs", ".dart", ".vue", ".svelte",
 ]);
+
+// Map extensions to language identifiers for code block formatting
+const EXT_TO_LANG: Record<string, string> = {
+  ".html": "html", ".css": "css", ".js": "javascript", ".jsx": "jsx",
+  ".ts": "typescript", ".tsx": "tsx", ".json": "json", ".xml": "xml",
+  ".md": "markdown", ".py": "python", ".java": "java", ".cpp": "cpp",
+  ".c": "c", ".h": "c", ".hpp": "cpp", ".cs": "csharp",
+  ".rs": "rust", ".go": "go", ".rb": "ruby", ".php": "php",
+  ".swift": "swift", ".kt": "kotlin", ".scala": "scala", ".lua": "lua",
+  ".sh": "bash", ".bash": "bash", ".sql": "sql", ".r": "r",
+  ".yml": "yaml", ".yaml": "yaml", ".toml": "toml", ".dart": "dart",
+  ".vue": "vue", ".svelte": "svelte",
+};
+
+function getFileExtension(filename: string): string {
+  const dotIdx = filename.lastIndexOf(".");
+  return dotIdx >= 0 ? filename.slice(dotIdx).toLowerCase() : "";
+}
+
+function isCodeFile(filename: string): boolean {
+  const ext = getFileExtension(filename);
+  return ext !== ".txt" && ext !== ".md" && TEXT_EXTENSIONS.has(ext);
+}
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -90,23 +116,33 @@ export async function extractTextFromFile(args: {
   let extractedText = "";
 
   switch (validation.type) {
-    case "txt":
-      extractedText = args.buffer.toString("utf-8");
+    case "txt": {
+      const raw = args.buffer.toString("utf-8");
+      if (isCodeFile(args.filename)) {
+        const ext = getFileExtension(args.filename);
+        const lang = EXT_TO_LANG[ext] || "code";
+        extractedText = `\`\`\`${lang}\n${raw}\n\`\`\``;
+        console.log(`[File Parser] code file: ${args.filename} (${lang}, ${raw.length} chars)`);
+      } else {
+        extractedText = raw;
+        console.log(`[File Parser] text file: ${args.filename} (${raw.length} chars)`);
+      }
       break;
+    }
 
     case "pdf":
-      // PDF text extraction — attempt basic extraction
-      // In production, use pdf-parse or pdfjs-dist
       try {
         extractedText = await extractPdfText(args.buffer);
-      } catch {
+        console.log(`[File Parser] PDF extracted: ${args.filename} (${extractedText.length} chars)`);
+      } catch (err) {
+        console.log(`[File Parser] PDF extraction failed: ${args.filename} — ${err instanceof Error ? err.message : err}`);
         extractedText = "[PDF text extraction failed. File stored for reference.]";
       }
       break;
 
     case "image":
-      // Images don't have text — store metadata
       extractedText = `[Image file: ${args.filename}, ${args.buffer.length} bytes]`;
+      console.log(`[File Parser] image file: ${args.filename} (${args.buffer.length} bytes)`);
       break;
   }
 

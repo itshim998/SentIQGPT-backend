@@ -123,6 +123,7 @@ const SEARCH_PATTERNS: readonly RegExp[] = [
 
 interface RouterOptions {
   hasImage?: boolean;
+  hasFile?: boolean;
 }
 
 function detectPromptCategory(

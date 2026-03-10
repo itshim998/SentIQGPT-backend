@@ -238,7 +238,16 @@ app.post(
     const fallbackForce = shouldForceWebSearch(parsed.data.message);
     const needsSearch = classification.needsWebSearch || fallbackForce;
     console.log(`[Classifier] queryType: ${classification.category} (rule: ${classification.matchedRule}, needsSearch: ${needsSearch}, fallbackForce: ${fallbackForce})`);
-    const modelOverride = selectModelForPrompt(parsed.data.message, classification.category);
+
+    // Detect file presence for router awareness
+    const fileRefs = parsed.data.context?.file_references;
+    const hasFile = Array.isArray(fileRefs) && fileRefs.length > 0;
+    const hasImage = hasFile && fileRefs.some((f: { filename?: string }) =>
+      /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(f.filename || "")
+    );
+    if (hasFile) console.log(`[File] ${fileRefs.length} file(s) in context, hasImage: ${hasImage}`);
+
+    const modelOverride = selectModelForPrompt(parsed.data.message, classification.category, { hasImage, hasFile });
 
     let webSearchContext = "";
     let searchResultsPayload: { query: string; results: { title: string; url: string; snippet: string }[] } | null = null;
@@ -313,6 +322,7 @@ app.post(
     };
 
     const call = buildChatPrompt(chatCtx);
+    console.log(`[Stream] model=${chatCtx.modelOverride} hasFiles=${ctx.hasFileContext} hasSearch=${!!webSearchContext} msgLen=${parsed.data.message.length}`);
 
     // Run memory pipeline in background (non-blocking)
     processMessageForMemory({
@@ -337,8 +347,10 @@ app.post(
       .catch(() => {});
 
     try {
+      const streamStart = Date.now();
       const stream = await callLLMAdapterStream(call);
       const reader = stream.getReader();
+      let tokenCount = 0;
 
       while (true) {
         if (clientDisconnected) {
@@ -347,15 +359,18 @@ app.post(
         }
         const { done, value } = await reader.read();
         if (done) break;
+        tokenCount++;
         res.write(`data: ${JSON.stringify({ type: "token", text: value })}\n\n`);
       }
 
       if (!clientDisconnected) {
         res.write("data: [DONE]\n\n");
       }
+      console.log(`[Stream] completed: ${tokenCount} chunks in ${Date.now() - streamStart}ms`);
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[Stream] error: ${message}`);
       if (!clientDisconnected) {
-        const message = err instanceof Error ? err.message : String(err);
         res.write(`data: ${JSON.stringify({ type: "error", error: message })}\n\n`);
       }
     } finally {
@@ -432,6 +447,8 @@ app.post(
       filename: file.originalname,
       mimetype: file.mimetype,
     });
+
+    console.log(`[File Upload] ${result.filename} → type=${result.type}, extracted=${result.extracted_text.length} chars, size=${result.size_bytes}B`);
 
     res.json({
       filename: result.filename,
