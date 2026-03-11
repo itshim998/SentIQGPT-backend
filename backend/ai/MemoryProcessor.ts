@@ -147,8 +147,15 @@ export async function processMessageForMemory(args: {
     recentMessages: args.recentMessages,
   });
 
+  // Skip "knowledge" type — it causes unnecessary storage overhead.
+  // Only store meaningful long-term memory: identity, preference, project.
+  if (classification.type === "knowledge") {
+    console.log(`[MEMORY] skipping knowledge storage (overhead reduction)`);
+    return { stored: false };
+  }
+
   const shouldStore = args.forceStore || (classification.should_store && !!classification.type);
-  const memType = classification.type || "knowledge";
+  const memType = classification.type || "project";
 
   if (!shouldStore) {
     return { stored: false };

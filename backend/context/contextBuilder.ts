@@ -50,12 +50,12 @@ export interface BuiltContext {
  *  4. Pre-build the memory prompt block for injection
  */
 export async function buildContext(raw: RawMessageContext): Promise<BuiltContext> {
-  // 1. Conversation compression — window of 6 + Groq summary of older msgs
-  const allMessages = raw.recent_messages ?? [];
-  const { recentMessages, summary } = await compressConversation(allMessages);
+  const ctxStart = Date.now();
 
-  // 2. Memories — try semantic search first, fall back to keyword overlap
-  const query = raw.userMessage || recentMessages[recentMessages.length - 1]?.content || "";
+  // Derive the query early so both pipelines can use it.
+  const allMessages = raw.recent_messages ?? [];
+  const query = raw.userMessage || allMessages[allMessages.length - 1]?.content || "";
+
   const rawMemories = (raw.memories ?? []).map((m) => ({
     type: m.type,
     summary: m.summary,
@@ -63,8 +63,16 @@ export async function buildContext(raw: RawMessageContext): Promise<BuiltContext
     embedding: m.embedding,
   }));
 
+  // ── PARALLEL: conversation compression + semantic memory search ──
+  // These are the two slowest sub-operations and are independent.
+  const [compressionResult, semanticResults] = await Promise.all([
+    compressConversation(allMessages),
+    semanticMemorySearch(rawMemories, query, 3),
+  ]);
+
+  const { recentMessages, summary } = compressionResult;
+
   let memories: readonly { type: string; summary: string }[];
-  const semanticResults = await semanticMemorySearch(rawMemories, query, 3);
   if (semanticResults) {
     memories = semanticResults.map((r) => r.memory);
     console.log(`[CONTEXT] memory retrieval: semantic (${memories.length} selected)`);
@@ -93,6 +101,7 @@ export async function buildContext(raw: RawMessageContext): Promise<BuiltContext
   console.log(`[CONTEXT] memory selected: ${memories.length}`);
   console.log(`[CONTEXT] messages included: ${recentMessages.length}`);
   console.log(`[CONTEXT] summary used: ${!!summary}`);
+  console.log(`[CONTEXT] buildContext completed in ${Date.now() - ctxStart}ms`);
 
   return {
     recentMessages,

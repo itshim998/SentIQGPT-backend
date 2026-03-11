@@ -317,14 +317,14 @@ export function buildMemoryClassifyPrompt(args: {
     "MEMORY TYPES:\n" +
     "- identity: facts about who the user is (name, age, location, occupation)\n" +
     "- preference: likes, dislikes, preferred styles or behaviors\n" +
-    "- project: ongoing work, goals, tasks the user is doing\n" +
-    "- knowledge: facts, concepts, or technical info shared by user\n\n" +
+    "- project: ongoing work, goals, tasks the user is doing\n\n" +
+    "IMPORTANT: Only classify as a memory type above. Do NOT store general informational answers or knowledge lookups.\n\n" +
     "RECENT MESSAGES:\n" +
     stableJsonStringify(args.recentMessages ?? []) +
     "\n\nCURRENT MESSAGE:\n" +
     args.message +
     "\n\nRETURN JSON:\n" +
-    '{\n  "should_store": true|false,\n  "type": "identity"|"preference"|"project"|"knowledge"|null,\n  "reason": "brief explanation"\n}';
+    '{\n  "should_store": true|false,\n  "type": "identity"|"preference"|"project"|null,\n  "reason": "brief explanation"\n}';
 
   return {
     task: "memory_classify",

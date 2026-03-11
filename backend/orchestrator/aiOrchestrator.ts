@@ -221,27 +221,38 @@ async function _orchestrateInner(
     }
   }
 
-  // 1. Build context (async — includes conversation compression + semantic memory)
-  const ctx = await buildContext({ ...(rawContext ?? {}), userMessage });
-
-  // 2. Run planner + memory pipeline in PARALLEL
-  const [plan, memoryResult] = await Promise.all([
-    planTask({
-      userMessage,
-      hasFileContext: ctx.hasFileContext,
-    }),
-    processMessageForMemory({
-      message: userMessage,
-      recentMessages: ctx.recentMessages,
-      existingMemories: ctx.memories,
-    }).catch(() => ({ stored: false as const })),
+  // 1. Build context + run planner in PARALLEL (both are independent)
+  //    Memory pipeline is deferred to background — never blocks the LLM response.
+  const [ctx, plan] = await Promise.all([
+    buildContext({ ...(rawContext ?? {}), userMessage }),
+    planTask({ userMessage, hasFileContext: (rawContext?.file_references?.length ?? 0) > 0 }),
   ]);
 
   console.log(`[ORCHESTRATOR] plan: ${plan.steps.length} step(s)`);
-  console.log(`[ORCHESTRATOR] memory stored: ${memoryResult.stored}`);
 
-  // 2b. Query classifier safety net — override planner if it missed web search
-  //     Uses the pre-classification from step 0 (already computed above)
+  // Fire memory pipeline in background — safe error handling
+  let memoryPayload: OrchestratorResponse["memory"] = { stored: false };
+  const memoryPromise = processMessageForMemory({
+    message: userMessage,
+    recentMessages: [...ctx.recentMessages],
+    existingMemories: [...ctx.memories],
+  })
+    .then((memResult) => {
+      if (memResult.stored) {
+        memoryPayload = {
+          stored: true,
+          type: memResult.memory?.type,
+          summary: memResult.memory?.summary,
+          importance: memResult.memory?.importance,
+        };
+      }
+      console.log(`[ORCHESTRATOR] memory stored: ${memResult.stored}`);
+    })
+    .catch((err) => {
+      console.log(`[ORCHESTRATOR] memory pipeline error: ${err instanceof Error ? err.message : err}`);
+    });
+
+  // 2. Query classifier safety net — override planner if it missed web search
   let finalPlan = plan;
   if (forceSearch) {
     const hasWebSearchStep = plan.steps.some(s => s.tool === "web_search");
@@ -254,19 +265,13 @@ async function _orchestrateInner(
     }
   }
 
-  const memoryPayload = memoryResult.stored
-    ? {
-        stored: true,
-        type: memoryResult.memory?.type,
-        summary: memoryResult.memory?.summary,
-        importance: memoryResult.memory?.importance,
-      }
-    : { stored: false };
-
   // 3. Execute the plan
   const execution = await executePlan(finalPlan.steps, ctx);
 
-  // 4. Merge step results into a single response
+  // 4. Wait for memory pipeline before merging (it ran in background)
+  await memoryPromise;
+
+  // 5. Merge step results into a single response
   const merged = mergeResults(execution.steps, memoryPayload);
 
   // 5. Self-Reflection Loop

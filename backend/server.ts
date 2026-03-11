@@ -222,6 +222,9 @@ app.post(
       return;
     }
 
+    const requestStart = Date.now();
+    console.log(`[Latency] user query received`);
+
     // Set SSE headers
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -233,7 +236,7 @@ app.post(
     let clientDisconnected = false;
     req.on("close", () => { clientDisconnected = true; });
 
-    // --- Query Classification: detect if web search is needed ---
+    // --- Query Classification: detect if web search is needed (instant, regex-only) ---
     const classification = classifyQueryType(parsed.data.message);
     const fallbackForce = shouldForceWebSearch(parsed.data.message);
     const needsSearch = classification.needsWebSearch || fallbackForce;
@@ -249,67 +252,63 @@ app.post(
 
     const modelOverride = selectModelForPrompt(parsed.data.message, classification.category, { hasImage, hasFile });
 
-    let webSearchContext = "";
-    let searchResultsPayload: { query: string; results: { title: string; url: string; snippet: string }[] } | null = null;
-
-    if (needsSearch) {
-      try {
-        const searchQuery = buildSearchQuery(parsed.data.message);
-        console.log(`[Search] executing web search: "${searchQuery.slice(0, 80)}"`);
-        const searchResult = await routeWebSearch({ query: searchQuery });
-        if (searchResult.success && searchResult.results.length > 0) {
-          console.log(`[SearchResults] count: ${searchResult.results.length}`);
-
-          // ── Result filtering: keep only results whose title or snippet
-          //    contains at least one keyword from the search query ──
-          const queryKeywords = searchQuery
-            .toLowerCase()
-            .split(/\s+/)
-            .filter(w => w.length > 2);
-          const filtered = searchResult.results.filter(r => {
-            const hay = `${r.title} ${r.snippet}`.toLowerCase();
-            return queryKeywords.some(kw => hay.includes(kw));
-          });
-          const relevantResults = filtered.length > 0 ? filtered : searchResult.results.slice(0, 2);
-          console.log(`[SearchFiltered] count: ${relevantResults.length}`);
-
-          // Compress search results into a context block (max ~2000 chars)
-          webSearchContext = relevantResults
-            .slice(0, 4)
-            .map((r, i) => {
-              const body = (r as { body?: string }).body;
-              const content = (body ?? r.snippet).slice(0, 400);
-              return `[Source ${i + 1}] ${r.title}\nURL: ${r.url}\n${content}`;
-            })
-            .join("\n\n");
-          searchResultsPayload = {
-            query: searchQuery,
-            results: relevantResults.slice(0, 4).map(r => ({
-              title: r.title,
-              url: r.url,
-              snippet: r.snippet,
-            })),
-          };
-          // Send search results event so the frontend can display sources
-          if (!clientDisconnected) {
-            res.write(`data: ${JSON.stringify({ type: "search", search: searchResultsPayload })}\n\n`);
+    // ── PARALLEL: Run web search + context building concurrently ──
+    // These are the two slowest pre-LLM operations and have no data
+    // dependencies on each other.
+    const searchPromise = needsSearch
+      ? (async () => {
+          try {
+            const searchQuery = buildSearchQuery(parsed.data.message);
+            console.log(`[Search] executing web search: "${searchQuery.slice(0, 80)}"`);
+            const searchResult = await routeWebSearch({ query: searchQuery });
+            if (searchResult.success && searchResult.results.length > 0) {
+              console.log(`[SearchResults] count: ${searchResult.results.length}`);
+              const queryKeywords = searchQuery.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+              const filtered = searchResult.results.filter(r => {
+                const hay = `${r.title} ${r.snippet}`.toLowerCase();
+                return queryKeywords.some(kw => hay.includes(kw));
+              });
+              const relevantResults = filtered.length > 0 ? filtered : searchResult.results.slice(0, 2);
+              console.log(`[SearchFiltered] count: ${relevantResults.length}`);
+              const webCtx = relevantResults
+                .slice(0, 4)
+                .map((r, i) => {
+                  const body = (r as { body?: string }).body;
+                  const content = (body ?? r.snippet).slice(0, 400);
+                  return `[Source ${i + 1}] ${r.title}\nURL: ${r.url}\n${content}`;
+                })
+                .join("\n\n");
+              return {
+                webSearchContext: webCtx,
+                searchResultsPayload: {
+                  query: searchQuery,
+                  results: relevantResults.slice(0, 4).map(r => ({ title: r.title, url: r.url, snippet: r.snippet })),
+                },
+              };
+            }
+            console.log(`[SearchResults] count: 0 for query: "${searchQuery.slice(0, 60)}"`);
+          } catch (searchErr) {
+            console.log(`[Search] web search failed: ${searchErr instanceof Error ? searchErr.message : searchErr}`);
           }
-        } else {
-          console.log(`[SearchResults] count: 0 for query: "${searchQuery.slice(0, 60)}"`);
-        }
-      } catch (searchErr) {
-        console.log(`[Search] web search failed: ${searchErr instanceof Error ? searchErr.message : searchErr}`);
-        // Non-fatal — continue without search results
-      }
-    }
+          return { webSearchContext: "", searchResultsPayload: null as { query: string; results: { title: string; url: string; snippet: string }[] } | null };
+        })()
+      : Promise.resolve({ webSearchContext: "", searchResultsPayload: null as { query: string; results: { title: string; url: string; snippet: string }[] } | null });
 
-    // Build context
-    const ctx = await buildContext({
+    const contextPromise = buildContext({
       recent_messages: parsed.data.context?.recent_messages,
       memories: parsed.data.context?.memories,
       file_references: parsed.data.context?.file_references,
       userMessage: parsed.data.message,
     });
+
+    // Await both in parallel
+    const [searchResult, ctx] = await Promise.all([searchPromise, contextPromise]);
+    const { webSearchContext, searchResultsPayload } = searchResult;
+
+    // Send search results event if available
+    if (searchResultsPayload && !clientDisconnected) {
+      res.write(`data: ${JSON.stringify({ type: "search", search: searchResultsPayload })}\n\n`);
+    }
 
     const chatCtx: ChatContext = {
       userMessage: parsed.data.message,
@@ -322,9 +321,10 @@ app.post(
     };
 
     const call = buildChatPrompt(chatCtx);
+    console.log(`[Latency] LLM request started (+${Date.now() - requestStart}ms)`);
     console.log(`[Stream] model=${chatCtx.modelOverride} hasFiles=${ctx.hasFileContext} hasSearch=${!!webSearchContext} msgLen=${parsed.data.message.length}`);
 
-    // Run memory pipeline in background (non-blocking)
+    // Run memory pipeline in background (non-blocking) — never delays the LLM response
     processMessageForMemory({
       message: parsed.data.message,
       recentMessages: [...ctx.recentMessages],
@@ -332,19 +332,23 @@ app.post(
     })
       .then((memResult) => {
         if (memResult.stored) {
-          const memEvent = JSON.stringify({
-            type: "memory",
-            memory: {
-              stored: true,
-              type: memResult.memory?.type,
-              summary: memResult.memory?.summary,
-              importance: memResult.memory?.importance,
-            },
-          });
-          res.write(`data: ${memEvent}\n\n`);
+          if (!clientDisconnected) {
+            const memEvent = JSON.stringify({
+              type: "memory",
+              memory: {
+                stored: true,
+                type: memResult.memory?.type,
+                summary: memResult.memory?.summary,
+                importance: memResult.memory?.importance,
+              },
+            });
+            res.write(`data: ${memEvent}\n\n`);
+          }
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.log(`[Memory] background pipeline error: ${err instanceof Error ? err.message : err}`);
+      });
 
     try {
       const streamStart = Date.now();
@@ -360,12 +364,16 @@ app.post(
         const { done, value } = await reader.read();
         if (done) break;
         tokenCount++;
+        if (tokenCount === 1) {
+          console.log(`[Latency] first token streamed (+${Date.now() - requestStart}ms)`);
+        }
         res.write(`data: ${JSON.stringify({ type: "token", text: value })}\n\n`);
       }
 
       if (!clientDisconnected) {
         res.write("data: [DONE]\n\n");
       }
+      console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
       console.log(`[Stream] completed: ${tokenCount} chunks in ${Date.now() - streamStart}ms`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
