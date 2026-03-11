@@ -7,6 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- KaTeX CSS for math rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
   <style>
 /* ============================================================
    SentIQGPT v3 — Liquid Glass Design System
@@ -604,6 +606,51 @@ body::after {
   font-weight: 600;
   margin: 12px 0 6px;
   color: var(--text-primary);
+}
+
+/* Markdown tables (GFM) */
+.message-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+  font-size: 0.9rem;
+  overflow-x: auto;
+  display: block;
+}
+.message-content thead {
+  background: rgba(139,92,246,0.12);
+}
+.message-content th, .message-content td {
+  border: 1px solid var(--border-light);
+  padding: 8px 12px;
+  text-align: left;
+}
+.message-content th {
+  font-weight: 600;
+  color: var(--purple-300);
+  white-space: nowrap;
+}
+.message-content tr:nth-child(even) {
+  background: rgba(255,255,255,0.02);
+}
+.message-content tr:hover {
+  background: rgba(139,92,246,0.06);
+}
+
+/* KaTeX dark theme overrides */
+.message-content .katex { color: var(--text-primary); font-size: 1.05em; }
+.message-content .katex-display { margin: 16px 0; overflow-x: auto; overflow-y: hidden; padding: 8px 0; }
+.message-content .katex-display > .katex { text-align: center; }
+
+/* Truncation notice */
+.truncation-notice {
+  background: rgba(239,68,68,0.12);
+  border: 1px solid rgba(239,68,68,0.3);
+  color: #fca5a5;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  margin-top: 12px;
 }
 
 /* Code blocks */
@@ -1594,6 +1641,10 @@ button, .tool-btn, .btn-send, .welcome-chip, .chat-list-item, .btn-settings, .si
   }
 }
   </style>
+  <!-- marked.js for full markdown + GFM table support -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+  <!-- KaTeX for math rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
   <div class="app-container">
@@ -1633,7 +1684,7 @@ button, .tool-btn, .btn-send, .welcome-chip, .chat-list-item, .btn-settings, .si
         <div class="welcome-icon">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z" opacity="0.3" fill="var(--purple-500)"/><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
         </div>
-        <h2>Welcome to SentIQ<span class="logo-accent">GPT</span></h2>
+        <h2>SentIQ<span class="logo-accent">GPT</span></h2>
         <p class="welcome-subtitle">Ask anything, generate images, or upload and analyse files.</p>
         <div class="welcome-chips">
           <button class="welcome-chip" data-prompt="Explain quantum computing in simple terms">💡 Explain quantum computing</button>
@@ -1673,9 +1724,6 @@ button, .tool-btn, .btn-send, .welcome-chip, .chat-list-item, .btn-settings, .si
             </button>
             <button id="image-gen-btn" class="tool-btn" title="Generate image">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            </button>
-            <button id="voice-btn" class="tool-btn" title="Voice input">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
             </button>
           </div>
 
@@ -1881,7 +1929,11 @@ async function getAllChats() {
 async function addMessageToChat(chatId, role, content, meta) {
   const chat = await getChat(chatId);
   if (!chat) throw new Error("Chat not found");
-  const msg = { id: generateId(), role, content, timestamp: new Date().toISOString() };
+  // Storage protection: truncate oversized messages
+  const safeContent = (typeof content === 'string' && content.length > MAX_MESSAGE_CHARS)
+    ? content.substring(0, MAX_MESSAGE_CHARS) + '\n[truncated]'
+    : content;
+  const msg = { id: generateId(), role, content: safeContent, timestamp: new Date().toISOString() };
   if (meta) msg.meta = meta;
   chat.messages.push(msg);
   chat.updated = new Date().toISOString();
@@ -2923,32 +2975,109 @@ window.SentIQAPI = {
   }
 
   // ================================================================
-  // Markdown Rendering
+  // Markdown Rendering (marked.js + KaTeX + GFM)
   // ================================================================
+
+  // Maximum message size before truncation (100k chars)
+  const MAX_MESSAGE_CHARS = 100_000;
+
+  // Configure marked with GFM support
+  (function initMarked() {
+    if (typeof marked === 'undefined') return;
+    marked.setOptions({
+      gfm: true,
+      breaks: true,
+    });
+
+    // Custom renderer for code blocks with syntax highlighting
+    const renderer = new marked.Renderer();
+    renderer.code = function({ text, lang }) {
+      const langLabel = escapeHtml(lang || 'code');
+      const highlighted = highlightCode(text, lang || 'code');
+      return `<div class="code-block-wrap"><div class="code-block-header"><span class="code-block-lang">${langLabel}</span><button class="code-copy-btn" onclick="window.SentIQChat.copyCode(this)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button></div><pre><code>${highlighted}</code></pre></div>`;
+    };
+    marked.use({ renderer });
+  })();
+
+  /**
+   * Render KaTeX math expressions in a string.
+   * Processes $$...$$ (display) first, then $...$ (inline).
+   */
+  function renderKaTeX(html) {
+    if (typeof katex === 'undefined') return html;
+    // Display math: $$...$$
+    html = html.replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => {
+      try {
+        return katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false });
+      } catch { return `<code>${escapeHtml(tex)}</code>`; }
+    });
+    // Inline math: $...$  (but not $$, not inside code, not currency like $100)
+    html = html.replace(/(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g, (_, tex) => {
+      // Skip if it looks like currency ($100, $50.00)
+      if (/^\d/.test(tex.trim())) return `$${tex}$`;
+      try {
+        return katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false });
+      } catch { return `<code>${escapeHtml(tex)}</code>`; }
+    });
+    return html;
+  }
+
   function renderRichText(text) {
     if (!text) return "";
-    // Extract code blocks first, replace with placeholders
-    const codeBlocks = [];
-    const withPlaceholders = text.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
-      codeBlocks.push({ lang: lang || 'code', code });
-      return `\x00CB${codeBlocks.length - 1}\x00`;
+
+    // Truncate extremely long messages to prevent DOM explosion
+    let truncated = false;
+    if (text.length > MAX_MESSAGE_CHARS) {
+      text = text.substring(0, MAX_MESSAGE_CHARS);
+      truncated = true;
+    }
+
+    // Extract LaTeX blocks before marked processes them
+    // (marked would escape the backslashes in LaTeX)
+    const mathBlocks = [];
+    // Display math $$...$$
+    text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => {
+      mathBlocks.push({ display: true, tex });
+      return `\x00MATH${mathBlocks.length - 1}\x00`;
+    });
+    // Inline math $...$
+    text = text.replace(/(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g, (_, tex) => {
+      if (/^\d/.test(tex.trim())) return `$${tex}$`; // skip currency
+      mathBlocks.push({ display: false, tex });
+      return `\x00MATH${mathBlocks.length - 1}\x00`;
     });
 
-    // Escape and process markdown on the non-code parts
-    let html = escapeHtml(withPlaceholders);
-    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-    html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
-    html = html.split("\n\n").map((p) => `<p>${p.trim()}</p>`).join("");
-    html = html.replace(/(?<!\n)\n(?!\n)/g, "<br>");
+    // Render markdown with marked (GFM tables, lists, code, links, etc.)
+    let html;
+    if (typeof marked !== 'undefined') {
+      html = marked.parse(text);
+    } else {
+      // Fallback: basic regex processing if marked isn't loaded
+      html = escapeHtml(text);
+      html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+      html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
+      html = html.split("\n\n").map((p) => `<p>${p.trim()}</p>`).join("");
+      html = html.replace(/(?<!\n)\n(?!\n)/g, "<br>");
+    }
 
-    // Restore code blocks with syntax highlighting
-    html = html.replace(/\x00CB(\d+)\x00/g, (m, idx) => {
-      const block = codeBlocks[parseInt(idx)];
-      const langLabel = escapeHtml(block.lang);
-      const highlighted = highlightCode(block.code, block.lang);
-      return `<div class="code-block-wrap"><div class="code-block-header"><span class="code-block-lang">${langLabel}</span><button class="code-copy-btn" onclick="window.SentIQChat.copyCode(this)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button></div><pre><code>${highlighted}</code></pre></div>`;
+    // Restore math blocks and render with KaTeX
+    html = html.replace(/\x00MATH(\d+)\x00/g, (_, idx) => {
+      const block = mathBlocks[parseInt(idx)];
+      if (typeof katex !== 'undefined') {
+        try {
+          return katex.renderToString(block.tex.trim(), {
+            displayMode: block.display,
+            throwOnError: false,
+          });
+        } catch { return `<code>${escapeHtml(block.tex)}</code>`; }
+      }
+      return `<code>${escapeHtml(block.tex)}</code>`;
     });
+
+    if (truncated) {
+      html += '<div class="truncation-notice">[output truncated due to size — original exceeded 100k characters]</div>';
+    }
 
     return html;
   }
@@ -3033,7 +3162,12 @@ window.SentIQAPI = {
 
     return {
       appendToken(token) {
+        if (fullText.length >= MAX_MESSAGE_CHARS) return; // Truncation guard
         fullText += token;
+        if (fullText.length > MAX_MESSAGE_CHARS) {
+          fullText = fullText.substring(0, MAX_MESSAGE_CHARS);
+          streamDone = true; // Force-end the stream
+        }
         if (!rafId) rafId = requestAnimationFrame(tick);
       },
       finish() {
