@@ -11,7 +11,6 @@ dotenv.config();
 
 import { orchestrate } from "./orchestrator/aiOrchestrator";
 import type { OrchestratorResponse } from "./orchestrator/aiOrchestrator";
-import { classifyQueryType, shouldForceWebSearch } from "./orchestrator/queryClassifier";
 
 // ─────────────────────────────
 // Helpers
@@ -153,85 +152,6 @@ async function testMemoryRetrieval(storedMemory: OrchestratorResponse): Promise<
 }
 
 // ─────────────────────────────
-// Test 5 — Web Search Regression (NVIDIA 2026)
-// ─────────────────────────────
-
-async function testWebSearchRegression(): Promise<void> {
-  section("Web Search Regression — NVIDIA 2026");
-
-  const query = "What are the latest NVIDIA announcements in 2026?";
-
-  // 5a. Classifier must detect this as search-needing
-  const cls = classifyQueryType(query);
-  console.log(`  classifier: category=${cls.category}, needsWebSearch=${cls.needsWebSearch}, rule=${cls.matchedRule}`);
-  assert(cls.needsWebSearch === true, "Classifier detects needsWebSearch", `got: ${cls.needsWebSearch}`);
-  assert(
-    cls.category === "real_time_information" || cls.category === "factual_lookup",
-    "Category indicates real-time or factual",
-    `got: ${cls.category}`,
-  );
-
-  // 5b. Fallback safeguard must also trigger
-  const fallback = shouldForceWebSearch(query);
-  assert(fallback === true, "shouldForceWebSearch() triggers", `got: ${fallback}`);
-
-  // 5c. Full pipeline must execute web search and produce grounded answer
-  const res: OrchestratorResponse = await orchestrate({ userMessage: query });
-  console.log(`  route: ${res.route}  |  reply length: ${res.reply?.length ?? 0}  |  searchResults: ${res.searchResults ? res.searchResults.results.length + " sources" : "none"}`);
-
-  assert(!!res.reply && res.reply.length > 30, "Reply is non-trivial");
-
-  // Reply must NOT mention knowledge cutoff
-  const replyLower = (res.reply ?? "").toLowerCase();
-  assert(
-    !replyLower.includes("knowledge cutoff") && !replyLower.includes("training data"),
-    "Reply does NOT mention knowledge cutoff",
-    `snippet: "${(res.reply ?? "").slice(0, 150)}"`,
-  );
-
-  // Search results should be present (web search ran)
-  assert(
-    !!res.searchResults && res.searchResults.results.length > 0,
-    "Search results are present in response",
-    `sources: ${res.searchResults?.results.length ?? 0}`,
-  );
-}
-
-// ─────────────────────────────
-// Test 6 — Classifier Unit Tests (no LLM needed)
-// ─────────────────────────────
-
-function testClassifierUnit(): void {
-  section("Query Classifier — Unit Tests (no LLM)");
-
-  const searchQueries = [
-    "What are the latest NVIDIA announcements in 2026?",
-    "latest news about Apple",
-    "recent announcements from Tesla",
-    "current stock price of Google",
-    "Who won the 2026 World Cup?",
-    "What happened today in tech?",
-    "bitcoin price today",
-  ];
-
-  for (const q of searchQueries) {
-    const r = classifyQueryType(q);
-    assert(r.needsWebSearch === true, `"${q.slice(0, 50)}..." → needsWebSearch`, `got: ${r.category}`);
-  }
-
-  const noSearchQueries = [
-    "Explain how neural networks work",
-    "What is the Pythagorean theorem?",
-    "Write me a poem about stars",
-  ];
-
-  for (const q of noSearchQueries) {
-    const r = classifyQueryType(q);
-    assert(r.needsWebSearch === false, `"${q.slice(0, 50)}..." → no search`, `got: ${r.category}`);
-  }
-}
-
-// ─────────────────────────────
 // Runner
 // ─────────────────────────────
 
@@ -275,21 +195,7 @@ async function run(): Promise<void> {
     failed++;
   }
 
-  // Test 5 — Web search regression (requires LLM service)
-  try {
-    await testWebSearchRegression();
-  } catch (err) {
-    console.log(`  ${FAIL}  Test 5 threw: ${err instanceof Error ? err.message : err}`);
-    failed++;
-  }
-
-  // Test 6 — Classifier unit tests (no external deps)
-  try {
-    testClassifierUnit();
-  } catch (err) {
-    console.log(`  ${FAIL}  Test 6 threw: ${err instanceof Error ? err.message : err}`);
-    failed++;
-  }
+  // Test 5 removed (web search pipeline removed)
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 

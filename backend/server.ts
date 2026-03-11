@@ -31,10 +31,7 @@ import { buildContext } from "./context/contextBuilder";
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
 
-// v2 Query Classifier (deterministic pre-classification for web search)
-import { classifyQueryType, buildSearchQuery, shouldForceWebSearch } from "./orchestrator/queryClassifier";
 import { selectModelForPrompt } from "./orchestrator/modelRouter";
-import { routeWebSearch } from "./tools/webSearch/webSearchRouter";
 
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
@@ -236,12 +233,6 @@ app.post(
     let clientDisconnected = false;
     req.on("close", () => { clientDisconnected = true; });
 
-    // --- Query Classification: detect if web search is needed (instant, regex-only) ---
-    const classification = classifyQueryType(parsed.data.message);
-    const fallbackForce = shouldForceWebSearch(parsed.data.message);
-    const needsSearch = classification.needsWebSearch || fallbackForce;
-    console.log(`[Classifier] queryType: ${classification.category} (rule: ${classification.matchedRule}, needsSearch: ${needsSearch}, fallbackForce: ${fallbackForce})`);
-
     // Detect file presence for router awareness
     const fileRefs = parsed.data.context?.file_references;
     const hasFile = Array.isArray(fileRefs) && fileRefs.length > 0;
@@ -250,65 +241,15 @@ app.post(
     );
     if (hasFile) console.log(`[File] ${fileRefs.length} file(s) in context, hasImage: ${hasImage}`);
 
-    const modelOverride = selectModelForPrompt(parsed.data.message, classification.category, { hasImage, hasFile });
+    const modelOverride = selectModelForPrompt(parsed.data.message, undefined, { hasImage, hasFile });
 
-    // ── PARALLEL: Run web search + context building concurrently ──
-    // These are the two slowest pre-LLM operations and have no data
-    // dependencies on each other.
-    const searchPromise = needsSearch
-      ? (async () => {
-          try {
-            const searchQuery = buildSearchQuery(parsed.data.message);
-            console.log(`[Search] executing web search: "${searchQuery.slice(0, 80)}"`);
-            const searchResult = await routeWebSearch({ query: searchQuery });
-            if (searchResult.success && searchResult.results.length > 0) {
-              console.log(`[SearchResults] count: ${searchResult.results.length}`);
-              const queryKeywords = searchQuery.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-              const filtered = searchResult.results.filter(r => {
-                const hay = `${r.title} ${r.snippet}`.toLowerCase();
-                return queryKeywords.some(kw => hay.includes(kw));
-              });
-              const relevantResults = filtered.length > 0 ? filtered : searchResult.results.slice(0, 2);
-              console.log(`[SearchFiltered] count: ${relevantResults.length}`);
-              const webCtx = relevantResults
-                .slice(0, 4)
-                .map((r, i) => {
-                  const body = (r as { body?: string }).body;
-                  const content = (body ?? r.snippet).slice(0, 400);
-                  return `[Source ${i + 1}] ${r.title}\nURL: ${r.url}\n${content}`;
-                })
-                .join("\n\n");
-              return {
-                webSearchContext: webCtx,
-                searchResultsPayload: {
-                  query: searchQuery,
-                  results: relevantResults.slice(0, 4).map(r => ({ title: r.title, url: r.url, snippet: r.snippet })),
-                },
-              };
-            }
-            console.log(`[SearchResults] count: 0 for query: "${searchQuery.slice(0, 60)}"`);
-          } catch (searchErr) {
-            console.log(`[Search] web search failed: ${searchErr instanceof Error ? searchErr.message : searchErr}`);
-          }
-          return { webSearchContext: "", searchResultsPayload: null as { query: string; results: { title: string; url: string; snippet: string }[] } | null };
-        })()
-      : Promise.resolve({ webSearchContext: "", searchResultsPayload: null as { query: string; results: { title: string; url: string; snippet: string }[] } | null });
-
-    const contextPromise = buildContext({
+    // ── Build context (conversation compression + semantic memory search) ──
+    const ctx = await buildContext({
       recent_messages: parsed.data.context?.recent_messages,
       memories: parsed.data.context?.memories,
       file_references: parsed.data.context?.file_references,
       userMessage: parsed.data.message,
     });
-
-    // Await both in parallel
-    const [searchResult, ctx] = await Promise.all([searchPromise, contextPromise]);
-    const { webSearchContext, searchResultsPayload } = searchResult;
-
-    // Send search results event if available
-    if (searchResultsPayload && !clientDisconnected) {
-      res.write(`data: ${JSON.stringify({ type: "search", search: searchResultsPayload })}\n\n`);
-    }
 
     const chatCtx: ChatContext = {
       userMessage: parsed.data.message,
@@ -316,13 +257,12 @@ app.post(
       memories: ctx.memories,
       fileReferences: ctx.fileReferences,
       conversationSummary: ctx.conversationSummary,
-      webSearchContext: webSearchContext || undefined,
       modelOverride,
     };
 
     const call = buildChatPrompt(chatCtx);
     console.log(`[Latency] LLM request started (+${Date.now() - requestStart}ms)`);
-    console.log(`[Stream] model=${chatCtx.modelOverride} hasFiles=${ctx.hasFileContext} hasSearch=${!!webSearchContext} msgLen=${parsed.data.message.length}`);
+    console.log(`[Stream] model=${chatCtx.modelOverride} hasFiles=${ctx.hasFileContext} msgLen=${parsed.data.message.length}`);
 
     // Run memory pipeline in background (non-blocking) — never delays the LLM response
     processMessageForMemory({

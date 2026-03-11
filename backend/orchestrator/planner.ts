@@ -29,15 +29,13 @@ export type PlanTool =
   | "conversation"
   | "image_generation"
   | "file_analysis"
-  | "memory_update"
-  | "web_search";
+  | "memory_update";
 
 const VALID_PLAN_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
   "conversation",
   "image_generation",
   "file_analysis",
   "memory_update",
-  "web_search",
 ]);
 
 const MAX_STEPS = 3;
@@ -69,8 +67,7 @@ function buildPlannerPrompt(
     '- "file_analysis": Analyze uploaded file content' +
     (hasFileContext ? " (files ARE in context)" : " (NO files in context — do NOT select this)") +
     "\n" +
-    '- "memory_update": Store a personal fact the user wants remembered\n' +
-    '- "web_search": Search the web for current/recent information, news, facts, or anything the AI does not know\n\n' +
+    '- "memory_update": Store a personal fact the user wants remembered\n\n' +
     "RULES:\n" +
     "- Return 1 to 3 steps maximum.\n" +
     "- Most requests need only 1 step — keep it simple.\n" +
@@ -81,17 +78,6 @@ function buildPlannerPrompt(
     "- Only choose image_generation if the user EXPLICITLY asks to create/generate an image.\n" +
     "- Only choose file_analysis if uploaded files exist in context.\n" +
     "- Only choose memory_update when the user says remember/forget.\n" +
-    "- Choose web_search when the user asks about:\n" +
-    "    • Current events, latest news, recent updates, today\'s information, real-time data\n" +
-    "    • Sports: scores, tournaments, world cups, match results, standings, IPL, T20, Olympics\n" +
-    "    • Medicines, drugs, supplements, health products, or any pharmaceutical name\n" +
-    "    • Products, prices, releases, reviews, specifications, comparisons\n" +
-    "    • Companies, brands, people, or any proper noun / named entity you are unsure about\n" +
-    "    • Technical documentation, APIs, libraries, frameworks\n" +
-    "    • Population, GDP, statistics, or any fact that may have changed recently\n" +
-    "    • Anything you are NOT 100% confident exists in your training data\n" +
-    "- IMPORTANT: When in doubt between conversation and web_search, PREFER web_search.\n" +
-    "  It is better to search and provide accurate info than to guess from stale knowledge.\n" +
     "- Default truly ambiguous requests to a single conversation step.\n" +
     "- Steps run in order. Later steps may use results of earlier ones.\n\n" +
     "USER MESSAGE:\n" +

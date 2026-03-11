@@ -13,8 +13,6 @@ export const CONTEXT_BUDGET = {
   conversation: 8_000,
   /** Retrieved memory entries. */
   memory: 6_000,
-  /** Web-search context block. */
-  search: 6_000,
   /** Uploaded file content (combined). */
   file: 40_000,
   /** The current user message. */
@@ -27,7 +25,6 @@ export interface ContextParts {
   system: string;
   conversation: string;
   memory: string;
-  search: string;
   file: string;
   user: string;
 }
@@ -54,7 +51,6 @@ export function allocateBudget(parts: ContextParts): ContextParts {
     system: truncateToBudget(parts.system, CONTEXT_BUDGET.system),
     conversation: truncateToBudget(parts.conversation, CONTEXT_BUDGET.conversation),
     memory: truncateToBudget(parts.memory, CONTEXT_BUDGET.memory),
-    search: truncateToBudget(parts.search, CONTEXT_BUDGET.search),
     file: truncateToBudget(parts.file, CONTEXT_BUDGET.file),
     user: truncateToBudget(parts.user, CONTEXT_BUDGET.user),
   };

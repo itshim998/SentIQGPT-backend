@@ -18,11 +18,9 @@
 
 import { handleChat } from "../ai/ChatHandler";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
-import { routeWebSearch } from "../tools/webSearch/webSearchRouter";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
-import { classifyQueryType, buildSearchQuery } from "./queryClassifier";
 import { selectModelForPrompt } from "./modelRouter";
 
 // ==============================
@@ -50,14 +48,6 @@ export interface StepResult {
     summary?: string;
     importance?: number;
   };
-  /** Web search output (web_search) */
-  readonly searchResults?: {
-    success: boolean;
-    query: string;
-    results: readonly { title: string; url: string; snippet: string }[];
-    provider_used?: string;
-    error?: string;
-  };
   readonly error?: string;
 }
 
@@ -70,7 +60,6 @@ const VALID_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
   "image_generation",
   "file_analysis",
   "memory_update",
-  "web_search",
 ]);
 
 const MAX_EXEC_STEPS = 3;
@@ -84,8 +73,7 @@ async function execConversation(
   ctx: BuiltContext,
   priorContext: string,
 ): Promise<StepResult> {
-  const classification = classifyQueryType(input);
-  const modelOverride = selectModelForPrompt(input, classification.category);
+  const modelOverride = selectModelForPrompt(input);
   const augmentedInput = priorContext
     ? `${input}\n\n[Previous step context]: ${priorContext}`
     : input;
@@ -126,8 +114,7 @@ async function execFileAnalysis(
   ctx: BuiltContext,
   priorContext: string,
 ): Promise<StepResult> {
-  const classification = classifyQueryType(input);
-  const modelOverride = selectModelForPrompt(input, classification.category);
+  const modelOverride = selectModelForPrompt(input);
   const augmentedInput = priorContext
     ? `${input}\n\n[Previous step context]: ${priorContext}`
     : input;
@@ -165,82 +152,6 @@ async function execMemoryUpdate(
     : { stored: false };
 
   return { step: 0, tool: "memory_update", memory };
-}
-
-async function execWebSearch(
-  input: string,
-  ctx: BuiltContext,
-  priorContext: string,
-): Promise<StepResult> {
-  const modelOverride = selectModelForPrompt(input, "factual_lookup");
-  const cleanedQuery = buildSearchQuery(input);
-  console.log(`[SearchQuery] generated: "${cleanedQuery}" (executor)`);
-  const searchResult = await routeWebSearch({ query: cleanedQuery });
-
-  if (!searchResult.success || searchResult.results.length === 0) {
-    console.log(`[SearchResults] count: 0 (executor)`);
-    return {
-      step: 0,
-      tool: "web_search",
-      searchResults: searchResult,
-      reply: `I wasn't able to find web results for "${cleanedQuery}". ${searchResult.error ?? ""}`.trim(),
-    };
-  }
-
-  console.log(`[SearchResults] count: ${searchResult.results.length} (executor)`);
-
-  // Filter results: keep only those whose title/snippet contain a query keyword
-  const queryKeywords = cleanedQuery
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(w => w.length > 2);
-  const filtered = searchResult.results.filter(r => {
-    const hay = `${r.title} ${r.snippet}`.toLowerCase();
-    return queryKeywords.some(kw => hay.includes(kw));
-  });
-  const relevantResults = filtered.length > 0 ? filtered : searchResult.results.slice(0, 2);
-  console.log(`[SearchFiltered] count: ${relevantResults.length} (executor)`);
-
-  // Build a context block from search results for the LLM
-  const searchContext = relevantResults
-    .map((r, i) => {
-      const body = (r as { body?: string }).body;
-      const content = body ?? r.snippet;
-      return `[Source ${i + 1}] ${r.title}\nURL: ${r.url}\n${content}`;
-    })
-    .join("\n\n");
-
-  // Pass search results to ChatHandler for synthesis
-  const chatResult = await handleChat({
-    userMessage:
-      `The user asked: "${input}"\n\n` +
-      `Here are web search results you can reference:\n\n${searchContext}\n\n` +
-      `Provide a comprehensive answer. If the search results are relevant, use them ` +
-      `and cite sources using [Source N] notation. ` +
-      `If the results are irrelevant or incomplete, use your own knowledge to answer.` +
-      (priorContext ? `\n\n[Previous step context]: ${priorContext}` : ""),
-    recentMessages: ctx.recentMessages,
-    memories: ctx.memories,
-    conversationSummary: ctx.conversationSummary,
-    webSearchContext: searchContext,
-    modelOverride,
-  });
-
-  return {
-    step: 0,
-    tool: "web_search",
-    reply: chatResult.reply,
-    searchResults: {
-      success: true,
-      query: cleanedQuery,
-      results: relevantResults.map(r => ({
-        title: r.title,
-        url: r.url,
-        snippet: r.snippet,
-      })),
-      provider_used: searchResult.provider_used,
-    },
-  };
 }
 
 // ==============================
@@ -285,9 +196,6 @@ export async function executePlan(
           break;
         case "memory_update":
           result = await execMemoryUpdate(planStep.input, ctx);
-          break;
-        case "web_search":
-          result = await execWebSearch(planStep.input, ctx, priorContext);
           break;
         case "conversation":
         default:

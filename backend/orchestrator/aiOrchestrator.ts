@@ -15,8 +15,7 @@
 //                     ├── conversation      → ChatHandler (Gemini)
 //                     ├── image_generation   → Image Router
 //                     ├── file_analysis      → ChatHandler + file context
-//                     ├── memory_update      → Explicit memory storage
-//                     └── web_search         → Web Search Router + ChatHandler
+//                     └── memory_update      → Explicit memory storage
 //
 //   5. Self-Reflection Loop
 //        └── Answer Critic (Groq) → optional Answer Improver (Gemini)
@@ -33,7 +32,6 @@ import { improveAnswer } from "../reflection/answerImprover";
 import { getCachedAnswer, setCachedAnswer } from "../cache/cacheManager";
 import type { RawMessageContext } from "../context/contextBuilder";
 import type { DetectedTool } from "./toolDetector";
-import { classifyQueryType, buildSearchQuery, shouldForceWebSearch } from "./queryClassifier";
 import type { PlanTool } from "./planner";
 import type { StepResult } from "./toolExecutor";
 
@@ -69,12 +67,6 @@ export interface OrchestratorResponse {
     summary?: string;
     importance?: number;
   };
-  /** Web search sources (for citation display) */
-  readonly searchResults?: {
-    query: string;
-    results: readonly { title: string; url: string; snippet: string }[];
-    provider_used?: string;
-  };
   /** Self-reflection evaluation (if run) */
   readonly reflection?: {
     score: number;
@@ -95,7 +87,6 @@ function planToolToRoute(tool: PlanTool): DetectedTool {
     case "image_generation": return "image_generation";
     case "file_analysis":    return "file_analysis";
     case "memory_update":    return "memory_update";
-    case "web_search":       return "normal_chat";
     case "conversation":
     default:                 return "normal_chat";
   }
@@ -108,7 +99,6 @@ function mergeResults(
 ): Omit<OrchestratorResponse, "confidence"> {
   let reply: string | undefined;
   let image: OrchestratorResponse["image"] | undefined;
-  let searchResults: OrchestratorResponse["searchResults"] | undefined;
   let memory = memoryPayload;
   let route: DetectedTool = "normal_chat";
 
@@ -140,14 +130,6 @@ function mergeResults(
         importance: step.memory.importance,
       };
     }
-
-    if (step.searchResults?.success) {
-      searchResults = {
-        query: step.searchResults.query,
-        results: step.searchResults.results,
-        provider_used: step.searchResults.provider_used,
-      };
-    }
   }
 
   if (replyParts.length > 0) {
@@ -162,7 +144,6 @@ function mergeResults(
       : undefined,
     image,
     memory,
-    searchResults,
   };
 }
 
@@ -197,17 +178,9 @@ async function _orchestrateInner(
 
   console.log(`[ORCHESTRATOR] Processing: "${userMessage.slice(0, 80)}..."`);
 
-  // Pre-classify to decide if this query needs real-time data
-  const preClassification = classifyQueryType(userMessage);
-  const forceSearch = preClassification.needsWebSearch || shouldForceWebSearch(userMessage);
-
-  console.log(`[Classifier] queryType: ${preClassification.category} (rule: ${preClassification.matchedRule}, forceSearch: ${forceSearch})`);
-
   // 0. Check LLM answer cache
-  //    SKIP cache for queries that need web search — cached answers would
-  //    contain stale training-data responses, not real-time information.
   const hasRawFiles = (rawContext?.file_references?.length ?? 0) > 0;
-  if (!hasRawFiles && !forceSearch) {
+  if (!hasRawFiles) {
     const cachedReply = getCachedAnswer(userMessage);
     if (cachedReply) {
       console.log(`[ORCHESTRATOR] returning cached answer`);
@@ -252,29 +225,17 @@ async function _orchestrateInner(
       console.log(`[ORCHESTRATOR] memory pipeline error: ${err instanceof Error ? err.message : err}`);
     });
 
-  // 2. Query classifier safety net — override planner if it missed web search
+  // 2. Execute the plan
   let finalPlan = plan;
-  if (forceSearch) {
-    const hasWebSearchStep = plan.steps.some(s => s.tool === "web_search");
-    if (!hasWebSearchStep) {
-      console.log(`[ORCHESTRATOR] classifier override: forcing web_search (rule: ${preClassification.matchedRule})`);
-      const searchQuery = buildSearchQuery(userMessage);
-      finalPlan = {
-        steps: [{ step: 1, tool: "web_search" as PlanTool, input: searchQuery }],
-      };
-    }
-  }
-
-  // 3. Execute the plan
   const execution = await executePlan(finalPlan.steps, ctx);
 
-  // 4. Wait for memory pipeline before merging (it ran in background)
+  // 3. Wait for memory pipeline before merging (it ran in background)
   await memoryPromise;
 
-  // 5. Merge step results into a single response
+  // 4. Merge step results into a single response
   const merged = mergeResults(execution.steps, memoryPayload);
 
-  // 5. Self-Reflection Loop
+  // 4. Self-Reflection Loop
   //    Only runs on text replies ≥ 100 chars.
   //    Skips image-only, memory-only, or short responses.
   const reflected = await reflectOnAnswer(userMessage, merged);
@@ -285,15 +246,12 @@ async function _orchestrateInner(
     confidence: 1.0,
   };
 
-  // 6. Cache the final answer for future identical queries
+  // 5. Cache the final answer for future identical queries
   //    Only cache conversation replies (not images, file analysis, or memory updates).
-  //    NEVER cache responses for queries that needed web search — real-time
-  //    data goes stale and would prevent future search execution.
   if (
     finalResponse.reply &&
     finalResponse.route === "normal_chat" &&
-    !hasRawFiles &&
-    !forceSearch
+    !hasRawFiles
   ) {
     setCachedAnswer(userMessage, finalResponse.reply);
   }

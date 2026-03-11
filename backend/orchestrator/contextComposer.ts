@@ -9,7 +9,6 @@
 //   2. file context
 //   3. conversation history
 //   4. memory
-//   5. web search
 
 import {
   CONTEXT_BUDGET,
@@ -20,8 +19,6 @@ import {
 
 // ── Per-item limits for collections ──
 const MAX_MEMORY_ITEM_CHARS  = 2_000;
-const MAX_SEARCH_RESULT_CHARS = 1_500;
-const MAX_SEARCH_RESULTS      = 3;
 const MAX_FILE_CHARS          = 40_000;
 
 // ── Inputs accepted by the composer ──
@@ -33,7 +30,6 @@ export interface ComposerInput {
   conversationSummary?: string;
   memories?: readonly { type: string; summary: string; importance?: number }[];
   fileReferences?: readonly { filename: string; extractedText: string }[];
-  webSearchContext?: string;
 }
 
 // ── Truncation helpers for individual items ──
@@ -112,29 +108,6 @@ function buildMemoryBlock(
 }
 
 /**
- * Limit search context to MAX_SEARCH_RESULTS and truncate each result.
- */
-function buildSearchBlock(raw: string | undefined): string {
-  if (!raw) return "";
-  // The upstream already formats as "[Source N] …" blocks separated by \n\n.
-  const blocks = raw.split(/\n{2,}/).filter(Boolean);
-  const kept = blocks.slice(0, MAX_SEARCH_RESULTS).map((b) =>
-    b.length > MAX_SEARCH_RESULT_CHARS
-      ? b.slice(0, MAX_SEARCH_RESULT_CHARS) + "…"
-      : b,
-  );
-  return (
-    "SEARCH CONTEXT:\n" +
-    kept.join("\n\n") +
-    "\n\n" +
-    "NOTE: The search results above were retrieved just now. " +
-    "If they are relevant, use them to support your answer and cite with [Source N]. " +
-    "If they are incomplete or irrelevant, use your own knowledge to answer the user's question. " +
-    "Do NOT refuse to answer just because search results are insufficient.\n"
-  );
-}
-
-/**
  * Build the file context block (all uploaded files combined).
  */
 function buildFileBlock(
@@ -181,7 +154,6 @@ export function composeContext(input: ComposerInput): string {
       CONTEXT_BUDGET.conversation,
     ),
     memory: buildMemoryBlock(input.memories ?? []),
-    search: buildSearchBlock(input.webSearchContext),
   };
 
   // ── 2. Enforce per-slot budgets ──
@@ -191,7 +163,6 @@ export function composeContext(input: ComposerInput): string {
   console.log(`[ContextComposer] system    chars=${safe.system.length}`);
   console.log(`[ContextComposer] conversation chars=${safe.conversation.length}`);
   console.log(`[ContextComposer] memory    chars=${safe.memory.length}`);
-  console.log(`[ContextComposer] search    chars=${safe.search.length}`);
   console.log(`[ContextComposer] file      chars=${safe.file.length}`);
   console.log(`[ContextComposer] user      chars=${safe.user.length}`);
 
@@ -203,8 +174,7 @@ export function composeContext(input: ComposerInput): string {
     (safe.memory   ? "\n" + safe.memory   : "") +
     (safe.conversation ? "\n" + safe.conversation : "") +
     (safe.file     ? "\n" + safe.file     : "") +
-    safe.user +
-    (safe.search   ? "\n" + safe.search   : "");
+    safe.user;
 
   // ── 5. Hard ceiling guard ──
   let finalPrompt: string;

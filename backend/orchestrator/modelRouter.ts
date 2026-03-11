@@ -6,20 +6,16 @@
 // Detection priority (first match wins):
 //   1. vision          → gemini (Gemini vision-capable model)
 //   2. coding          → qwen3-coder   (Pollinations)
-//   3. search          → gemini-search  (Pollinations)
-//   4. general_chat    → gemini-fast    (Pollinations)
+//   3. general_chat    → gemini-fast    (Pollinations)
 //
 // Gemini direct API is NEVER selected by the router.
 // It is a last-resort fallback handled by the Python gateway.
 
-import type { QueryCategory } from "./queryClassifier";
-
-export type QueryType = QueryCategory;
+export type QueryType = string;
 
 export type PromptModelCategory =
   | "coding"
   | "vision"
-  | "search"
   | "general_chat";
 
 // ── Coding detection ──
@@ -101,26 +97,6 @@ const VISION_PATTERNS: readonly RegExp[] = [
   /\bextract\s+(?:text|data)\s+from\s+(?:this\s+)?(?:image|photo|screenshot)\b/i,
 ];
 
-// ── Web search detection ──
-// Queries needing current or real-time information.
-const SEARCH_PATTERNS: readonly RegExp[] = [
-  /\blatest\b/i,
-  /\bcurrent(?:ly)?\b/i,
-  /\btoday\b/i,
-  /\brecent(?:ly)?\b/i,
-  /\bnews\b/i,
-  /\bannouncement\b/i,
-  /\bprice\b/i,
-  /\bstatistics\b/i,
-  /\btrending\b/i,
-  /\bwho\s+won\b/i,
-  /\bscore\b/i,
-  /\bweather\b/i,
-  /\bstock\b/i,
-  /\bupdate[sd]?\b/i,
-  /\b20(?:2[5-9]|[3-9]\d)\b/,
-];
-
 interface RouterOptions {
   hasImage?: boolean;
   hasFile?: boolean;
@@ -154,20 +130,7 @@ function detectPromptCategory(
     }
   }
 
-  // 3. SEARCH — queries needing current information.
-  if (
-    classification === "real_time_information" ||
-    classification === "factual_lookup"
-  ) {
-    return "search";
-  }
-  for (const pattern of SEARCH_PATTERNS) {
-    if (pattern.test(query)) {
-      return "search";
-    }
-  }
-
-  // 4. GENERAL CHAT — everything else → gemini-fast via Pollinations.
+  // 3. GENERAL CHAT — everything else → gemini-fast via Pollinations.
   return "general_chat";
 }
 
@@ -176,9 +139,8 @@ function detectPromptCategory(
  *
  * All primary routes go through Pollinations:
  *   1. qwen3-coder   — coding tasks
- *   2. gemini-search  — queries needing current data
- *   3. gemini-fast    — general conversation & lightweight
- *   4. gemini (vision) — image tasks (Gemini direct)
+ *   2. gemini-fast    — general conversation & lightweight
+ *   3. gemini (vision) — image tasks (Gemini direct)
  *
  * Gemini direct API is ONLY used for vision or as a last-resort fallback
  * (handled by the Python gateway, not selected here).
@@ -199,10 +161,6 @@ export function selectModelForPrompt(
     case "coding":
       model = "qwen3-coder";
       console.log(`[Router] category=coding → qwen3-coder (Pollinations)`);
-      break;
-    case "search":
-      model = "gemini-search";
-      console.log(`[Router] category=search → gemini-search (Pollinations)`);
       break;
     case "general_chat":
     default:
