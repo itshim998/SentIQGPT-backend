@@ -167,14 +167,21 @@ export function composeContext(input: ComposerInput): string {
   console.log(`[ContextComposer] user      chars=${safe.user.length}`);
 
   // ── 4. Assemble in priority order ──
-  // Sections are ordered so that if the model's context window is smaller
-  // than the prompt it will see the most important parts first.
-  const assembled =
-    safe.system +
-    (safe.memory   ? "\n" + safe.memory   : "") +
-    (safe.conversation ? "\n" + safe.conversation : "") +
-    (safe.file     ? "\n" + safe.file     : "") +
-    safe.user;
+  // When files are present, they take priority over memory.
+  // Order: system → user → file → conversation → memory
+  // This ensures that if the hard ceiling truncates the end,
+  // the file content and user question survive.
+  const hasFiles = safe.file.length > 0;
+  const assembled = hasFiles
+    ? safe.system +
+      safe.user +
+      "\n" + safe.file +
+      (safe.conversation ? "\n" + safe.conversation : "") +
+      (safe.memory ? "\n" + safe.memory : "")
+    : safe.system +
+      (safe.memory   ? "\n" + safe.memory   : "") +
+      (safe.conversation ? "\n" + safe.conversation : "") +
+      safe.user;
 
   // ── 5. Hard ceiling guard ──
   let finalPrompt: string;

@@ -260,7 +260,9 @@ export interface ChatContext {
 }
 
 export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
-  const SYSTEM_PROMPT =
+  const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
+
+  let SYSTEM_PROMPT =
     "SYSTEM: You are SentIQGPT, a knowledgeable and helpful AI assistant.\n" +
     "SAFETY RULES:\n" +
     "- Never generate harmful, illegal, or dangerous content.\n" +
@@ -273,13 +275,27 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     "Do NOT provide diagnosis, treatment instructions, or medical advice.\n" +
     "OUTPUT: Respond in clear, helpful natural language.\n";
 
+  // When files are present, add explicit file-analysis instructions
+  if (hasFiles) {
+    const filenames = ctx.fileReferences!.map((f) => f.filename).join(", ");
+    SYSTEM_PROMPT +=
+      "\nFILE ANALYSIS MODE:\n" +
+      `- The user has uploaded file(s): ${filenames}\n` +
+      "- The full extracted content of these files is provided below.\n" +
+      "- Base your answers ONLY on the actual file content provided.\n" +
+      "- If the file content says extraction failed, tell the user honestly.\n" +
+      "- Do NOT hallucinate or invent file content.\n" +
+      "- Do NOT reference files from previous conversations.\n" +
+      "- Prioritize answering about the uploaded file over any other context.\n";
+  }
+
   // Delegate prompt assembly + budget enforcement to the Context Composer.
   const finalPrompt = composeContext({
     systemPrompt: SYSTEM_PROMPT,
     userMessage: ctx.userMessage,
     conversation: ctx.recentMessages,
     conversationSummary: ctx.conversationSummary,
-    memories: ctx.memories,
+    memories: hasFiles ? [] : ctx.memories, // When files present, skip memory to avoid confusion
     fileReferences: ctx.fileReferences,
   });
 

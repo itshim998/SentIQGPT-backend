@@ -154,33 +154,64 @@ export async function extractTextFromFile(args: {
   };
 }
 
-// Basic PDF text extraction (best-effort without heavy dependencies)
+// Reliable PDF text extraction using pdf-parse
+let _pdfParse: ((buf: Buffer) => Promise<{ text: string }>) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const mod = require("pdf-parse");
+  _pdfParse = typeof mod === "function" ? mod : (mod.default ?? null);
+  if (_pdfParse) console.log("[File Parser] pdf-parse loaded successfully");
+} catch {
+  console.warn("[File Parser] pdf-parse not available — PDF extraction will use fallback");
+}
+
 async function extractPdfText(buffer: Buffer): Promise<string> {
-  // Try to find readable text in the PDF buffer
-  // This is a lightweight fallback — for production, install pdf-parse
-  try {
-    const pdfParse = await import("pdf-parse");
-    const parseFn = (pdfParse as any).default || pdfParse;
-    if (typeof parseFn === "function") {
-      const data = await parseFn(buffer);
-      return data.text || "";
+  // Primary: use pdf-parse
+  if (_pdfParse) {
+    try {
+      const data = await _pdfParse(buffer);
+      const raw = data.text || "";
+
+      // Quality check: pdf-parse can return empty or garbage for scanned PDFs
+      const cleaned = raw
+        .replace(/\r\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+
+      if (cleaned.length < 20) {
+        console.warn(`[File Parser] PDF text too short (${cleaned.length} chars) — may be scanned/image-based`);
+        return "[This PDF appears to be scanned or image-based. Text extraction returned minimal content. " +
+               "The user should be informed that the file could not be fully read.]\n\n" +
+               (cleaned || "(no text extracted)");
+      }
+
+      // Truncate very large PDFs to avoid context overflow
+      const MAX_PDF_CHARS = 50_000;
+      if (cleaned.length > MAX_PDF_CHARS) {
+        console.log(`[File Parser] PDF text truncated: ${cleaned.length} → ${MAX_PDF_CHARS} chars`);
+        return cleaned.slice(0, MAX_PDF_CHARS) + "\n\n[... PDF content truncated to fit context window ...]";
+      }
+
+      return cleaned;
+    } catch (err) {
+      console.error(`[File Parser] pdf-parse error:`, err instanceof Error ? err.message : err);
+      // Fall through to fallback
     }
-  } catch {
-    // pdf-parse not installed — fall back to regex extraction
   }
 
-  // Fallback: extract readable ASCII strings from the PDF
+  // Fallback: extract readable ASCII strings from the PDF binary
   const text = buffer.toString("latin1");
   const matches = text.match(/\(([^()]{2,})\)/g);
   if (matches) {
-    return matches
+    const extracted = matches
       .map((m) => m.slice(1, -1))
       .filter((s) => /[a-zA-Z]/.test(s))
       .join(" ")
       .slice(0, 10000);
+    if (extracted.length > 50) return extracted;
   }
 
-  return "[Could not extract text from PDF]";
+  return "[Could not extract text from this PDF. The file may be scanned, image-based, or encrypted.]";
 }
 
 // Use LLM to describe an image (if multimodal support available)
