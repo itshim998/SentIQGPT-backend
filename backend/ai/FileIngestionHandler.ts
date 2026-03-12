@@ -161,6 +161,8 @@ export async function extractTextFromFile(args: {
 
 // Reliable PDF text extraction using pdf-parse v2
 // v2 exports a PDFParse class (not a function like v1).
+// The bundled pdf.js requires a worker; we point it at the co-located .mjs file
+// using a file:// URL so it works in Node.js on both Windows and Linux.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _PDFParseClass: any = null;
 try {
@@ -169,9 +171,18 @@ try {
   _PDFParseClass = mod.PDFParse ?? null;
   if (_PDFParseClass) {
     console.log("[File Parser] pdf-parse v2 PDFParse class loaded");
-    // Disable worker for Node.js server-side usage
     if (typeof _PDFParseClass.setWorker === "function") {
-      _PDFParseClass.setWorker("");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const _path = require("path");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const _url = require("url");
+      const workerFile = _path.resolve(
+        _path.dirname(require.resolve("pdf-parse")),
+        "pdf.worker.mjs",
+      );
+      const workerURL = _url.pathToFileURL(workerFile).href;
+      _PDFParseClass.setWorker(workerURL);
+      console.log("[File Parser] pdf.js worker configured:", workerURL);
     }
   }
 } catch {
