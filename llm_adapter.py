@@ -315,6 +315,55 @@ def _invoke_gemini(prompt: str, model_override: Optional[str] = None) -> str:
 
     raise RuntimeError(f"All {len(GEMINI_API_KEYS)} Gemini keys failed: {last_error}")
 
+
+def _call_gemini_vision(prompt: str, image_base64: str, mime_type: str, api_key: str, model: Optional[str] = None) -> str:
+    """Send a text + image multimodal request to Gemini Vision."""
+    if not GENAI_MODULE:
+        raise RuntimeError("Gemini SDK not installed")
+    if not api_key:
+        raise RuntimeError("Gemini API key is empty")
+    if not gemini_bucket.consume():
+        raise RuntimeError("Gemini rate limit exceeded")
+
+    import base64 as b64mod
+    # Validate base64 data
+    try:
+        raw_bytes = b64mod.b64decode(image_base64)
+    except Exception:
+        raise RuntimeError("Invalid base64 image data")
+    if len(raw_bytes) > 20 * 1024 * 1024:
+        raise RuntimeError("Image too large for vision analysis (max 20MB)")
+
+    with _gemini_configure_lock:
+        if hasattr(GENAI_MODULE, "configure"):
+            GENAI_MODULE.configure(api_key=api_key)
+        model_obj = GENAI_MODULE.GenerativeModel(model or GEMINI_VISION_MODEL)
+
+    content_parts = [
+        prompt,
+        {"inline_data": {"mime_type": mime_type, "data": image_base64}},
+    ]
+    resp = model_obj.generate_content(content_parts)
+    return getattr(resp, "text", str(resp))
+
+
+def _invoke_gemini_vision(prompt: str, image_base64: str, mime_type: str, model_override: Optional[str] = None) -> str:
+    """Try all Gemini keys for a vision request."""
+    if not GEMINI_API_KEYS:
+        raise RuntimeError("No Gemini API keys configured")
+
+    last_error = None
+    for idx, api_key in enumerate(GEMINI_API_KEYS, 1):
+        try:
+            result = _call_gemini_vision(prompt, image_base64, mime_type, api_key, model_override)
+            logger.info("Gemini Vision key #%d succeeded", idx)
+            return result
+        except Exception as e:
+            last_error = e
+            logger.warning("Gemini Vision key #%d failed: %s", idx, e)
+
+    raise RuntimeError(f"All {len(GEMINI_API_KEYS)} Gemini Vision keys failed: {last_error}")
+
 # ==============================
 # Groq invocation (key rotation)
 # ==============================

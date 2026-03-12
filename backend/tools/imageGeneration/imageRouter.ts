@@ -26,17 +26,62 @@ import { FluxSchnellProvider } from "./providers/fluxSchnellProvider";
 import { FluxDevProvider } from "./providers/fluxDevProvider";
 import { PollinationsProvider } from "./providers/pollinationsProvider";
 import { HuggingFaceProvider } from "./providers/huggingfaceProvider";
+import { KleinLargeProvider } from "./providers/kleinLargeProvider";
 
 // ==============================
 // Provider registry (order = priority)
 // ==============================
 
-const providers: readonly ImageProvider[] = [
+// Standard providers (simple/moderate prompts)
+const standardProviders: readonly ImageProvider[] = [
   new FluxSchnellProvider(),   // 1. Pollinations Flux Schnell (primary)
   new HuggingFaceProvider(),   // 2. HuggingFace SDXL (fast fallback with API key)
   new FluxDevProvider(),        // 3. Pollinations FLUX.2 Dev
   new PollinationsProvider(),   // 4. Pollinations Z-Image Turbo
 ];
+
+// Complex providers (text, spatial, multi-element prompts)
+const complexProviders: readonly ImageProvider[] = [
+  new KleinLargeProvider(),     // 1. Klein-large (spatial/text rendering)
+  new FluxDevProvider(),        // 2. FLUX.2 Dev (fallback)
+  new FluxSchnellProvider(),    // 3. Flux Schnell (fallback)
+  new HuggingFaceProvider(),    // 4. HuggingFace SDXL (fallback)
+  new PollinationsProvider(),   // 5. Z-Image Turbo (fallback)
+];
+
+// Backward-compatible reference for logging
+const providers = standardProviders;
+
+// ==============================
+// Prompt complexity detection
+// ==============================
+
+const COMPLEXITY_PATTERNS: readonly RegExp[] = [
+  // Text in image
+  /\b(?:text|sign|say(?:s|ing)?|word(?:s)?|letter(?:s)?|written|writing|caption|label|banner|slogan|quote)\b/i,
+  // Spatial relationships
+  /\b(?:holding|carry(?:ing)?|wear(?:ing)?|standing\s+(?:in front of|behind|next to|beside|near))\b/i,
+  /\b(?:in front of|behind|next to|on top of|surrounded by|inside|between)\b/i,
+  // Multi-element composition
+  /\b(?:multiple|several|three|four|five|six|seven|eight|many|group of|crowd)\b/i,
+  // Specific poses / actions
+  /\b(?:pointing at|looking at|reaching for|sitting on|leaning against)\b/i,
+  // Highly detailed scenes
+  /\b(?:cinematic scene|photorealistic|hyper.?realistic|ultra.?detailed scene)\b/i,
+];
+
+/**
+ * Detect whether a prompt requires complex generation (spatial reasoning, text, multi-element).
+ * Returns true if the prompt likely benefits from klein-large.
+ */
+export function detectPromptComplexity(prompt: string): boolean {
+  let matchCount = 0;
+  for (const pattern of COMPLEXITY_PATTERNS) {
+    if (pattern.test(prompt)) matchCount++;
+  }
+  // Require at least 1 match to route to complex
+  return matchCount >= 1;
+}
 
 // ==============================
 // Per-provider cooldown tracking
@@ -145,9 +190,11 @@ async function executeImageGeneration(args: {
 }): Promise<ImageGenerationResult> {
   const errors: string[] = [];
   const startTime = Date.now();
-  console.log(`[IMAGE] routing prompt="${args.prompt.slice(0, 60)}..." providers=${providers.length}`);
+  const isComplex = detectPromptComplexity(args.prompt);
+  const selectedProviders = isComplex ? complexProviders : standardProviders;
+  console.log(`[IMAGE] routing prompt="${args.prompt.slice(0, 60)}..." complex=${isComplex} providers=${selectedProviders.length}`);
 
-  for (const provider of providers) {
+  for (const provider of selectedProviders) {
     // Skip unavailable providers (missing API keys, etc.)
     if (!provider.isAvailable()) {
       console.log(`[IMAGE] provider=${provider.name} skipped reason=not_configured`);

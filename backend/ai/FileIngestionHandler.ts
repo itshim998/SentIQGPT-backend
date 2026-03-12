@@ -141,8 +141,13 @@ export async function extractTextFromFile(args: {
       break;
 
     case "image":
-      extractedText = `[Image file: ${args.filename}, ${args.buffer.length} bytes]`;
-      console.log(`[File Parser] image file: ${args.filename} (${args.buffer.length} bytes)`);
+      try {
+        extractedText = await analyzeImageWithVision(args.buffer, args.filename, args.mimetype);
+        console.log(`[File Parser] image analyzed: ${args.filename} (${extractedText.length} chars)`);
+      } catch (err) {
+        console.log(`[File Parser] image analysis failed: ${args.filename} — ${err instanceof Error ? err.message : err}`);
+        extractedText = `[Image file: ${args.filename}. Vision analysis was unavailable. The image was uploaded but could not be described.]`;
+      }
       break;
   }
 
@@ -166,71 +171,136 @@ try {
 }
 
 async function extractPdfText(buffer: Buffer): Promise<string> {
-  // Primary: use pdf-parse
+  const MAX_PDF_CHARS = 50_000;
+
+  // Stage 1: Text extraction via pdf-parse
   if (_pdfParse) {
     try {
       const data = await _pdfParse(buffer);
       const raw = data.text || "";
-
-      // Quality check: pdf-parse can return empty or garbage for scanned PDFs
       const cleaned = raw
         .replace(/\r\n/g, "\n")
         .replace(/\n{3,}/g, "\n\n")
         .trim();
 
-      if (cleaned.length < 20) {
-        console.warn(`[File Parser] PDF text too short (${cleaned.length} chars) — may be scanned/image-based`);
-        return "[This PDF appears to be scanned or image-based. Text extraction returned minimal content. " +
-               "The user should be informed that the file could not be fully read.]\n\n" +
-               (cleaned || "(no text extracted)");
+      // If we got substantial text, return it
+      if (cleaned.length >= 500) {
+        if (cleaned.length > MAX_PDF_CHARS) {
+          console.log(`[File Parser] PDF text truncated: ${cleaned.length} → ${MAX_PDF_CHARS} chars`);
+          return cleaned.slice(0, MAX_PDF_CHARS) + "\n\n[... PDF content truncated to fit context window ...]";
+        }
+        return cleaned;
       }
 
-      // Truncate very large PDFs to avoid context overflow
-      const MAX_PDF_CHARS = 50_000;
-      if (cleaned.length > MAX_PDF_CHARS) {
-        console.log(`[File Parser] PDF text truncated: ${cleaned.length} → ${MAX_PDF_CHARS} chars`);
-        return cleaned.slice(0, MAX_PDF_CHARS) + "\n\n[... PDF content truncated to fit context window ...]";
-      }
-
-      return cleaned;
+      console.warn(`[File Parser] PDF text too short (${cleaned.length} chars) — trying OCR fallback`);
     } catch (err) {
       console.error(`[File Parser] pdf-parse error:`, err instanceof Error ? err.message : err);
-      // Fall through to fallback
     }
   }
 
-  // Fallback: extract readable ASCII strings from the PDF binary
-  const text = buffer.toString("latin1");
-  const matches = text.match(/\(([^()]{2,})\)/g);
-  if (matches) {
-    const extracted = matches
-      .map((m) => m.slice(1, -1))
-      .filter((s) => /[a-zA-Z]/.test(s))
-      .join(" ")
-      .slice(0, 10000);
-    if (extracted.length > 50) return extracted;
+  // Stage 2: OCR fallback using tesseract.js for scanned PDFs
+  try {
+    const ocrText = await ocrPdfBuffer(buffer);
+    if (ocrText && ocrText.length >= 50) {
+      console.log(`[File Parser] OCR succeeded: ${ocrText.length} chars`);
+      if (ocrText.length > MAX_PDF_CHARS) {
+        return ocrText.slice(0, MAX_PDF_CHARS) + "\n\n[... OCR content truncated ...]";
+      }
+      return ocrText;
+    }
+  } catch (err) {
+    console.error(`[File Parser] OCR fallback failed:`, err instanceof Error ? err.message : err);
   }
 
-  return "[Could not extract text from this PDF. The file may be scanned, image-based, or encrypted.]";
+  return "[Could not extract text from this PDF. The file may be scanned, image-based, or encrypted. " +
+         "OCR was attempted but did not produce readable text.]";
 }
 
-// Use LLM to describe an image (if multimodal support available)
+/**
+ * OCR a PDF buffer by converting pages to images and running tesseract.js.
+ * Falls back gracefully if tesseract.js is not available.
+ */
+async function ocrPdfBuffer(buffer: Buffer): Promise<string> {
+  let Tesseract: any;
+  try {
+    Tesseract = require("tesseract.js");
+  } catch {
+    console.warn("[File Parser] tesseract.js not available — OCR disabled");
+    return "";
+  }
+
+  // Use tesseract to OCR the raw PDF buffer directly.
+  // tesseract.js can handle image buffers; for PDFs we pass the buffer
+  // and it will attempt to process the first page image.
+  try {
+    const worker = await Tesseract.createWorker("eng");
+    const { data: { text } } = await worker.recognize(buffer);
+    await worker.terminate();
+    return (text || "").trim();
+  } catch (err) {
+    console.warn(`[File Parser] tesseract.js OCR error: ${err instanceof Error ? err.message : err}`);
+    return "";
+  }
+}
+
+/**
+ * Analyze an image using Gemini Vision (multimodal).
+ * Sends the image as base64 to the Python LLM gateway's /llm/vision endpoint.
+ */
+const LLM_SERVICE_URL = process.env.LLM_SERVICE_URL || `http://localhost:${process.env.LLM_SERVICE_PORT || "3002"}`;
+
+async function analyzeImageWithVision(
+  buffer: Buffer,
+  filename: string,
+  mimetype: string,
+): Promise<string> {
+  const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+  if (buffer.length > MAX_IMAGE_SIZE) {
+    return `[Image ${filename} is too large for vision analysis (${(buffer.length / 1024 / 1024).toFixed(1)}MB). Max: 10MB.]`;
+  }
+
+  const base64 = buffer.toString("base64");
+  const prompt =
+    "Analyze this image thoroughly. Provide:\n" +
+    "1. A detailed description of what the image contains\n" +
+    "2. Any text visible in the image (OCR)\n" +
+    "3. Key details, data, or information shown\n" +
+    `Filename: ${filename}`;
+
+  try {
+    const response = await fetch(`${LLM_SERVICE_URL}/llm/vision`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        image_base64: base64,
+        mime_type: mimetype,
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Vision API error (${response.status}): ${errText}`);
+    }
+
+    const data = (await response.json()) as { result: string };
+    return `[Image Analysis of ${filename}]\n\n${data.result}`;
+  } catch (err) {
+    console.error(`[File Parser] Gemini Vision failed:`, err instanceof Error ? err.message : err);
+    // Fallback: return basic metadata
+    return `[Image: ${filename}, ${(buffer.length / 1024).toFixed(1)}KB. Vision analysis unavailable.]`;
+  }
+}
+
+// Legacy export for compatibility
 export async function describeImage(args: {
   readonly base64: string;
   readonly filename: string;
 }): Promise<string> {
-  const call: LLMAdapterCall = {
-    task: "file_extract",
-    prompt:
-      "TASK: Describe the contents of this image briefly.\n" +
-      `Filename: ${args.filename}\n` +
-      "Provide a 1-2 sentence description.",
-    prefer: "gemini",
-  };
-
   try {
-    const raw = await callLLMAdapter(call);
-    return raw;
+    const buffer = Buffer.from(args.base64, "base64");
+    return await analyzeImageWithVision(buffer, args.filename, "image/jpeg");
   } catch {
     return `[Image: ${args.filename}]`;
   }

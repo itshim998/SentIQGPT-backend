@@ -140,6 +140,40 @@ async def stream_llm(request: LLMInvokeRequest):
 
 
 # ============================
+# Vision (multimodal) endpoint
+# ============================
+
+class VisionRequest(BaseModel):
+    prompt: str
+    image_base64: str
+    mime_type: str = "image/jpeg"
+    model_override: Optional[str] = None
+
+@app.post("/llm/vision")
+async def vision_llm(request: VisionRequest):
+    """Analyze an image using Gemini Vision (multimodal)."""
+    if not request.prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt must be non-empty")
+    if not request.image_base64:
+        raise HTTPException(status_code=400, detail="image_base64 must be non-empty")
+    # Limit base64 payload: ~20MB decoded
+    if len(request.image_base64) > 28_000_000:
+        raise HTTPException(status_code=400, detail="Image too large (max ~20MB)")
+    try:
+        from llm_adapter import _invoke_gemini_vision
+        result = _invoke_gemini_vision(
+            prompt=request.prompt,
+            image_base64=request.image_base64,
+            mime_type=request.mime_type,
+            model_override=request.model_override,
+        )
+        return {"result": result, "provider": "gemini-vision"}
+    except Exception as e:
+        logger.error("Vision invocation failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================
 # Embedding endpoint
 # ============================
 
