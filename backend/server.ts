@@ -131,26 +131,6 @@ function formatZodError(err: ZodError): string {
   return err.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join("; ");
 }
 
-// ---- File Reference Detector ----
-// Only include file context when the user explicitly refers to an uploaded file.
-const FILE_REFERENCE_PATTERNS: readonly RegExp[] = [
-  /\b(?:from|in|about|analyze|summarize|explain|read|extract|check|review|look at)\s+(?:the\s+)?(?:uploaded?\s+)?(?:file|pdf|document|image|photo|picture|attachment)\b/i,
-  /\b(?:in|from)\s+(?:the|that|this)\s+(?:pdf|doc|file|image|document|attachment|upload)\b/i,
-  /\bupload(?:ed)?\s+file\b/i,
-  /\bthe\s+(?:pdf|document|image|file)\b/i,
-  /\bwhat\s+(?:does|is)\s+(?:the|this|that)\s+(?:file|pdf|document|image)\b/i,
-  /\b(?:according\s+to|based\s+on)\s+(?:the\s+)?(?:file|pdf|document|image)\b/i,
-  /\b(?:from|in)\s+(?:the\s+)?(?:offer.letter|resume|cv|report|invoice|screenshot|diagram|chart)\b/i,
-  /\b(?:what|who|when|where|how|why|tell\s+me|can\s+you)\s+.*(?:file|pdf|document|image|picture|photo)\b/i,
-];
-
-function detectFileReference(message: string): boolean {
-  for (const pattern of FILE_REFERENCE_PATTERNS) {
-    if (pattern.test(message)) return true;
-  }
-  return false;
-}
-
 // ---- File Session Manager ----
 // Maintains the most recently uploaded file per IP to prevent old file references.
 interface FileSession {
@@ -224,10 +204,12 @@ app.post(
     }
 
     // v2: Route through the AI orchestrator
-    // Only include file context when user explicitly references a file
-    const rawOrcFileRefs = parsed.data.context?.file_references;
-    const orcUserReferencesFile = detectFileReference(parsed.data.message);
-    const orcFileRefs = orcUserReferencesFile ? rawOrcFileRefs : undefined;
+    // Always include file_references when present — the frontend only sends
+    // the current session file (scoped correctly), so no backend gating needed.
+    const orcFileRefs = parsed.data.context?.file_references;
+    if (Array.isArray(orcFileRefs) && orcFileRefs.length > 0) {
+      console.log(`[File] orchestrator: ${orcFileRefs.length} file(s) included in context`);
+    }
 
     const result = await orchestrate({
       userMessage: parsed.data.message,
@@ -281,19 +263,14 @@ app.post(
     let clientDisconnected = false;
     req.on("close", () => { clientDisconnected = true; });
 
-    // Detect file presence for router awareness
-    // Only include file context when user explicitly references a file
-    const rawFileRefs = parsed.data.context?.file_references;
-    const userReferencesFile = detectFileReference(parsed.data.message);
-    const fileRefs = userReferencesFile ? rawFileRefs : undefined;
+    // Always include file_references when present — the frontend only sends
+    // the current session file (scoped correctly), so no backend gating needed.
+    const fileRefs = parsed.data.context?.file_references;
     const hasFile = Array.isArray(fileRefs) && fileRefs.length > 0;
     const hasImage = hasFile && fileRefs.some((f: { filename?: string }) =>
       /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(f.filename || "")
     );
-    if (hasFile) console.log(`[File] ${fileRefs.length} file(s) in context, hasImage: ${hasImage}`);
-    if (!userReferencesFile && Array.isArray(rawFileRefs) && rawFileRefs.length > 0) {
-      console.log(`[File] ${rawFileRefs.length} file(s) available but user did not reference them — skipping file context`);
-    }
+    if (hasFile) console.log(`[File] stream: ${fileRefs.length} file(s) in context, hasImage: ${hasImage}`);
 
     const modelOverride = selectModelForPrompt(parsed.data.message, undefined, { hasImage, hasFile });
 
@@ -301,7 +278,7 @@ app.post(
     const ctx = await buildContext({
       recent_messages: parsed.data.context?.recent_messages,
       memories: parsed.data.context?.memories,
-      file_references: fileRefs,  // Only included when user references a file
+      file_references: fileRefs,
       userMessage: parsed.data.message,
     });
 
