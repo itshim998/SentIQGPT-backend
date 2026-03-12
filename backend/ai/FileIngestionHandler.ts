@@ -159,48 +159,68 @@ export async function extractTextFromFile(args: {
   };
 }
 
-// Reliable PDF text extraction using pdf-parse
-let _pdfParse: ((buf: Buffer) => Promise<{ text: string }>) | null = null;
+// Reliable PDF text extraction using pdf-parse v2
+// v2 exports a PDFParse class (not a function like v1).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _PDFParseClass: any = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const mod = require("pdf-parse");
-  _pdfParse = typeof mod === "function" ? mod : (mod.default ?? null);
-  if (_pdfParse) console.log("[File Parser] pdf-parse loaded successfully");
+  _PDFParseClass = mod.PDFParse ?? null;
+  if (_PDFParseClass) {
+    console.log("[File Parser] pdf-parse v2 PDFParse class loaded");
+    // Disable worker for Node.js server-side usage
+    if (typeof _PDFParseClass.setWorker === "function") {
+      _PDFParseClass.setWorker("");
+    }
+  }
 } catch {
-  console.warn("[File Parser] pdf-parse not available — PDF extraction will use fallback");
+  console.warn("[File Parser] pdf-parse not available — PDF extraction disabled");
 }
 
 async function extractPdfText(buffer: Buffer): Promise<string> {
   const MAX_PDF_CHARS = 50_000;
 
-  // Extract text via pdf-parse (the only reliable PDF text extraction method)
-  if (_pdfParse) {
-    try {
-      const data = await _pdfParse(buffer);
-      const raw = data.text || "";
-      const cleaned = raw
-        .replace(/\r\n/g, "\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
-
-      if (cleaned.length > 0) {
-        if (cleaned.length > MAX_PDF_CHARS) {
-          console.log(`[File Parser] PDF text truncated: ${cleaned.length} → ${MAX_PDF_CHARS} chars`);
-          return cleaned.slice(0, MAX_PDF_CHARS) + "\n\n[... PDF content truncated to fit context window ...]";
-        }
-        return cleaned;
-      }
-
-      console.warn(`[File Parser] pdf-parse returned no text — PDF may be scanned/image-based`);
-    } catch (err) {
-      console.error(`[File Parser] pdf-parse error:`, err instanceof Error ? err.message : err);
-    }
-  } else {
-    console.warn(`[File Parser] pdf-parse not loaded — cannot extract PDF text`);
+  if (!_PDFParseClass) {
+    console.warn("[PDF] PDFParse class not loaded — cannot extract text");
+    return "[Could not extract text from this PDF. The pdf-parse library failed to load.]";
   }
 
-  // Note: tesseract.js CANNOT process PDF buffers directly — it only accepts image formats.
-  // OCR of scanned PDFs would require a PDF-to-image conversion step (not currently available).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let parser: any = null;
+  try {
+    parser = new _PDFParseClass({ data: buffer, verbosity: 0 });
+    const result = await parser.getText();
+    const raw: string = result?.text || "";
+    const pageCount: number = result?.total || 0;
+
+    console.log(`[PDF] extracted ${raw.length} chars from ${pageCount} page(s)`);
+
+    const cleaned = raw
+      .replace(/\r\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    console.log(`[PDF] cleaned text length: ${cleaned.length} chars`);
+
+    if (cleaned.length > 0) {
+      if (cleaned.length > MAX_PDF_CHARS) {
+        console.log(`[PDF] text truncated: ${cleaned.length} → ${MAX_PDF_CHARS} chars`);
+        return cleaned.slice(0, MAX_PDF_CHARS) + "\n\n[... PDF content truncated to fit context window ...]";
+      }
+      console.log(`[PDF] context length sent to LLM: ${cleaned.length} chars`);
+      return cleaned;
+    }
+
+    console.warn("[PDF] extraction returned no text — PDF may be scanned/image-based");
+  } catch (err) {
+    console.error("[PDF] extraction error:", err instanceof Error ? err.message : err);
+  } finally {
+    if (parser) {
+      try { await parser.destroy(); } catch { /* cleanup best-effort */ }
+    }
+  }
+
   return "[Could not extract text from this PDF. The file may be scanned, image-based, or encrypted. " +
          "If the PDF contains selectable text, please try re-uploading. " +
          "Scanned/image-based PDFs are not yet supported for text extraction.]";

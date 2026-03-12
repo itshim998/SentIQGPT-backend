@@ -451,6 +451,9 @@ app.post(
     });
 
     console.log(`[File Upload] ${result.filename} → type=${result.type}, extracted=${result.extracted_text.length} chars, size=${result.size_bytes}B`);
+    if (result.type === "pdf") {
+      console.log(`[PDF] chunks created: 1, context length sent to LLM: ${result.extracted_text.length}`);
+    }
 
     // Update file session for this client
     const clientIp = req.ip || req.socket.remoteAddress || "unknown";
