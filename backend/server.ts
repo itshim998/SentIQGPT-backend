@@ -96,6 +96,8 @@ app.use(
   helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: false,  // Allow cross-origin API responses
+    crossOriginOpenerPolicy: false,    // Allow cross-origin window context
     hsts: { maxAge: 31536000, includeSubDomains: true },
   }),
 );
@@ -617,6 +619,18 @@ app.get("/api/audit", (_req, res) => {
 // Global error handler
 // ===============================
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  // Handle multer errors (file too large, etc.) with clear messages
+  if (err && (err as any).code === "LIMIT_FILE_SIZE") {
+    console.warn(`[SentIQGPT] File upload rejected: file too large`);
+    res.status(413).json({ error: "File too large. Maximum size is 10MB." });
+    return;
+  }
+  if (err && err.message && err.message.includes("Multipart")) {
+    console.warn(`[SentIQGPT] Multer error: ${err.message}`);
+    res.status(400).json({ error: "Invalid file upload. Please try again." });
+    return;
+  }
+
   console.error("[SentIQGPT] Unhandled error:", err.message);
   res.status(500).json({ error: "Internal server error." });
 });
