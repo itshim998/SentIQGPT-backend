@@ -67,26 +67,28 @@ const ALLOWED_ORIGINS: string[] = process.env.CORS_ORIGINS
 
 console.log("[SentIQGPT v1] CORS allowed origins:", ALLOWED_ORIGINS);
 
-app.use(
-  cors({
-    origin(
-      requestOrigin: string | undefined,
-      callback: (err: Error | null, allow?: boolean | string) => void,
-    ) {
-      if (!requestOrigin) return callback(null, true);
-      if (ALLOWED_ORIGINS.includes(requestOrigin)) {
-        return callback(null, requestOrigin);
-      }
-      console.warn(`[CORS] Blocked request from origin: ${requestOrigin}`);
-      callback(new Error(`Origin ${requestOrigin} not allowed by CORS`));
-    },
-    methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type"],
-    credentials: false,
-  }),
-);
+const corsOptions: cors.CorsOptions = {
+  origin(
+    requestOrigin: string | undefined,
+    callback: (err: Error | null, allow?: boolean | string) => void,
+  ) {
+    // Allow requests with no origin (server-to-server, curl, etc.)
+    if (!requestOrigin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(requestOrigin)) {
+      return callback(null, requestOrigin);
+    }
+    // Reject silently — return false instead of throwing, so Express
+    // still sends headers and the browser gets a clean CORS rejection.
+    console.warn(`[CORS] Blocked request from origin: ${requestOrigin}`);
+    callback(null, false);
+  },
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: false,
+};
 
-app.options("*", cors());
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
 
 // ---- Security headers ----
