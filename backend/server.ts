@@ -658,3 +658,13 @@ function gracefulShutdown(signal: string) {
 }
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+// ---- Crash safety net ----
+// Prevent stray async throws (e.g. from native addons) from killing the process.
+process.on("uncaughtException", (err) => {
+  console.error("[SentIQGPT] UNCAUGHT EXCEPTION (kept alive):", err.message);
+  console.error(err.stack);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[SentIQGPT] UNHANDLED REJECTION (kept alive):", reason);
+});

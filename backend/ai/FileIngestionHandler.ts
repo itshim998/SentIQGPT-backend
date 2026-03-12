@@ -173,7 +173,7 @@ try {
 async function extractPdfText(buffer: Buffer): Promise<string> {
   const MAX_PDF_CHARS = 50_000;
 
-  // Stage 1: Text extraction via pdf-parse
+  // Extract text via pdf-parse (the only reliable PDF text extraction method)
   if (_pdfParse) {
     try {
       const data = await _pdfParse(buffer);
@@ -183,8 +183,7 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
         .replace(/\n{3,}/g, "\n\n")
         .trim();
 
-      // If we got substantial text, return it
-      if (cleaned.length >= 500) {
+      if (cleaned.length > 0) {
         if (cleaned.length > MAX_PDF_CHARS) {
           console.log(`[File Parser] PDF text truncated: ${cleaned.length} → ${MAX_PDF_CHARS} chars`);
           return cleaned.slice(0, MAX_PDF_CHARS) + "\n\n[... PDF content truncated to fit context window ...]";
@@ -192,55 +191,19 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
         return cleaned;
       }
 
-      console.warn(`[File Parser] PDF text too short (${cleaned.length} chars) — trying OCR fallback`);
+      console.warn(`[File Parser] pdf-parse returned no text — PDF may be scanned/image-based`);
     } catch (err) {
       console.error(`[File Parser] pdf-parse error:`, err instanceof Error ? err.message : err);
     }
+  } else {
+    console.warn(`[File Parser] pdf-parse not loaded — cannot extract PDF text`);
   }
 
-  // Stage 2: OCR fallback using tesseract.js for scanned PDFs
-  try {
-    const ocrText = await ocrPdfBuffer(buffer);
-    if (ocrText && ocrText.length >= 50) {
-      console.log(`[File Parser] OCR succeeded: ${ocrText.length} chars`);
-      if (ocrText.length > MAX_PDF_CHARS) {
-        return ocrText.slice(0, MAX_PDF_CHARS) + "\n\n[... OCR content truncated ...]";
-      }
-      return ocrText;
-    }
-  } catch (err) {
-    console.error(`[File Parser] OCR fallback failed:`, err instanceof Error ? err.message : err);
-  }
-
+  // Note: tesseract.js CANNOT process PDF buffers directly — it only accepts image formats.
+  // OCR of scanned PDFs would require a PDF-to-image conversion step (not currently available).
   return "[Could not extract text from this PDF. The file may be scanned, image-based, or encrypted. " +
-         "OCR was attempted but did not produce readable text.]";
-}
-
-/**
- * OCR a PDF buffer by converting pages to images and running tesseract.js.
- * Falls back gracefully if tesseract.js is not available.
- */
-async function ocrPdfBuffer(buffer: Buffer): Promise<string> {
-  let Tesseract: any;
-  try {
-    Tesseract = require("tesseract.js");
-  } catch {
-    console.warn("[File Parser] tesseract.js not available — OCR disabled");
-    return "";
-  }
-
-  // Use tesseract to OCR the raw PDF buffer directly.
-  // tesseract.js can handle image buffers; for PDFs we pass the buffer
-  // and it will attempt to process the first page image.
-  try {
-    const worker = await Tesseract.createWorker("eng");
-    const { data: { text } } = await worker.recognize(buffer);
-    await worker.terminate();
-    return (text || "").trim();
-  } catch (err) {
-    console.warn(`[File Parser] tesseract.js OCR error: ${err instanceof Error ? err.message : err}`);
-    return "";
-  }
+         "If the PDF contains selectable text, please try re-uploading. " +
+         "Scanned/image-based PDFs are not yet supported for text extraction.]";
 }
 
 /**
