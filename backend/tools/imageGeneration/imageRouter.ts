@@ -26,7 +26,7 @@ import { FluxSchnellProvider } from "./providers/fluxSchnellProvider";
 import { FluxDevProvider } from "./providers/fluxDevProvider";
 import { PollinationsProvider } from "./providers/pollinationsProvider";
 import { HuggingFaceProvider } from "./providers/huggingfaceProvider";
-import { KleinLargeProvider } from "./providers/kleinLargeProvider";
+import { GptImageProvider } from "./providers/gptImageProvider";
 
 // ==============================
 // Provider registry (order = priority)
@@ -42,9 +42,9 @@ const standardProviders: readonly ImageProvider[] = [
 
 // Complex providers (text, spatial, multi-element prompts)
 const complexProviders: readonly ImageProvider[] = [
-  new KleinLargeProvider(),     // 1. Klein-large (spatial/text rendering)
-  new FluxDevProvider(),        // 2. FLUX.2 Dev (fallback)
-  new FluxSchnellProvider(),    // 3. Flux Schnell (fallback)
+  new GptImageProvider(),       // 1. GPTImage (complex prompt primary)
+  new FluxSchnellProvider(),    // 2. Flux Schnell (fallback safety)
+  new FluxDevProvider(),        // 3. FLUX.2 Dev (fallback)
   new HuggingFaceProvider(),    // 4. HuggingFace SDXL (fallback)
   new PollinationsProvider(),   // 5. Z-Image Turbo (fallback)
 ];
@@ -72,7 +72,7 @@ const COMPLEXITY_PATTERNS: readonly RegExp[] = [
 
 /**
  * Detect whether a prompt requires complex generation (spatial reasoning, text, multi-element).
- * Returns true if the prompt likely benefits from klein-large.
+ * Returns true if the prompt likely benefits from the complex-provider path.
  */
 export function detectPromptComplexity(prompt: string): boolean {
   let matchCount = 0;
@@ -192,7 +192,9 @@ async function executeImageGeneration(args: {
   const startTime = Date.now();
   const isComplex = detectPromptComplexity(args.prompt);
   const selectedProviders = isComplex ? complexProviders : standardProviders;
-  console.log(`[IMAGE] routing prompt="${args.prompt.slice(0, 60)}..." complex=${isComplex} providers=${selectedProviders.length}`);
+  console.log(
+    `[IMAGE] routing prompt="${args.prompt.slice(0, 60)}..." complex=${isComplex} primary=${selectedProviders[0]?.name ?? "none"} providers=${selectedProviders.length}`,
+  );
 
   for (const provider of selectedProviders) {
     // Skip unavailable providers (missing API keys, etc.)

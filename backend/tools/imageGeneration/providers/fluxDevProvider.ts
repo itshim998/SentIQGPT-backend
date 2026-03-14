@@ -10,7 +10,7 @@ import { enhancePrompt, buildPollinationsUrl, fetchPollinationsImage, getPollina
 const FLUX_DEV_TIMEOUT_MS = 45_000;
 
 export class FluxDevProvider implements ImageProvider {
-  readonly name = "flux-dev";
+  readonly name = "flux-2-dev";
 
   isAvailable(): boolean {
     return Boolean(getPollinationsApiKey());
