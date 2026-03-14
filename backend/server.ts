@@ -25,6 +25,7 @@ import { processMessageForMemory, compressMemories } from "./ai/MemoryProcessor"
 import { extractTextFromFile, validateFileUpload } from "./ai/FileIngestionHandler";
 import { routeImageGeneration } from "./tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "./tools/chartGeneration/chartRouter";
+import { isChartRequest } from "./tools/chartGeneration/chartDetector";
 import { callLLMAdapter, buildTitleGeneratePrompt, strictParseJsonObject, callLLMAdapterStream, buildChatPrompt } from "./ai/PromptBuilders";
 import type { ChatContext } from "./ai/PromptBuilders";
 import { buildContext } from "./context/contextBuilder";
@@ -251,6 +252,40 @@ app.post(
 
     if (detectPromptInjection(parsed.data.message)) {
       res.status(400).json({ error: "Message rejected by safety filter." });
+      return;
+    }
+
+    // ── Safety gate: chart requests MUST go through the orchestrator ──
+    // The streaming path does not support tool execution (charts, images, etc.).
+    // If the message is a chart request, redirect to the orchestrator and return
+    // the result as a single SSE JSON payload so the frontend can render it.
+    if (isChartRequest(parsed.data.message)) {
+      console.log(`[Stream] chart request detected — redirecting to orchestrator`);
+      try {
+        const result = await orchestrate({
+          userMessage: parsed.data.message,
+          context: {
+            recent_messages: parsed.data.context?.recent_messages,
+            memories: parsed.data.context?.memories,
+            file_references: parsed.data.context?.file_references,
+          },
+        });
+        // Return the full orchestrator result as JSON (not SSE) so the frontend
+        // can use deliverAssistantResponse to render the chart.
+        res.json({
+          route: result.route,
+          reply: result.reply,
+          disclaimer: result.disclaimer,
+          image: result.image,
+          chart: result.chart,
+          memory: result.memory,
+          confidence: result.confidence,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Stream] chart orchestration failed: ${message}`);
+        res.status(500).json({ error: message });
+      }
       return;
     }
 
@@ -759,3 +794,4 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (reason) => {
   console.error("[SentIQGPT] UNHANDLED REJECTION (kept alive):", reason);
 });
+
