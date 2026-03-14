@@ -45,11 +45,16 @@ export interface StepResult {
   };
   /** Chart output (chart_generation) */
   readonly chart?: {
+    type?: "chart";
     success: boolean;
     chart_type: string;
     renderer: string;
     code: string;
     preview?: string;
+    image_base64?: string;
+    image_url?: string;
+    plotly_json?: Record<string, unknown>;
+    chartjs_config?: Record<string, unknown>;
     error?: string;
   };
   /** Memory output (memory_update) */
@@ -178,11 +183,16 @@ async function execChartGeneration(
     step: 0,
     tool: "chart_generation",
     chart: {
+      type: result.type,
       success: result.success,
       chart_type: result.chart_type,
       renderer: result.renderer,
       code: result.code,
       preview: result.preview,
+      image_base64: result.image_base64,
+      image_url: result.image_url,
+      plotly_json: result.plotly_json as Record<string, unknown> | undefined,
+      chartjs_config: result.chartjs_config as Record<string, unknown> | undefined,
       error: result.error,
     },
   };

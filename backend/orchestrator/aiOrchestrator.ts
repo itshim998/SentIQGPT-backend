@@ -62,11 +62,16 @@ export interface OrchestratorResponse {
   };
   /** Chart result (for chart_generation) */
   readonly chart?: {
+    type?: "chart";
     success: boolean;
     chart_type: string;
     renderer: string;
     code: string;
     preview?: string;
+    image_base64?: string;
+    image_url?: string;
+    plotly_json?: Record<string, unknown>;
+    chartjs_config?: Record<string, unknown>;
     error?: string;
   };
   /** Memory pipeline result */

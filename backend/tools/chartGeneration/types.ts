@@ -28,6 +28,18 @@ export type DataSourceType =
 
 export type RendererType = "matplotlib" | "plotly" | "chartjs";
 
+export interface PlotlyFigureSpec {
+  readonly data: readonly Record<string, unknown>[];
+  readonly layout: Record<string, unknown>;
+  readonly config?: Record<string, unknown>;
+}
+
+export interface ChartJsConfigSpec {
+  readonly type: string;
+  readonly data: Record<string, unknown>;
+  readonly options?: Record<string, unknown>;
+}
+
 // ==============================
 // Chart intent (from detector)
 // ==============================
@@ -93,6 +105,7 @@ export interface ChartSpec {
 // ==============================
 
 export interface ChartResult {
+  readonly type?: "chart";
   readonly success: boolean;
   readonly chart_type: ChartType;
   readonly renderer: RendererType;
@@ -100,5 +113,11 @@ export interface ChartResult {
   readonly code: string;
   /** Optional base64 PNG preview (matplotlib only, when Python service available) */
   readonly preview?: string;
+  /** Legacy image field for frontend compatibility */
+  readonly image_base64?: string;
+  readonly image_url?: string;
+  /** Structured interactive payloads for frontend rendering */
+  readonly plotly_json?: PlotlyFigureSpec;
+  readonly chartjs_config?: ChartJsConfigSpec;
   readonly error?: string;
 }

@@ -12,6 +12,7 @@ import { detectChartIntent, isChartRequest } from "./chartDetector";
 import { generateChartSpec } from "./chartSpecGenerator";
 import { renderChart, rendererLabel } from "./chartRenderer";
 import type { ChartResult } from "./types";
+import { buildChartJsConfig, buildPlotlyFigure } from "./frontendPayloadBuilder";
 
 // ==============================
 // Preview (optional)
@@ -96,17 +97,29 @@ export async function routeChartGeneration(
       }
     }
 
+    const plotlyJson = spec.renderer === "plotly"
+      ? buildPlotlyFigure(spec)
+      : undefined;
+    const chartJsConfig = spec.renderer === "chartjs"
+      ? buildChartJsConfig(spec)
+      : undefined;
+
     return {
+      type: "chart",
       success: true,
       chart_type: spec.chart_type,
       renderer: spec.renderer,
       code,
       preview,
+      image_base64: preview,
+      plotly_json: plotlyJson,
+      chartjs_config: chartJsConfig,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.log(`[CHART ROUTER] error: ${message}`);
     return {
+      type: "chart",
       success: false,
       chart_type: "scatter",
       renderer: "matplotlib",

@@ -552,10 +552,15 @@ app.post(
     console.log(`[CHART] type=${result.chart_type} renderer=${result.renderer} codeLen=${result.code.length}`);
 
     res.json({
+      type: result.type,
       chart_type: result.chart_type,
       renderer: result.renderer,
       code: result.code,
       preview: result.preview,
+      image_base64: result.image_base64,
+      image_url: result.image_url,
+      plotly_json: result.plotly_json,
+      chartjs_config: result.chartjs_config,
       success: true,
     });
   }),
