@@ -46,6 +46,7 @@ import {
   MemoryCompressRequestSchema,
   ImageGenerateRequestSchema,
   ChartGenerateRequestSchema,
+  SelectionContextSchema,
   detectPromptInjection,
 } from "./validation/schemas";
 import { ZodError } from "zod";
@@ -561,6 +562,64 @@ app.post(
 );
 
 // ===============================
+// POST /api/chat/selection — "Ask SentIQGPT" text selection context endpoint
+// Accepts a selection context payload (selected_text + surrounding lines) and
+// routes it through the AI orchestrator as a standard chat message.
+// ===============================
+app.post(
+  "/api/chat/selection",
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const parsed = SelectionContextSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: formatZodError(parsed.error) });
+      return;
+    }
+
+    const { selected_text, context_before, context_after } = parsed.data;
+
+    // Truncate selected text to 3 lines maximum (server-enforced safety limit)
+    const selectedLines = selected_text.split("\n");
+    const truncatedSelection = selectedLines.slice(0, 3).join("\n");
+
+    if (detectPromptInjection(truncatedSelection)) {
+      res.status(400).json({ error: "Message rejected by safety filter." });
+      return;
+    }
+
+    // Build a contextual prompt that includes surrounding lines
+    const parts: string[] = [];
+    if (context_before?.trim()) {
+      parts.push(`[Context before]:\n${context_before.trim()}`);
+    }
+    parts.push(`[Selected text]:\n${truncatedSelection}`);
+    if (context_after?.trim()) {
+      parts.push(`[Context after]:\n${context_after.trim()}`);
+    }
+
+    const userMessage = parts.join("\n\n");
+
+    const result = await orchestrate({
+      userMessage,
+      context: {
+        recent_messages: parsed.data.context?.recent_messages,
+        memories: parsed.data.context?.memories,
+      },
+    });
+
+    res.json({
+      route: result.route,
+      reply: result.reply,
+      disclaimer: result.disclaimer,
+      image: result.image,
+      chart: result.chart,
+      memory: result.memory,
+      confidence: result.confidence,
+    });
+  }),
+);
+
+// ===============================
 // POST /api/chat/title — Generate session title from first exchange
 // ===============================
 app.post(
@@ -612,12 +671,14 @@ app.get("/api/config", (_req, res) => {
       memory: true,
       file_upload: true,
       image_generation: true,
+      chart_generation: true,
       tool_detection: true,
       ai_orchestrator: true,
       streaming: true,
       session_title_generation: true,
       knowledge_query: true,
       memory_update: true,
+      text_selection_tool: true,
     },
     limits: {
       max_message_length: 10000,

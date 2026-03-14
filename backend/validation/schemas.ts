@@ -68,7 +68,29 @@ export const ChartGenerateRequestSchema = z.object({
   fetch_preview: z.boolean().optional(),
 });
 
-// --- Prompt injection detection ---
+// --- Chat Selection (Ask SentIQGPT text selection tool) ---
+
+export const SelectionContextSchema = z.object({
+  selected_text: z
+    .string()
+    .min(1, "Selected text is required")
+    .max(2000, "Selected text too long"),
+  context_before: z.string().max(1000).optional(),
+  context_after: z.string().max(1000).optional(),
+  conversation_id: z.string().min(1).optional(),
+  context: z.object({
+    recent_messages: z.array(z.object({
+      role: z.enum(["user", "assistant"]),
+      content: z.string(),
+    })).max(50).optional(),
+    memories: z.array(z.object({
+      type: z.string(),
+      summary: z.string(),
+    })).max(100).optional(),
+  }).optional(),
+});
+
+export type SelectionContextPayload = z.infer<typeof SelectionContextSchema>;
 
 const INJECTION_PATTERNS = [
   /ignore\s+(all\s+)?previous\s+instructions/i,
