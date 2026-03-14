@@ -152,8 +152,35 @@ async function testMemoryRetrieval(storedMemory: OrchestratorResponse): Promise<
 }
 
 // ─────────────────────────────
-// Runner
+// Test 5 — Chart Generation
 // ─────────────────────────────
+
+async function testChartGeneration(): Promise<void> {
+  section("Chart Generation");
+
+  const res: OrchestratorResponse = await orchestrate({
+    userMessage: "Generate a scatter plot with 500 points using a Gaussian distribution.",
+  });
+
+  console.log(`  route: ${res.route}  |  chart success: ${res.chart?.success}  |  renderer: ${res.chart?.renderer ?? "none"}`);
+
+  assert(res.route === "chart_generation", "Route is chart_generation", `got: ${res.route}`);
+  assert(!!res.chart, "Chart payload present");
+  if (res.chart) {
+    assert(res.chart.success === true, "Chart generation succeeded");
+    assert(!!res.chart.code && res.chart.code.length > 50, "Code is non-trivial", `length: ${res.chart.code.length}`);
+    assert(res.chart.chart_type === "scatter", "Chart type is scatter", `got: ${res.chart.chart_type}`);
+    assert(
+      res.chart.renderer === "matplotlib" || res.chart.renderer === "plotly",
+      "Renderer is matplotlib or plotly",
+      `got: ${res.chart.renderer}`,
+    );
+    assert(
+      res.chart.code.includes("np.random.seed") || res.chart.code.includes("np.random"),
+      "Code uses numpy random (deterministic)",
+    );
+  }
+}
 
 async function run(): Promise<void> {
   console.log("\n🔬 SentIQGPT Integration Test Pipeline");
@@ -192,6 +219,13 @@ async function run(): Promise<void> {
     }
   } catch (err) {
     console.log(`  ${FAIL}  Test 4 threw: ${err instanceof Error ? err.message : err}`);
+    failed++;
+  }
+
+  try {
+    await testChartGeneration();
+  } catch (err) {
+    console.log(`  ${FAIL}  Test 5 threw: ${err instanceof Error ? err.message : err}`);
     failed++;
   }
 

@@ -7,6 +7,7 @@
 //   image_generation → Image Router (FLUX/HF/Pollinations)
 //   file_analysis    → ChatHandler + file context
 //   memory_update    → MemoryProcessor (force-store)
+//   chart_generation → ChartRouter (matplotlib / plotly / chart.js)
 //
 // Results from earlier steps are threaded into later steps as
 // additional context so the LLM can build on prior outputs.
@@ -18,6 +19,7 @@
 
 import { handleChat } from "../ai/ChatHandler";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
+import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
@@ -41,6 +43,15 @@ export interface StepResult {
     prompt: string;
     error?: string;
   };
+  /** Chart output (chart_generation) */
+  readonly chart?: {
+    success: boolean;
+    chart_type: string;
+    renderer: string;
+    code: string;
+    preview?: string;
+    error?: string;
+  };
   /** Memory output (memory_update) */
   readonly memory?: {
     stored: boolean;
@@ -60,6 +71,7 @@ const VALID_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
   "image_generation",
   "file_analysis",
   "memory_update",
+  "chart_generation",
 ]);
 
 const MAX_EXEC_STEPS = 3;
@@ -154,6 +166,28 @@ async function execMemoryUpdate(
   return { step: 0, tool: "memory_update", memory };
 }
 
+async function execChartGeneration(
+  input: string,
+): Promise<StepResult> {
+  const result = await routeChartGeneration({
+    userMessage: input,
+    fetchPreview: true,
+  });
+
+  return {
+    step: 0,
+    tool: "chart_generation",
+    chart: {
+      success: result.success,
+      chart_type: result.chart_type,
+      renderer: result.renderer,
+      code: result.code,
+      preview: result.preview,
+      error: result.error,
+    },
+  };
+}
+
 // ==============================
 // Public API
 // ==============================
@@ -197,6 +231,9 @@ export async function executePlan(
         case "memory_update":
           result = await execMemoryUpdate(planStep.input, ctx);
           break;
+        case "chart_generation":
+          result = await execChartGeneration(planStep.input);
+          break;
         case "conversation":
         default:
           result = await execConversation(planStep.input, ctx, priorContext);
@@ -213,6 +250,9 @@ export async function executePlan(
       } else if (result.image?.success) {
         priorContext += (priorContext ? "\n" : "") +
           `[Image generated: ${result.image.provider_used ?? "unknown"} — "${planStep.input.slice(0, 80)}"]`;
+      } else if (result.chart?.success) {
+        priorContext += (priorContext ? "\n" : "") +
+          `[Chart generated: ${result.chart.chart_type} (${result.chart.renderer}) — "${planStep.input.slice(0, 80)}"]`;
       } else if (result.memory?.stored) {
         priorContext += (priorContext ? "\n" : "") +
           `[Memory stored: ${result.memory.summary ?? planStep.input.slice(0, 80)}]`;

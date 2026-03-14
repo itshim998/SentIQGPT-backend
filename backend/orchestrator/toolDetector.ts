@@ -9,6 +9,7 @@
 //   "file_analysis"     → ChatHandler with file context
 //   "knowledge_query"   → ChatHandler with deep reasoning prompt
 //   "memory_update"     → Explicit memory store/update request
+//   "chart_generation"  → ChartRouter (matplotlib / plotly / chart.js)
 //
 // Falls back to "normal_chat" on any error.
 
@@ -24,7 +25,8 @@ export type DetectedTool =
   | "image_generation"
   | "file_analysis"
   | "knowledge_query"
-  | "memory_update";
+  | "memory_update"
+  | "chart_generation";
 
 const VALID_TOOLS: ReadonlySet<string> = new Set<DetectedTool>([
   "normal_chat",
@@ -32,6 +34,7 @@ const VALID_TOOLS: ReadonlySet<string> = new Set<DetectedTool>([
   "file_analysis",
   "knowledge_query",
   "memory_update",
+  "chart_generation",
 ]);
 
 export interface ToolDetectionResult {
@@ -55,7 +58,8 @@ function buildRouteClassifyPrompt(
     '- "image_generation": User explicitly wants to generate, create, draw, or make an image/picture/art\n' +
     '- "file_analysis": User is asking about, referencing, or analyzing uploaded file content\n' +
     '- "knowledge_query": User asks a deep, complex, or research-level question requiring thorough reasoning (e.g. explain quantum computing, compare frameworks)\n' +
-    '- "memory_update": User explicitly asks the AI to remember, forget, or update a personal fact/preference\n\n' +
+    '- "memory_update": User explicitly asks the AI to remember, forget, or update a personal fact/preference\n' +
+    '- "chart_generation": User wants a chart, graph, or data visualization (scatter plot, bar chart, histogram, heatmap, etc.)\n\n' +
     "RULES:\n" +
     "- Only choose image_generation if the user EXPLICITLY requests creating a new image.\n" +
     "- Only choose file_analysis if the user references uploaded files or documents" +
@@ -63,13 +67,14 @@ function buildRouteClassifyPrompt(
     "\n" +
     "- Choose knowledge_query for in-depth questions that need structured, detailed answers.\n" +
     "- Choose memory_update when the user says 'remember that...', 'my name is...', 'I prefer...', 'forget that...', etc.\n" +
+    "- Choose chart_generation when the user asks for a chart, graph, plot, or any data visualization.\n" +
     "- Default to normal_chat for anything ambiguous.\n" +
     '- If image_generation, extract the image description into "extracted_prompt".\n' +
     '- If memory_update, extract what should be remembered into "extracted_prompt".\n\n' +
     "USER MESSAGE:\n" +
     userMessage +
     "\n\nRETURN JSON:\n" +
-    '{\n  "tool": "normal_chat"|"image_generation"|"file_analysis"|"knowledge_query"|"memory_update",\n' +
+    '{\n  "tool": "normal_chat"|"image_generation"|"file_analysis"|"knowledge_query"|"memory_update"|"chart_generation",\n' +
     '  "confidence": 0.0-1.0,\n' +
     '  "extracted_prompt": "optional refined prompt for the tool"\n}';
 

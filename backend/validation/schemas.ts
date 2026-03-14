@@ -61,6 +61,13 @@ export const ImageGenerateRequestSchema = z.object({
   size: z.enum(["256x256", "512x512", "1024x1024"]).optional(),
 });
 
+// --- Chart Generation ---
+
+export const ChartGenerateRequestSchema = z.object({
+  message: z.string().min(1, "Message is required").max(2000, "Message too long"),
+  fetch_preview: z.boolean().optional(),
+});
+
 // --- Prompt injection detection ---
 
 const INJECTION_PATTERNS = [
