@@ -20,6 +20,7 @@ import {
   strictParseJsonObject,
 } from "../ai/PromptBuilders";
 import type { LLMAdapterCall } from "../ai/PromptBuilders";
+import { isChartRequest } from "../tools/chartGeneration/chartDetector";
 
 // ==============================
 // Types
@@ -112,11 +113,6 @@ function parsePlan(raw: string): ExecutionPlan {
   for (const item of rawPlan) {
     if (steps.length >= MAX_STEPS) break;
 
-    const tool =
-      typeof item.tool === "string" && VALID_PLAN_TOOLS.has(item.tool)
-        ? (item.tool as PlanTool)
-        : "conversation";
-
     const input =
       typeof item.input === "string" && item.input.trim()
         ? item.input.trim()
@@ -124,9 +120,20 @@ function parsePlan(raw: string): ExecutionPlan {
 
     if (!input) continue;
 
+    const parsedTool =
+      typeof item.tool === "string" && VALID_PLAN_TOOLS.has(item.tool)
+        ? (item.tool as PlanTool)
+        : "conversation";
+
+    // Secondary safety: if the LLM incorrectly assigned image_generation for a
+    // chart-like message, override to chart_generation.
+    const safeTool: PlanTool = (parsedTool === "image_generation" && isChartRequest(input))
+      ? "chart_generation"
+      : parsedTool;
+
     steps.push({
       step: steps.length + 1,
-      tool,
+      tool: safeTool,
       input,
     });
   }
@@ -148,6 +155,16 @@ export async function planTask(args: {
   readonly userMessage: string;
   readonly hasFileContext?: boolean;
 }): Promise<ExecutionPlan> {
+  // Hard safety rule: chart keywords ALWAYS produce a single chart_generation step.
+  // This pre-check bypasses the LLM entirely and guarantees chart requests
+  // are never accidentally routed to image_generation in multi-step plans.
+  if (isChartRequest(args.userMessage)) {
+    console.log(`[PLANNER] chart keywords detected — hard-routing to chart_generation`);
+    return {
+      steps: [{ step: 1, tool: "chart_generation", input: args.userMessage }],
+    };
+  }
+
   const call = buildPlannerPrompt(
     args.userMessage,
     args.hasFileContext ?? false,

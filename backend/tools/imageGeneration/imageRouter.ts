@@ -27,6 +27,7 @@ import { FluxDevProvider } from "./providers/fluxDevProvider";
 import { PollinationsProvider } from "./providers/pollinationsProvider";
 import { HuggingFaceProvider } from "./providers/huggingfaceProvider";
 import { GptImageProvider } from "./providers/gptImageProvider";
+import { isChartRequest } from "../chartGeneration/chartDetector";
 
 // ==============================
 // Provider registry (order = priority)
@@ -160,6 +161,19 @@ export async function routeImageGeneration(args: {
 }): Promise<ImageGenerationResult> {
   if (!args.prompt.trim()) {
     return { success: false, prompt: args.prompt, error: "Prompt is required" };
+  }
+
+  // Hard safety rule: chart/data-visualization prompts must NEVER reach image
+  // generation models.  Reject immediately and guide the caller to chartGeneration.
+  if (isChartRequest(args.prompt)) {
+    console.warn(`[IMAGE ROUTER] chart request blocked — prompt="${args.prompt.slice(0, 60)}..."`);
+    return {
+      success: false,
+      prompt: args.prompt,
+      error:
+        "Chart and data visualization requests must be handled by the chartGeneration tool, " +
+        "not by image generation models. Please use /api/charts/generate instead.",
+    };
   }
 
   if (imageQueue.length >= MAX_QUEUE_SIZE) {

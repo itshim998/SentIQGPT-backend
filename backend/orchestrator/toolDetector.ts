@@ -19,6 +19,7 @@ import {
   strictParseJsonObject,
 } from "../ai/PromptBuilders";
 import type { LLMAdapterCall } from "../ai/PromptBuilders";
+import { isChartRequest } from "../tools/chartGeneration/chartDetector";
 
 export type DetectedTool =
   | "normal_chat"
@@ -95,6 +96,14 @@ export async function detectTool(args: {
   readonly userMessage: string;
   readonly hasFileContext?: boolean;
 }): Promise<ToolDetectionResult> {
+  // Hard safety rule: chart keywords ALWAYS route to chart_generation.
+  // This pre-check bypasses the LLM entirely and guarantees chart requests
+  // are never accidentally routed to image_generation.
+  if (isChartRequest(args.userMessage)) {
+    console.log(`[TOOL DETECTOR] chart keywords detected — hard-routing to chart_generation`);
+    return { tool: "chart_generation", confidence: 1.0 };
+  }
+
   const call = buildRouteClassifyPrompt(
     args.userMessage,
     args.hasFileContext ?? false,
@@ -110,9 +119,15 @@ export async function detectTool(args: {
   try {
     const parsed = strictParseJsonObject(raw);
 
-    const tool = typeof parsed.tool === "string" && VALID_TOOLS.has(parsed.tool)
+    const rawTool = typeof parsed.tool === "string" && VALID_TOOLS.has(parsed.tool)
       ? (parsed.tool as DetectedTool)
       : "normal_chat";
+
+    // Secondary safety check: if LLM incorrectly routes a chart request to
+    // image_generation, override it to chart_generation.
+    const tool: DetectedTool = (rawTool === "image_generation" && isChartRequest(args.userMessage))
+      ? "chart_generation"
+      : rawTool;
 
     const confidence =
       typeof parsed.confidence === "number"
