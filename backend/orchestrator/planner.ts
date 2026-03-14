@@ -29,13 +29,15 @@ export type PlanTool =
   | "conversation"
   | "image_generation"
   | "file_analysis"
-  | "memory_update";
+  | "memory_update"
+  | "chart_generation";
 
 const VALID_PLAN_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
   "conversation",
   "image_generation",
   "file_analysis",
   "memory_update",
+  "chart_generation",
 ]);
 
 const MAX_STEPS = 3;
@@ -67,7 +69,8 @@ function buildPlannerPrompt(
     '- "file_analysis": Analyze uploaded file content' +
     (hasFileContext ? " (files ARE in context)" : " (NO files in context — do NOT select this)") +
     "\n" +
-    '- "memory_update": Store a personal fact the user wants remembered\n\n' +
+    '- "memory_update": Store a personal fact the user wants remembered\n' +
+    '- "chart_generation": Generate a chart or data visualization (scatter, bar, histogram, heatmap, etc.)\n\n' +
     "RULES:\n" +
     "- Return 1 to 3 steps maximum.\n" +
     "- Most requests need only 1 step — keep it simple.\n" +
@@ -76,6 +79,7 @@ function buildPlannerPrompt(
     "  Example single-step: \"What is quantum computing?\" → 1 step (conversation).\n" +
     "- Each step must have a clear, self-contained input string.\n" +
     "- Only choose image_generation if the user EXPLICITLY asks to create/generate an image.\n" +
+    "- Only choose chart_generation if the user asks for a chart, graph, plot, or data visualization.\n" +
     "- Only choose file_analysis if uploaded files exist in context.\n" +
     "- Only choose memory_update when the user says remember/forget.\n" +
     "- Default truly ambiguous requests to a single conversation step.\n" +
@@ -84,7 +88,7 @@ function buildPlannerPrompt(
     userMessage +
     "\n\nRETURN JSON (array of steps):\n" +
     '{ "plan": [\n' +
-    '  { "step": 1, "tool": "conversation"|"image_generation"|"file_analysis"|"memory_update"|"web_search", "input": "..." }\n' +
+    '  { "step": 1, "tool": "conversation"|"image_generation"|"file_analysis"|"memory_update"|"chart_generation", "input": "..." }\n' +
     "] }";
 
   return {

@@ -1,0 +1,120 @@
+// SentIQGPT — Chart Router
+//
+// Orchestrates the full chart generation pipeline:
+//   1. detectChartIntent  — extract chart type, data source, parameters
+//   2. generateChartSpec  — build a fully-specified ChartSpec
+//   3. renderChart        — produce runnable renderer code
+//   4. (optional) request Python preview from LLM service
+//
+// This is the single entry-point used by toolExecutor.ts.
+
+import { detectChartIntent, isChartRequest } from "./chartDetector";
+import { generateChartSpec } from "./chartSpecGenerator";
+import { renderChart, rendererLabel } from "./chartRenderer";
+import type { ChartResult } from "./types";
+
+// ==============================
+// Preview (optional)
+// ==============================
+
+/** URL of the LLM/chart service that can execute matplotlib code. */
+const LLM_SERVICE_URL =
+  process.env.LLM_SERVICE_URL ??
+  `http://localhost:${process.env.LLM_SERVICE_PORT ?? "3002"}`;
+
+/**
+ * Ask the Python service to execute matplotlib code and return a PNG
+ * preview as a data URI.  Returns undefined on any failure so the
+ * chart result is still usable without a preview.
+ */
+async function fetchMatplotlibPreview(code: string): Promise<string | undefined> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+
+    const resp = await fetch(`${LLM_SERVICE_URL}/chart/render`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!resp.ok) return undefined;
+
+    const body = await resp.json() as { preview?: string };
+    return typeof body.preview === "string" && body.preview.length > 0
+      ? body.preview
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// ==============================
+// Public API
+// ==============================
+
+export interface ChartRouterRequest {
+  /** Raw user message requesting the chart */
+  readonly userMessage: string;
+  /** When true, attempt to fetch a PNG preview via the LLM service */
+  readonly fetchPreview?: boolean;
+}
+
+/**
+ * Full chart generation pipeline.
+ *
+ * Returns a ChartResult with the runnable code for the selected
+ * renderer.  A base64 PNG preview is included when fetchPreview is true
+ * and the LLM service's /chart/render endpoint is reachable.
+ */
+export async function routeChartGeneration(
+  request: ChartRouterRequest,
+): Promise<ChartResult> {
+  const { userMessage, fetchPreview = false } = request;
+
+  try {
+    // 1. Detect intent
+    const intent = detectChartIntent(userMessage);
+    console.log(`[CHART ROUTER] type=${intent.type} source=${intent.data_source}`);
+
+    // 2. Build spec
+    const spec = generateChartSpec(intent, userMessage);
+    console.log(`[CHART ROUTER] renderer=${spec.renderer}`);
+
+    // 3. Generate code
+    const code = renderChart(spec);
+
+    // 4. Optionally fetch preview PNG from Python service
+    let preview: string | undefined;
+    if (fetchPreview && spec.renderer === "matplotlib") {
+      preview = await fetchMatplotlibPreview(code);
+      if (preview) {
+        console.log(`[CHART ROUTER] preview PNG fetched (${preview.length} chars)`);
+      }
+    }
+
+    return {
+      success: true,
+      chart_type: spec.chart_type,
+      renderer: spec.renderer,
+      code,
+      preview,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(`[CHART ROUTER] error: ${message}`);
+    return {
+      success: false,
+      chart_type: "scatter",
+      renderer: "matplotlib",
+      code: "",
+      error: message,
+    };
+  }
+}
+
+/** Convenience re-export so callers don't need to import from two places. */
+export { isChartRequest, rendererLabel };

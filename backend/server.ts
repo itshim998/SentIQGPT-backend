@@ -24,6 +24,7 @@ import { handleChat } from "./ai/ChatHandler";
 import { processMessageForMemory, compressMemories } from "./ai/MemoryProcessor";
 import { extractTextFromFile, validateFileUpload } from "./ai/FileIngestionHandler";
 import { routeImageGeneration } from "./tools/imageGeneration/imageRouter";
+import { routeChartGeneration } from "./tools/chartGeneration/chartRouter";
 import { callLLMAdapter, buildTitleGeneratePrompt, strictParseJsonObject, callLLMAdapterStream, buildChatPrompt } from "./ai/PromptBuilders";
 import type { ChatContext } from "./ai/PromptBuilders";
 import { buildContext } from "./context/contextBuilder";
@@ -44,6 +45,7 @@ import {
   MemoryClassifyRequestSchema,
   MemoryCompressRequestSchema,
   ImageGenerateRequestSchema,
+  ChartGenerateRequestSchema,
   detectPromptInjection,
 } from "./validation/schemas";
 import { ZodError } from "zod";
@@ -173,6 +175,7 @@ app.get("/api/health", (_req, res) => {
       "persistent-memory",
       "file-upload",
       "image-generation",
+      "chart-generation",
       "memory-compression",
       "tool-detection",
       "ai-orchestrator",
@@ -225,6 +228,7 @@ app.post(
       reply: result.reply,
       disclaimer: result.disclaimer,
       image: result.image,
+      chart: result.chart,
       memory: result.memory,
       confidence: result.confidence,
     });
@@ -511,6 +515,47 @@ app.post(
       // Keep legacy fields for frontend compatibility
       image_url: result.image_url,
       image_base64: result.image_base64,
+    });
+  }),
+);
+
+// ===============================
+// POST /api/charts/generate — Generate chart code from natural language
+// ===============================
+app.post(
+  "/api/charts/generate",
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const parsed = ChartGenerateRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: formatZodError(parsed.error) });
+      return;
+    }
+
+    if (detectPromptInjection(parsed.data.message)) {
+      res.status(400).json({ error: "Message rejected by safety filter." });
+      return;
+    }
+
+    const result = await routeChartGeneration({
+      userMessage: parsed.data.message,
+      fetchPreview: parsed.data.fetch_preview ?? false,
+    });
+
+    if (!result.success) {
+      console.log(`[CHART] generation failed: ${result.error}`);
+      res.status(500).json({ error: result.error });
+      return;
+    }
+
+    console.log(`[CHART] type=${result.chart_type} renderer=${result.renderer} codeLen=${result.code.length}`);
+
+    res.json({
+      chart_type: result.chart_type,
+      renderer: result.renderer,
+      code: result.code,
+      preview: result.preview,
+      success: true,
     });
   }),
 );

@@ -60,6 +60,15 @@ export interface OrchestratorResponse {
     prompt: string;
     error?: string;
   };
+  /** Chart result (for chart_generation) */
+  readonly chart?: {
+    success: boolean;
+    chart_type: string;
+    renderer: string;
+    code: string;
+    preview?: string;
+    error?: string;
+  };
   /** Memory pipeline result */
   readonly memory: {
     stored: boolean;
@@ -87,6 +96,7 @@ function planToolToRoute(tool: PlanTool): DetectedTool {
     case "image_generation": return "image_generation";
     case "file_analysis":    return "file_analysis";
     case "memory_update":    return "memory_update";
+    case "chart_generation": return "chart_generation";
     case "conversation":
     default:                 return "normal_chat";
   }
@@ -99,6 +109,7 @@ function mergeResults(
 ): Omit<OrchestratorResponse, "confidence"> {
   let reply: string | undefined;
   let image: OrchestratorResponse["image"] | undefined;
+  let chart: OrchestratorResponse["chart"] | undefined;
   let memory = memoryPayload;
   let route: DetectedTool = "normal_chat";
 
@@ -119,6 +130,13 @@ function mergeResults(
       // If the primary step was not image, upgrade route
       if (!image.error && image.success) {
         route = "image_generation";
+      }
+    }
+
+    if (step.chart) {
+      chart = step.chart;
+      if (!chart.error && chart.success) {
+        route = "chart_generation";
       }
     }
 
@@ -143,6 +161,7 @@ function mergeResults(
       ? "SentIQGPT is an AI assistant. Verify important information independently."
       : undefined,
     image,
+    chart,
     memory,
   };
 }
@@ -247,7 +266,7 @@ async function _orchestrateInner(
   };
 
   // 5. Cache the final answer for future identical queries
-  //    Only cache conversation replies (not images, file analysis, or memory updates).
+  //    Only cache conversation replies (not images, charts, file analysis, or memory updates).
   if (
     finalResponse.reply &&
     finalResponse.route === "normal_chat" &&
@@ -284,7 +303,8 @@ async function reflectOnAnswer(
   if (
     !merged.reply ||
     merged.reply.length < MIN_REFLECTION_LENGTH ||
-    merged.route === "image_generation"
+    merged.route === "image_generation" ||
+    merged.route === "chart_generation"
   ) {
     return { merged };
   }
