@@ -240,23 +240,29 @@ function renderMatplotlib(spec: ChartSpec): string {
     case "pca":
     case "clustering": {
       const colors = palette;
-      plotCode = type === "pca"
-        ? [
+      const colorList = pyList(colors.slice(0, 3));
+      if (type === "pca") {
+        plotCode = [
           `fig, ax = plt.subplots(figsize=(8, 6))`,
-          `for i, c in enumerate(${pyList(colors.slice(0, 3))}):\n    mask = labels == i\n    ax.scatter(x[mask], y[mask], s=${ms ** 2}, color=c, alpha=0.6, label=f"Cluster {i}")`,
+          `for i, c in enumerate(${colorList}):`,
+          `    mask = labels == i`,
+          `    ax.scatter(x[mask], y[mask], s=${ms ** 2}, color=c, alpha=0.6, label=f"Cluster {i}")`,
           `ax.set_xlabel("${axes.x_label ?? "PC1"}")`,
           `ax.set_ylabel("${axes.y_label ?? "PC2"}")`,
           `ax.legend()`,
           `ax.grid(${grid})`,
-        ].join("\n")
-        : [
+        ].join("\n");
+      } else {
+        plotCode = [
           `fig, ax = plt.subplots(figsize=(8, 6))`,
-          `for i, (xi, yi) in enumerate(zip(xs, ys)):\n    ax.scatter(xi, yi, s=${ms ** 2}, color=${pyList(colors.slice(0, 3))}[i], alpha=0.6, label=f"Cluster {i}")`,
+          `for i, (xi, yi) in enumerate(zip(xs, ys)):`,
+          `    ax.scatter(xi, yi, s=${ms ** 2}, color=${colorList}[i], alpha=0.6, label=f"Cluster {i}")`,
           `ax.set_xlabel("${axes.x_label ?? "X"}")`,
           `ax.set_ylabel("${axes.y_label ?? "Y"}")`,
           `ax.legend()`,
           `ax.grid(${grid})`,
         ].join("\n");
+      }
       break;
     }
 
