@@ -24,9 +24,11 @@
 
 import { handleChat } from "../ai/ChatHandler";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
+import { verifyMathAnswer } from "../ai/mathVerifier";
 import { buildContext } from "../context/contextBuilder";
 import { planTask } from "./planner";
 import { executePlan } from "./toolExecutor";
+import { isMathQuery } from "./modelRouter";
 import { evaluateAnswer } from "../reflection/answerCritic";
 import { improveAnswer } from "../reflection/answerImprover";
 import { getCachedAnswer, setCachedAnswer } from "../cache/cacheManager";
@@ -224,6 +226,60 @@ async function _orchestrateInner(
         confidence: 1.0,
       };
     }
+  }
+
+  // ── Early Math Detection ──
+  // Math detection MUST run on the raw userMessage, not the planner-rewritten
+  // input. The planner (Groq) compresses/summarizes the query, which strips
+  // numerical context and causes word problems to be misclassified as general chat.
+  // When math is detected, we bypass the planner entirely and go straight to
+  // the DeepSeek math pipeline.
+  if (isMathQuery(userMessage)) {
+    console.log(`[MathPipeline] math query detected on raw input — bypassing planner`);
+    console.log(`[MathPipeline] solving with deepseek`);
+
+    const systemPrompt =
+      "SYSTEM: You are SentIQGPT, a knowledgeable and helpful AI assistant.\n" +
+      "Provide clear, step-by-step mathematical reasoning.\n" +
+      "Show your work and verify your calculations.";
+
+    // Run math pipeline + memory in parallel
+    let memoryPayload: OrchestratorResponse["memory"] = { stored: false };
+    const [mathResult] = await Promise.all([
+      verifyMathAnswer(userMessage, systemPrompt),
+      processMessageForMemory({
+        message: userMessage,
+        recentMessages: [],
+        existingMemories: [],
+      })
+        .then((memResult) => {
+          if (memResult.stored) {
+            memoryPayload = {
+              stored: true,
+              type: memResult.memory?.type,
+              summary: memResult.memory?.summary,
+              importance: memResult.memory?.importance,
+            };
+          }
+        })
+        .catch((err) => {
+          console.log(`[MathPipeline] memory pipeline error: ${err instanceof Error ? err.message : err}`);
+        }),
+    ]);
+
+    console.log(
+      `[MathPipeline] result — verified=${mathResult.verified} agreed=${mathResult.agreed} reconciled=${mathResult.reconciled}`,
+    );
+    console.log(`[MathPipeline] reflection skipped — math query already verified`);
+    console.log(`[MathPipeline] returning result`);
+
+    return {
+      route: "math_reasoning" as DetectedTool,
+      reply: mathResult.answer,
+      disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+      memory: memoryPayload,
+      confidence: 1.0,
+    };
   }
 
   // 1. Build context + run planner in PARALLEL (both are independent)
