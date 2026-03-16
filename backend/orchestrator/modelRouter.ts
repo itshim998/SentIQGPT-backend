@@ -5,8 +5,9 @@
 //
 // Detection priority (first match wins):
 //   1. vision          → gemini (Gemini vision-capable model)
-//   2. coding          → qwen3-coder   (Pollinations)
-//   3. general_chat    → gemini-fast    (Pollinations)
+//   2. math_reasoning  → deepseek       (Pollinations)
+//   3. coding          → qwen3-coder    (Pollinations)
+//   4. general_chat    → gemini-fast     (Pollinations)
 //
 // Gemini direct API is NEVER selected by the router.
 // It is a last-resort fallback handled by the Python gateway.
@@ -95,7 +96,7 @@ const MATH_PATTERNS: readonly RegExp[] = [
   // Algebra
   /\balgebra(?:ic)?\b/i,
   /\bequation(?:s)?\b/i,
-  /\bsolve\s+(?:for\s+)?[a-z]/i,
+  /\bsolve\b/i,
   /\bfactor(?:ize|ise)?\b/i,
   /\bsimplif(?:y|ied|ication)\b/i,
   /\bpolynomial\b/i,
@@ -152,16 +153,165 @@ const MATH_PATTERNS: readonly RegExp[] = [
   /\btrigonometr(?:y|ic)\b/i,
 ];
 
+// ── Word problem / optimization detection (Layer 2) ──
+// Detects mathematical word problems that lack explicit math keywords.
+// Uses a hybrid approach: constraint language + numbers + goal phrases.
+const WORD_PROBLEM_CONSTRAINT_WORDS: readonly RegExp[] = [
+  /\bprofit\b/i,
+  /\bcost\b/i,
+  /\bproduction\b/i,
+  /\bfactory\b/i,
+  /\bmachines?\b/i,
+  /\bhours?\b/i,
+  /\bresources?\b/i,
+  /\bconstraints?\b/i,
+  /\bbudget\b/i,
+  /\bdistance\b/i,
+  /\bspeed\b/i,
+  /\brate\b/i,
+  /\bpercentage\b/i,
+  /\bincrease\b/i,
+  /\bdecrease\b/i,
+  /\bworkers?\b/i,
+  /\bcapacity\b/i,
+  /\bsupply\b/i,
+  /\bdemand\b/i,
+  /\binventory\b/i,
+  /\bunits?\b/i,
+  /\bquantity\b/i,
+  /\bprice\b/i,
+  /\brevenue\b/i,
+  /\bwages?\b/i,
+  /\bsalary\b/i,
+  /\blabou?r\b/i,
+  /\binterest\b/i,
+  /\binvestment\b/i,
+  /\bweight\b/i,
+  /\bvolume\b/i,
+  /\barea\b/i,
+  /\blength\b/i,
+  /\bwidth\b/i,
+  /\bheight\b/i,
+  /\bratio\b/i,
+  /\bproportion\b/i,
+];
+
+const WORD_PROBLEM_GOAL_PHRASES: readonly RegExp[] = [
+  /\bmaximiz(?:e|ing)\b/i,
+  /\bminimiz(?:e|ing)\b/i,
+  /\boptimiz(?:e|ing|ation)\b/i,
+  /\bhow\s+many\b/i,
+  /\bhow\s+much\b/i,
+  /\bhow\s+long\b/i,
+  /\bhow\s+far\b/i,
+  /\bhow\s+fast\b/i,
+  /\bfind\s+the\b/i,
+  /\bwhat\s+is\s+the\s+(?:total|maximum|minimum|average|sum|difference|product)\b/i,
+  /\bdetermine\b/i,
+  /\bshould\s+be\s+produced\b/i,
+  /\bshould\s+.*\b(?:buy|sell|make|produce|allocate|invest|hire)\b/i,
+  /\bwhat\s+(?:fraction|percent(?:age)?|proportion)\b/i,
+];
+
+// ── Structural pattern detection (Layer 3) ──
+// Detects comparisons and bound phrases common in constraint problems.
+const STRUCTURAL_COMPARISON_WORDS: readonly RegExp[] = [
+  /\bat\s+least\b/i,
+  /\bat\s+most\b/i,
+  /\bno\s+more\s+than\b/i,
+  /\bno\s+less\s+than\b/i,
+  /\bno\s+fewer\s+than\b/i,
+  /\btwice\s+as\s+many\b/i,
+  /\bthree\s+times\b/i,
+  /\bhalf\s+(?:of|as)\b/i,
+  /\bmaximum\b/i,
+  /\bminimum\b/i,
+  /\bnot\s+(?:to\s+)?exceed\b/i,
+  /\bgreater\s+than\b/i,
+  /\bless\s+than\b/i,
+  /\bequal\s+to\b/i,
+  /\btotal\s+(?:of|is)\b/i,
+  /\blimited\s+to\b/i,
+  /\bavailable\b/i,
+  /\brequires?\b/i,
+  /\beach\b/i,
+  /\bper\b/i,
+];
+
 /**
- * Lightweight math query detector.
- * Returns true if the query contains mathematical/numerical reasoning patterns.
- * Exported so it can be reused by the math verification system.
+ * Count distinct numbers in the query (integers, decimals, fractions).
+ * Used to detect multi-quantity word problems.
  */
-export function isMathQuery(query: string): boolean {
+function countNumbers(query: string): number {
+  const matches = query.match(/\b\d+(?:\.\d+)?(?:\/\d+)?\b/g);
+  return matches ? matches.length : 0;
+}
+
+/**
+ * Count how many patterns from a list match the query.
+ */
+function countMatches(query: string, patterns: readonly RegExp[]): number {
+  let count = 0;
+  for (const p of patterns) {
+    if (p.test(query)) count++;
+  }
+  return count;
+}
+
+/**
+ * Hybrid math reasoning detector — detects both symbolic and word-based math.
+ *
+ * Layer 1: Symbol/keyword detection (MATH_PATTERNS — explicit math terms)
+ * Layer 2: Word problem detection (constraint language + numbers + goal)
+ * Layer 3: Structural pattern detection (numbers + comparisons + goals)
+ *
+ * Runtime: < 1ms — regex + token counting only, no LLM calls.
+ */
+export function detectMathReasoning(query: string): boolean {
+  // Layer 1 — explicit math symbols and keywords
   for (const pattern of MATH_PATTERNS) {
     if (pattern.test(query)) return true;
   }
+
+  const numCount = countNumbers(query);
+
+  // Layer 2 — word problem detection
+  // Requires: multiple numbers + constraint language + goal phrase
+  if (numCount >= 2) {
+    const constraintHits = countMatches(query, WORD_PROBLEM_CONSTRAINT_WORDS);
+    const goalHits = countMatches(query, WORD_PROBLEM_GOAL_PHRASES);
+    if (constraintHits >= 2 && goalHits >= 1) return true;
+  }
+
+  // Layer 3 — structural pattern detection
+  // Requires: multiple numbers + comparison/bound language + goal phrase
+  if (numCount >= 2) {
+    const structuralHits = countMatches(query, STRUCTURAL_COMPARISON_WORDS);
+    const goalHits = countMatches(query, WORD_PROBLEM_GOAL_PHRASES);
+    if (structuralHits >= 2 && goalHits >= 1) return true;
+  }
+
+  // Layer 2b — strong optimization signal even with fewer numbers
+  // "maximize profit" or "minimize cost" are unambiguous math goals
+  if (
+    /\b(?:maximiz|minimiz|optimiz)(?:e|ing|ation)\b/i.test(query) &&
+    numCount >= 1 &&
+    countMatches(query, WORD_PROBLEM_CONSTRAINT_WORDS) >= 1
+  ) {
+    return true;
+  }
+
   return false;
+}
+
+/**
+ * Lightweight math query detector.
+ * Returns true if the query contains mathematical/numerical reasoning patterns.
+ * Uses the hybrid detectMathReasoning() for both symbolic and word-problem detection.
+ * Exported so it can be reused by the math verification system.
+ */
+export function isMathQuery(query: string): boolean {
+  return detectMathReasoning(query);
 }
 
 // ── Vision detection ──
@@ -245,7 +395,7 @@ export function selectModelForPrompt(
       break;
     case "math_reasoning":
       model = "deepseek";
-      console.log(`[Router] category=math_reasoning → deepseek (Pollinations)`);
+      console.log(`[Router] category=math_reasoning model=deepseek`);
       break;
     case "coding":
       model = "qwen3-coder";
