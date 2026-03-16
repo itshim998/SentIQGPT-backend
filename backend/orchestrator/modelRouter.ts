@@ -16,6 +16,7 @@ export type QueryType = string;
 export type PromptModelCategory =
   | "coding"
   | "vision"
+  | "math_reasoning"
   | "general_chat";
 
 // ── Coding detection ──
@@ -85,6 +86,84 @@ const CODING_PATTERNS: readonly RegExp[] = [
   /\bunit\s*test\b/i,
 ];
 
+// ── Math / numerical reasoning detection ──
+// Checked AFTER vision but BEFORE coding, so that math queries with
+// code keywords like "algorithm" route to deepseek instead of qwen3-coder.
+const MATH_PATTERNS: readonly RegExp[] = [
+  // Arithmetic expressions (digits with operators)
+  /\d+\s*[+\-*/^]\s*\d+/,
+  // Algebra
+  /\balgebra(?:ic)?\b/i,
+  /\bequation(?:s)?\b/i,
+  /\bsolve\s+(?:for\s+)?[a-z]/i,
+  /\bfactor(?:ize|ise)?\b/i,
+  /\bsimplif(?:y|ied|ication)\b/i,
+  /\bpolynomial\b/i,
+  /\bquadratic\b/i,
+  /\blinear\s+(?:equation|system|algebra)\b/i,
+  // Calculus
+  /\bcalculus\b/i,
+  /\bintegral(?:s)?\b/i,
+  /\bintegrat(?:e|ion)\b/i,
+  /\bderivativ(?:e|es)\b/i,
+  /\bdifferentiat(?:e|ion)\b/i,
+  /\blimit\s+(?:of|as)\b/i,
+  /\bseries\s+(?:expansion|convergence)\b/i,
+  // Probability & statistics
+  /\bprobabilit(?:y|ies)\b/i,
+  /\bstatistic(?:s|al)\b/i,
+  /\bstandard\s+deviation\b/i,
+  /\bvariance\b/i,
+  /\bmean\s+(?:of|value)\b/i,
+  /\bmedian\b/i,
+  /\bcorrelation\b/i,
+  /\bregression\b/i,
+  /\bbinomial\b/i,
+  /\bnormal\s+distribution\b/i,
+  /\bBayes(?:ian)?\b/i,
+  // Matrices & linear algebra
+  /\bmatr(?:ix|ices)\b/i,
+  /\bdeterminant\b/i,
+  /\beigenvalue\b/i,
+  /\beigenvector\b/i,
+  /\bvector\s+(?:space|field|product)\b/i,
+  // Action verbs for math
+  /\bcalculat(?:e|ion)\b/i,
+  /\bcompute\b/i,
+  /\bprove\s+(?:that|the)\b/i,
+  /\bsimplify\b/i,
+  /\bevaluat(?:e|ion)\b/i,
+  // Math notation / symbols
+  /\bsin\s*\(|cos\s*\(|tan\s*\(|log\s*\(/i,
+  /\bsqrt\b/i,
+  /\bsummation\b/i,
+  /\bpermutation(?:s)?\b/i,
+  /\bcombination(?:s)?\b/i,
+  /\bfactorial\b/i,
+  /\bprime\s+number/i,
+  /\bgreatest\s+common\b/i,
+  /\bleast\s+common\b/i,
+  /\bmodular\s+arithmetic\b/i,
+  // Generic math keywords
+  /\bmath(?:ematic(?:s|al))?\b/i,
+  /\bnumerical(?:ly)?\b/i,
+  /\barithmetic\b/i,
+  /\bgeometr(?:y|ic)\b/i,
+  /\btrigonometr(?:y|ic)\b/i,
+];
+
+/**
+ * Lightweight math query detector.
+ * Returns true if the query contains mathematical/numerical reasoning patterns.
+ * Exported so it can be reused by the math verification system.
+ */
+export function isMathQuery(query: string): boolean {
+  for (const pattern of MATH_PATTERNS) {
+    if (pattern.test(query)) return true;
+  }
+  return false;
+}
+
 // ── Vision detection ──
 // If an image is involved the query MUST go to a vision-capable model.
 const VISION_PATTERNS: readonly RegExp[] = [
@@ -123,7 +202,13 @@ function detectPromptCategory(
     return "general_chat";
   }
 
-  // 2. CODING — any programming signal routes to qwen3-coder.
+  // 2. MATH REASONING — any numerical/mathematical signal routes to deepseek.
+  //    Checked BEFORE coding so that "solve this algorithm" goes to deepseek.
+  if (isMathQuery(query)) {
+    return "math_reasoning";
+  }
+
+  // 3. CODING — any programming signal routes to qwen3-coder.
   for (const pattern of CODING_PATTERNS) {
     if (pattern.test(query)) {
       return "coding";
@@ -158,6 +243,10 @@ export function selectModelForPrompt(
       model = "gemini-vision";
       console.log(`[Router] category=vision → gemini (vision model)`);
       break;
+    case "math_reasoning":
+      model = "deepseek";
+      console.log(`[Router] category=math_reasoning → deepseek (Pollinations)`);
+      break;
     case "coding":
       model = "qwen3-coder";
       console.log(`[Router] category=coding → qwen3-coder (Pollinations)`);
@@ -170,7 +259,7 @@ export function selectModelForPrompt(
   }
 
   console.log(
-    `[Router] selected model=${model}  provider=${category === "vision" ? "gemini" : "pollinations"}  query="${query.slice(0, 60)}..."`,
+    `[Router] selected model=${model}  provider=${category === "vision" ? "gemini" : "pollinations"}  category=${category}  query="${query.slice(0, 60)}..."`,
   );
   return model;
 }

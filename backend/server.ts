@@ -34,6 +34,7 @@ import { buildContext } from "./context/contextBuilder";
 import { orchestrate } from "./orchestrator/aiOrchestrator";
 
 import { selectModelForPrompt } from "./orchestrator/modelRouter";
+import { isMathQuery } from "./orchestrator/modelRouter";
 
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
@@ -289,6 +290,43 @@ app.post(
       return;
     }
 
+    // ── Safety gate: math queries use two-model verification via orchestrator ──
+    // Math queries need the verification pipeline (deepseek + verifier), which
+    // is only available through the orchestrator.  Redirect like chart requests.
+    if (isMathQuery(parsed.data.message)) {
+      console.log(`[Stream] math query detected — redirecting to orchestrator for verification`);
+      try {
+        const result = await orchestrate({
+          userMessage: parsed.data.message,
+          context: {
+            recent_messages: parsed.data.context?.recent_messages,
+            memories: parsed.data.context?.memories,
+            file_references: parsed.data.context?.file_references,
+          },
+        });
+        // Return as SSE stream so the frontend handles it uniformly
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        res.flushHeaders();
+        if (result.reply) {
+          // Stream the verified answer in chunks for smooth typing effect
+          const CHUNK_SIZE = 24;
+          for (let i = 0; i < result.reply.length; i += CHUNK_SIZE) {
+            const chunk = result.reply.slice(i, i + CHUNK_SIZE);
+            res.write(`data: ${JSON.stringify({ type: "token", text: chunk })}\n\n`);
+          }
+        }
+        res.write("data: [DONE]\n\n");
+        res.end();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Stream] math orchestration failed: ${message}`);
+        res.status(500).json({ error: message });
+      }
+      return;
+    }
     const requestStart = Date.now();
     console.log(`[Latency] user query received`);
 

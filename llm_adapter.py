@@ -233,6 +233,9 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     if logical in {"qwen3-coder-30b", "qwen3-coder"}:
         return "pollinations", CODING_MODEL
 
+    if logical == "deepseek":
+        return "pollinations", "deepseek"
+
     if logical == "gemini-fast":
         return "pollinations", GENERAL_CHAT_MODEL
 

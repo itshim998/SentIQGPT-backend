@@ -303,7 +303,8 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   const isPollinations =
     ctx.modelOverride === "qwen3-coder" ||
     ctx.modelOverride === "qwen3-coder-30b" ||
-    ctx.modelOverride === "gemini-fast";
+    ctx.modelOverride === "gemini-fast" ||
+    ctx.modelOverride === "deepseek";
 
   return {
     task: "chat",

@@ -1,13 +1,20 @@
-// SentIQGPT v2 — Image Router
+// SentIQGPT v3 — Image Router
 //
 // Sequential fallback router with per-provider cooldowns, retry, and queue.
 // Tries each provider in priority order; returns as soon as one succeeds.
 //
-// Provider chain:
-//   1. Pollinations Flux Schnell  (primary — Pollinations CDN)
+// Provider chain (standard):
+//   1. zimage                     (primary — Pollinations CDN)
 //   2. HuggingFace SDXL           (requires HUGGINGFACE_API_TOKEN)
 //   3. FLUX.2 Dev                 (Pollinations fallback)
 //   4. Z-Image Turbo              (Pollinations fallback)
+//
+// Provider chain (complex):
+//   1. gptimage                   (complex prompt primary)
+//   2. zimage                     (fallback)
+//   3. FLUX.2 Dev                 (fallback)
+//   4. HuggingFace SDXL           (fallback)
+//   5. Z-Image Turbo              (fallback)
 //
 // Features:
 //   - Global queue: max 1 concurrent job, max 10 queued requests
@@ -22,7 +29,7 @@
 // If ALL providers fail, returns a structured error — never crashes.
 
 import type { ImageProvider, ImageGenerationResult } from "./types";
-import { FluxSchnellProvider } from "./providers/fluxSchnellProvider";
+import { ZimageProvider } from "./providers/zimageProvider";
 import { FluxDevProvider } from "./providers/fluxDevProvider";
 import { PollinationsProvider } from "./providers/pollinationsProvider";
 import { HuggingFaceProvider } from "./providers/huggingfaceProvider";
@@ -35,19 +42,19 @@ import { isChartRequest } from "../chartGeneration/chartDetector";
 
 // Standard providers (simple/moderate prompts)
 const standardProviders: readonly ImageProvider[] = [
-  new FluxSchnellProvider(),   // 1. Pollinations Flux Schnell (primary)
-  new HuggingFaceProvider(),   // 2. HuggingFace SDXL (fast fallback with API key)
-  new FluxDevProvider(),        // 3. Pollinations FLUX.2 Dev
-  new PollinationsProvider(),   // 4. Pollinations Z-Image Turbo
+  new ZimageProvider(),          // 1. zimage (primary)
+  new HuggingFaceProvider(),     // 2. HuggingFace SDXL (fast fallback with API key)
+  new FluxDevProvider(),          // 3. Pollinations FLUX.2 Dev
+  new PollinationsProvider(),     // 4. Pollinations Z-Image Turbo
 ];
 
 // Complex providers (text, spatial, multi-element prompts)
 const complexProviders: readonly ImageProvider[] = [
-  new GptImageProvider(),       // 1. GPTImage (complex prompt primary)
-  new FluxSchnellProvider(),    // 2. Flux Schnell (fallback safety)
-  new FluxDevProvider(),        // 3. FLUX.2 Dev (fallback)
-  new HuggingFaceProvider(),    // 4. HuggingFace SDXL (fallback)
-  new PollinationsProvider(),   // 5. Z-Image Turbo (fallback)
+  new GptImageProvider(),         // 1. gptimage (complex prompt primary)
+  new ZimageProvider(),           // 2. zimage (fallback)
+  new FluxDevProvider(),          // 3. FLUX.2 Dev (fallback)
+  new HuggingFaceProvider(),      // 4. HuggingFace SDXL (fallback)
+  new PollinationsProvider(),     // 5. Z-Image Turbo (fallback)
 ];
 
 // Backward-compatible reference for logging

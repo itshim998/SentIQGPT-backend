@@ -21,9 +21,10 @@ import { handleChat } from "../ai/ChatHandler";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
+import { verifyMathAnswer } from "../ai/mathVerifier";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
-import { selectModelForPrompt } from "./modelRouter";
+import { selectModelForPrompt, isMathQuery } from "./modelRouter";
 
 // ==============================
 // Types
@@ -90,11 +91,29 @@ async function execConversation(
   ctx: BuiltContext,
   priorContext: string,
 ): Promise<StepResult> {
-  const modelOverride = selectModelForPrompt(input);
   const augmentedInput = priorContext
     ? `${input}\n\n[Previous step context]: ${priorContext}`
     : input;
 
+  // ── Math verification path ──
+  // If the query is mathematical, route through the two-model verification system
+  // instead of the standard single-model chat handler.
+  if (isMathQuery(input)) {
+    console.log(`[EXECUTOR] math query detected — routing to verification pipeline`);
+    const systemPrompt =
+      "SYSTEM: You are SentIQGPT, a knowledgeable and helpful AI assistant.\n" +
+      "Provide clear, step-by-step mathematical reasoning.\n" +
+      "Show your work and verify your calculations.";
+
+    const mathResult = await verifyMathAnswer(augmentedInput, systemPrompt);
+    console.log(
+      `[EXECUTOR] math verification: verified=${mathResult.verified} agreed=${mathResult.agreed} reconciled=${mathResult.reconciled}`,
+    );
+    return { step: 0, tool: "conversation", reply: mathResult.answer };
+  }
+
+  // ── Standard conversation path ──
+  const modelOverride = selectModelForPrompt(input);
   const result = await handleChat({
     userMessage: augmentedInput,
     recentMessages: ctx.recentMessages,
