@@ -39,6 +39,10 @@ export interface MathVerificationResult {
 const PRIMARY_MODEL = "deepseek";
 const VERIFIER_MODEL = "gemini-fast";
 
+/** When false (default), only DeepSeek solves — no Gemini verification pass. */
+const VERIFICATION_ENABLED =
+  (process.env.ENABLE_MATH_VERIFICATION ?? "").toLowerCase() === "true";
+
 // Short answers (< this length) are more likely to be numeric and benefit
 // most from exact-match comparison. Long answers use semantic comparison.
 const SHORT_ANSWER_THRESHOLD = 200;
@@ -129,7 +133,7 @@ export async function verifyMathAnswer(
     : userMessage;
 
   // ── Step 1: Primary solve with deepseek ──
-  console.log(`[MathVerifier] Step 1: Primary solve with ${PRIMARY_MODEL}`);
+  console.log(`[MathPipeline] solving with ${PRIMARY_MODEL}`);
   const primaryCall: LLMAdapterCall = {
     task: "chat",
     prompt: fullPrompt,
@@ -140,7 +144,7 @@ export async function verifyMathAnswer(
   try {
     primaryAnswer = await callLLMAdapter(primaryCall);
   } catch (err) {
-    console.error(`[MathVerifier] Primary model failed: ${err instanceof Error ? err.message : err}`);
+    console.error(`[MathPipeline] Primary model failed: ${err instanceof Error ? err.message : err}`);
     // If deepseek fails, fall through to verifier model as sole answer
     const fallbackCall: LLMAdapterCall = {
       task: "chat",
@@ -158,8 +162,21 @@ export async function verifyMathAnswer(
     };
   }
 
+  // ── Skip verification when disabled ──
+  if (!VERIFICATION_ENABLED) {
+    console.log(`[MathPipeline] verification disabled — returning deepseek answer directly`);
+    return {
+      answer: primaryAnswer,
+      verified: false,
+      agreed: false,
+      reconciled: false,
+      primaryModel: PRIMARY_MODEL,
+      verifierModel: VERIFIER_MODEL,
+    };
+  }
+
   // ── Step 2: Verification pass with the main chat model ──
-  console.log(`[MathVerifier] Step 2: Verification pass with ${VERIFIER_MODEL}`);
+  console.log(`[MathPipeline] verification enabled — verifying with ${VERIFIER_MODEL}`);
   const verifierCall: LLMAdapterCall = {
     task: "chat",
     prompt: fullPrompt,
@@ -170,7 +187,7 @@ export async function verifyMathAnswer(
   try {
     verifierAnswer = await callLLMAdapter(verifierCall);
   } catch (err) {
-    console.error(`[MathVerifier] Verifier model failed: ${err instanceof Error ? err.message : err}`);
+    console.error(`[MathPipeline] Verifier model failed: ${err instanceof Error ? err.message : err}`);
     // If verifier fails, return primary answer unverified
     return {
       answer: primaryAnswer,
@@ -183,11 +200,11 @@ export async function verifyMathAnswer(
   }
 
   // ── Step 3: Compare results ──
-  console.log(`[MathVerifier] Step 3: Comparing results`);
+  console.log(`[MathPipeline] Step 3: Comparing results`);
   const agreed = answersMatch(primaryAnswer, verifierAnswer);
 
   if (agreed) {
-    console.log(`[MathVerifier] Models agree — returning primary answer`);
+    console.log(`[MathPipeline] Models agree — returning primary answer`);
     return {
       answer: primaryAnswer,
       verified: true,
@@ -199,7 +216,7 @@ export async function verifyMathAnswer(
   }
 
   // ── Step 3b: Reconciliation — models disagree ──
-  console.log(`[MathVerifier] Models disagree — running reconciliation`);
+  console.log(`[MathPipeline] Models disagree — running reconciliation`);
   const reconciliationPrompt =
     `You are a mathematical verification assistant. Two models were asked the same question and gave different answers.\n\n` +
     `ORIGINAL QUESTION:\n${userMessage}\n\n` +
@@ -218,7 +235,7 @@ export async function verifyMathAnswer(
 
   try {
     const reconciledAnswer = await callLLMAdapter(reconcileCall);
-    console.log(`[MathVerifier] Reconciliation complete`);
+    console.log(`[MathPipeline] Reconciliation complete`);
     return {
       answer: reconciledAnswer,
       verified: true,
@@ -228,7 +245,7 @@ export async function verifyMathAnswer(
       verifierModel: VERIFIER_MODEL,
     };
   } catch (err) {
-    console.error(`[MathVerifier] Reconciliation failed: ${err instanceof Error ? err.message : err}`);
+    console.error(`[MathPipeline] Reconciliation failed: ${err instanceof Error ? err.message : err}`);
     // If reconciliation fails, prefer the primary (deepseek) answer
     return {
       answer: primaryAnswer,

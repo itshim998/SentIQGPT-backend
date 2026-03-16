@@ -33,6 +33,8 @@ import { selectModelForPrompt, isMathQuery } from "./modelRouter";
 export interface StepResult {
   readonly step: number;
   readonly tool: PlanTool;
+  /** True when this step was handled by the math verification pipeline */
+  readonly isMathResult?: boolean;
   /** Text output (conversation / file_analysis replies) */
   readonly reply?: string;
   /** Image output (image_generation) */
@@ -99,7 +101,7 @@ async function execConversation(
   // If the query is mathematical, route through the two-model verification system
   // instead of the standard single-model chat handler.
   if (isMathQuery(input)) {
-    console.log(`[EXECUTOR] math query detected — routing to verification pipeline`);
+    console.log(`[MathPipeline] math query detected — routing to deepseek verification pipeline`);
     const systemPrompt =
       "SYSTEM: You are SentIQGPT, a knowledgeable and helpful AI assistant.\n" +
       "Provide clear, step-by-step mathematical reasoning.\n" +
@@ -107,9 +109,9 @@ async function execConversation(
 
     const mathResult = await verifyMathAnswer(augmentedInput, systemPrompt);
     console.log(
-      `[EXECUTOR] math verification: verified=${mathResult.verified} agreed=${mathResult.agreed} reconciled=${mathResult.reconciled}`,
+      `[MathPipeline] solving with deepseek — verified=${mathResult.verified} agreed=${mathResult.agreed} reconciled=${mathResult.reconciled}`,
     );
-    return { step: 0, tool: "conversation", reply: mathResult.answer };
+    return { step: 0, tool: "conversation", isMathResult: true, reply: mathResult.answer };
   }
 
   // ── Standard conversation path ──

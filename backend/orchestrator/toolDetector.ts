@@ -27,7 +27,8 @@ export type DetectedTool =
   | "file_analysis"
   | "knowledge_query"
   | "memory_update"
-  | "chart_generation";
+  | "chart_generation"
+  | "math_reasoning";
 
 const VALID_TOOLS: ReadonlySet<string> = new Set<DetectedTool>([
   "normal_chat",

@@ -294,8 +294,17 @@ app.post(
     // Math queries need the verification pipeline (deepseek + verifier), which
     // is only available through the orchestrator.  Redirect like chart requests.
     if (isMathQuery(parsed.data.message)) {
-      console.log(`[Stream] math query detected — redirecting to orchestrator for verification`);
+      console.log(`[MathPipeline] streaming math query — redirecting to orchestrator`);
       try {
+        // Send SSE headers early so frontend can detect route before answer arrives
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        res.flushHeaders();
+        // Emit route metadata so frontend can show "Reasoning..." indicator
+        res.write(`data: ${JSON.stringify({ type: "route", route: "math_reasoning" })}\n\n`);
+
         const result = await orchestrate({
           userMessage: parsed.data.message,
           context: {
@@ -305,11 +314,6 @@ app.post(
           },
         });
         // Return as SSE stream so the frontend handles it uniformly
-        res.setHeader("Content-Type", "text/event-stream");
-        res.setHeader("Cache-Control", "no-cache");
-        res.setHeader("Connection", "keep-alive");
-        res.setHeader("X-Accel-Buffering", "no");
-        res.flushHeaders();
         if (result.reply) {
           // Stream the verified answer in chunks for smooth typing effect
           const CHUNK_SIZE = 24;
@@ -322,7 +326,7 @@ app.post(
         res.end();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Stream] math orchestration failed: ${message}`);
+        console.error(`[MathPipeline] streaming orchestration failed: ${message}`);
         res.status(500).json({ error: message });
       }
       return;

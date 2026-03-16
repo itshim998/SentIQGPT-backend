@@ -111,12 +111,13 @@ function planToolToRoute(tool: PlanTool): DetectedTool {
 function mergeResults(
   steps: readonly StepResult[],
   memoryPayload: OrchestratorResponse["memory"],
-): Omit<OrchestratorResponse, "confidence"> {
+): Omit<OrchestratorResponse, "confidence"> & { _isMathResult?: boolean } {
   let reply: string | undefined;
   let image: OrchestratorResponse["image"] | undefined;
   let chart: OrchestratorResponse["chart"] | undefined;
   let memory = memoryPayload;
   let route: DetectedTool = "normal_chat";
+  let _isMathResult = false;
 
   const replyParts: string[] = [];
 
@@ -124,6 +125,12 @@ function mergeResults(
     // Track the primary route from the first step
     if (step.step === 1) {
       route = planToolToRoute(step.tool);
+    }
+
+    // Detect math pipeline results
+    if (step.isMathResult) {
+      _isMathResult = true;
+      route = "math_reasoning" as DetectedTool;
     }
 
     if (step.reply) {
@@ -168,6 +175,7 @@ function mergeResults(
     image,
     chart,
     memory,
+    _isMathResult,
   };
 }
 
@@ -259,10 +267,11 @@ async function _orchestrateInner(
   // 4. Merge step results into a single response
   const merged = mergeResults(execution.steps, memoryPayload);
 
-  // 4. Self-Reflection Loop
-  //    Only runs on text replies ≥ 100 chars.
-  //    Skips image-only, memory-only, or short responses.
-  const reflected = await reflectOnAnswer(userMessage, merged);
+  // 4b. Self-Reflection Loop
+  //     Only runs on text replies ≥ 100 chars.
+  //     Skips image-only, memory-only, short responses, AND math results
+  //     (math queries are already verified by the two-model pipeline).
+  const reflected = await reflectOnAnswer(userMessage, merged, merged._isMathResult);
 
   const finalResponse: OrchestratorResponse = {
     ...reflected.merged,
@@ -296,10 +305,13 @@ const MIN_REFLECTION_LENGTH = 100;
  *   • No text reply exists (image/memory-only)
  *   • Reply is shorter than MIN_REFLECTION_LENGTH
  *   • Route is image_generation (tool output, not prose)
+ *   • Route is chart_generation
+ *   • Query was handled by the math verification pipeline
  */
 async function reflectOnAnswer(
   userMessage: string,
   merged: Omit<OrchestratorResponse, "confidence">,
+  isMathResult?: boolean,
 ): Promise<{
   merged: Omit<OrchestratorResponse, "confidence">;
   reflection?: OrchestratorResponse["reflection"];
@@ -311,6 +323,12 @@ async function reflectOnAnswer(
     merged.route === "image_generation" ||
     merged.route === "chart_generation"
   ) {
+    return { merged };
+  }
+
+  // Guard: skip for math queries — already verified by two-model pipeline
+  if (isMathResult) {
+    console.log("[MathPipeline] reflection skipped — math query already verified by two-model pipeline");
     return { merged };
   }
 
