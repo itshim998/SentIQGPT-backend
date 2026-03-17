@@ -33,8 +33,7 @@ import { buildContext } from "./context/contextBuilder";
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
 
-import { selectModelForPrompt } from "./orchestrator/modelRouter";
-import { isMathQuery } from "./orchestrator/modelRouter";
+import { detectCodeQuery, isMathQuery, selectModelForPrompt } from "./orchestrator/modelRouter";
 
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
@@ -293,7 +292,10 @@ app.post(
     // ── Safety gate: math queries use two-model verification via orchestrator ──
     // Math queries need the verification pipeline (deepseek + verifier), which
     // is only available through the orchestrator.  Redirect like chart requests.
-    if (isMathQuery(parsed.data.message)) {
+    const isCodingQuery = detectCodeQuery(parsed.data.message);
+    const isMathReasoningQuery = !isCodingQuery && isMathQuery(parsed.data.message);
+
+    if (isMathReasoningQuery) {
       console.log(`[MathPipeline] streaming math query — redirecting to orchestrator`);
       try {
         // Send SSE headers early so frontend can detect route before answer arrives
@@ -836,4 +838,3 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (reason) => {
   console.error("[SentIQGPT] UNHANDLED REJECTION (kept alive):", reason);
 });
-

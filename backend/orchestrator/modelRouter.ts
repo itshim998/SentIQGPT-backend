@@ -1,13 +1,13 @@
-// SentIQGPT v3 — Capability-Aware Model Router
+// SentIQGPT v3 - Capability-Aware Model Router
 //
 // Deterministically selects the best model for a prompt based on
-// detected capabilities.  Regex-only — no LLM calls.
+// detected capabilities. Regex-only - no LLM calls.
 //
 // Detection priority (first match wins):
-//   1. vision          → gemini (Gemini vision-capable model)
-//   2. math_reasoning  → deepseek       (Pollinations)
-//   3. coding          → qwen3-coder    (Pollinations)
-//   4. general_chat    → gemini-fast     (Pollinations)
+//   1. vision          -> gemini (Gemini vision-capable model)
+//   2. coding          -> qwen-coder (Pollinations)
+//   3. math_reasoning  -> deepseek (Pollinations)
+//   4. general_chat    -> gemini-fast (Pollinations)
 //
 // Gemini direct API is NEVER selected by the router.
 // It is a last-resort fallback handled by the Python gateway.
@@ -20,80 +20,64 @@ export type PromptModelCategory =
   | "math_reasoning"
   | "general_chat";
 
-// ── Coding detection ──
-// Checked BEFORE general chat.  Any programming language name OR coding
-// keyword forces routing to qwen3-coder.
-const CODING_PATTERNS: readonly RegExp[] = [
-  // Core coding keywords
+// Coding detection must run before math detection so debugging prompts
+// do not get intercepted by the math pipeline.
+const CODE_LANGUAGE_PATTERNS: readonly RegExp[] = [
+  /\bpython\b/i,
+  /\bjava\b/i,
+  /\bjavascript\b/i,
+  /\btypescript\b/i,
+  /\bcpp\b/i,
+  /\bc\+\+\b/i,
+  /\bc\b(?=\s+(?:code|program|compiler|function|bug|error|pointer|syntax|language|file)\b)/i,
+];
+
+const CODE_SYNTAX_PATTERNS: readonly RegExp[] = [
+  /\bdef\s+[A-Za-z_]\w*\s*\(/i,
+  /\bfunction\s+[A-Za-z_$][\w$]*\s*\(/i,
+  /\bclass\s+[A-Za-z_]\w*/i,
+  /\breturn\b/i,
+  /\bprint\s*\(/i,
+  /\binput\s*\(/i,
+  /\bconsole\.log\s*\(/i,
+];
+
+const CODE_STRUCTURE_PATTERNS: readonly RegExp[] = [
+  /```/,
+  /[A-Za-z_]\w*\s*\([^)\n]*\)/,
+  /\{[^}]*\}/,
+  /(?:^|\n)(?:\t| {2,})\S/m,
+  /:\s*(?:\r?\n)\s{2,}\S/m,
+];
+
+const CODE_DEBUG_PATTERNS: readonly RegExp[] = [
+  /\berror\b/i,
+  /\bbug\b/i,
+  /\bnot\s+working\b/i,
+  /\bnot\s+printing\b/i,
+  /\bfix\b/i,
+  /\bissue\b/i,
+  /\bdebug(?:ging)?\b/i,
+  /\bexception\b/i,
+];
+
+const GENERIC_CODING_PATTERNS: readonly RegExp[] = [
   /\bcode\b/i,
   /\bprogram(?:ming)?\b/i,
   /\bscript\b/i,
-  /\bfunction\b/i,
-  /\bclass\b/i,
-  /\balgorithm\b/i,
-  /\bcompil(?:e|er)\b/i,
-  /\bdebug(?:ging)?\b/i,
-  /\bimplementation\b/i,
-  /\bsnippet\b/i,
-  /\bAPI\b/,
-  /\bSDK\b/i,
-  /\bregex\b/i,
-  /\bquery\b/i,
+  /\bcompiler?\b/i,
   /\bsyntax\b/i,
-  /\bloop\b/i,
-  /\barray\b/i,
-  /\bvariable\b/i,
-  /\bpointer\b/i,
-  /\brecursion\b/i,
-  // Programming languages
-  /\b[Cc]\+\+\b/,
-  /\b[Cc]#\b/,
-  /\bjava\b/i,
-  /\bpython\b/i,
-  /\bjavascript\b/i,
-  /\btypescript\b/i,
-  /\bgolang\b/i,
-  /\b\bgo\s+(?:program|code|function|module)\b/i,
-  /\brust\b/i,
-  /\bhtml\b/i,
-  /\bcss\b/i,
-  /\bsql\b/i,
-  /\bswift\b/i,
-  /\bkotlin\b/i,
-  /\bruby\b/i,
-  /\bphp\b/i,
-  /\bperl\b/i,
-  /\bscala\b/i,
-  /\bhaskell\b/i,
-  /\blua\b/i,
-  /\bR\b(?=\s+(?:code|program|script|function))/,
-  /\bbash\b/i,
-  /\bshell\b/i,
-  /\bpowershell\b/i,
-  // Action verbs paired with code output
-  /\bwrite\s+(?:a\s+)?(?:code|program|script|function|class|method|module|test)\b/i,
-  /\bbuild\s+(?:a\s+)?(?:code|program|script|app|application|class|module)\b/i,
-  /\bcreate\s+(?:a\s+)?(?:code|program|script|function|class|component|module|webpage|page)\b/i,
-  /\bimplement\s+(?:a\s+|the\s+)?/i,
-  /\bgenerate\s+(?:a\s+)?(?:code|program|script|function|class|test)\b/i,
-  /\bdesign\s+(?:a\s+)?(?:code|program|class|algorithm|system)\b/i,
-  // Diagnostic indicators
   /\bstack\s*trace\b/i,
-  /\bfix\s+(?:this\s+)?(?:code|bug|error|exception)\b/i,
   /\brefactor\b/i,
-  /\bexception\b/i,
-  /```/,
-  /\bbug\b/i,
   /\bunit\s*test\b/i,
+  /\bapi\b/i,
+  /\bsdk\b/i,
 ];
 
-// ── Math / numerical reasoning detection ──
-// Checked AFTER vision but BEFORE coding, so that math queries with
-// code keywords like "algorithm" route to deepseek instead of qwen3-coder.
+// Math / numerical reasoning detection.
+// Checked after coding so programming prompts never leak into deepseek.
 const MATH_PATTERNS: readonly RegExp[] = [
-  // Arithmetic expressions (digits with operators)
   /\d+\s*[+\-*/^]\s*\d+/,
-  // Algebra
   /\balgebra(?:ic)?\b/i,
   /\bequation(?:s)?\b/i,
   /\bsolve\b/i,
@@ -102,7 +86,6 @@ const MATH_PATTERNS: readonly RegExp[] = [
   /\bpolynomial\b/i,
   /\bquadratic\b/i,
   /\blinear\s+(?:equation|system|algebra)\b/i,
-  // Calculus
   /\bcalculus\b/i,
   /\bintegral(?:s)?\b/i,
   /\bintegrat(?:e|ion)\b/i,
@@ -110,7 +93,6 @@ const MATH_PATTERNS: readonly RegExp[] = [
   /\bdifferentiat(?:e|ion)\b/i,
   /\blimit\s+(?:of|as)\b/i,
   /\bseries\s+(?:expansion|convergence)\b/i,
-  // Probability & statistics
   /\bprobabilit(?:y|ies)\b/i,
   /\bstatistic(?:s|al)\b/i,
   /\bstandard\s+deviation\b/i,
@@ -122,19 +104,16 @@ const MATH_PATTERNS: readonly RegExp[] = [
   /\bbinomial\b/i,
   /\bnormal\s+distribution\b/i,
   /\bBayes(?:ian)?\b/i,
-  // Matrices & linear algebra
   /\bmatr(?:ix|ices)\b/i,
   /\bdeterminant\b/i,
   /\beigenvalue\b/i,
   /\beigenvector\b/i,
   /\bvector\s+(?:space|field|product)\b/i,
-  // Action verbs for math
   /\bcalculat(?:e|ion)\b/i,
   /\bcompute\b/i,
   /\bprove\s+(?:that|the)\b/i,
   /\bsimplify\b/i,
   /\bevaluat(?:e|ion)\b/i,
-  // Math notation / symbols
   /\bsin\s*\(|cos\s*\(|tan\s*\(|log\s*\(/i,
   /\bsqrt\b/i,
   /\bsummation\b/i,
@@ -145,7 +124,6 @@ const MATH_PATTERNS: readonly RegExp[] = [
   /\bgreatest\s+common\b/i,
   /\bleast\s+common\b/i,
   /\bmodular\s+arithmetic\b/i,
-  // Generic math keywords
   /\bmath(?:ematic(?:s|al))?\b/i,
   /\bnumerical(?:ly)?\b/i,
   /\barithmetic\b/i,
@@ -153,9 +131,6 @@ const MATH_PATTERNS: readonly RegExp[] = [
   /\btrigonometr(?:y|ic)\b/i,
 ];
 
-// ── Word problem / optimization detection (Layer 2) ──
-// Detects mathematical word problems that lack explicit math keywords.
-// Uses a hybrid approach: constraint language + numbers + goal phrases.
 const WORD_PROBLEM_CONSTRAINT_WORDS: readonly RegExp[] = [
   /\bprofit\b/i,
   /\bcost\b/i,
@@ -213,8 +188,6 @@ const WORD_PROBLEM_GOAL_PHRASES: readonly RegExp[] = [
   /\bwhat\s+(?:fraction|percent(?:age)?|proportion)\b/i,
 ];
 
-// ── Structural pattern detection (Layer 3) ──
-// Detects comparisons and bound phrases common in constraint problems.
 const STRUCTURAL_COMPARISON_WORDS: readonly RegExp[] = [
   /\bat\s+least\b/i,
   /\bat\s+most\b/i,
@@ -238,61 +211,62 @@ const STRUCTURAL_COMPARISON_WORDS: readonly RegExp[] = [
   /\bper\b/i,
 ];
 
-/**
- * Count distinct numbers in the query (integers, decimals, fractions).
- * Used to detect multi-quantity word problems.
- */
 function countNumbers(query: string): number {
   const matches = query.match(/\b\d+(?:\.\d+)?(?:\/\d+)?\b/g);
   return matches ? matches.length : 0;
 }
 
-/**
- * Count how many patterns from a list match the query.
- */
 function countMatches(query: string, patterns: readonly RegExp[]): number {
   let count = 0;
-  for (const p of patterns) {
-    if (p.test(query)) count++;
+  for (const pattern of patterns) {
+    if (pattern.test(query)) count++;
   }
   return count;
 }
 
-/**
- * Hybrid math reasoning detector — detects both symbolic and word-based math.
- *
- * Layer 1: Symbol/keyword detection (MATH_PATTERNS — explicit math terms)
- * Layer 2: Word problem detection (constraint language + numbers + goal)
- * Layer 3: Structural pattern detection (numbers + comparisons + goals)
- *
- * Runtime: < 1ms — regex + token counting only, no LLM calls.
- */
+export function detectCodeQuery(query: string): boolean {
+  if (!query.trim()) return false;
+
+  const languageHits = countMatches(query, CODE_LANGUAGE_PATTERNS);
+  const syntaxHits = countMatches(query, CODE_SYNTAX_PATTERNS);
+  const structureHits = countMatches(query, CODE_STRUCTURE_PATTERNS);
+  const debugHits = countMatches(query, CODE_DEBUG_PATTERNS);
+  const genericHits = countMatches(query, GENERIC_CODING_PATTERNS);
+
+  if (/```/.test(query)) return true;
+  if (languageHits > 0) return true;
+  if (syntaxHits >= 2) return true;
+  if (syntaxHits > 0 && (debugHits > 0 || structureHits > 0 || genericHits > 0)) return true;
+  if (debugHits > 0 && (syntaxHits > 0 || structureHits > 0 || genericHits > 0)) return true;
+  if (genericHits >= 2 && (syntaxHits > 0 || structureHits > 0 || debugHits > 0)) return true;
+  if (structureHits >= 2 && (syntaxHits > 0 || debugHits > 0 || genericHits > 0)) return true;
+
+  return false;
+}
+
 export function detectMathReasoning(query: string): boolean {
-  // Layer 1 — explicit math symbols and keywords
+  if (detectCodeQuery(query)) {
+    return false;
+  }
+
   for (const pattern of MATH_PATTERNS) {
     if (pattern.test(query)) return true;
   }
 
   const numCount = countNumbers(query);
 
-  // Layer 2 — word problem detection
-  // Requires: multiple numbers + constraint language + goal phrase
   if (numCount >= 2) {
     const constraintHits = countMatches(query, WORD_PROBLEM_CONSTRAINT_WORDS);
     const goalHits = countMatches(query, WORD_PROBLEM_GOAL_PHRASES);
     if (constraintHits >= 2 && goalHits >= 1) return true;
   }
 
-  // Layer 3 — structural pattern detection
-  // Requires: multiple numbers + comparison/bound language + goal phrase
   if (numCount >= 2) {
     const structuralHits = countMatches(query, STRUCTURAL_COMPARISON_WORDS);
     const goalHits = countMatches(query, WORD_PROBLEM_GOAL_PHRASES);
     if (structuralHits >= 2 && goalHits >= 1) return true;
   }
 
-  // Layer 2b — strong optimization signal even with fewer numbers
-  // "maximize profit" or "minimize cost" are unambiguous math goals
   if (
     /\b(?:maximiz|minimiz|optimiz)(?:e|ing|ation)\b/i.test(query) &&
     numCount >= 1 &&
@@ -304,18 +278,10 @@ export function detectMathReasoning(query: string): boolean {
   return false;
 }
 
-/**
- * Lightweight math query detector.
- * Returns true if the query contains mathematical/numerical reasoning patterns.
- * Uses the hybrid detectMathReasoning() for both symbolic and word-problem detection.
- * Exported so it can be reused by the math verification system.
- */
 export function isMathQuery(query: string): boolean {
   return detectMathReasoning(query);
 }
 
-// ── Vision detection ──
-// If an image is involved the query MUST go to a vision-capable model.
 const VISION_PATTERNS: readonly RegExp[] = [
   /\bdescribe\s+(?:this\s+)?image\b/i,
   /\bwhat\s+is\s+in\s+(?:this\s+)?image\b/i,
@@ -336,50 +302,34 @@ function detectPromptCategory(
   classification?: QueryType,
   options?: RouterOptions,
 ): PromptModelCategory {
-  // 1. VISION — highest priority.  Image presence forces vision model.
+  void classification;
+
   if (options?.hasImage) {
     return "vision";
   }
+
   for (const pattern of VISION_PATTERNS) {
     if (pattern.test(query)) {
       return "vision";
     }
   }
 
-  // 1.5. FILE ANALYSIS — file input forces gemini-fast for large-context handling.
   if (options?.hasFile) {
-    console.log(`[Router] file_input_detected → gemini-fast`);
+    console.log("[Router] file_input_detected -> gemini-fast");
     return "general_chat";
   }
 
-  // 2. MATH REASONING — any numerical/mathematical signal routes to deepseek.
-  //    Checked BEFORE coding so that "solve this algorithm" goes to deepseek.
+  if (detectCodeQuery(query)) {
+    return "coding";
+  }
+
   if (isMathQuery(query)) {
     return "math_reasoning";
   }
 
-  // 3. CODING — any programming signal routes to qwen3-coder.
-  for (const pattern of CODING_PATTERNS) {
-    if (pattern.test(query)) {
-      return "coding";
-    }
-  }
-
-  // 3. GENERAL CHAT — everything else → gemini-fast via Pollinations.
   return "general_chat";
 }
 
-/**
- * Select the logical model name for the prompt.
- *
- * All primary routes go through Pollinations:
- *   1. qwen3-coder   — coding tasks
- *   2. gemini-fast    — general conversation & lightweight
- *   3. gemini (vision) — image tasks (Gemini direct)
- *
- * Gemini direct API is ONLY used for vision or as a last-resort fallback
- * (handled by the Python gateway, not selected here).
- */
 export function selectModelForPrompt(
   query: string,
   classification?: QueryType,
@@ -391,25 +341,25 @@ export function selectModelForPrompt(
   switch (category) {
     case "vision":
       model = "gemini-vision";
-      console.log(`[Router] category=vision → gemini (vision model)`);
+      console.log("[Router] category=vision -> gemini-vision");
+      break;
+    case "coding":
+      model = "qwen-coder";
+      console.log("[Router] category=coding -> qwen-coder");
       break;
     case "math_reasoning":
       model = "deepseek";
-      console.log(`[Router] category=math_reasoning model=deepseek`);
-      break;
-    case "coding":
-      model = "qwen3-coder";
-      console.log(`[Router] category=coding → qwen3-coder (Pollinations)`);
+      console.log("[Router] category=math_reasoning -> deepseek");
       break;
     case "general_chat":
     default:
       model = "gemini-fast";
-      console.log(`[Router] category=general → gemini-fast (Pollinations)`);
+      console.log("[Router] category=general_chat -> gemini-fast");
       break;
   }
 
   console.log(
-    `[Router] selected model=${model}  provider=${category === "vision" ? "gemini" : "pollinations"}  category=${category}  query="${query.slice(0, 60)}..."`,
+    `[Router] selected model=${model} provider=${category === "vision" ? "gemini" : "pollinations"} category=${category} query="${query.slice(0, 60)}..."`,
   );
   return model;
 }

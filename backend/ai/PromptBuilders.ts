@@ -301,6 +301,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
 
   // Determine the preferred provider based on the model override.
   const isPollinations =
+    ctx.modelOverride === "qwen-coder" ||
     ctx.modelOverride === "qwen3-coder" ||
     ctx.modelOverride === "qwen3-coder-30b" ||
     ctx.modelOverride === "gemini-fast" ||

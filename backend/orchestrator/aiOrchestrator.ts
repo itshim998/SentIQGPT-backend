@@ -28,7 +28,7 @@ import { verifyMathAnswer } from "../ai/mathVerifier";
 import { buildContext } from "../context/contextBuilder";
 import { planTask } from "./planner";
 import { executePlan } from "./toolExecutor";
-import { isMathQuery } from "./modelRouter";
+import { detectCodeQuery, isMathQuery } from "./modelRouter";
 import { evaluateAnswer } from "../reflection/answerCritic";
 import { improveAnswer } from "../reflection/answerImprover";
 import { getCachedAnswer, setCachedAnswer } from "../cache/cacheManager";
@@ -234,7 +234,9 @@ async function _orchestrateInner(
   // numerical context and causes word problems to be misclassified as general chat.
   // When math is detected, we bypass the planner entirely and go straight to
   // the DeepSeek math pipeline.
-  if (isMathQuery(userMessage)) {
+  const isCodingQuery = detectCodeQuery(userMessage);
+
+  if (!isCodingQuery && isMathQuery(userMessage)) {
     console.log(`[MathPipeline] math query detected on raw input — bypassing planner`);
     console.log(`[MathPipeline] solving with deepseek`);
 

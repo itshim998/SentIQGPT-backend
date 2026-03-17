@@ -24,7 +24,7 @@ import { processMessageForMemory } from "../ai/MemoryProcessor";
 import { verifyMathAnswer } from "../ai/mathVerifier";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
-import { selectModelForPrompt, isMathQuery } from "./modelRouter";
+import { detectCodeQuery, selectModelForPrompt, isMathQuery } from "./modelRouter";
 
 // ==============================
 // Types
@@ -100,7 +100,7 @@ async function execConversation(
   // ── Math verification path ──
   // If the query is mathematical, route through the two-model verification system
   // instead of the standard single-model chat handler.
-  if (isMathQuery(input)) {
+  if (!detectCodeQuery(input) && isMathQuery(input)) {
     console.log(`[MathPipeline] math query detected — routing to deepseek verification pipeline`);
     const systemPrompt =
       "SYSTEM: You are SentIQGPT, a knowledgeable and helpful AI assistant.\n" +
