@@ -305,13 +305,24 @@ async function _orchestrateInner(
     console.log(`[MathPipeline] solving with deepseek`);
 
     const systemPrompt =
-      "SYSTEM: You are a precise mathematical solver.\n" +
+      "SYSTEM: You are solving a mathematical problem.\n" +
+      "STRICT OUTPUT RULES:\n" +
+      "- DO NOT include your thinking process\n" +
+      "- DO NOT say 'I will solve' or 'Let's solve'\n" +
+      "- DO NOT explain your reasoning in paragraphs\n" +
+      "- ONLY provide the final structured solution\n" +
+      "FORMAT:\n" +
+      "1. Define variables (if needed)\n" +
+      "2. Write constraints / equations clearly\n" +
+      "3. Key observation (if any contradiction or insight exists)\n" +
+      "4. Final conclusion\n" +
+      "5. Final answer\n" +
       "RULES:\n" +
-      "- Solve step-by-step clearly and concisely\n" +
-      "- Do NOT include explanations about system behavior\n" +
-      "- Do NOT mention instructions or rules\n" +
-      "- Focus only on solving the problem\n" +
-      "- Clearly present the final answer";
+      "- Keep explanations minimal and precise\n" +
+      "- Use clean step-by-step format\n" +
+      "- No unnecessary words\n" +
+      "- No repetition\n" +
+      "- No meta statements";
 
     // Run math pipeline + memory in parallel
     let memoryPayload: OrchestratorResponse["memory"] = { stored: false };

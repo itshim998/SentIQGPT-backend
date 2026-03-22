@@ -5,6 +5,8 @@
 
 import { callLLMAdapterDetailed } from "./PromptBuilders";
 import type { LLMAdapterCall } from "./PromptBuilders";
+import { formatMathResponse } from "./mathFormatter";
+import { shapeMathResponse } from "./responseShaper";
 
 // ==============================
 // Constants
@@ -38,8 +40,15 @@ export async function solveMathDirect(
   };
 
   const result = await callLLMAdapterDetailed(call);
+  let processed = formatMathResponse(result.text);
+  processed = shapeMathResponse(processed);
+
+  if (/i will|let's solve|we are given/i.test(processed)) {
+    processed = processed.replace(/i will|let's solve|we are given/gi, "");
+  }
+
   return {
-    answer: result.text,
+    answer: processed,
     model_used: result.model_used,
     fallback: result.fallback ?? false,
   };
