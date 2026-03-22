@@ -13,9 +13,12 @@ import { shapeMathResponse } from "./responseShaper";
 // ==============================
 
 const PRIMARY_MODEL = "deepseek";
-const SOLVER_MAX_OUTPUT_TOKENS = 1600;
+const SOLVER_MAX_OUTPUT_TOKENS = 2600;
+const SOLVER_RETRY_MAX_OUTPUT_TOKENS = 1800;
 const GENERATION_MAX_OUTPUT_TOKENS = 2600;
 const GENERATION_RETRY_MAX_OUTPUT_TOKENS = 1400;
+const TRUNCATION_NOTICE =
+  "The mathematical response was truncated before completion. Please ask for a shorter or more focused solution.";
 const GENERATION_SYSTEM_PROMPT =
   "SYSTEM: You are generating math practice content.\n" +
   "RULES:\n" +
@@ -35,35 +38,59 @@ const GENERATION_RETRY_SYSTEM_PROMPT =
   "- Use plain concise wording\n" +
   "- If you use matrices, keep them small and complete\n" +
   "- Finish the response fully";
-const GENERATION_PATTERNS: readonly RegExp[] = [
-  /\bexercise(?:s)?\b/i,
-  /\bpractice\b/i,
-  /\bexample(?:s)?\b/i,
-  /\bworksheet\b/i,
-  /\bquiz\b/i,
-  /\bquestion(?:s)?\b/i,
-  /\bgenerate\b/i,
-  /\bcreate\b/i,
-  /\bgive\b.*\b(?:exercise|question|example|problem)s?\b/i,
+const COMPACT_SOLVER_SYSTEM_PROMPT =
+  "SYSTEM: You are a precise mathematical solver.\n" +
+  "RULES:\n" +
+  "- Do NOT restate the full problem\n" +
+  "- Keep the solution concise and complete\n" +
+  "- Include only the essential mathematical steps\n" +
+  "- Clearly list variables, objective, and constraints when relevant\n" +
+  "- State the final optimization result directly\n" +
+  "- State whether the optimum is at a corner point, infeasible, or affected by redundant constraints\n" +
+  "- No meta commentary or long prose paragraphs";
+const GENERATION_REQUEST_PATTERNS: readonly RegExp[] = [
+  /\b(?:give|create|generate|provide|make|write|list|suggest)\b[\s\S]{0,40}\b(?:exercise(?:s)?|example(?:s)?|practice(?:\s+problems?)?|worksheet|quiz|problem\s+set)\b/i,
+  /\b(?:exercise(?:s)?|example(?:s)?|practice(?:\s+problems?)?|worksheet|quiz|problem\s+set)\b[\s\S]{0,40}\b(?:please\s+)?(?:give|create|generate|provide|make|write|list|suggest)\b/i,
 ];
+const SOLVE_SECTION_PATTERNS: readonly RegExp[] = [
+  /\bquestions?\s*:/i,
+  /\bdetermine\s*:/i,
+  /\bstate\s+whether\s*:/i,
+  /\bobjective\s*:/i,
+  /\bconstraints?\s*:/i,
+  /\bformulate\b/i,
+  /\bminimi[sz]e\b/i,
+  /\bmaximi[sz]e\b/i,
+  /\bsubject\s+to\b/i,
+];
+const META_REASONING_PATTERN = /i will|let's solve|we are given/gi;
 
 // ==============================
 // Math Pipeline
 // ==============================
 
-function isGenerationMathRequest(userMessage: string): boolean {
-  return GENERATION_PATTERNS.some((pattern) => pattern.test(userMessage));
+function classifyMathIntent(userMessage: string): "solve" | "generation" {
+  if (SOLVE_SECTION_PATTERNS.some((pattern) => pattern.test(userMessage))) {
+    return "solve";
+  }
+
+  if (GENERATION_REQUEST_PATTERNS.some((pattern) => pattern.test(userMessage))) {
+    return "generation";
+  }
+
+  return "solve";
 }
 
 function buildMathPrompt(
   userMessage: string,
   systemPrompt: string,
-  generationMode: boolean,
-  retryCompact = false,
+  intent: "solve" | "generation",
+  retryMode: "none" | "compact-solve" | "compact-generation" = "none",
 ): string {
-  const effectiveSystemPrompt = generationMode
-    ? (retryCompact ? GENERATION_RETRY_SYSTEM_PROMPT : GENERATION_SYSTEM_PROMPT)
-    : systemPrompt;
+  const effectiveSystemPrompt =
+    intent === "generation"
+      ? (retryMode === "compact-generation" ? GENERATION_RETRY_SYSTEM_PROMPT : GENERATION_SYSTEM_PROMPT)
+      : (retryMode === "compact-solve" ? COMPACT_SOLVER_SYSTEM_PROMPT : systemPrompt);
 
   return effectiveSystemPrompt
     ? `${effectiveSystemPrompt}\n\nUser: ${userMessage}`
@@ -146,6 +173,98 @@ function degradeIncompleteMathTail(text: string): string {
   return `${prefix} [incomplete math omitted]`;
 }
 
+function hasIncompleteProseTail(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return true;
+  }
+
+  if (/[=:]\s*$/.test(trimmed)) {
+    return true;
+  }
+
+  if (/\b(?:Determine|State whether|Questions?|Objective|Constraints?)\s*:?\s*$/i.test(trimmed)) {
+    return true;
+  }
+
+  if (/(?:^|\n)\s*\d+\.\s+[^\n]*[:=]\s*$/m.test(trimmed)) {
+    return true;
+  }
+
+  if (/(?:^|\n)\s*\d+\.\s*$/m.test(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
+function trimToLastCompleteBoundary(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const sentenceMatches = [...trimmed.matchAll(/[.!?](?=\s|$)/g)];
+  if (sentenceMatches.length > 0) {
+    const lastMatch = sentenceMatches[sentenceMatches.length - 1];
+    return trimmed.slice(0, (lastMatch.index ?? 0) + 1).trim();
+  }
+
+  const numberedSteps = [...trimmed.matchAll(/(?:^|\n)\s*\d+\.\s/g)];
+  if (numberedSteps.length > 1) {
+    const lastStep = numberedSteps[numberedSteps.length - 1];
+    return trimmed.slice(0, lastStep.index ?? 0).trim();
+  }
+
+  const lastLineBreak = trimmed.lastIndexOf("\n");
+  if (lastLineBreak > 0) {
+    return trimmed.slice(0, lastLineBreak).trim();
+  }
+
+  return "";
+}
+
+function finalizeSalvagedText(text: string): string {
+  const trimmed = text
+    .trim()
+    .replace(/(?:^|\n)\s*\d+\.\s*$/m, "")
+    .replace(/[=:]\s*$/, "")
+    .trim();
+  if (!trimmed) {
+    return TRUNCATION_NOTICE;
+  }
+
+  if (/[.!?\])]$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `${trimmed}.`;
+}
+
+function salvageTruncatedResponse(text: string): string {
+  let candidate = hasIncompleteMathTail(text) ? degradeIncompleteMathTail(text) : text;
+  candidate = candidate
+    .replace(/(?:^|\n)\s*\d+\.\s*$/m, "")
+    .replace(/\b(?:Determine|State whether|Questions?|Objective|Constraints?)\s*:?\s*$/i, "")
+    .replace(/[=:]\s*$/, "")
+    .trim();
+
+  if (candidate && !hasIncompleteMathTail(candidate) && !hasIncompleteProseTail(candidate)) {
+    return finalizeSalvagedText(candidate);
+  }
+
+  const bounded = trimToLastCompleteBoundary(candidate);
+  if (bounded) {
+    return finalizeSalvagedText(bounded);
+  }
+
+  return TRUNCATION_NOTICE;
+}
+
+function normalizeMathResponse(text: string): string {
+  return shapeMathResponse(formatMathResponse(text)).replace(META_REASONING_PATTERN, "").trim();
+}
+
 /**
  * Run the single-model math solving pipeline.
  *
@@ -157,44 +276,48 @@ export async function solveMathDirect(
   userMessage: string,
   systemPrompt: string,
 ): Promise<{ answer: string; model_used?: string; fallback?: boolean }> {
-  const generationMode = isGenerationMathRequest(userMessage);
-  const makeCall = async (retryCompact = false) => {
+  const intent = classifyMathIntent(userMessage);
+  console.log(`[MathPipeline] intent=${intent}`);
+
+  const makeCall = async (retryMode: "none" | "compact-solve" | "compact-generation" = "none") => {
     const call: LLMAdapterCall = {
       task: "chat",
-      prompt: buildMathPrompt(userMessage, systemPrompt, generationMode, retryCompact),
+      prompt: buildMathPrompt(userMessage, systemPrompt, intent, retryMode),
       model_override: PRIMARY_MODEL,
       timeout_ms: 115_000,
-      max_output_tokens: generationMode
-        ? (retryCompact ? GENERATION_RETRY_MAX_OUTPUT_TOKENS : GENERATION_MAX_OUTPUT_TOKENS)
-        : SOLVER_MAX_OUTPUT_TOKENS,
+      max_output_tokens:
+        intent === "generation"
+          ? (retryMode === "compact-generation" ? GENERATION_RETRY_MAX_OUTPUT_TOKENS : GENERATION_MAX_OUTPUT_TOKENS)
+          : (retryMode === "compact-solve" ? SOLVER_RETRY_MAX_OUTPUT_TOKENS : SOLVER_MAX_OUTPUT_TOKENS),
     };
 
     return callLLMAdapterDetailed(call);
   };
 
-  let result = await makeCall(false);
-  let processed = shapeMathResponse(formatMathResponse(result.text));
+  let result = await makeCall("none");
+  let processed = normalizeMathResponse(result.text);
+  let incompleteOutput =
+    result.truncated || hasIncompleteMathTail(processed) || hasIncompleteProseTail(processed);
 
-  if (/i will|let's solve|we are given/i.test(processed)) {
-    processed = processed.replace(/i will|let's solve|we are given/gi, "");
-  }
-
-  const needsRetry = generationMode && (result.truncated || hasIncompleteMathTail(processed));
+  const needsRetry = incompleteOutput;
   if (needsRetry) {
-    console.log("[MathPipeline] compact retry triggered for incomplete or truncated generation output");
+    const retryMode = intent === "generation" ? "compact-generation" : "compact-solve";
+    console.log(`[MathPipeline] compact retry triggered for incomplete or truncated ${intent} output`);
     if (result.finish_reason) {
       console.log(`[MathPipeline] provider finish_reason=${result.finish_reason}`);
     }
-    result = await makeCall(true);
-    processed = shapeMathResponse(formatMathResponse(result.text));
-    if (/i will|let's solve|we are given/i.test(processed)) {
-      processed = processed.replace(/i will|let's solve|we are given/gi, "");
-    }
+    console.log(`[MathPipeline] retry_strategy=${retryMode}`);
+    result = await makeCall(retryMode);
+    processed = normalizeMathResponse(result.text);
+    incompleteOutput =
+      result.truncated || hasIncompleteMathTail(processed) || hasIncompleteProseTail(processed);
   }
 
-  if (hasIncompleteMathTail(processed)) {
-    console.log("[MathPipeline] incomplete math tail detected; degrading broken fragment");
-    processed = degradeIncompleteMathTail(processed);
+  if (incompleteOutput) {
+    console.log(
+      `[MathPipeline] salvaging truncated output finish_reason=${result.finish_reason ?? "unknown"} truncated=${result.truncated ? "true" : "false"} chars=${processed.length}`,
+    );
+    processed = salvageTruncatedResponse(processed);
   }
 
   return {
