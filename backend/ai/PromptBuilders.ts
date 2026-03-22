@@ -70,6 +70,7 @@ export interface LLMAdapterCall {
   readonly model_override?: string;
   readonly use_simulation?: boolean;
   readonly user_id?: string;
+  readonly timeout_ms?: number;
 }
 
 export interface LLMAdapterResult {
@@ -99,7 +100,7 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
       model_override: call.model_override,
       user_id: call.user_id,
     }),
-    signal: AbortSignal.timeout(90_000), // 90s hard timeout
+    signal: AbortSignal.timeout(call.timeout_ms ?? 90_000), // 90s default; override for long-running direct math
   });
 
   if (!response.ok) {

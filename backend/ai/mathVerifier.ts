@@ -37,6 +37,7 @@ export async function solveMathDirect(
     task: "chat",
     prompt: fullPrompt,
     model_override: PRIMARY_MODEL,
+    timeout_ms: 115_000,
   };
 
   const result = await callLLMAdapterDetailed(call);

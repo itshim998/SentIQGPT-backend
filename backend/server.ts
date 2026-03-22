@@ -244,6 +244,17 @@ app.post(
   "/api/chat/stream",
   aiRateLimiter,
   asyncHandler(async (req, res) => {
+    const writeSseEvent = (payload: string) => {
+      if (!res.writableEnded) {
+        res.write(`data: ${payload}\n\n`);
+      }
+    };
+    const finishSse = () => {
+      if (!res.writableEnded) {
+        res.end();
+      }
+    };
+
     const parsed = ChatRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
@@ -297,6 +308,7 @@ app.post(
 
     if (isMathReasoningQuery) {
       console.log(`[MathPipeline] streaming math query — redirecting to orchestrator`);
+      let sseStarted = false;
       try {
         // Send SSE headers early so frontend can detect route before answer arrives
         res.setHeader("Content-Type", "text/event-stream");
@@ -304,8 +316,9 @@ app.post(
         res.setHeader("Connection", "keep-alive");
         res.setHeader("X-Accel-Buffering", "no");
         res.flushHeaders();
+        sseStarted = true;
         // Emit route metadata so frontend can show "Reasoning..." indicator
-        res.write(`data: ${JSON.stringify({ type: "route", route: "math_reasoning" })}\n\n`);
+        writeSseEvent(JSON.stringify({ type: "route", route: "math_reasoning" }));
 
         const result = await orchestrate({
           userMessage: parsed.data.message,
@@ -321,15 +334,21 @@ app.post(
           const CHUNK_SIZE = 24;
           for (let i = 0; i < result.reply.length; i += CHUNK_SIZE) {
             const chunk = result.reply.slice(i, i + CHUNK_SIZE);
-            res.write(`data: ${JSON.stringify({ type: "token", text: chunk })}\n\n`);
+            writeSseEvent(JSON.stringify({ type: "token", text: chunk }));
           }
         }
-        res.write("data: [DONE]\n\n");
-        res.end();
+        writeSseEvent("[DONE]");
+        finishSse();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[MathPipeline] streaming orchestration failed: ${message}`);
-        res.status(500).json({ error: message });
+        if (sseStarted || res.headersSent) {
+          writeSseEvent(JSON.stringify({ type: "error", error: message }));
+          writeSseEvent("[DONE]");
+          finishSse();
+        } else {
+          res.status(500).json({ error: message });
+        }
       }
       return;
     }
@@ -397,7 +416,7 @@ app.post(
                 importance: memResult.memory?.importance,
               },
             });
-            res.write(`data: ${memEvent}\n\n`);
+            writeSseEvent(memEvent);
           }
         }
       })
@@ -422,11 +441,11 @@ app.post(
         if (tokenCount === 1) {
           console.log(`[Latency] first token streamed (+${Date.now() - requestStart}ms)`);
         }
-        res.write(`data: ${JSON.stringify({ type: "token", text: value })}\n\n`);
+        writeSseEvent(JSON.stringify({ type: "token", text: value }));
       }
 
       if (!clientDisconnected) {
-        res.write("data: [DONE]\n\n");
+        writeSseEvent("[DONE]");
       }
       console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
       console.log(`[Stream] completed: ${tokenCount} chunks in ${Date.now() - streamStart}ms`);
@@ -434,10 +453,10 @@ app.post(
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[Stream] error: ${message}`);
       if (!clientDisconnected) {
-        res.write(`data: ${JSON.stringify({ type: "error", error: message })}\n\n`);
+        writeSseEvent(JSON.stringify({ type: "error", error: message }));
       }
     } finally {
-      res.end();
+      finishSse();
     }
   }),
 );
@@ -792,16 +811,26 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   // Handle multer errors (file too large, etc.) with clear messages
   if (err && (err as any).code === "LIMIT_FILE_SIZE") {
     console.warn(`[SentIQGPT] File upload rejected: file too large`);
-    res.status(413).json({ error: "File too large. Maximum size is 10MB." });
+    if (!res.headersSent && !res.writableEnded) {
+      res.status(413).json({ error: "File too large. Maximum size is 10MB." });
+    }
     return;
   }
   if (err && err.message && err.message.includes("Multipart")) {
     console.warn(`[SentIQGPT] Multer error: ${err.message}`);
-    res.status(400).json({ error: "Invalid file upload. Please try again." });
+    if (!res.headersSent && !res.writableEnded) {
+      res.status(400).json({ error: "Invalid file upload. Please try again." });
+    }
     return;
   }
 
   console.error("[SentIQGPT] Unhandled error:", err.message);
+  if (res.headersSent || res.writableEnded) {
+    if (!res.writableEnded) {
+      res.end();
+    }
+    return;
+  }
   res.status(500).json({ error: "Internal server error." });
 });
 
