@@ -145,9 +145,16 @@ pollinations_bucket = TokenBucket(RPM)
 # ==============================
 _shelve_lock = threading.Lock()
 
-def _cache_key(prompt: str, task: str, model: str, provider: str, user_id: str = "") -> str:
+def _cache_key(
+    prompt: str,
+    task: str,
+    model: str,
+    provider: str,
+    user_id: str = "",
+    max_output_tokens: Optional[int] = None,
+) -> str:
     h = hashlib.sha256()
-    h.update(f"{provider}|{task}|{model}|{user_id}|{prompt}".encode())
+    h.update(f"{provider}|{task}|{model}|{user_id}|{max_output_tokens or ''}|{prompt}".encode())
     return h.hexdigest()
 
 def _cache_get(key: str) -> Optional[str]:
@@ -416,12 +423,20 @@ def _normalize_pollinations_model(model: str) -> str:
     return model
 
 
-def _build_pollinations_payload(prompt: str, model: str, temperature: float) -> dict:
-    return {
+def _build_pollinations_payload(
+    prompt: str,
+    model: str,
+    temperature: float,
+    max_output_tokens: Optional[int] = None,
+) -> dict:
+    payload = {
         "model": _normalize_pollinations_model(model),
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
     }
+    if max_output_tokens is not None:
+        payload["max_tokens"] = max_output_tokens
+    return payload
 
 
 def _extract_openai_text(content) -> str:
@@ -444,32 +459,37 @@ def _extract_openai_text(content) -> str:
     return ""
 
 
-def _extract_pollinations_response(resp: _requests_lib.Response) -> str:
+def _extract_pollinations_response(resp: _requests_lib.Response) -> tuple[str, Optional[str]]:
     try:
         data = resp.json()
     except ValueError:
-        return resp.text.strip()
+        return resp.text.strip(), None
 
+    finish_reason = None
     if isinstance(data, dict):
         choices = data.get("choices")
         if isinstance(choices, list) and choices:
             first_choice = choices[0]
             if isinstance(first_choice, dict):
+                if isinstance(first_choice.get("finish_reason"), str):
+                    finish_reason = first_choice.get("finish_reason")
                 message = first_choice.get("message")
                 if isinstance(message, dict):
                     text = _extract_openai_text(message.get("content"))
                     if text:
-                        return text
+                        return text, finish_reason
                 delta = first_choice.get("delta")
                 if isinstance(delta, dict):
                     text = _extract_openai_text(delta.get("content"))
                     if text:
-                        return text
+                        return text, finish_reason
         output_text = data.get("output_text")
         if isinstance(output_text, str) and output_text.strip():
-            return output_text.strip()
+            if isinstance(data.get("finish_reason"), str):
+                finish_reason = data.get("finish_reason")
+            return output_text.strip(), finish_reason
 
-    return resp.text.strip()
+    return resp.text.strip(), finish_reason
 
 
 def _pollinations_candidate_endpoints() -> list[str]:
@@ -520,7 +540,12 @@ def _post_pollinations(payload: dict, headers: dict[str, str]) -> tuple[str, _re
     raise RuntimeError("Pollinations request failed without a response")
 
 
-def _call_pollinations(prompt: str, model: str, temperature: float = 0.7) -> str:
+def _call_pollinations(
+    prompt: str,
+    model: str,
+    temperature: float = 0.7,
+    max_output_tokens: Optional[int] = None,
+) -> tuple[str, Optional[str], bool]:
     """Call Pollinations via its OpenAI-compatible chat completions endpoint."""
     if not pollinations_bucket.consume():
         raise RuntimeError("Pollinations rate limit exceeded")
@@ -529,18 +554,27 @@ def _call_pollinations(prompt: str, model: str, temperature: float = 0.7) -> str
     if POLLINATIONS_API_KEY:
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
-    payload = _build_pollinations_payload(prompt, model, temperature)
+    payload = _build_pollinations_payload(prompt, model, temperature, max_output_tokens)
 
     endpoint_used, resp = _post_pollinations(payload, headers)
 
-    result = _extract_pollinations_response(resp)
+    result, finish_reason = _extract_pollinations_response(resp)
+    truncated = finish_reason in {"length", "max_tokens", "content_filter"}
     logger.info(
-        "[Pollinations] response received status=%s endpoint=%s chars=%d",
+        "[Pollinations] response received status=%s endpoint=%s chars=%d finish_reason=%s",
         resp.status_code,
         endpoint_used,
         len(result),
+        finish_reason,
     )
-    return result
+    if truncated:
+        logger.warning(
+            "[Pollinations] completion may be truncated finish_reason=%s chars=%d model=%s",
+            finish_reason,
+            len(result),
+            payload["model"],
+        )
+    return result, finish_reason, truncated
 
 
 def _call_pollinations_stream(prompt: str, model: str, temperature: float = 0.7):
@@ -561,12 +595,13 @@ def _call_pollinations_stream(prompt: str, model: str, temperature: float = 0.7)
     logger.info("[Pollinations] buffered stream mode enabled")
     endpoint_used, resp = _post_pollinations(payload, headers)
 
-    full_text = _extract_pollinations_response(resp)
+    full_text, finish_reason = _extract_pollinations_response(resp)
     logger.info(
-        "[Pollinations] response received status=%s endpoint=%s chars=%d",
+        "[Pollinations] response received status=%s endpoint=%s chars=%d finish_reason=%s",
         resp.status_code,
         endpoint_used,
         len(full_text),
+        finish_reason,
     )
 
     # Yield in small chunks to simulate token-by-token streaming
@@ -585,6 +620,7 @@ def call_llm_router(
     prefer: Optional[str] = None,
     model_override: Optional[str] = None,
     user_id: Optional[str] = None,
+    max_output_tokens: Optional[int] = None,
 ) -> dict[str, Any]:
     """
     Route an LLM call to the correct provider based on task.
@@ -607,6 +643,8 @@ def call_llm_router(
     actual_model_used = model
     fallback_triggered = False
     fallback_reason = None
+    finish_reason = None
+    truncated = False
 
     def _build_response_payload(text: str) -> dict[str, Any]:
         if fallback_triggered:
@@ -618,6 +656,8 @@ def call_llm_router(
             "model_used": actual_model_used,
             "fallback": fallback_triggered,
             "fallback_reason": fallback_reason,
+            "finish_reason": finish_reason,
+            "truncated": truncated,
         }
 
     if use_simulation:
@@ -629,7 +669,7 @@ def call_llm_router(
     logger.info("[LLM Request] model=%s  provider=%s  task=%s  override=%s", model, provider, task, model_override)
 
     # Check cache
-    key = _cache_key(prompt, task, model, provider, user_id or "")
+    key = _cache_key(prompt, task, model, provider, user_id or "", max_output_tokens)
     cached = _cache_get(key)
     if cached is not None:
         logger.info("Cache hit for task=%s provider=%s", task, provider)
@@ -637,6 +677,8 @@ def call_llm_router(
             actual_model_used = cached.get("model_used", actual_model_used)
             fallback_triggered = bool(cached.get("fallback", False))
             fallback_reason = cached.get("fallback_reason")
+            finish_reason = cached.get("finish_reason")
+            truncated = bool(cached.get("truncated", False))
             return _build_response_payload(cached.get("text", ""))
         return _build_response_payload(cached)
 
@@ -655,7 +697,11 @@ def call_llm_router(
     # Invoke the correct provider
     try:
         if provider == "pollinations":
-            result = _call_pollinations(effective_prompt, resolved_override or model)
+            result, finish_reason, truncated = _call_pollinations(
+                effective_prompt,
+                resolved_override or model,
+                max_output_tokens=max_output_tokens,
+            )
         elif provider == "groq":
             result = _invoke_groq(effective_prompt, resolved_override)
         else:
@@ -688,7 +734,11 @@ def call_llm_router(
                 fallback_triggered = True
                 fallback_reason = f"{primary_model or 'pollinations_primary'}_failed"
                 actual_model_used = alt_pollinations_model
-                fallback_result = _call_pollinations(effective_prompt, alt_pollinations_model)
+                fallback_result, finish_reason, truncated = _call_pollinations(
+                    effective_prompt,
+                    alt_pollinations_model,
+                    max_output_tokens=max_output_tokens,
+                )
                 payload = _build_response_payload(fallback_result)
                 _cache_set(key, payload)
                 logger.info(
@@ -711,6 +761,8 @@ def call_llm_router(
                 fallback_triggered = True
                 fallback_reason = f"{primary_model or 'pollinations_primary'}_failed_then_{alt_pollinations_model}_failed"
                 actual_model_used = GEMINI_FAST_MODEL
+                finish_reason = None
+                truncated = False
                 fallback_result = _invoke_gemini(effective_prompt, GEMINI_FAST_MODEL)
                 payload = _build_response_payload(fallback_result)
                 _cache_set(key, payload)
@@ -727,6 +779,8 @@ def call_llm_router(
                 fallback_triggered = True
                 fallback_reason = f"{provider}_failed"
                 actual_model_used = GEMINI_FAST_MODEL
+                finish_reason = None
+                truncated = False
                 fallback_result = _invoke_gemini(effective_prompt, GEMINI_FAST_MODEL)
                 payload = _build_response_payload(fallback_result)
                 _cache_set(key, payload)

@@ -71,6 +71,7 @@ export interface LLMAdapterCall {
   readonly use_simulation?: boolean;
   readonly user_id?: string;
   readonly timeout_ms?: number;
+  readonly max_output_tokens?: number;
 }
 
 export interface LLMAdapterResult {
@@ -78,6 +79,8 @@ export interface LLMAdapterResult {
   readonly model_used?: string;
   readonly fallback?: boolean;
   readonly fallback_reason?: string | null;
+  readonly finish_reason?: string | null;
+  readonly truncated?: boolean;
 }
 
 // ==============================
@@ -99,6 +102,7 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
       prefer: call.prefer,
       model_override: call.model_override,
       user_id: call.user_id,
+      max_output_tokens: call.max_output_tokens,
     }),
     signal: AbortSignal.timeout(call.timeout_ms ?? 90_000), // 90s default; override for long-running direct math
   });
@@ -116,6 +120,8 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
           model_used?: string;
           fallback?: boolean;
           fallback_reason?: string | null;
+          finish_reason?: string | null;
+          truncated?: boolean;
         };
   };
   if (typeof data.result === "string") {
@@ -124,6 +130,8 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
       model_used: undefined,
       fallback: false,
       fallback_reason: null,
+      finish_reason: null,
+      truncated: false,
     };
   }
   return {
@@ -131,6 +139,8 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
     model_used: data.result.model_used,
     fallback: data.result.fallback,
     fallback_reason: data.result.fallback_reason,
+    finish_reason: data.result.finish_reason,
+    truncated: data.result.truncated,
   };
 }
 
