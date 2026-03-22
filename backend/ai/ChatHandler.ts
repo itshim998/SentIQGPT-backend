@@ -1,9 +1,10 @@
 import {
   buildChatPrompt,
-  callLLMAdapter,
+  callLLMAdapterDetailed,
   getDemoFallbackResponse,
   strictParseJsonObject,
 } from "./PromptBuilders";
+import { sanitizeResponse } from "./responseSanitizer";
 import type { ChatContext } from "./PromptBuilders";
 
 // SentIQGPT v1 — Chat Handler
@@ -16,6 +17,8 @@ import type { ChatContext } from "./PromptBuilders";
 export interface ChatResponse {
   readonly reply: string;
   readonly disclaimer: string;
+  readonly model_used?: string;
+  readonly fallback?: boolean;
 }
 
 export async function handleChat(args: {
@@ -42,8 +45,13 @@ export async function handleChat(args: {
   const call = buildChatPrompt(ctx);
 
   let raw: string;
+  let model_used: string | undefined;
+  let fallback = false;
   try {
-    raw = await callLLMAdapter(call);
+    const result = await callLLMAdapterDetailed(call);
+    raw = result.text;
+    model_used = result.model_used;
+    fallback = result.fallback ?? false;
   } catch {
     raw = getDemoFallbackResponse("chat");
   }
@@ -63,5 +71,5 @@ export async function handleChat(args: {
     reply = raw;
   }
 
-  return { reply, disclaimer };
+  return { reply: sanitizeResponse(reply), disclaimer, model_used, fallback };
 }

@@ -26,7 +26,7 @@ import hashlib
 import threading
 import logging
 import importlib
-from typing import Optional
+from typing import Any, Optional
 
 import requests as _requests_lib
 
@@ -585,7 +585,7 @@ def call_llm_router(
     prefer: Optional[str] = None,
     model_override: Optional[str] = None,
     user_id: Optional[str] = None,
-) -> str:
+) -> dict[str, Any]:
     """
     Route an LLM call to the correct provider based on task.
 
@@ -600,13 +600,29 @@ def call_llm_router(
     Returns:
         LLM response text.
     """
-    if use_simulation:
-        return simulated_response(prompt, task)
-
     # Determine provider
     default_provider = prefer or get_provider_for_task(task)
     provider, resolved_override = resolve_model_override(model_override, default_provider)
     model = resolved_override or _default_model_for_provider(provider)
+    actual_model_used = model
+    fallback_triggered = False
+    fallback_reason = None
+
+    def _build_response_payload(text: str) -> dict[str, Any]:
+        if fallback_triggered:
+            print(f"[FALLBACK] triggered: reason={fallback_reason} -> model={actual_model_used}")
+        else:
+            print(f"[MODEL_USED] {actual_model_used}")
+        return {
+            "text": text,
+            "model_used": actual_model_used,
+            "fallback": fallback_triggered,
+            "fallback_reason": fallback_reason,
+        }
+
+    if use_simulation:
+        actual_model_used = "simulation"
+        return _build_response_payload(simulated_response(prompt, task))
 
     logger.info("[Router] model=%s provider=%s task=%s override=%s", model, provider, task, model_override)
     logger.info("[Provider] %s", provider)
@@ -617,15 +633,24 @@ def call_llm_router(
     cached = _cache_get(key)
     if cached is not None:
         logger.info("Cache hit for task=%s provider=%s", task, provider)
-        return cached
+        if isinstance(cached, dict):
+            actual_model_used = cached.get("model_used", actual_model_used)
+            fallback_triggered = bool(cached.get("fallback", False))
+            fallback_reason = cached.get("fallback_reason")
+            return _build_response_payload(cached.get("text", ""))
+        return _build_response_payload(cached)
 
     # Enforce JSON if needed
     effective_prompt = prompt
-    if task in STRICT_JSON_TASKS:
-        effective_prompt = (
-            "SYSTEM: Respond ONLY with valid JSON. "
-            "No markdown. No explanations.\n\n" + prompt
-        )
+    # Force non-JSON mode for reasoning tasks
+    if task in ["chat", "general", "math_reasoning"]:
+        effective_prompt = prompt
+    else:
+        if task in STRICT_JSON_TASKS:
+            effective_prompt = (
+                "SYSTEM: Respond ONLY with valid JSON. "
+                "No markdown. No explanations.\n\n" + prompt
+            )
 
     # Invoke the correct provider
     try:
@@ -636,9 +661,10 @@ def call_llm_router(
         else:
             result = _invoke_gemini(effective_prompt, resolved_override)
 
-        _cache_set(key, result)
+        payload = _build_response_payload(result)
+        _cache_set(key, payload)
         logger.info("Provider=%s succeeded for task=%s", provider, task)
-        return result
+        return payload
 
     except Exception as e:
         logger.error("Provider=%s failed for task=%s: %s", provider, task, e)
@@ -659,14 +685,18 @@ def call_llm_router(
                     primary_model,
                     alt_pollinations_model,
                 )
+                fallback_triggered = True
+                fallback_reason = f"{primary_model or 'pollinations_primary'}_failed"
+                actual_model_used = alt_pollinations_model
                 fallback_result = _call_pollinations(effective_prompt, alt_pollinations_model)
-                _cache_set(key, fallback_result)
+                payload = _build_response_payload(fallback_result)
+                _cache_set(key, payload)
                 logger.info(
                     "[Fallback] Pollinations alternate model %s succeeded for task=%s",
                     alt_pollinations_model,
                     task,
                 )
-                return fallback_result
+                return payload
             except Exception as alt_error:
                 logger.warning(
                     "[Fallback] Pollinations alternate model %s also failed: %s — switching to Gemini",
@@ -678,10 +708,14 @@ def call_llm_router(
             try:
                 logger.info("[Fallback] All Pollinations models failed — switching to Gemini (%s)", GEMINI_FAST_MODEL)
                 logger.info("[Router] fallback provider=gemini")
+                fallback_triggered = True
+                fallback_reason = f"{primary_model or 'pollinations_primary'}_failed_then_{alt_pollinations_model}_failed"
+                actual_model_used = GEMINI_FAST_MODEL
                 fallback_result = _invoke_gemini(effective_prompt, GEMINI_FAST_MODEL)
-                _cache_set(key, fallback_result)
+                payload = _build_response_payload(fallback_result)
+                _cache_set(key, payload)
                 logger.info("Fallback Gemini path succeeded for task=%s", task)
-                return fallback_result
+                return payload
             except Exception as fallback_error:
                 logger.error("Fallback Gemini path failed for task=%s: %s", task, fallback_error)
 
@@ -690,14 +724,20 @@ def call_llm_router(
             try:
                 logger.info("[Fallback] %s failed — switching to Gemini (%s)", provider, GEMINI_FAST_MODEL)
                 logger.info("[Router] fallback provider=gemini")
+                fallback_triggered = True
+                fallback_reason = f"{provider}_failed"
+                actual_model_used = GEMINI_FAST_MODEL
                 fallback_result = _invoke_gemini(effective_prompt, GEMINI_FAST_MODEL)
-                _cache_set(key, fallback_result)
+                payload = _build_response_payload(fallback_result)
+                _cache_set(key, payload)
                 logger.info("Fallback Gemini path succeeded for task=%s", task)
-                return fallback_result
+                return payload
             except Exception as fallback_error:
                 logger.error("Fallback Gemini path failed for task=%s: %s", task, fallback_error)
 
-        return json.dumps({"error": "provider_failed", "provider": provider, "detail": str(e)})
+        return _build_response_payload(
+            json.dumps({"error": "provider_failed", "provider": provider, "detail": str(e)})
+        )
 
 # ==============================
 # Backward-compatible API
@@ -708,12 +748,13 @@ def call_llm(
     use_simulation: bool = False,
     model_override: Optional[str] = None,
 ) -> str:
-    return call_llm_router(
+    result = call_llm_router(
         prompt=prompt,
         task=category,
         use_simulation=use_simulation,
         model_override=model_override,
     )
+    return result["text"]
 
 
 # ==============================

@@ -21,7 +21,7 @@ import { handleChat } from "../ai/ChatHandler";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
-import { verifyMathAnswer } from "../ai/mathVerifier";
+import { solveMathDirect } from "../ai/mathVerifier";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
 import { detectCodeQuery, selectModelForPrompt, isMathQuery } from "./modelRouter";
@@ -33,10 +33,12 @@ import { detectCodeQuery, selectModelForPrompt, isMathQuery } from "./modelRoute
 export interface StepResult {
   readonly step: number;
   readonly tool: PlanTool;
-  /** True when this step was handled by the math verification pipeline */
+  /** True when this step was handled by the math pipeline */
   readonly isMathResult?: boolean;
   /** Text output (conversation / file_analysis replies) */
   readonly reply?: string;
+  readonly model_used?: string;
+  readonly fallback?: boolean;
   /** Image output (image_generation) */
   readonly image?: {
     success: boolean;
@@ -97,21 +99,32 @@ async function execConversation(
     ? `${input}\n\n[Previous step context]: ${priorContext}`
     : input;
 
-  // ── Math verification path ──
-  // If the query is mathematical, route through the two-model verification system
+  // Math path
+  // If the query is mathematical, route through the direct DeepSeek math solver
   // instead of the standard single-model chat handler.
   if (!detectCodeQuery(input) && isMathQuery(input)) {
-    console.log(`[MathPipeline] math query detected — routing to deepseek verification pipeline`);
+    console.log(`[MathPipeline] math query detected — routing to direct deepseek solver`);
     const systemPrompt =
-      "SYSTEM: You are SentIQGPT, a knowledgeable and helpful AI assistant.\n" +
-      "Provide clear, step-by-step mathematical reasoning.\n" +
-      "Show your work and verify your calculations.";
+      "SYSTEM: You are a precise mathematical solver.\n" +
+      "RULES:\n" +
+      "- Solve step-by-step clearly and concisely\n" +
+      "- Do NOT include explanations about system behavior\n" +
+      "- Do NOT mention instructions or rules\n" +
+      "- Focus only on solving the problem\n" +
+      "- Clearly present the final answer";
 
-    const mathResult = await verifyMathAnswer(augmentedInput, systemPrompt);
+    const mathResult = await solveMathDirect(augmentedInput, systemPrompt);
     console.log(
-      `[MathPipeline] solving with deepseek — verified=${mathResult.verified} agreed=${mathResult.agreed} reconciled=${mathResult.reconciled}`,
+      `[MathPipeline] solved using deepseek`,
     );
-    return { step: 0, tool: "conversation", isMathResult: true, reply: mathResult.answer };
+    return {
+      step: 0,
+      tool: "conversation",
+      isMathResult: true,
+      reply: mathResult.answer,
+      model_used: mathResult.model_used,
+      fallback: mathResult.fallback,
+    };
   }
 
   // ── Standard conversation path ──
@@ -125,7 +138,13 @@ async function execConversation(
     modelOverride,
   });
 
-  return { step: 0, tool: "conversation", reply: result.reply };
+  return {
+    step: 0,
+    tool: "conversation",
+    reply: result.reply,
+    model_used: result.model_used,
+    fallback: result.fallback,
+  };
 }
 
 async function execImageGeneration(
@@ -166,7 +185,13 @@ async function execFileAnalysis(
     modelOverride,
   });
 
-  return { step: 0, tool: "file_analysis", reply: result.reply };
+  return {
+    step: 0,
+    tool: "file_analysis",
+    reply: result.reply,
+    model_used: result.model_used,
+    fallback: result.fallback,
+  };
 }
 
 async function execMemoryUpdate(

@@ -10,7 +10,7 @@
 //   • Does NOT add hallucinated information
 //   • Preserves citations and structure from the original
 
-import { callLLMAdapter } from "../ai/PromptBuilders";
+import { callLLMAdapterDetailed } from "../ai/PromptBuilders";
 import type { CriticEvaluation, ImprovementResult } from "./types";
 
 /**
@@ -54,13 +54,13 @@ export async function improveAnswer(
     "\n\nIMPROVED ANSWER:";
 
   try {
-    const improved = await callLLMAdapter({
+    const improved = await callLLMAdapterDetailed({
       task: "chat",
       prompt,
       prefer: "gemini",
     });
 
-    const trimmed = improved.trim();
+    const trimmed = improved.text.trim();
 
     // Sanity check: if the improved answer is empty or drastically shorter, keep original
     if (!trimmed || trimmed.length < answer.length * 0.3) {
@@ -72,6 +72,8 @@ export async function improveAnswer(
     return {
       answer: trimmed,
       improved: true,
+      model_used: improved.model_used,
+      fallback: improved.fallback ?? false,
       changeNote: `Fixed ${evaluation.issues.length} issue(s): ${evaluation.issues.join("; ").slice(0, 120)}`,
     };
   } catch (err) {

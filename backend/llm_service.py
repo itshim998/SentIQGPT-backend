@@ -17,7 +17,7 @@ import logging
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Optional
 import uvicorn
 
 # --- Environment ---
@@ -67,7 +67,7 @@ class LLMInvokeRequest(BaseModel):
 
 
 class LLMInvokeResponse(BaseModel):
-    result: str
+    result: Any
     provider: str
     cached: bool = False
 

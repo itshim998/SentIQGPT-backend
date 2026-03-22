@@ -29,6 +29,10 @@ export interface ImprovementResult {
   readonly answer: string;
   /** Whether an improvement was actually applied. */
   readonly improved: boolean;
+  /** Model used for the final improved answer. */
+  readonly model_used?: string;
+  /** Whether fallback was used for the final improved answer. */
+  readonly fallback?: boolean;
   /** Brief description of what changed. */
   readonly changeNote?: string;
 }

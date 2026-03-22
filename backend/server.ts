@@ -289,8 +289,8 @@ app.post(
       return;
     }
 
-    // ── Safety gate: math queries use two-model verification via orchestrator ──
-    // Math queries need the verification pipeline (deepseek + verifier), which
+    // ── Safety gate: math queries use the direct math pipeline via orchestrator ──
+    // Math queries need the direct DeepSeek pipeline, which
     // is only available through the orchestrator.  Redirect like chart requests.
     const isCodingQuery = detectCodeQuery(parsed.data.message);
     const isMathReasoningQuery = !isCodingQuery && isMathQuery(parsed.data.message);
@@ -317,7 +317,7 @@ app.post(
         });
         // Return as SSE stream so the frontend handles it uniformly
         if (result.reply) {
-          // Stream the verified answer in chunks for smooth typing effect
+          // Stream the math answer in chunks for smooth typing effect
           const CHUNK_SIZE = 24;
           for (let i = 0; i < result.reply.length; i += CHUNK_SIZE) {
             const chunk = result.reply.slice(i, i + CHUNK_SIZE);

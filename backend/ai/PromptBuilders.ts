@@ -72,13 +72,20 @@ export interface LLMAdapterCall {
   readonly user_id?: string;
 }
 
+export interface LLMAdapterResult {
+  readonly text: string;
+  readonly model_used?: string;
+  readonly fallback?: boolean;
+  readonly fallback_reason?: string | null;
+}
+
 // ==============================
 // LLM Adapter invocation (via HTTP to FastAPI service)
 // ==============================
 
 const LLM_SERVICE_URL = process.env.LLM_SERVICE_URL || `http://localhost:${process.env.LLM_SERVICE_PORT || "3002"}`;
 
-export async function callLLMAdapter(call: LLMAdapterCall): Promise<string> {
+export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMAdapterResult> {
   const url = `${LLM_SERVICE_URL}/llm/invoke`;
 
   const response = await fetch(url, {
@@ -100,8 +107,35 @@ export async function callLLMAdapter(call: LLMAdapterCall): Promise<string> {
     throw new Error(`LLM service error (${response.status}): ${text}`);
   }
 
-  const data = (await response.json()) as { result: string };
-  return data.result;
+  const data = (await response.json()) as {
+    result:
+      | string
+      | {
+          text: string;
+          model_used?: string;
+          fallback?: boolean;
+          fallback_reason?: string | null;
+        };
+  };
+  if (typeof data.result === "string") {
+    return {
+      text: data.result,
+      model_used: undefined,
+      fallback: false,
+      fallback_reason: null,
+    };
+  }
+  return {
+    text: data.result.text,
+    model_used: data.result.model_used,
+    fallback: data.result.fallback,
+    fallback_reason: data.result.fallback_reason,
+  };
+}
+
+export async function callLLMAdapter(call: LLMAdapterCall): Promise<string> {
+  const result = await callLLMAdapterDetailed(call);
+  return result.text;
 }
 
 /**
@@ -273,7 +307,8 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     "- If you are unsure about a factual claim, say so honestly.\n" +
     "- For medicines or health products: provide general factual information. " +
     "Do NOT provide diagnosis, treatment instructions, or medical advice.\n" +
-    "OUTPUT: Respond in clear, helpful natural language.\n";
+    "OUTPUT: Respond in clear, helpful natural language.\n" +
+    "OUTPUT RULE:\n- Respond ONLY in natural language\n- Do NOT output JSON unless explicitly asked\n";
 
   // When files are present, add explicit file-analysis instructions
   if (hasFiles) {

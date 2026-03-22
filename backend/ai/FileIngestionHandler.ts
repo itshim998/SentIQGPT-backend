@@ -278,8 +278,18 @@ async function analyzeImageWithVision(
       throw new Error(`Vision API error (${response.status}): ${errText}`);
     }
 
-    const data = (await response.json()) as { result: string };
-    return `[Image Analysis of ${filename}]\n\n${data.result}`;
+    const data = (await response.json()) as {
+      result:
+        | string
+        | {
+            text: string;
+            model_used?: string;
+            fallback?: boolean;
+            fallback_reason?: string | null;
+          };
+    };
+    const text = typeof data.result === "string" ? data.result : data.result.text;
+    return `[Image Analysis of ${filename}]\n\n${text}`;
   } catch (err) {
     console.error(`[File Parser] Gemini Vision failed:`, err instanceof Error ? err.message : err);
     // Fallback: return basic metadata

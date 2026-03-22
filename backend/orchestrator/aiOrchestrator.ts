@@ -22,9 +22,9 @@
 //   6. Knowledge Cache Layer
 //        └── LLM answer cache (check before pipeline, store after reflection)
 
-import { handleChat } from "../ai/ChatHandler";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
-import { verifyMathAnswer } from "../ai/mathVerifier";
+import { solveMathDirect } from "../ai/mathVerifier";
+import { sanitizeResponse } from "../ai/responseSanitizer";
 import { buildContext } from "../context/contextBuilder";
 import { planTask } from "./planner";
 import { executePlan } from "./toolExecutor";
@@ -93,6 +93,12 @@ export interface OrchestratorResponse {
   readonly confidence: number;
 }
 
+type InternalMergedResponse = Omit<OrchestratorResponse, "confidence"> & {
+  _isMathResult?: boolean;
+  _model_used?: string;
+  _fallback?: boolean;
+};
+
 // ==============================
 // Helpers
 // ==============================
@@ -109,17 +115,71 @@ function planToolToRoute(tool: PlanTool): DetectedTool {
   }
 }
 
+function getBaseModelConfidence(model: string): number {
+  const normalized = model.trim().toLowerCase();
+  if (normalized === "deepseek") return 0.9;
+  if (normalized === "gemini" || normalized.startsWith("gemini")) return 0.8;
+  if (normalized === "qwen-coder" || normalized.startsWith("qwen-coder")) return 0.75;
+  return 0.7;
+}
+
+function computeConfidence(
+  model_used?: string,
+  fallback?: boolean,
+  reply?: string,
+): number {
+  const safeModel = model_used?.trim() ? model_used : "unknown";
+  let confidence = getBaseModelConfidence(safeModel);
+
+  if (fallback) {
+    confidence -= 0.15;
+  }
+
+  if (!reply || reply.trim().length < 20) {
+    confidence -= 0.1;
+  } else {
+    confidence += 0.05;
+  }
+
+  confidence = Math.max(0.3, Math.min(0.95, confidence));
+
+  if (!Number.isFinite(confidence)) {
+    confidence = 0.3;
+  }
+
+  console.log("[CONFIDENCE]", {
+    model: safeModel,
+    fallback: !!fallback,
+    final: confidence,
+  });
+
+  return confidence;
+}
+
+function finalizeReply(
+  reply?: string,
+  emptyFallback = "Sorry, something went wrong. Please try again.",
+): string {
+  const cleanedReply = reply ? sanitizeResponse(reply) : emptyFallback;
+  if (!cleanedReply || cleanedReply.trim().length < 5) {
+    return "Sorry, something went wrong. Please try again.";
+  }
+  return cleanedReply;
+}
+
 /** Merge multi-step results into a single OrchestratorResponse. */
 function mergeResults(
   steps: readonly StepResult[],
   memoryPayload: OrchestratorResponse["memory"],
-): Omit<OrchestratorResponse, "confidence"> & { _isMathResult?: boolean } {
+): InternalMergedResponse {
   let reply: string | undefined;
   let image: OrchestratorResponse["image"] | undefined;
   let chart: OrchestratorResponse["chart"] | undefined;
   let memory = memoryPayload;
   let route: DetectedTool = "normal_chat";
   let _isMathResult = false;
+  let _model_used: string | undefined;
+  let _fallback = false;
 
   const replyParts: string[] = [];
 
@@ -137,6 +197,8 @@ function mergeResults(
 
     if (step.reply) {
       replyParts.push(step.reply);
+      _model_used = step.model_used ?? _model_used;
+      _fallback = step.fallback ?? _fallback;
     }
 
     if (step.image) {
@@ -178,6 +240,8 @@ function mergeResults(
     chart,
     memory,
     _isMathResult,
+    _model_used,
+    _fallback,
   };
 }
 
@@ -220,10 +284,10 @@ async function _orchestrateInner(
       console.log(`[ORCHESTRATOR] returning cached answer`);
       return {
         route: "normal_chat",
-        reply: cachedReply,
+        reply: finalizeReply(cachedReply),
         disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
         memory: { stored: false },
-        confidence: 1.0,
+        confidence: computeConfidence("gemini", false, finalizeReply(cachedReply)),
       };
     }
   }
@@ -241,14 +305,18 @@ async function _orchestrateInner(
     console.log(`[MathPipeline] solving with deepseek`);
 
     const systemPrompt =
-      "SYSTEM: You are SentIQGPT, a knowledgeable and helpful AI assistant.\n" +
-      "Provide clear, step-by-step mathematical reasoning.\n" +
-      "Show your work and verify your calculations.";
+      "SYSTEM: You are a precise mathematical solver.\n" +
+      "RULES:\n" +
+      "- Solve step-by-step clearly and concisely\n" +
+      "- Do NOT include explanations about system behavior\n" +
+      "- Do NOT mention instructions or rules\n" +
+      "- Focus only on solving the problem\n" +
+      "- Clearly present the final answer";
 
     // Run math pipeline + memory in parallel
     let memoryPayload: OrchestratorResponse["memory"] = { stored: false };
     const [mathResult] = await Promise.all([
-      verifyMathAnswer(userMessage, systemPrompt),
+      solveMathDirect(userMessage, systemPrompt),
       processMessageForMemory({
         message: userMessage,
         recentMessages: [],
@@ -270,17 +338,24 @@ async function _orchestrateInner(
     ]);
 
     console.log(
-      `[MathPipeline] result — verified=${mathResult.verified} agreed=${mathResult.agreed} reconciled=${mathResult.reconciled}`,
+      `[MathPipeline] solved using deepseek`,
     );
-    console.log(`[MathPipeline] reflection skipped — math query already verified`);
+    console.log(`[MathPipeline] reflection skipped — math query handled by direct math pipeline`);
     console.log(`[MathPipeline] returning result`);
+
+    const finalReply = finalizeReply(mathResult.answer);
+    const computedConfidence = computeConfidence(
+      mathResult.model_used,
+      mathResult.fallback,
+      finalReply,
+    );
 
     return {
       route: "math_reasoning" as DetectedTool,
-      reply: mathResult.answer,
+      reply: finalReply,
       disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
       memory: memoryPayload,
-      confidence: 1.0,
+      confidence: computedConfidence,
     };
   }
 
@@ -328,13 +403,30 @@ async function _orchestrateInner(
   // 4b. Self-Reflection Loop
   //     Only runs on text replies ≥ 100 chars.
   //     Skips image-only, memory-only, short responses, AND math results
-  //     (math queries are already verified by the two-model pipeline).
+  //     (math queries are already handled by the direct math pipeline).
   const reflected = await reflectOnAnswer(userMessage, merged, merged._isMathResult);
 
+  const finalReply =
+    reflected.merged.reply !== undefined
+      ? finalizeReply(reflected.merged.reply)
+      : reflected.merged.route === "memory_update"
+        ? finalizeReply(undefined, "Got it. I've remembered that.")
+        : finalizeReply(undefined);
+  const computedConfidence = computeConfidence(
+    reflected.merged._model_used,
+    reflected.merged._fallback,
+    finalReply,
+  );
+  const { _isMathResult, _model_used, _fallback, ...publicMerged } = reflected.merged;
+  void _isMathResult;
+  void _model_used;
+  void _fallback;
+
   const finalResponse: OrchestratorResponse = {
-    ...reflected.merged,
+    ...publicMerged,
+    reply: finalReply,
     reflection: reflected.reflection,
-    confidence: 1.0,
+    confidence: computedConfidence,
   };
 
   // 5. Cache the final answer for future identical queries
@@ -364,14 +456,14 @@ const MIN_REFLECTION_LENGTH = 100;
  *   • Reply is shorter than MIN_REFLECTION_LENGTH
  *   • Route is image_generation (tool output, not prose)
  *   • Route is chart_generation
- *   • Query was handled by the math verification pipeline
+ *   • Query was handled by the math pipeline
  */
 async function reflectOnAnswer(
   userMessage: string,
-  merged: Omit<OrchestratorResponse, "confidence">,
+  merged: InternalMergedResponse,
   isMathResult?: boolean,
 ): Promise<{
-  merged: Omit<OrchestratorResponse, "confidence">;
+  merged: InternalMergedResponse;
   reflection?: OrchestratorResponse["reflection"];
 }> {
   // Guard: skip for non-text or short replies
@@ -384,9 +476,9 @@ async function reflectOnAnswer(
     return { merged };
   }
 
-  // Guard: skip for math queries — already verified by two-model pipeline
+  // Guard: skip for math queries — already handled by the math pipeline
   if (isMathResult) {
-    console.log("[MathPipeline] reflection skipped — math query already verified by two-model pipeline");
+    console.log("[MathPipeline] reflection skipped — math query already handled by direct math pipeline");
     return { merged };
   }
 
@@ -418,7 +510,12 @@ async function reflectOnAnswer(
 
     return {
       merged: result.improved
-        ? { ...merged, reply: result.answer }
+        ? {
+            ...merged,
+            reply: result.answer,
+            _model_used: result.model_used ?? merged._model_used ?? "unknown",
+            _fallback: result.fallback ?? false,
+          }
         : merged,
       reflection: {
         score: evaluation.score,

@@ -23,7 +23,7 @@ venv/
 sentiq_cache.db*
 
 # Frontend — tracked in this repo (serve via backend static middleware or deploy separately)
-# frontend/
+frontend/
 healthiq_frontend.html
 
 # Backups
