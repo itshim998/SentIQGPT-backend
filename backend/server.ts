@@ -28,7 +28,7 @@ import { routeChartGeneration } from "./tools/chartGeneration/chartRouter";
 import { isChartRequest } from "./tools/chartGeneration/chartDetector";
 import { callLLMAdapter, buildTitleGeneratePrompt, strictParseJsonObject, callLLMAdapterStream, buildChatPrompt } from "./ai/PromptBuilders";
 import type { ChatContext } from "./ai/PromptBuilders";
-import { buildContext } from "./context/contextBuilder";
+import { buildContext, buildContextFast } from "./context/contextBuilder";
 
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
@@ -355,7 +355,7 @@ app.post(
     const requestStart = Date.now();
     console.log(`[Latency] user query received`);
 
-    // Set SSE headers
+    // Set SSE headers IMMEDIATELY - start streaming as fast as possible
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
@@ -377,13 +377,17 @@ app.post(
 
     const modelOverride = selectModelForPrompt(parsed.data.message, undefined, { hasImage, hasFile });
 
-    // ── Build context (conversation compression + semantic memory search) ──
-    const ctx = await buildContext({
+    // ── FAST context build (NO LLM calls, minimal latency) ──
+    // Use buildContextFast which skips conversation compression for speed.
+    // This gets the model started ASAP while still providing recent context.
+    const ctx = await buildContextFast({
       recent_messages: parsed.data.context?.recent_messages,
       memories: parsed.data.context?.memories,
       file_references: fileRefs,
       userMessage: parsed.data.message,
     });
+
+    console.log(`[Latency] context built (+${Date.now() - requestStart}ms)`);
 
     const chatCtx: ChatContext = {
       userMessage: parsed.data.message,
@@ -430,24 +434,67 @@ app.post(
       const reader = stream.getReader();
       let tokenCount = 0;
 
-      while (true) {
-        if (clientDisconnected) {
-          reader.cancel();
-          break;
+      // Timeout safety: if streaming takes too long, gracefully complete
+      // This prevents UI freezes and ensures partial responses are delivered
+      const STREAM_TIMEOUT_MS = 60_000; // 60s max streaming time
+      const FIRST_TOKEN_TIMEOUT_MS = 8_000; // 8s to first token
+      let firstTokenReceived = false;
+      let streamTimedOut = false;
+      let firstTokenTimedOut = false;
+
+      // First token timeout - fail faster if model doesn't respond
+      const firstTokenTimer = setTimeout(() => {
+        if (!firstTokenReceived && !clientDisconnected) {
+          firstTokenTimedOut = true;
+          console.log(`[Timeout] first token timeout after ${FIRST_TOKEN_TIMEOUT_MS}ms`);
         }
-        const { done, value } = await reader.read();
-        if (done) break;
-        tokenCount++;
-        if (tokenCount === 1) {
-          console.log(`[Latency] first token streamed (+${Date.now() - requestStart}ms)`);
+      }, FIRST_TOKEN_TIMEOUT_MS);
+
+      // Overall stream timeout
+      const streamTimer = setTimeout(() => {
+        if (!clientDisconnected && tokenCount > 0) {
+          streamTimedOut = true;
+          console.log(`[Timeout] stream timeout after ${tokenCount} chunks, completing gracefully`);
         }
-        writeSseEvent(JSON.stringify({ type: "token", text: value }));
+      }, STREAM_TIMEOUT_MS);
+
+      try {
+        while (true) {
+          if (clientDisconnected || streamTimedOut || firstTokenTimedOut) {
+            reader.cancel();
+            break;
+          }
+
+          const result = await reader.read();
+          if (result.done) break;
+
+          const value = result.value;
+          tokenCount++;
+
+          if (tokenCount === 1) {
+            firstTokenReceived = true;
+            clearTimeout(firstTokenTimer);
+            console.log(`[Latency] first token streamed (+${Date.now() - requestStart}ms)`);
+          }
+          writeSseEvent(JSON.stringify({ type: "token", text: value }));
+        }
+      } finally {
+        clearTimeout(firstTokenTimer);
+        clearTimeout(streamTimer);
       }
 
       if (!clientDisconnected) {
+        if (firstTokenTimedOut) {
+          // First token timeout - send error
+          writeSseEvent(JSON.stringify({ type: "error", error: "Response timeout - model is slow to respond. Please try again." }));
+        }
         writeSseEvent("[DONE]");
+        if (streamTimedOut && tokenCount > 0) {
+          console.log(`[Latency] response completed (timeout, partial) (+${Date.now() - requestStart}ms)`);
+        } else {
+          console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
+        }
       }
-      console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
       console.log(`[Stream] completed: ${tokenCount} chunks in ${Date.now() - streamStart}ms`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
