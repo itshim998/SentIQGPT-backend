@@ -438,21 +438,21 @@ app.post(
       const reader = stream.getReader();
       let tokenCount = 0;
 
-      // Timeout safety: if streaming takes too long, gracefully complete
-      // This prevents UI freezes and ensures partial responses are delivered
+      // Timeout safety: allow buffered providers to deliver a late first chunk
+      // without treating it as a fatal error. The hard request bound stays in
+      // the LLM fetch timeout; this timer is only a soft observability signal.
       const STREAM_TIMEOUT_MS = 60_000; // 60s max streaming time
-      const FIRST_TOKEN_TIMEOUT_MS = 8_000; // 8s to first token
+      const FIRST_TOKEN_SLOW_MS = 8_000; // soft threshold for late first token
       let firstTokenReceived = false;
       let streamTimedOut = false;
-      let firstTokenTimedOut = false;
 
-      // First token timeout - fail faster if model doesn't respond
+      // Slow-first-token note: useful for buffered models like Pollinations,
+      // but it must not cancel the stream on its own.
       const firstTokenTimer = setTimeout(() => {
         if (!firstTokenReceived && !clientDisconnected) {
-          firstTokenTimedOut = true;
-          console.log(`[Timeout] first token timeout after ${FIRST_TOKEN_TIMEOUT_MS}ms`);
+          console.log(`[Timeout] first token delayed beyond ${FIRST_TOKEN_SLOW_MS}ms`);
         }
-      }, FIRST_TOKEN_TIMEOUT_MS);
+      }, FIRST_TOKEN_SLOW_MS);
 
       // Overall stream timeout
       const streamTimer = setTimeout(() => {
@@ -464,7 +464,7 @@ app.post(
 
       try {
         while (true) {
-          if (clientDisconnected || streamTimedOut || firstTokenTimedOut) {
+          if (clientDisconnected || streamTimedOut) {
             reader.cancel();
             break;
           }
@@ -488,9 +488,11 @@ app.post(
       }
 
       if (!clientDisconnected) {
-        if (firstTokenTimedOut) {
-          // First token timeout - send error
-          writeSseEvent(JSON.stringify({ type: "error", error: "Response timeout - model is slow to respond. Please try again." }));
+        if (streamTimedOut && tokenCount > 0) {
+          writeSseEvent(JSON.stringify({
+            type: "error",
+            error: "Response interrupted after a long stream. Showing partial output.",
+          }));
         }
         writeSseEvent("[DONE]");
         if (streamTimedOut && tokenCount > 0) {

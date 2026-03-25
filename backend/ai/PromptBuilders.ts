@@ -166,7 +166,7 @@ export async function callLLMAdapterStream(
       task: call.task,
       model_override: call.model_override,
     }),
-    signal: AbortSignal.timeout(120_000), // 120s for streaming
+    signal: AbortSignal.timeout(call.timeout_ms ?? 120_000), // 120s default; override when needed
   });
 
   if (!response.ok) {
@@ -180,38 +180,93 @@ export async function callLLMAdapterStream(
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  let sseBuffer = "";
+  const eventQueue: Array<
+    | { type: "text"; text: string }
+    | { type: "error"; error: string }
+    | { type: "done" }
+  > = [];
+
+  function enqueueEventBlock(block: string): void {
+    const dataLines: string[] = [];
+    for (const rawLine of block.split(/\r?\n/)) {
+      if (!rawLine.startsWith("data:")) continue;
+      dataLines.push(rawLine.slice(5).trimStart());
+    }
+
+    if (dataLines.length === 0) return;
+
+    const payload = dataLines.join("\n").trim();
+    if (!payload) return;
+
+    if (payload === "[DONE]") {
+      eventQueue.push({ type: "done" });
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(payload) as { text?: string; error?: string };
+      if (parsed.error) {
+        eventQueue.push({ type: "error", error: parsed.error });
+        return;
+      }
+      if (parsed.text) {
+        eventQueue.push({ type: "text", text: parsed.text });
+      }
+    } catch {
+      // Ignore malformed SSE frames.
+    }
+  }
+
+  function flushBufferedEvents(): void {
+    let separatorIndex = sseBuffer.indexOf("\n\n");
+    while (separatorIndex !== -1) {
+      const block = sseBuffer.slice(0, separatorIndex).replace(/\r/g, "");
+      sseBuffer = sseBuffer.slice(separatorIndex + 2);
+      enqueueEventBlock(block);
+      separatorIndex = sseBuffer.indexOf("\n\n");
+    }
+  }
 
   return new ReadableStream<string>({
     async pull(controller) {
-      const { done, value } = await reader.read();
-      if (done) {
+      while (eventQueue.length === 0) {
+        const { done, value } = await reader.read();
+        if (done) {
+          sseBuffer += decoder.decode();
+          if (sseBuffer.trim()) {
+            enqueueEventBlock(sseBuffer.replace(/\r/g, ""));
+            sseBuffer = "";
+          }
+          break;
+        }
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        flushBufferedEvents();
+      }
+
+      if (eventQueue.length === 0) {
         controller.close();
         return;
       }
 
-      const text = decoder.decode(value, { stream: true });
-      // Parse SSE lines: "data: {...}\n\n"
-      const lines = text.split("\n");
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const payload = line.slice(6).trim();
-        if (payload === "[DONE]") {
-          controller.close();
-          return;
-        }
-        try {
-          const parsed = JSON.parse(payload) as { text?: string; error?: string };
-          if (parsed.error) {
-            controller.error(new Error(parsed.error));
-            return;
-          }
-          if (parsed.text) {
-            controller.enqueue(parsed.text);
-          }
-        } catch {
-          // Ignore malformed SSE lines
-        }
+      const nextEvent = eventQueue.shift();
+      if (!nextEvent) {
+        controller.close();
+        return;
       }
+
+      if (nextEvent.type === "done") {
+        controller.close();
+        return;
+      }
+
+      if (nextEvent.type === "error") {
+        controller.error(new Error(nextEvent.error));
+        return;
+      }
+
+      controller.enqueue(nextEvent.text);
     },
   });
 }
