@@ -448,6 +448,7 @@ export function buildMemoryCompressPrompt(args: {
 export function buildTitleGeneratePrompt(args: {
   readonly userMessage: string;
   readonly assistantReply: string;
+  readonly conversationId: string;
 }): LLMAdapterCall {
   const prompt =
     "TASK: Generate Chat Title\n" +
@@ -466,6 +467,7 @@ export function buildTitleGeneratePrompt(args: {
     task: "general",
     prompt,
     prefer: "groq",
+    user_id: args.conversationId,
   };
 }
 

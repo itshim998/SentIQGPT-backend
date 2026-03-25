@@ -2,11 +2,11 @@
 //
 // Scores each memory against the current user query using:
 //   1. Keyword overlap  (50% weight)
-//   2. Importance score  (30% weight)
+//   2. Importance score (30% weight)
 //   3. Memory-type boost (20% weight)
 //
-// Returns the top-N most relevant memories for prompt injection,
-// keeping token usage low while preserving personalization.
+// Only memories with an actual keyword hit or an explicit personal-memory
+// lookup trigger are eligible for prompt injection.
 
 // ==============================
 // Types
@@ -38,6 +38,28 @@ const TYPE_BOOST: Record<string, number> = {
   knowledge: 0.0,
 };
 
+const EXPLICIT_TYPE_PATTERNS: Record<string, readonly RegExp[]> = {
+  identity: [
+    /\bmy\s+name\b/i,
+    /\bwho\s+am\s+i\b/i,
+    /\bmy\s+age\b/i,
+    /\bmy\s+email\b/i,
+    /\bmy\s+phone\b/i,
+    /\bmy\s+address\b/i,
+    /\bmy\s+birthday\b/i,
+  ],
+  preference: [
+    /\bmy\s+preference\b/i,
+    /\bwhat\s+do\s+i\s+like\b/i,
+    /\bwhat\s+do\s+i\s+prefer\b/i,
+  ],
+  project: [
+    /\bmy\s+project\b/i,
+    /\bworking\s+on\b/i,
+    /\bbuilding\b/i,
+  ],
+};
+
 function tokenize(text: string): Set<string> {
   return new Set(
     text
@@ -47,23 +69,44 @@ function tokenize(text: string): Set<string> {
   );
 }
 
-function scoreMemory(memory: ScoredMemory, queryTokens: Set<string>): number {
-  // 1. Keyword overlap
-  const summaryLower = memory.summary.toLowerCase();
+function countKeywordHits(summaryLower: string, queryTokens: Set<string>): number {
   let hits = 0;
   for (const word of queryTokens) {
     if (summaryLower.includes(word)) hits++;
   }
-  const keywordScore = queryTokens.size > 0 ? hits / queryTokens.size : 0;
+  return hits;
+}
 
-  // 2. Importance (normalize 1-10 → 0-1, default 5)
+function hasExplicitTypeMatch(memoryType: string, query: string): boolean {
+  const patterns = EXPLICIT_TYPE_PATTERNS[memoryType] ?? [];
+  return patterns.some((pattern) => pattern.test(query));
+}
+
+function scoreMemory(
+  memory: ScoredMemory,
+  queryTokens: Set<string>,
+  query: string,
+): {
+  readonly score: number;
+  readonly keywordHits: number;
+  readonly explicitTypeMatch: boolean;
+} {
+  const summaryLower = memory.summary.toLowerCase();
+  const keywordHits = countKeywordHits(summaryLower, queryTokens);
+  const explicitTypeMatch = hasExplicitTypeMatch(memory.type, query);
+  const keywordScore = queryTokens.size > 0 ? keywordHits / queryTokens.size : 0;
   const importance = (memory.importance ?? 5) / 10;
-
-  // 3. Type boost
   const typeBoost = TYPE_BOOST[memory.type] ?? 0;
 
-  // Combined: 50% keyword, 30% importance, 20% type
-  return keywordScore * 0.5 + importance * 0.3 + typeBoost * 0.2;
+  return {
+    score:
+      keywordScore * 0.5 +
+      importance * 0.3 +
+      typeBoost * 0.2 +
+      (explicitTypeMatch ? 0.35 : 0),
+    keywordHits,
+    explicitTypeMatch,
+  };
 }
 
 // ==============================
@@ -72,23 +115,24 @@ function scoreMemory(memory: ScoredMemory, queryTokens: Set<string>): number {
 
 /**
  * Select the top `limit` memories most relevant to `query`.
- * If there are fewer than `limit`, returns all.
  */
 export function selectMemoriesForQuery(
   memories: readonly ScoredMemory[],
   query: string,
   limit: number = 3,
 ): ScoredMemory[] {
-  if (memories.length <= limit) return [...memories];
-
   const queryTokens = tokenize(query);
 
-  const scored = memories.map((m) => ({
-    memory: m,
-    score: scoreMemory(m, queryTokens),
-  }));
+  const scored = memories
+    .map((memory) => ({
+      memory,
+      ...scoreMemory(memory, queryTokens, query),
+    }))
+    .filter((item) => item.keywordHits > 0 || item.explicitTypeMatch);
+
+  if (scored.length === 0) return [];
 
   scored.sort((a, b) => b.score - a.score);
 
-  return scored.slice(0, limit).map((s) => s.memory);
+  return scored.slice(0, limit).map((item) => item.memory);
 }

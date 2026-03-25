@@ -3,13 +3,12 @@
 // Central intelligence pipeline. The orchestrator:
 //
 //   1. Builds compressed context (conversation window + semantic memories)
-//   2. Runs the Task Planner (Groq) + Memory Pipeline in PARALLEL
+//   2. Runs the Task Planner (Groq)
 //   3. Hands the execution plan to the Tool Executor
 //   4. Merges multi-step results into a single OrchestratorResponse
 //
 //   User Message
 //       ├── Task Planner (Groq, fast)       → ExecutionPlan (1–3 steps)
-//       ├── Memory Pipeline (Groq, parallel)
 //       └── Context Builder (async)
 //               └── Tool Executor
 //                     ├── conversation      → ChatHandler (Gemini)
@@ -22,7 +21,6 @@
 //   6. Knowledge Cache Layer
 //        └── LLM answer cache (check before pipeline, store after reflection)
 
-import { processMessageForMemory } from "../ai/MemoryProcessor";
 import { solveMathDirect } from "../ai/mathVerifier";
 import { sanitizeResponse } from "../ai/responseSanitizer";
 import { buildContext } from "../context/contextBuilder";
@@ -31,7 +29,6 @@ import { executePlan } from "./toolExecutor";
 import { detectCodeQuery, isMathQuery } from "./modelRouter";
 import { evaluateAnswer } from "../reflection/answerCritic";
 import { improveAnswer } from "../reflection/answerImprover";
-import { getCachedAnswer, setCachedAnswer } from "../cache/cacheManager";
 import type { RawMessageContext } from "../context/contextBuilder";
 import type { DetectedTool } from "./toolDetector";
 import type { PlanTool } from "./planner";
@@ -252,7 +249,7 @@ function mergeResults(
 /**
  * Main orchestration function.
  *
- * Runs the Task Planner and Memory Pipeline in parallel for speed,
+ * Runs the Task Planner alongside context building for speed,
  * then hands the execution plan to the Tool Executor.
  */
 export async function orchestrate(
@@ -276,21 +273,6 @@ async function _orchestrateInner(
 
   console.log(`[ORCHESTRATOR] Processing: "${userMessage.slice(0, 80)}..."`);
 
-  // 0. Check LLM answer cache
-  const hasRawFiles = (rawContext?.file_references?.length ?? 0) > 0;
-  if (!hasRawFiles) {
-    const cachedReply = getCachedAnswer(userMessage);
-    if (cachedReply) {
-      console.log(`[ORCHESTRATOR] returning cached answer`);
-      return {
-        route: "normal_chat",
-        reply: finalizeReply(cachedReply),
-        disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
-        memory: { stored: false },
-        confidence: computeConfidence("gemini", false, finalizeReply(cachedReply)),
-      };
-    }
-  }
 
   // ── Early Math Detection ──
   // Math detection MUST run on the raw userMessage, not the planner-rewritten
@@ -324,29 +306,7 @@ async function _orchestrateInner(
       "- No repetition\n" +
       "- No meta statements";
 
-    // Run math pipeline + memory in parallel
-    let memoryPayload: OrchestratorResponse["memory"] = { stored: false };
-    const [mathResult] = await Promise.all([
-      solveMathDirect(userMessage, systemPrompt),
-      processMessageForMemory({
-        message: userMessage,
-        recentMessages: [],
-        existingMemories: [],
-      })
-        .then((memResult) => {
-          if (memResult.stored) {
-            memoryPayload = {
-              stored: true,
-              type: memResult.memory?.type,
-              summary: memResult.memory?.summary,
-              importance: memResult.memory?.importance,
-            };
-          }
-        })
-        .catch((err) => {
-          console.log(`[MathPipeline] memory pipeline error: ${err instanceof Error ? err.message : err}`);
-        }),
-    ]);
+    const mathResult = await solveMathDirect(userMessage, systemPrompt);
 
     console.log(
       `[MathPipeline] solved using deepseek`,
@@ -365,7 +325,7 @@ async function _orchestrateInner(
       route: "math_reasoning" as DetectedTool,
       reply: finalReply,
       disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
-      memory: memoryPayload,
+      memory: { stored: false },
       confidence: computedConfidence,
     };
   }
@@ -379,39 +339,14 @@ async function _orchestrateInner(
 
   console.log(`[ORCHESTRATOR] plan: ${plan.steps.length} step(s)`);
 
-  // Fire memory pipeline in background — safe error handling
-  let memoryPayload: OrchestratorResponse["memory"] = { stored: false };
-  const memoryPromise = processMessageForMemory({
-    message: userMessage,
-    recentMessages: [...ctx.recentMessages],
-    existingMemories: [...ctx.memories],
-  })
-    .then((memResult) => {
-      if (memResult.stored) {
-        memoryPayload = {
-          stored: true,
-          type: memResult.memory?.type,
-          summary: memResult.memory?.summary,
-          importance: memResult.memory?.importance,
-        };
-      }
-      console.log(`[ORCHESTRATOR] memory stored: ${memResult.stored}`);
-    })
-    .catch((err) => {
-      console.log(`[ORCHESTRATOR] memory pipeline error: ${err instanceof Error ? err.message : err}`);
-    });
-
   // 2. Execute the plan
   let finalPlan = plan;
   const execution = await executePlan(finalPlan.steps, ctx);
 
-  // 3. Wait for memory pipeline before merging (it ran in background)
-  await memoryPromise;
+  // 3. Merge step results into a single response
+  const merged = mergeResults(execution.steps, { stored: false });
 
-  // 4. Merge step results into a single response
-  const merged = mergeResults(execution.steps, memoryPayload);
-
-  // 4b. Self-Reflection Loop
+  // 3b. Self-Reflection Loop
   //     Only runs on text replies ≥ 100 chars.
   //     Skips image-only, memory-only, short responses, AND math results
   //     (math queries are already handled by the direct math pipeline).
@@ -439,16 +374,6 @@ async function _orchestrateInner(
     reflection: reflected.reflection,
     confidence: computedConfidence,
   };
-
-  // 5. Cache the final answer for future identical queries
-  //    Only cache conversation replies (not images, charts, file analysis, or memory updates).
-  if (
-    finalResponse.reply &&
-    finalResponse.route === "normal_chat" &&
-    !hasRawFiles
-  ) {
-    setCachedAnswer(userMessage, finalResponse.reply);
-  }
 
   return finalResponse;
 }

@@ -402,32 +402,6 @@ app.post(
     console.log(`[Latency] LLM request started (+${Date.now() - requestStart}ms)`);
     console.log(`[Stream] model=${chatCtx.modelOverride} hasFiles=${ctx.hasFileContext} msgLen=${parsed.data.message.length}`);
 
-    // Run memory pipeline in background (non-blocking) — never delays the LLM response
-    processMessageForMemory({
-      message: parsed.data.message,
-      recentMessages: [...ctx.recentMessages],
-      existingMemories: [...ctx.memories],
-    })
-      .then((memResult) => {
-        if (memResult.stored) {
-          if (!clientDisconnected) {
-            const memEvent = JSON.stringify({
-              type: "memory",
-              memory: {
-                stored: true,
-                type: memResult.memory?.type,
-                summary: memResult.memory?.summary,
-                importance: memResult.memory?.importance,
-              },
-            });
-            writeSseEvent(memEvent);
-          }
-        }
-      })
-      .catch((err) => {
-        console.log(`[Memory] background pipeline error: ${err instanceof Error ? err.message : err}`);
-      });
-
     try {
       const streamStart = Date.now();
       const stream = await callLLMAdapterStream(call);
@@ -776,13 +750,14 @@ app.post(
   "/api/chat/title",
   aiRateLimiter,
   asyncHandler(async (req, res) => {
-    const { userMessage, assistantReply } = req.body;
+    const { userMessage, assistantReply, conversation_id } = req.body;
 
     if (
       typeof userMessage !== "string" || !userMessage.trim() ||
-      typeof assistantReply !== "string" || !assistantReply.trim()
+      typeof assistantReply !== "string" || !assistantReply.trim() ||
+      typeof conversation_id !== "string" || !conversation_id.trim()
     ) {
-      res.status(400).json({ error: "userMessage and assistantReply are required." });
+      res.status(400).json({ error: "userMessage, assistantReply, and conversation_id are required." });
       return;
     }
 
@@ -790,6 +765,7 @@ app.post(
       const call = buildTitleGeneratePrompt({
         userMessage: userMessage.slice(0, 500),
         assistantReply: assistantReply.slice(0, 500),
+        conversationId: conversation_id.trim(),
       });
       const raw = await callLLMAdapter(call);
       const parsed = strictParseJsonObject(raw);

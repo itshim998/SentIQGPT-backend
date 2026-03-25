@@ -44,3 +44,6 @@ desktop.ini
 *.log
 logs/
 npm-debug.log*
+
+#.txt file to ignore
+Issues_in_SentIQGPT.txt

@@ -57,6 +57,7 @@ async function testNormalConversation(): Promise<void> {
     `got: ${res.route}`,
   );
   assert(!!res.reply && res.reply.length > 20, "Reply is non-trivial", `length: ${res.reply?.length}`);
+  assert(res.memory.stored === false, "Memory is not auto-stored for normal conversation", `stored: ${res.memory.stored}`);
   assert(typeof res.confidence === "number" && res.confidence > 0, "Confidence > 0", `got: ${res.confidence}`);
 }
 
@@ -83,14 +84,14 @@ async function testImageGeneration(): Promise<void> {
 }
 
 // ─────────────────────────────
-// Test 3 — Memory Storage
+// Test 3 — Explicit Memory Storage
 // ─────────────────────────────
 
 async function testMemoryStorage(): Promise<OrchestratorResponse> {
   section("Memory Storage");
 
   const res: OrchestratorResponse = await orchestrate({
-    userMessage: "I am building an AI assistant called SentIQGPT. It uses Gemini and Groq together.",
+    userMessage: "Remember that I am building an AI assistant called SentIQGPT. It uses Gemini and Groq together.",
   });
 
   console.log(`  route: ${res.route}  |  memory stored: ${res.memory.stored}  |  type: ${res.memory.type ?? "n/a"}`);
