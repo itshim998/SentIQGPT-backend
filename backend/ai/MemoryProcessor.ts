@@ -7,6 +7,7 @@ import {
   strictParseJsonObject,
 } from "./PromptBuilders";
 import { generateEmbedding } from "../memory/memoryEmbedding";
+import { detectExplicitMemoryWriteIntent, detectPersonalMemoryType } from "../orchestrator/queryClassifier";
 
 // SentIQGPT v1 — Memory Processor
 //
@@ -141,6 +142,9 @@ export async function processMessageForMemory(args: {
     embedding?: readonly number[];
   };
 }> {
+  const explicitWrite = detectExplicitMemoryWriteIntent(args.message);
+  const deterministicType = detectPersonalMemoryType(args.message);
+
   // Step 1: Classify
   const classification = await classifyMemory({
     message: args.message,
@@ -154,10 +158,26 @@ export async function processMessageForMemory(args: {
     return { stored: false };
   }
 
-  const shouldStore = args.forceStore || (classification.should_store && !!classification.type);
-  const memType = classification.type || "project";
+  const classifiedType =
+    classification.type === "identity" ||
+    classification.type === "preference" ||
+    classification.type === "project"
+      ? classification.type
+      : null;
+
+  const memType = deterministicType ?? classifiedType;
+  const shouldStore = args.forceStore
+    ? explicitWrite && !!memType
+    : classification.should_store && !!memType;
 
   if (!shouldStore) {
+    if (args.forceStore) {
+      console.log(`[MEMORY] explicit store rejected: explicitWrite=${explicitWrite} type=${memType ?? "null"}`);
+    }
+    return { stored: false };
+  }
+
+  if (!memType) {
     return { stored: false };
   }
 

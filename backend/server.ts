@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import multer from "multer";
 import { existsSync } from "fs";
 import { resolve as pathResolve } from "path";
+import { randomUUID } from "crypto";
 
 // Load .env
 const envPathCandidates = [
@@ -34,6 +35,7 @@ import { buildContext, buildContextFast } from "./context/contextBuilder";
 import { orchestrate } from "./orchestrator/aiOrchestrator";
 
 import { detectCodeQuery, isMathQuery, selectModelForPrompt } from "./orchestrator/modelRouter";
+import { detectExplicitMemoryWriteIntent } from "./orchestrator/queryClassifier";
 
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
@@ -270,6 +272,34 @@ app.post(
     // The streaming path does not support tool execution (charts, images, etc.).
     // If the message is a chart request, redirect to the orchestrator and return
     // the result as a single SSE JSON payload so the frontend can render it.
+    if (detectExplicitMemoryWriteIntent(parsed.data.message)) {
+      console.log(`[Stream] explicit memory write detected — redirecting to orchestrator`);
+      try {
+        const result = await orchestrate({
+          userMessage: parsed.data.message,
+          context: {
+            recent_messages: parsed.data.context?.recent_messages,
+            memories: parsed.data.context?.memories,
+            file_references: parsed.data.context?.file_references,
+          },
+        });
+        res.json({
+          route: result.route,
+          reply: result.reply,
+          disclaimer: result.disclaimer,
+          image: result.image,
+          chart: result.chart,
+          memory: result.memory,
+          confidence: result.confidence,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Stream] memory orchestration failed: ${message}`);
+        res.status(500).json({ error: message });
+      }
+      return;
+    }
+
     if (isChartRequest(parsed.data.message)) {
       console.log(`[Stream] chart request detected — redirecting to orchestrator`);
       try {
@@ -754,18 +784,20 @@ app.post(
 
     if (
       typeof userMessage !== "string" || !userMessage.trim() ||
-      typeof assistantReply !== "string" || !assistantReply.trim() ||
-      typeof conversation_id !== "string" || !conversation_id.trim()
+      typeof assistantReply !== "string" || !assistantReply.trim()
     ) {
-      res.status(400).json({ error: "userMessage, assistantReply, and conversation_id are required." });
+      res.status(400).json({ error: "userMessage and assistantReply are required." });
       return;
     }
 
     try {
+      const cacheScopedConversationId = typeof conversation_id === "string" && conversation_id.trim()
+        ? conversation_id.trim()
+        : `title-${randomUUID()}`;
       const call = buildTitleGeneratePrompt({
         userMessage: userMessage.slice(0, 500),
         assistantReply: assistantReply.slice(0, 500),
-        conversationId: conversation_id.trim(),
+        conversationId: cacheScopedConversationId,
       });
       const raw = await callLLMAdapter(call);
       const parsed = strictParseJsonObject(raw);

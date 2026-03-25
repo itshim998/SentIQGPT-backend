@@ -74,6 +74,31 @@ const GENERIC_CODING_PATTERNS: readonly RegExp[] = [
   /\bsdk\b/i,
 ];
 
+const BUILD_REQUEST_PATTERNS: readonly RegExp[] = [
+  /\b(?:code|build|create|develop)\b/i,
+  /\bdesign\s+and\s+build\b/i,
+];
+
+const BUILD_ARTIFACT_PATTERNS: readonly RegExp[] = [
+  /\bhtml\s+page\b/i,
+  /\bwebsite\b/i,
+  /\bportfolio\b/i,
+  /\blanding\s+page\b/i,
+  /\bapp\b/i,
+  /\bcomponent\b/i,
+  /\bui\b/i,
+];
+
+const FRONTEND_STACK_PATTERNS: readonly RegExp[] = [
+  /\bnext\.js\b/i,
+  /\breact\b/i,
+  /\btailwind\b/i,
+  /\bgsap\b/i,
+  /\bframer\s+motion\b/i,
+  /\bthree\.js\b/i,
+  /\btypescript\b/i,
+];
+
 // Math / numerical reasoning detection.
 // Checked after coding so programming prompts never leak into deepseek.
 const MATH_PATTERNS: readonly RegExp[] = [
@@ -232,9 +257,15 @@ export function detectCodeQuery(query: string): boolean {
   const structureHits = countMatches(query, CODE_STRUCTURE_PATTERNS);
   const debugHits = countMatches(query, CODE_DEBUG_PATTERNS);
   const genericHits = countMatches(query, GENERIC_CODING_PATTERNS);
+  const buildHits = countMatches(query, BUILD_REQUEST_PATTERNS);
+  const artifactHits = countMatches(query, BUILD_ARTIFACT_PATTERNS);
+  const stackHits = countMatches(query, FRONTEND_STACK_PATTERNS);
 
   if (/```/.test(query)) return true;
   if (languageHits > 0) return true;
+  if (buildHits > 0 && artifactHits > 0) return true;
+  if (buildHits > 0 && stackHits > 0) return true;
+  if (artifactHits > 0 && stackHits >= 2) return true;
   if (syntaxHits >= 2) return true;
   if (syntaxHits > 0 && (debugHits > 0 || structureHits > 0 || genericHits > 0)) return true;
   if (debugHits > 0 && (syntaxHits > 0 || structureHits > 0 || genericHits > 0)) return true;

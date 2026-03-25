@@ -80,9 +80,9 @@ function buildPlannerPrompt(
     "  Example single-step: \"What is quantum computing?\" → 1 step (conversation).\n" +
     "- Each step must have a clear, self-contained input string.\n" +
     "- Only choose image_generation if the user EXPLICITLY asks to create/generate an image.\n" +
-    "- Only choose chart_generation if the user asks for a chart, graph, plot, or data visualization.\n" +
+    "- Only choose chart_generation for an explicit chart or data-visualization request, not for frontend/design prompts that merely mention visualization.\n" +
     "- Only choose file_analysis if uploaded files exist in context.\n" +
-    "- Only choose memory_update when the user says remember/forget.\n" +
+    "- Only choose memory_update when the user explicitly asks you to remember, save, store, or keep something in mind.\n" +
     "- Default truly ambiguous requests to a single conversation step.\n" +
     "- Steps run in order. Later steps may use results of earlier ones.\n\n" +
     "USER MESSAGE:\n" +

@@ -27,6 +27,7 @@ import { buildContext } from "../context/contextBuilder";
 import { planTask } from "./planner";
 import { executePlan } from "./toolExecutor";
 import { detectCodeQuery, isMathQuery } from "./modelRouter";
+import { detectExplicitMemoryWriteIntent } from "./queryClassifier";
 import { evaluateAnswer } from "../reflection/answerCritic";
 import { improveAnswer } from "../reflection/answerImprover";
 import type { RawMessageContext } from "../context/contextBuilder";
@@ -280,6 +281,28 @@ async function _orchestrateInner(
   // numerical context and causes word problems to be misclassified as general chat.
   // When math is detected, we bypass the planner entirely and go straight to
   // the DeepSeek math pipeline.
+  if (detectExplicitMemoryWriteIntent(userMessage)) {
+    console.log(`[ORCHESTRATOR] explicit memory write detected — bypassing planner`);
+    const ctx = await buildContext({ ...(rawContext ?? {}), userMessage });
+    const execution = await executePlan(
+      [{ step: 1, tool: "memory_update", input: userMessage }],
+      ctx,
+    );
+    const merged = mergeResults(execution.steps, { stored: false });
+    const reply = merged.memory.stored
+      ? "Got it. I've remembered that."
+      : "I couldn't store that memory. Please phrase it as something to remember about your identity, preferences, or project.";
+    const confidence = computeConfidence("memory_update", false, merged.memory.stored ? reply : "");
+
+    return {
+      route: "memory_update",
+      reply,
+      disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+      memory: merged.memory,
+      confidence,
+    };
+  }
+
   const isCodingQuery = detectCodeQuery(userMessage);
 
   if (!isCodingQuery && isMathQuery(userMessage)) {
@@ -355,8 +378,13 @@ async function _orchestrateInner(
   const finalReply =
     reflected.merged.reply !== undefined
       ? finalizeReply(reflected.merged.reply)
-      : reflected.merged.route === "memory_update"
+      : reflected.merged.route === "memory_update" && reflected.merged.memory.stored
         ? finalizeReply(undefined, "Got it. I've remembered that.")
+        : reflected.merged.route === "memory_update"
+          ? finalizeReply(
+              undefined,
+              "I couldn't store that memory. Please phrase it as something to remember about your identity, preferences, or project.",
+            )
         : finalizeReply(undefined);
   const computedConfidence = computeConfidence(
     reflected.merged._model_used,

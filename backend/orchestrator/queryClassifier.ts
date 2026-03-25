@@ -32,6 +32,8 @@ export interface QueryClassification {
   readonly matchedRule: string;
 }
 
+export type PersonalMemoryType = "identity" | "preference" | "project";
+
 // ==============================
 // No-search exclusion patterns
 // ==============================
@@ -95,6 +97,43 @@ const PERSONAL_PATTERNS: readonly RegExp[] = [
   /\b(?:my\s+(?:name|age|email|phone|address|birthday|project|file|document|preference))\b/i,
   /\b(?:remember\s+(?:that|my|i)|forget\s+(?:that|my)|do\s+you\s+(?:know|remember)\s+(?:my|about\s+me))\b/i,
   /\b(?:i\s+(?:told\s+you|mentioned|said\s+(?:that|my))|you\s+(?:know|said)\s+(?:my|that\s+i))\b/i,
+];
+
+/** Explicit memory write patterns — must be an actual save/store request. */
+const EXPLICIT_MEMORY_WRITE_PATTERNS: readonly RegExp[] = [
+  /^\s*(?:please\s+)?remember\b/i,
+  /\bcan\s+you\s+remember\s+(?:this|that|my|i)\b/i,
+  /\bremember\s+this\b/i,
+  /\bremember\s+that\b/i,
+  /\bremember\s+my\b/i,
+  /\bremember\s+i\b/i,
+  /\b(?:save|store)\s+this\b/i,
+  /\bkeep\s+this\s+in\s+mind\b/i,
+];
+
+const MEMORY_RETRIEVAL_PATTERNS: readonly RegExp[] = [
+  /\bdo\s+you\s+remember\b/i,
+  /\bwhat\s+do\s+you\s+remember\b/i,
+  /\bwhat\s+is\s+my\b/i,
+  /\bwho\s+am\s+i\b/i,
+];
+
+const IDENTITY_MEMORY_PATTERNS: readonly RegExp[] = [
+  /\bmy\s+(?:name|age|email|phone|address|birthday)\b/i,
+  /\bi\s+am\s+(?:called|named)\b/i,
+];
+
+const PREFERENCE_MEMORY_PATTERNS: readonly RegExp[] = [
+  /\bmy\s+(?:favorite|favourite|preferred|preference)\b/i,
+  /\bi\s+(?:prefer|like|love|dislike|hate)\b/i,
+];
+
+const PROJECT_MEMORY_PATTERNS: readonly RegExp[] = [
+  /\bmy\s+project\b/i,
+  /\bworking\s+on\b/i,
+  /\bbuilding\b/i,
+  /\bdeveloping\b/i,
+  /\bportfolio\s+website\b/i,
 ];
 
 /** Image generation patterns */
@@ -168,6 +207,32 @@ export function classifyQueryType(query: string): QueryClassification {
 
   // Default: general knowledge — LLM can answer from training data
   return { category: "general_knowledge", needsWebSearch: false, matchedRule: "default" };
+}
+
+export function detectExplicitMemoryWriteIntent(query: string): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return false;
+  if (MEMORY_RETRIEVAL_PATTERNS.some((pat) => pat.test(trimmed))) return false;
+  return EXPLICIT_MEMORY_WRITE_PATTERNS.some((pat) => pat.test(trimmed));
+}
+
+export function detectPersonalMemoryType(query: string): PersonalMemoryType | null {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+
+  for (const pat of IDENTITY_MEMORY_PATTERNS) {
+    if (pat.test(trimmed)) return "identity";
+  }
+
+  for (const pat of PREFERENCE_MEMORY_PATTERNS) {
+    if (pat.test(trimmed)) return "preference";
+  }
+
+  for (const pat of PROJECT_MEMORY_PATTERNS) {
+    if (pat.test(trimmed)) return "project";
+  }
+
+  return null;
 }
 
 // ==============================
