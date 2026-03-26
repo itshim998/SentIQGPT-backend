@@ -8,6 +8,13 @@ type UserDbMapRow = {
   assigned_db: number;
 };
 
+type DbRouterErrorLike = {
+  code?: string;
+  message?: string;
+  details?: string | null;
+  hint?: string | null;
+} | null | undefined;
+
 const CONTROL_DATABASE_ID: DatabaseId = 1;
 const ALL_DATABASE_IDS: readonly DatabaseId[] = [1, 2, 3, 4];
 const ASSIGNABLE_DATABASE_IDS: readonly AssignableDatabaseId[] = [2, 3, 4];
@@ -65,6 +72,27 @@ function getClientForDatabase(dbNumber: number): SupabaseClient {
   return clientByDatabaseId[dbNumber];
 }
 
+function formatDbRouterError(error: DbRouterErrorLike): string {
+  if (!error) return "unknown";
+  const parts = [
+    error.code ? `code=${error.code}` : null,
+    error.message ? `message=${error.message}` : null,
+    error.details ? `details=${error.details}` : null,
+    error.hint ? `hint=${error.hint}` : null,
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(" ") : "unknown";
+}
+
+function logDbRouter(operation: string, userId: string, details: Record<string, string | number | null> = {}): void {
+  const detailString = Object.entries(details)
+    .filter(([, value]) => value !== null && value !== "")
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(" ");
+  const suffix = detailString ? ` ${detailString}` : "";
+  console.log(`[dbRouter] ${operation} userId=${userId}${suffix}`);
+}
+
 async function fetchAssignedDatabase(userId: string): Promise<DatabaseId | null> {
   const normalizedUserId = assertValidUserId(userId);
 
@@ -93,6 +121,26 @@ async function fetchAssignedDatabase(userId: string): Promise<DatabaseId | null>
   return data.assigned_db;
 }
 
+async function ensureControlUserSession(userId: string): Promise<void> {
+  const normalizedUserId = assertValidUserId(userId);
+  logDbRouter("control-session.init.start", normalizedUserId, { db: CONTROL_DATABASE_ID });
+
+  const { error } = await controlDbClient.rpc("initialize_user_session", {
+    user_id: normalizedUserId,
+  });
+
+  if (error) {
+    console.error(
+      `[dbRouter] control-session.init.failed userId=${normalizedUserId} db=${CONTROL_DATABASE_ID} ${formatDbRouterError(error)}`,
+    );
+    throw new Error(
+      `[dbRouter] Failed to initialize control user session for user ${normalizedUserId}: ${error.message}`,
+    );
+  }
+
+  logDbRouter("control-session.init.ok", normalizedUserId, { db: CONTROL_DATABASE_ID });
+}
+
 function pickRandomDataDatabase(): AssignableDatabaseId {
   const index = randomInt(0, ASSIGNABLE_DATABASE_IDS.length);
   return ASSIGNABLE_DATABASE_IDS[index];
@@ -110,21 +158,28 @@ export async function getUserDatabase(userId: string): Promise<SupabaseClient | 
 
 export async function assignDatabaseToUser(userId: string): Promise<SupabaseClient> {
   const normalizedUserId = assertValidUserId(userId);
+  await ensureControlUserSession(normalizedUserId);
 
   const existingAssignment = await fetchAssignedDatabase(normalizedUserId);
   if (existingAssignment !== null) {
+    logDbRouter("assign.skip-existing", normalizedUserId, { assigned_db: existingAssignment });
     return getClientForDatabase(existingAssignment);
   }
 
   const assignedDb = pickRandomDataDatabase();
+  logDbRouter("assign.start", normalizedUserId, { assigned_db: assignedDb });
   const { error } = await controlDbClient
     .from("user_db_map")
     .insert({ user_id: normalizedUserId, assigned_db: assignedDb });
 
   if (error) {
+    console.error(
+      `[dbRouter] assign.failed userId=${normalizedUserId} assigned_db=${assignedDb} ${formatDbRouterError(error)}`,
+    );
     if (isUniqueConstraintViolation(error)) {
       const winningAssignment = await fetchAssignedDatabase(normalizedUserId);
       if (winningAssignment !== null) {
+        logDbRouter("assign.race-won", normalizedUserId, { assigned_db: winningAssignment });
         return getClientForDatabase(winningAssignment);
       }
 
@@ -138,14 +193,20 @@ export async function assignDatabaseToUser(userId: string): Promise<SupabaseClie
     );
   }
 
+  logDbRouter("assign.ok", normalizedUserId, { assigned_db: assignedDb });
   return getClientForDatabase(assignedDb);
 }
 
 export async function getOrAssignUserDatabase(userId: string): Promise<SupabaseClient> {
-  const existingClient = await getUserDatabase(userId);
-  if (existingClient) {
-    return existingClient;
+  const normalizedUserId = assertValidUserId(userId);
+  await ensureControlUserSession(normalizedUserId);
+
+  const assignedDb = await fetchAssignedDatabase(normalizedUserId);
+  if (assignedDb !== null) {
+    logDbRouter("resolve.ok", normalizedUserId, { assigned_db: assignedDb });
+    return getClientForDatabase(assignedDb);
   }
 
-  return assignDatabaseToUser(userId);
+  logDbRouter("resolve.missing-map", normalizedUserId);
+  return assignDatabaseToUser(normalizedUserId);
 }

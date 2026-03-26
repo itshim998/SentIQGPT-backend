@@ -89,7 +89,7 @@ const corsOptions: cors.CorsOptions = {
     console.warn(`[CORS] Blocked request from origin: ${requestOrigin}`);
     callback(null, false);
   },
-  methods: ["GET", "POST", "OPTIONS"],
+  methods: ["GET", "POST", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
 };
@@ -194,6 +194,274 @@ async function getRequestIdentity(req: Request): Promise<{ userId: string; isGue
   return { userId: await getVerifiedUserId(req), isGuest: false };
 }
 
+type DbErrorLike = {
+  code?: string;
+  message?: string;
+  details?: string | null;
+  hint?: string | null;
+} | null | undefined;
+
+type ConversationRow = {
+  id: string;
+  user_id: string;
+  title?: string | null;
+  created_at?: string;
+};
+
+type ConversationListRow = {
+  id: string;
+  title: string | null;
+  created_at: string;
+};
+
+type ConversationMessageRow = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
+function formatDbError(error: DbErrorLike): string {
+  if (!error) return "unknown";
+  const parts = [
+    error.code ? `code=${error.code}` : null,
+    error.message ? `message=${error.message}` : null,
+    error.details ? `details=${error.details}` : null,
+    error.hint ? `hint=${error.hint}` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : "unknown";
+}
+
+function logDbEvent(
+  scope: string,
+  userId: string,
+  details: Record<string, string | number | null | undefined> = {},
+): void {
+  const detailString = Object.entries(details)
+    .filter(([, value]) => value !== null && typeof value !== "undefined" && value !== "")
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(" ");
+  const suffix = detailString ? ` ${detailString}` : "";
+  console.log(`[SentIQGPT][db] ${scope} userId=${userId}${suffix}`);
+}
+
+function logDbFailure(
+  scope: string,
+  userId: string,
+  error: DbErrorLike | Error,
+  details: Record<string, string | number | null | undefined> = {},
+): void {
+  const detailString = Object.entries(details)
+    .filter(([, value]) => value !== null && typeof value !== "undefined" && value !== "")
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(" ");
+  const normalizedError = error instanceof Error
+    ? error.message
+    : formatDbError(error);
+  const suffix = detailString ? ` ${detailString}` : "";
+  console.error(`[SentIQGPT][db] ${scope}.failed userId=${userId}${suffix} error=${normalizedError}`);
+}
+
+async function resolveUserDatabaseOrThrow(userId: string, scope: string) {
+  logDbEvent(`${scope}.resolve-db.start`, userId);
+  try {
+    const userDb = await getOrAssignUserDatabase(userId);
+    logDbEvent(`${scope}.resolve-db.ok`, userId);
+    return userDb;
+  } catch (error) {
+    logDbFailure(`${scope}.resolve-db`, userId, error instanceof Error ? error : new Error(String(error)));
+    throw error;
+  }
+}
+
+async function initializeUserSessionOrThrow(userDb: any, userId: string, scope: string): Promise<void> {
+  logDbEvent(`${scope}.session-init.start`, userId);
+  const { error } = await userDb.rpc("initialize_user_session", { user_id: userId });
+  if (error) {
+    logDbFailure(`${scope}.session-init`, userId, error);
+    throw new Error(error.message);
+  }
+  logDbEvent(`${scope}.session-init.ok`, userId);
+}
+
+async function getOwnedConversationOrThrow(
+  userDb: any,
+  userId: string,
+  conversationId: string,
+  scope: string,
+): Promise<ConversationRow> {
+  logDbEvent(`${scope}.conversation-owner.start`, userId, { conversationId });
+  const { data, error } = await userDb
+    .from("conversations")
+    .select("id, user_id, title, created_at")
+    .eq("id", conversationId)
+    .single();
+
+  if (error || !data || data.user_id !== userId) {
+    if (error) {
+      logDbFailure(`${scope}.conversation-owner`, userId, error, { conversationId });
+    } else {
+      logDbFailure(`${scope}.conversation-owner`, userId, new Error("Unauthorized conversation access"), { conversationId });
+    }
+    throw new Error("Unauthorized conversation access");
+  }
+
+  logDbEvent(`${scope}.conversation-owner.ok`, userId, { conversationId });
+  return data as ConversationRow;
+}
+
+async function createConversationOrThrow(
+  userDb: any,
+  userId: string,
+  scope: string,
+  title = "New Chat",
+): Promise<ConversationListRow> {
+  logDbEvent(`${scope}.conversation-create.start`, userId, { title });
+  const { data, error } = await userDb
+    .from("conversations")
+    .insert({ user_id: userId, title })
+    .select("id, title, created_at")
+    .single();
+
+  if (error) {
+    logDbFailure(`${scope}.conversation-create`, userId, error, { title });
+    throw new Error(error.message);
+  }
+  if (!data?.id) {
+    logDbFailure(`${scope}.conversation-create`, userId, new Error("Failed to create conversation"));
+    throw new Error("Failed to create conversation");
+  }
+
+  logDbEvent(`${scope}.conversation-create.ok`, userId, { conversationId: data.id });
+  return data as ConversationListRow;
+}
+
+async function insertConversationMessageOrThrow(
+  userDb: any,
+  userId: string,
+  conversationId: string,
+  role: "user" | "assistant",
+  content: string,
+  scope: string,
+): Promise<void> {
+  logDbEvent(`${scope}.message-insert.start`, userId, { conversationId, role });
+  const { error } = await userDb
+    .from("messages")
+    .insert({ conversation_id: conversationId, role, content });
+  if (error) {
+    logDbFailure(`${scope}.message-insert`, userId, error, { conversationId, role });
+    throw new Error(error.message);
+  }
+  logDbEvent(`${scope}.message-insert.ok`, userId, { conversationId, role });
+}
+
+async function insertMemoryOrThrow(
+  userDb: any,
+  userId: string,
+  memory: { type?: string; summary?: string; importance?: number },
+  scope: string,
+): Promise<void> {
+  logDbEvent(`${scope}.memory-insert.start`, userId, { type: memory.type || null });
+  const { error } = await userDb
+    .from("memories")
+    .insert({
+      user_id: userId,
+      type: memory.type,
+      summary: memory.summary,
+      importance: memory.importance,
+    });
+  if (error) {
+    logDbFailure(`${scope}.memory-insert`, userId, error, { type: memory.type || null });
+    throw new Error(error.message);
+  }
+  logDbEvent(`${scope}.memory-insert.ok`, userId, { type: memory.type || null });
+}
+
+async function listConversationsOrThrow(userDb: any, userId: string, scope: string): Promise<ConversationListRow[]> {
+  logDbEvent(`${scope}.conversation-list.start`, userId);
+  const { data, error } = await userDb
+    .from("conversations")
+    .select("id, title, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    logDbFailure(`${scope}.conversation-list`, userId, error);
+    throw new Error(error.message);
+  }
+
+  logDbEvent(`${scope}.conversation-list.ok`, userId, { count: data?.length || 0 });
+  return (data || []) as ConversationListRow[];
+}
+
+async function listConversationMessagesOrThrow(
+  userDb: any,
+  userId: string,
+  conversationId: string,
+  scope: string,
+): Promise<ConversationMessageRow[]> {
+  await getOwnedConversationOrThrow(userDb, userId, conversationId, scope);
+  logDbEvent(`${scope}.message-list.start`, userId, { conversationId });
+  const { data, error } = await userDb
+    .from("messages")
+    .select("id, role, content, created_at")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    logDbFailure(`${scope}.message-list`, userId, error, { conversationId });
+    throw new Error(error.message);
+  }
+
+  logDbEvent(`${scope}.message-list.ok`, userId, { conversationId, count: data?.length || 0 });
+  return (data || []) as ConversationMessageRow[];
+}
+
+async function updateConversationTitleIfOwned(
+  userDb: any,
+  userId: string,
+  conversationId: string,
+  title: string,
+  scope: string,
+): Promise<void> {
+  await getOwnedConversationOrThrow(userDb, userId, conversationId, scope);
+  logDbEvent(`${scope}.conversation-title.start`, userId, { conversationId });
+  const { error } = await userDb
+    .from("conversations")
+    .update({ title })
+    .eq("id", conversationId)
+    .eq("user_id", userId);
+
+  if (error) {
+    logDbFailure(`${scope}.conversation-title`, userId, error, { conversationId });
+    throw new Error(error.message);
+  }
+
+  logDbEvent(`${scope}.conversation-title.ok`, userId, { conversationId });
+}
+
+async function deleteConversationIfOwned(
+  userDb: any,
+  userId: string,
+  conversationId: string,
+  scope: string,
+): Promise<void> {
+  await getOwnedConversationOrThrow(userDb, userId, conversationId, scope);
+  logDbEvent(`${scope}.conversation-delete.start`, userId, { conversationId });
+  const { error } = await userDb
+    .from("conversations")
+    .delete()
+    .eq("id", conversationId)
+    .eq("user_id", userId);
+
+  if (error) {
+    logDbFailure(`${scope}.conversation-delete`, userId, error, { conversationId });
+    throw new Error(error.message);
+  }
+
+  logDbEvent(`${scope}.conversation-delete.ok`, userId, { conversationId });
+}
+
 // ---- File Session Manager ----
 // Maintains the most recently uploaded file per IP to prevent old file references.
 interface FileSession {
@@ -247,6 +515,81 @@ app.get("/api/health", (_req, res) => {
     ],
   });
 });
+
+// ===============================
+// GET /api/conversations
+// ===============================
+app.get(
+  "/api/conversations",
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.list");
+    await initializeUserSessionOrThrow(userDb, userId, "conversations.list");
+    const conversations = await listConversationsOrThrow(userDb, userId, "conversations.list");
+    res.json({ conversations });
+  }),
+);
+
+// ===============================
+// POST /api/conversations
+// ===============================
+app.post(
+  "/api/conversations",
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const requestedTitle =
+      typeof req.body?.title === "string" && req.body.title.trim()
+        ? req.body.title.trim().slice(0, 120)
+        : "New Chat";
+    const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.create");
+    await initializeUserSessionOrThrow(userDb, userId, "conversations.create");
+    const conversation = await createConversationOrThrow(userDb, userId, "conversations.create", requestedTitle);
+    res.json({ conversation });
+  }),
+);
+
+// ===============================
+// GET /api/conversations/:id/messages
+// ===============================
+app.get(
+  "/api/conversations/:id/messages",
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const conversationId = req.params.id?.trim();
+    if (!conversationId) {
+      res.status(400).json({ error: "Conversation id is required." });
+      return;
+    }
+    const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.messages");
+    await initializeUserSessionOrThrow(userDb, userId, "conversations.messages");
+    const messages = await listConversationMessagesOrThrow(
+      userDb,
+      userId,
+      conversationId,
+      "conversations.messages",
+    );
+    res.json({ messages });
+  }),
+);
+
+// ===============================
+// DELETE /api/conversations/:id
+// ===============================
+app.delete(
+  "/api/conversations/:id",
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const conversationId = req.params.id?.trim();
+    if (!conversationId) {
+      res.status(400).json({ error: "Conversation id is required." });
+      return;
+    }
+    const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.delete");
+    await initializeUserSessionOrThrow(userDb, userId, "conversations.delete");
+    await deleteConversationIfOwned(userDb, userId, conversationId, "conversations.delete");
+    res.json({ success: true });
+  }),
+);
 
 // ===============================
 // POST /api/chat — Main conversation endpoint (v2: orchestrated)
@@ -306,52 +649,25 @@ app.post(
       return;
     }
 
-    const userDb = await getOrAssignUserDatabase(userId);
-    const { error: sessionInitError } = await userDb.rpc("initialize_user_session", {
-      user_id: userId,
-    });
-    if (sessionInitError) {
-      throw new Error(sessionInitError.message);
-    }
+    const userDb = await resolveUserDatabaseOrThrow(userId, "chat");
+    await initializeUserSessionOrThrow(userDb, userId, "chat");
     const conversationId = parsed.data.conversationId || null;
     let activeConversationId = conversationId;
     if (activeConversationId) {
-      const { data: conversationOwnerRow, error: conversationOwnerError } = await userDb
-        .from("conversations")
-        .select("user_id")
-        .eq("id", activeConversationId)
-        .single<{ user_id: string }>();
-      if (conversationOwnerError || !conversationOwnerRow || conversationOwnerRow.user_id !== userId) {
-        throw new Error("Unauthorized conversation access");
-      }
+      await getOwnedConversationOrThrow(userDb, userId, activeConversationId, "chat");
     }
     if (!activeConversationId) {
-      const { data: conversationRow, error: conversationInsertError } = await userDb
-        .from("conversations")
-        .insert({
-          user_id: userId,
-          title: "New Chat",
-        })
-        .select("id")
-        .single<{ id: string }>();
-      if (conversationInsertError) {
-        throw new Error(conversationInsertError.message);
-      }
-      if (!conversationRow?.id) {
-        throw new Error("Failed to create conversation");
-      }
+      const conversationRow = await createConversationOrThrow(userDb, userId, "chat");
       activeConversationId = conversationRow.id;
     }
-    const { error: userMessageInsertError } = await userDb
-      .from("messages")
-      .insert({
-        conversation_id: activeConversationId,
-        role: "user",
-        content: parsed.data.message,
-      });
-    if (userMessageInsertError) {
-      throw new Error(userMessageInsertError.message);
-    }
+    await insertConversationMessageOrThrow(
+      userDb,
+      userId,
+      activeConversationId,
+      "user",
+      parsed.data.message,
+      "chat",
+    );
 
     const result = await orchestrate({
       userMessage: parsed.data.message,
@@ -363,28 +679,16 @@ app.post(
         userId,
       },
     });
-    const { error: assistantMessageInsertError } = await userDb
-      .from("messages")
-      .insert({
-        conversation_id: activeConversationId,
-        role: "assistant",
-        content: result.reply,
-      });
-    if (assistantMessageInsertError) {
-      throw new Error(assistantMessageInsertError.message);
-    }
+    await insertConversationMessageOrThrow(
+      userDb,
+      userId,
+      activeConversationId,
+      "assistant",
+      result.reply ?? "",
+      "chat",
+    );
     if (result.memory && result.memory.stored === true) {
-      const { error: memoryInsertError } = await userDb
-        .from("memories")
-        .insert({
-          user_id: userId,
-          type: result.memory.type,
-          summary: result.memory.summary,
-          importance: result.memory.importance,
-        });
-      if (memoryInsertError) {
-        throw new Error(memoryInsertError.message);
-      }
+      await insertMemoryOrThrow(userDb, userId, result.memory, "chat");
     }
 
     res.json({
@@ -540,64 +844,35 @@ app.post(
       return;
     }
 
-    const userDb = await getOrAssignUserDatabase(userId);
-    const { error: sessionInitError } = await userDb.rpc("initialize_user_session", {
-      user_id: userId,
-    });
-    if (sessionInitError) {
-      throw new Error(sessionInitError.message);
-    }
+    const userDb = await resolveUserDatabaseOrThrow(userId, "chat.stream");
+    await initializeUserSessionOrThrow(userDb, userId, "chat.stream");
     const conversationId = parsed.data.conversationId || null;
     let activeConversationId = conversationId;
     if (activeConversationId) {
-      const { data: conversationOwnerRow, error: conversationOwnerError } = await userDb
-        .from("conversations")
-        .select("user_id")
-        .eq("id", activeConversationId)
-        .single<{ user_id: string }>();
-      if (conversationOwnerError || !conversationOwnerRow || conversationOwnerRow.user_id !== userId) {
-        throw new Error("Unauthorized conversation access");
-      }
+      await getOwnedConversationOrThrow(userDb, userId, activeConversationId, "chat.stream");
     }
     if (!activeConversationId) {
-      const { data: conversationRow, error: conversationInsertError } = await userDb
-        .from("conversations")
-        .insert({
-          user_id: userId,
-          title: "New Chat",
-        })
-        .select("id")
-        .single<{ id: string }>();
-      if (conversationInsertError) {
-        throw new Error(conversationInsertError.message);
-      }
-      if (!conversationRow?.id) {
-        throw new Error("Failed to create conversation");
-      }
+      const conversationRow = await createConversationOrThrow(userDb, userId, "chat.stream");
       activeConversationId = conversationRow.id;
     }
-    const { error: userMessageInsertError } = await userDb
-      .from("messages")
-      .insert({
-        conversation_id: activeConversationId,
-        role: "user",
-        content: parsed.data.message,
-      });
-    if (userMessageInsertError) {
-      throw new Error(userMessageInsertError.message);
-    }
+    await insertConversationMessageOrThrow(
+      userDb,
+      userId,
+      activeConversationId,
+      "user",
+      parsed.data.message,
+      "chat.stream",
+    );
 
     const persistAssistantMessage = async (content: string) => {
-      const { error: assistantMessageInsertError } = await userDb
-        .from("messages")
-        .insert({
-          conversation_id: activeConversationId,
-          role: "assistant",
-          content,
-        });
-      if (assistantMessageInsertError) {
-        throw new Error(assistantMessageInsertError.message);
-      }
+      await insertConversationMessageOrThrow(
+        userDb,
+        userId,
+        activeConversationId,
+        "assistant",
+        content,
+        "chat.stream",
+      );
     };
 
     const persistStoredMemory = async (memory?: {
@@ -607,17 +882,7 @@ app.post(
       importance?: number;
     }) => {
       if (!memory || memory.stored !== true) return;
-      const { error: memoryInsertError } = await userDb
-        .from("memories")
-        .insert({
-          user_id: userId,
-          type: memory.type,
-          summary: memory.summary,
-          importance: memory.importance,
-        });
-      if (memoryInsertError) {
-        throw new Error(memoryInsertError.message);
-      }
+      await insertMemoryOrThrow(userDb, userId, memory, "chat.stream");
     };
 
     let clientDisconnected = false;
@@ -1228,6 +1493,21 @@ app.post(
       const title = typeof parsed.title === "string" && parsed.title.trim()
         ? parsed.title.trim().slice(0, 60)
         : userMessage.slice(0, 50);
+
+      if (!isGuest && rawConversationId) {
+        try {
+          const userDb = await resolveUserDatabaseOrThrow(userId, "chat.title");
+          await initializeUserSessionOrThrow(userDb, userId, "chat.title");
+          await updateConversationTitleIfOwned(userDb, userId, rawConversationId, title, "chat.title");
+        } catch (titlePersistError) {
+          logDbFailure(
+            "chat.title.persist",
+            userId,
+            titlePersistError instanceof Error ? titlePersistError : new Error(String(titlePersistError)),
+            { conversationId: rawConversationId },
+          );
+        }
+      }
 
       res.json({ title });
     } catch {
