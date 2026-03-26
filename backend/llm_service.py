@@ -132,9 +132,7 @@ def supabase_rest_request(
     )
 
     if not response.ok:
-        raise Exception(
-            f"Supabase request failed for {table} ({response.status_code}): {response.text[:300]}"
-        )
+        raise Exception("Supabase request failed")
 
     if not response.text.strip():
         return None
@@ -158,9 +156,7 @@ def supabase_rpc_request(
     )
 
     if not response.ok:
-        raise Exception(
-            f"Supabase RPC failed for {function_name} ({response.status_code}): {response.text[:300]}"
-        )
+        raise Exception("Supabase RPC failed")
 
     if not response.text.strip():
         return None

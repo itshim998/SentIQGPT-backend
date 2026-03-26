@@ -11,10 +11,38 @@ services:
         value: "3002"
       - key: LLM_SERVICE_URL
         value: "http://localhost:3002"
+      - key: SUPABASE_URL_1
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY_1
+        sync: false
+      - key: SUPABASE_ANON_KEY_1
+        sync: false
+      - key: SUPABASE_URL_2
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY_2
+        sync: false
+      # Currently unused by app code, reserved for shard/auth parity.
+      - key: SUPABASE_ANON_KEY_2
+        sync: false
+      - key: SUPABASE_URL_3
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY_3
+        sync: false
+      # Currently unused by app code, reserved for shard/auth parity.
+      - key: SUPABASE_ANON_KEY_3
+        sync: false
+      - key: SUPABASE_URL_4
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY_4
+        sync: false
+      # Currently unused by app code, reserved for shard/auth parity.
+      - key: SUPABASE_ANON_KEY_4
+        sync: false
       - key: GEMINI_EMBEDDING_MODEL
         value: "gemini-embedding-001"
       - key: SMART_MODEL_CODING
         value: "qwen-coder"
+      # Currently unused legacy config.
       - key: SMART_MODEL_LIGHTWEIGHT
         value: "gpt-5-nano"
       - key: POLLINATIONS_OPENAI_ENDPOINT

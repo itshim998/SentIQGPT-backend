@@ -1320,8 +1320,6 @@ const server = app.listen(PORT, () => {
   console.log(`[SentIQGPT v2] Server running on port ${PORT}`);
   console.log(`[SentIQGPT v2] Architecture: Orchestrated Dual-Model (Gemini + Groq)`);
   console.log(`[SentIQGPT v2] LLM Service expected on port ${process.env.LLM_SERVICE_PORT || "3002"}`);
-  console.log(`[SentIQGPT v2] Pollinations key loaded: ${!!(process.env.POLLINATIONS_API_KEY || process.env.FLUX_API_KEY)} (source: ${process.env.POLLINATIONS_API_KEY ? "POLLINATIONS_API_KEY" : process.env.FLUX_API_KEY ? "FLUX_API_KEY" : "NONE"})`);
-  console.log(`[SentIQGPT v2] HuggingFace key loaded: ${!!process.env.HUGGINGFACE_API_TOKEN}`);
 });
 
 // ---- Graceful shutdown ----
