@@ -28,6 +28,7 @@ export async function handleChat(args: {
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
   readonly conversationSummary?: string;
   readonly modelOverride?: string;
+  readonly userId?: string;
 }): Promise<ChatResponse> {
   if (!args.userMessage.trim()) {
     throw new Error("userMessage must be a non-empty string.");
@@ -40,6 +41,7 @@ export async function handleChat(args: {
     fileReferences: args.fileReferences,
     conversationSummary: args.conversationSummary,
     modelOverride: args.modelOverride,
+    userId: args.userId,
   };
 
   const call = buildChatPrompt(ctx);

@@ -15,6 +15,7 @@
 //   - buildContextFast() skips compression for streaming (latency-critical)
 //   - buildContext() uses full compression for non-streaming requests
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MemoryReference } from "../memory/memoryTypes";
 import { formatMemoriesForPrompt } from "../memory/memoryStore";
 import { selectMemoriesForQuery } from "./memorySelector";
@@ -29,6 +30,8 @@ export interface RawMessageContext {
     extractedText: string;
   }[];
   readonly userMessage?: string;
+  readonly userDb?: SupabaseClient;
+  readonly userId?: string;
 }
 
 export interface BuiltContext {
@@ -41,6 +44,54 @@ export interface BuiltContext {
   readonly memoryPromptBlock: string;
   readonly conversationSummary?: string;
   readonly hasFileContext: boolean;
+  readonly userId?: string;
+}
+
+type ContextMemory = { type: string; summary: string };
+
+type CloudMemoryRow = {
+  summary: string;
+  type: string;
+  importance?: number;
+};
+
+async function fetchCloudMemories(
+  userDb: SupabaseClient,
+  userId: string,
+): Promise<readonly ContextMemory[]> {
+  const { data: cloudMemories, error } = await userDb
+    .from("memories")
+    .select("summary, type, importance")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  if (error) {
+    throw error;
+  }
+
+  return ((cloudMemories ?? []) as CloudMemoryRow[]).map((memory) => ({
+    type: memory.type,
+    summary: memory.summary,
+  }));
+}
+
+function mergeMemories(
+  localMemories: readonly ContextMemory[],
+  cloudMemories: readonly ContextMemory[],
+): readonly ContextMemory[] {
+  const merged: ContextMemory[] = [];
+  const seenSummaries = new Set<string>();
+
+  for (const memory of [...localMemories, ...cloudMemories]) {
+    const summary = memory.summary;
+    if (!summary || seenSummaries.has(summary)) continue;
+    seenSummaries.add(summary);
+    merged.push(memory);
+    if (merged.length >= 10) break;
+  }
+
+  return merged;
 }
 
 /**
@@ -53,7 +104,11 @@ export interface BuiltContext {
  *  3. Chunk files and select relevant chunks for the query
  *  4. Pre-build the memory prompt block for injection
  */
-export async function buildContext(raw: RawMessageContext): Promise<BuiltContext> {
+export async function buildContext(
+  raw: RawMessageContext,
+  userDb?: SupabaseClient,
+  userId?: string,
+): Promise<BuiltContext> {
   const ctxStart = Date.now();
 
   // Derive the query early so both pipelines can use it.
@@ -70,19 +125,25 @@ export async function buildContext(raw: RawMessageContext): Promise<BuiltContext
   // ── PARALLEL: conversation compression + semantic memory search ──
   // These are the two slowest sub-operations and are independent.
   const [compressionResult, semanticResults] = await Promise.all([
-    compressConversation(allMessages),
+    compressConversation(allMessages, userId),
     semanticMemorySearch(rawMemories, query, 3),
   ]);
 
   const { recentMessages, summary } = compressionResult;
 
-  let memories: readonly { type: string; summary: string }[];
+  let memories: readonly ContextMemory[];
   if (semanticResults) {
     memories = semanticResults.map((r) => r.memory);
     console.log(`[CONTEXT] memory retrieval: semantic (${memories.length} selected)`);
   } else {
     memories = selectMemoriesForQuery(rawMemories, query, 3);
     console.log(`[CONTEXT] memory retrieval: keyword fallback (${memories.length} selected)`);
+  }
+
+  const normalizedUserId = userId?.trim();
+  if (userDb && normalizedUserId) {
+    const cloudMemories = await fetchCloudMemories(userDb, normalizedUserId);
+    memories = mergeMemories(memories, cloudMemories);
   }
 
   // 3. File references — pass through full content for prompt-level handling
@@ -114,6 +175,7 @@ export async function buildContext(raw: RawMessageContext): Promise<BuiltContext
     memoryPromptBlock,
     conversationSummary: summary,
     hasFileContext: fileReferences.length > 0,
+    userId: normalizedUserId,
   };
 }
 
@@ -129,7 +191,11 @@ export async function buildContext(raw: RawMessageContext): Promise<BuiltContext
  * Use this for /api/chat/stream where time-to-first-token is critical.
  * The tradeoff is slightly less context for very long conversations.
  */
-export async function buildContextFast(raw: RawMessageContext): Promise<BuiltContext> {
+export async function buildContextFast(
+  raw: RawMessageContext,
+  userDb?: SupabaseClient,
+  userId?: string,
+): Promise<BuiltContext> {
   const ctxStart = Date.now();
 
   // Get recent messages directly - no compression, no LLM call
@@ -146,7 +212,13 @@ export async function buildContextFast(raw: RawMessageContext): Promise<BuiltCon
 
   // Use fast keyword-based memory selection (no async operations)
   // This avoids waiting for semantic search which can add latency
-  const memories = selectMemoriesForQuery(rawMemories, query, 3);
+  let memories: readonly ContextMemory[] = selectMemoriesForQuery(rawMemories, query, 3);
+
+  const normalizedUserId = userId?.trim();
+  if (userDb && normalizedUserId) {
+    const cloudMemories = await fetchCloudMemories(userDb, normalizedUserId);
+    memories = mergeMemories(memories, cloudMemories);
+  }
 
   // File references - pass through unchanged
   const rawFiles = raw.file_references ?? [];
@@ -170,5 +242,6 @@ export async function buildContextFast(raw: RawMessageContext): Promise<BuiltCon
     memoryPromptBlock,
     conversationSummary: undefined, // No compression = no summary
     hasFileContext: fileReferences.length > 0,
+    userId: normalizedUserId,
   };
 }

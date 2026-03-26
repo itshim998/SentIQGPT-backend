@@ -39,6 +39,7 @@ export interface MemoryCompression {
 export async function classifyMemory(args: {
   readonly message: string;
   readonly recentMessages?: readonly { role: string; content: string }[];
+  readonly userId?: string;
 }): Promise<MemoryClassification> {
   const call = buildMemoryClassifyPrompt(args);
 
@@ -72,6 +73,7 @@ export async function summarizeMemory(args: {
   readonly message: string;
   readonly memoryType: string;
   readonly existingMemories?: readonly { summary: string }[];
+  readonly userId?: string;
 }): Promise<MemorySummary> {
   const call = buildMemorySummarizePrompt(args);
 
@@ -99,6 +101,7 @@ export async function summarizeMemory(args: {
 
 export async function compressMemories(args: {
   readonly memories: readonly { summary: string; importance: number; timestamp: string }[];
+  readonly userId?: string;
 }): Promise<MemoryCompression> {
   if (args.memories.length < 2) {
     throw new Error("Need at least 2 memories to compress.");
@@ -133,6 +136,7 @@ export async function processMessageForMemory(args: {
   readonly recentMessages?: readonly { role: string; content: string }[];
   readonly existingMemories?: readonly { type: string; summary: string }[];
   readonly forceStore?: boolean;
+  readonly userId?: string;
 }): Promise<{
   readonly stored: boolean;
   readonly memory?: {
@@ -149,6 +153,7 @@ export async function processMessageForMemory(args: {
   const classification = await classifyMemory({
     message: args.message,
     recentMessages: args.recentMessages,
+    userId: args.userId,
   });
 
   // Skip "knowledge" type — it causes unnecessary storage overhead.
@@ -190,6 +195,7 @@ export async function processMessageForMemory(args: {
     message: args.message,
     memoryType: memType,
     existingMemories: typeMemories,
+    userId: args.userId,
   });
 
   console.log(`[MEMORY] summary generated: "${summary.summary.slice(0, 80)}" (importance: ${summary.importance})`);

@@ -28,6 +28,7 @@ const QUALITY_THRESHOLD = 0.82;
 export async function evaluateAnswer(
   userMessage: string,
   answer: string,
+  userId?: string,
 ): Promise<CriticEvaluation> {
   const prompt =
     "TASK: Answer Quality Evaluation\n" +
@@ -62,6 +63,7 @@ export async function evaluateAnswer(
       task: "route_classify",
       prompt,
       prefer: "groq",
+      user_id: userId,
     });
   } catch (err) {
     console.log(`[REFLECTION] critic call failed: ${err instanceof Error ? err.message : err}`);

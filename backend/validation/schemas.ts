@@ -8,6 +8,7 @@ import { z } from "zod";
 
 export const ChatRequestSchema = z.object({
   message: z.string().min(1, "Message is required").max(10000, "Message too long"),
+  conversationId: z.string().min(1).optional(),
   conversation_id: z.string().min(1).optional(),
   context: z.object({
     recent_messages: z.array(z.object({
@@ -23,7 +24,10 @@ export const ChatRequestSchema = z.object({
       extractedText: z.string(),
     })).max(10).optional(),
   }).optional(),
-});
+}).transform(({ conversation_id, ...rest }) => ({
+  ...rest,
+  conversationId: rest.conversationId ?? conversation_id,
+}));
 
 // --- Memory ---
 
@@ -77,6 +81,7 @@ export const SelectionContextSchema = z.object({
     .max(2000, "Selected text too long"),
   context_before: z.string().max(1000).optional(),
   context_after: z.string().max(1000).optional(),
+  conversationId: z.string().min(1).optional(),
   conversation_id: z.string().min(1).optional(),
   context: z.object({
     recent_messages: z.array(z.object({
@@ -88,7 +93,10 @@ export const SelectionContextSchema = z.object({
       summary: z.string(),
     })).max(100).optional(),
   }).optional(),
-});
+}).transform(({ conversation_id, ...rest }) => ({
+  ...rest,
+  conversationId: rest.conversationId ?? conversation_id,
+}));
 
 export type SelectionContextPayload = z.infer<typeof SelectionContextSchema>;
 

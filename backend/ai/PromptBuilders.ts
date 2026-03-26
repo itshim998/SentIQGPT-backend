@@ -165,6 +165,7 @@ export async function callLLMAdapterStream(
       prompt: call.prompt,
       task: call.task,
       model_override: call.model_override,
+      user_id: call.user_id,
     }),
     signal: AbortSignal.timeout(call.timeout_ms ?? 120_000), // 120s default; override when needed
   });
@@ -357,6 +358,7 @@ export interface ChatContext {
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
   readonly conversationSummary?: string;
   readonly modelOverride?: string;
+  readonly userId?: string;
 }
 
 export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
@@ -413,6 +415,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     prompt: finalPrompt,
     prefer: isPollinations ? undefined : "gemini",
     model_override: ctx.modelOverride,
+    user_id: ctx.userId,
   };
 }
 
@@ -423,6 +426,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
 export function buildMemoryClassifyPrompt(args: {
   readonly message: string;
   readonly recentMessages?: readonly { role: string; content: string }[];
+  readonly userId?: string;
 }): LLMAdapterCall {
   const prompt =
     "TASK: Memory Classification\n" +
@@ -443,6 +447,7 @@ export function buildMemoryClassifyPrompt(args: {
     task: "memory_classify",
     prompt,
     prefer: "groq",
+    user_id: args.userId,
   };
 }
 
@@ -454,6 +459,7 @@ export function buildMemorySummarizePrompt(args: {
   readonly message: string;
   readonly memoryType: string;
   readonly existingMemories?: readonly { summary: string }[];
+  readonly userId?: string;
 }): LLMAdapterCall {
   const prompt =
     "TASK: Memory Summarization\n" +
@@ -470,6 +476,7 @@ export function buildMemorySummarizePrompt(args: {
     task: "memory_summarize",
     prompt,
     prefer: "groq",
+    user_id: args.userId,
   };
 }
 
@@ -479,6 +486,7 @@ export function buildMemorySummarizePrompt(args: {
 
 export function buildMemoryCompressPrompt(args: {
   readonly memories: readonly { summary: string; importance: number; timestamp: string }[];
+  readonly userId?: string;
 }): LLMAdapterCall {
   const prompt =
     "TASK: Memory Compression\n" +
@@ -493,6 +501,7 @@ export function buildMemoryCompressPrompt(args: {
     task: "memory_compress",
     prompt,
     prefer: "groq",
+    user_id: args.userId,
   };
 }
 

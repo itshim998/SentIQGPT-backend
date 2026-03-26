@@ -60,6 +60,7 @@ export interface ExecutionPlan {
 function buildPlannerPrompt(
   userMessage: string,
   hasFileContext: boolean,
+  userId?: string,
 ): LLMAdapterCall {
   const prompt =
     "TASK: Execution Planning\n" +
@@ -96,6 +97,7 @@ function buildPlannerPrompt(
     task: "route_classify",
     prompt,
     prefer: "groq",
+    user_id: userId,
   };
 }
 
@@ -154,6 +156,7 @@ function parsePlan(raw: string): ExecutionPlan {
 export async function planTask(args: {
   readonly userMessage: string;
   readonly hasFileContext?: boolean;
+  readonly userId?: string;
 }): Promise<ExecutionPlan> {
   // Hard safety rule: chart keywords ALWAYS produce a single chart_generation step.
   // This pre-check bypasses the LLM entirely and guarantees chart requests
@@ -168,6 +171,7 @@ export async function planTask(args: {
   const call = buildPlannerPrompt(
     args.userMessage,
     args.hasFileContext ?? false,
+    args.userId,
   );
 
   let raw: string;

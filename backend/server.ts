@@ -30,6 +30,7 @@ import { isChartRequest } from "./tools/chartGeneration/chartDetector";
 import { callLLMAdapter, buildTitleGeneratePrompt, strictParseJsonObject, callLLMAdapterStream, buildChatPrompt } from "./ai/PromptBuilders";
 import type { ChatContext } from "./ai/PromptBuilders";
 import { buildContext, buildContextFast } from "./context/contextBuilder";
+import { getOrAssignUserDatabase } from "./dbRouter";
 
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
@@ -137,6 +138,62 @@ function formatZodError(err: ZodError): string {
   return err.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join("; ");
 }
 
+const GUEST_USER_ID = "guest";
+const GUEST_MODEL_OVERRIDE = "gemini-fast";
+
+async function getVerifiedUserId(req: Request): Promise<string> {
+  const authHeader = req.header("Authorization") || req.header("authorization") || "";
+  const bearerPrefix = "Bearer ";
+  if (!authHeader.startsWith(bearerPrefix)) {
+    throw new Error("Unauthorized");
+  }
+
+  const token = authHeader.slice(bearerPrefix.length).trim();
+  if (!token) {
+    throw new Error("Unauthorized");
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL_1?.trim();
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY_1?.trim();
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error("Unauthorized");
+  }
+
+  let response: globalThis.Response;
+  try {
+    response = await fetch(`${supabaseUrl.replace(/\/$/, "")}/auth/v1/user`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: supabaseAnonKey,
+      },
+      signal: AbortSignal.timeout(3000),
+    });
+  } catch {
+    throw new Error("Unauthorized");
+  }
+
+  if (!response.ok) {
+    throw new Error("Unauthorized");
+  }
+
+  const verifiedUser = await response.json() as { id?: string };
+  const userId = typeof verifiedUser.id === "string" ? verifiedUser.id.trim() : "";
+  if (!userId) {
+    throw new Error("Unauthorized");
+  }
+
+  return userId;
+}
+
+async function getRequestIdentity(req: Request): Promise<{ userId: string; isGuest: boolean }> {
+  const authHeader = req.header("Authorization") || req.header("authorization") || "";
+  if (!authHeader.trim()) {
+    return { userId: GUEST_USER_ID, isGuest: true };
+  }
+  return { userId: await getVerifiedUserId(req), isGuest: false };
+}
+
 // ---- File Session Manager ----
 // Maintains the most recently uploaded file per IP to prevent old file references.
 interface FileSession {
@@ -203,6 +260,7 @@ app.post(
       res.status(400).json({ error: formatZodError(parsed.error) });
       return;
     }
+    const { userId, isGuest } = await getRequestIdentity(req);
 
     // Prompt injection detection
     if (detectPromptInjection(parsed.data.message)) {
@@ -218,14 +276,116 @@ app.post(
       console.log(`[File] orchestrator: ${orcFileRefs.length} file(s) included in context`);
     }
 
+    if (isGuest) {
+      const guestContext = await buildContext({
+        recent_messages: parsed.data.context?.recent_messages,
+        memories: [],
+        file_references: orcFileRefs,
+        userMessage: parsed.data.message,
+      }, undefined, userId);
+
+      const guestResult = await handleChat({
+        userMessage: parsed.data.message,
+        recentMessages: guestContext.recentMessages,
+        memories: [],
+        fileReferences: guestContext.fileReferences,
+        conversationSummary: guestContext.conversationSummary,
+        modelOverride: GUEST_MODEL_OVERRIDE,
+        userId,
+      });
+
+      res.json({
+        route: "chat",
+        reply: guestResult.reply,
+        disclaimer: guestResult.disclaimer,
+        image: undefined,
+        chart: undefined,
+        memory: undefined,
+        confidence: undefined,
+      });
+      return;
+    }
+
+    const userDb = await getOrAssignUserDatabase(userId);
+    const { error: sessionInitError } = await userDb.rpc("initialize_user_session", {
+      user_id: userId,
+    });
+    if (sessionInitError) {
+      throw new Error(sessionInitError.message);
+    }
+    const conversationId = parsed.data.conversationId || null;
+    let activeConversationId = conversationId;
+    if (activeConversationId) {
+      const { data: conversationOwnerRow, error: conversationOwnerError } = await userDb
+        .from("conversations")
+        .select("user_id")
+        .eq("id", activeConversationId)
+        .single<{ user_id: string }>();
+      if (conversationOwnerError || !conversationOwnerRow || conversationOwnerRow.user_id !== userId) {
+        throw new Error("Unauthorized conversation access");
+      }
+    }
+    if (!activeConversationId) {
+      const { data: conversationRow, error: conversationInsertError } = await userDb
+        .from("conversations")
+        .insert({
+          user_id: userId,
+          title: "New Chat",
+        })
+        .select("id")
+        .single<{ id: string }>();
+      if (conversationInsertError) {
+        throw new Error(conversationInsertError.message);
+      }
+      if (!conversationRow?.id) {
+        throw new Error("Failed to create conversation");
+      }
+      activeConversationId = conversationRow.id;
+    }
+    const { error: userMessageInsertError } = await userDb
+      .from("messages")
+      .insert({
+        conversation_id: activeConversationId,
+        role: "user",
+        content: parsed.data.message,
+      });
+    if (userMessageInsertError) {
+      throw new Error(userMessageInsertError.message);
+    }
+
     const result = await orchestrate({
       userMessage: parsed.data.message,
       context: {
         recent_messages: parsed.data.context?.recent_messages,
         memories: parsed.data.context?.memories,
         file_references: orcFileRefs,
+        userDb,
+        userId,
       },
     });
+    const { error: assistantMessageInsertError } = await userDb
+      .from("messages")
+      .insert({
+        conversation_id: activeConversationId,
+        role: "assistant",
+        content: result.reply,
+      });
+    if (assistantMessageInsertError) {
+      throw new Error(assistantMessageInsertError.message);
+    }
+    if (result.memory && result.memory.stored === true) {
+      const { error: memoryInsertError } = await userDb
+        .from("memories")
+        .insert({
+          user_id: userId,
+          type: result.memory.type,
+          summary: result.memory.summary,
+          importance: result.memory.importance,
+        });
+      if (memoryInsertError) {
+        throw new Error(memoryInsertError.message);
+      }
+    }
 
     res.json({
       route: result.route,
@@ -272,6 +432,197 @@ app.post(
     // The streaming path does not support tool execution (charts, images, etc.).
     // If the message is a chart request, redirect to the orchestrator and return
     // the result as a single SSE JSON payload so the frontend can render it.
+    const { userId, isGuest } = await getRequestIdentity(req);
+    if (isGuest) {
+      const requestStart = Date.now();
+      console.log(`[Latency] guest user query received`);
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+
+      let clientDisconnected = false;
+      req.on("close", () => { clientDisconnected = true; });
+
+      const fileRefs = parsed.data.context?.file_references;
+      const guestCtx = await buildContextFast({
+        recent_messages: parsed.data.context?.recent_messages,
+        memories: [],
+        file_references: fileRefs,
+        userMessage: parsed.data.message,
+      }, undefined, userId);
+
+      const chatCtx: ChatContext = {
+        userMessage: parsed.data.message,
+        recentMessages: guestCtx.recentMessages,
+        memories: [],
+        fileReferences: guestCtx.fileReferences,
+        conversationSummary: guestCtx.conversationSummary,
+        modelOverride: GUEST_MODEL_OVERRIDE,
+        userId,
+      };
+
+      const call = buildChatPrompt(chatCtx);
+      console.log(`[Latency] guest LLM request started (+${Date.now() - requestStart}ms)`);
+      console.log(`[Stream] guest model=${chatCtx.modelOverride} hasFiles=${guestCtx.hasFileContext} msgLen=${parsed.data.message.length}`);
+
+      try {
+        const streamStart = Date.now();
+        const stream = await callLLMAdapterStream(call);
+        const reader = stream.getReader();
+        let tokenCount = 0;
+        let firstTokenReceived = false;
+        let streamTimedOut = false;
+
+        const STREAM_TIMEOUT_MS = 60_000;
+        const FIRST_TOKEN_SLOW_MS = 8_000;
+
+        const firstTokenTimer = setTimeout(() => {
+          if (!firstTokenReceived && !clientDisconnected) {
+            console.log(`[Timeout] guest first token delayed beyond ${FIRST_TOKEN_SLOW_MS}ms`);
+          }
+        }, FIRST_TOKEN_SLOW_MS);
+
+        const streamTimer = setTimeout(() => {
+          if (!clientDisconnected && tokenCount > 0) {
+            streamTimedOut = true;
+            console.log(`[Timeout] guest stream timeout after ${tokenCount} chunks, completing gracefully`);
+          }
+        }, STREAM_TIMEOUT_MS);
+
+        try {
+          while (true) {
+            if (clientDisconnected || streamTimedOut) {
+              reader.cancel();
+              break;
+            }
+
+            const result = await reader.read();
+            if (result.done) break;
+
+            const value = result.value;
+            tokenCount++;
+
+            if (tokenCount === 1) {
+              firstTokenReceived = true;
+              clearTimeout(firstTokenTimer);
+              console.log(`[Latency] guest first token streamed (+${Date.now() - requestStart}ms)`);
+            }
+
+            writeSseEvent(JSON.stringify({ type: "token", text: value }));
+          }
+        } finally {
+          clearTimeout(firstTokenTimer);
+          clearTimeout(streamTimer);
+        }
+
+        if (!clientDisconnected) {
+          if (streamTimedOut && tokenCount > 0) {
+            writeSseEvent(JSON.stringify({
+              type: "error",
+              error: "Response interrupted after a long stream. Showing partial output.",
+            }));
+          }
+          writeSseEvent("[DONE]");
+        }
+        console.log(`[Stream] guest completed: ${tokenCount} chunks in ${Date.now() - streamStart}ms`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Stream] guest error: ${message}`);
+        if (!clientDisconnected) {
+          writeSseEvent(JSON.stringify({ type: "error", error: message }));
+        }
+      } finally {
+        finishSse();
+      }
+      return;
+    }
+
+    const userDb = await getOrAssignUserDatabase(userId);
+    const { error: sessionInitError } = await userDb.rpc("initialize_user_session", {
+      user_id: userId,
+    });
+    if (sessionInitError) {
+      throw new Error(sessionInitError.message);
+    }
+    const conversationId = parsed.data.conversationId || null;
+    let activeConversationId = conversationId;
+    if (activeConversationId) {
+      const { data: conversationOwnerRow, error: conversationOwnerError } = await userDb
+        .from("conversations")
+        .select("user_id")
+        .eq("id", activeConversationId)
+        .single<{ user_id: string }>();
+      if (conversationOwnerError || !conversationOwnerRow || conversationOwnerRow.user_id !== userId) {
+        throw new Error("Unauthorized conversation access");
+      }
+    }
+    if (!activeConversationId) {
+      const { data: conversationRow, error: conversationInsertError } = await userDb
+        .from("conversations")
+        .insert({
+          user_id: userId,
+          title: "New Chat",
+        })
+        .select("id")
+        .single<{ id: string }>();
+      if (conversationInsertError) {
+        throw new Error(conversationInsertError.message);
+      }
+      if (!conversationRow?.id) {
+        throw new Error("Failed to create conversation");
+      }
+      activeConversationId = conversationRow.id;
+    }
+    const { error: userMessageInsertError } = await userDb
+      .from("messages")
+      .insert({
+        conversation_id: activeConversationId,
+        role: "user",
+        content: parsed.data.message,
+      });
+    if (userMessageInsertError) {
+      throw new Error(userMessageInsertError.message);
+    }
+
+    const persistAssistantMessage = async (content: string) => {
+      const { error: assistantMessageInsertError } = await userDb
+        .from("messages")
+        .insert({
+          conversation_id: activeConversationId,
+          role: "assistant",
+          content,
+        });
+      if (assistantMessageInsertError) {
+        throw new Error(assistantMessageInsertError.message);
+      }
+    };
+
+    const persistStoredMemory = async (memory?: {
+      stored?: boolean;
+      type?: string;
+      summary?: string;
+      importance?: number;
+    }) => {
+      if (!memory || memory.stored !== true) return;
+      const { error: memoryInsertError } = await userDb
+        .from("memories")
+        .insert({
+          user_id: userId,
+          type: memory.type,
+          summary: memory.summary,
+          importance: memory.importance,
+        });
+      if (memoryInsertError) {
+        throw new Error(memoryInsertError.message);
+      }
+    };
+
+    let clientDisconnected = false;
+    req.on("close", () => { clientDisconnected = true; });
+
     if (detectExplicitMemoryWriteIntent(parsed.data.message)) {
       console.log(`[Stream] explicit memory write detected — redirecting to orchestrator`);
       try {
@@ -281,8 +632,14 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            userDb,
+            userId,
           },
         });
+        if (result.reply) {
+          await persistAssistantMessage(result.reply);
+        }
+        await persistStoredMemory(result.memory);
         res.json({
           route: result.route,
           reply: result.reply,
@@ -309,8 +666,14 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            userDb,
+            userId,
           },
         });
+        if (result.reply) {
+          await persistAssistantMessage(result.reply);
+        }
+        await persistStoredMemory(result.memory);
         // Return the full orchestrator result as JSON (not SSE) so the frontend
         // can use deliverAssistantResponse to render the chart.
         res.json({
@@ -356,6 +719,8 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            userDb,
+            userId,
           },
         });
         // Return as SSE stream so the frontend handles it uniformly
@@ -366,6 +731,12 @@ app.post(
             const chunk = result.reply.slice(i, i + CHUNK_SIZE);
             writeSseEvent(JSON.stringify({ type: "token", text: chunk }));
           }
+        }
+        if (!clientDisconnected && result.reply) {
+          await persistAssistantMessage(result.reply);
+        }
+        if (!clientDisconnected) {
+          await persistStoredMemory(result.memory);
         }
         writeSseEvent("[DONE]");
         finishSse();
@@ -392,10 +763,6 @@ app.post(
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
 
-    // Track client disconnect
-    let clientDisconnected = false;
-    req.on("close", () => { clientDisconnected = true; });
-
     // Always include file_references when present — the frontend only sends
     // the current session file (scoped correctly), so no backend gating needed.
     const fileRefs = parsed.data.context?.file_references;
@@ -415,7 +782,7 @@ app.post(
       memories: parsed.data.context?.memories,
       file_references: fileRefs,
       userMessage: parsed.data.message,
-    });
+    }, userDb, userId);
 
     console.log(`[Latency] context built (+${Date.now() - requestStart}ms)`);
 
@@ -426,6 +793,7 @@ app.post(
       fileReferences: ctx.fileReferences,
       conversationSummary: ctx.conversationSummary,
       modelOverride,
+      userId,
     };
 
     const call = buildChatPrompt(chatCtx);
@@ -437,6 +805,7 @@ app.post(
       const stream = await callLLMAdapterStream(call);
       const reader = stream.getReader();
       let tokenCount = 0;
+      let fullReply = "";
 
       // Timeout safety: allow buffered providers to deliver a late first chunk
       // without treating it as a fatal error. The hard request bound stays in
@@ -474,6 +843,7 @@ app.post(
 
           const value = result.value;
           tokenCount++;
+          fullReply += value;
 
           if (tokenCount === 1) {
             firstTokenReceived = true;
@@ -488,6 +858,9 @@ app.post(
       }
 
       if (!clientDisconnected) {
+        if (!streamTimedOut && fullReply) {
+          await persistAssistantMessage(fullReply);
+        }
         if (streamTimedOut && tokenCount > 0) {
           writeSseEvent(JSON.stringify({
             type: "error",
@@ -521,6 +894,11 @@ app.post(
   "/api/memory/classify",
   aiRateLimiter,
   asyncHandler(async (req, res) => {
+    const { userId, isGuest } = await getRequestIdentity(req);
+    if (isGuest) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
     const parsed = MemoryClassifyRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
@@ -530,6 +908,7 @@ app.post(
     const result = await processMessageForMemory({
       message: parsed.data.message,
       recentMessages: parsed.data.recent_messages,
+      userId,
     });
 
     res.json(result);
@@ -543,6 +922,11 @@ app.post(
   "/api/memory/compress",
   aiRateLimiter,
   asyncHandler(async (req, res) => {
+    const { userId, isGuest } = await getRequestIdentity(req);
+    if (isGuest) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
     const parsed = MemoryCompressRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
@@ -551,6 +935,7 @@ app.post(
 
     const result = await compressMemories({
       memories: parsed.data.memories,
+      userId,
     });
 
     res.json(result);
@@ -565,6 +950,7 @@ app.post(
   uploadRateLimiter,
   upload.single("file"),
   asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
     const file = req.file;
     if (!file) {
       res.status(400).json({ error: "No file uploaded." });
@@ -581,6 +967,7 @@ app.post(
       buffer: file.buffer,
       filename: file.originalname,
       mimetype: file.mimetype,
+      userId,
     });
 
     console.log(`[File Upload] ${result.filename} → type=${result.type}, extracted=${result.extracted_text.length} chars, size=${result.size_bytes}B`);
@@ -624,6 +1011,7 @@ app.post(
   aiRateLimiter,
   imageQuotaMiddleware,
   asyncHandler(async (req, res) => {
+    await getVerifiedUserId(req);
     const parsed = ImageGenerateRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
@@ -678,6 +1066,7 @@ app.post(
   "/api/charts/generate",
   aiRateLimiter,
   asyncHandler(async (req, res) => {
+    await getVerifiedUserId(req);
     const parsed = ChartGenerateRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
@@ -726,6 +1115,7 @@ app.post(
   "/api/chat/selection",
   aiRateLimiter,
   asyncHandler(async (req, res) => {
+    const { userId, isGuest } = await getRequestIdentity(req);
     const parsed = SelectionContextSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
@@ -755,11 +1145,33 @@ app.post(
 
     const userMessage = parts.join("\n\n");
 
+    if (isGuest) {
+      const guestResult = await handleChat({
+        userMessage,
+        recentMessages: parsed.data.context?.recent_messages,
+        memories: [],
+        modelOverride: GUEST_MODEL_OVERRIDE,
+        userId,
+      });
+
+      res.json({
+        route: "chat",
+        reply: guestResult.reply,
+        disclaimer: guestResult.disclaimer,
+        image: undefined,
+        chart: undefined,
+        memory: undefined,
+        confidence: undefined,
+      });
+      return;
+    }
+
     const result = await orchestrate({
       userMessage,
       context: {
         recent_messages: parsed.data.context?.recent_messages,
         memories: parsed.data.context?.memories,
+        userId,
       },
     });
 
@@ -782,7 +1194,14 @@ app.post(
   "/api/chat/title",
   aiRateLimiter,
   asyncHandler(async (req, res) => {
-    const { userMessage, assistantReply, conversation_id } = req.body;
+    const { userId, isGuest } = await getRequestIdentity(req);
+    const { userMessage, assistantReply } = req.body;
+    const rawConversationId =
+      typeof req.body?.conversationId === "string" && req.body.conversationId.trim()
+        ? req.body.conversationId.trim()
+        : typeof req.body?.conversation_id === "string" && req.body.conversation_id.trim()
+          ? req.body.conversation_id.trim()
+          : "";
 
     if (
       typeof userMessage !== "string" || !userMessage.trim() ||
@@ -793,14 +1212,17 @@ app.post(
     }
 
     try {
-      const cacheScopedConversationId = typeof conversation_id === "string" && conversation_id.trim()
-        ? conversation_id.trim()
+      const cacheScopedConversationId = rawConversationId
+        ? rawConversationId
         : `title-${randomUUID()}`;
-      const call = buildTitleGeneratePrompt({
+      const baseCall = buildTitleGeneratePrompt({
         userMessage: userMessage.slice(0, 500),
         assistantReply: assistantReply.slice(0, 500),
         conversationId: cacheScopedConversationId,
       });
+      const call = isGuest
+        ? { ...baseCall, user_id: userId, prefer: undefined, model_override: GUEST_MODEL_OVERRIDE }
+        : { ...baseCall, user_id: userId };
       const raw = await callLLMAdapter(call);
       const parsed = strictParseJsonObject(raw);
       const title = typeof parsed.title === "string" && parsed.title.trim()

@@ -13,12 +13,14 @@ import os
 import sys
 import json
 import logging
+from datetime import date
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Any, Optional
 import uvicorn
+import requests
 
 # --- Environment ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -49,6 +51,12 @@ if not logger.handlers:
 logger.setLevel(logging.INFO)
 
 LLM_SERVICE_PORT = int(os.getenv("LLM_SERVICE_PORT", "3002"))
+REQUESTS_PER_DAY = 50
+SUPABASE_REST_TIMEOUT_SECONDS = 15
+CONTROL_DB_NUMBER = 1
+VALID_DB_NUMBERS = {1, 2, 3, 4}
+GUEST_USER_ID = "guest"
+GUEST_MODEL_OVERRIDE = "gemini-fast"
 
 # ============================
 # FastAPI Application
@@ -77,6 +85,213 @@ class EmbedRequest(BaseModel):
     text: str
 
 
+def read_required_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise Exception(f"Missing required environment variable: {name}")
+    return value
+
+
+def get_db_config(db_number: int) -> tuple[str, str]:
+    if db_number not in VALID_DB_NUMBERS:
+        raise Exception(f"Invalid assigned_db value: {db_number}")
+
+    base_url = read_required_env(f"SUPABASE_URL_{db_number}").rstrip("/")
+    service_role_key = read_required_env(f"SUPABASE_SERVICE_ROLE_KEY_{db_number}")
+    return base_url, service_role_key
+
+
+def build_rest_headers(service_role_key: str, *, prefer: Optional[str] = None) -> dict[str, str]:
+    headers = {
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+    return headers
+
+
+def supabase_rest_request(
+    method: str,
+    db_number: int,
+    table: str,
+    *,
+    params: Optional[dict[str, str]] = None,
+    json_body: Optional[dict[str, Any]] = None,
+    prefer: Optional[str] = None,
+) -> Any:
+    base_url, service_role_key = get_db_config(db_number)
+    response = requests.request(
+        method=method,
+        url=f"{base_url}/rest/v1/{table}",
+        headers=build_rest_headers(service_role_key, prefer=prefer),
+        params=params,
+        json=json_body,
+        timeout=SUPABASE_REST_TIMEOUT_SECONDS,
+    )
+
+    if not response.ok:
+        raise Exception(
+            f"Supabase request failed for {table} ({response.status_code}): {response.text[:300]}"
+        )
+
+    if not response.text.strip():
+        return None
+
+    return response.json()
+
+
+def supabase_rpc_request(
+    db_number: int,
+    function_name: str,
+    *,
+    json_body: Optional[dict[str, Any]] = None,
+) -> Any:
+    base_url, service_role_key = get_db_config(db_number)
+    response = requests.request(
+        method="POST",
+        url=f"{base_url}/rest/v1/rpc/{function_name}",
+        headers=build_rest_headers(service_role_key),
+        json=json_body,
+        timeout=SUPABASE_REST_TIMEOUT_SECONDS,
+    )
+
+    if not response.ok:
+        raise Exception(
+            f"Supabase RPC failed for {function_name} ({response.status_code}): {response.text[:300]}"
+        )
+
+    if not response.text.strip():
+        return None
+
+    return response.json()
+
+
+def require_user_id(user_id: Optional[str]) -> str:
+    normalized_user_id = (user_id or "").strip()
+    if not normalized_user_id:
+        raise Exception("User ID required for LLM usage")
+    return normalized_user_id
+
+
+def is_guest_user(user_id: Optional[str]) -> bool:
+    return (user_id or "").strip() == GUEST_USER_ID
+
+
+def resolve_user_db(user_id: str) -> int:
+    data = supabase_rest_request(
+        "GET",
+        CONTROL_DB_NUMBER,
+        "user_db_map",
+        params={
+            "user_id": f"eq.{user_id}",
+            "select": "assigned_db",
+        },
+    )
+
+    if not isinstance(data, list) or not data:
+        raise Exception(f"No database assignment found for user {user_id}")
+
+    assigned_db = data[0].get("assigned_db")
+    if not isinstance(assigned_db, int) or assigned_db not in VALID_DB_NUMBERS:
+        raise Exception(f"Invalid assigned_db value for user {user_id}: {assigned_db}")
+
+    return assigned_db
+
+
+def get_today_iso_date() -> str:
+    return date.today().isoformat()
+
+
+def fetch_usage_row(user_id: str, db_number: int) -> Optional[dict[str, Any]]:
+    data = supabase_rest_request(
+        "GET",
+        db_number,
+        "usage_logs",
+        params={
+            "user_id": f"eq.{user_id}",
+            "date": f"eq.{get_today_iso_date()}",
+            "select": "id,requests_count",
+        },
+    )
+
+    if not isinstance(data, list) or not data:
+        return None
+
+    return data[0]
+
+
+def insert_usage_row(user_id: str, db_number: int) -> None:
+    supabase_rest_request(
+        "POST",
+        db_number,
+        "usage_logs",
+        params={"on_conflict": "user_id,date"},
+        json_body={
+            "user_id": user_id,
+            "date": get_today_iso_date(),
+            "requests_count": 0,
+            "tokens_used": 0,
+            "images_generated": 0,
+        },
+        prefer="resolution=ignore-duplicates,return=minimal",
+    )
+
+
+def ensure_usage_row(user_id: str, db_number: int) -> dict[str, Any]:
+    usage_row = fetch_usage_row(user_id, db_number)
+    if usage_row is not None:
+        return usage_row
+
+    insert_usage_row(user_id, db_number)
+    usage_row = fetch_usage_row(user_id, db_number)
+    if usage_row is None:
+        raise Exception(f"Failed to ensure usage row for user {user_id}")
+
+    return usage_row
+
+
+def increment_requests_count(user_id: str, db_number: int, current_count: int) -> None:
+    supabase_rest_request(
+        "PATCH",
+        db_number,
+        "usage_logs",
+        params={
+            "user_id": f"eq.{user_id}",
+            "date": f"eq.{get_today_iso_date()}",
+        },
+        json_body={"requests_count": current_count + 1},
+        prefer="return=minimal",
+    )
+
+
+def get_enforced_usage(user_id: str) -> tuple[int, dict[str, Any]]:
+    assigned_db = resolve_user_db(user_id)
+    usage_row = ensure_usage_row(user_id, assigned_db)
+    requests_count = int(usage_row.get("requests_count") or 0)
+
+    if requests_count >= REQUESTS_PER_DAY:
+        raise Exception("Daily request limit reached")
+
+    return assigned_db, usage_row
+
+
+def reserve_llm_request_slot(user_id: str) -> int:
+    assigned_db = resolve_user_db(user_id)
+    reserved = supabase_rpc_request(
+        assigned_db,
+        "reserve_daily_llm_request",
+        json_body={
+            "p_user_id": user_id,
+            "p_daily_limit": REQUESTS_PER_DAY,
+        },
+    )
+    if reserved is not True:
+        raise Exception("Daily request limit reached")
+    return assigned_db
+
+
 @app.get("/llm/health")
 async def health_check():
     return {
@@ -94,19 +309,26 @@ async def health_check():
 @app.post("/llm/invoke", response_model=LLMInvokeResponse)
 async def invoke_llm(request: LLMInvokeRequest):
     try:
+        if is_guest_user(request.user_id):
+            user_id = GUEST_USER_ID
+            effective_model_override = GUEST_MODEL_OVERRIDE
+        else:
+            user_id = require_user_id(request.user_id)
+            reserve_llm_request_slot(user_id)
+            effective_model_override = request.model_override
         result = call_llm_router(
             prompt=request.prompt,
             task=request.task,
             use_simulation=request.use_simulation,
             prefer=request.prefer,
-            model_override=request.model_override,
-            user_id=request.user_id,
+            model_override=effective_model_override,
+            user_id=user_id,
             max_output_tokens=request.max_output_tokens,
         )
         # Resolve the actual provider (not just the prefer hint)
         from llm_adapter import resolve_model_override, get_provider_for_task
         default_prov = request.prefer or get_provider_for_task(request.task)
-        resolved_prov, _ = resolve_model_override(request.model_override, default_prov)
+        resolved_prov, _ = resolve_model_override(effective_model_override, default_prov)
         return LLMInvokeResponse(result=result, provider=resolved_prov)
     except Exception as e:
         logger.error("LLM invocation failed: %s", e)
@@ -118,10 +340,18 @@ async def stream_llm(request: LLMInvokeRequest):
     """SSE streaming endpoint for provider responses as text/event-stream."""
     def event_generator():
         try:
+            if is_guest_user(request.user_id):
+                user_id = GUEST_USER_ID
+                effective_model_override = GUEST_MODEL_OVERRIDE
+            else:
+                user_id = require_user_id(request.user_id)
+                reserve_llm_request_slot(user_id)
+                effective_model_override = request.model_override
             for chunk in stream_llm_router(
                 prompt=request.prompt,
                 task=request.task,
-                model_override=request.model_override,
+                model_override=effective_model_override,
+                user_id=user_id,
             ):
                 # SSE format: data: <text>\n\n
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
@@ -150,10 +380,14 @@ class VisionRequest(BaseModel):
     image_base64: str
     mime_type: str = "image/jpeg"
     model_override: Optional[str] = None
+    user_id: Optional[str] = None
 
 @app.post("/llm/vision")
 async def vision_llm(request: VisionRequest):
     """Analyze an image using Gemini Vision (multimodal)."""
+    user_id = require_user_id(request.user_id)
+    if is_guest_user(user_id):
+        raise HTTPException(status_code=401, detail="Unauthorized")
     if not request.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt must be non-empty")
     if not request.image_base64:
@@ -162,6 +396,7 @@ async def vision_llm(request: VisionRequest):
     if len(request.image_base64) > 28_000_000:
         raise HTTPException(status_code=400, detail="Image too large (max ~20MB)")
     try:
+        reserve_llm_request_slot(user_id)
         from llm_adapter import _invoke_gemini_vision
         result = _invoke_gemini_vision(
             prompt=request.prompt,

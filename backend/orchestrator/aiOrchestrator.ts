@@ -283,7 +283,11 @@ async function _orchestrateInner(
   // the DeepSeek math pipeline.
   if (detectExplicitMemoryWriteIntent(userMessage)) {
     console.log(`[ORCHESTRATOR] explicit memory write detected — bypassing planner`);
-    const ctx = await buildContext({ ...(rawContext ?? {}), userMessage });
+    const ctx = await buildContext(
+      { ...(rawContext ?? {}), userMessage },
+      rawContext?.userDb,
+      rawContext?.userId,
+    );
     const execution = await executePlan(
       [{ step: 1, tool: "memory_update", input: userMessage }],
       ctx,
@@ -329,7 +333,7 @@ async function _orchestrateInner(
       "- No repetition\n" +
       "- No meta statements";
 
-    const mathResult = await solveMathDirect(userMessage, systemPrompt);
+    const mathResult = await solveMathDirect(userMessage, systemPrompt, rawContext?.userId);
 
     console.log(
       `[MathPipeline] solved using deepseek`,
@@ -356,8 +360,16 @@ async function _orchestrateInner(
   // 1. Build context + run planner in PARALLEL (both are independent)
   //    Memory pipeline is deferred to background — never blocks the LLM response.
   const [ctx, plan] = await Promise.all([
-    buildContext({ ...(rawContext ?? {}), userMessage }),
-    planTask({ userMessage, hasFileContext: (rawContext?.file_references?.length ?? 0) > 0 }),
+    buildContext(
+      { ...(rawContext ?? {}), userMessage },
+      rawContext?.userDb,
+      rawContext?.userId,
+    ),
+    planTask({
+      userMessage,
+      hasFileContext: (rawContext?.file_references?.length ?? 0) > 0,
+      userId: rawContext?.userId,
+    }),
   ]);
 
   console.log(`[ORCHESTRATOR] plan: ${plan.steps.length} step(s)`);
@@ -373,7 +385,12 @@ async function _orchestrateInner(
   //     Only runs on text replies ≥ 100 chars.
   //     Skips image-only, memory-only, short responses, AND math results
   //     (math queries are already handled by the direct math pipeline).
-  const reflected = await reflectOnAnswer(userMessage, merged, merged._isMathResult);
+  const reflected = await reflectOnAnswer(
+    userMessage,
+    merged,
+    merged._isMathResult,
+    rawContext?.userId,
+  );
 
   const finalReply =
     reflected.merged.reply !== undefined
@@ -426,6 +443,7 @@ async function reflectOnAnswer(
   userMessage: string,
   merged: InternalMergedResponse,
   isMathResult?: boolean,
+  userId?: string,
 ): Promise<{
   merged: InternalMergedResponse;
   reflection?: OrchestratorResponse["reflection"];
@@ -448,7 +466,7 @@ async function reflectOnAnswer(
 
   try {
     // Critic pass (Groq — fast & cheap)
-    const evaluation = await evaluateAnswer(userMessage, merged.reply);
+    const evaluation = await evaluateAnswer(userMessage, merged.reply, userId);
 
     console.log(`[REFLECTION] score: ${evaluation.score.toFixed(2)}`);
     console.log(`[REFLECTION] issues detected: ${evaluation.issues.length}`);
@@ -466,7 +484,7 @@ async function reflectOnAnswer(
     }
 
     // Improvement pass (Gemini — high quality)
-    const result = await improveAnswer(userMessage, merged.reply, evaluation);
+    const result = await improveAnswer(userMessage, merged.reply, evaluation, userId);
 
     if (result.improved) {
       console.log("[REFLECTION] improvement applied");

@@ -107,6 +107,7 @@ export async function extractTextFromFile(args: {
   readonly buffer: Buffer;
   readonly filename: string;
   readonly mimetype: string;
+  readonly userId?: string;
 }): Promise<FileExtractionResult> {
   const validation = validateFileUpload(args.mimetype, args.buffer.length, args.filename);
   if (!validation.valid || !validation.type) {
@@ -142,7 +143,12 @@ export async function extractTextFromFile(args: {
 
     case "image":
       try {
-        extractedText = await analyzeImageWithVision(args.buffer, args.filename, args.mimetype);
+        extractedText = await analyzeImageWithVision(
+          args.buffer,
+          args.filename,
+          args.mimetype,
+          args.userId,
+        );
         console.log(`[File Parser] image analyzed: ${args.filename} (${extractedText.length} chars)`);
       } catch (err) {
         console.log(`[File Parser] image analysis failed: ${args.filename} — ${err instanceof Error ? err.message : err}`);
@@ -247,10 +253,14 @@ async function analyzeImageWithVision(
   buffer: Buffer,
   filename: string,
   mimetype: string,
+  userId?: string,
 ): Promise<string> {
   const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
   if (buffer.length > MAX_IMAGE_SIZE) {
     return `[Image ${filename} is too large for vision analysis (${(buffer.length / 1024 / 1024).toFixed(1)}MB). Max: 10MB.]`;
+  }
+  if (!userId?.trim()) {
+    throw new Error("User ID required for vision analysis");
   }
 
   const base64 = buffer.toString("base64");
@@ -269,6 +279,7 @@ async function analyzeImageWithVision(
         prompt,
         image_base64: base64,
         mime_type: mimetype,
+        user_id: userId,
       }),
       signal: AbortSignal.timeout(60_000),
     });
@@ -301,10 +312,11 @@ async function analyzeImageWithVision(
 export async function describeImage(args: {
   readonly base64: string;
   readonly filename: string;
+  readonly userId?: string;
 }): Promise<string> {
   try {
     const buffer = Buffer.from(args.base64, "base64");
-    return await analyzeImageWithVision(buffer, args.filename, "image/jpeg");
+    return await analyzeImageWithVision(buffer, args.filename, "image/jpeg", args.userId);
   } catch {
     return `[Image: ${args.filename}]`;
   }

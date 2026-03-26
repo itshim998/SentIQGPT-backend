@@ -275,6 +275,7 @@ function normalizeMathResponse(text: string): string {
 export async function solveMathDirect(
   userMessage: string,
   systemPrompt: string,
+  userId?: string,
 ): Promise<{ answer: string; model_used?: string; fallback?: boolean }> {
   const intent = classifyMathIntent(userMessage);
   console.log(`[MathPipeline] intent=${intent}`);
@@ -284,6 +285,7 @@ export async function solveMathDirect(
       task: "chat",
       prompt: buildMathPrompt(userMessage, systemPrompt, intent, retryMode),
       model_override: PRIMARY_MODEL,
+      user_id: userId,
       timeout_ms: 115_000,
       max_output_tokens:
         intent === "generation"

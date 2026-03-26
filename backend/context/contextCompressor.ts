@@ -41,6 +41,7 @@ export interface CompressedConversation {
  */
 export async function compressConversation(
   messages: readonly { role: string; content: string }[],
+  userId?: string,
 ): Promise<CompressedConversation> {
   // Short conversations — no compression needed
   if (messages.length <= CONVERSATION_WINDOW) {
@@ -68,6 +69,7 @@ export async function compressConversation(
       "Summarize the following conversation excerpt in 1-2 concise sentences. " +
       "Capture the key topics discussed and any important decisions or facts.\n\n" +
       `${transcript}\n\nSummary:`,
+    user_id: userId,
   };
 
   try {

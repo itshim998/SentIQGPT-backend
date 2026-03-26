@@ -147,6 +147,7 @@ async function execConversation(
     fileReferences: ctx.fileReferences,
     conversationSummary: ctx.conversationSummary,
     modelOverride,
+    userId: ctx.userId,
   });
 
   return {
@@ -194,6 +195,7 @@ async function execFileAnalysis(
     fileReferences: ctx.fileReferences,
     conversationSummary: ctx.conversationSummary,
     modelOverride,
+    userId: ctx.userId,
   });
 
   return {
@@ -214,6 +216,7 @@ async function execMemoryUpdate(
     recentMessages: ctx.recentMessages,
     existingMemories: ctx.memories,
     forceStore: true,
+    userId: ctx.userId,
   }).catch(() => ({ stored: false as const }));
 
   const memory = memResult.stored

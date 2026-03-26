@@ -818,6 +818,7 @@ def stream_llm_router(
     prompt: str,
     task: str = "chat",
     model_override: Optional[str] = None,
+    user_id: Optional[str] = None,
 ):
     """
     Streaming variant — yields text chunks.

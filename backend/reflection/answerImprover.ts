@@ -25,6 +25,7 @@ export async function improveAnswer(
   userMessage: string,
   answer: string,
   evaluation: CriticEvaluation,
+  userId?: string,
 ): Promise<ImprovementResult> {
   const issueList = evaluation.issues.length > 0
     ? evaluation.issues.map((i, idx) => `${idx + 1}. ${i}`).join("\n")
@@ -58,6 +59,7 @@ export async function improveAnswer(
       task: "chat",
       prompt,
       prefer: "gemini",
+      user_id: userId,
     });
 
     const trimmed = improved.text.trim();
