@@ -276,7 +276,7 @@ async function resolveUserDatabaseOrThrow(userId: string, scope: string) {
 
 async function initializeUserSessionOrThrow(userDb: any, userId: string, scope: string): Promise<void> {
   logDbEvent(`${scope}.session-init.start`, userId);
-  const { error } = await userDb.rpc("initialize_user_session", { user_id: userId });
+  const { error } = await userDb.rpc("initialize_user_session", { p_user_id: userId });
   if (error) {
     logDbFailure(`${scope}.session-init`, userId, error);
     throw new Error(error.message);

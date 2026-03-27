@@ -126,7 +126,7 @@ async function ensureControlUserSession(userId: string): Promise<void> {
   logDbRouter("control-session.init.start", normalizedUserId, { db: CONTROL_DATABASE_ID });
 
   const { error } = await controlDbClient.rpc("initialize_user_session", {
-    user_id: normalizedUserId,
+    p_user_id: normalizedUserId,
   });
 
   if (error) {
