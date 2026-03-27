@@ -276,12 +276,13 @@ async function resolveUserDatabaseOrThrow(userId: string, scope: string) {
 
 async function initializeUserSessionOrThrow(userDb: any, userId: string, scope: string): Promise<void> {
   logDbEvent(`${scope}.session-init.start`, userId);
+  const startedAt = Date.now();
   const { error } = await userDb.rpc("initialize_user_session", { p_user_id: userId });
   if (error) {
     logDbFailure(`${scope}.session-init`, userId, error);
     throw new Error(error.message);
   }
-  logDbEvent(`${scope}.session-init.ok`, userId);
+  logDbEvent(`${scope}.session-init.ok`, userId, { duration_ms: Date.now() - startedAt });
 }
 
 async function getOwnedConversationOrThrow(
@@ -317,6 +318,7 @@ async function createConversationOrThrow(
   title = "New Chat",
 ): Promise<ConversationListRow> {
   logDbEvent(`${scope}.conversation-create.start`, userId, { title });
+  const startedAt = Date.now();
   const { data, error } = await userDb
     .from("conversations")
     .insert({ user_id: userId, title })
@@ -332,7 +334,10 @@ async function createConversationOrThrow(
     throw new Error("Failed to create conversation");
   }
 
-  logDbEvent(`${scope}.conversation-create.ok`, userId, { conversationId: data.id });
+  logDbEvent(`${scope}.conversation-create.ok`, userId, {
+    conversationId: data.id,
+    duration_ms: Date.now() - startedAt,
+  });
   return data as ConversationListRow;
 }
 
@@ -379,6 +384,7 @@ async function insertMemoryOrThrow(
 
 async function listConversationsOrThrow(userDb: any, userId: string, scope: string): Promise<ConversationListRow[]> {
   logDbEvent(`${scope}.conversation-list.start`, userId);
+  const startedAt = Date.now();
   const { data, error } = await userDb
     .from("conversations")
     .select("id, title, created_at")
@@ -390,7 +396,10 @@ async function listConversationsOrThrow(userDb: any, userId: string, scope: stri
     throw new Error(error.message);
   }
 
-  logDbEvent(`${scope}.conversation-list.ok`, userId, { count: data?.length || 0 });
+  logDbEvent(`${scope}.conversation-list.ok`, userId, {
+    count: data?.length || 0,
+    duration_ms: Date.now() - startedAt,
+  });
   return (data || []) as ConversationListRow[];
 }
 
@@ -402,6 +411,7 @@ async function listConversationMessagesOrThrow(
 ): Promise<ConversationMessageRow[]> {
   await getOwnedConversationOrThrow(userDb, userId, conversationId, scope);
   logDbEvent(`${scope}.message-list.start`, userId, { conversationId });
+  const startedAt = Date.now();
   const { data, error } = await userDb
     .from("messages")
     .select("id, role, content, created_at")
@@ -413,7 +423,11 @@ async function listConversationMessagesOrThrow(
     throw new Error(error.message);
   }
 
-  logDbEvent(`${scope}.message-list.ok`, userId, { conversationId, count: data?.length || 0 });
+  logDbEvent(`${scope}.message-list.ok`, userId, {
+    conversationId,
+    count: data?.length || 0,
+    duration_ms: Date.now() - startedAt,
+  });
   return (data || []) as ConversationMessageRow[];
 }
 
@@ -522,10 +536,15 @@ app.get("/api/health", (_req, res) => {
 app.get(
   "/api/conversations",
   asyncHandler(async (req, res) => {
+    const requestStartedAt = Date.now();
     const userId = await getVerifiedUserId(req);
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.list");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.list");
     const conversations = await listConversationsOrThrow(userDb, userId, "conversations.list");
+    logDbEvent("conversations.list.request.ok", userId, {
+      duration_ms: Date.now() - requestStartedAt,
+      count: conversations.length,
+    });
     res.json({ conversations });
   }),
 );
@@ -536,6 +555,7 @@ app.get(
 app.post(
   "/api/conversations",
   asyncHandler(async (req, res) => {
+    const requestStartedAt = Date.now();
     const userId = await getVerifiedUserId(req);
     const requestedTitle =
       typeof req.body?.title === "string" && req.body.title.trim()
@@ -544,6 +564,10 @@ app.post(
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.create");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.create");
     const conversation = await createConversationOrThrow(userDb, userId, "conversations.create", requestedTitle);
+    logDbEvent("conversations.create.request.ok", userId, {
+      duration_ms: Date.now() - requestStartedAt,
+      conversationId: conversation.id,
+    });
     res.json({ conversation });
   }),
 );
@@ -554,6 +578,7 @@ app.post(
 app.get(
   "/api/conversations/:id/messages",
   asyncHandler(async (req, res) => {
+    const requestStartedAt = Date.now();
     const userId = await getVerifiedUserId(req);
     const conversationId = req.params.id?.trim();
     if (!conversationId) {
@@ -568,6 +593,11 @@ app.get(
       conversationId,
       "conversations.messages",
     );
+    logDbEvent("conversations.messages.request.ok", userId, {
+      duration_ms: Date.now() - requestStartedAt,
+      conversationId,
+      count: messages.length,
+    });
     res.json({ messages });
   }),
 );
