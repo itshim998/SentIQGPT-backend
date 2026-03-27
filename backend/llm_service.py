@@ -13,6 +13,8 @@ import os
 import sys
 import json
 import logging
+import threading
+import time
 from datetime import date
 
 from fastapi import FastAPI, HTTPException
@@ -53,10 +55,15 @@ logger.setLevel(logging.INFO)
 LLM_SERVICE_PORT = int(os.getenv("LLM_SERVICE_PORT", "3002"))
 REQUESTS_PER_DAY = 50
 SUPABASE_REST_TIMEOUT_SECONDS = 15
+SUPABASE_ERROR_BODY_LIMIT = 400
 CONTROL_DB_NUMBER = 1
 VALID_DB_NUMBERS = {1, 2, 3, 4}
 GUEST_USER_ID = "guest"
 GUEST_MODEL_OVERRIDE = "gemini-fast"
+USER_DB_CACHE_TTL_SECONDS = 300
+
+_user_db_cache_lock = threading.Lock()
+_user_db_cache: dict[str, tuple[int, float]] = {}
 
 # ============================
 # FastAPI Application
@@ -83,6 +90,26 @@ class LLMInvokeResponse(BaseModel):
 
 class EmbedRequest(BaseModel):
     text: str
+
+
+class SupabaseRequestError(Exception):
+    def __init__(
+        self,
+        kind: str,
+        db_number: int,
+        target: str,
+        status_code: int,
+        details: str,
+    ) -> None:
+        self.kind = kind
+        self.db_number = db_number
+        self.target = target
+        self.status_code = status_code
+        self.details = details
+        super().__init__(
+            f"Supabase {kind} failed db={db_number} target={target} "
+            f"status={status_code} details={details}"
+        )
 
 
 def read_required_env(name: str) -> str:
@@ -112,6 +139,57 @@ def build_rest_headers(service_role_key: str, *, prefer: Optional[str] = None) -
     return headers
 
 
+def truncate_text(value: str, limit: int = SUPABASE_ERROR_BODY_LIMIT) -> str:
+    text = (value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...[truncated]"
+
+
+def format_supabase_response_details(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+        return truncate_text(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+    except ValueError:
+        return truncate_text(response.text or response.reason or "unknown")
+
+
+def raise_supabase_request_error(
+    kind: str,
+    db_number: int,
+    target: str,
+    response: requests.Response,
+) -> None:
+    details = format_supabase_response_details(response)
+    logger.error(
+        "[Supabase][%s] db=%s target=%s status=%s details=%s",
+        kind,
+        db_number,
+        target,
+        response.status_code,
+        details,
+    )
+    raise SupabaseRequestError(kind, db_number, target, response.status_code, details)
+
+
+def get_cached_user_db(user_id: str) -> Optional[int]:
+    now = time.monotonic()
+    with _user_db_cache_lock:
+        cached = _user_db_cache.get(user_id)
+        if not cached:
+            return None
+        assigned_db, cached_at = cached
+        if now - cached_at > USER_DB_CACHE_TTL_SECONDS:
+            _user_db_cache.pop(user_id, None)
+            return None
+        return assigned_db
+
+
+def cache_user_db(user_id: str, assigned_db: int) -> None:
+    with _user_db_cache_lock:
+        _user_db_cache[user_id] = (assigned_db, time.monotonic())
+
+
 def supabase_rest_request(
     method: str,
     db_number: int,
@@ -132,7 +210,7 @@ def supabase_rest_request(
     )
 
     if not response.ok:
-        raise Exception("Supabase request failed")
+        raise_supabase_request_error("rest", db_number, table, response)
 
     if not response.text.strip():
         return None
@@ -156,7 +234,7 @@ def supabase_rpc_request(
     )
 
     if not response.ok:
-        raise Exception("Supabase RPC failed")
+        raise_supabase_request_error("rpc", db_number, function_name, response)
 
     if not response.text.strip():
         return None
@@ -176,6 +254,12 @@ def is_guest_user(user_id: Optional[str]) -> bool:
 
 
 def resolve_user_db(user_id: str) -> int:
+    cached_db = get_cached_user_db(user_id)
+    if cached_db is not None:
+        logger.info("[quota] resolve_user_db.cache_hit user_id=%s db=%s", user_id, cached_db)
+        return cached_db
+
+    logger.info("[quota] resolve_user_db.start user_id=%s", user_id)
     data = supabase_rest_request(
         "GET",
         CONTROL_DB_NUMBER,
@@ -193,6 +277,8 @@ def resolve_user_db(user_id: str) -> int:
     if not isinstance(assigned_db, int) or assigned_db not in VALID_DB_NUMBERS:
         raise Exception(f"Invalid assigned_db value for user {user_id}: {assigned_db}")
 
+    cache_user_db(user_id, assigned_db)
+    logger.info("[quota] resolve_user_db.ok user_id=%s db=%s", user_id, assigned_db)
     return assigned_db
 
 
@@ -262,8 +348,8 @@ def increment_requests_count(user_id: str, db_number: int, current_count: int) -
     )
 
 
-def get_enforced_usage(user_id: str) -> tuple[int, dict[str, Any]]:
-    assigned_db = resolve_user_db(user_id)
+def get_enforced_usage(user_id: str, assigned_db: Optional[int] = None) -> tuple[int, dict[str, Any]]:
+    assigned_db = assigned_db if assigned_db in VALID_DB_NUMBERS else resolve_user_db(user_id)
     usage_row = ensure_usage_row(user_id, assigned_db)
     requests_count = int(usage_row.get("requests_count") or 0)
 
@@ -273,19 +359,50 @@ def get_enforced_usage(user_id: str) -> tuple[int, dict[str, Any]]:
     return assigned_db, usage_row
 
 
+def should_fallback_quota_rpc(error: SupabaseRequestError) -> bool:
+    if error.kind != "rpc":
+        return False
+    # Fallback only when the RPC path itself is unavailable or rejected, not on
+    # successful quota exhaustion. This keeps the atomic RPC as the primary path.
+    return error.status_code in {400, 401, 403, 404, 406, 500}
+
+
 def reserve_llm_request_slot(user_id: str) -> int:
     assigned_db = resolve_user_db(user_id)
-    reserved = supabase_rpc_request(
-        assigned_db,
-        "reserve_daily_llm_request",
-        json_body={
-            "p_user_id": user_id,
-            "p_daily_limit": REQUESTS_PER_DAY,
-        },
-    )
-    if reserved is not True:
-        raise Exception("Daily request limit reached")
-    return assigned_db
+    logger.info("[quota] reserve.start user_id=%s db=%s", user_id, assigned_db)
+    try:
+        reserved = supabase_rpc_request(
+            assigned_db,
+            "reserve_daily_llm_request",
+            json_body={
+                "p_user_id": user_id,
+                "p_daily_limit": REQUESTS_PER_DAY,
+            },
+        )
+        if reserved is not True:
+            raise Exception("Daily request limit reached")
+        logger.info("[quota] reserve.rpc.ok user_id=%s db=%s", user_id, assigned_db)
+        return assigned_db
+    except SupabaseRequestError as error:
+        if not should_fallback_quota_rpc(error):
+            raise
+
+        logger.warning(
+            "[quota] reserve.rpc_failed_fallback user_id=%s db=%s reason=%s",
+            user_id,
+            assigned_db,
+            error,
+        )
+        _, usage_row = get_enforced_usage(user_id, assigned_db=assigned_db)
+        current_count = int(usage_row.get("requests_count") or 0)
+        increment_requests_count(user_id, assigned_db, current_count)
+        logger.info(
+            "[quota] reserve.fallback.ok user_id=%s db=%s requests_count=%s",
+            user_id,
+            assigned_db,
+            current_count + 1,
+        )
+        return assigned_db
 
 
 @app.get("/llm/health")
@@ -308,10 +425,12 @@ async def invoke_llm(request: LLMInvokeRequest):
         if is_guest_user(request.user_id):
             user_id = GUEST_USER_ID
             effective_model_override = GUEST_MODEL_OVERRIDE
+            assigned_db = None
         else:
             user_id = require_user_id(request.user_id)
-            reserve_llm_request_slot(user_id)
+            assigned_db = reserve_llm_request_slot(user_id)
             effective_model_override = request.model_override
+            logger.info("[invoke] quota_reserved user_id=%s db=%s task=%s", user_id, assigned_db, request.task)
         result = call_llm_router(
             prompt=request.prompt,
             task=request.task,
@@ -339,10 +458,12 @@ async def stream_llm(request: LLMInvokeRequest):
             if is_guest_user(request.user_id):
                 user_id = GUEST_USER_ID
                 effective_model_override = GUEST_MODEL_OVERRIDE
+                assigned_db = None
             else:
                 user_id = require_user_id(request.user_id)
-                reserve_llm_request_slot(user_id)
+                assigned_db = reserve_llm_request_slot(user_id)
                 effective_model_override = request.model_override
+                logger.info("[stream] quota_reserved user_id=%s db=%s task=%s", user_id, assigned_db, request.task)
             for chunk in stream_llm_router(
                 prompt=request.prompt,
                 task=request.task,
@@ -392,7 +513,8 @@ async def vision_llm(request: VisionRequest):
     if len(request.image_base64) > 28_000_000:
         raise HTTPException(status_code=400, detail="Image too large (max ~20MB)")
     try:
-        reserve_llm_request_slot(user_id)
+        assigned_db = reserve_llm_request_slot(user_id)
+        logger.info("[vision] quota_reserved user_id=%s db=%s", user_id, assigned_db)
         from llm_adapter import _invoke_gemini_vision
         result = _invoke_gemini_vision(
             prompt=request.prompt,
@@ -411,8 +533,6 @@ async def vision_llm(request: VisionRequest):
 # ============================
 
 EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
-
-import threading
 _embed_lock = threading.Lock()
 
 def _generate_embedding(text: str, api_key: str) -> list:
