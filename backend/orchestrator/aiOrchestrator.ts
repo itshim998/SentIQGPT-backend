@@ -21,7 +21,8 @@
 //   6. Knowledge Cache Layer
 //        └── LLM answer cache (check before pipeline, store after reflection)
 
-import { solveMathDirect } from "../ai/mathVerifier";
+import { DEFAULT_SOLVER_SYSTEM_PROMPT, solveMathDirect } from "../ai/mathVerifier";
+import { finalizeMathReply } from "../ai/mathAnswerFinalizer";
 import { sanitizeResponse } from "../ai/responseSanitizer";
 import { buildContext } from "../context/contextBuilder";
 import { planTask } from "./planner";
@@ -313,27 +314,7 @@ async function _orchestrateInner(
     console.log(`[MathPipeline] math query detected on raw input — bypassing planner`);
     console.log(`[MathPipeline] solving with minimax`);
 
-    const systemPrompt =
-      "SYSTEM: You are solving a mathematical problem.\n" +
-      "STRICT OUTPUT RULES:\n" +
-      "- DO NOT include your thinking process\n" +
-      "- DO NOT say 'I will solve' or 'Let's solve'\n" +
-      "- DO NOT explain your reasoning in paragraphs\n" +
-      "- ONLY provide the final structured solution\n" +
-      "FORMAT:\n" +
-      "1. Define variables (if needed)\n" +
-      "2. Write constraints / equations clearly\n" +
-      "3. Key observation (if any contradiction or insight exists)\n" +
-      "4. Final conclusion\n" +
-      "5. Final answer\n" +
-      "RULES:\n" +
-      "- Keep explanations minimal and precise\n" +
-      "- Use clean step-by-step format\n" +
-      "- No unnecessary words\n" +
-      "- No repetition\n" +
-      "- No meta statements";
-
-    const mathResult = await solveMathDirect(userMessage, systemPrompt, rawContext?.userId);
+    const mathResult = await solveMathDirect(userMessage, DEFAULT_SOLVER_SYSTEM_PROMPT, rawContext?.userId);
 
     console.log(
       `[MathPipeline] solved using minimax`,
@@ -341,7 +322,7 @@ async function _orchestrateInner(
     console.log(`[MathPipeline] reflection skipped — math query handled by direct math pipeline`);
     console.log(`[MathPipeline] returning result`);
 
-    const finalReply = finalizeReply(mathResult.answer);
+    const finalReply = finalizeMathReply(mathResult.answer);
     const computedConfidence = computeConfidence(
       mathResult.model_used,
       mathResult.fallback,
@@ -393,7 +374,9 @@ async function _orchestrateInner(
   );
 
   const finalReply =
-    reflected.merged.reply !== undefined
+    reflected.merged._isMathResult
+      ? finalizeMathReply(reflected.merged.reply)
+      : reflected.merged.reply !== undefined
       ? finalizeReply(reflected.merged.reply)
       : reflected.merged.route === "memory_update" && reflected.merged.memory.stored
         ? finalizeReply(undefined, "Got it. I've remembered that.")

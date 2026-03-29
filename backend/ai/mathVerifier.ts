@@ -6,7 +6,7 @@
 import { callLLMAdapterDetailed } from "./PromptBuilders";
 import type { LLMAdapterCall } from "./PromptBuilders";
 import { formatMathResponse } from "./mathFormatter";
-import { shapeMathResponse } from "./responseShaper";
+import { hasMathLeakageSignals, shapeMathResponse } from "./responseShaper";
 
 // ==============================
 // Constants
@@ -19,6 +19,26 @@ const GENERATION_MAX_OUTPUT_TOKENS = 2600;
 const GENERATION_RETRY_MAX_OUTPUT_TOKENS = 1400;
 const TRUNCATION_NOTICE =
   "The mathematical response was truncated before completion. Please ask for a shorter or more focused solution.";
+export const DEFAULT_SOLVER_SYSTEM_PROMPT =
+  "SYSTEM: You are SentIQGPT's math reasoning solver.\n" +
+  "VISIBLE ANSWER CONTRACT:\n" +
+  "- Produce a polished user-facing answer, not hidden chain-of-thought.\n" +
+  "- Do NOT reveal internal scratchwork, retries, or self-corrections.\n" +
+  "- Do NOT say phrases like 'let me solve', 'wait', 'let me reconsider', 'let me verify', or 'something is off'.\n" +
+  "- Do NOT narrate failed attempts.\n" +
+  "- Keep the explanation concise, decisive, and readable.\n" +
+  "RESPONSE FORMAT:\n" +
+  "### Key Insight\n" +
+  "- One short bullet with the core idea.\n" +
+  "### Solution\n" +
+  "- Two to five short bullets with only the essential reasoning or equations.\n" +
+  "### Final Answer\n" +
+  "- One direct conclusion.\n" +
+  "STYLE RULES:\n" +
+  "- Use markdown headings and bullets.\n" +
+  "- Use equations only when they genuinely help.\n" +
+  "- If the problem statement appears inconsistent, state that briefly and give the best resolution.\n" +
+  "- No repetition. No meta commentary. No long scratchwork paragraphs.";
 const GENERATION_SYSTEM_PROMPT =
   "SYSTEM: You are generating math practice content.\n" +
   "RULES:\n" +
@@ -39,15 +59,18 @@ const GENERATION_RETRY_SYSTEM_PROMPT =
   "- If you use matrices, keep them small and complete\n" +
   "- Finish the response fully";
 const COMPACT_SOLVER_SYSTEM_PROMPT =
-  "SYSTEM: You are a precise mathematical solver.\n" +
+  "SYSTEM: You are SentIQGPT's compact math reasoning solver.\n" +
+  "OUTPUT FORMAT:\n" +
+  "### Key Insight\n" +
+  "- One short bullet.\n" +
+  "### Solution\n" +
+  "- Two to four short bullets.\n" +
+  "### Final Answer\n" +
+  "- One direct line.\n" +
   "RULES:\n" +
-  "- Do NOT restate the full problem\n" +
-  "- Keep the solution concise and complete\n" +
-  "- Include only the essential mathematical steps\n" +
-  "- Clearly list variables, objective, and constraints when relevant\n" +
-  "- State the final optimization result directly\n" +
-  "- State whether the optimum is at a corner point, infeasible, or affected by redundant constraints\n" +
-  "- No meta commentary or long prose paragraphs";
+  "- No chain-of-thought, no self-talk, and no restating the whole problem.\n" +
+  "- Include only decisive equations or comparisons.\n" +
+  "- No repetition, no failed attempts, no meta commentary.";
 const GENERATION_REQUEST_PATTERNS: readonly RegExp[] = [
   /\b(?:give|create|generate|provide|make|write|list|suggest)\b[\s\S]{0,40}\b(?:exercise(?:s)?|example(?:s)?|practice(?:\s+problems?)?|worksheet|quiz|problem\s+set)\b/i,
   /\b(?:exercise(?:s)?|example(?:s)?|practice(?:\s+problems?)?|worksheet|quiz|problem\s+set)\b[\s\S]{0,40}\b(?:please\s+)?(?:give|create|generate|provide|make|write|list|suggest)\b/i,
@@ -261,7 +284,7 @@ function salvageTruncatedResponse(text: string): string {
   return TRUNCATION_NOTICE;
 }
 
-function normalizeMathResponse(text: string): string {
+export function normalizeMathResponse(text: string): string {
   return shapeMathResponse(formatMathResponse(text)).replace(META_REASONING_PATTERN, "").trim();
 }
 
@@ -300,13 +323,17 @@ export async function solveMathDirect(
   let processed = normalizeMathResponse(result.text);
   let incompleteOutput =
     result.truncated || hasIncompleteMathTail(processed) || hasIncompleteProseTail(processed);
+  const hasLeakage = hasMathLeakageSignals(result.text) || processed.split("\n").length > 12;
 
-  const needsRetry = incompleteOutput;
+  const needsRetry = incompleteOutput || hasLeakage;
   if (needsRetry) {
     const retryMode = intent === "generation" ? "compact-generation" : "compact-solve";
     console.log(`[MathPipeline] compact retry triggered for incomplete or truncated ${intent} output`);
     if (result.finish_reason) {
       console.log(`[MathPipeline] provider finish_reason=${result.finish_reason}`);
+    }
+    if (hasLeakage) {
+      console.log("[MathPipeline] retry_trigger=leakage_or_excessive_structure");
     }
     console.log(`[MathPipeline] retry_strategy=${retryMode}`);
     result = await makeCall(retryMode);

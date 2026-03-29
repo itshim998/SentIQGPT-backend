@@ -21,7 +21,7 @@ import { handleChat } from "../ai/ChatHandler";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
-import { solveMathDirect } from "../ai/mathVerifier";
+import { DEFAULT_SOLVER_SYSTEM_PROMPT, solveMathDirect } from "../ai/mathVerifier";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
 import { detectCodeQuery, selectModelForPrompt, isMathQuery } from "./modelRouter";
@@ -104,27 +104,7 @@ async function execConversation(
   // instead of the standard single-model chat handler.
   if (!detectCodeQuery(input) && isMathQuery(input)) {
     console.log(`[MathPipeline] math query detected — routing to direct minimax solver`);
-    const systemPrompt =
-      "SYSTEM: You are solving a mathematical problem.\n" +
-      "STRICT OUTPUT RULES:\n" +
-      "- DO NOT include your thinking process\n" +
-      "- DO NOT say 'I will solve' or 'Let's solve'\n" +
-      "- DO NOT explain your reasoning in paragraphs\n" +
-      "- ONLY provide the final structured solution\n" +
-      "FORMAT:\n" +
-      "1. Define variables (if needed)\n" +
-      "2. Write constraints / equations clearly\n" +
-      "3. Key observation (if any contradiction or insight exists)\n" +
-      "4. Final conclusion\n" +
-      "5. Final answer\n" +
-      "RULES:\n" +
-      "- Keep explanations minimal and precise\n" +
-      "- Use clean step-by-step format\n" +
-      "- No unnecessary words\n" +
-      "- No repetition\n" +
-      "- No meta statements";
-
-    const mathResult = await solveMathDirect(augmentedInput, systemPrompt);
+    const mathResult = await solveMathDirect(augmentedInput, DEFAULT_SOLVER_SYSTEM_PROMPT);
     console.log(
       `[MathPipeline] solved using minimax`,
     );

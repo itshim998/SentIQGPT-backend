@@ -559,7 +559,7 @@ def _call_pollinations(
     endpoint_used, resp = _post_pollinations(payload, headers)
 
     result, finish_reason = _extract_pollinations_response(resp)
-    truncated = finish_reason in {"length", "max_tokens", "content_filter"}
+    truncated = finish_reason in {"length", "max_tokens", "content_filter", "reason-length"}
     logger.info(
         "[Pollinations] response received status=%s endpoint=%s chars=%d finish_reason=%s",
         resp.status_code,

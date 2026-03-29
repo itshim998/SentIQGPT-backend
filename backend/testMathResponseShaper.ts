@@ -1,0 +1,65 @@
+import { formatMathResponse } from "./ai/mathFormatter";
+import { normalizeMathResponse } from "./ai/mathVerifier";
+
+const leakedTrainAnswer = `
+Let me solve this 2. Let: 3. - Distance between A and B = D 4. - Speed of train from A = v₁ 5. - Speed of train from B = v₂ 6. - They meet at the halfway point, so each travels D/2 7. Time to meet for train from A: t = (D/2)/v₁ = D/(2v₁) 8. Time to meet for train from B: t = (D/2)/v₂ = D/(2v₂) 9. Since they leave at the same time and meet simultaneously: 10. D/(2v₁) = D/(2v₁) = D/(2v₂) 11. So v₁ = v₂? Wait, that doesn't make sense with the different times after meeting 12. Let me reconsider 13. They meet at the halfway point, so both travel D/2 to the meeting point 14. After meeting: 15. - Train from A travels the remaining D/2 to B in 2 hours 16. - Train from B travels the remaining D/2 to A in 8 hours 17. So: 18. v₁ = (D/2)/2 = D/4 19. v₂ = (D/2)/8 = D/16 20. So v₁/v₂ = (D/4)/(D/16) = 16/4 = 4 21. The train from A is 4 times faster than the train from B 22. Let me verify: 23. - Both travel D/2 to meet 24. - Time for train A to travel D/2: (D/2)/(D/4) = 2 hours 25. - Time for train B to travel D/2: (D/2)/(D/16) = 8 hours 26. Yes! They meet after 2 hours (train A) and 8 hours (train B)? No wait, that's not right 27. If they meet at the halfway point, the time to reach the meeting point must be the same for both 28. Let t be the time until they meet 29. For train A: D/2 = v₁t 30. For train B: D/2 = v₂t 31. So v₁ = D/(2t) and v₂ = D/(2t) 32. After meeting, the remaining distances are both D/2, and the travel times are 2 and 8 hours respectively 33. This gives me v₁ = D/4 and v₂ = D/16, which means v₁/v₂ = 4 34. The train from A is four times faster than the train from B 35. But wait—if train A is faster, it should reach the meeting point sooner than train B 36. Yet they meet at the same time, so something's off 37. Let me verify this works: if v₁ = D/4 and v₂ = D/16, train A takes (D/2)/(D/4) = 2 hours to reach the midpoint, and train B takes (D/2)/(D/16) = 8 hours 38. These aren't equal, so they can't actually meet at the same time with these speeds
+`;
+
+const structuredAnswer = `
+### Key Insight
+- Both trains cover the same remaining distance after meeting.
+
+### Solution
+- Train A covers \(D/2\) in 2 hours, so \(v_1 = (D/2)/2 = D/4\).
+- Train B covers \(D/2\) in 8 hours, so \(v_2 = (D/2)/8 = D/16\).
+- Therefore, \(v_1 / v_2 = 4\).
+
+### Final Answer
+Train A is 4 times as fast as Train B.
+`;
+
+const latexAnswer = String.raw`
+Train A's speed ratio can be written as \[
+\frac{v_1}{v_2} = \frac{(D/2)/2}{(D/2)/8} = 4
+\]
+Final answer: Train A is 4 times faster.
+`;
+
+function assert(condition: boolean, label: string): void {
+  if (!condition) {
+    console.error(`FAIL | ${label}`);
+    process.exit(1);
+  }
+  console.log(`PASS | ${label}`);
+}
+
+function includesNone(text: string, patterns: readonly RegExp[]): boolean {
+  return patterns.every((pattern) => !pattern.test(text));
+}
+
+const normalizedLeaked = normalizeMathResponse(leakedTrainAnswer);
+console.log("\nNormalized leaked sample:\n");
+console.log(normalizedLeaked);
+console.log("\n----\n");
+
+assert(/^### Solution/m.test(normalizedLeaked) || /^### Key Insight/m.test(normalizedLeaked), "leaked sample is reformatted into markdown sections");
+assert(/^### Final Answer/m.test(normalizedLeaked), "leaked sample has a final answer section");
+assert(includesNone(normalizedLeaked, [
+  /\bwait\b/i,
+  /\blet me reconsider\b/i,
+  /\blet me verify\b/i,
+  /\bsomething's off\b/i,
+  /\bno wait\b/i,
+]), "leaked sample removes self-talk and contradiction phrases");
+assert(/4 times faster|four times faster/i.test(normalizedLeaked), "leaked sample preserves the correct train-speed conclusion");
+
+const normalizedStructured = normalizeMathResponse(structuredAnswer);
+assert(/^### Key Insight/m.test(normalizedStructured), "well-structured answer keeps the key insight heading");
+assert(/Train A is 4 times as fast as Train B\./i.test(normalizedStructured), "well-structured answer preserves the final answer");
+
+const normalizedLatex = normalizeMathResponse(latexAnswer);
+const formattedLatex = formatMathResponse(latexAnswer);
+assert(formattedLatex.includes("$$") && formattedLatex.includes("\\frac{v_1}{v_2}"), "LaTeX display math is preserved and normalized");
+assert(/^### Final Answer/m.test(normalizedLatex), "LaTeX answer still gets a final answer section");
+
+console.log("\nMath response shaping validation passed.");
