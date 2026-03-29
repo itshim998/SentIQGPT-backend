@@ -408,7 +408,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     ctx.modelOverride === "qwen3-coder" ||
     ctx.modelOverride === "qwen3-coder-30b" ||
     ctx.modelOverride === "gemini-fast" ||
-    ctx.modelOverride === "deepseek";
+    ctx.modelOverride === "minimax";
 
   return {
     task: "chat",

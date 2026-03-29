@@ -1,7 +1,7 @@
 // SentIQGPT v3 - Mathematical Reasoning Direct Solver
 //
 // Single-model math pipeline for mathematical/numerical queries.
-// Uses DeepSeek directly via the shared LLM adapter.
+// Uses MiniMax directly via the shared LLM adapter.
 
 import { callLLMAdapterDetailed } from "./PromptBuilders";
 import type { LLMAdapterCall } from "./PromptBuilders";
@@ -12,7 +12,7 @@ import { shapeMathResponse } from "./responseShaper";
 // Constants
 // ==============================
 
-const PRIMARY_MODEL = "deepseek";
+const PRIMARY_MODEL = "minimax";
 const SOLVER_MAX_OUTPUT_TOKENS = 2600;
 const SOLVER_RETRY_MAX_OUTPUT_TOKENS = 1800;
 const GENERATION_MAX_OUTPUT_TOKENS = 2600;

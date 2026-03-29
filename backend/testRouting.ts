@@ -17,18 +17,18 @@ const cases: readonly RoutingCase[] = [
     expectedModel: "qwen-coder",
   },
   {
-    name: "Math equation routes to deepseek",
+    name: "Math equation routes to minimax",
     query: "Solve 3x + 7 = 19",
     expectCode: false,
     expectMath: true,
-    expectedModel: "deepseek",
+    expectedModel: "minimax",
   },
   {
-    name: "Word problem routes to deepseek",
+    name: "Word problem routes to minimax",
     query: "A factory makes 2 products with 3 machines and 8 labor hours. How many units maximize profit?",
     expectCode: false,
     expectMath: true,
-    expectedModel: "deepseek",
+    expectedModel: "minimax",
   },
   {
     name: "Normal chat routes to gemini-fast",

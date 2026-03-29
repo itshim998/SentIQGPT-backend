@@ -6,7 +6,7 @@
 // Detection priority (first match wins):
 //   1. vision          -> gemini (Gemini vision-capable model)
 //   2. coding          -> qwen-coder (Pollinations)
-//   3. math_reasoning  -> deepseek (Pollinations)
+//   3. math_reasoning  -> minimax (Pollinations)
 //   4. general_chat    -> gemini-fast (Pollinations)
 //
 // Gemini direct API is NEVER selected by the router.
@@ -100,7 +100,7 @@ const FRONTEND_STACK_PATTERNS: readonly RegExp[] = [
 ];
 
 // Math / numerical reasoning detection.
-// Checked after coding so programming prompts never leak into deepseek.
+// Checked after coding so programming prompts never leak into minimax.
 const MATH_PATTERNS: readonly RegExp[] = [
   /\d+\s*[+\-*/^]\s*\d+/,
   /\balgebra(?:ic)?\b/i,
@@ -379,8 +379,8 @@ export function selectModelForPrompt(
       console.log("[Router] category=coding -> qwen-coder");
       break;
     case "math_reasoning":
-      model = "deepseek";
-      console.log("[Router] category=math_reasoning -> deepseek");
+      model = "minimax";
+      console.log("[Router] category=math_reasoning -> minimax");
       break;
     case "general_chat":
     default:
