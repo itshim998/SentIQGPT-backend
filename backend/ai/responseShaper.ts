@@ -22,6 +22,27 @@ const PROMPT_ECHO_PATTERNS = [
   /\bdo not mention headings, bullets, or line counts\b/i,
 ];
 
+const NARRATIVE_SENTENCE_PATTERNS = [
+  /^\s*(?:we need to|we want to|we have to|we must)\b/i,
+  /^\s*(?:let'?s|let us)\b/i,
+  /^\s*we can\b/i,
+  /^\s*(?:consider|suppose|assume)\b/i,
+  /^\s*(?:actually|now|next|first)\b/i,
+  /^\s*(?:from here|from this)\b(?:\s+we can)?/i,
+  /^\s*this is a\b/i,
+  /^\s*the idea is\b/i,
+  /^\s*to solve\b/i,
+  /^\s*we (?:rewrite|express|equate|substitute|compare|check)\b/i,
+];
+
+const RESTATEMENT_LINE_PATTERNS = [
+  /\btypical\s+\w+\s+problem\b/i,
+  /\bstart(?:s|ing)?\s+simultaneously\b/i,
+  /\bopposite ends?\b/i,
+  /\bstanding in a line\b/i,
+  /\bplaying a game\b/i,
+];
+
 const SCRATCHWORK_NOISE_PATTERNS = [
   /\bmeet simultaneously\b/i,
   /\btime to meet\b/i,
@@ -29,7 +50,7 @@ const SCRATCHWORK_NOISE_PATTERNS = [
   /\btime for\b/i,
   /\blet t be\b/i,
   /\bif they meet at the halfway point, the time to reach the meeting point must be the same\b/i,
-  /\bD\/2\s*=\s*v[₁1₂2]t\b/i,
+  /\bD\/2\s*=\s*v[123456789xyztâ‚â‚‚]t\b/i,
   /D\/\(2t\)/i,
 ];
 
@@ -45,6 +66,40 @@ const INSIGHT_PATTERNS = [
   /\b(?:key insight|observation|because|since)\b/i,
 ];
 
+function hasMathPayload(text: string): boolean {
+  return /[=â‰ˆ<>]|\\frac|\\sqrt|\\begin\{|\\\(|\\\[|\$\$|\$[^$]+\$|(?:^|\s)(?:x|y|z|t|v_?\d?|D|n)(?:\s|$)|\d+\s*[+\-*/=]|\b(?:from\s*\(\d+\)|therefore|thus|hence)\b|[â‡’â†’]/i.test(text);
+}
+
+function normalizeLine(line: string): string {
+  return line.replace(/^#{1,3}\s*/, "").replace(/^\d+\.\s*/, "").replace(/^[-*â€¢]\s*/, "").replace(/\s+/g, " ").trim();
+}
+
+function cleanNarrativeFromLine(line: string): string {
+  const sentences = line
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+
+  if (sentences.length <= 1) {
+    return line;
+  }
+
+  const kept = sentences.filter((sentence) => {
+    if (NARRATIVE_SENTENCE_PATTERNS.some((pattern) => pattern.test(sentence))) {
+      return /[=â‰ˆ<>]|\\frac|\\sqrt|[â‡’â†’]/i.test(sentence) || /^\s*(?:from\s*\(\d+\)|therefore|thus|hence)\b/i.test(sentence);
+    }
+    if (hasMathPayload(sentence)) return true;
+    if (RESTATEMENT_LINE_PATTERNS.some((pattern) => pattern.test(sentence))) return false;
+    return true;
+  });
+
+  return kept.join(" ").trim();
+}
+
+function isLongNarrativeLine(line: string): boolean {
+  return line.length > 120 && !hasMathPayload(line) && RESTATEMENT_LINE_PATTERNS.some((pattern) => pattern.test(line));
+}
+
 export function hasMathLeakageSignals(text: string): boolean {
   if (!text) return false;
   return LEAKY_LINE_PATTERNS.some((pattern) => pattern.test(text));
@@ -55,16 +110,37 @@ export function hasMathPromptEchoSignals(text: string): boolean {
   return PROMPT_ECHO_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+export function hasMathNarrativeSignals(text: string): boolean {
+  if (!text) return false;
+  return NARRATIVE_SENTENCE_PATTERNS.some((pattern) => pattern.test(text)) || RESTATEMENT_LINE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+export function shouldRewriteMathResponse(text: string): boolean {
+  if (!text) return false;
+  const lines = text
+    .replace(/\r\n?/g, "\n")
+    .split(/\n+/)
+    .map((line) => normalizeLine(line))
+    .filter(Boolean);
+
+  const narrativeLines = lines.filter((line) => hasMathNarrativeSignals(line));
+  const longNarrativeLines = lines.filter((line) => isLongNarrativeLine(line));
+  const overlyVerbose = text.length > 650 || lines.length > 10;
+
+  return narrativeLines.length > 0 || longNarrativeLines.length > 0 || overlyVerbose;
+}
+
 export function shapeMathResponse(text: string): string {
   if (!text) return text;
 
   let cleaned = text;
   const mathBlocks: string[] = [];
   const dedupeSet = new Set<string>();
-  const hadMarkdownStructure = /(^|\n)#{1,3}\s+|(^|\n)[-*•]\s+/.test(cleaned);
+  const hadMarkdownStructure = /(^|\n)#{1,3}\s+|(^|\n)[-*â€¢]\s+/.test(cleaned);
   const hadNumberedSteps = /(^|\s)\d+\.\s/.test(cleaned);
   const hasPromptEcho = hasMathPromptEchoSignals(text);
   const hasLeakage = hasMathLeakageSignals(text);
+  const hasNarrative = hasMathNarrativeSignals(text);
 
   const inlineResetPatterns = [
     /\s+(?=\d+\.\s)/g,
@@ -75,7 +151,6 @@ export function shapeMathResponse(text: string): string {
     return `\x00MATH${mathBlocks.length - 1}\x00`;
   };
 
-  // Preserve LaTeX blocks so cleanup/numbering does not break matrices or equations.
   cleaned = cleaned.replace(/\$\$[\s\S]+?\$\$/g, preserveMath);
   cleaned = cleaned.replace(/\\+\[[\s\S]+?\\+\]/g, preserveMath);
   cleaned = cleaned.replace(/\\+\(\s*\\+begin\{.*?\}[\s\S]*?\\+end\{.*?\}\s*\\+\)/g, preserveMath);
@@ -97,12 +172,14 @@ export function shapeMathResponse(text: string): string {
     .filter((line) => line.length > 0);
 
   const normalizedLines = rawLines
-    .map((line) => line.replace(/^\d+\.\s*/, "").replace(/^[-*•]\s*/, "").replace(/\s+/g, " ").trim())
+    .map((line) => cleanNarrativeFromLine(line))
+    .map((line) => normalizeLine(line))
     .filter((line) => line.length > 0)
     .filter((line) => !LABEL_ONLY_PATTERNS.some((pattern) => pattern.test(line)))
     .filter((line) => !LEAKY_LINE_PATTERNS.some((pattern) => pattern.test(line)))
     .filter((line) => !PROMPT_ECHO_PATTERNS.some((pattern) => pattern.test(line)))
     .filter((line) => !SCRATCHWORK_NOISE_PATTERNS.some((pattern) => pattern.test(line)))
+    .filter((line) => !isLongNarrativeLine(line))
     .filter((line) => {
       const key = line.toLowerCase();
       if (dedupeSet.has(key)) return false;
@@ -112,9 +189,9 @@ export function shapeMathResponse(text: string): string {
 
   if (normalizedLines.length === 0) {
     cleaned = "";
-  } else if (!hasPromptEcho && !hasLeakage && !hadNumberedSteps && normalizedLines.length <= 3) {
+  } else if (!hasPromptEcho && !hasLeakage && !hasNarrative && !hadNumberedSteps && normalizedLines.length <= 3) {
     cleaned = normalizedLines.join("\n");
-  } else if (!hasPromptEcho && !hasLeakage && hadMarkdownStructure && normalizedLines.length <= 8) {
+  } else if (!hasPromptEcho && !hasLeakage && !hasNarrative && hadMarkdownStructure && normalizedLines.length <= 6) {
     cleaned = rawLines.join("\n").trim();
   } else if (normalizedLines.length === 1) {
     cleaned = normalizedLines[0];
@@ -129,10 +206,7 @@ export function shapeMathResponse(text: string): string {
     const finalAnswerLines: string[] = [];
     if (finalAnswerIndex > 0) {
       const previousLine = normalizedLines[finalAnswerIndex - 1];
-      if (
-        /[=≈<>]/.test(previousLine) ||
-        /\b(?:ratio|therefore|thus|hence)\b/i.test(previousLine)
-      ) {
+      if (/[=â‰ˆ<>]/.test(previousLine) || /\b(?:ratio|therefore|thus|hence)\b/i.test(previousLine)) {
         finalAnswerLines.push(previousLine);
       }
     }
@@ -144,13 +218,14 @@ export function shapeMathResponse(text: string): string {
     });
 
     const insightIndex = remainingLines.findIndex((line) => {
-      if (/[=≈<>]/.test(line)) return false;
+      if (/[=â‰ˆ<>]/.test(line)) return false;
+      if (line.length > 110 && !hasMathPayload(line)) return false;
       return INSIGHT_PATTERNS.some((pattern) => pattern.test(line));
     });
     const insightLine = insightIndex >= 0 ? remainingLines[insightIndex] : undefined;
     const solutionLines = remainingLines.filter((_, index) => index !== insightIndex);
-    const compactSolutionLines = solutionLines.length > 5
-      ? solutionLines.slice(-5)
+    const compactSolutionLines = solutionLines.length > 4
+      ? solutionLines.slice(-4)
       : solutionLines;
 
     const sections: string[] = [];

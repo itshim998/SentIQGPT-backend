@@ -6,7 +6,13 @@
 import { callLLMAdapterDetailed } from "./PromptBuilders";
 import type { LLMAdapterCall } from "./PromptBuilders";
 import { formatMathResponse } from "./mathFormatter";
-import { hasMathLeakageSignals, hasMathPromptEchoSignals, shapeMathResponse } from "./responseShaper";
+import {
+  hasMathLeakageSignals,
+  hasMathNarrativeSignals,
+  hasMathPromptEchoSignals,
+  shapeMathResponse,
+  shouldRewriteMathResponse,
+} from "./responseShaper";
 
 // ==============================
 // Constants
@@ -19,15 +25,17 @@ const GENERATION_MAX_OUTPUT_TOKENS = 2600;
 const GENERATION_RETRY_MAX_OUTPUT_TOKENS = 1400;
 const EXAMPLE_MAX_OUTPUT_TOKENS = 2200;
 const EXAMPLE_RETRY_MAX_OUTPUT_TOKENS = 1400;
+const REWRITE_MAX_OUTPUT_TOKENS = 900;
 const TRUNCATION_NOTICE =
   "The mathematical response was truncated before completion. Please ask for a shorter or more focused solution.";
 export const DEFAULT_SOLVER_SYSTEM_PROMPT =
-  "SYSTEM: Solve the user's math problem clearly for the end user.\n" +
+  "SYSTEM: You are a precise mathematical reasoning engine for end users.\n" +
   "RULES:\n" +
-  "- Give a concise, user-facing answer with only the essential reasoning.\n" +
-  "- Use natural markdown when it helps, but do not talk about formatting.\n" +
+  "- Think internally and show only the essential solution.\n" +
+  "- Use 2 to 5 short direct steps when needed, then give the final answer.\n" +
   "- Do not reveal hidden scratchwork, retries, self-corrections, or chain-of-thought.\n" +
-  "- Do not mention the prompt, bullets, headings, or line counts.\n" +
+  "- Do not use narration such as 'we need to', 'let's', 'consider', 'suppose', 'check', 'actually', or 'from here we can'.\n" +
+  "- Do not mention the prompt, headings, bullets, or formatting rules.\n" +
   "- If the problem statement looks inconsistent, say so briefly and give the best resolution.\n" +
   "- End with a direct final answer.";
 const GENERATION_SYSTEM_PROMPT =
@@ -53,23 +61,34 @@ const EXAMPLE_SYSTEM_PROMPT =
   "SYSTEM: Create one relevant math example for the user's topic and solve it clearly.\n" +
   "RULES:\n" +
   "- If the user gives a topic instead of a concrete problem, choose one representative example.\n" +
-  "- Present the example and solve it with a short, readable explanation.\n" +
+  "- Present the example, 2 to 5 short direct steps, and the final answer.\n" +
   "- Keep the answer concise and user-facing.\n" +
   "- Do not reveal hidden reasoning, self-talk, retries, or formatting instructions.\n" +
+  "- Do not use narration such as 'we need to', 'let's', 'consider', 'suppose', 'check', 'actually', or 'from here we can'.\n" +
   "- End with a direct final answer.";
 const EXAMPLE_RETRY_SYSTEM_PROMPT =
   "SYSTEM: Provide one short solved math example for the user.\n" +
   "RULES:\n" +
-  "- Keep only the example, the essential steps, and the final answer.\n" +
+  "- Keep only the example, 2 to 4 direct steps, and the final answer.\n" +
   "- No prompt echo, no self-talk, and no formatting commentary.\n" +
-  "- Do not mention headings, bullets, or line counts.";
+  "- Do not use narration such as 'we need to', 'let's', 'consider', 'suppose', 'check', 'actually', or 'from here we can'.";
 const COMPACT_SOLVER_SYSTEM_PROMPT =
   "SYSTEM: Give a concise user-facing math answer.\n" +
   "RULES:\n" +
-  "- Keep only the key steps and the final answer.\n" +
+  "- Keep only 2 to 4 direct mathematical steps and the final answer.\n" +
   "- No chain-of-thought, no self-talk, and no prompt echo.\n" +
+  "- Do not use narration such as 'we need to', 'let's', 'consider', 'suppose', 'check', 'actually', or 'from here we can'.\n" +
   "- Do not mention bullets, headings, line counts, or formatting rules.\n" +
   "- No repetition, no failed attempts, no meta commentary.";
+const REWRITE_SYSTEM_PROMPT =
+  "SYSTEM: Rewrite the draft math answer for the end user.\n" +
+  "RULES:\n" +
+  "- Keep the mathematics unchanged.\n" +
+  "- Remove narration, meta wording, and explanatory chatter.\n" +
+  "- Keep only 2 to 5 short direct steps and the final answer.\n" +
+  "- Do not use phrases such as 'we need to', 'let's', 'consider', 'suppose', 'check', 'actually', or 'from here we can'.\n" +
+  "- Do not mention formatting rules, headings, or bullets.\n" +
+  "- Return only the rewritten answer.";
 const GENERATION_REQUEST_PATTERNS: readonly RegExp[] = [
   /\b(?:give|create|generate|provide|make|write|list|suggest)\b[\s\S]{0,40}\b(?:exercise(?:s)?|example(?:s)?|practice(?:\s+problems?)?|worksheet|quiz|problem\s+set)\b/i,
   /\b(?:exercise(?:s)?|example(?:s)?|practice(?:\s+problems?)?|worksheet|quiz|problem\s+set)\b[\s\S]{0,40}\b(?:please\s+)?(?:give|create|generate|provide|make|write|list|suggest)\b/i,
@@ -302,6 +321,36 @@ export function normalizeMathResponse(text: string): string {
   return shapeMathResponse(formatMathResponse(text)).replace(META_REASONING_PATTERN, "").trim();
 }
 
+function buildRewritePrompt(userMessage: string, draftAnswer: string): string {
+  return [
+    REWRITE_SYSTEM_PROMPT,
+    "",
+    "Original problem:",
+    userMessage,
+    "",
+    "Draft answer to rewrite:",
+    draftAnswer,
+  ].join("\n");
+}
+
+async function rewriteMathAnswer(
+  userMessage: string,
+  draftAnswer: string,
+  userId?: string,
+): Promise<string> {
+  const rewriteCall: LLMAdapterCall = {
+    task: "chat",
+    prompt: buildRewritePrompt(userMessage, draftAnswer),
+    model_override: PRIMARY_MODEL,
+    user_id: userId,
+    timeout_ms: 75_000,
+    max_output_tokens: REWRITE_MAX_OUTPUT_TOKENS,
+  };
+
+  const rewriteResult = await callLLMAdapterDetailed(rewriteCall);
+  return normalizeMathResponse(rewriteResult.text);
+}
+
 /**
  * Run the single-model math solving pipeline.
  *
@@ -341,8 +390,9 @@ export async function solveMathDirect(
     result.truncated || hasIncompleteMathTail(processed) || hasIncompleteProseTail(processed);
   const hasLeakage = hasMathLeakageSignals(result.text) || hasMathLeakageSignals(processed);
   const hasPromptEcho = hasMathPromptEchoSignals(result.text) || hasMathPromptEchoSignals(processed);
+  const hasNarrativeStyle = hasMathNarrativeSignals(result.text) || hasMathNarrativeSignals(processed);
 
-  const needsRetry = incompleteOutput || hasLeakage || hasPromptEcho;
+  const needsRetry = incompleteOutput || hasLeakage || hasPromptEcho || hasNarrativeStyle;
   if (needsRetry) {
     const retryMode = intent === "generation" || intent === "example" ? "compact-generation" : "compact-solve";
     console.log(`[MathPipeline] compact retry triggered for incomplete or truncated ${intent} output`);
@@ -354,6 +404,9 @@ export async function solveMathDirect(
     }
     if (hasPromptEcho) {
       console.log("[MathPipeline] retry_trigger=prompt_echo");
+    }
+    if (hasNarrativeStyle) {
+      console.log("[MathPipeline] retry_trigger=narrative_style");
     }
     console.log(`[MathPipeline] retry_strategy=${retryMode}`);
     result = await makeCall(retryMode);
@@ -367,6 +420,19 @@ export async function solveMathDirect(
       `[MathPipeline] salvaging truncated output finish_reason=${result.finish_reason ?? "unknown"} truncated=${result.truncated ? "true" : "false"} chars=${processed.length}`,
     );
     processed = salvageTruncatedResponse(processed);
+  }
+
+  if (!incompleteOutput && shouldRewriteMathResponse(processed)) {
+    console.log("[MathPipeline] rewrite_fallback_triggered");
+    try {
+      const rewritten = await rewriteMathAnswer(userMessage, processed, userId);
+      if (rewritten && rewritten.trim().length >= 20) {
+        processed = rewritten;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`[MathPipeline] rewrite_fallback_failed: ${message}`);
+    }
   }
 
   return {
