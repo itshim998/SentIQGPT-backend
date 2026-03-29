@@ -7,6 +7,21 @@ const LEAKY_LINE_PATTERNS = [
   /\b(?:these aren'?t equal|they can'?t|they wouldn't|this suggests|the only way this works)\b/i,
 ];
 
+const PROMPT_ECHO_PATTERNS = [
+  /\bone direct line\b/i,
+  /\bwe should output\b/i,
+  /\binclude a bullet\b/i,
+  /\bbullet for final answer\b/i,
+  /\bensure we don'?t include\b/i,
+  /\bthat matches the format\b/i,
+  /\bthey said\b/i,
+  /\bshow a bullet\b/i,
+  /\bfinal answer is a bullet\b/i,
+  /\bchain-of-th(?:ought)?\b/i,
+  /\bformatting rules?\b/i,
+  /\bdo not mention headings, bullets, or line counts\b/i,
+];
+
 const SCRATCHWORK_NOISE_PATTERNS = [
   /\bmeet simultaneously\b/i,
   /\btime to meet\b/i,
@@ -35,12 +50,21 @@ export function hasMathLeakageSignals(text: string): boolean {
   return LEAKY_LINE_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+export function hasMathPromptEchoSignals(text: string): boolean {
+  if (!text) return false;
+  return PROMPT_ECHO_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 export function shapeMathResponse(text: string): string {
   if (!text) return text;
 
   let cleaned = text;
   const mathBlocks: string[] = [];
   const dedupeSet = new Set<string>();
+  const hadMarkdownStructure = /(^|\n)#{1,3}\s+|(^|\n)[-*•]\s+/.test(cleaned);
+  const hadNumberedSteps = /(^|\s)\d+\.\s/.test(cleaned);
+  const hasPromptEcho = hasMathPromptEchoSignals(text);
+  const hasLeakage = hasMathLeakageSignals(text);
 
   const inlineResetPatterns = [
     /\s+(?=\d+\.\s)/g,
@@ -77,6 +101,7 @@ export function shapeMathResponse(text: string): string {
     .filter((line) => line.length > 0)
     .filter((line) => !LABEL_ONLY_PATTERNS.some((pattern) => pattern.test(line)))
     .filter((line) => !LEAKY_LINE_PATTERNS.some((pattern) => pattern.test(line)))
+    .filter((line) => !PROMPT_ECHO_PATTERNS.some((pattern) => pattern.test(line)))
     .filter((line) => !SCRATCHWORK_NOISE_PATTERNS.some((pattern) => pattern.test(line)))
     .filter((line) => {
       const key = line.toLowerCase();
@@ -87,6 +112,10 @@ export function shapeMathResponse(text: string): string {
 
   if (normalizedLines.length === 0) {
     cleaned = "";
+  } else if (!hasPromptEcho && !hasLeakage && !hadNumberedSteps && normalizedLines.length <= 3) {
+    cleaned = normalizedLines.join("\n");
+  } else if (!hasPromptEcho && !hasLeakage && hadMarkdownStructure && normalizedLines.length <= 8) {
+    cleaned = rawLines.join("\n").trim();
   } else if (normalizedLines.length === 1) {
     cleaned = normalizedLines[0];
   } else {

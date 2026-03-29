@@ -6,7 +6,7 @@
 import { callLLMAdapterDetailed } from "./PromptBuilders";
 import type { LLMAdapterCall } from "./PromptBuilders";
 import { formatMathResponse } from "./mathFormatter";
-import { hasMathLeakageSignals, shapeMathResponse } from "./responseShaper";
+import { hasMathLeakageSignals, hasMathPromptEchoSignals, shapeMathResponse } from "./responseShaper";
 
 // ==============================
 // Constants
@@ -17,28 +17,19 @@ const SOLVER_MAX_OUTPUT_TOKENS = 2600;
 const SOLVER_RETRY_MAX_OUTPUT_TOKENS = 1800;
 const GENERATION_MAX_OUTPUT_TOKENS = 2600;
 const GENERATION_RETRY_MAX_OUTPUT_TOKENS = 1400;
+const EXAMPLE_MAX_OUTPUT_TOKENS = 2200;
+const EXAMPLE_RETRY_MAX_OUTPUT_TOKENS = 1400;
 const TRUNCATION_NOTICE =
   "The mathematical response was truncated before completion. Please ask for a shorter or more focused solution.";
 export const DEFAULT_SOLVER_SYSTEM_PROMPT =
-  "SYSTEM: You are SentIQGPT's math reasoning solver.\n" +
-  "VISIBLE ANSWER CONTRACT:\n" +
-  "- Produce a polished user-facing answer, not hidden chain-of-thought.\n" +
-  "- Do NOT reveal internal scratchwork, retries, or self-corrections.\n" +
-  "- Do NOT say phrases like 'let me solve', 'wait', 'let me reconsider', 'let me verify', or 'something is off'.\n" +
-  "- Do NOT narrate failed attempts.\n" +
-  "- Keep the explanation concise, decisive, and readable.\n" +
-  "RESPONSE FORMAT:\n" +
-  "### Key Insight\n" +
-  "- One short bullet with the core idea.\n" +
-  "### Solution\n" +
-  "- Two to five short bullets with only the essential reasoning or equations.\n" +
-  "### Final Answer\n" +
-  "- One direct conclusion.\n" +
-  "STYLE RULES:\n" +
-  "- Use markdown headings and bullets.\n" +
-  "- Use equations only when they genuinely help.\n" +
-  "- If the problem statement appears inconsistent, state that briefly and give the best resolution.\n" +
-  "- No repetition. No meta commentary. No long scratchwork paragraphs.";
+  "SYSTEM: Solve the user's math problem clearly for the end user.\n" +
+  "RULES:\n" +
+  "- Give a concise, user-facing answer with only the essential reasoning.\n" +
+  "- Use natural markdown when it helps, but do not talk about formatting.\n" +
+  "- Do not reveal hidden scratchwork, retries, self-corrections, or chain-of-thought.\n" +
+  "- Do not mention the prompt, bullets, headings, or line counts.\n" +
+  "- If the problem statement looks inconsistent, say so briefly and give the best resolution.\n" +
+  "- End with a direct final answer.";
 const GENERATION_SYSTEM_PROMPT =
   "SYSTEM: You are generating math practice content.\n" +
   "RULES:\n" +
@@ -58,22 +49,39 @@ const GENERATION_RETRY_SYSTEM_PROMPT =
   "- Use plain concise wording\n" +
   "- If you use matrices, keep them small and complete\n" +
   "- Finish the response fully";
-const COMPACT_SOLVER_SYSTEM_PROMPT =
-  "SYSTEM: You are SentIQGPT's compact math reasoning solver.\n" +
-  "OUTPUT FORMAT:\n" +
-  "### Key Insight\n" +
-  "- One short bullet.\n" +
-  "### Solution\n" +
-  "- Two to four short bullets.\n" +
-  "### Final Answer\n" +
-  "- One direct line.\n" +
+const EXAMPLE_SYSTEM_PROMPT =
+  "SYSTEM: Create one relevant math example for the user's topic and solve it clearly.\n" +
   "RULES:\n" +
-  "- No chain-of-thought, no self-talk, and no restating the whole problem.\n" +
-  "- Include only decisive equations or comparisons.\n" +
+  "- If the user gives a topic instead of a concrete problem, choose one representative example.\n" +
+  "- Present the example and solve it with a short, readable explanation.\n" +
+  "- Keep the answer concise and user-facing.\n" +
+  "- Do not reveal hidden reasoning, self-talk, retries, or formatting instructions.\n" +
+  "- End with a direct final answer.";
+const EXAMPLE_RETRY_SYSTEM_PROMPT =
+  "SYSTEM: Provide one short solved math example for the user.\n" +
+  "RULES:\n" +
+  "- Keep only the example, the essential steps, and the final answer.\n" +
+  "- No prompt echo, no self-talk, and no formatting commentary.\n" +
+  "- Do not mention headings, bullets, or line counts.";
+const COMPACT_SOLVER_SYSTEM_PROMPT =
+  "SYSTEM: Give a concise user-facing math answer.\n" +
+  "RULES:\n" +
+  "- Keep only the key steps and the final answer.\n" +
+  "- No chain-of-thought, no self-talk, and no prompt echo.\n" +
+  "- Do not mention bullets, headings, line counts, or formatting rules.\n" +
   "- No repetition, no failed attempts, no meta commentary.";
 const GENERATION_REQUEST_PATTERNS: readonly RegExp[] = [
   /\b(?:give|create|generate|provide|make|write|list|suggest)\b[\s\S]{0,40}\b(?:exercise(?:s)?|example(?:s)?|practice(?:\s+problems?)?|worksheet|quiz|problem\s+set)\b/i,
   /\b(?:exercise(?:s)?|example(?:s)?|practice(?:\s+problems?)?|worksheet|quiz|problem\s+set)\b[\s\S]{0,40}\b(?:please\s+)?(?:give|create|generate|provide|make|write|list|suggest)\b/i,
+];
+const EXAMPLE_REQUEST_PATTERNS: readonly RegExp[] = [
+  /\bas an example\b/i,
+  /\bfor example\b/i,
+  /\bexample\b[\s\S]{0,80}\bsolve\b/i,
+  /\bsolve\b[\s\S]{0,80}\bexample\b/i,
+  /\b(?:show|give|create|generate|write|make)\b[\s\S]{0,40}\b(?:an?|one)\s+(?:math\s+)?example\b/i,
+  /\b(?:show|give)\s+me\b[\s\S]{0,40}\b(?:math\s+)?example\b/i,
+  /\b(?:an?|one)\s+(?:math\s+)?example\b[\s\S]{0,40}\band\s+\bsolve\b/i,
 ];
 const SOLVE_SECTION_PATTERNS: readonly RegExp[] = [
   /\bquestions?\s*:/i,
@@ -92,13 +100,17 @@ const META_REASONING_PATTERN = /i will|let's solve|we are given/gi;
 // Math Pipeline
 // ==============================
 
-function classifyMathIntent(userMessage: string): "solve" | "generation" {
-  if (SOLVE_SECTION_PATTERNS.some((pattern) => pattern.test(userMessage))) {
-    return "solve";
+export function classifyMathIntent(userMessage: string): "solve" | "generation" | "example" {
+  if (EXAMPLE_REQUEST_PATTERNS.some((pattern) => pattern.test(userMessage))) {
+    return "example";
   }
 
   if (GENERATION_REQUEST_PATTERNS.some((pattern) => pattern.test(userMessage))) {
     return "generation";
+  }
+
+  if (SOLVE_SECTION_PATTERNS.some((pattern) => pattern.test(userMessage))) {
+    return "solve";
   }
 
   return "solve";
@@ -107,12 +119,14 @@ function classifyMathIntent(userMessage: string): "solve" | "generation" {
 function buildMathPrompt(
   userMessage: string,
   systemPrompt: string,
-  intent: "solve" | "generation",
+  intent: "solve" | "generation" | "example",
   retryMode: "none" | "compact-solve" | "compact-generation" = "none",
 ): string {
   const effectiveSystemPrompt =
     intent === "generation"
       ? (retryMode === "compact-generation" ? GENERATION_RETRY_SYSTEM_PROMPT : GENERATION_SYSTEM_PROMPT)
+      : intent === "example"
+        ? (retryMode === "compact-generation" ? EXAMPLE_RETRY_SYSTEM_PROMPT : EXAMPLE_SYSTEM_PROMPT)
       : (retryMode === "compact-solve" ? COMPACT_SOLVER_SYSTEM_PROMPT : systemPrompt);
 
   return effectiveSystemPrompt
@@ -313,6 +327,8 @@ export async function solveMathDirect(
       max_output_tokens:
         intent === "generation"
           ? (retryMode === "compact-generation" ? GENERATION_RETRY_MAX_OUTPUT_TOKENS : GENERATION_MAX_OUTPUT_TOKENS)
+          : intent === "example"
+            ? (retryMode === "compact-generation" ? EXAMPLE_RETRY_MAX_OUTPUT_TOKENS : EXAMPLE_MAX_OUTPUT_TOKENS)
           : (retryMode === "compact-solve" ? SOLVER_RETRY_MAX_OUTPUT_TOKENS : SOLVER_MAX_OUTPUT_TOKENS),
     };
 
@@ -323,17 +339,21 @@ export async function solveMathDirect(
   let processed = normalizeMathResponse(result.text);
   let incompleteOutput =
     result.truncated || hasIncompleteMathTail(processed) || hasIncompleteProseTail(processed);
-  const hasLeakage = hasMathLeakageSignals(result.text) || processed.split("\n").length > 12;
+  const hasLeakage = hasMathLeakageSignals(result.text) || hasMathLeakageSignals(processed);
+  const hasPromptEcho = hasMathPromptEchoSignals(result.text) || hasMathPromptEchoSignals(processed);
 
-  const needsRetry = incompleteOutput || hasLeakage;
+  const needsRetry = incompleteOutput || hasLeakage || hasPromptEcho;
   if (needsRetry) {
-    const retryMode = intent === "generation" ? "compact-generation" : "compact-solve";
+    const retryMode = intent === "generation" || intent === "example" ? "compact-generation" : "compact-solve";
     console.log(`[MathPipeline] compact retry triggered for incomplete or truncated ${intent} output`);
     if (result.finish_reason) {
       console.log(`[MathPipeline] provider finish_reason=${result.finish_reason}`);
     }
     if (hasLeakage) {
-      console.log("[MathPipeline] retry_trigger=leakage_or_excessive_structure");
+      console.log("[MathPipeline] retry_trigger=leakage");
+    }
+    if (hasPromptEcho) {
+      console.log("[MathPipeline] retry_trigger=prompt_echo");
     }
     console.log(`[MathPipeline] retry_strategy=${retryMode}`);
     result = await makeCall(retryMode);

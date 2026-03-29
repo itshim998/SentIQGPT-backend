@@ -1,5 +1,6 @@
 import { formatMathResponse } from "./ai/mathFormatter";
-import { normalizeMathResponse } from "./ai/mathVerifier";
+import { classifyMathIntent, normalizeMathResponse } from "./ai/mathVerifier";
+import { selectModelForPrompt } from "./orchestrator/modelRouter";
 
 const leakedTrainAnswer = `
 Let me solve this 2. Let: 3. - Distance between A and B = D 4. - Speed of train from A = v₁ 5. - Speed of train from B = v₂ 6. - They meet at the halfway point, so each travels D/2 7. Time to meet for train from A: t = (D/2)/v₁ = D/(2v₁) 8. Time to meet for train from B: t = (D/2)/v₂ = D/(2v₂) 9. Since they leave at the same time and meet simultaneously: 10. D/(2v₁) = D/(2v₁) = D/(2v₂) 11. So v₁ = v₂? Wait, that doesn't make sense with the different times after meeting 12. Let me reconsider 13. They meet at the halfway point, so both travel D/2 to the meeting point 14. After meeting: 15. - Train from A travels the remaining D/2 to B in 2 hours 16. - Train from B travels the remaining D/2 to A in 8 hours 17. So: 18. v₁ = (D/2)/2 = D/4 19. v₂ = (D/2)/8 = D/16 20. So v₁/v₂ = (D/4)/(D/16) = 16/4 = 4 21. The train from A is 4 times faster than the train from B 22. Let me verify: 23. - Both travel D/2 to meet 24. - Time for train A to travel D/2: (D/2)/(D/4) = 2 hours 25. - Time for train B to travel D/2: (D/2)/(D/16) = 8 hours 26. Yes! They meet after 2 hours (train A) and 8 hours (train B)? No wait, that's not right 27. If they meet at the halfway point, the time to reach the meeting point must be the same for both 28. Let t be the time until they meet 29. For train A: D/2 = v₁t 30. For train B: D/2 = v₂t 31. So v₁ = D/(2t) and v₂ = D/(2t) 32. After meeting, the remaining distances are both D/2, and the travel times are 2 and 8 hours respectively 33. This gives me v₁ = D/4 and v₂ = D/16, which means v₁/v₂ = 4 34. The train from A is four times faster than the train from B 35. But wait—if train A is faster, it should reach the meeting point sooner than train B 36. Yet they meet at the same time, so something's off 37. Let me verify this works: if v₁ = D/4 and v₂ = D/16, train A takes (D/2)/(D/4) = 2 hours to reach the midpoint, and train B takes (D/2)/(D/16) = 8 hours 38. These aren't equal, so they can't actually meet at the same time with these speeds
@@ -23,6 +24,25 @@ Train A's speed ratio can be written as \[
 \frac{v_1}{v_2} = \frac{(D/2)/2}{(D/2)/8} = 4
 \]
 Final answer: Train A is 4 times faster.
+`;
+
+const promptEchoAnswer = `
+Key Insight
+
+- Key Insight
+
+Solution
+
+- One direct line.
+- So they show a bullet for Final Answer as well. So we should include a bullet. So we should output:
+- That matches the format: bullet for final answer.
+- We need to ensure we don't include any extra text.
+- State after H = (|0> + |1>)/√2.
+- We should also check that we didn't include any chain-of-th.
+
+Final Answer
+
+final answer is a bullet with the state.
 `;
 
 function assert(condition: boolean, label: string): void {
@@ -60,6 +80,23 @@ assert(/Train A is 4 times as fast as Train B\./i.test(normalizedStructured), "w
 const normalizedLatex = normalizeMathResponse(latexAnswer);
 const formattedLatex = formatMathResponse(latexAnswer);
 assert(formattedLatex.includes("$$") && formattedLatex.includes("\\frac{v_1}{v_2}"), "LaTeX display math is preserved and normalized");
-assert(/^### Final Answer/m.test(normalizedLatex), "LaTeX answer still gets a final answer section");
+assert(
+  /Train A is 4 times faster/i.test(normalizedLatex) || /\\frac\{v_1\}\{v_2\}/.test(normalizedLatex),
+  "LaTeX answer stays readable even without forced section headings",
+);
+
+const normalizedPromptEcho = normalizeMathResponse(promptEchoAnswer);
+assert(includesNone(normalizedPromptEcho, [
+  /\bone direct line\b/i,
+  /\bwe should output\b/i,
+  /\bbullet for final answer\b/i,
+  /\bchain-of-th(?:ought)?\b/i,
+]), "prompt-echo sample removes formatting commentary");
+assert(/\(\|0\>\s*\+\s*\|1\>\)\/√2/.test(normalizedPromptEcho), "prompt-echo sample preserves the actual math state");
+
+assert(classifyMathIntent("Solve a quantum computing math as an example.") === "example", "example-style solve prompt routes to example math intent");
+assert(classifyMathIntent("Give me a quantum computing math example and solve it.") === "example", "explicit example-and-solve prompt routes to example math intent");
+assert(classifyMathIntent("Solve 3x + 7 = 19") === "solve", "concrete math solve prompt stays on solve intent");
+assert(selectModelForPrompt("Solve 3x + 7 = 19") === "minimax", "concrete solve prompt still routes to minimax");
 
 console.log("\nMath response shaping validation passed.");
