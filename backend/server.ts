@@ -221,6 +221,19 @@ type ConversationMessageRow = {
   created_at: string;
 };
 
+type MemoryScope = "global" | "chat";
+
+type MemoryRow = {
+  id: string;
+  user_id: string;
+  type: string;
+  summary: string;
+  importance: number;
+  scope?: MemoryScope | null;
+  chat_id?: string | null;
+  created_at: string;
+};
+
 function formatDbError(error: DbErrorLike): string {
   if (!error) return "unknown";
   const parts = [
@@ -363,23 +376,78 @@ async function insertConversationMessageOrThrow(
 async function insertMemoryOrThrow(
   userDb: any,
   userId: string,
-  memory: { type?: string; summary?: string; importance?: number },
+  memory: { type?: string; summary?: string; importance?: number; scope?: MemoryScope; chat_id?: string | null },
   scope: string,
-): Promise<void> {
+): Promise<MemoryRow> {
   logDbEvent(`${scope}.memory-insert.start`, userId, { type: memory.type || null });
-  const { error } = await userDb
+  const normalizedScope: MemoryScope = memory.scope === "chat" ? "chat" : "global";
+  const { data, error } = await userDb
     .from("memories")
     .insert({
       user_id: userId,
       type: memory.type,
       summary: memory.summary,
       importance: memory.importance,
-    });
+      scope: normalizedScope,
+      chat_id: normalizedScope === "chat" ? memory.chat_id ?? null : null,
+    })
+    .select("id, user_id, type, summary, importance, scope, chat_id, created_at")
+    .single();
   if (error) {
     logDbFailure(`${scope}.memory-insert`, userId, error, { type: memory.type || null });
     throw new Error(error.message);
   }
+  if (!data?.id) {
+    throw new Error("Failed to create memory");
+  }
   logDbEvent(`${scope}.memory-insert.ok`, userId, { type: memory.type || null });
+  return data as MemoryRow;
+}
+
+async function listMemoriesOrThrow(
+  userDb: any,
+  userId: string,
+  scope: string,
+): Promise<MemoryRow[]> {
+  logDbEvent(`${scope}.memory-list.start`, userId);
+  const startedAt = Date.now();
+  const { data, error } = await userDb
+    .from("memories")
+    .select("id, user_id, type, summary, importance, scope, chat_id, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    logDbFailure(`${scope}.memory-list`, userId, error);
+    throw new Error(error.message);
+  }
+
+  logDbEvent(`${scope}.memory-list.ok`, userId, {
+    count: data?.length || 0,
+    duration_ms: Date.now() - startedAt,
+  });
+  return (data || []) as MemoryRow[];
+}
+
+async function deleteMemoryIfOwned(
+  userDb: any,
+  userId: string,
+  memoryId: string,
+  scope: string,
+): Promise<void> {
+  logDbEvent(`${scope}.memory-delete.start`, userId, { memoryId });
+  const { error } = await userDb
+    .from("memories")
+    .delete()
+    .eq("id", memoryId)
+    .eq("user_id", userId);
+
+  if (error) {
+    logDbFailure(`${scope}.memory-delete`, userId, error, { memoryId });
+    throw new Error(error.message);
+  }
+
+  logDbEvent(`${scope}.memory-delete.ok`, userId, { memoryId });
 }
 
 async function listConversationsOrThrow(userDb: any, userId: string, scope: string): Promise<ConversationListRow[]> {
@@ -622,6 +690,47 @@ app.delete(
 );
 
 // ===============================
+// GET /api/memories
+// ===============================
+app.get(
+  "/api/memories",
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "memories.list");
+    try {
+      await initializeUserSessionOrThrow(userDb, userId, "memories.list");
+    } catch (sessionError) {
+      logDbFailure(
+        "memories.list.session-init",
+        userId,
+        sessionError instanceof Error ? sessionError : new Error(String(sessionError)),
+      );
+    }
+    const memories = await listMemoriesOrThrow(userDb, userId, "memories.list");
+    res.json({ memories });
+  }),
+);
+
+// ===============================
+// DELETE /api/memories/:id
+// ===============================
+app.delete(
+  "/api/memories/:id",
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const memoryId = req.params.id?.trim();
+    if (!memoryId) {
+      res.status(400).json({ error: "Memory id is required." });
+      return;
+    }
+    const userDb = await resolveUserDatabaseOrThrow(userId, "memories.delete");
+    await initializeUserSessionOrThrow(userDb, userId, "memories.delete");
+    await deleteMemoryIfOwned(userDb, userId, memoryId, "memories.delete");
+    res.json({ success: true });
+  }),
+);
+
+// ===============================
 // POST /api/chat — Main conversation endpoint (v2: orchestrated)
 // ===============================
 app.post(
@@ -679,25 +788,81 @@ app.post(
       return;
     }
 
-    const userDb = await resolveUserDatabaseOrThrow(userId, "chat");
-    await initializeUserSessionOrThrow(userDb, userId, "chat");
-    const conversationId = parsed.data.conversationId || null;
-    let activeConversationId = conversationId;
-    if (activeConversationId) {
-      await getOwnedConversationOrThrow(userDb, userId, activeConversationId, "chat");
+    const sync = {
+      persisted: true,
+      deferred: false,
+      conversationId: undefined as string | undefined,
+    };
+
+    let userDb: any = null;
+    let activeConversationId = parsed.data.conversationId || null;
+    try {
+      userDb = await resolveUserDatabaseOrThrow(userId, "chat");
+      await initializeUserSessionOrThrow(userDb, userId, "chat");
+    } catch (bootstrapError) {
+      sync.persisted = false;
+      sync.deferred = true;
+      logDbFailure(
+        "chat.bootstrap",
+        userId,
+        bootstrapError instanceof Error ? bootstrapError : new Error(String(bootstrapError)),
+      );
+      userDb = null;
     }
-    if (!activeConversationId) {
-      const conversationRow = await createConversationOrThrow(userDb, userId, "chat");
-      activeConversationId = conversationRow.id;
+
+    if (userDb && activeConversationId) {
+      try {
+        await getOwnedConversationOrThrow(userDb, userId, activeConversationId, "chat");
+        sync.conversationId = activeConversationId;
+      } catch (conversationLookupError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        logDbFailure(
+          "chat.conversation.resolve",
+          userId,
+          conversationLookupError instanceof Error ? conversationLookupError : new Error(String(conversationLookupError)),
+          { conversationId: activeConversationId },
+        );
+        activeConversationId = null;
+      }
     }
-    await insertConversationMessageOrThrow(
-      userDb,
-      userId,
-      activeConversationId,
-      "user",
-      parsed.data.message,
-      "chat",
-    );
+    if (userDb && !activeConversationId) {
+      try {
+        const conversationRow = await createConversationOrThrow(userDb, userId, "chat");
+        activeConversationId = conversationRow.id;
+        sync.conversationId = activeConversationId;
+      } catch (conversationCreateError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        logDbFailure(
+          "chat.conversation.create",
+          userId,
+          conversationCreateError instanceof Error ? conversationCreateError : new Error(String(conversationCreateError)),
+        );
+        activeConversationId = null;
+      }
+    }
+    if (userDb && activeConversationId) {
+      try {
+        await insertConversationMessageOrThrow(
+          userDb,
+          userId,
+          activeConversationId,
+          "user",
+          parsed.data.message,
+          "chat",
+        );
+      } catch (userMessagePersistError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        logDbFailure(
+          "chat.user-message.persist",
+          userId,
+          userMessagePersistError instanceof Error ? userMessagePersistError : new Error(String(userMessagePersistError)),
+          { conversationId: activeConversationId },
+        );
+      }
+    }
 
     const result = await orchestrate({
       userMessage: parsed.data.message,
@@ -707,18 +872,61 @@ app.post(
         file_references: orcFileRefs,
         userDb,
         userId,
+        conversationId: activeConversationId || undefined,
       },
     });
-    await insertConversationMessageOrThrow(
-      userDb,
-      userId,
-      activeConversationId,
-      "assistant",
-      result.reply ?? "",
-      "chat",
-    );
-    if (result.memory && result.memory.stored === true) {
-      await insertMemoryOrThrow(userDb, userId, result.memory, "chat");
+
+    if (userDb && activeConversationId) {
+      try {
+        await insertConversationMessageOrThrow(
+          userDb,
+          userId,
+          activeConversationId,
+          "assistant",
+          result.reply ?? "",
+          "chat",
+        );
+      } catch (assistantPersistError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        logDbFailure(
+          "chat.assistant-message.persist",
+          userId,
+          assistantPersistError instanceof Error ? assistantPersistError : new Error(String(assistantPersistError)),
+          { conversationId: activeConversationId },
+        );
+      }
+    }
+
+    let responseMemory = result.memory;
+    if (userDb && result.memory && result.memory.stored === true) {
+      try {
+        const insertedMemory = await insertMemoryOrThrow(
+          userDb,
+          userId,
+          {
+            ...result.memory,
+            scope: result.memory.type === "project" ? "chat" : "global",
+            chat_id: result.memory.type === "project" ? activeConversationId : null,
+          },
+          "chat",
+        );
+        responseMemory = {
+          ...result.memory,
+          id: insertedMemory.id,
+          scope: insertedMemory.scope === "chat" ? "chat" : "global",
+          chat_id: insertedMemory.chat_id ?? null,
+        };
+      } catch (memoryPersistError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        logDbFailure(
+          "chat.memory.persist",
+          userId,
+          memoryPersistError instanceof Error ? memoryPersistError : new Error(String(memoryPersistError)),
+          { conversationId: activeConversationId },
+        );
+      }
     }
 
     res.json({
@@ -727,8 +935,9 @@ app.post(
       disclaimer: result.disclaimer,
       image: result.image,
       chart: result.chart,
-      memory: result.memory,
+      memory: responseMemory,
       confidence: result.confidence,
+      sync,
     });
   }),
 );
@@ -874,45 +1083,149 @@ app.post(
       return;
     }
 
-    const userDb = await resolveUserDatabaseOrThrow(userId, "chat.stream");
-    await initializeUserSessionOrThrow(userDb, userId, "chat.stream");
     const conversationId = parsed.data.conversationId || null;
     let activeConversationId = conversationId;
-    if (activeConversationId) {
-      await getOwnedConversationOrThrow(userDb, userId, activeConversationId, "chat.stream");
+    const sync = {
+      persisted: true,
+      deferred: false,
+      conversationId: activeConversationId,
+    };
+    let userDb: any = null;
+    try {
+      userDb = await resolveUserDatabaseOrThrow(userId, "chat.stream");
+      await initializeUserSessionOrThrow(userDb, userId, "chat.stream");
+    } catch (dbBootstrapError) {
+      sync.persisted = false;
+      sync.deferred = true;
+      logDbFailure(
+        "chat.stream.bootstrap",
+        userId,
+        dbBootstrapError instanceof Error ? dbBootstrapError : new Error(String(dbBootstrapError)),
+        { conversationId: activeConversationId },
+      );
     }
-    if (!activeConversationId) {
-      const conversationRow = await createConversationOrThrow(userDb, userId, "chat.stream");
-      activeConversationId = conversationRow.id;
+    if (userDb && activeConversationId) {
+      try {
+        await getOwnedConversationOrThrow(userDb, userId, activeConversationId, "chat.stream");
+      } catch (conversationOwnershipError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        logDbFailure(
+          "chat.stream.conversation-resolve",
+          userId,
+          conversationOwnershipError instanceof Error ? conversationOwnershipError : new Error(String(conversationOwnershipError)),
+          { conversationId: activeConversationId },
+        );
+        activeConversationId = null;
+      }
     }
-    await insertConversationMessageOrThrow(
-      userDb,
-      userId,
-      activeConversationId,
-      "user",
-      parsed.data.message,
-      "chat.stream",
-    );
+    if (userDb && !activeConversationId) {
+      try {
+        const conversationRow = await createConversationOrThrow(userDb, userId, "chat.stream");
+        activeConversationId = conversationRow.id;
+      } catch (conversationCreateError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        logDbFailure(
+          "chat.stream.conversation-create",
+          userId,
+          conversationCreateError instanceof Error ? conversationCreateError : new Error(String(conversationCreateError)),
+        );
+      }
+    }
+    sync.conversationId = activeConversationId;
+    if (userDb && activeConversationId) {
+      try {
+        await insertConversationMessageOrThrow(
+          userDb,
+          userId,
+          activeConversationId,
+          "user",
+          parsed.data.message,
+          "chat.stream",
+        );
+      } catch (messagePersistError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        logDbFailure(
+          "chat.stream.user-message",
+          userId,
+          messagePersistError instanceof Error ? messagePersistError : new Error(String(messagePersistError)),
+          { conversationId: activeConversationId },
+        );
+      }
+    }
 
     const persistAssistantMessage = async (content: string) => {
-      await insertConversationMessageOrThrow(
-        userDb,
-        userId,
-        activeConversationId,
-        "assistant",
-        content,
-        "chat.stream",
-      );
+      if (!userDb || !activeConversationId) {
+        sync.persisted = false;
+        sync.deferred = true;
+        return;
+      }
+      try {
+        await insertConversationMessageOrThrow(
+          userDb,
+          userId,
+          activeConversationId,
+          "assistant",
+          content,
+          "chat.stream",
+        );
+      } catch (assistantPersistError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        logDbFailure(
+          "chat.stream.assistant-message",
+          userId,
+          assistantPersistError instanceof Error ? assistantPersistError : new Error(String(assistantPersistError)),
+          { conversationId: activeConversationId },
+        );
+      }
     };
 
     const persistStoredMemory = async (memory?: {
+      id?: string;
       stored?: boolean;
       type?: string;
       summary?: string;
       importance?: number;
+      scope?: MemoryScope;
+      chat_id?: string | null;
     }) => {
       if (!memory || memory.stored !== true) return;
-      await insertMemoryOrThrow(userDb, userId, memory, "chat.stream");
+      if (!userDb) {
+        sync.persisted = false;
+        sync.deferred = true;
+        return;
+      }
+      const normalizedScope: MemoryScope = memory.scope === "chat" || memory.type === "project"
+        ? "chat"
+        : "global";
+      const memoryChatId = normalizedScope === "chat" ? activeConversationId ?? memory.chat_id ?? null : null;
+      try {
+        const insertedMemory = await insertMemoryOrThrow(
+          userDb,
+          userId,
+          {
+            ...memory,
+            scope: normalizedScope,
+            chat_id: memoryChatId,
+          },
+          "chat.stream",
+        );
+        memory.id = insertedMemory.id;
+        memory.scope = (insertedMemory.scope === "chat" ? "chat" : "global");
+        memory.chat_id = insertedMemory.chat_id ?? null;
+      } catch (memoryPersistError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        logDbFailure(
+          "chat.stream.memory",
+          userId,
+          memoryPersistError instanceof Error ? memoryPersistError : new Error(String(memoryPersistError)),
+          { conversationId: activeConversationId },
+        );
+      }
     };
 
     let clientDisconnected = false;
@@ -927,6 +1240,7 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            conversationId: activeConversationId || undefined,
             userDb,
             userId,
           },
@@ -943,6 +1257,7 @@ app.post(
           chart: result.chart,
           memory: result.memory,
           confidence: result.confidence,
+          sync,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -961,6 +1276,7 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            conversationId: activeConversationId || undefined,
             userDb,
             userId,
           },
@@ -979,6 +1295,7 @@ app.post(
           chart: result.chart,
           memory: result.memory,
           confidence: result.confidence,
+          sync,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -1014,6 +1331,7 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            conversationId: activeConversationId || undefined,
             userDb,
             userId,
           },
@@ -1077,6 +1395,7 @@ app.post(
       memories: parsed.data.context?.memories,
       file_references: fileRefs,
       userMessage: parsed.data.message,
+      conversationId: activeConversationId || undefined,
     }, userDb, userId);
 
     console.log(`[Latency] context built (+${Date.now() - requestStart}ms)`);

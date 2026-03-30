@@ -78,9 +78,12 @@ export interface OrchestratorResponse {
   /** Memory pipeline result */
   readonly memory: {
     stored: boolean;
+    id?: string;
     type?: string;
     summary?: string;
     importance?: number;
+    scope?: "global" | "chat";
+    chat_id?: string | null;
   };
   /** Self-reflection evaluation (if run) */
   readonly reflection?: {

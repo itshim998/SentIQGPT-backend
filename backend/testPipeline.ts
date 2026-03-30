@@ -91,7 +91,7 @@ async function testMemoryStorage(): Promise<OrchestratorResponse> {
   section("Memory Storage");
 
   const res: OrchestratorResponse = await orchestrate({
-    userMessage: "Remember that I am building an AI assistant called SentIQGPT. It uses Gemini and Groq together.",
+    userMessage: "My name is Soumo. Remember it.",
   });
 
   console.log(`  route: ${res.route}  |  memory stored: ${res.memory.stored}  |  type: ${res.memory.type ?? "n/a"}`);
@@ -129,7 +129,7 @@ async function testMemoryRetrieval(storedMemory: OrchestratorResponse): Promise<
     : [];
 
   const res: OrchestratorResponse = await orchestrate({
-    userMessage: "What project am I working on?",
+    userMessage: "What's my name you remember?",
     context: {
       memories,
     },
@@ -146,10 +146,24 @@ async function testMemoryRetrieval(storedMemory: OrchestratorResponse): Promise<
 
   const replyLower = (res.reply ?? "").toLowerCase();
   assert(
-    replyLower.includes("sentiqgpt") || replyLower.includes("ai assistant") || replyLower.includes("project"),
-    "Reply references stored context (SentIQGPT / AI assistant / project)",
+    replyLower.includes("soumo"),
+    "Reply references stored identity memory (Soumo)",
     `reply snippet: "${(res.reply ?? "").slice(0, 120)}"`,
   );
+}
+
+async function testExplicitMemoryPhrasings(): Promise<void> {
+  section("Explicit Memory Phrasings");
+
+  const prompts = [
+    "Remember my name is Soumo.",
+    "Don't forget that my name is Soumo.",
+  ];
+
+  for (const prompt of prompts) {
+    const res: OrchestratorResponse = await orchestrate({ userMessage: prompt });
+    assert(res.memory.stored === true, `Memory stored for phrasing: "${prompt}"`, `stored: ${res.memory.stored}`);
+  }
 }
 
 // ─────────────────────────────
@@ -220,6 +234,13 @@ async function run(): Promise<void> {
     }
   } catch (err) {
     console.log(`  ${FAIL}  Test 4 threw: ${err instanceof Error ? err.message : err}`);
+    failed++;
+  }
+
+  try {
+    await testExplicitMemoryPhrasings();
+  } catch (err) {
+    console.log(`  ${FAIL}  Explicit memory phrasing test threw: ${err instanceof Error ? err.message : err}`);
     failed++;
   }
 

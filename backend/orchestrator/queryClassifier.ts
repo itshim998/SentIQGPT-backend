@@ -105,10 +105,14 @@ const EXPLICIT_MEMORY_WRITE_PATTERNS: readonly RegExp[] = [
   /\bcan\s+you\s+remember\s+(?:this|that|my|i)\b/i,
   /\bremember\s+this\b/i,
   /\bremember\s+that\b/i,
+  /\bremember\s+it\b/i,
   /\bremember\s+my\b/i,
   /\bremember\s+i\b/i,
   /\b(?:save|store)\s+this\b/i,
+  /\b(?:save|store)\s+(?:it|that|my|about\s+me)\b/i,
+  /\bdon'?t\s+forget\s+(?:it|that|this|my|about\s+me)\b/i,
   /\bkeep\s+this\s+in\s+mind\b/i,
+  /\bkeep\s+(?:this|that|it|my\s+\w+)\s+(?:about\s+me\s+)?in\s+mind\b/i,
 ];
 
 const MEMORY_RETRIEVAL_PATTERNS: readonly RegExp[] = [
@@ -213,7 +217,12 @@ export function detectExplicitMemoryWriteIntent(query: string): boolean {
   const trimmed = query.trim();
   if (!trimmed) return false;
   if (MEMORY_RETRIEVAL_PATTERNS.some((pat) => pat.test(trimmed))) return false;
-  return EXPLICIT_MEMORY_WRITE_PATTERNS.some((pat) => pat.test(trimmed));
+  if (EXPLICIT_MEMORY_WRITE_PATTERNS.some((pat) => pat.test(trimmed))) return true;
+
+  const hasPersonalType = detectPersonalMemoryType(trimmed) !== null;
+  const hasMemoryVerb = /\b(?:remember|save|store|forget|keep)\b/i.test(trimmed);
+  const hasReferenceTarget = /\b(?:it|that|this|my|about\s+me)\b/i.test(trimmed);
+  return hasPersonalType && hasMemoryVerb && hasReferenceTarget;
 }
 
 export function detectPersonalMemoryType(query: string): PersonalMemoryType | null {

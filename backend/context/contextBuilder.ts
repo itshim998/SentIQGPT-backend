@@ -32,6 +32,7 @@ export interface RawMessageContext {
   readonly userMessage?: string;
   readonly userDb?: SupabaseClient;
   readonly userId?: string;
+  readonly conversationId?: string;
 }
 
 export interface BuiltContext {
@@ -50,30 +51,40 @@ export interface BuiltContext {
 type ContextMemory = { type: string; summary: string };
 
 type CloudMemoryRow = {
+  id?: string;
   summary: string;
   type: string;
   importance?: number;
+  scope?: "global" | "chat";
+  chat_id?: string | null;
 };
 
 async function fetchCloudMemories(
   userDb: SupabaseClient,
   userId: string,
+  conversationId?: string,
 ): Promise<readonly ContextMemory[]> {
   const { data: cloudMemories, error } = await userDb
     .from("memories")
-    .select("summary, type, importance")
+    .select("id, summary, type, importance, scope, chat_id")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
-    .limit(5);
+    .limit(20);
 
   if (error) {
     throw error;
   }
 
-  return ((cloudMemories ?? []) as CloudMemoryRow[]).map((memory) => ({
-    type: memory.type,
-    summary: memory.summary,
-  }));
+  return ((cloudMemories ?? []) as CloudMemoryRow[])
+    .filter((memory) => {
+      const scope = memory.scope === "chat" ? "chat" : "global";
+      if (scope === "global") return true;
+      return !!conversationId && memory.chat_id === conversationId;
+    })
+    .map((memory) => ({
+      type: memory.type,
+      summary: memory.summary,
+    }));
 }
 
 function mergeMemories(
@@ -142,7 +153,7 @@ export async function buildContext(
 
   const normalizedUserId = userId?.trim();
   if (userDb && normalizedUserId) {
-    const cloudMemories = await fetchCloudMemories(userDb, normalizedUserId);
+    const cloudMemories = await fetchCloudMemories(userDb, normalizedUserId, raw.conversationId);
     memories = mergeMemories(memories, cloudMemories);
   }
 
@@ -216,7 +227,7 @@ export async function buildContextFast(
 
   const normalizedUserId = userId?.trim();
   if (userDb && normalizedUserId) {
-    const cloudMemories = await fetchCloudMemories(userDb, normalizedUserId);
+    const cloudMemories = await fetchCloudMemories(userDb, normalizedUserId, raw.conversationId);
     memories = mergeMemories(memories, cloudMemories);
   }
 
