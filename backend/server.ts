@@ -641,6 +641,40 @@ app.post(
 );
 
 // ===============================
+// PATCH /api/conversations/:id/title
+// ===============================
+app.patch(
+  "/api/conversations/:id/title",
+  asyncHandler(async (req, res) => {
+    const requestStartedAt = Date.now();
+    const userId = await getVerifiedUserId(req);
+    const conversationId = req.params.id?.trim();
+    const title =
+      typeof req.body?.title === "string" && req.body.title.trim()
+        ? req.body.title.trim().slice(0, 120)
+        : "";
+
+    if (!conversationId) {
+      res.status(400).json({ error: "Conversation id is required." });
+      return;
+    }
+    if (!title) {
+      res.status(400).json({ error: "Title is required." });
+      return;
+    }
+
+    const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.title");
+    await initializeUserSessionOrThrow(userDb, userId, "conversations.title");
+    await updateConversationTitleIfOwned(userDb, userId, conversationId, title, "conversations.title");
+    logDbEvent("conversations.title.request.ok", userId, {
+      duration_ms: Date.now() - requestStartedAt,
+      conversationId,
+    });
+    res.json({ success: true, conversationId, title });
+  }),
+);
+
+// ===============================
 // GET /api/conversations/:id/messages
 // ===============================
 app.get(
@@ -1842,21 +1876,6 @@ app.post(
       const title = typeof parsed.title === "string" && parsed.title.trim()
         ? parsed.title.trim().slice(0, 60)
         : userMessage.slice(0, 50);
-
-      if (!isGuest && rawConversationId) {
-        try {
-          const userDb = await resolveUserDatabaseOrThrow(userId, "chat.title");
-          await initializeUserSessionOrThrow(userDb, userId, "chat.title");
-          await updateConversationTitleIfOwned(userDb, userId, rawConversationId, title, "chat.title");
-        } catch (titlePersistError) {
-          logDbFailure(
-            "chat.title.persist",
-            userId,
-            titlePersistError instanceof Error ? titlePersistError : new Error(String(titlePersistError)),
-            { conversationId: rawConversationId },
-          );
-        }
-      }
 
       res.json({ title });
     } catch {
