@@ -112,6 +112,7 @@ function planToolToRoute(tool: PlanTool): DetectedTool {
     case "file_analysis":    return "file_analysis";
     case "memory_update":    return "memory_update";
     case "chart_generation": return "chart_generation";
+    case "web_search":       return "web_search";
     case "conversation":
     default:                 return "normal_chat";
   }
@@ -439,7 +440,8 @@ async function reflectOnAnswer(
     !merged.reply ||
     merged.reply.length < MIN_REFLECTION_LENGTH ||
     merged.route === "image_generation" ||
-    merged.route === "chart_generation"
+    merged.route === "chart_generation" ||
+    merged.route === "web_search" // Skip reflection for web search (already synthesized)
   ) {
     return { merged };
   }

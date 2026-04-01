@@ -3,17 +3,22 @@
 // Sequential fallback router for web search providers.
 // Tries each provider in priority order; returns as soon as one succeeds.
 //
-// Provider chain: DuckDuckGo HTML (real search) → DuckDuckGo Instant API → Wikipedia
+// Provider chain: Tavily (best) → DuckDuckGo HTML → DuckDuckGo Instant API → Wikipedia
 //
-// DuckDuckGo HTML is prioritised because it performs an actual web search
-// and returns current/news results.  The Instant API only exposes
-// encyclopaedic abstracts and Wikipedia is limited to its own articles,
-// so neither reliably surfaces recent or breaking-news content.
+// Tavily is prioritized because it:
+//   - Returns structured results with relevance scores
+//   - Supports multi-key rotation for high availability
+//   - Provides high-quality, current web results
+//
+// DuckDuckGo HTML serves as fallback for real web search when Tavily is unavailable.
+// The Instant API only exposes encyclopaedic abstracts and Wikipedia is limited to
+// its own articles, so neither reliably surfaces recent or breaking-news content.
 //
 // After results are gathered, the content extractor enriches the top
 // results with extracted body text from the source pages.
 
 import type { WebSearchProvider, WebSearchResult, SearchResult } from "./types";
+import { TavilyProvider, isTavilyAvailable } from "./providers/tavilyProvider";
 import { DuckDuckGoApiProvider } from "./providers/duckduckgoApi";
 import { DuckDuckGoHtmlProvider } from "./providers/duckduckgoHtml";
 import { WikipediaProvider } from "./providers/wikipediaProvider";
@@ -24,11 +29,26 @@ import { getCachedSearchResults, setCachedSearchResults } from "../../cache/cach
 // Provider registry (order = priority)
 // ==============================
 
-const providers: readonly WebSearchProvider[] = [
-  new DuckDuckGoHtmlProvider(),   // Real web search — best for current events
-  new DuckDuckGoApiProvider(),    // Instant Answer (encyclopaedic)
-  new WikipediaProvider(),        // Wikipedia articles (fallback)
-];
+function buildProviderChain(): WebSearchProvider[] {
+  const chain: WebSearchProvider[] = [];
+
+  // Tavily is primary if configured
+  if (isTavilyAvailable()) {
+    chain.push(new TavilyProvider());
+  }
+
+  // Fallback chain
+  chain.push(
+    new DuckDuckGoHtmlProvider(),   // Real web search — best for current events
+    new DuckDuckGoApiProvider(),    // Instant Answer (encyclopaedic)
+    new WikipediaProvider(),        // Wikipedia articles (last resort)
+  );
+
+  return chain;
+}
+
+// Build provider chain once at startup, refresh on each call for dynamic key availability
+const getProviders = (): readonly WebSearchProvider[] => buildProviderChain();
 
 // Only extract body text for the top N results to limit latency
 const MAX_EXTRACT = 3;
@@ -64,6 +84,9 @@ export async function routeWebSearch(args: {
   const maxResults = args.maxResults ?? 5;
   const errors: string[] = [];
   console.log(`[WEB SEARCH] routing query: "${query.slice(0, 60)}..."`);
+
+  // Get fresh provider chain (respects current key availability)
+  const providers = getProviders();
 
   let rawResults: readonly SearchResult[] = [];
   let providerUsed: string | undefined;

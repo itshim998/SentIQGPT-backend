@@ -11,7 +11,7 @@
 // Safety constraints:
 //   • Max 3 steps per plan
 //   • Only permitted tools: conversation, image_generation,
-//     file_analysis, memory_update
+//     file_analysis, memory_update, chart_generation, web_search
 //   • No recursive/self-referencing steps
 
 import {
@@ -21,6 +21,8 @@ import {
 } from "../ai/PromptBuilders";
 import type { LLMAdapterCall } from "../ai/PromptBuilders";
 import { isChartRequest } from "../tools/chartGeneration/chartDetector";
+import { classifyQueryType, shouldForceWebSearch } from "./queryClassifier";
+import { isTavilyAvailable } from "../tools/webSearch/providers/tavilyProvider";
 
 // ==============================
 // Types
@@ -31,7 +33,8 @@ export type PlanTool =
   | "image_generation"
   | "file_analysis"
   | "memory_update"
-  | "chart_generation";
+  | "chart_generation"
+  | "web_search";
 
 const VALID_PLAN_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
   "conversation",
@@ -39,6 +42,7 @@ const VALID_PLAN_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
   "file_analysis",
   "memory_update",
   "chart_generation",
+  "web_search",
 ]);
 
 const MAX_STEPS = 3;
@@ -60,8 +64,13 @@ export interface ExecutionPlan {
 function buildPlannerPrompt(
   userMessage: string,
   hasFileContext: boolean,
+  hasWebSearch: boolean,
   userId?: string,
 ): LLMAdapterCall {
+  const webSearchTool = hasWebSearch
+    ? '- "web_search": Search the web for current information, news, real-time data, or facts that may be outdated in training data\n'
+    : "";
+
   const prompt =
     "TASK: Execution Planning\n" +
     "ROLE: Break down the user's request into an ordered execution plan.\n\n" +
@@ -72,8 +81,9 @@ function buildPlannerPrompt(
     (hasFileContext ? " (files ARE in context)" : " (NO files in context — do NOT select this)") +
     "\n" +
     '- "memory_update": Store a personal fact the user wants remembered\n' +
-    '- "chart_generation": Generate a chart or data visualization (scatter, bar, histogram, heatmap, etc.)\n\n' +
-    "RULES:\n" +
+    '- "chart_generation": Generate a chart or data visualization (scatter, bar, histogram, heatmap, etc.)\n' +
+    webSearchTool +
+    "\nRULES:\n" +
     "- Return 1 to 3 steps maximum.\n" +
     "- Most requests need only 1 step — keep it simple.\n" +
     "- Use multiple steps ONLY when the user explicitly asks for more than one action.\n" +
@@ -84,13 +94,18 @@ function buildPlannerPrompt(
     "- Only choose chart_generation for an explicit chart or data-visualization request, not for frontend/design prompts that merely mention visualization.\n" +
     "- Only choose file_analysis if uploaded files exist in context.\n" +
     "- Only choose memory_update when the user explicitly asks you to remember, save, store, or keep something in mind.\n" +
+    (hasWebSearch
+      ? '- Choose "web_search" for questions about current events, recent news, real-time data (stock prices, weather, scores), facts that may have changed since training data cutoff (e.g., "best AI models in 2026"), or when the user asks to "search" or "look up".\n'
+      : "") +
     "- Default truly ambiguous requests to a single conversation step.\n" +
     "- Steps run in order. Later steps may use results of earlier ones.\n\n" +
     "USER MESSAGE:\n" +
     userMessage +
     "\n\nRETURN JSON (array of steps):\n" +
     '{ "plan": [\n' +
-    '  { "step": 1, "tool": "conversation"|"image_generation"|"file_analysis"|"memory_update"|"chart_generation", "input": "..." }\n' +
+    '  { "step": 1, "tool": "conversation"|"image_generation"|"file_analysis"|"memory_update"|"chart_generation"' +
+    (hasWebSearch ? '|"web_search"' : "") +
+    ', "input": "..." }\n' +
     "] }";
 
   return {
@@ -168,9 +183,24 @@ export async function planTask(args: {
     };
   }
 
+  // Check if web search is available and if the query needs it
+  const hasWebSearch = isTavilyAvailable();
+  const queryClassification = classifyQueryType(args.userMessage);
+  const forceWebSearch = shouldForceWebSearch(args.userMessage);
+
+  // Pre-check: if query clearly needs web search and Tavily is available,
+  // bypass LLM planner for faster routing
+  if (hasWebSearch && (queryClassification.needsWebSearch || forceWebSearch)) {
+    console.log(`[PLANNER] web search needed (rule: ${queryClassification.matchedRule}) — hard-routing to web_search`);
+    return {
+      steps: [{ step: 1, tool: "web_search", input: args.userMessage }],
+    };
+  }
+
   const call = buildPlannerPrompt(
     args.userMessage,
     args.hasFileContext ?? false,
+    hasWebSearch,
     args.userId,
   );
 

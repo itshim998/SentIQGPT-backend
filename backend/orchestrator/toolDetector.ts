@@ -28,7 +28,8 @@ export type DetectedTool =
   | "knowledge_query"
   | "memory_update"
   | "chart_generation"
-  | "math_reasoning";
+  | "math_reasoning"
+  | "web_search";
 
 const VALID_TOOLS: ReadonlySet<string> = new Set<DetectedTool>([
   "normal_chat",
@@ -37,6 +38,7 @@ const VALID_TOOLS: ReadonlySet<string> = new Set<DetectedTool>([
   "knowledge_query",
   "memory_update",
   "chart_generation",
+  "web_search",
 ]);
 
 export interface ToolDetectionResult {
