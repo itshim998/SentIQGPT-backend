@@ -73,6 +73,10 @@ GUIDELINES:
 - If information is unclear or incomplete, say so
 - Keep the answer focused and relevant to the question
 - Use natural, conversational language
+- Format the answer in clean Markdown with short paragraphs
+- Use short headings or bullet points only when they improve readability
+- Do not dump raw snippets, repeated source titles, or long numbered lists of search results
+- Do not include a "Sources" section; links will be appended separately
 
 USER QUESTION: {query}
 
@@ -176,13 +180,39 @@ function generateFallbackAnswer(
     return "I couldn't find relevant information from web search. The search service may be temporarily unavailable.";
   }
 
-  // Generate a simple answer from snippets without LLM
-  const snippets = results
-    .slice(0, 3)
-    .map((r, i) => `${i + 1}. **${r.title}**: ${r.snippet?.slice(0, 200) ?? ""}`)
-    .join("\n\n");
+  const normalizeSnippet = (value: string | undefined, maxChars = 220): string => {
+    const cleaned = String(value || "")
+      .replace(/\s+/g, " ")
+      .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+      .trim();
+    if (!cleaned) return "";
+    return cleaned.length > maxChars
+      ? `${cleaned.slice(0, maxChars).trimEnd()}...`
+      : cleaned;
+  };
 
-  return `Here's what I found about "${query}":\n\n${snippets}\n\n*Note: This is a simplified summary. Full synthesis was not available.*`;
+  const summaryLead =
+    normalizeSnippet(results[0]?.snippet || results[0]?.body, 260) ||
+    `I found several relevant sources about ${query}.`;
+
+  const findings = results
+    .slice(0, 3)
+    .map((result) => {
+      const title = (result.title || "Untitled source").trim();
+      const snippet = normalizeSnippet(result.snippet || result.body, 200) || "Relevant reporting was found, but the preview text was limited.";
+      return `- **${title}**: ${snippet}`;
+    })
+    .join("\n");
+
+  return [
+    "### Web Summary",
+    summaryLead,
+    "",
+    "### Key Findings",
+    findings,
+    "",
+    "_This summary was generated from search result previews because full synthesis was unavailable._",
+  ].join("\n");
 }
 
 // ==============================
