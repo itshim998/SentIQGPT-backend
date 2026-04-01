@@ -61,7 +61,7 @@ const NO_SEARCH_PATTERNS: readonly RegExp[] = [
 /** Time-sensitive / current-events patterns — require a real-world signal */
 const REALTIME_PATTERNS: readonly RegExp[] = [
   // Current events — require an entity or topic alongside the time signal
-  /\b(?:latest|recent)\s+(?:\w+\s+){0,3}(?:announcements?|news|updates?|releases?|launches?)\b/i,
+  /\b(?:latest|recent|current)\s+(?:\w+\s+){0,3}(?:announcements?|news|updates?|releases?|launches?)\b/i,
   /\b(?:announcements?|news|updates?)\s+(?:from|on|about|by)\s+/i,
   /\b(?:who\s+won|who\s+is\s+winning|score\s+of|results?\s+of|standings?\s+of|live\s+score)\b/i,
   /\b(?:stock\s+price|share\s+price|market\s+cap|exchange\s+rate|bitcoin\s+price|crypto\s+price)\b/i,

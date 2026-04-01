@@ -67,5 +67,7 @@ services:
         sync: false
       - key: STABILITY_API_KEY
         sync: false
+      - key: TAVILY_KEYS
+        sync: false
       - key: CORS_ORIGINS
         value: "https://sentiqgpt.sentiqlabs.com"

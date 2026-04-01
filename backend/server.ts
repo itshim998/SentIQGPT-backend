@@ -36,7 +36,8 @@ import { getOrAssignUserDatabase } from "./dbRouter";
 import { orchestrate } from "./orchestrator/aiOrchestrator";
 
 import { detectCodeQuery, isMathQuery, selectModelForPrompt } from "./orchestrator/modelRouter";
-import { detectExplicitMemoryWriteIntent } from "./orchestrator/queryClassifier";
+import { detectExplicitMemoryWriteIntent, classifyQueryType, shouldForceWebSearch } from "./orchestrator/queryClassifier";
+import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
@@ -1400,6 +1401,73 @@ app.post(
       }
       return;
     }
+
+    // ── Safety gate: web search queries require real-time information ──
+    // If the query requires web search (e.g., "2026 NVIDIA news", "latest stock price"),
+    // redirect to orchestrator which handles the Tavily pipeline.
+    const queryClassification = classifyQueryType(parsed.data.message);
+    const forceWebSearch = shouldForceWebSearch(parsed.data.message);
+    const tavilyAvailable = isTavilyAvailable();
+    
+    // Diagnostic logging for web search routing
+    console.log(`[WebSearchCheck] query="${parsed.data.message.slice(0, 50)}..." needsWebSearch=${queryClassification.needsWebSearch} forceWebSearch=${forceWebSearch} tavilyAvailable=${tavilyAvailable} rule=${queryClassification.matchedRule} category=${queryClassification.category}`);
+    
+    if ((queryClassification.needsWebSearch || forceWebSearch) && tavilyAvailable) {
+      console.log(`[Stream] web search detected — redirecting to orchestrator (rule: ${queryClassification.matchedRule}, category: ${queryClassification.category})`);
+      let sseStarted = false;
+      try {
+        // Send SSE headers early so frontend can detect route before answer arrives
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        res.flushHeaders();
+        sseStarted = true;
+        // Emit route metadata so frontend can show "Searching..." indicator
+        writeSseEvent(JSON.stringify({ type: "route", route: "web_search" }));
+
+        const result = await orchestrate({
+          userMessage: parsed.data.message,
+          context: {
+            recent_messages: parsed.data.context?.recent_messages,
+            memories: parsed.data.context?.memories,
+            file_references: parsed.data.context?.file_references,
+            conversationId: activeConversationId || undefined,
+            userDb,
+            userId,
+          },
+        });
+        // Return as SSE stream so the frontend handles it uniformly
+        if (result.reply) {
+          // Stream the web search answer in chunks for smooth typing effect
+          const CHUNK_SIZE = 24;
+          for (let i = 0; i < result.reply.length; i += CHUNK_SIZE) {
+            const chunk = result.reply.slice(i, i + CHUNK_SIZE);
+            writeSseEvent(JSON.stringify({ type: "token", text: chunk }));
+          }
+        }
+        if (!clientDisconnected && result.reply) {
+          await persistAssistantMessage(result.reply);
+        }
+        if (!clientDisconnected) {
+          await persistStoredMemory(result.memory);
+        }
+        writeSseEvent("[DONE]");
+        finishSse();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Stream] web search orchestration failed: ${message}`);
+        if (sseStarted || res.headersSent) {
+          writeSseEvent(JSON.stringify({ type: "error", error: message }));
+          writeSseEvent("[DONE]");
+          finishSse();
+        } else {
+          res.status(500).json({ error: message });
+        }
+      }
+      return;
+    }
+
     const requestStart = Date.now();
     console.log(`[Latency] user query received`);
 
@@ -2055,6 +2123,10 @@ const server = app.listen(PORT, () => {
   console.log(`[SentIQGPT v2] Server running on port ${PORT}`);
   console.log(`[SentIQGPT v2] Architecture: Orchestrated Dual-Model (Gemini + Groq)`);
   console.log(`[SentIQGPT v2] LLM Service expected on port ${process.env.LLM_SERVICE_PORT || "3002"}`);
+  
+  // Log Tavily availability for debugging
+  const tavilyStatus = isTavilyAvailable();
+  console.log(`[SentIQGPT v2] Tavily Web Search: ${tavilyStatus ? "ENABLED" : "DISABLED (set TAVILY_KEYS in env)"}`);
 });
 
 // ---- Graceful shutdown ----
