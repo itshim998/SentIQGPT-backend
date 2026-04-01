@@ -77,6 +77,7 @@ GUIDELINES:
 - Use short headings or bullet points only when they improve readability
 - Do not dump raw snippets, repeated source titles, or long numbered lists of search results
 - Do not include a "Sources" section; links will be appended separately
+- Avoid echoing webpage chrome such as navigation labels, repeated headings, or stray "Title:" prefixes from extracted content
 
 USER QUESTION: {query}
 
@@ -181,10 +182,26 @@ function generateFallbackAnswer(
   }
 
   const normalizeSnippet = (value: string | undefined, maxChars = 220): string => {
-    const cleaned = String(value || "")
-      .replace(/\s+/g, " ")
+    const rawLines = String(value || "")
+      .replace(/\r\n?/g, "\n")
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/`([^`]+)`/g, "$1")
       .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+      .replace(/^\s*#{1,6}\s*/gm, "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !/^(?:home|menu|latest|browse|videos?|news|watch now|skip to content)$/i.test(line))
+      .map((line) => line.replace(/^(?:title|page title|summary title|web summary title|key findings?)\s*:\s*/i, ""));
+
+    const cleaned = rawLines
+      .join(" ")
+      .replace(/\s*#{1,6}\s+/g, " ")
+      .replace(/\b(?:title|page title|summary title|web summary title)\s*:\s*/gi, "")
+      .replace(/\b(?:Web Summary|Key Findings|Sources)\s*:\s*/gi, "")
+      .replace(/\s{2,}/g, " ")
       .trim();
+
     if (!cleaned) return "";
     return cleaned.length > maxChars
       ? `${cleaned.slice(0, maxChars).trimEnd()}...`
