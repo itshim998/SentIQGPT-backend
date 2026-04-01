@@ -3,11 +3,12 @@
 // Executes a structured plan produced by the Task Planner.
 // Runs each step sequentially, routing to the correct capability:
 //
-//   conversation    → ChatHandler (Gemini)
+//   conversation     → ChatHandler (Gemini)
 //   image_generation → Image Router (FLUX/HF/Pollinations)
 //   file_analysis    → ChatHandler + file context
 //   memory_update    → MemoryProcessor (force-store)
 //   chart_generation → ChartRouter (matplotlib / plotly / chart.js)
+//   web_search       → Tavily Search Pipeline (query expansion + LLM synthesis)
 //
 // Results from earlier steps are threaded into later steps as
 // additional context so the LLM can build on prior outputs.
@@ -20,6 +21,7 @@
 import { handleChat } from "../ai/ChatHandler";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
+import { executeTavilySearchPipeline } from "../tools/webSearch/tavilySearchPipeline";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
 import { DEFAULT_SOLVER_SYSTEM_PROMPT, solveMathDirect } from "../ai/mathVerifier";
 import type { BuiltContext } from "../context/contextBuilder";
@@ -85,6 +87,7 @@ const VALID_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
   "file_analysis",
   "memory_update",
   "chart_generation",
+  "web_search",
 ]);
 
 const MAX_EXEC_STEPS = 3;
@@ -241,6 +244,51 @@ async function execChartGeneration(
   };
 }
 
+async function execWebSearch(
+  input: string,
+): Promise<StepResult> {
+  console.log(`[WebSearch] executing Tavily pipeline for: "${input.slice(0, 60)}..."`);
+
+  try {
+    const result = await executeTavilySearchPipeline({
+      query: input,
+      maxResults: 8,
+      skipLLMSynthesis: false,
+    });
+
+    if (!result.success) {
+      console.log(`[WebSearch] pipeline failed: ${result.error}`);
+      return {
+        step: 0,
+        tool: "web_search",
+        reply: result.error ?? "Web search failed. Please try again.",
+        model_used: "tavily",
+        fallback: true,
+      };
+    }
+
+    console.log(`[WebSearch] pipeline success: ${result.results.length} results, ${result.queriesUsed} queries`);
+
+    return {
+      step: 0,
+      tool: "web_search",
+      reply: result.answer,
+      model_used: "gemini-fast",
+      fallback: false,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(`[WebSearch] error: ${message}`);
+    return {
+      step: 0,
+      tool: "web_search",
+      reply: "Web search is temporarily unavailable. Please try again later.",
+      model_used: "tavily",
+      fallback: true,
+    };
+  }
+}
+
 // ==============================
 // Public API
 // ==============================
@@ -286,6 +334,9 @@ export async function executePlan(
           break;
         case "chart_generation":
           result = await execChartGeneration(planStep.input);
+          break;
+        case "web_search":
+          result = await execWebSearch(planStep.input);
           break;
         case "conversation":
         default:

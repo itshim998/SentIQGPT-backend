@@ -1886,9 +1886,95 @@ app.post(
 );
 
 // ===============================
+// POST /api/search — Tavily Web Search Pipeline
+// ===============================
+import {
+  executeTavilySearchPipeline,
+  searchTavily,
+  getTavilyPipelineStatus,
+} from "./tools/webSearch/tavilySearchPipeline";
+
+/**
+ * Full web search pipeline with query expansion, parallel search,
+ * result aggregation, and LLM synthesis.
+ */
+app.post(
+  "/api/search",
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const { query, maxResults, skipLLMSynthesis } = req.body;
+
+    if (typeof query !== "string" || !query.trim()) {
+      res.status(400).json({ error: "Query is required." });
+      return;
+    }
+
+    console.log(`[API] /api/search - query: "${query.slice(0, 60)}..."`);
+
+    try {
+      const result = await executeTavilySearchPipeline({
+        query: query.trim(),
+        maxResults: typeof maxResults === "number" ? maxResults : undefined,
+        skipLLMSynthesis: skipLLMSynthesis === true,
+      });
+
+      res.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[API] /api/search error: ${message}`);
+      res.status(500).json({
+        success: false,
+        query,
+        error: "Web search is temporarily unavailable.",
+        results: [],
+        sources: [],
+        queriesUsed: 0,
+      });
+    }
+  }),
+);
+
+/**
+ * Simple direct Tavily search without pipeline features.
+ */
+app.post(
+  "/api/search/simple",
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const { query, maxResults } = req.body;
+
+    if (typeof query !== "string" || !query.trim()) {
+      res.status(400).json({ error: "Query is required." });
+      return;
+    }
+
+    try {
+      const result = await searchTavily(
+        query.trim(),
+        typeof maxResults === "number" ? maxResults : 5
+      );
+
+      res.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ success: false, results: [], error: message });
+    }
+  }),
+);
+
+/**
+ * GET /api/search/status — Check Tavily pipeline health
+ */
+app.get("/api/search/status", (_req, res) => {
+  const status = getTavilyPipelineStatus();
+  res.json(status);
+});
+
+// ===============================
 // GET /api/config — Server capabilities
 // ===============================
 app.get("/api/config", (_req, res) => {
+  const searchStatus = getTavilyPipelineStatus();
   res.json({
     version: "2.0.0",
     architecture: "orchestrated-dual-model",
@@ -1909,6 +1995,7 @@ app.get("/api/config", (_req, res) => {
       knowledge_query: true,
       memory_update: true,
       text_selection_tool: true,
+      web_search: searchStatus.available,
     },
     limits: {
       max_message_length: 10000,

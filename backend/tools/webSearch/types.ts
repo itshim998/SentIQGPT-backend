@@ -13,9 +13,11 @@ export interface SearchResult {
   readonly body?: string;
   /** Which provider produced this result. */
   readonly source: SearchSource;
+  /** Relevance score (0-1) from providers that support it (e.g., Tavily). */
+  readonly score?: number;
 }
 
-export type SearchSource = "duckduckgo_api" | "duckduckgo_html" | "wikipedia";
+export type SearchSource = "duckduckgo_api" | "duckduckgo_html" | "wikipedia" | "tavily";
 
 /**
  * Contract every search provider must satisfy.
