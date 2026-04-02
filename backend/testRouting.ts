@@ -1,4 +1,4 @@
-import { detectCodeQuery, detectMathReasoning, selectModelForPrompt } from "./orchestrator/modelRouter";
+import { detectCodeQuery, detectMathReasoning, selectModelForPrompt, isCodingPDF } from "./orchestrator/modelRouter";
 
 type RoutingCase = {
   name: string;
@@ -6,6 +6,7 @@ type RoutingCase = {
   expectCode: boolean;
   expectMath: boolean;
   expectedModel: string;
+  options?: { hasFile?: boolean; hasImage?: boolean; fileNames?: string[]; fileContent?: string };
 };
 
 const cases: readonly RoutingCase[] = [
@@ -31,11 +32,27 @@ const cases: readonly RoutingCase[] = [
     expectedModel: "minimax",
   },
   {
-    name: "Normal chat routes to gemini-fast",
+    name: "Normal chat routes to mistral",
     query: "Tell me a short story about spring rain.",
     expectCode: false,
     expectMath: false,
+    expectedModel: "mistral",
+  },
+  {
+    name: "File upload (non-coding) routes to gemini-fast",
+    query: "Summarize this document",
+    expectCode: false,
+    expectMath: false,
     expectedModel: "gemini-fast",
+    options: { hasFile: true, fileNames: ["report.pdf"], fileContent: "This is a business report about Q4 earnings." },
+  },
+  {
+    name: "Coding PDF routes to qwen-coder",
+    query: "Explain the code in this PDF",
+    expectCode: false,
+    expectMath: false,
+    expectedModel: "qwen-coder",
+    options: { hasFile: true, fileNames: ["python-tutorial.pdf"], fileContent: "def hello_world():\n    print('Hello')" },
   },
 ];
 
@@ -44,7 +61,7 @@ let failed = 0;
 for (const testCase of cases) {
   const codeDetected = detectCodeQuery(testCase.query);
   const mathDetected = detectMathReasoning(testCase.query);
-  const model = selectModelForPrompt(testCase.query);
+  const model = selectModelForPrompt(testCase.query, undefined, testCase.options);
 
   const passed =
     codeDetected === testCase.expectCode &&
@@ -58,6 +75,23 @@ for (const testCase of cases) {
   if (!passed) {
     failed += 1;
   }
+}
+
+// Additional test for isCodingPDF function
+console.log("\n--- Coding PDF Detection Tests ---");
+const codingPdfTests = [
+  { names: ["python-tutorial.pdf"], content: "", expected: true },
+  { names: ["algorithm-guide.pdf"], content: "", expected: true },
+  { names: ["business-report.pdf"], content: "", expected: false },
+  { names: ["document.pdf"], content: "def foo():\n  return 42", expected: true },
+  { names: ["notes.pdf"], content: "Meeting notes for Q4", expected: false },
+];
+
+for (const test of codingPdfTests) {
+  const result = isCodingPDF(test.names, test.content);
+  const passed = result === test.expected;
+  console.log(`${passed ? "PASS" : "FAIL"} | isCodingPDF(${test.names[0]}) = ${result}, expected ${test.expected}`);
+  if (!passed) failed++;
 }
 
 if (failed > 0) {

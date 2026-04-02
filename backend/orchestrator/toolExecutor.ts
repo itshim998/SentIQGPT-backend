@@ -125,7 +125,17 @@ async function execConversation(
   }
 
   // ── Standard conversation path ──
-  const modelOverride = selectModelForPrompt(input);
+  // Pass file context to router for coding PDF detection
+  const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
+  const fileNames = hasFiles ? ctx.fileReferences.map((f) => f.filename) : undefined;
+  const fileContent = hasFiles ? ctx.fileReferences.map((f) => f.extractedText).join("\n") : undefined;
+  
+  const modelOverride = selectModelForPrompt(input, undefined, {
+    hasFile: hasFiles,
+    fileNames,
+    fileContent,
+  });
+  
   const result = await handleChat({
     userMessage: augmentedInput,
     recentMessages: ctx.recentMessages,
@@ -169,7 +179,17 @@ async function execFileAnalysis(
   ctx: BuiltContext,
   priorContext: string,
 ): Promise<StepResult> {
-  const modelOverride = selectModelForPrompt(input);
+  // Pass file context to router for coding PDF detection
+  const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
+  const fileNames = hasFiles ? ctx.fileReferences.map((f) => f.filename) : undefined;
+  const fileContent = hasFiles ? ctx.fileReferences.map((f) => f.extractedText).join("\n") : undefined;
+  
+  const modelOverride = selectModelForPrompt(input, undefined, {
+    hasFile: hasFiles,
+    fileNames,
+    fileContent,
+  });
+  
   const augmentedInput = priorContext
     ? `${input}\n\n[Previous step context]: ${priorContext}`
     : input;

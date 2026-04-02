@@ -1487,7 +1487,16 @@ app.post(
     );
     if (hasFile) console.log(`[File] stream: ${fileRefs.length} file(s) in context, hasImage: ${hasImage}`);
 
-    const modelOverride = selectModelForPrompt(parsed.data.message, undefined, { hasImage, hasFile });
+    // Extract file names and content for coding PDF detection
+    const fileNames = hasFile ? fileRefs.map((f: { filename?: string }) => f.filename || "") : undefined;
+    const fileContent = hasFile ? fileRefs.map((f: { extractedText?: string }) => f.extractedText || "").join("\n") : undefined;
+
+    const modelOverride = selectModelForPrompt(parsed.data.message, undefined, { 
+      hasImage, 
+      hasFile,
+      fileNames,
+      fileContent,
+    });
 
     // ── FAST context build (NO LLM calls, minimal latency) ──
     // Use buildContextFast which skips conversation compression for speed.

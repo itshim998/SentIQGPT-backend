@@ -4,10 +4,12 @@
 // detected capabilities. Regex-only - no LLM calls.
 //
 // Detection priority (first match wins):
-//   1. vision          -> gemini (Gemini vision-capable model)
-//   2. coding          -> qwen-coder (Pollinations)
-//   3. math_reasoning  -> minimax (Pollinations)
-//   4. general_chat    -> gemini-fast (Pollinations)
+//   1. vision              -> gemini-vision (Gemini vision-capable model)
+//   2. file (coding PDF)   -> qwen-coder (Pollinations) - coding PDFs get code model
+//   3. file (non-coding)   -> gemini-fast (Pollinations) - preserve file pipeline
+//   4. coding              -> qwen-coder (Pollinations)
+//   5. math_reasoning      -> minimax (Pollinations)
+//   6. general_chat        -> mistral (Pollinations) - human-like conversations
 //
 // Gemini direct API is NEVER selected by the router.
 // It is a last-resort fallback handled by the Python gateway.
@@ -18,7 +20,9 @@ export type PromptModelCategory =
   | "coding"
   | "vision"
   | "math_reasoning"
-  | "general_chat";
+  | "general_chat"
+  | "file_coding"
+  | "file_general";
 
 // Coding detection must run before math detection so debugging prompts
 // do not get intercepted by the math pipeline.
@@ -326,6 +330,91 @@ const VISION_PATTERNS: readonly RegExp[] = [
 interface RouterOptions {
   hasImage?: boolean;
   hasFile?: boolean;
+  /** Extracted text content from uploaded files (for coding PDF detection) */
+  fileContent?: string;
+  /** Filenames of uploaded files (for coding PDF detection) */
+  fileNames?: string[];
+}
+
+// ==============================
+// Coding PDF Detection
+// ==============================
+
+/** Patterns indicating a PDF contains programming/coding content */
+const PDF_CODING_FILENAME_PATTERNS: readonly RegExp[] = [
+  /code/i,
+  /programming/i,
+  /algorithm/i,
+  /data\s*struct/i,
+  /software/i,
+  /developer/i,
+  /python/i,
+  /java(?:script)?/i,
+  /typescript/i,
+  /c\+\+/i,
+  /rust/i,
+  /golang/i,
+  /react/i,
+  /angular/i,
+  /vue/i,
+  /node/i,
+  /api/i,
+  /backend/i,
+  /frontend/i,
+  /fullstack/i,
+  /leetcode/i,
+  /hackerrank/i,
+  /coding/i,
+  /tutorial/i,
+  /cheatsheet/i,
+  /documentation/i,
+  /reference/i,
+];
+
+/**
+ * Detects if uploaded PDF content is coding-related.
+ * Checks both filename patterns and extracted text content.
+ */
+export function isCodingPDF(fileNames?: string[], fileContent?: string): boolean {
+  // Check filenames for coding indicators
+  if (fileNames && fileNames.length > 0) {
+    for (const name of fileNames) {
+      const lowerName = name.toLowerCase();
+      // Only check PDFs
+      if (!lowerName.endsWith(".pdf")) continue;
+      
+      for (const pattern of PDF_CODING_FILENAME_PATTERNS) {
+        if (pattern.test(lowerName)) {
+          console.log(`[Router] coding PDF detected by filename: ${name}`);
+          return true;
+        }
+      }
+    }
+  }
+
+  // Check extracted content for code patterns
+  if (fileContent && fileContent.length > 0) {
+    // Use existing code detection on file content
+    if (detectCodeQuery(fileContent)) {
+      console.log("[Router] coding PDF detected by content analysis");
+      return true;
+    }
+
+    // Additional PDF-specific code indicators (more lenient for extracted text)
+    const codeIndicatorCount = countMatches(fileContent, [
+      ...CODE_LANGUAGE_PATTERNS,
+      ...CODE_SYNTAX_PATTERNS,
+      ...GENERIC_CODING_PATTERNS,
+    ]);
+    
+    // If multiple code indicators found in PDF content, treat as coding PDF
+    if (codeIndicatorCount >= 3) {
+      console.log(`[Router] coding PDF detected by indicator count: ${codeIndicatorCount}`);
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function detectPromptCategory(
@@ -335,6 +424,7 @@ function detectPromptCategory(
 ): PromptModelCategory {
   void classification;
 
+  // Priority 1: Vision (images)
   if (options?.hasImage) {
     return "vision";
   }
@@ -345,19 +435,29 @@ function detectPromptCategory(
     }
   }
 
+  // Priority 2 & 3: Files (coding PDFs vs general files)
+  // File override takes HIGHEST priority after vision
   if (options?.hasFile) {
-    console.log("[Router] file_input_detected -> gemini-fast");
-    return "general_chat";
+    // Check if the PDF is coding-related
+    if (isCodingPDF(options.fileNames, options.fileContent)) {
+      console.log("[Router] file_input_detected (coding PDF) -> qwen-coder");
+      return "file_coding";
+    }
+    console.log("[Router] file_input_detected (non-coding) -> gemini-fast");
+    return "file_general";
   }
 
+  // Priority 4: Coding queries (no files)
   if (detectCodeQuery(query)) {
     return "coding";
   }
 
+  // Priority 5: Math queries
   if (isMathQuery(query)) {
     return "math_reasoning";
   }
 
+  // Priority 6: General chat (default) -> mistral for human-like conversations
   return "general_chat";
 }
 
@@ -374,6 +474,14 @@ export function selectModelForPrompt(
       model = "gemini-vision";
       console.log("[Router] category=vision -> gemini-vision");
       break;
+    case "file_coding":
+      model = "qwen-coder";
+      console.log("[Router] category=file_coding -> qwen-coder");
+      break;
+    case "file_general":
+      model = "gemini-fast";
+      console.log("[Router] category=file_general -> gemini-fast");
+      break;
     case "coding":
       model = "qwen-coder";
       console.log("[Router] category=coding -> qwen-coder");
@@ -384,13 +492,14 @@ export function selectModelForPrompt(
       break;
     case "general_chat":
     default:
-      model = "gemini-fast";
-      console.log("[Router] category=general_chat -> gemini-fast");
+      model = "mistral";
+      console.log("[Router] category=general_chat -> mistral");
       break;
   }
 
+  const provider = category === "vision" ? "gemini" : "pollinations";
   console.log(
-    `[Router] selected model=${model} provider=${category === "vision" ? "gemini" : "pollinations"} category=${category} query="${query.slice(0, 60)}..."`,
+    `[Router] selected model=${model} provider=${provider} category=${category} query="${query.slice(0, 60)}..."`,
   );
   return model;
 }
