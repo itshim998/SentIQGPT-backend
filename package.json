@@ -1,14 +1,14 @@
 {
-  "name": "sentiqgpt-backend",
+  "name": "sentiqgpt",
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.backend.json",
     "start": "node dist/backend/server.js",
-    "dev": "ts-node backend/server.ts",
+    "dev": "ts-node --project tsconfig.backend.json backend/server.ts",
     "llm-service": "python backend/llm_service.py",
     "dev:all": "concurrently \"npm run dev\" \"npm run llm-service\"",
-    "test:pipeline": "ts-node backend/testPipeline.ts"
+    "test:pipeline": "ts-node --project tsconfig.backend.json backend/testPipeline.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0",

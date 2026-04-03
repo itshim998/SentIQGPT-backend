@@ -5,10 +5,10 @@
 
 # Dependencies
 node_modules/
-package-lock.json
 
 # Build output
 dist/
+.next/
 
 # Python
 __pycache__/
@@ -22,7 +22,7 @@ venv/
 *.db
 sentiq_cache.db*
 
-# Frontend — tracked in this repo (serve via backend static middleware or deploy separately)
+# Frontend - deployed separately
 frontend/
 healthiq_frontend.html
 
