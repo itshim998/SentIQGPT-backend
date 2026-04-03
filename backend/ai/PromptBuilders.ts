@@ -109,6 +109,18 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
 
   if (!response.ok) {
     const text = await response.text();
+    // Check for safety violation response
+    try {
+      const errorData = JSON.parse(text) as { detail?: { status?: string; reason?: string } | string };
+      if (typeof errorData.detail === "object" && errorData.detail?.status === "blocked" && errorData.detail?.reason === "safety_violation") {
+        throw new Error("Message rejected by safety filter.");
+      }
+    } catch (parseError) {
+      // If it's not JSON or not a safety error, throw the original error
+      if ((parseError as Error).message === "Message rejected by safety filter.") {
+        throw parseError;
+      }
+    }
     throw new Error(`LLM service error (${response.status}): ${text}`);
   }
 
@@ -172,6 +184,18 @@ export async function callLLMAdapterStream(
 
   if (!response.ok) {
     const text = await response.text();
+    // Check for safety violation response
+    try {
+      const errorData = JSON.parse(text) as { detail?: { status?: string; reason?: string } | string };
+      if (typeof errorData.detail === "object" && errorData.detail?.status === "blocked" && errorData.detail?.reason === "safety_violation") {
+        throw new Error("Message rejected by safety filter.");
+      }
+    } catch (parseError) {
+      // If it's not JSON or not a safety error, throw the original error
+      if ((parseError as Error).message === "Message rejected by safety filter.") {
+        throw parseError;
+      }
+    }
     throw new Error(`LLM stream error (${response.status}): ${text}`);
   }
 
@@ -189,6 +213,10 @@ export async function callLLMAdapterStream(
   > = [];
 
   function enqueueEventBlock(block: string): void {
+    // Check for event: error format (from safety monitor)
+    const eventMatch = block.match(/^event:\s*(\w+)/m);
+    const eventType = eventMatch?.[1];
+    
     const dataLines: string[] = [];
     for (const rawLine of block.split(/\r?\n/)) {
       if (!rawLine.startsWith("data:")) continue;
@@ -206,7 +234,15 @@ export async function callLLMAdapterStream(
     }
 
     try {
-      const parsed = JSON.parse(payload) as { text?: string; error?: string };
+      const parsed = JSON.parse(payload) as { text?: string; error?: string; message?: string };
+      
+      // Handle safety violation from output guard (event: error format)
+      if (eventType === "error" || parsed.message?.includes("safety")) {
+        const errorMessage = parsed.message || parsed.error || "Response blocked due to safety concerns";
+        eventQueue.push({ type: "error", error: errorMessage });
+        return;
+      }
+      
       if (parsed.error) {
         eventQueue.push({ type: "error", error: parsed.error });
         return;

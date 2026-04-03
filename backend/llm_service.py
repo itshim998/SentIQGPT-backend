@@ -42,6 +42,13 @@ from llm_adapter import (
     GEMINI_MODEL,
     GROQ_MODEL,
     STRICT_JSON_TASKS,
+    # Safety model imports
+    call_safety_model,
+    is_safe_content,
+    SafetyResult,
+    SAFETY_TIMEOUT,
+    SAFETY_OUTPUT_TIMEOUT,
+    SAFETY_BUFFER_SIZE,
 )
 
 # --- Logger ---
@@ -64,6 +71,97 @@ USER_DB_CACHE_TTL_SECONDS = 300
 
 _user_db_cache_lock = threading.Lock()
 _user_db_cache: dict[str, tuple[int, float]] = {}
+
+# ============================
+# Safety Audit Log (In-Memory)
+# ============================
+# Circular buffer of safety violations for review
+
+class SafetyAuditEntry:
+    def __init__(
+        self,
+        timestamp: str,
+        check_type: str,
+        classification: str,
+        user_id: str,
+        text_preview: str,
+        raw_response: str,
+        endpoint: str,
+    ):
+        self.timestamp = timestamp
+        self.check_type = check_type
+        self.classification = classification
+        self.user_id = user_id
+        self.text_preview = text_preview
+        self.raw_response = raw_response
+        self.endpoint = endpoint
+
+MAX_SAFETY_AUDIT_ENTRIES = 500
+_safety_audit_entries: list[SafetyAuditEntry] = []
+_safety_audit_lock = threading.Lock()
+
+
+def log_safety_violation(
+    check_type: str,
+    classification: str,
+    user_id: str,
+    text: str,
+    raw_response: str,
+    endpoint: str,
+) -> None:
+    """Log a safety check result to the in-memory audit log."""
+    from datetime import datetime
+    entry = SafetyAuditEntry(
+        timestamp=datetime.utcnow().isoformat() + "Z",
+        check_type=check_type,
+        classification=classification,
+        user_id=user_id or "unknown",
+        text_preview=text[:200] + "..." if len(text) > 200 else text,
+        raw_response=raw_response[:100] if raw_response else "",
+        endpoint=endpoint,
+    )
+    with _safety_audit_lock:
+        _safety_audit_entries.append(entry)
+        if len(_safety_audit_entries) > MAX_SAFETY_AUDIT_ENTRIES:
+            _safety_audit_entries.pop(0)
+    logger.info(
+        "[SafetyAudit] %s check=%s classification=%s user=%s endpoint=%s",
+        entry.timestamp,
+        check_type,
+        classification,
+        user_id,
+        endpoint,
+    )
+
+
+def get_safety_audit_entries(limit: int = 50) -> list[dict]:
+    """Get recent safety audit entries."""
+    with _safety_audit_lock:
+        entries = _safety_audit_entries[-limit:]
+    return [
+        {
+            "timestamp": e.timestamp,
+            "check_type": e.check_type,
+            "classification": e.classification,
+            "user_id": e.user_id,
+            "text_preview": e.text_preview,
+            "endpoint": e.endpoint,
+        }
+        for e in reversed(entries)
+    ]
+
+
+def check_input_safety(prompt: str, user_id: str, endpoint: str) -> tuple[bool, str, str]:
+    """Check if input is safe. Returns (is_safe, classification, raw_response)."""
+    classification, raw_response = call_safety_model(prompt, check_type="input")
+    
+    # Log all UNSAFE hits (and optionally CONTROVERSIAL for review)
+    if classification == SafetyResult.UNSAFE:
+        log_safety_violation("input", classification, user_id, prompt, raw_response, endpoint)
+    
+    is_safe = classification != SafetyResult.UNSAFE
+    return is_safe, classification, raw_response
+
 
 # ============================
 # FastAPI Application
@@ -431,6 +529,17 @@ async def invoke_llm(request: LLMInvokeRequest):
             assigned_db = reserve_llm_request_slot(user_id)
             effective_model_override = request.model_override
             logger.info("[invoke] quota_reserved user_id=%s db=%s task=%s", user_id, assigned_db, request.task)
+        
+        # ── INPUT SAFETY GUARD ──
+        # Check user prompt for safety violations before calling primary model
+        is_safe, classification, _ = check_input_safety(request.prompt, user_id, "/llm/invoke")
+        if not is_safe:
+            logger.warning("[Safety] Input blocked for user=%s classification=%s", user_id, classification)
+            raise HTTPException(
+                status_code=400,
+                detail={"status": "blocked", "reason": "safety_violation"},
+            )
+        
         result = call_llm_router(
             prompt=request.prompt,
             task=request.task,
@@ -450,9 +559,89 @@ async def invoke_llm(request: LLMInvokeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class StreamingSafetyMonitor:
+    """Background monitor that checks accumulated tokens for safety violations.
+    
+    Designed to be non-blocking: checks happen in a background thread and
+    only terminate the stream if UNSAFE content is detected.
+    """
+    def __init__(self, user_id: str, buffer_size: int = SAFETY_BUFFER_SIZE):
+        self.user_id = user_id
+        self.buffer_size = buffer_size
+        self.accumulated_text = ""
+        self.token_count = 0
+        self.violation_detected = False
+        self.violation_reason = ""
+        self._check_thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+        self._checking = False
+    
+    def add_token(self, token: str) -> bool:
+        """Add a token to the buffer. Returns True if safe to continue, False if violated."""
+        if self.violation_detected:
+            return False
+        
+        with self._lock:
+            self.accumulated_text += token
+            self.token_count += 1
+            
+            # Trigger background check every buffer_size tokens
+            if self.token_count % self.buffer_size == 0 and not self._checking:
+                self._trigger_background_check()
+        
+        return not self.violation_detected
+    
+    def _trigger_background_check(self) -> None:
+        """Start a background safety check (non-blocking)."""
+        self._checking = True
+        text_to_check = self.accumulated_text
+        
+        def check():
+            try:
+                classification, raw = call_safety_model(
+                    text_to_check,
+                    timeout=SAFETY_OUTPUT_TIMEOUT,
+                    check_type="output",
+                )
+                if classification == SafetyResult.UNSAFE:
+                    with self._lock:
+                        self.violation_detected = True
+                        self.violation_reason = f"Output safety violation: {classification}"
+                    log_safety_violation(
+                        "output", classification, self.user_id,
+                        text_to_check, raw, "/llm/stream"
+                    )
+            except Exception as e:
+                logger.warning("[SafetyMonitor] Background check failed: %s", e)
+            finally:
+                with self._lock:
+                    self._checking = False
+        
+        self._check_thread = threading.Thread(target=check, daemon=True)
+        self._check_thread.start()
+    
+    def is_violated(self) -> bool:
+        """Check if a safety violation has been detected."""
+        return self.violation_detected
+
+
 @app.post("/llm/stream")
 async def stream_llm(request: LLMInvokeRequest):
     """SSE streaming endpoint for provider responses as text/event-stream."""
+    
+    # ── INPUT SAFETY GUARD (pre-check before streaming) ──
+    user_id_for_safety = request.user_id or GUEST_USER_ID
+    is_safe, classification, _ = check_input_safety(request.prompt, user_id_for_safety, "/llm/stream")
+    if not is_safe:
+        logger.warning("[Safety] Stream input blocked for user=%s classification=%s", user_id_for_safety, classification)
+        raise HTTPException(
+            status_code=400,
+            detail={"status": "blocked", "reason": "safety_violation"},
+        )
+    
+    # Check if this is a chart-related task (exempt from output guard)
+    is_chart_task = request.task in {"chart", "chart_generate", "chart_generation"}
+    
     def event_generator():
         try:
             if is_guest_user(request.user_id):
@@ -464,12 +653,25 @@ async def stream_llm(request: LLMInvokeRequest):
                 assigned_db = reserve_llm_request_slot(user_id)
                 effective_model_override = request.model_override
                 logger.info("[stream] quota_reserved user_id=%s db=%s task=%s", user_id, assigned_db, request.task)
+            
+            # ── OUTPUT SAFETY MONITOR ──
+            # Skip for chart generation to prevent false positives on code/data
+            safety_monitor = None if is_chart_task else StreamingSafetyMonitor(user_id)
+            
             for chunk in stream_llm_router(
                 prompt=request.prompt,
                 task=request.task,
                 model_override=effective_model_override,
                 user_id=user_id,
             ):
+                # Check output safety (if monitor active)
+                if safety_monitor:
+                    if not safety_monitor.add_token(chunk):
+                        # Safety violation detected — terminate stream
+                        logger.warning("[Safety] Output violation detected — terminating stream")
+                        yield f"event: error\ndata: {json.dumps({'message': 'Response blocked due to safety concerns'})}\n\n"
+                        return
+                
                 # SSE format: data: <text>\n\n
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
             yield "data: [DONE]\n\n"
@@ -662,6 +864,40 @@ async def render_chart(request: ChartRenderRequest):
     except Exception as e:
         logger.error("Chart render error: %s", e)
         return {"preview": None, "error": str(e)}
+
+
+# ============================
+# Safety audit endpoint
+# ============================
+
+@app.get("/llm/safety/audit")
+async def get_safety_audit(limit: int = 50):
+    """Get recent safety audit entries for review."""
+    return {
+        "entries": get_safety_audit_entries(min(limit, MAX_SAFETY_AUDIT_ENTRIES)),
+        "max_entries": MAX_SAFETY_AUDIT_ENTRIES,
+    }
+
+
+@app.get("/llm/safety/health")
+async def safety_health():
+    """Check if the safety model is accessible."""
+    try:
+        # Quick test call with innocuous input
+        classification, raw = call_safety_model("Hello, how are you?", timeout=5, check_type="input")
+        return {
+            "status": "ok",
+            "safety_model": "qwen-safety",
+            "test_classification": classification,
+            "test_response_preview": raw[:50] if raw else None,
+        }
+    except Exception as e:
+        return {
+            "status": "degraded",
+            "safety_model": "qwen-safety",
+            "error": str(e),
+            "note": "Safety checks will default to SAFE on failure",
+        }
 
 
 if __name__ == "__main__":
