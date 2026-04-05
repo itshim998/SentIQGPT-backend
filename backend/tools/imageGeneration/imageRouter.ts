@@ -10,7 +10,7 @@
 //   4. Z-Image Turbo              (Pollinations fallback)
 //
 // Provider chain (complex):
-//   1. gptimage                   (complex prompt primary)
+//   1. wan-image                 (complex prompt primary)
 //   2. zimage                     (fallback)
 //   3. FLUX.2 Dev                 (fallback)
 //   4. HuggingFace SDXL           (fallback)
@@ -50,7 +50,7 @@ const standardProviders: readonly ImageProvider[] = [
 
 // Complex providers (text, spatial, multi-element prompts)
 const complexProviders: readonly ImageProvider[] = [
-  new GptImageProvider(),         // 1. gptimage (complex prompt primary)
+  new GptImageProvider(),         // 1. wan-image (complex prompt primary)
   new ZimageProvider(),           // 2. zimage (fallback)
   new FluxDevProvider(),          // 3. FLUX.2 Dev (fallback)
   new HuggingFaceProvider(),      // 4. HuggingFace SDXL (fallback)
