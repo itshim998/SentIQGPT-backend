@@ -142,6 +142,21 @@ function formatZodError(err: ZodError): string {
 const GUEST_USER_ID = "guest";
 const GUEST_MODEL_OVERRIDE = "gemini-fast";
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// CAPACITY LIMITS (enforced per user to keep DBs under 95% usage)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Maximum conversations per user. When exceeded, oldest conversation is deleted.
+ */
+const MAX_CONVERSATIONS_PER_USER = 50;
+
+/**
+ * Maximum memory storage per user in bytes (25 KB).
+ * Memories exceeding this are rejected.
+ */
+const MAX_MEMORY_BYTES_PER_USER = 25 * 1024; // 25 KB
+
 async function getVerifiedUserId(req: Request): Promise<string> {
   const authHeader = req.header("Authorization") || req.header("authorization") || "";
   const bearerPrefix = "Bearer ";
@@ -325,12 +340,80 @@ async function getOwnedConversationOrThrow(
   return data as ConversationRow;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONVERSATION LIMIT ENFORCEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Enforces the max conversations per user limit.
+ * If user has >= MAX_CONVERSATIONS_PER_USER, deletes the oldest conversation(s)
+ * to make room for a new one.
+ * 
+ * Called BEFORE creating a new conversation.
+ */
+async function enforceConversationLimit(
+  userDb: any,
+  userId: string,
+  scope: string,
+): Promise<void> {
+  logDbEvent(`${scope}.conversation-limit.check`, userId);
+
+  // Get all conversations for the user, ordered by created_at ascending (oldest first)
+  const { data: conversations, error: listError } = await userDb
+    .from("conversations")
+    .select("id, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true });
+
+  if (listError) {
+    // Non-fatal: if we can't check, proceed with creation
+    console.warn(`[SentIQGPT][db] ${scope}.conversation-limit.list-failed userId=${userId} error=${listError.message}`);
+    return;
+  }
+
+  const conversationCount = conversations?.length ?? 0;
+  
+  if (conversationCount < MAX_CONVERSATIONS_PER_USER) {
+    logDbEvent(`${scope}.conversation-limit.ok`, userId, { count: conversationCount, limit: MAX_CONVERSATIONS_PER_USER });
+    return;
+  }
+
+  // Need to delete oldest conversation(s) to make room
+  const toDelete = conversationCount - MAX_CONVERSATIONS_PER_USER + 1; // +1 to make room for new one
+  const conversationsToDelete = conversations.slice(0, toDelete);
+
+  logDbEvent(`${scope}.conversation-limit.enforce`, userId, {
+    count: conversationCount,
+    limit: MAX_CONVERSATIONS_PER_USER,
+    deleting: toDelete,
+  });
+
+  for (const conv of conversationsToDelete) {
+    const { error: deleteError } = await userDb
+      .from("conversations")
+      .delete()
+      .eq("id", conv.id)
+      .eq("user_id", userId);
+
+    if (deleteError) {
+      console.warn(
+        `[SentIQGPT][db] ${scope}.conversation-limit.delete-failed userId=${userId} conversationId=${conv.id} error=${deleteError.message}`
+      );
+    } else {
+      logDbEvent(`${scope}.conversation-limit.deleted`, userId, { conversationId: conv.id });
+    }
+  }
+}
+
 async function createConversationOrThrow(
   userDb: any,
   userId: string,
   scope: string,
   title = "New Chat",
 ): Promise<ConversationListRow> {
+  // Enforce conversation limit before creating new one
+  await enforceConversationLimit(userDb, userId, scope);
+
   logDbEvent(`${scope}.conversation-create.start`, userId, { title });
   const startedAt = Date.now();
   const { data, error } = await userDb
@@ -374,12 +457,79 @@ async function insertConversationMessageOrThrow(
   logDbEvent(`${scope}.message-insert.ok`, userId, { conversationId, role });
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// MEMORY STORAGE LIMIT ENFORCEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Calculates the approximate storage size of a user's memories in bytes.
+ * Uses the summary field length as the primary storage indicator.
+ */
+async function calculateUserMemorySize(
+  userDb: any,
+  userId: string,
+): Promise<number> {
+  const { data: memories, error } = await userDb
+    .from("memories")
+    .select("summary")
+    .eq("user_id", userId);
+
+  if (error || !memories) {
+    return 0;
+  }
+
+  // Calculate total bytes from all summaries (UTF-8 encoding approximation)
+  let totalBytes = 0;
+  for (const memory of memories) {
+    if (memory.summary) {
+      // Use TextEncoder for accurate byte count (handles UTF-8 properly)
+      totalBytes += new TextEncoder().encode(memory.summary).length;
+    }
+  }
+
+  return totalBytes;
+}
+
+/**
+ * Checks if adding a new memory would exceed the user's memory storage limit.
+ * Throws an error if limit would be exceeded.
+ */
+async function enforceMemoryLimit(
+  userDb: any,
+  userId: string,
+  newMemorySummary: string,
+  scope: string,
+): Promise<void> {
+  const currentBytes = await calculateUserMemorySize(userDb, userId);
+  const newMemoryBytes = new TextEncoder().encode(newMemorySummary || "").length;
+  const projectedBytes = currentBytes + newMemoryBytes;
+
+  logDbEvent(`${scope}.memory-limit.check`, userId, {
+    current_kb: (currentBytes / 1024).toFixed(2),
+    new_kb: (newMemoryBytes / 1024).toFixed(2),
+    projected_kb: (projectedBytes / 1024).toFixed(2),
+    limit_kb: (MAX_MEMORY_BYTES_PER_USER / 1024).toFixed(2),
+  });
+
+  if (projectedBytes > MAX_MEMORY_BYTES_PER_USER) {
+    const currentKb = (currentBytes / 1024).toFixed(2);
+    const limitKb = (MAX_MEMORY_BYTES_PER_USER / 1024).toFixed(2);
+    throw new Error(
+      `Memory storage limit exceeded. Current: ${currentKb}KB, Limit: ${limitKb}KB. ` +
+      `Delete some memories to add new ones.`
+    );
+  }
+}
+
 async function insertMemoryOrThrow(
   userDb: any,
   userId: string,
   memory: { type?: string; summary?: string; importance?: number; scope?: MemoryScope; chat_id?: string | null },
   scope: string,
 ): Promise<MemoryRow> {
+  // Enforce memory storage limit before inserting
+  await enforceMemoryLimit(userDb, userId, memory.summary ?? "", scope);
+
   logDbEvent(`${scope}.memory-insert.start`, userId, { type: memory.type || null });
   const normalizedScope: MemoryScope = memory.scope === "chat" ? "chat" : "global";
   const { data, error } = await userDb
