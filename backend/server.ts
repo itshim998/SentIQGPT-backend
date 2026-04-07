@@ -1975,9 +1975,9 @@ app.post(
     }
 
     // Get user's database client
-    const { client: userDb, dbNumber, error: dbError } = await getOrAssignUserDatabase(userId);
-    if (dbError || !userDb) {
-      console.error(`[IMAGE_STORE] db.error userId=${userId} error=${dbError}`);
+    const userDb = await getOrAssignUserDatabase(userId);
+    if (!userDb) {
+      console.error(`[IMAGE_STORE] db.error userId=${userId}`);
       res.status(500).json({ error: "Database not available" });
       return;
     }
@@ -1997,7 +1997,7 @@ app.post(
       return;
     }
 
-    console.log(`[IMAGE_STORE] ok userId=${userId} chatId=${chat_id} imageId=${result.imageId} db=${dbNumber}`);
+    console.log(`[IMAGE_STORE] ok userId=${userId} chatId=${chat_id} imageId=${result.imageId}`);
     res.json({
       success: true,
       image_url: result.imageUrl,
@@ -2024,8 +2024,8 @@ app.get(
     }
 
     // Get user's database client
-    const { client: userDb, error: dbError } = await getOrAssignUserDatabase(userId);
-    if (dbError || !userDb) {
+    const userDb = await getOrAssignUserDatabase(userId);
+    if (!userDb) {
       res.status(500).json({ error: "Database not available" });
       return;
     }
