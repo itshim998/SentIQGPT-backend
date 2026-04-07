@@ -72,6 +72,8 @@ export interface LLMAdapterCall {
   readonly user_id?: string;
   readonly timeout_ms?: number;
   readonly max_output_tokens?: number;
+  readonly image_base64?: string;
+  readonly image_mime_type?: string;
 }
 
 export interface LLMAdapterResult {
@@ -170,15 +172,23 @@ export async function callLLMAdapterStream(
 ): Promise<ReadableStream<string>> {
   const url = `${LLM_SERVICE_URL}/llm/stream`;
 
+  const requestBody: Record<string, unknown> = {
+    prompt: call.prompt,
+    task: call.task,
+    model_override: call.model_override,
+    user_id: call.user_id,
+  };
+  
+  // Include image data for native vision support
+  if (call.image_base64) {
+    requestBody.image_base64 = call.image_base64;
+    requestBody.image_mime_type = call.image_mime_type || "image/jpeg";
+  }
+
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt: call.prompt,
-      task: call.task,
-      model_override: call.model_override,
-      user_id: call.user_id,
-    }),
+    body: JSON.stringify(requestBody),
     signal: AbortSignal.timeout(call.timeout_ms ?? 120_000), // 120s default; override when needed
   });
 
@@ -432,7 +442,7 @@ export interface ChatContext {
   readonly userMessage: string;
   readonly recentMessages?: readonly { role: string; content: string }[];
   readonly memories?: readonly { type: string; summary: string }[];
-  readonly fileReferences?: readonly { filename: string; extractedText: string }[];
+  readonly fileReferences?: readonly { filename: string; extractedText: string; imageBase64?: string; mimeType?: string }[];
   readonly conversationSummary?: string;
   readonly modelOverride?: string;
   readonly userId?: string;
@@ -440,6 +450,11 @@ export interface ChatContext {
 
 export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
+  
+  // Extract image data if present (for native vision support)
+  const imageFile = ctx.fileReferences?.find((f) => f.imageBase64);
+  const imageBase64 = imageFile?.imageBase64;
+  const imageMimeType = imageFile?.mimeType;
 
   // Select system prompt based on model
   // Use Mistral conversational prompt for pure text conversations
@@ -457,15 +472,25 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   // When files are present, add explicit file-analysis instructions
   if (hasFiles) {
     const filenames = ctx.fileReferences!.map((f) => f.filename).join(", ");
-    SYSTEM_PROMPT +=
-      "\nFILE ANALYSIS MODE:\n" +
-      `- The user has uploaded file(s): ${filenames}\n` +
-      "- The full extracted content of these files is provided below.\n" +
-      "- Base your answers ONLY on the actual file content provided.\n" +
-      "- If the file content says extraction failed, tell the user honestly.\n" +
-      "- Do NOT hallucinate or invent file content.\n" +
-      "- Do NOT reference files from previous conversations.\n" +
-      "- Prioritize answering about the uploaded file over any other context.\n";
+    if (imageBase64) {
+      // For images with native vision, use simplified instructions
+      SYSTEM_PROMPT +=
+        "\nIMAGE ANALYSIS MODE:\n" +
+        `- The user has uploaded an image: ${filenames}\n` +
+        "- An image is attached to this message for direct visual analysis.\n" +
+        "- Analyze the image directly and respond to the user's question.\n" +
+        "- Be thorough and describe relevant details from the image.\n";
+    } else {
+      SYSTEM_PROMPT +=
+        "\nFILE ANALYSIS MODE:\n" +
+        `- The user has uploaded file(s): ${filenames}\n` +
+        "- The full extracted content of these files is provided below.\n" +
+        "- Base your answers ONLY on the actual file content provided.\n" +
+        "- If the file content says extraction failed, tell the user honestly.\n" +
+        "- Do NOT hallucinate or invent file content.\n" +
+        "- Do NOT reference files from previous conversations.\n" +
+        "- Prioritize answering about the uploaded file over any other context.\n";
+    }
   }
 
   // Delegate prompt assembly + budget enforcement to the Context Composer.
@@ -475,7 +500,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     conversation: ctx.recentMessages,
     conversationSummary: ctx.conversationSummary,
     memories: hasFiles ? [] : ctx.memories, // When files present, skip memory to avoid confusion
-    fileReferences: ctx.fileReferences,
+    fileReferences: imageBase64 ? [] : ctx.fileReferences, // Skip file text for images with native vision
   });
 
   // Determine the preferred provider based on the model override.
@@ -493,6 +518,8 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     prefer: isPollinations ? undefined : "gemini",
     model_override: ctx.modelOverride,
     user_id: ctx.userId,
+    image_base64: imageBase64,
+    image_mime_type: imageMimeType,
   };
 }
 

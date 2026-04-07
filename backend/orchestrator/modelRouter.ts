@@ -4,7 +4,7 @@
 // detected capabilities. Regex-only - no LLM calls.
 //
 // Detection priority (first match wins):
-//   1. vision              -> gemini-vision (Gemini vision-capable model)
+//   1. vision              -> gemini-fast (Pollinations) - native vision support
 //   2. file (coding PDF)   -> qwen-coder (Pollinations) - coding PDFs get code model
 //   3. file (non-coding)   -> gemini-fast (Pollinations) - preserve file pipeline
 //   4. coding              -> qwen-coder (Pollinations)
@@ -471,8 +471,8 @@ export function selectModelForPrompt(
 
   switch (category) {
     case "vision":
-      model = "gemini-vision";
-      console.log("[Router] category=vision -> gemini-vision");
+      model = "gemini-fast";
+      console.log("[Router] category=vision -> gemini-fast");
       break;
     case "file_coding":
       model = "qwen-coder";

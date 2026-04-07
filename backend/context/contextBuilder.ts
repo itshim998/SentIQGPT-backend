@@ -28,6 +28,8 @@ export interface RawMessageContext {
   readonly file_references?: readonly {
     filename: string;
     extractedText: string;
+    imageBase64?: string;
+    mimeType?: string;
   }[];
   readonly userMessage?: string;
   readonly userDb?: SupabaseClient;
@@ -41,6 +43,8 @@ export interface BuiltContext {
   readonly fileReferences: readonly {
     filename: string;
     extractedText: string;
+    imageBase64?: string;
+    mimeType?: string;
   }[];
   readonly memoryPromptBlock: string;
   readonly conversationSummary?: string;

@@ -142,18 +142,11 @@ export async function extractTextFromFile(args: {
       break;
 
     case "image":
-      try {
-        extractedText = await analyzeImageWithVision(
-          args.buffer,
-          args.filename,
-          args.mimetype,
-          args.userId,
-        );
-        console.log(`[File Parser] image analyzed: ${args.filename} (${extractedText.length} chars)`);
-      } catch (err) {
-        console.log(`[File Parser] image analysis failed: ${args.filename} — ${err instanceof Error ? err.message : err}`);
-        extractedText = `[Image file: ${args.filename}. Vision analysis was unavailable. The image was uploaded but could not be described.]`;
-      }
+      // Skip OCR/vision processing during upload - gemini-fast has native vision
+      // and will analyze the image directly when the user queries about it.
+      // Just store metadata for reference.
+      extractedText = `[Image: ${args.filename}]`;
+      console.log(`[File Parser] image stored (no OCR): ${args.filename}`);
       break;
   }
 

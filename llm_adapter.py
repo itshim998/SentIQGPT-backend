@@ -578,10 +578,27 @@ def _build_pollinations_payload(
     model: str,
     temperature: float,
     max_output_tokens: Optional[int] = None,
+    image_base64: Optional[str] = None,
+    image_mime_type: Optional[str] = None,
 ) -> dict:
+    # Build message content - either text-only or multimodal with image
+    if image_base64:
+        # OpenAI vision format for multimodal content
+        content = [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{image_mime_type or 'image/jpeg'};base64,{image_base64}"
+                }
+            }
+        ]
+    else:
+        content = prompt
+    
     payload = {
         "model": _normalize_pollinations_model(model),
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": content}],
         "temperature": temperature,
     }
     if max_output_tokens is not None:
@@ -695,6 +712,8 @@ def _call_pollinations(
     model: str,
     temperature: float = 0.7,
     max_output_tokens: Optional[int] = None,
+    image_base64: Optional[str] = None,
+    image_mime_type: Optional[str] = None,
 ) -> tuple[str, Optional[str], bool]:
     """Call Pollinations via its OpenAI-compatible chat completions endpoint."""
     if not pollinations_bucket.consume():
@@ -704,7 +723,7 @@ def _call_pollinations(
     if POLLINATIONS_API_KEY:
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
-    payload = _build_pollinations_payload(prompt, model, temperature, max_output_tokens)
+    payload = _build_pollinations_payload(prompt, model, temperature, max_output_tokens, image_base64, image_mime_type)
 
     endpoint_used, resp = _post_pollinations(payload, headers)
 
@@ -727,7 +746,13 @@ def _call_pollinations(
     return result, finish_reason, truncated
 
 
-def _call_pollinations_stream(prompt: str, model: str, temperature: float = 0.7):
+def _call_pollinations_stream(
+    prompt: str, 
+    model: str, 
+    temperature: float = 0.7,
+    image_base64: Optional[str] = None,
+    image_mime_type: Optional[str] = None,
+):
     """
     Buffered-streaming variant for Pollinations.
     Pollinations is requested as a normal chat completion, then the
@@ -740,7 +765,7 @@ def _call_pollinations_stream(prompt: str, model: str, temperature: float = 0.7)
     if POLLINATIONS_API_KEY:
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
-    payload = _build_pollinations_payload(prompt, model, temperature)
+    payload = _build_pollinations_payload(prompt, model, temperature, None, image_base64, image_mime_type)
 
     logger.info("[Pollinations] buffered stream mode enabled")
     endpoint_used, resp = _post_pollinations(payload, headers)
@@ -969,23 +994,27 @@ def stream_llm_router(
     task: str = "chat",
     model_override: Optional[str] = None,
     user_id: Optional[str] = None,
+    image_base64: Optional[str] = None,
+    image_mime_type: Optional[str] = None,
 ):
     """
     Streaming variant — yields text chunks.
     Routes to Pollinations or Gemini based on model_override.
     Prefers Pollinations; falls back to alternate Pollinations model, then Gemini.
+    Supports image data for native vision with gemini-fast via Pollinations.
     """
     provider, resolved_override = resolve_model_override(model_override, "pollinations")
     model = resolved_override or _default_model_for_provider(provider)
-
-    logger.info("[Router] model=%s provider=%s task=%s override=%s stream=true", model, provider, task, model_override)
+    
+    has_image = bool(image_base64)
+    logger.info("[Router] model=%s provider=%s task=%s override=%s stream=true hasImage=%s", model, provider, task, model_override, has_image)
     logger.info("[Provider] %s", provider)
     logger.info("[LLM Request] stream  model=%s  provider=%s  override=%s", model, provider, model_override)
 
     # --- Pollinations streaming path ---
     if provider == "pollinations":
         try:
-            yield from _call_pollinations_stream(prompt, resolved_override or model)
+            yield from _call_pollinations_stream(prompt, resolved_override or model, image_base64=image_base64, image_mime_type=image_mime_type)
             logger.info("[Provider] Pollinations stream succeeded for model=%s", model)
             return
         except Exception as e:
@@ -1001,7 +1030,7 @@ def stream_llm_router(
                 alt_pollinations_model = CODING_MODEL
             try:
                 logger.info("[Fallback] Trying alternate Pollinations model: %s", alt_pollinations_model)
-                yield from _call_pollinations_stream(prompt, alt_pollinations_model)
+                yield from _call_pollinations_stream(prompt, alt_pollinations_model, image_base64=image_base64, image_mime_type=image_mime_type)
                 logger.info("[Fallback] Alternate Pollinations model %s stream succeeded", alt_pollinations_model)
                 return
             except Exception as alt_error:

@@ -22,6 +22,8 @@ export const ChatRequestSchema = z.object({
     file_references: z.array(z.object({
       filename: z.string(),
       extractedText: z.string(),
+      imageBase64: z.string().optional(),
+      mimeType: z.string().optional(),
     })).max(10).optional(),
   }).optional(),
 }).transform(({ conversation_id, ...rest }) => ({
