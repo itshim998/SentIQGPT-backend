@@ -27,6 +27,7 @@ import { extractTextFromFile, validateFileUpload } from "./ai/FileIngestionHandl
 import { routeImageGeneration } from "./tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "./tools/chartGeneration/chartRouter";
 import { isChartRequest } from "./tools/chartGeneration/chartDetector";
+import { uploadChatImage, getChatImages } from "./tools/imageGeneration/imageStorageService";
 import { callLLMAdapter, buildTitleGeneratePrompt, strictParseJsonObject, callLLMAdapterStream, buildChatPrompt } from "./ai/PromptBuilders";
 import type { ChatContext } from "./ai/PromptBuilders";
 import { buildContext, buildContextFast } from "./context/contextBuilder";
@@ -840,6 +841,15 @@ app.get(
     }
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.messages");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.messages");
+    
+    // Fetch conversation details (including title) along with messages
+    const conversation = await getOwnedConversationOrThrow(
+      userDb,
+      userId,
+      conversationId,
+      "conversations.messages",
+    );
+    
     const messages = await listConversationMessagesOrThrow(
       userDb,
       userId,
@@ -851,7 +861,16 @@ app.get(
       conversationId,
       count: messages.length,
     });
-    res.json({ messages });
+    
+    // Return both conversation metadata (with title) and messages
+    res.json({
+      conversation: {
+        id: conversation.id,
+        title: conversation.title || "New Chat",
+        created_at: conversation.created_at,
+      },
+      messages,
+    });
   }),
 );
 
@@ -1935,8 +1954,86 @@ app.post(
 );
 
 // ===============================
-// POST /api/charts/generate — Generate chart code from natural language
+// POST /api/images/store — Store a generated image to Supabase Storage
+// Stores image in Storage bucket and metadata in database
 // ===============================
+app.post(
+  "/api/images/store",
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const { chat_id, image_data, prompt, provider } = req.body;
+
+    // Validate required fields
+    if (!chat_id || typeof chat_id !== "string") {
+      res.status(400).json({ error: "chat_id is required" });
+      return;
+    }
+    if (!image_data || typeof image_data !== "string") {
+      res.status(400).json({ error: "image_data (base64 or data URL) is required" });
+      return;
+    }
+
+    // Get user's database client
+    const { client: userDb, dbNumber, error: dbError } = await getOrAssignUserDatabase(userId);
+    if (dbError || !userDb) {
+      console.error(`[IMAGE_STORE] db.error userId=${userId} error=${dbError}`);
+      res.status(500).json({ error: "Database not available" });
+      return;
+    }
+
+    // Upload to storage and save metadata
+    const result = await uploadChatImage(userDb, {
+      userId,
+      chatId: chat_id,
+      imageData: image_data,
+      prompt: typeof prompt === "string" ? prompt : undefined,
+      provider: typeof provider === "string" ? provider : undefined,
+    });
+
+    if (!result.success) {
+      console.error(`[IMAGE_STORE] failed userId=${userId} chatId=${chat_id} error=${result.error}`);
+      res.status(500).json({ error: result.error || "Failed to store image" });
+      return;
+    }
+
+    console.log(`[IMAGE_STORE] ok userId=${userId} chatId=${chat_id} imageId=${result.imageId} db=${dbNumber}`);
+    res.json({
+      success: true,
+      image_url: result.imageUrl,
+      image_id: result.imageId,
+      storage_path: result.storagePath,
+      file_size_bytes: result.fileSizeBytes,
+    });
+  }),
+);
+
+// ===============================
+// GET /api/images/chat/:chatId — Get all images for a chat
+// Returns image metadata (URLs) for rendering
+// ===============================
+app.get(
+  "/api/images/chat/:chatId",
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const chatId = req.params.chatId;
+
+    if (!chatId) {
+      res.status(400).json({ error: "chatId is required" });
+      return;
+    }
+
+    // Get user's database client
+    const { client: userDb, error: dbError } = await getOrAssignUserDatabase(userId);
+    if (dbError || !userDb) {
+      res.status(500).json({ error: "Database not available" });
+      return;
+    }
+
+    const images = await getChatImages(userDb, userId, chatId);
+    res.json({ images });
+  }),
+);
 app.post(
   "/api/charts/generate",
   aiRateLimiter,
