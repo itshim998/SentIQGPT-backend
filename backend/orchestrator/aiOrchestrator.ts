@@ -43,6 +43,8 @@ import type { StepResult } from "./toolExecutor";
 export interface OrchestratorRequest {
   readonly userMessage: string;
   readonly context?: RawMessageContext;
+  /** Skip reflection loop for faster response (default: false) */
+  readonly skipReflection?: boolean;
 }
 
 export interface OrchestratorResponse {
@@ -275,9 +277,9 @@ export async function orchestrate(
 async function _orchestrateInner(
   request: OrchestratorRequest,
 ): Promise<OrchestratorResponse> {
-  const { userMessage, context: rawContext } = request;
+  const { userMessage, context: rawContext, skipReflection = false } = request;
 
-  console.log(`[ORCHESTRATOR] Processing: "${userMessage.slice(0, 80)}..."`);
+  console.log(`[ORCHESTRATOR] Processing: "${userMessage.slice(0, 80)}..." (skipReflection=${skipReflection})`);
 
 
   // ── Early Math Detection ──
@@ -366,16 +368,26 @@ async function _orchestrateInner(
   // 3. Merge step results into a single response
   const merged = mergeResults(execution.steps, { stored: false });
 
-  // 3b. Self-Reflection Loop
-  //     Only runs on text replies ≥ 100 chars.
-  //     Skips image-only, memory-only, short responses, AND math results
-  //     (math queries are already handled by the direct math pipeline).
-  const reflected = await reflectOnAnswer(
-    userMessage,
-    merged,
-    merged._isMathResult,
-    rawContext?.userId,
-  );
+  // 3b. Self-Reflection Loop (OPTIONAL for performance)
+  //     Only runs when:
+  //       - skipReflection is false (default)
+  //       - Text replies ≥ 100 chars
+  //     Always skips:
+  //       - image-only, memory-only, short responses
+  //       - math queries (handled by direct math pipeline)
+  let reflected: { merged: InternalMergedResponse; reflection?: OrchestratorResponse["reflection"] };
+  
+  if (skipReflection) {
+    console.log("[REFLECTION] skipped per request (skipReflection=true)");
+    reflected = { merged };
+  } else {
+    reflected = await reflectOnAnswer(
+      userMessage,
+      merged,
+      merged._isMathResult,
+      rawContext?.userId,
+    );
+  }
 
   const finalReply =
     reflected.merged._isMathResult

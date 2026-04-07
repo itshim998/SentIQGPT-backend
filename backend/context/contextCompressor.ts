@@ -22,6 +22,9 @@ export const CONVERSATION_WINDOW = 6;
 /** Minimum older-message count before triggering summarization. */
 const SUMMARY_THRESHOLD = 2;
 
+/** Skip compression for conversations shorter than this (optimization) */
+const SKIP_COMPRESSION_THRESHOLD = 10;
+
 // ==============================
 // Types
 // ==============================
@@ -38,6 +41,10 @@ export interface CompressedConversation {
 /**
  * Compress a conversation history into a recent-message window plus
  * an optional Groq-generated summary of older messages.
+ *
+ * OPTIMIZATION: Skips LLM compression for short conversations (<10 messages)
+ * to avoid unnecessary latency. Compression is only valuable for long
+ * conversations where token savings outweigh the LLM call overhead.
  */
 export async function compressConversation(
   messages: readonly { role: string; content: string }[],
@@ -51,8 +58,11 @@ export async function compressConversation(
   const recentMessages = messages.slice(-CONVERSATION_WINDOW);
   const olderMessages = messages.slice(0, -CONVERSATION_WINDOW);
 
-  // Not enough older messages to justify a summarization call
-  if (olderMessages.length < SUMMARY_THRESHOLD) {
+  // OPTIMIZATION: Skip LLM compression for moderately short conversations
+  // The latency cost of the Groq call (~1-2s) outweighs the benefit
+  // for conversations with only a few messages outside the window.
+  if (messages.length < SKIP_COMPRESSION_THRESHOLD || olderMessages.length < SUMMARY_THRESHOLD) {
+    console.log(`[COMPRESSOR] skipping LLM compression (${messages.length} messages < ${SKIP_COMPRESSION_THRESHOLD} threshold)`);
     return { recentMessages };
   }
 

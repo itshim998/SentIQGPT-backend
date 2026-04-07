@@ -114,6 +114,9 @@ function mergeMemories(
  *     keyword fallback otherwise
  *  3. Chunk files and select relevant chunks for the query
  *  4. Pre-build the memory prompt block for injection
+ *
+ * OPTIMIZATION: Cloud memory fetch now runs in parallel with compression
+ * and semantic search to minimize total latency.
  */
 export async function buildContext(
   raw: RawMessageContext,
@@ -122,7 +125,7 @@ export async function buildContext(
 ): Promise<BuiltContext> {
   const ctxStart = Date.now();
 
-  // Derive the query early so both pipelines can use it.
+  // Derive the query early so all pipelines can use it.
   const allMessages = raw.recent_messages ?? [];
   const query = raw.userMessage || allMessages[allMessages.length - 1]?.content || "";
 
@@ -133,11 +136,18 @@ export async function buildContext(
     embedding: m.embedding,
   }));
 
-  // ── PARALLEL: conversation compression + semantic memory search ──
-  // These are the two slowest sub-operations and are independent.
-  const [compressionResult, semanticResults] = await Promise.all([
+  const normalizedUserId = userId?.trim();
+
+  // ── PARALLEL: conversation compression + semantic memory search + cloud memory fetch ──
+  // All three operations are independent and can run concurrently.
+  const cloudMemoryPromise = (userDb && normalizedUserId)
+    ? fetchCloudMemories(userDb, normalizedUserId, raw.conversationId)
+    : Promise.resolve([] as readonly ContextMemory[]);
+
+  const [compressionResult, semanticResults, cloudMemories] = await Promise.all([
     compressConversation(allMessages, userId),
     semanticMemorySearch(rawMemories, query, 3),
+    cloudMemoryPromise,
   ]);
 
   const { recentMessages, summary } = compressionResult;
@@ -151,9 +161,8 @@ export async function buildContext(
     console.log(`[CONTEXT] memory retrieval: keyword fallback (${memories.length} selected)`);
   }
 
-  const normalizedUserId = userId?.trim();
-  if (userDb && normalizedUserId) {
-    const cloudMemories = await fetchCloudMemories(userDb, normalizedUserId, raw.conversationId);
+  // Merge cloud memories (already fetched in parallel)
+  if (cloudMemories.length > 0) {
     memories = mergeMemories(memories, cloudMemories);
   }
 
@@ -198,6 +207,7 @@ export async function buildContext(
  *  2. Uses only the recent message window directly
  *  3. Runs memory selection synchronously (keyword fallback) for speed
  *  4. Still processes files if present
+ *  5. OPTIMIZATION: Cloud memory fetch runs in parallel with setup
  *
  * Use this for /api/chat/stream where time-to-first-token is critical.
  * The tradeoff is slightly less context for very long conversations.
@@ -221,13 +231,19 @@ export async function buildContextFast(
     embedding: m.embedding,
   }));
 
-  // Use fast keyword-based memory selection (no async operations)
-  // This avoids waiting for semantic search which can add latency
+  const normalizedUserId = userId?.trim();
+
+  // Start cloud memory fetch early (async)
+  const cloudMemoryPromise = (userDb && normalizedUserId)
+    ? fetchCloudMemories(userDb, normalizedUserId, raw.conversationId)
+    : Promise.resolve([] as readonly ContextMemory[]);
+
+  // Use fast keyword-based memory selection (synchronous)
   let memories: readonly ContextMemory[] = selectMemoriesForQuery(rawMemories, query, 3);
 
-  const normalizedUserId = userId?.trim();
-  if (userDb && normalizedUserId) {
-    const cloudMemories = await fetchCloudMemories(userDb, normalizedUserId, raw.conversationId);
+  // Await cloud memories (started earlier, likely already resolved)
+  const cloudMemories = await cloudMemoryPromise;
+  if (cloudMemories.length > 0) {
     memories = mergeMemories(memories, cloudMemories);
   }
 

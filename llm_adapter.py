@@ -110,6 +110,14 @@ _CACHE_FILE_ENV = os.getenv("SENTIQ_CACHE_FILE", "sentiq_cache.db")
 CACHE_FILE = _CACHE_FILE_ENV if os.path.isabs(_CACHE_FILE_ENV) else os.path.join(BASE_DIR, _CACHE_FILE_ENV)
 RPM = int(os.getenv("SENTIQ_RPM", "120"))
 
+# --- Smart Key Rotation Settings ---
+# Short timeout for initial key attempt to fail fast on network issues
+FAST_FAIL_TIMEOUT = int(os.getenv("SENTIQ_FAST_FAIL_TIMEOUT", "10"))
+# Track unhealthy keys temporarily to skip them
+_unhealthy_keys: dict[str, float] = {}  # key -> timestamp when marked unhealthy
+_unhealthy_keys_lock = threading.Lock()
+UNHEALTHY_KEY_TTL = 60  # seconds to skip an unhealthy key
+
 # ==============================
 # Logger
 # ==============================
@@ -148,7 +156,102 @@ pollinations_bucket = TokenBucket(RPM)
 safety_bucket = TokenBucket(RPM * 2)  # Higher limit for safety checks
 
 # ==============================
-# Cache helpers
+# Smart Key Health Tracking
+# ==============================
+def _mark_key_unhealthy(key: str) -> None:
+    """Mark an API key as temporarily unhealthy to skip it in rotation."""
+    with _unhealthy_keys_lock:
+        _unhealthy_keys[key] = time.time()
+        logger.info("Marked API key as unhealthy (will skip for %ds)", UNHEALTHY_KEY_TTL)
+
+def _is_key_healthy(key: str) -> bool:
+    """Check if an API key should be used (not recently failed)."""
+    with _unhealthy_keys_lock:
+        if key not in _unhealthy_keys:
+            return True
+        marked_at = _unhealthy_keys[key]
+        if time.time() - marked_at > UNHEALTHY_KEY_TTL:
+            # Key has recovered, remove from unhealthy list
+            del _unhealthy_keys[key]
+            return True
+        return False
+
+def _get_healthy_keys(keys: list[str]) -> list[str]:
+    """Filter keys to only include healthy ones, preserving order."""
+    healthy = [k for k in keys if _is_key_healthy(k)]
+    # If all keys are unhealthy, return all (force retry)
+    return healthy if healthy else keys
+
+# ==============================
+# In-Memory LRU Cache (fast layer)
+# ==============================
+from collections import OrderedDict
+
+class LRUCache:
+    """Thread-safe in-memory LRU cache for fast lookups before disk I/O."""
+    
+    def __init__(self, max_size: int = 500):
+        self.max_size = max_size
+        self.cache: OrderedDict = OrderedDict()
+        self.lock = threading.Lock()
+        self.hits = 0
+        self.misses = 0
+    
+    def get(self, key: str) -> Optional[Any]:
+        with self.lock:
+            if key in self.cache:
+                # Move to end (most recently used)
+                self.cache.move_to_end(key)
+                self.hits += 1
+                return self.cache[key]
+            self.misses += 1
+            return None
+    
+    def set(self, key: str, value: Any) -> None:
+        with self.lock:
+            if key in self.cache:
+                self.cache.move_to_end(key)
+                self.cache[key] = value
+            else:
+                if len(self.cache) >= self.max_size:
+                    # Remove oldest item
+                    self.cache.popitem(last=False)
+                self.cache[key] = value
+    
+    def stats(self) -> dict:
+        with self.lock:
+            total = self.hits + self.misses
+            return {
+                "size": len(self.cache),
+                "max_size": self.max_size,
+                "hits": self.hits,
+                "misses": self.misses,
+                "hit_rate": self.hits / total if total > 0 else 0,
+            }
+
+# Global in-memory cache (fast layer before disk shelve)
+_memory_cache = LRUCache(max_size=500)
+
+# ==============================
+# Persistent Groq Clients (connection pooling)
+# ==============================
+_groq_clients: dict[str, Any] = {}
+_groq_clients_lock = threading.Lock()
+
+def _get_groq_client(api_key: str):
+    """Get or create a persistent Groq client for the given API key."""
+    global _groq_clients
+    if not GROQ_MODULE:
+        raise RuntimeError("Groq SDK not installed")
+    
+    with _groq_clients_lock:
+        if api_key not in _groq_clients:
+            _groq_clients[api_key] = GROQ_MODULE.Groq(api_key=api_key)
+            logger.info("Created persistent Groq client (total: %d)", len(_groq_clients))
+        return _groq_clients[api_key]
+
+# ==============================
+# Cache helpers (two-tier: memory + disk)
 # ==============================
 _shelve_lock = threading.Lock()
 
@@ -165,22 +268,51 @@ def _cache_key(
     return h.hexdigest()
 
 def _cache_get(key: str) -> Optional[str]:
+    """Two-tier cache lookup: memory first, then disk.
+    
+    This dramatically reduces latency for repeated queries by avoiding
+    disk I/O on cache hits (~50-100ms savings per hit).
+    """
+    # Tier 1: Fast in-memory lookup
+    result = _memory_cache.get(key)
+    if result is not None:
+        logger.debug("Memory cache hit for key=%s", key[:16])
+        return result
+    
+    # Tier 2: Disk lookup (slower)
     try:
         with _shelve_lock:
             with shelve.open(CACHE_FILE) as db:
                 if key in db:
-                    return db[key]
+                    value = db[key]
+                    # Promote to memory cache for future fast access
+                    _memory_cache.set(key, value)
+                    logger.debug("Disk cache hit for key=%s", key[:16])
+                    return value
     except Exception:
         pass
     return None
 
-def _cache_set(key: str, value: str) -> None:
-    try:
-        with _shelve_lock:
-            with shelve.open(CACHE_FILE) as db:
-                db[key] = value
-    except Exception:
-        pass
+def _cache_set(key: str, value: Any) -> None:
+    """Two-tier cache write: memory and disk.
+    
+    Writes to memory cache immediately for fast subsequent reads.
+    Disk write happens in background thread to avoid blocking.
+    """
+    # Tier 1: Write to memory cache (instant)
+    _memory_cache.set(key, value)
+    
+    # Tier 2: Write to disk (in background to avoid blocking)
+    def _disk_write():
+        try:
+            with _shelve_lock:
+                with shelve.open(CACHE_FILE) as db:
+                    db[key] = value
+        except Exception as e:
+            logger.warning("Failed to persist cache to disk: %s", e)
+    
+    # Fire-and-forget disk write in background thread
+    threading.Thread(target=_disk_write, daemon=True).start()
 
 # ==============================
 # Task → Provider routing
@@ -316,12 +448,15 @@ def _call_gemini_stream(prompt: str, api_key: str, model: Optional[str] = None):
             yield text
 
 def _invoke_gemini(prompt: str, model_override: Optional[str] = None) -> str:
-    """Try all Gemini keys in rotation."""
+    """Try Gemini keys with smart rotation (skip recently failed keys)."""
     if not GEMINI_API_KEYS:
         raise RuntimeError("No Gemini API keys configured")
 
+    # Prefer healthy keys first
+    keys_to_try = _get_healthy_keys(GEMINI_API_KEYS)
+    
     last_error = None
-    for idx, api_key in enumerate(GEMINI_API_KEYS, 1):
+    for idx, api_key in enumerate(keys_to_try, 1):
         try:
             result = _call_gemini(prompt, api_key, model_override)
             logger.info("Gemini key #%d succeeded", idx)
@@ -329,8 +464,10 @@ def _invoke_gemini(prompt: str, model_override: Optional[str] = None) -> str:
         except Exception as e:
             last_error = e
             logger.warning("Gemini key #%d failed: %s", idx, e)
+            # Mark key as unhealthy for fast-fail on subsequent requests
+            _mark_key_unhealthy(api_key)
 
-    raise RuntimeError(f"All {len(GEMINI_API_KEYS)} Gemini keys failed: {last_error}")
+    raise RuntimeError(f"All {len(keys_to_try)} Gemini keys failed: {last_error}")
 
 
 def _call_gemini_vision(prompt: str, image_base64: str, mime_type: str, api_key: str, model: Optional[str] = None) -> str:
@@ -382,7 +519,7 @@ def _invoke_gemini_vision(prompt: str, image_base64: str, mime_type: str, model_
     raise RuntimeError(f"All {len(GEMINI_API_KEYS)} Gemini Vision keys failed: {last_error}")
 
 # ==============================
-# Groq invocation (key rotation)
+# Groq invocation (key rotation with client pooling)
 # ==============================
 def _call_groq(prompt: str, api_key: str, model: Optional[str] = None) -> str:
     if not GROQ_MODULE:
@@ -392,7 +529,8 @@ def _call_groq(prompt: str, api_key: str, model: Optional[str] = None) -> str:
     if not groq_bucket.consume():
         raise RuntimeError("Groq rate limit exceeded")
 
-    client = GROQ_MODULE.Groq(api_key=api_key)
+    # Use persistent client (connection pooling)
+    client = _get_groq_client(api_key)
     response = client.chat.completions.create(
         model=model or GROQ_MODEL,
         messages=[{"role": "user", "content": prompt}],
@@ -402,12 +540,15 @@ def _call_groq(prompt: str, api_key: str, model: Optional[str] = None) -> str:
     return response.choices[0].message.content
 
 def _invoke_groq(prompt: str, model_override: Optional[str] = None) -> str:
-    """Try all Groq keys in rotation."""
+    """Try Groq keys with smart rotation (skip recently failed keys)."""
     if not GROQ_API_KEYS:
         raise RuntimeError("No Groq API keys configured")
 
+    # Prefer healthy keys first
+    keys_to_try = _get_healthy_keys(GROQ_API_KEYS)
+    
     last_error = None
-    for idx, api_key in enumerate(GROQ_API_KEYS, 1):
+    for idx, api_key in enumerate(keys_to_try, 1):
         try:
             result = _call_groq(prompt, api_key, model_override)
             logger.info("Groq key #%d succeeded", idx)
@@ -415,8 +556,10 @@ def _invoke_groq(prompt: str, model_override: Optional[str] = None) -> str:
         except Exception as e:
             last_error = e
             logger.warning("Groq key #%d failed: %s", idx, e)
+            # Mark key as unhealthy for fast-fail on subsequent requests
+            _mark_key_unhealthy(api_key)
 
-    raise RuntimeError(f"All {len(GROQ_API_KEYS)} Groq keys failed: {last_error}")
+    raise RuntimeError(f"All {len(keys_to_try)} Groq keys failed: {last_error}")
 
 # ==============================
 # Pollinations invocation (HTTP)

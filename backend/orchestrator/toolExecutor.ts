@@ -310,11 +310,103 @@ async function execWebSearch(
 }
 
 // ==============================
+// Parallelization Helpers
+// ==============================
+
+/** Tools that can run in parallel (independent, no context dependency) */
+const PARALLELIZABLE_TOOLS: ReadonlySet<PlanTool> = new Set([
+  "image_generation",
+  "chart_generation",
+  "memory_update",
+  "web_search",
+]);
+
+/** Check if a step can run independently (doesn't need prior context) */
+function canRunInParallel(tool: PlanTool): boolean {
+  return PARALLELIZABLE_TOOLS.has(tool);
+}
+
+/** Execute a single step and return the result with proper step number */
+async function executeStep(
+  planStep: PlanStep,
+  ctx: BuiltContext,
+  priorContext: string,
+): Promise<StepResult> {
+  console.log(`[EXECUTOR] running step ${planStep.step} → ${planStep.tool}`);
+
+  if (!VALID_TOOLS.has(planStep.tool)) {
+    return {
+      step: planStep.step,
+      tool: planStep.tool,
+      error: `Unknown tool: ${planStep.tool}`,
+    };
+  }
+
+  try {
+    let result: StepResult;
+
+    switch (planStep.tool) {
+      case "image_generation":
+        result = await execImageGeneration(planStep.input);
+        break;
+      case "file_analysis":
+        result = await execFileAnalysis(planStep.input, ctx, priorContext);
+        break;
+      case "memory_update":
+        result = await execMemoryUpdate(planStep.input, ctx);
+        break;
+      case "chart_generation":
+        result = await execChartGeneration(planStep.input);
+        break;
+      case "web_search":
+        result = await execWebSearch(planStep.input);
+        break;
+      case "conversation":
+      default:
+        result = await execConversation(planStep.input, ctx, priorContext);
+        break;
+    }
+
+    return { ...result, step: planStep.step };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(`[EXECUTOR] step ${planStep.step} failed: ${message}`);
+    return {
+      step: planStep.step,
+      tool: planStep.tool,
+      error: message,
+    };
+  }
+}
+
+/** Build context string from a step result */
+function buildContextFromResult(result: StepResult, input: string): string {
+  if (result.reply) {
+    return result.reply.slice(0, 500);
+  }
+  if (result.image?.success) {
+    return `[Image generated: ${result.image.provider_used ?? "unknown"} — "${input.slice(0, 80)}"]`;
+  }
+  if (result.chart?.success) {
+    return `[Chart generated: ${result.chart.chart_type} (${result.chart.renderer}) — "${input.slice(0, 80)}"]`;
+  }
+  if (result.memory?.stored) {
+    return `[Memory stored: ${result.memory.summary ?? input.slice(0, 80)}]`;
+  }
+  return "";
+}
+
+// ==============================
 // Public API
 // ==============================
 
 /**
  * Execute an ordered plan, routing each step to its capability module.
+ *
+ * OPTIMIZATION: Independent steps (image_generation, chart_generation,
+ * memory_update, web_search) can run in parallel when they don't depend
+ * on prior step outputs. Context-dependent steps (conversation, file_analysis)
+ * run sequentially to preserve context threading.
  *
  * Results from prior steps are condensed and forwarded to subsequent
  * steps as context so the LLM can produce coherent multi-step answers.
@@ -323,74 +415,58 @@ export async function executePlan(
   steps: readonly PlanStep[],
   ctx: BuiltContext,
 ): Promise<ExecutionResult> {
+  const stepsToExecute = steps.slice(0, MAX_EXEC_STEPS);
+  
+  // Group steps: parallel-capable vs context-dependent
+  // Strategy: Run all parallelizable steps concurrently, then run sequential ones
+  const parallelSteps: PlanStep[] = [];
+  const sequentialSteps: PlanStep[] = [];
+
+  for (const step of stepsToExecute) {
+    if (canRunInParallel(step.tool)) {
+      parallelSteps.push(step);
+    } else {
+      sequentialSteps.push(step);
+    }
+  }
+
   const results: StepResult[] = [];
   let priorContext = "";
 
-  for (const planStep of steps.slice(0, MAX_EXEC_STEPS)) {
-    console.log(`[EXECUTOR] running step ${planStep.step} → ${planStep.tool}`);
+  // Execute parallel steps concurrently (they don't need prior context)
+  if (parallelSteps.length > 0) {
+    console.log(`[EXECUTOR] running ${parallelSteps.length} parallel step(s): ${parallelSteps.map(s => s.tool).join(", ")}`);
+    const startTime = Date.now();
 
-    // Guard: reject unknown tools
-    if (!VALID_TOOLS.has(planStep.tool)) {
-      results.push({
-        step: planStep.step,
-        tool: planStep.tool,
-        error: `Unknown tool: ${planStep.tool}`,
-      });
-      continue;
-    }
+    const parallelPromises = parallelSteps.map(step => executeStep(step, ctx, ""));
+    const parallelResults = await Promise.all(parallelPromises);
 
-    try {
-      let result: StepResult;
+    console.log(`[EXECUTOR] parallel execution completed in ${Date.now() - startTime}ms`);
 
-      switch (planStep.tool) {
-        case "image_generation":
-          result = await execImageGeneration(planStep.input);
-          break;
-        case "file_analysis":
-          result = await execFileAnalysis(planStep.input, ctx, priorContext);
-          break;
-        case "memory_update":
-          result = await execMemoryUpdate(planStep.input, ctx);
-          break;
-        case "chart_generation":
-          result = await execChartGeneration(planStep.input);
-          break;
-        case "web_search":
-          result = await execWebSearch(planStep.input);
-          break;
-        case "conversation":
-        default:
-          result = await execConversation(planStep.input, ctx, priorContext);
-          break;
-      }
-
-      // Stamp the correct step number
-      result = { ...result, step: planStep.step };
+    // Collect results and build context
+    for (let i = 0; i < parallelResults.length; i++) {
+      const result = parallelResults[i];
       results.push(result);
-
-      // Build running context for subsequent steps
-      if (result.reply) {
-        priorContext += (priorContext ? "\n" : "") + result.reply.slice(0, 500);
-      } else if (result.image?.success) {
-        priorContext += (priorContext ? "\n" : "") +
-          `[Image generated: ${result.image.provider_used ?? "unknown"} — "${planStep.input.slice(0, 80)}"]`;
-      } else if (result.chart?.success) {
-        priorContext += (priorContext ? "\n" : "") +
-          `[Chart generated: ${result.chart.chart_type} (${result.chart.renderer}) — "${planStep.input.slice(0, 80)}"]`;
-      } else if (result.memory?.stored) {
-        priorContext += (priorContext ? "\n" : "") +
-          `[Memory stored: ${result.memory.summary ?? planStep.input.slice(0, 80)}]`;
+      const contextPart = buildContextFromResult(result, parallelSteps[i].input);
+      if (contextPart) {
+        priorContext += (priorContext ? "\n" : "") + contextPart;
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.log(`[EXECUTOR] step ${planStep.step} failed: ${message}`);
-      results.push({
-        step: planStep.step,
-        tool: planStep.tool,
-        error: message,
-      });
     }
   }
+
+  // Execute sequential steps in order (they may need prior context)
+  for (const planStep of sequentialSteps) {
+    const result = await executeStep(planStep, ctx, priorContext);
+    results.push(result);
+
+    const contextPart = buildContextFromResult(result, planStep.input);
+    if (contextPart) {
+      priorContext += (priorContext ? "\n" : "") + contextPart;
+    }
+  }
+
+  // Sort results by step number to maintain original order
+  results.sort((a, b) => a.step - b.step);
 
   console.log(`[EXECUTOR] plan complete: ${results.length} steps executed`);
   return { steps: results };
