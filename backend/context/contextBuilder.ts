@@ -168,14 +168,10 @@ export async function buildContext(
 
   // 3. File references — pass through full content for prompt-level handling
   //    (PromptBuilders.ts applies safe truncation at 40k per file)
-  const rawFiles = raw.file_references ?? [];
-  const fileReferences: readonly { filename: string; extractedText: string; imageBase64?: string; mimeType?: string }[] =
-    rawFiles.map((f) => ({
-      filename: f.filename,
-      extractedText: f.extractedText,
-      imageBase64: f.imageBase64,
-      mimeType: f.mimeType,
-    }));
+  const fileReferences = (raw.file_references ?? []).map((f) => ({
+    filename: f.filename,
+    extractedText: f.extractedText,
+  }));
   if (fileReferences.length > 0) {
     const totalChars = fileReferences.reduce((s, f) => s + f.extractedText.length, 0);
     console.log(`[CONTEXT] file pass-through: ${fileReferences.length} file(s), ${totalChars} total chars`);
