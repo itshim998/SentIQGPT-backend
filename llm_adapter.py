@@ -695,8 +695,6 @@ def _call_pollinations(
     model: str,
     temperature: float = 0.7,
     max_output_tokens: Optional[int] = None,
-    image_base64: Optional[str] = None,
-    image_mime_type: Optional[str] = None,
 ) -> tuple[str, Optional[str], bool]:
     """Call Pollinations via its OpenAI-compatible chat completions endpoint."""
     if not pollinations_bucket.consume():
@@ -706,7 +704,7 @@ def _call_pollinations(
     if POLLINATIONS_API_KEY:
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
-    payload = _build_pollinations_payload(prompt, model, temperature, max_output_tokens, image_base64, image_mime_type)
+    payload = _build_pollinations_payload(prompt, model, temperature, max_output_tokens)
 
     endpoint_used, resp = _post_pollinations(payload, headers)
 
