@@ -28,8 +28,6 @@ export interface RawMessageContext {
   readonly file_references?: readonly {
     filename: string;
     extractedText: string;
-    imageBase64?: string;
-    mimeType?: string;
   }[];
   readonly userMessage?: string;
   readonly userDb?: SupabaseClient;
@@ -43,8 +41,6 @@ export interface BuiltContext {
   readonly fileReferences: readonly {
     filename: string;
     extractedText: string;
-    imageBase64?: string;
-    mimeType?: string;
   }[];
   readonly memoryPromptBlock: string;
   readonly conversationSummary?: string;
@@ -173,10 +169,12 @@ export async function buildContext(
   // 3. File references — pass through full content for prompt-level handling
   //    (PromptBuilders.ts applies safe truncation at 40k per file)
   const rawFiles = raw.file_references ?? [];
-  const fileReferences: readonly { filename: string; extractedText: string }[] =
+  const fileReferences: readonly { filename: string; extractedText: string; imageBase64?: string; mimeType?: string }[] =
     rawFiles.map((f) => ({
       filename: f.filename,
       extractedText: f.extractedText,
+      imageBase64: f.imageBase64,
+      mimeType: f.mimeType,
     }));
   if (fileReferences.length > 0) {
     const totalChars = fileReferences.reduce((s, f) => s + f.extractedText.length, 0);
@@ -251,13 +249,11 @@ export async function buildContextFast(
     memories = mergeMemories(memories, cloudMemories);
   }
 
-  // File references - pass through unchanged
-  const rawFiles = raw.file_references ?? [];
-  const fileReferences: readonly { filename: string; extractedText: string }[] =
-    rawFiles.map((f) => ({
-      filename: f.filename,
-      extractedText: f.extractedText,
-    }));
+  // File references - just text extracted content
+  const fileReferences = (raw.file_references ?? []).map((f) => ({
+    filename: f.filename,
+    extractedText: f.extractedText,
+  }));
 
   // Pre-build the memory prompt block
   const memoryPromptBlock = formatMemoriesForPrompt(memories);

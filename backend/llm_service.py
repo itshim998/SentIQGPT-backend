@@ -178,8 +178,6 @@ class LLMInvokeRequest(BaseModel):
     model_override: Optional[str] = None
     user_id: Optional[str] = None
     max_output_tokens: Optional[int] = None
-    image_base64: Optional[str] = None
-    image_mime_type: Optional[str] = None
 
 
 class LLMInvokeResponse(BaseModel):
@@ -665,8 +663,6 @@ async def stream_llm(request: LLMInvokeRequest):
                 task=request.task,
                 model_override=effective_model_override,
                 user_id=user_id,
-                image_base64=request.image_base64,
-                image_mime_type=request.image_mime_type,
             ):
                 # Check output safety (if monitor active)
                 if safety_monitor:
