@@ -29,6 +29,26 @@ def main() -> None:
             {"kind": "chunk", "text": "hello", "finish_reason": None},
         ),
         (
+            "leading_space_delta",
+            'data: {"choices":[{"delta":{"content":" hello"}}]}',
+            {"kind": "chunk", "text": " hello", "finish_reason": None},
+        ),
+        (
+            "newline_only_delta",
+            'data: {"choices":[{"delta":{"content":"\\n"}}]}',
+            {"kind": "chunk", "text": "\n", "finish_reason": None},
+        ),
+        (
+            "indentation_delta",
+            'data: {"choices":[{"delta":{"content":"    "}}]}',
+            {"kind": "chunk", "text": "    ", "finish_reason": None},
+        ),
+        (
+            "mixed_whitespace_delta",
+            'data: {"choices":[{"delta":{"content":"\\n  const answer = 42;"}}]}',
+            {"kind": "chunk", "text": "\n  const answer = 42;", "finish_reason": None},
+        ),
+        (
             "finish_reason_chunk",
             'data: {"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}',
             {"kind": "chunk", "text": "", "finish_reason": "stop"},

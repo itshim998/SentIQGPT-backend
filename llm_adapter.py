@@ -595,9 +595,9 @@ def _build_pollinations_payload(
     return payload
 
 
-def _extract_openai_text(content) -> str:
+def _extract_openai_text(content, *, trim: bool = True) -> str:
     if isinstance(content, str):
-        return content.strip()
+        return content.strip() if trim else content
     if isinstance(content, list):
         parts: list[str] = []
         for item in content:
@@ -611,8 +611,13 @@ def _extract_openai_text(content) -> str:
                 continue
             if isinstance(item.get("content"), str):
                 parts.append(item["content"])
-        return "".join(parts).strip()
+        combined = "".join(parts)
+        return combined.strip() if trim else combined
     return ""
+
+
+def _extract_openai_text_stream(content) -> str:
+    return _extract_openai_text(content, trim=False)
 
 
 def _extract_pollinations_response(resp: _requests_lib.Response) -> tuple[str, Optional[str]]:
@@ -711,7 +716,7 @@ def _parse_pollinations_sse_event(raw_line: str) -> dict[str, Any]:
                 finish_reason = first_choice["finish_reason"]
             delta = first_choice.get("delta")
             if isinstance(delta, dict):
-                text = _extract_openai_text(delta.get("content"))
+                text = _extract_openai_text_stream(delta.get("content"))
 
     return {
         "kind": "chunk",
