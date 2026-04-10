@@ -41,6 +41,13 @@ from llm_adapter import (
     GROQ_API_KEYS,
     GEMINI_MODEL,
     GROQ_MODEL,
+    CODING_MODEL,
+    POLLINATIONS_OPENAI_ENDPOINT,
+    POLLINATIONS_FALLBACK_OPENAI_ENDPOINT,
+    POLLINATIONS_TIMEOUT,
+    POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT,
+    POLLINATIONS_STREAM_IDLE_TIMEOUT,
+    POLLINATIONS_API_KEY,
     STRICT_JSON_TASKS,
     # Safety model imports
     call_safety_model,
@@ -513,6 +520,13 @@ async def health_check():
         "gemini_model": GEMINI_MODEL,
         "embedding_model": EMBEDDING_MODEL,
         "groq_model": GROQ_MODEL,
+        "coding_model": CODING_MODEL,
+        "pollinations_api_key_configured": bool(POLLINATIONS_API_KEY),
+        "pollinations_endpoint": POLLINATIONS_OPENAI_ENDPOINT,
+        "pollinations_fallback_endpoint": POLLINATIONS_FALLBACK_OPENAI_ENDPOINT,
+        "pollinations_timeout_seconds": POLLINATIONS_TIMEOUT,
+        "pollinations_stream_first_chunk_timeout_seconds": POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT,
+        "pollinations_stream_idle_timeout_seconds": POLLINATIONS_STREAM_IDLE_TIMEOUT,
         "strict_json_tasks": len(STRICT_JSON_TASKS),
     }
 

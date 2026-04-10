@@ -11,15 +11,15 @@
 //   4. memory
 
 import {
-  CONTEXT_BUDGET,
   allocateBudget,
+  getContextBudget,
   truncateToBudget,
+  type ContextBudgetProfile,
   type ContextParts,
 } from "./contextBudgetManager";
 
 // ── Per-item limits for collections ──
 const MAX_MEMORY_ITEM_CHARS  = 2_000;
-const MAX_FILE_CHARS          = 40_000;
 
 // ── Inputs accepted by the composer ──
 
@@ -30,6 +30,7 @@ export interface ComposerInput {
   conversationSummary?: string;
   memories?: readonly { type: string; summary: string; importance?: number }[];
   fileReferences?: readonly { filename: string; extractedText: string }[];
+  budgetProfile?: ContextBudgetProfile;
 }
 
 // ── Truncation helpers for individual items ──
@@ -39,9 +40,9 @@ export interface ComposerInput {
  * Files ≤ MAX_FILE_CHARS pass through; larger files keep the first and
  * last 20 000 chars with a truncation marker in between.
  */
-function truncateFileContent(raw: string): string {
-  if (raw.length <= MAX_FILE_CHARS) return raw;
-  const half = MAX_FILE_CHARS / 2;
+function truncateFileContent(raw: string, maxFileChars: number): string {
+  if (raw.length <= maxFileChars) return raw;
+  const half = Math.floor(maxFileChars / 2);
   return (
     raw.slice(0, half) +
     "\n\n[... file truncated for analysis ...]\n\n" +
@@ -112,11 +113,12 @@ function buildMemoryBlock(
  */
 function buildFileBlock(
   files: readonly { filename: string; extractedText: string }[] | undefined,
+  maxFileChars: number,
 ): string {
   if (!files || files.length === 0) return "";
   const parts: string[] = [];
   for (const file of files) {
-    const content = truncateFileContent(file.extractedText || "");
+    const content = truncateFileContent(file.extractedText || "", maxFileChars);
     const ext = file.filename.split(".").pop() || "txt";
     parts.push(
       `User uploaded file: ${file.filename}\n\n` +
@@ -143,21 +145,22 @@ function buildFileBlock(
  *    force-truncate and log a warning.
  */
 export function composeContext(input: ComposerInput): string {
+  const budget = getContextBudget(input.budgetProfile ?? "standard");
   // ── 1. Build raw blocks ──
   const rawParts: ContextParts = {
     system: input.systemPrompt,
     user: `USER: ${input.userMessage}\n`,
-    file: buildFileBlock(input.fileReferences),
+    file: buildFileBlock(input.fileReferences, budget.file),
     conversation: trimConversation(
       input.conversation ?? [],
       input.conversationSummary,
-      CONTEXT_BUDGET.conversation,
+      budget.conversation,
     ),
     memory: buildMemoryBlock(input.memories ?? []),
   };
 
   // ── 2. Enforce per-slot budgets ──
-  const safe = allocateBudget(rawParts);
+  const safe = allocateBudget(rawParts, budget);
 
   // ── 3. Log per-section sizes ──
   console.log(`[ContextComposer] system    chars=${safe.system.length}`);
@@ -185,16 +188,18 @@ export function composeContext(input: ComposerInput): string {
 
   // ── 5. Hard ceiling guard ──
   let finalPrompt: string;
-  if (assembled.length > CONTEXT_BUDGET.total) {
+  if (assembled.length > budget.total) {
     console.warn(
       `[ContextGuard] prompt truncated to safe limit ` +
-      `(${assembled.length} → ${CONTEXT_BUDGET.total})`,
+      `(${assembled.length} → ${budget.total})`,
     );
-    finalPrompt = truncateToBudget(assembled, CONTEXT_BUDGET.total);
+    finalPrompt = truncateToBudget(assembled, budget.total);
   } else {
     finalPrompt = assembled;
   }
 
-  console.log(`[ContextComposer] final prompt size=${finalPrompt.length}`);
+  console.log(
+    `[ContextComposer] final prompt size=${finalPrompt.length} profile=${input.budgetProfile ?? "standard"}`,
+  );
   return finalPrompt;
 }

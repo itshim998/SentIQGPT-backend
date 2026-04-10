@@ -436,6 +436,7 @@ export interface ChatContext {
   readonly conversationSummary?: string;
   readonly modelOverride?: string;
   readonly userId?: string;
+  readonly streaming?: boolean;
 }
 
 export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
@@ -476,7 +477,12 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     conversationSummary: ctx.conversationSummary,
     memories: hasFiles ? [] : ctx.memories, // When files present, skip memory to avoid confusion
     fileReferences: ctx.fileReferences,
+    budgetProfile: ctx.streaming ? "streaming" : "standard",
   });
+
+  console.log(
+    `[PromptBuilders] chat prompt ready model=${ctx.modelOverride ?? "default"} streaming=${ctx.streaming ? "true" : "false"} chars=${finalPrompt.length}`,
+  );
 
   // Determine the preferred provider based on the model override.
   const isPollinations =

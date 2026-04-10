@@ -1209,6 +1209,7 @@ app.post(
         conversationSummary: guestCtx.conversationSummary,
         modelOverride: GUEST_MODEL_OVERRIDE,
         userId,
+        streaming: true,
       };
 
       const call = buildChatPrompt(chatCtx);
@@ -1688,6 +1689,7 @@ app.post(
       conversationSummary: ctx.conversationSummary,
       modelOverride,
       userId,
+      streaming: true,
     };
 
     const call = buildChatPrompt(chatCtx);

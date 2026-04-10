@@ -32,6 +32,15 @@ export const STREAMING_CONTEXT_BUDGET = {
 } as const;
 
 export type BudgetSlot = keyof typeof CONTEXT_BUDGET;
+export type ContextBudgetProfile = "standard" | "streaming";
+export interface ContextBudgetConfig {
+  readonly total: number;
+  readonly system: number;
+  readonly conversation: number;
+  readonly memory: number;
+  readonly file: number;
+  readonly user: number;
+}
 
 export interface ContextParts {
   system: string;
@@ -53,17 +62,24 @@ export function truncateToBudget(text: string, maxChars: number): string {
   return text.slice(0, maxChars - marker.length) + marker;
 }
 
+export function getContextBudget(profile: ContextBudgetProfile = "standard"): ContextBudgetConfig {
+  return profile === "streaming" ? STREAMING_CONTEXT_BUDGET : CONTEXT_BUDGET;
+}
+
 /**
  * Accept a bag of named context strings and enforce per-slot budgets.
  * Returns a new object where every slot is guaranteed to fit within
  * its budget.
  */
-export function allocateBudget(parts: ContextParts): ContextParts {
+export function allocateBudget(
+  parts: ContextParts,
+  budget: ContextBudgetConfig = CONTEXT_BUDGET,
+): ContextParts {
   return {
-    system: truncateToBudget(parts.system, CONTEXT_BUDGET.system),
-    conversation: truncateToBudget(parts.conversation, CONTEXT_BUDGET.conversation),
-    memory: truncateToBudget(parts.memory, CONTEXT_BUDGET.memory),
-    file: truncateToBudget(parts.file, CONTEXT_BUDGET.file),
-    user: truncateToBudget(parts.user, CONTEXT_BUDGET.user),
+    system: truncateToBudget(parts.system, budget.system),
+    conversation: truncateToBudget(parts.conversation, budget.conversation),
+    memory: truncateToBudget(parts.memory, budget.memory),
+    file: truncateToBudget(parts.file, budget.file),
+    user: truncateToBudget(parts.user, budget.user),
   };
 }

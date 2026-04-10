@@ -98,6 +98,12 @@ POLLINATIONS_FALLBACK_OPENAI_ENDPOINT = os.getenv(
     "https://gen.pollinations.ai/v1/chat/completions",
 )
 POLLINATIONS_TIMEOUT = int(os.getenv("POLLINATIONS_TIMEOUT", "90"))
+POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT = int(
+    os.getenv("POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT", "20")
+)
+POLLINATIONS_STREAM_IDLE_TIMEOUT = int(
+    os.getenv("POLLINATIONS_STREAM_IDLE_TIMEOUT", "45")
+)
 
 # --- Safety Model Configuration ---
 SAFETY_MODEL = "qwen-safety"  # Case-sensitive, exact model name
@@ -659,18 +665,92 @@ def _should_retry_pollinations(resp: _requests_lib.Response) -> bool:
     return "model not found" in body or "legacy api" in body or "nothing here" in body
 
 
-def _post_pollinations(payload: dict, headers: dict[str, str]) -> tuple[str, _requests_lib.Response]:
+def _pollinations_stream_request_timeout() -> tuple[int, int]:
+    return (FAST_FAIL_TIMEOUT, POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT)
+
+
+def _set_response_socket_timeout(resp: _requests_lib.Response, read_timeout: int) -> None:
+    try:
+        raw = getattr(resp, "raw", None)
+        fp = getattr(raw, "_fp", None)
+        inner_fp = getattr(fp, "fp", None)
+        sock = getattr(getattr(inner_fp, "raw", None), "_sock", None)
+        if sock is not None:
+            sock.settimeout(read_timeout)
+            logger.info("[Pollinations] updated stream read timeout=%ss", read_timeout)
+    except Exception as exc:
+        logger.warning("[Pollinations] could not update stream read timeout: %s", exc)
+
+
+def _parse_pollinations_sse_event(raw_line: str) -> dict[str, Any]:
+    line = (raw_line or "").strip()
+    if not line or not line.startswith("data:"):
+        return {"kind": "skip"}
+
+    payload_text = line[5:].strip()
+    if not payload_text:
+        return {"kind": "skip"}
+    if payload_text == "[DONE]":
+        return {"kind": "done"}
+
+    try:
+        payload = json.loads(payload_text)
+    except ValueError:
+        return {"kind": "malformed", "raw": payload_text[:240]}
+
+    if not isinstance(payload, dict):
+        return {"kind": "skip"}
+
+    finish_reason = None
+    text = ""
+    choices = payload.get("choices")
+    if isinstance(choices, list) and choices:
+        first_choice = choices[0]
+        if isinstance(first_choice, dict):
+            if isinstance(first_choice.get("finish_reason"), str):
+                finish_reason = first_choice["finish_reason"]
+            delta = first_choice.get("delta")
+            if isinstance(delta, dict):
+                text = _extract_openai_text(delta.get("content"))
+
+    return {
+        "kind": "chunk",
+        "text": text,
+        "finish_reason": finish_reason,
+        "payload": payload,
+    }
+
+
+def _post_pollinations(
+    payload: dict,
+    headers: dict[str, str],
+    *,
+    timeout: Any = None,
+    stream: bool = False,
+) -> tuple[str, _requests_lib.Response]:
     candidates = _pollinations_candidate_endpoints()
     last_response: Optional[_requests_lib.Response] = None
+    request_timeout = timeout if timeout is not None else POLLINATIONS_TIMEOUT
 
     for index, endpoint in enumerate(candidates):
-        logger.info("[Pollinations] endpoint used=%s", endpoint)
-        logger.info("[Pollinations] request body model=%s", payload["model"])
+        logger.info(
+            "[Pollinations] endpoint used=%s mode=%s timeout=%s",
+            endpoint,
+            "provider_sse" if stream else "completion",
+            request_timeout,
+        )
+        logger.info(
+            "[Pollinations] request body model=%s stream=%s prompt_chars=%d",
+            payload["model"],
+            "true" if payload.get("stream") else "false",
+            len(_extract_openai_text(payload.get("messages", [{}])[0].get("content")) if isinstance(payload.get("messages"), list) and payload.get("messages") else ""),
+        )
         resp = _requests_lib.post(
             endpoint,
             json=payload,
             headers=headers,
-            timeout=POLLINATIONS_TIMEOUT,
+            timeout=request_timeout,
+            stream=stream,
         )
         if resp.ok:
             return endpoint, resp
@@ -684,6 +764,7 @@ def _post_pollinations(payload: dict, headers: dict[str, str]) -> tuple[str, _re
         )
         if index == len(candidates) - 1 or not _should_retry_pollinations(resp):
             resp.raise_for_status()
+        resp.close()
 
     if last_response is not None:
         last_response.raise_for_status()
@@ -733,9 +814,7 @@ def _call_pollinations_stream(
     temperature: float = 0.7,
 ):
     """
-    Buffered-streaming variant for Pollinations.
-    Pollinations is requested as a normal chat completion, then the
-    completed text is chunked into SSE-friendly pieces for the frontend.
+    True provider SSE stream for Pollinations.
     """
     if not pollinations_bucket.consume():
         raise RuntimeError("Pollinations rate limit exceeded")
@@ -745,23 +824,74 @@ def _call_pollinations_stream(
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
     payload = _build_pollinations_payload(prompt, model, temperature, None)
+    payload["stream"] = True
 
-    logger.info("[Pollinations] buffered stream mode enabled")
-    endpoint_used, resp = _post_pollinations(payload, headers)
-
-    full_text, finish_reason = _extract_pollinations_response(resp)
-    logger.info(
-        "[Pollinations] response received status=%s endpoint=%s chars=%d finish_reason=%s",
-        resp.status_code,
-        endpoint_used,
-        len(full_text),
-        finish_reason,
+    logger.info("[Pollinations] provider_sse stream mode enabled")
+    stream_started = time.monotonic()
+    endpoint_used, resp = _post_pollinations(
+        payload,
+        headers,
+        timeout=_pollinations_stream_request_timeout(),
+        stream=True,
     )
 
-    # Yield in small chunks to simulate token-by-token streaming
-    CHUNK_SIZE = 24
-    for i in range(0, len(full_text), CHUNK_SIZE):
-        yield full_text[i : i + CHUNK_SIZE]
+    finish_reason = None
+    first_text_ms: Optional[int] = None
+    text_chunks = 0
+    saw_done = False
+
+    try:
+        for raw_line in resp.iter_lines(decode_unicode=True):
+            event = _parse_pollinations_sse_event(raw_line)
+            kind = event.get("kind")
+
+            if kind == "skip":
+                continue
+            if kind == "malformed":
+                logger.warning("[Pollinations] malformed SSE line ignored: %s", event.get("raw"))
+                continue
+            if kind == "done":
+                saw_done = True
+                break
+
+            event_finish_reason = event.get("finish_reason")
+            if isinstance(event_finish_reason, str):
+                finish_reason = event_finish_reason
+
+            text = event.get("text") or ""
+            if not text:
+                continue
+
+            if first_text_ms is None:
+                first_text_ms = int((time.monotonic() - stream_started) * 1000)
+                logger.info(
+                    "[Pollinations] first text streamed endpoint=%s model=%s latency_ms=%d",
+                    endpoint_used,
+                    payload["model"],
+                    first_text_ms,
+                )
+                _set_response_socket_timeout(resp, POLLINATIONS_STREAM_IDLE_TIMEOUT)
+
+            text_chunks += 1
+            yield text
+    finally:
+        resp.close()
+
+    total_ms = int((time.monotonic() - stream_started) * 1000)
+    logger.info(
+        "[Pollinations] stream completed endpoint=%s model=%s chunks=%d finish_reason=%s first_text_ms=%s total_ms=%d done=%s",
+        endpoint_used,
+        payload["model"],
+        text_chunks,
+        finish_reason,
+        first_text_ms,
+        total_ms,
+        "true" if saw_done else "false",
+    )
+    if first_text_ms is None:
+        raise RuntimeError(
+            f"Pollinations stream produced no text within {POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT}s"
+        )
 
 
 # ==============================
@@ -911,7 +1041,10 @@ def call_llm_router(
             # Both Pollinations options exhausted — use Gemini as last resort
             try:
                 logger.info("[Fallback] All Pollinations models failed — switching to Gemini (%s)", GEMINI_FAST_MODEL)
-                logger.info("[Router] fallback provider=gemini")
+                logger.info(
+                    "[Router] fallback provider=gemini fallback_reason=%s",
+                    f"{primary_model or 'pollinations_primary'}_failed_then_{alt_pollinations_model}_failed_before_first_text",
+                )
                 fallback_triggered = True
                 fallback_reason = f"{primary_model or 'pollinations_primary'}_failed_then_{alt_pollinations_model}_failed"
                 actual_model_used = GEMINI_FAST_MODEL
@@ -982,19 +1115,37 @@ def stream_llm_router(
     provider, resolved_override = resolve_model_override(model_override, "pollinations")
     model = resolved_override or _default_model_for_provider(provider)
     
-    logger.info("[Router] model=%s provider=%s task=%s override=%s stream=true", model, provider, task, model_override)
+    logger.info(
+        "[Router] model=%s provider=%s task=%s override=%s stream=true prompt_chars=%d",
+        model,
+        provider,
+        task,
+        model_override,
+        len(prompt),
+    )
     logger.info("[Provider] %s", provider)
     logger.info("[LLM Request] stream  model=%s  provider=%s  override=%s", model, provider, model_override)
 
     # --- Pollinations streaming path ---
     if provider == "pollinations":
+        emitted_primary_text = False
         try:
-            yield from _call_pollinations_stream(prompt, resolved_override or model)
+            for chunk in _call_pollinations_stream(prompt, resolved_override or model):
+                if chunk:
+                    emitted_primary_text = True
+                yield chunk
             logger.info("[Provider] Pollinations stream succeeded for model=%s", model)
             return
         except Exception as e:
+            if emitted_primary_text:
+                logger.error(
+                    "[Provider] Pollinations stream aborted after partial output for model=%s: %s",
+                    model,
+                    e,
+                )
+                raise
             logger.warning(
-                "[Fallback] Pollinations stream failed for model=%s: %s — retrying alternate Pollinations model",
+                "[Fallback] Pollinations stream failed before first text for model=%s: %s — retrying alternate Pollinations model",
                 model, e,
             )
             # Try alternate Pollinations model before falling back to Gemini
@@ -1003,17 +1154,35 @@ def stream_llm_router(
                 alt_pollinations_model = GENERAL_CHAT_MODEL
             else:
                 alt_pollinations_model = CODING_MODEL
+            emitted_alt_text = False
             try:
                 logger.info("[Fallback] Trying alternate Pollinations model: %s", alt_pollinations_model)
-                yield from _call_pollinations_stream(prompt, alt_pollinations_model)
-                logger.info("[Fallback] Alternate Pollinations model %s stream succeeded", alt_pollinations_model)
+                for chunk in _call_pollinations_stream(prompt, alt_pollinations_model):
+                    if chunk:
+                        emitted_alt_text = True
+                    yield chunk
+                logger.info(
+                    "[Fallback] Alternate Pollinations model %s stream succeeded fallback_reason=%s",
+                    alt_pollinations_model,
+                    f"{primary_model or 'pollinations_primary'}_failed_before_first_text",
+                )
                 return
             except Exception as alt_error:
+                if emitted_alt_text:
+                    logger.error(
+                        "[Fallback] Alternate Pollinations model %s aborted after partial output: %s",
+                        alt_pollinations_model,
+                        alt_error,
+                    )
+                    raise
                 logger.warning(
-                    "[Fallback] Alternate Pollinations model %s also failed: %s — switching to Gemini (%s)",
+                    "[Fallback] Alternate Pollinations model %s also failed before first text: %s — switching to Gemini (%s)",
                     alt_pollinations_model, alt_error, GEMINI_FAST_MODEL,
                 )
-                logger.info("[Router] fallback provider=gemini")
+                logger.info(
+                    "[Router] fallback provider=gemini fallback_reason=%s",
+                    f"{primary_model or 'pollinations_primary'}_failed_then_{alt_pollinations_model}_failed_before_first_text",
+                )
                 # Fall through to Gemini below
                 model = GEMINI_FAST_MODEL
 
@@ -1183,4 +1352,3 @@ def is_safe_content(text: str, check_type: str = "input", timeout: Optional[int]
     classification, _ = call_safety_model(text, timeout=timeout, check_type=check_type)
     # Block only explicit UNSAFE — allow SAFE, CONTROVERSIAL, TIMEOUT, ERROR (fail-open)
     return classification != SafetyResult.UNSAFE
-
