@@ -32,6 +32,28 @@ import { callLLMAdapter, buildTitleGeneratePrompt, strictParseJsonObject, callLL
 import type { ChatContext } from "./ai/PromptBuilders";
 import { buildContext, buildContextFast } from "./context/contextBuilder";
 import { getOrAssignUserDatabase } from "./dbRouter";
+import {
+  createConversation,
+  deleteConversation,
+  deleteConversations,
+  getConversationById,
+  getConversationMessages,
+  getUserConversations,
+  getUserConversationsOldestFirst,
+  insertConversationMessage,
+  updateConversationTitle,
+  type ConversationListRow,
+  type ConversationMessageRow,
+  type ConversationRow,
+} from "./services/conversationService";
+import {
+  deleteMemory,
+  getMemorySummaries,
+  getUserMemories,
+  insertMemory,
+  type MemoryRow,
+  type MemoryScope,
+} from "./services/memoryService";
 
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
@@ -44,6 +66,7 @@ import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
 import { auditMiddleware, getRecentAuditEntries } from "./middleware/audit";
 import { imageQuotaMiddleware, getQuotaInfo, isImageRequest } from "./middleware/imageQuota";
+import { AuthError, getRequestUser, resolveRequestUser, verifyJWT } from "./middleware/auth";
 
 // Validation
 import {
@@ -140,7 +163,6 @@ function formatZodError(err: ZodError): string {
   return err.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join("; ");
 }
 
-const GUEST_USER_ID = "guest";
 const GUEST_MODEL_OVERRIDE = "gemini-fast";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -159,56 +181,13 @@ const MAX_CONVERSATIONS_PER_USER = 50;
 const MAX_MEMORY_BYTES_PER_USER = 25 * 1024; // 25 KB
 
 async function getVerifiedUserId(req: Request): Promise<string> {
-  const authHeader = req.header("Authorization") || req.header("authorization") || "";
-  const bearerPrefix = "Bearer ";
-  if (!authHeader.startsWith(bearerPrefix)) {
-    throw new Error("Unauthorized");
-  }
-
-  const token = authHeader.slice(bearerPrefix.length).trim();
-  if (!token) {
-    throw new Error("Unauthorized");
-  }
-
-  const supabaseUrl = process.env.SUPABASE_URL_1?.trim();
-  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY_1?.trim();
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error("Unauthorized");
-  }
-
-  let response: globalThis.Response;
-  try {
-    response = await fetch(`${supabaseUrl.replace(/\/$/, "")}/auth/v1/user`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        apikey: supabaseAnonKey,
-      },
-      signal: AbortSignal.timeout(3000),
-    });
-  } catch {
-    throw new Error("Unauthorized");
-  }
-
-  if (!response.ok) {
-    throw new Error("Unauthorized");
-  }
-
-  const verifiedUser = await response.json() as { id?: string };
-  const userId = typeof verifiedUser.id === "string" ? verifiedUser.id.trim() : "";
-  if (!userId) {
-    throw new Error("Unauthorized");
-  }
-
-  return userId;
+  const user = await resolveRequestUser(req, { allowGuest: false });
+  return user.sub;
 }
 
 async function getRequestIdentity(req: Request): Promise<{ userId: string; isGuest: boolean }> {
-  const authHeader = req.header("Authorization") || req.header("authorization") || "";
-  if (!authHeader.trim()) {
-    return { userId: GUEST_USER_ID, isGuest: true };
-  }
-  return { userId: await getVerifiedUserId(req), isGuest: false };
+  const user = await resolveRequestUser(req, { allowGuest: true });
+  return { userId: user.sub, isGuest: user.isGuest };
 }
 
 type DbErrorLike = {
@@ -217,39 +196,6 @@ type DbErrorLike = {
   details?: string | null;
   hint?: string | null;
 } | null | undefined;
-
-type ConversationRow = {
-  id: string;
-  user_id: string;
-  title?: string | null;
-  created_at?: string;
-};
-
-type ConversationListRow = {
-  id: string;
-  title: string | null;
-  created_at: string;
-};
-
-type ConversationMessageRow = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  created_at: string;
-};
-
-type MemoryScope = "global" | "chat";
-
-type MemoryRow = {
-  id: string;
-  user_id: string;
-  type: string;
-  summary: string;
-  importance: number;
-  scope?: MemoryScope | null;
-  chat_id?: string | null;
-  created_at: string;
-};
 
 function formatDbError(error: DbErrorLike): string {
   if (!error) return "unknown";
@@ -322,11 +268,7 @@ async function getOwnedConversationOrThrow(
   scope: string,
 ): Promise<ConversationRow> {
   logDbEvent(`${scope}.conversation-owner.start`, userId, { conversationId });
-  const { data, error } = await userDb
-    .from("conversations")
-    .select("id, user_id, title, created_at")
-    .eq("id", conversationId)
-    .single();
+  const { data, error } = await getConversationById(userDb, conversationId);
 
   if (error || !data || data.user_id !== userId) {
     if (error) {
@@ -360,11 +302,7 @@ async function enforceConversationLimit(
   logDbEvent(`${scope}.conversation-limit.check`, userId);
 
   // Get all conversations for the user, ordered by created_at ascending (oldest first)
-  const { data: conversations, error: listError } = await userDb
-    .from("conversations")
-    .select("id, created_at")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: true });
+  const { data: conversations, error: listError } = await getUserConversationsOldestFirst(userDb, userId);
 
   if (listError) {
     // Non-fatal: if we can't check, proceed with creation
@@ -389,20 +327,21 @@ async function enforceConversationLimit(
     deleting: toDelete,
   });
 
-  for (const conv of conversationsToDelete) {
-    const { error: deleteError } = await userDb
-      .from("conversations")
-      .delete()
-      .eq("id", conv.id)
-      .eq("user_id", userId);
+  const conversationIdsToDelete = conversationsToDelete.map((conv) => conv.id);
+  if (conversationIdsToDelete.length === 0) {
+    return;
+  }
 
-    if (deleteError) {
-      console.warn(
-        `[SentIQGPT][db] ${scope}.conversation-limit.delete-failed userId=${userId} conversationId=${conv.id} error=${deleteError.message}`
-      );
-    } else {
-      logDbEvent(`${scope}.conversation-limit.deleted`, userId, { conversationId: conv.id });
-    }
+  const { error: deleteError } = await deleteConversations(userDb, conversationIdsToDelete, userId);
+  if (deleteError) {
+    console.warn(
+      `[SentIQGPT][db] ${scope}.conversation-limit.delete-failed userId=${userId} conversationIds=${conversationIdsToDelete.join(",")} error=${deleteError.message}`
+    );
+    return;
+  }
+
+  for (const conv of conversationsToDelete) {
+    logDbEvent(`${scope}.conversation-limit.deleted`, userId, { conversationId: conv.id });
   }
 }
 
@@ -417,11 +356,7 @@ async function createConversationOrThrow(
 
   logDbEvent(`${scope}.conversation-create.start`, userId, { title });
   const startedAt = Date.now();
-  const { data, error } = await userDb
-    .from("conversations")
-    .insert({ user_id: userId, title })
-    .select("id, title, created_at")
-    .single();
+  const { data, error } = await createConversation(userDb, { userId, title });
 
   if (error) {
     logDbFailure(`${scope}.conversation-create`, userId, error, { title });
@@ -448,9 +383,7 @@ async function insertConversationMessageOrThrow(
   scope: string,
 ): Promise<void> {
   logDbEvent(`${scope}.message-insert.start`, userId, { conversationId, role });
-  const { error } = await userDb
-    .from("messages")
-    .insert({ conversation_id: conversationId, role, content });
+  const { error } = await insertConversationMessage(userDb, { conversationId, role, content });
   if (error) {
     logDbFailure(`${scope}.message-insert`, userId, error, { conversationId, role });
     throw new Error(error.message);
@@ -470,10 +403,7 @@ async function calculateUserMemorySize(
   userDb: any,
   userId: string,
 ): Promise<number> {
-  const { data: memories, error } = await userDb
-    .from("memories")
-    .select("summary")
-    .eq("user_id", userId);
+  const { data: memories, error } = await getMemorySummaries(userDb, userId);
 
   if (error || !memories) {
     return 0;
@@ -532,19 +462,14 @@ async function insertMemoryOrThrow(
   await enforceMemoryLimit(userDb, userId, memory.summary ?? "", scope);
 
   logDbEvent(`${scope}.memory-insert.start`, userId, { type: memory.type || null });
-  const normalizedScope: MemoryScope = memory.scope === "chat" ? "chat" : "global";
-  const { data, error } = await userDb
-    .from("memories")
-    .insert({
-      user_id: userId,
-      type: memory.type,
-      summary: memory.summary,
-      importance: memory.importance,
-      scope: normalizedScope,
-      chat_id: normalizedScope === "chat" ? memory.chat_id ?? null : null,
-    })
-    .select("id, user_id, type, summary, importance, scope, chat_id, created_at")
-    .single();
+  const { data, error } = await insertMemory(userDb, {
+    userId,
+    type: memory.type,
+    summary: memory.summary,
+    importance: memory.importance,
+    scope: memory.scope,
+    chat_id: memory.chat_id ?? null,
+  });
   if (error) {
     logDbFailure(`${scope}.memory-insert`, userId, error, { type: memory.type || null });
     throw new Error(error.message);
@@ -563,11 +488,7 @@ async function listMemoriesOrThrow(
 ): Promise<MemoryRow[]> {
   logDbEvent(`${scope}.memory-list.start`, userId);
   const startedAt = Date.now();
-  const { data, error } = await userDb
-    .from("memories")
-    .select("id, user_id, type, summary, importance, scope, chat_id, created_at")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false });
+  const { data, error } = await getUserMemories(userDb, userId);
 
   if (error) {
     logDbFailure(`${scope}.memory-list`, userId, error);
@@ -588,11 +509,7 @@ async function deleteMemoryIfOwned(
   scope: string,
 ): Promise<void> {
   logDbEvent(`${scope}.memory-delete.start`, userId, { memoryId });
-  const { error } = await userDb
-    .from("memories")
-    .delete()
-    .eq("id", memoryId)
-    .eq("user_id", userId);
+  const { error } = await deleteMemory(userDb, memoryId, userId);
 
   if (error) {
     logDbFailure(`${scope}.memory-delete`, userId, error, { memoryId });
@@ -605,11 +522,7 @@ async function deleteMemoryIfOwned(
 async function listConversationsOrThrow(userDb: any, userId: string, scope: string): Promise<ConversationListRow[]> {
   logDbEvent(`${scope}.conversation-list.start`, userId);
   const startedAt = Date.now();
-  const { data, error } = await userDb
-    .from("conversations")
-    .select("id, title, created_at")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false });
+  const { data, error } = await getUserConversations(userDb, userId);
 
   if (error) {
     logDbFailure(`${scope}.conversation-list`, userId, error);
@@ -632,11 +545,7 @@ async function listConversationMessagesOrThrow(
   await getOwnedConversationOrThrow(userDb, userId, conversationId, scope);
   logDbEvent(`${scope}.message-list.start`, userId, { conversationId });
   const startedAt = Date.now();
-  const { data, error } = await userDb
-    .from("messages")
-    .select("id, role, content, created_at")
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true });
+  const { data, error } = await getConversationMessages(userDb, conversationId);
 
   if (error) {
     logDbFailure(`${scope}.message-list`, userId, error, { conversationId });
@@ -660,11 +569,7 @@ async function updateConversationTitleIfOwned(
 ): Promise<void> {
   await getOwnedConversationOrThrow(userDb, userId, conversationId, scope);
   logDbEvent(`${scope}.conversation-title.start`, userId, { conversationId });
-  const { error } = await userDb
-    .from("conversations")
-    .update({ title })
-    .eq("id", conversationId)
-    .eq("user_id", userId);
+  const { error } = await updateConversationTitle(userDb, conversationId, userId, title);
 
   if (error) {
     logDbFailure(`${scope}.conversation-title`, userId, error, { conversationId });
@@ -682,11 +587,7 @@ async function deleteConversationIfOwned(
 ): Promise<void> {
   await getOwnedConversationOrThrow(userDb, userId, conversationId, scope);
   logDbEvent(`${scope}.conversation-delete.start`, userId, { conversationId });
-  const { error } = await userDb
-    .from("conversations")
-    .delete()
-    .eq("id", conversationId)
-    .eq("user_id", userId);
+  const { error } = await deleteConversation(userDb, conversationId, userId);
 
   if (error) {
     logDbFailure(`${scope}.conversation-delete`, userId, error, { conversationId });
@@ -940,13 +841,14 @@ app.delete(
 app.post(
   "/api/chat",
   aiRateLimiter,
+  verifyJWT({ allowGuest: true }),
   asyncHandler(async (req, res) => {
     const parsed = ChatRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
       return;
     }
-    const { userId, isGuest } = await getRequestIdentity(req);
+    const { sub: userId, isGuest } = getRequestUser(req);
 
     // Prompt injection detection
     if (detectPromptInjection(parsed.data.message)) {
@@ -1152,6 +1054,7 @@ app.post(
 app.post(
   "/api/chat/stream",
   aiRateLimiter,
+  verifyJWT({ allowGuest: true }),
   asyncHandler(async (req, res) => {
     const writeSseEvent = (payload: string) => {
       if (!res.writableEnded) {
@@ -1179,7 +1082,7 @@ app.post(
     // The streaming path does not support tool execution (charts, images, etc.).
     // If the message is a chart request, redirect to the orchestrator and return
     // the result as a single SSE JSON payload so the frontend can render it.
-    const { userId, isGuest } = await getRequestIdentity(req);
+    const { sub: userId, isGuest } = getRequestUser(req);
     if (isGuest) {
       const requestStart = Date.now();
       console.log(`[Latency] guest user query received`);
@@ -2348,6 +2251,14 @@ app.get("/api/audit", (_req, res) => {
 // Global error handler
 // ===============================
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  if (err instanceof AuthError) {
+    console.warn(`[SentIQGPT] Auth error: ${err.code}`);
+    if (!res.headersSent && !res.writableEnded) {
+      res.status(err.status).json({ error: err.message });
+    }
+    return;
+  }
+
   // Handle multer errors (file too large, etc.) with clear messages
   if (err && (err as any).code === "LIMIT_FILE_SIZE") {
     console.warn(`[SentIQGPT] File upload rejected: file too large`);
