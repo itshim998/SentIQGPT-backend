@@ -23,7 +23,7 @@
 
 import { DEFAULT_SOLVER_SYSTEM_PROMPT, solveMathDirect } from "../ai/mathVerifier";
 import { finalizeMathReply } from "../ai/mathAnswerFinalizer";
-import { sanitizeResponse } from "../ai/responseSanitizer";
+import { finalizeUserFacingReply } from "../ai/replyGuard";
 import { buildContext } from "../context/contextBuilder";
 import { planTask } from "./planner";
 import { executePlan } from "./toolExecutor";
@@ -165,11 +165,7 @@ function finalizeReply(
   reply?: string,
   emptyFallback = "Sorry, something went wrong. Please try again.",
 ): string {
-  const cleanedReply = reply ? sanitizeResponse(reply) : emptyFallback;
-  if (!cleanedReply || cleanedReply.trim().length < 5) {
-    return "Sorry, something went wrong. Please try again.";
-  }
-  return cleanedReply;
+  return finalizeUserFacingReply(reply, { emptyFallback });
 }
 
 /** Merge multi-step results into a single OrchestratorResponse. */

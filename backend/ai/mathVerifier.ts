@@ -6,6 +6,7 @@
 import { callLLMAdapterDetailed } from "./PromptBuilders";
 import type { LLMAdapterCall } from "./PromptBuilders";
 import { formatMathResponse } from "./mathFormatter";
+import { extractUserFacingAnswer } from "./replyGuard";
 import {
   hasMathLeakageSignals,
   hasMathNarrativeSignals,
@@ -27,7 +28,7 @@ const EXAMPLE_MAX_OUTPUT_TOKENS = 2200;
 const EXAMPLE_RETRY_MAX_OUTPUT_TOKENS = 1400;
 const REWRITE_MAX_OUTPUT_TOKENS = 900;
 const TRUNCATION_NOTICE =
-  "The mathematical response was truncated before completion. Please ask for a shorter or more focused solution.";
+  "[Response truncated before completion. Ask for a shorter or more focused solution if you want the remaining steps.]";
 export const DEFAULT_SOLVER_SYSTEM_PROMPT =
   "SYSTEM: You are a precise mathematical reasoning engine for end users.\n" +
   "RULES:\n" +
@@ -297,7 +298,7 @@ function finalizeSalvagedText(text: string): string {
   return `${trimmed}.`;
 }
 
-function salvageTruncatedResponse(text: string): string {
+export function salvageTruncatedResponse(text: string): string {
   let candidate = hasIncompleteMathTail(text) ? degradeIncompleteMathTail(text) : text;
   candidate = candidate
     .replace(/(?:^|\n)\s*\d+\.\s*$/m, "")
@@ -306,12 +307,12 @@ function salvageTruncatedResponse(text: string): string {
     .trim();
 
   if (candidate && !hasIncompleteMathTail(candidate) && !hasIncompleteProseTail(candidate)) {
-    return finalizeSalvagedText(candidate);
+    return `${finalizeSalvagedText(candidate)}\n\n${TRUNCATION_NOTICE}`;
   }
 
   const bounded = trimToLastCompleteBoundary(candidate);
   if (bounded) {
-    return finalizeSalvagedText(bounded);
+    return `${finalizeSalvagedText(bounded)}\n\n${TRUNCATION_NOTICE}`;
   }
 
   return TRUNCATION_NOTICE;
@@ -319,6 +320,11 @@ function salvageTruncatedResponse(text: string): string {
 
 export function normalizeMathResponse(text: string): string {
   return shapeMathResponse(formatMathResponse(text)).replace(META_REASONING_PATTERN, "").trim();
+}
+
+function extractMathCandidate(text: string, adapterError?: string | null): string {
+  const extracted = extractUserFacingAnswer(text, { adapterError });
+  return extracted.reply ?? "";
 }
 
 function buildRewritePrompt(userMessage: string, draftAnswer: string): string {
@@ -348,7 +354,7 @@ async function rewriteMathAnswer(
   };
 
   const rewriteResult = await callLLMAdapterDetailed(rewriteCall);
-  return normalizeMathResponse(rewriteResult.text);
+  return normalizeMathResponse(extractMathCandidate(rewriteResult.text, rewriteResult.error));
 }
 
 /**
@@ -385,7 +391,7 @@ export async function solveMathDirect(
   };
 
   let result = await makeCall("none");
-  let processed = normalizeMathResponse(result.text);
+  let processed = normalizeMathResponse(extractMathCandidate(result.text, result.error));
   let incompleteOutput =
     result.truncated || hasIncompleteMathTail(processed) || hasIncompleteProseTail(processed);
   const hasLeakage = hasMathLeakageSignals(result.text) || hasMathLeakageSignals(processed);
@@ -410,7 +416,7 @@ export async function solveMathDirect(
     }
     console.log(`[MathPipeline] retry_strategy=${retryMode}`);
     result = await makeCall(retryMode);
-    processed = normalizeMathResponse(result.text);
+    processed = normalizeMathResponse(extractMathCandidate(result.text, result.error));
     incompleteOutput =
       result.truncated || hasIncompleteMathTail(processed) || hasIncompleteProseTail(processed);
   }

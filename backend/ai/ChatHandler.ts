@@ -2,17 +2,9 @@ import {
   buildChatPrompt,
   callLLMAdapterDetailed,
   getDemoFallbackResponse,
-  strictParseJsonObject,
 } from "./PromptBuilders";
-import { sanitizeResponse } from "./responseSanitizer";
 import type { ChatContext } from "./PromptBuilders";
-
-// SentIQGPT v1 — Chat Handler
-//
-// Orchestrates the main conversation pipeline:
-// 1. Build context window (messages + memories + files)
-// 2. Route to Gemini via PromptBuilders
-// 3. Parse and return response
+import { extractUserFacingAnswer, finalizeUserFacingReply } from "./replyGuard";
 
 export interface ChatResponse {
   readonly reply: string;
@@ -49,29 +41,28 @@ export async function handleChat(args: {
   let raw: string;
   let model_used: string | undefined;
   let fallback = false;
+  let adapterError: string | null | undefined;
+
   try {
     const result = await callLLMAdapterDetailed(call);
     raw = result.text;
     model_used = result.model_used;
     fallback = result.fallback ?? false;
+    adapterError = result.error;
   } catch {
     raw = getDemoFallbackResponse("chat");
   }
 
-  // Chat responses may be plain text (not JSON) — handle both
-  let reply: string;
   let disclaimer = "SentIQGPT is an AI assistant. Verify important information independently.";
-
-  try {
-    const parsed = strictParseJsonObject(raw);
-    reply = typeof parsed.reply === "string" ? parsed.reply : raw;
-    if (typeof parsed.disclaimer === "string") {
-      disclaimer = parsed.disclaimer;
-    }
-  } catch {
-    // Response was plain text — use directly
-    reply = raw;
+  const extracted = extractUserFacingAnswer(raw, { adapterError });
+  if (typeof extracted.disclaimer === "string" && extracted.disclaimer.trim()) {
+    disclaimer = extracted.disclaimer;
   }
 
-  return { reply: sanitizeResponse(reply), disclaimer, model_used, fallback };
+  return {
+    reply: finalizeUserFacingReply(raw, { adapterError }),
+    disclaimer,
+    model_used,
+    fallback,
+  };
 }

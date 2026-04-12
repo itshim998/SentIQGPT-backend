@@ -11,6 +11,7 @@
 //   • Preserves citations and structure from the original
 
 import { callLLMAdapterDetailed } from "../ai/PromptBuilders";
+import { finalizeUserFacingReply } from "../ai/replyGuard";
 import type { CriticEvaluation, ImprovementResult } from "./types";
 
 /**
@@ -62,10 +63,13 @@ export async function improveAnswer(
       user_id: userId,
     });
 
-    const trimmed = improved.text.trim();
+    const trimmed = finalizeUserFacingReply(improved.text, {
+      adapterError: improved.error,
+      emptyFallback: answer,
+    }).trim();
 
     // Sanity check: if the improved answer is empty or drastically shorter, keep original
-    if (!trimmed || trimmed.length < answer.length * 0.3) {
+    if (!trimmed || trimmed.length < answer.length * 0.3 || improved.error || trimmed === answer.trim()) {
       console.log("[REFLECTION] improved answer too short, keeping original");
       return { answer, improved: false };
     }

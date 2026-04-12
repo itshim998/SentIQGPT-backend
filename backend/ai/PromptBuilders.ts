@@ -81,6 +81,8 @@ export interface LLMAdapterResult {
   readonly fallback_reason?: string | null;
   readonly finish_reason?: string | null;
   readonly truncated?: boolean;
+  readonly error?: string | null;
+  readonly error_detail?: string | null;
 }
 
 // ==============================
@@ -134,6 +136,8 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
           fallback_reason?: string | null;
           finish_reason?: string | null;
           truncated?: boolean;
+          error?: string | null;
+          error_detail?: string | null;
         };
   };
   if (typeof data.result === "string") {
@@ -144,15 +148,19 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
       fallback_reason: null,
       finish_reason: null,
       truncated: false,
+      error: null,
+      error_detail: null,
     };
   }
   return {
-    text: data.result.text,
+    text: typeof data.result.text === "string" ? data.result.text : "",
     model_used: data.result.model_used,
     fallback: data.result.fallback,
     fallback_reason: data.result.fallback_reason,
     finish_reason: data.result.finish_reason,
     truncated: data.result.truncated,
+    error: data.result.error,
+    error_detail: data.result.error_detail,
   };
 }
 

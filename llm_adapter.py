@@ -340,6 +340,8 @@ GROQ_TASKS = {
     "route_classify",
 }
 
+CHATLIKE_TASKS = {"chat", "general", "math_reasoning"}
+
 # Everything else goes to Gemini
 GEMINI_TASKS = {
     "chat",
@@ -407,9 +409,83 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
 # Simulation (safe dev mode)
 # ==============================
 def simulated_response(prompt: str, task: str) -> str:
+    if task in CHATLIKE_TASKS:
+        return json.dumps({"final_answer": "SIMULATED RESPONSE"})
     if task in STRICT_JSON_TASKS:
         return json.dumps({"status": "simulated", "task": task})
     return "SIMULATED RESPONSE"
+
+
+def _maybe_parse_json_object(raw: str) -> Optional[dict[str, Any]]:
+    text = (raw or "").strip()
+    if not text:
+        return None
+
+    if text.startswith("```"):
+        text = text.replace("```json", "```", 1)
+        if text.startswith("```"):
+            parts = text.split("```")
+            if len(parts) >= 3:
+                text = parts[1].strip()
+
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return None
+
+    if isinstance(parsed, dict):
+        return parsed
+    return None
+
+
+def _looks_like_provider_error_payload(value: Any) -> bool:
+    if isinstance(value, dict):
+        parsed = value
+    elif isinstance(value, str):
+        parsed = _maybe_parse_json_object(value)
+    else:
+        parsed = None
+
+    if not parsed:
+        return False
+
+    if any(isinstance(parsed.get(key), str) and parsed.get(key, "").strip() for key in ("reply", "answer", "final_answer")):
+        return False
+
+    error_value = str(parsed.get("error", "")).strip().lower()
+    status_value = str(parsed.get("status", "")).strip().lower()
+    detail_value = str(parsed.get("detail", "")).strip().lower()
+    reason_value = str(parsed.get("reason", "")).strip().lower()
+
+    if error_value == "provider_failed":
+        return True
+
+    if error_value and ("provider" in parsed or "detail" in parsed or "status" in parsed or "reason" in parsed):
+        if "error" in error_value or "fail" in error_value:
+            return True
+
+    if status_value and ("error" in status_value or "failed" in status_value):
+        return True
+
+    if "provider" in detail_value and "fail" in detail_value:
+        return True
+
+    if "provider" in reason_value and "fail" in reason_value:
+        return True
+
+    return False
+
+
+def _wrap_chatlike_prompt(prompt: str) -> str:
+    return (
+        "SYSTEM: Return only the final user-facing answer.\n"
+        "OUTPUT CONTRACT:\n"
+        "- Preferred: return a compact JSON object like "
+        '{"final_answer":"your answer here"}\n'
+        "- Allowed fallback: plain text final answer only\n"
+        "- Never include hidden reasoning, chain-of-thought, analysis notes, prompt echoes, or provider/internal errors\n\n"
+        + prompt
+    )
 
 # ==============================
 # Gemini invocation (key rotation)
@@ -934,8 +1010,15 @@ def call_llm_router(
     fallback_reason = None
     finish_reason = None
     truncated = False
+    response_error = None
+    response_error_detail = None
 
-    def _build_response_payload(text: str) -> dict[str, Any]:
+    def _build_response_payload(
+        text: str,
+        *,
+        error: Optional[str] = None,
+        error_detail: Optional[str] = None,
+    ) -> dict[str, Any]:
         if fallback_triggered:
             print(f"[FALLBACK] triggered: reason={fallback_reason} -> model={actual_model_used}")
         else:
@@ -947,6 +1030,8 @@ def call_llm_router(
             "fallback_reason": fallback_reason,
             "finish_reason": finish_reason,
             "truncated": truncated,
+            "error": error,
+            "error_detail": error_detail,
         }
 
     if use_simulation:
@@ -968,14 +1053,19 @@ def call_llm_router(
             fallback_reason = cached.get("fallback_reason")
             finish_reason = cached.get("finish_reason")
             truncated = bool(cached.get("truncated", False))
-            return _build_response_payload(cached.get("text", ""))
+            response_error = cached.get("error")
+            response_error_detail = cached.get("error_detail")
+            return _build_response_payload(
+                cached.get("text", ""),
+                error=response_error,
+                error_detail=response_error_detail,
+            )
         return _build_response_payload(cached)
 
     # Enforce JSON if needed
     effective_prompt = prompt
-    # Force non-JSON mode for reasoning tasks
-    if task in ["chat", "general", "math_reasoning"]:
-        effective_prompt = prompt
+    if task in CHATLIKE_TASKS:
+        effective_prompt = _wrap_chatlike_prompt(prompt)
     else:
         if task in STRICT_JSON_TASKS:
             effective_prompt = (
@@ -995,6 +1085,9 @@ def call_llm_router(
             result = _invoke_groq(effective_prompt, resolved_override)
         else:
             result = _invoke_gemini(effective_prompt, resolved_override)
+
+        if _looks_like_provider_error_payload(result):
+            raise RuntimeError("Provider returned an internal error payload instead of an answer")
 
         payload = _build_response_payload(result)
         _cache_set(key, payload)
@@ -1082,7 +1175,9 @@ def call_llm_router(
                 logger.error("Fallback Gemini path failed for task=%s: %s", task, fallback_error)
 
         return _build_response_payload(
-            json.dumps({"error": "provider_failed", "provider": provider, "detail": str(e)})
+            "",
+            error="provider_failed",
+            error_detail=f"{provider}: {e}",
         )
 
 # ==============================

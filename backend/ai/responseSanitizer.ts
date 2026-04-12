@@ -1,41 +1,182 @@
-export function sanitizeResponse(response: string): string {
-  const leakagePatterns = [
-    /i will solve/i,
-    /step[- ]by[- ]step/i,
-    /as an ai/i,
-    /i am an ai/i,
-    /i am designed/i,
-    /you asked me/i,
-    /following the rules/i,
-  ];
-  const internalPatterns = [
-    /invalid json/gi,
-    /unexpected token/gi,
-    /internal server error/gi,
-    /modeloutputsanitizationerror/gi,
-  ];
+const DEFAULT_SAFE_REPLY_FALLBACK =
+  "Sorry, I couldn't generate a proper response. Please try again.";
 
-  let cleaned = response ?? "";
+export interface SanitizeResponseOptions {
+  readonly preserveFormatting?: boolean;
+  readonly safeFallback?: string;
+}
 
-  for (const pattern of leakagePatterns) {
-    cleaned = cleaned.replace(pattern, " ");
+const DROP_LINE_PATTERNS: readonly RegExp[] = [
+  /^\s*(?:internal|hidden|private)\s+(?:reasoning|analysis|notes?)\s*[:\-]?\s*$/i,
+  /^\s*(?:chain[- ]of[- ]thought|cot|scratch(?: |-)?work)\s*[:\-]?/i,
+  /^\s*(?:thinking|analysis|reasoning|plan|approach|progress update)\s*[:\-]/i,
+  /^\s*(?:following the rules|per the instructions|based on the prompt|the prompt asks|the system prompt|the user asked me)\b/i,
+  /^\s*(?:json parse failure|invalid json|unexpected token|internal server error|provider failed|modeloutputsanitizationerror)\b/i,
+  /^\s*(?:here(?:'| i)s my (?:thinking|reasoning|analysis)|my chain(?: |-)?of(?: |-)?thought)\b/i,
+];
+
+const DROP_SENTENCE_PATTERNS: readonly RegExp[] = [
+  /^(?:i(?:'| a)?m\s+(?:going to|gonna)\s|i will\b|i should\b|i need to\b|let me\b|let'?s\b|we need to\b|we should\b).*$/i,
+  /^(?:following the rules|based on the prompt|the prompt asks|the system prompt|the hidden instructions)\b.*$/i,
+  /^(?:first,?\s+)?(?:i(?:'| a)?ll|i will|let me|we need to)\s+(?:analyze|reason|think|check|solve|walk through)\b.*$/i,
+  /^(?:analysis|reasoning|plan|approach|internal note|meta)\s*[:\-].*$/i,
+];
+
+const PROMPT_ECHO_PATTERNS: readonly RegExp[] = [
+  /\b(?:return|respond)\s+only\s+(?:with|in)\b/i,
+  /\b(?:no\s+markdown|no\s+json|valid json|final answer only)\b/i,
+  /\b(?:do not reveal|do not leak|hidden scratchwork|chain[- ]of[- ]thought)\b/i,
+  /\b(?:formatting rules?|bullet for final answer|one direct line)\b/i,
+];
+
+function looksLikeProviderFailurePayload(raw: string): boolean {
+  if (!raw.startsWith("{") || !raw.endsWith("}")) {
+    return false;
   }
 
-  for (const pattern of internalPatterns) {
-    cleaned = cleaned.replace(pattern, " ");
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return false;
+    }
+    if (
+      typeof parsed.error === "string" &&
+      parsed.error.toLowerCase() === "provider_failed"
+    ) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
   }
+}
 
-  cleaned = cleaned
-    .replace(/\s+/g, " ")
-    .replace(/\s([.,!?])/g, "$1")
-    .replace(/^[,.;:!?]+\s*/g, "")
-    .replace(/^\s*(?:this|that)\.\s*/i, "")
-    .replace(/^(?:to\s+(?:provide|help|assist|answer)\b[^,.!?]*,\s*)+/i, "")
-    .replace(/^(?:to\s+(?:provide|help|assist|answer)\b[^.!?]*[.!?]\s*)+/i, "")
-    .replace(/\s+[,.;:!?]+$/g, "")
-    .replace(/([.!?]\s+)to\s+/g, "$1To ")
-    .replace(/^to\s+[a-z]/i, (match) => match.charAt(0).toUpperCase() + match.slice(1))
+function splitSentences(line: string): string[] {
+  return line
+    .split(/(?<=[.!?])\s+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function stripStructuralPrefix(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^[-*+]\s+/, "")
+    .replace(/^\d+\.\s+/, "")
     .trim();
+}
+
+function cleanLine(line: string): string {
+  const sentences = splitSentences(line);
+  if (sentences.length <= 1) {
+    const normalizedLine = stripStructuralPrefix(line);
+    if (
+      DROP_SENTENCE_PATTERNS.some((pattern) => pattern.test(normalizedLine)) ||
+      PROMPT_ECHO_PATTERNS.some((pattern) => pattern.test(normalizedLine))
+    ) {
+      return "";
+    }
+    return line.trim();
+  }
+
+  const kept = sentences.filter((sentence, index) => {
+    const normalizedSentence = stripStructuralPrefix(sentence);
+
+    if (DROP_SENTENCE_PATTERNS.some((pattern) => pattern.test(normalizedSentence))) {
+      return false;
+    }
+
+    if (PROMPT_ECHO_PATTERNS.some((pattern) => pattern.test(normalizedSentence)) && index < sentences.length - 1) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return kept.join(" ").trim();
+}
+
+function collapseBlankLines(lines: readonly string[]): string[] {
+  const collapsed: string[] = [];
+  for (const line of lines) {
+    if (!line) {
+      if (collapsed.length === 0 || collapsed[collapsed.length - 1] === "") {
+        continue;
+      }
+      collapsed.push("");
+      continue;
+    }
+    collapsed.push(line);
+  }
+
+  while (collapsed.length > 0 && collapsed[0] === "") {
+    collapsed.shift();
+  }
+  while (collapsed.length > 0 && collapsed[collapsed.length - 1] === "") {
+    collapsed.pop();
+  }
+
+  return collapsed;
+}
+
+export function sanitizeResponse(
+  response: string,
+  options: SanitizeResponseOptions = {},
+): string {
+  const fallback = options.safeFallback ?? DEFAULT_SAFE_REPLY_FALLBACK;
+  const raw = (response ?? "").replace(/\r\n?/g, "\n").trim();
+
+  if (!raw || looksLikeProviderFailurePayload(raw)) {
+    return fallback;
+  }
+
+  const rawLines = raw
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""));
+
+  const keptLines: string[] = [];
+  let startedContent = false;
+
+  for (const originalLine of rawLines) {
+    const trimmed = originalLine.trim();
+    const normalizedLine = stripStructuralPrefix(trimmed);
+
+    if (!trimmed) {
+      if (startedContent) {
+        keptLines.push("");
+      }
+      continue;
+    }
+
+    if (DROP_LINE_PATTERNS.some((pattern) => pattern.test(normalizedLine))) {
+      continue;
+    }
+
+    if (PROMPT_ECHO_PATTERNS.some((pattern) => pattern.test(normalizedLine)) && !/[=+\-*/^]|\\frac|\\sqrt|\d/.test(normalizedLine)) {
+      continue;
+    }
+
+    const cleanedLine = cleanLine(trimmed)
+      .replace(/^(?:final answer|answer)\s*:\s*/i, "")
+      .replace(/\s+([,.;:!?])/g, "$1")
+      .trim();
+
+    if (!cleanedLine) {
+      continue;
+    }
+
+    keptLines.push(cleanedLine);
+    startedContent = true;
+  }
+
+  const normalizedLines = collapseBlankLines(keptLines);
+  if (normalizedLines.length === 0) {
+    return fallback;
+  }
+
+  const cleaned = options.preserveFormatting
+    ? normalizedLines.join("\n").replace(/\n{3,}/g, "\n\n").trim()
+    : normalizedLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 
   const isBroken =
     !cleaned ||
@@ -43,12 +184,7 @@ export function sanitizeResponse(response: string): string {
     /(?:=|:)\s*$/.test(cleaned);
 
   if (isBroken) {
-    console.log("[SANITIZER] cleaned response");
-    return "Sorry, I couldn't generate a proper response. Please try again.";
-  }
-
-  if (cleaned !== response) {
-    console.log("[SANITIZER] cleaned response");
+    return fallback;
   }
 
   return cleaned;
