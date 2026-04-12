@@ -47,9 +47,12 @@ import {
   type ConversationRow,
 } from "./services/conversationService";
 import {
+  decrementUserMemoryUsage,
   deleteMemory,
-  getMemorySummaries,
+  getMemoryById,
+  getUserMemoryUsageBytes,
   getUserMemories,
+  incrementUserMemoryUsage,
   insertMemory,
   type MemoryRow,
   type MemoryScope,
@@ -397,27 +400,16 @@ async function insertConversationMessageOrThrow(
 
 /**
  * Calculates the approximate storage size of a user's memories in bytes.
- * Uses the summary field length as the primary storage indicator.
+ * Reads the persisted byte counter from the shard-local users row.
  */
 async function calculateUserMemorySize(
   userDb: any,
   userId: string,
 ): Promise<number> {
-  const { data: memories, error } = await getMemorySummaries(userDb, userId);
-
-  if (error || !memories) {
+  const { data: totalBytes, error } = await getUserMemoryUsageBytes(userDb, userId);
+  if (error) {
     return 0;
   }
-
-  // Calculate total bytes from all summaries (UTF-8 encoding approximation)
-  let totalBytes = 0;
-  for (const memory of memories) {
-    if (memory.summary) {
-      // Use TextEncoder for accurate byte count (handles UTF-8 properly)
-      totalBytes += new TextEncoder().encode(memory.summary).length;
-    }
-  }
-
   return totalBytes;
 }
 
@@ -458,6 +450,8 @@ async function insertMemoryOrThrow(
   memory: { type?: string; summary?: string; importance?: number; scope?: MemoryScope; chat_id?: string | null },
   scope: string,
 ): Promise<MemoryRow> {
+  const newMemoryBytes = new TextEncoder().encode(memory.summary ?? "").length;
+
   // Enforce memory storage limit before inserting
   await enforceMemoryLimit(userDb, userId, memory.summary ?? "", scope);
 
@@ -477,6 +471,13 @@ async function insertMemoryOrThrow(
   if (!data?.id) {
     throw new Error("Failed to create memory");
   }
+
+  const { error: usageError } = await incrementUserMemoryUsage(userDb, userId, newMemoryBytes);
+  if (usageError) {
+    await deleteMemory(userDb, data.id, userId).catch(() => undefined);
+    throw new Error(usageError.message);
+  }
+
   logDbEvent(`${scope}.memory-insert.ok`, userId, { type: memory.type || null });
   return data as MemoryRow;
 }
@@ -509,9 +510,27 @@ async function deleteMemoryIfOwned(
   scope: string,
 ): Promise<void> {
   logDbEvent(`${scope}.memory-delete.start`, userId, { memoryId });
+  const { data: memoryRow, error: memoryLookupError } = await getMemoryById(userDb, memoryId, userId);
+  if (memoryLookupError) {
+    logDbFailure(`${scope}.memory-delete.lookup`, userId, memoryLookupError, { memoryId });
+    throw new Error(memoryLookupError.message);
+  }
+
+  const memoryBytes = new TextEncoder().encode(memoryRow?.summary ?? "").length;
+  if (memoryBytes > 0) {
+    const { error: usageError } = await decrementUserMemoryUsage(userDb, userId, memoryBytes);
+    if (usageError) {
+      logDbFailure(`${scope}.memory-delete.usage`, userId, usageError, { memoryId });
+      throw new Error(usageError.message);
+    }
+  }
+
   const { error } = await deleteMemory(userDb, memoryId, userId);
 
   if (error) {
+    if (memoryBytes > 0) {
+      await incrementUserMemoryUsage(userDb, userId, memoryBytes).catch(() => undefined);
+    }
     logDbFailure(`${scope}.memory-delete`, userId, error, { memoryId });
     throw new Error(error.message);
   }
