@@ -1,5 +1,6 @@
 import { finalizeMathReply } from "./ai/mathAnswerFinalizer";
 import {
+  composeUserFacingReply,
   extractUserFacingAnswer,
   finalizeUserFacingReply,
   DEFAULT_SAFE_REPLY_FALLBACK,
@@ -33,6 +34,11 @@ const fencedJsonAnswer = [
 const finalAnswerJson = JSON.stringify({
   final_answer: "The system has the unique solution x = 3, y = 0, z = 1.",
   disclaimer: "Custom disclaimer.",
+});
+
+const explanationJson = JSON.stringify({
+  explanation: "Step 1: Write the augmented matrix.\nStep 2: Eliminate x from rows 2 and 3.\nStep 3: Use back substitution to solve for z, y, and x.",
+  final_answer: "x = 3, y = 0, z = 1",
 });
 
 const providerFailureBlob = JSON.stringify({
@@ -72,6 +78,18 @@ assert(finalizeUserFacingReply(fencedJsonAnswer) === "The determinant is 5.", "f
 const extractedFinalAnswer = extractUserFacingAnswer(finalAnswerJson);
 assert(extractedFinalAnswer.reply === "The system has the unique solution x = 3, y = 0, z = 1.", "final_answer key extracted");
 assert(extractedFinalAnswer.disclaimer === "Custom disclaimer.", "disclaimer extracted from JSON envelope");
+
+const extractedExplanation = extractUserFacingAnswer(explanationJson);
+assert(extractedExplanation.explanation?.includes("Step 1: Write the augmented matrix.") ?? false, "structured explanation extracted");
+assert(extractedExplanation.finalAnswer === "x = 3, y = 0, z = 1", "structured final answer extracted");
+assert(
+  composeUserFacingReply(extractedExplanation, { preferExplanation: true })?.includes("Final Answer") ?? false,
+  "structured explanation composes into explanation plus final answer",
+);
+assert(
+  finalizeMathReply(explanationJson).includes("Step 2: Eliminate x from rows 2 and 3."),
+  "math finalizer preserves structured explanation JSON",
+);
 
 assert(
   finalizeUserFacingReply(providerFailureBlob) === DEFAULT_SAFE_REPLY_FALLBACK,

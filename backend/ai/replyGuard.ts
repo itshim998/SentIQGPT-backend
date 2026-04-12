@@ -11,6 +11,8 @@ export interface ExtractReplyOptions {
 
 export interface ExtractedReply {
   readonly reply: string | null;
+  readonly explanation?: string;
+  readonly finalAnswer?: string;
   readonly disclaimer?: string;
   readonly source: "json" | "fenced_json" | "plain_text" | "blocked";
   readonly blockedReason?: "adapter_error" | "provider_error_payload" | "missing_reply";
@@ -19,6 +21,7 @@ export interface ExtractedReply {
 export interface FinalizeReplyOptions extends ExtractReplyOptions {
   readonly preserveFormatting?: boolean;
   readonly emptyFallback?: string;
+  readonly preferExplanation?: boolean;
 }
 
 function unwrapFencedBlock(raw: string): { content: string; fenced: boolean } {
@@ -130,6 +133,23 @@ export function extractUserFacingAnswer(
       };
     }
 
+    const explanation = typeof parsed.explanation === "string" && parsed.explanation.trim()
+      ? parsed.explanation.trim()
+      : undefined;
+    const finalAnswer = typeof parsed.final_answer === "string" && parsed.final_answer.trim()
+      ? parsed.final_answer.trim()
+      : undefined;
+
+    if (explanation && finalAnswer) {
+      return {
+        reply: finalAnswer,
+        explanation,
+        finalAnswer,
+        disclaimer: typeof parsed.disclaimer === "string" ? parsed.disclaimer : undefined,
+        source: fenced ? "fenced_json" : "json",
+      };
+    }
+
     for (const key of REPLY_KEYS) {
       if (typeof parsed[key] === "string" && parsed[key].trim()) {
         return {
@@ -154,18 +174,32 @@ export function extractUserFacingAnswer(
   };
 }
 
+export function composeUserFacingReply(
+  extracted: ExtractedReply,
+  options: Pick<FinalizeReplyOptions, "preferExplanation"> = {},
+): string | null {
+  if (options.preferExplanation && extracted.explanation && extracted.finalAnswer) {
+    return `${extracted.explanation}\n\nFinal Answer\n${extracted.finalAnswer}`;
+  }
+
+  return extracted.reply;
+}
+
 export function finalizeUserFacingReply(
   raw: string | undefined,
   options: FinalizeReplyOptions = {},
 ): string {
   const fallback = options.emptyFallback ?? DEFAULT_SAFE_REPLY_FALLBACK;
   const extracted = extractUserFacingAnswer(raw, { adapterError: options.adapterError });
+  const composed = composeUserFacingReply(extracted, {
+    preferExplanation: options.preferExplanation ?? false,
+  });
 
-  if (!extracted.reply) {
+  if (!composed) {
     return fallback;
   }
 
-  return sanitizeResponse(extracted.reply, {
+  return sanitizeResponse(composed, {
     preserveFormatting: options.preserveFormatting ?? false,
     safeFallback: fallback,
   });

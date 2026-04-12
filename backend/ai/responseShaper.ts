@@ -24,6 +24,7 @@ const PROMPT_ECHO_PATTERNS = [
 
 const NARRATIVE_SENTENCE_PATTERNS = [
   /^\s*(?:we need to|we want to|we have to|we must)\b/i,
+  /^\s*we have\b/i,
   /^\s*(?:let'?s|let us)\b/i,
   /^\s*we can\b/i,
   /^\s*(?:consider|suppose|assume)\b/i,
@@ -50,7 +51,7 @@ const SCRATCHWORK_NOISE_PATTERNS = [
   /\btime for\b/i,
   /\blet t be\b/i,
   /\bif they meet at the halfway point, the time to reach the meeting point must be the same\b/i,
-  /\bD\/2\s*=\s*v[123456789xyztâ‚â‚‚]t\b/i,
+  /\bD\/2\s*=\s*v[123456789xyztÃ¢â€šÂÃ¢â€šâ€š]t\b/i,
   /D\/\(2t\)/i,
 ];
 
@@ -66,12 +67,42 @@ const INSIGHT_PATTERNS = [
   /\b(?:key insight|observation|because|since)\b/i,
 ];
 
+const LEGITIMATE_EXPLANATION_PATTERNS = [
+  /^(?:step\s*\d+[:.)-]?|\d+\.)/i,
+  /\baugmented matrix\b/i,
+  /\brow operations?\b/i,
+  /\bback substitution\b/i,
+  /\beliminat(?:e|ing)\b/i,
+  /\bsubstitut(?:e|ing|ion)\b/i,
+  /\brearrang(?:e|ing)\b/i,
+  /\bsolve for\b/i,
+  /\btherefore\b/i,
+  /\bthus\b/i,
+  /\bhence\b/i,
+];
+
 function hasMathPayload(text: string): boolean {
-  return /[=â‰ˆ<>]|\\frac|\\sqrt|\\begin\{|\\\(|\\\[|\$\$|\$[^$]+\$|(?:^|\s)(?:x|y|z|t|v_?\d?|D|n)(?:\s|$)|\d+\s*[+\-*/=]|\b(?:from\s*\(\d+\)|therefore|thus|hence)\b|[â‡’â†’]/i.test(text);
+  return /[=Ã¢â€°Ë†<>]|\\frac|\\sqrt|\\begin\{|\\\(|\\\[|\$\$|\$[^$]+\$|(?:^|\s)(?:x|y|z|t|v_?\d?|D|n|R_?\d+)(?:\s|$)|\d+\s*[+\-*/=]|\b(?:from\s*\(\d+\)|therefore|thus|hence)\b|[Ã¢â€¡â€™Ã¢â€ â€™]/i.test(text);
+}
+
+function hasLegitimateExplanation(text: string): boolean {
+  return LEGITIMATE_EXPLANATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function stripStructuralPrefix(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^[-*Ã¢â‚¬Â¢]\s+/, "")
+    .replace(/^\d+\.\s+/, "")
+    .trim();
 }
 
 function normalizeLine(line: string): string {
-  return line.replace(/^#{1,3}\s*/, "").replace(/^\d+\.\s*/, "").replace(/^[-*â€¢]\s*/, "").replace(/\s+/g, " ").trim();
+  return line
+    .replace(/^#{1,3}\s*/, "")
+    .replace(/^[-*Ã¢â‚¬Â¢]\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function cleanNarrativeFromLine(line: string): string {
@@ -81,23 +112,49 @@ function cleanNarrativeFromLine(line: string): string {
     .filter(Boolean);
 
   if (sentences.length <= 1) {
-    return line;
+    const trimmed = line.trim();
+    const normalized = stripStructuralPrefix(trimmed);
+    if (
+      (NARRATIVE_SENTENCE_PATTERNS.some((pattern) => pattern.test(normalized)) ||
+        RESTATEMENT_LINE_PATTERNS.some((pattern) => pattern.test(normalized))) &&
+      !hasMathPayload(normalized) &&
+      !hasLegitimateExplanation(normalized)
+    ) {
+      return "";
+    }
+    return trimmed;
   }
 
   const kept = sentences.filter((sentence) => {
-    if (NARRATIVE_SENTENCE_PATTERNS.some((pattern) => pattern.test(sentence))) {
-      return /[=â‰ˆ<>]|\\frac|\\sqrt|[â‡’â†’]/i.test(sentence) || /^\s*(?:from\s*\(\d+\)|therefore|thus|hence)\b/i.test(sentence);
+    const normalized = stripStructuralPrefix(sentence);
+    if (NARRATIVE_SENTENCE_PATTERNS.some((pattern) => pattern.test(normalized))) {
+      return hasMathPayload(normalized) || hasLegitimateExplanation(normalized) || /^\s*(?:from\s*\(\d+\)|therefore|thus|hence)\b/i.test(normalized);
     }
-    if (hasMathPayload(sentence)) return true;
-    if (RESTATEMENT_LINE_PATTERNS.some((pattern) => pattern.test(sentence))) return false;
+    if (hasMathPayload(normalized)) return true;
+    if (hasLegitimateExplanation(normalized)) return true;
+    if (RESTATEMENT_LINE_PATTERNS.some((pattern) => pattern.test(normalized))) return false;
     return true;
   });
 
-  return kept.join(" ").trim();
+  return kept
+    .join(" ")
+    .trim()
+    .replace(/^(?:we have\b[^.]*\.\s*)+/i, "")
+    .replace(/^(?:we can\b[^.]*\.\s*)+/i, "")
+    .replace(/^(?:let'?s\b[^.]*\.\s*)+/i, "")
+    .trim();
 }
 
 function isLongNarrativeLine(line: string): boolean {
   return line.length > 120 && !hasMathPayload(line) && RESTATEMENT_LINE_PATTERNS.some((pattern) => pattern.test(line));
+}
+
+function isWorkedStepLine(line: string): boolean {
+  return /^(?:step\s*\d+[:.)-]?|\d+\.)/i.test(line);
+}
+
+function isMethodOperationLine(line: string): boolean {
+  return /(?:R\d+\s*->|row operations?|augmented matrix|back substitution|eliminat(?:e|ing)|substitut(?:e|ing|ion))/i.test(line);
 }
 
 export function hasMathLeakageSignals(text: string): boolean {
@@ -125,7 +182,7 @@ export function shouldRewriteMathResponse(text: string): boolean {
 
   const narrativeLines = lines.filter((line) => hasMathNarrativeSignals(line));
   const longNarrativeLines = lines.filter((line) => isLongNarrativeLine(line));
-  const overlyVerbose = text.length > 650 || lines.length > 10;
+  const overlyVerbose = text.length > 900 || lines.length > 14;
 
   return narrativeLines.length > 0 || longNarrativeLines.length > 0 || overlyVerbose;
 }
@@ -136,8 +193,8 @@ export function shapeMathResponse(text: string): string {
   let cleaned = text;
   const mathBlocks: string[] = [];
   const dedupeSet = new Set<string>();
-  const hadMarkdownStructure = /(^|\n)#{1,3}\s+|(^|\n)[-*â€¢]\s+/.test(cleaned);
-  const hadNumberedSteps = /(^|\s)\d+\.\s/.test(cleaned);
+  const hadMarkdownStructure = /(^|\n)#{1,3}\s+|(^|\n)[-*Ã¢â‚¬Â¢]\s+/.test(cleaned);
+  const hadNumberedSteps = /(^|\n)\s*(?:step\s*\d+[:.)-]?|\d+\.)/i.test(cleaned);
   const hasPromptEcho = hasMathPromptEchoSignals(text);
   const hasLeakage = hasMathLeakageSignals(text);
   const hasNarrative = hasMathNarrativeSignals(text);
@@ -171,15 +228,18 @@ export function shapeMathResponse(text: string): string {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
-  const normalizedLines = rawLines
+  const contentLines = rawLines
     .map((line) => cleanNarrativeFromLine(line))
-    .map((line) => normalizeLine(line))
     .filter((line) => line.length > 0)
-    .filter((line) => !LABEL_ONLY_PATTERNS.some((pattern) => pattern.test(line)))
     .filter((line) => !LEAKY_LINE_PATTERNS.some((pattern) => pattern.test(line)))
     .filter((line) => !PROMPT_ECHO_PATTERNS.some((pattern) => pattern.test(line)))
     .filter((line) => !SCRATCHWORK_NOISE_PATTERNS.some((pattern) => pattern.test(line)))
-    .filter((line) => !isLongNarrativeLine(line))
+    .filter((line) => !isLongNarrativeLine(line));
+
+  const normalizedLines = contentLines
+    .map((line) => normalizeLine(line))
+    .filter((line) => line.length > 0)
+    .filter((line) => !LABEL_ONLY_PATTERNS.some((pattern) => pattern.test(line)))
     .filter((line) => {
       const key = line.toLowerCase();
       if (dedupeSet.has(key)) return false;
@@ -187,12 +247,31 @@ export function shapeMathResponse(text: string): string {
       return true;
     });
 
+  const preservedWorkedLines = contentLines.filter((line, index) => {
+    const normalized = normalizeLine(line);
+    if (!normalized) return false;
+    if (LABEL_ONLY_PATTERNS.some((pattern) => pattern.test(normalized))) return false;
+    return normalizedLines.some((candidate) => candidate.toLowerCase() === normalized.toLowerCase()) ||
+      isWorkedStepLine(line) ||
+      isMethodOperationLine(line) ||
+      index === contentLines.length - 1;
+  });
+
+  const hasExplicitWorkedStructure =
+    preservedWorkedLines.some((line) => isWorkedStepLine(line)) ||
+    preservedWorkedLines.some((line) => isMethodOperationLine(line)) ||
+    /\b(?:gauss|elimination|matrix|row operation|back substitution|substitution method)\b/i.test(text);
+  const hasNamedProcedure =
+    /\b(?:gauss|elimination|matrix|row operation|back substitution|substitution method)\b/i.test(text);
+
   if (normalizedLines.length === 0) {
     cleaned = "";
+  } else if ((hasNamedProcedure || (!hasPromptEcho && !hasLeakage)) && hasExplicitWorkedStructure) {
+    cleaned = preservedWorkedLines.join("\n").trim();
   } else if (!hasPromptEcho && !hasLeakage && !hasNarrative && !hadNumberedSteps && normalizedLines.length <= 3) {
     cleaned = normalizedLines.join("\n");
   } else if (!hasPromptEcho && !hasLeakage && !hasNarrative && hadMarkdownStructure && normalizedLines.length <= 6) {
-    cleaned = rawLines.join("\n").trim();
+    cleaned = contentLines.join("\n").trim();
   } else if (normalizedLines.length === 1) {
     cleaned = normalizedLines[0];
   } else {
@@ -206,7 +285,7 @@ export function shapeMathResponse(text: string): string {
     const finalAnswerLines: string[] = [];
     if (finalAnswerIndex > 0) {
       const previousLine = normalizedLines[finalAnswerIndex - 1];
-      if (/[=â‰ˆ<>]/.test(previousLine) || /\b(?:ratio|therefore|thus|hence)\b/i.test(previousLine)) {
+      if (/[=Ã¢â€°Ë†<>]/.test(previousLine) || /\b(?:ratio|therefore|thus|hence)\b/i.test(previousLine)) {
         finalAnswerLines.push(previousLine);
       }
     }
@@ -218,14 +297,14 @@ export function shapeMathResponse(text: string): string {
     });
 
     const insightIndex = remainingLines.findIndex((line) => {
-      if (/[=â‰ˆ<>]/.test(line)) return false;
+      if (/[=Ã¢â€°Ë†<>]/.test(line)) return false;
       if (line.length > 110 && !hasMathPayload(line)) return false;
       return INSIGHT_PATTERNS.some((pattern) => pattern.test(line));
     });
     const insightLine = insightIndex >= 0 ? remainingLines[insightIndex] : undefined;
     const solutionLines = remainingLines.filter((_, index) => index !== insightIndex);
-    const compactSolutionLines = solutionLines.length > 4
-      ? solutionLines.slice(-4)
+    const compactSolutionLines = solutionLines.length > 6
+      ? solutionLines.slice(-6)
       : solutionLines;
 
     const sections: string[] = [];

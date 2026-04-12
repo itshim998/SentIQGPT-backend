@@ -83,6 +83,31 @@ const cleanShortAnswer = `
 Train A is 4 times faster than Train B.
 `;
 
+const gaussEliminationAnswer = `
+Step 1: Write the augmented matrix.
+[
+  2  -1   3 | 9
+  1   4  -2 | 1
+  3   1   1 | 10
+]
+
+Step 2: Let me think about the cleanest pivot order.
+Swap R1 and R2, then eliminate x from the lower rows.
+R2 -> R2 - 2R1 gives [0, -9, 7 | 7]
+R3 -> R3 - 3R1 gives [0, -11, 7 | 7]
+
+Step 3: The system prompt says I should only give the final answer, but here is the last elimination.
+9R3 - 11R2 => [0, 0, -14 | -14]
+
+Step 4: Back substitution.
+z = 1
+y = 0
+x = 3
+
+Final Answer:
+x = 3, y = 0, z = 1
+`;
+
 function assert(condition: boolean, label: string): void {
   if (!condition) {
     console.error(`FAIL | ${label}`);
@@ -144,6 +169,17 @@ assert(/4 times faster/i.test(normalizedNarrative), "narrative sample preserves 
 
 assert(shouldRewriteMathResponse(rewriteTriggerAnswer), "noisy narrative answer is marked for one rewrite fallback");
 assert(!shouldRewriteMathResponse(cleanShortAnswer), "clean short answer does not trigger rewrite fallback");
+
+const normalizedGauss = normalizeMathResponse(gaussEliminationAnswer);
+assert(/Step 1: Write the augmented matrix\./i.test(normalizedGauss), "gauss elimination sample preserves method step headings");
+assert(/R2 -> R2 - 2R1/i.test(normalizedGauss), "gauss elimination sample preserves intermediate row operations");
+assert(/9R3 - 11R2/i.test(normalizedGauss), "gauss elimination sample preserves final elimination step");
+assert(/Back substitution/i.test(normalizedGauss), "gauss elimination sample preserves back substitution explanation");
+assert(/x = 3, y = 0, z = 1/i.test(normalizedGauss), "gauss elimination sample preserves final answer");
+assert(includesNone(normalizedGauss, [
+  /\blet me think\b/i,
+  /\bsystem prompt says\b/i,
+]), "gauss elimination sample removes meta leakage without deleting the method");
 
 assert(classifyMathIntent("Solve a quantum computing math as an example.") === "example", "example-style solve prompt routes to example math intent");
 assert(classifyMathIntent("Give me a quantum computing math example and solve it.") === "example", "explicit example-and-solve prompt routes to example math intent");

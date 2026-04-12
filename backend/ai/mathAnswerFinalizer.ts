@@ -6,6 +6,7 @@ export function finalizeMathReply(
 ): string {
   return finalizeUserFacingReply(reply, {
     preserveFormatting: true,
+    preferExplanation: true,
     emptyFallback,
   });
 }

@@ -6,7 +6,7 @@
 import { callLLMAdapterDetailed } from "./PromptBuilders";
 import type { LLMAdapterCall } from "./PromptBuilders";
 import { formatMathResponse } from "./mathFormatter";
-import { extractUserFacingAnswer } from "./replyGuard";
+import { composeUserFacingReply, extractUserFacingAnswer } from "./replyGuard";
 import {
   hasMathLeakageSignals,
   hasMathNarrativeSignals,
@@ -32,13 +32,14 @@ const TRUNCATION_NOTICE =
 export const DEFAULT_SOLVER_SYSTEM_PROMPT =
   "SYSTEM: You are a precise mathematical reasoning engine for end users.\n" +
   "RULES:\n" +
-  "- Think internally and show only the essential solution.\n" +
-  "- Use 2 to 5 short direct steps when needed, then give the final answer.\n" +
+  "- Think internally, but present a concise worked solution for the user.\n" +
+  "- Use short numbered steps that show the method, then end with a definitive final answer.\n" +
+  "- Include essential intermediate equations, matrices, substitutions, or row operations when they are part of the method.\n" +
   "- Do not reveal hidden scratchwork, retries, self-corrections, or chain-of-thought.\n" +
-  "- Do not use narration such as 'we need to', 'let's', 'consider', 'suppose', 'check', 'actually', or 'from here we can'.\n" +
+  "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
   "- Do not mention the prompt, headings, bullets, or formatting rules.\n" +
   "- If the problem statement looks inconsistent, say so briefly and give the best resolution.\n" +
-  "- End with a direct final answer.";
+  "- Keep the explanation concise, but do not skip the method.";
 const GENERATION_SYSTEM_PROMPT =
   "SYSTEM: You are generating math practice content.\n" +
   "RULES:\n" +
@@ -62,23 +63,24 @@ const EXAMPLE_SYSTEM_PROMPT =
   "SYSTEM: Create one relevant math example for the user's topic and solve it clearly.\n" +
   "RULES:\n" +
   "- If the user gives a topic instead of a concrete problem, choose one representative example.\n" +
-  "- Present the example, 2 to 5 short direct steps, and the final answer.\n" +
+  "- Present the example, short numbered steps, and the final answer.\n" +
   "- Keep the answer concise and user-facing.\n" +
   "- Do not reveal hidden reasoning, self-talk, retries, or formatting instructions.\n" +
-  "- Do not use narration such as 'we need to', 'let's', 'consider', 'suppose', 'check', 'actually', or 'from here we can'.\n" +
-  "- End with a direct final answer.";
+  "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
+  "- Include the method briefly before the final answer.";
 const EXAMPLE_RETRY_SYSTEM_PROMPT =
   "SYSTEM: Provide one short solved math example for the user.\n" +
   "RULES:\n" +
-  "- Keep only the example, 2 to 4 direct steps, and the final answer.\n" +
+  "- Keep the example, concise numbered steps, and the final answer.\n" +
   "- No prompt echo, no self-talk, and no formatting commentary.\n" +
-  "- Do not use narration such as 'we need to', 'let's', 'consider', 'suppose', 'check', 'actually', or 'from here we can'.";
+  "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.";
 const COMPACT_SOLVER_SYSTEM_PROMPT =
-  "SYSTEM: Give a concise user-facing math answer.\n" +
+  "SYSTEM: Give a concise user-facing worked math solution.\n" +
   "RULES:\n" +
-  "- Keep only 2 to 4 direct mathematical steps and the final answer.\n" +
+  "- Keep 3 to 6 concise numbered steps and the final answer.\n" +
+  "- Preserve the key method, including intermediate equations or matrix operations when needed.\n" +
   "- No chain-of-thought, no self-talk, and no prompt echo.\n" +
-  "- Do not use narration such as 'we need to', 'let's', 'consider', 'suppose', 'check', 'actually', or 'from here we can'.\n" +
+  "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
   "- Do not mention bullets, headings, line counts, or formatting rules.\n" +
   "- No repetition, no failed attempts, no meta commentary.";
 const REWRITE_SYSTEM_PROMPT =
@@ -86,8 +88,9 @@ const REWRITE_SYSTEM_PROMPT =
   "RULES:\n" +
   "- Keep the mathematics unchanged.\n" +
   "- Remove narration, meta wording, and explanatory chatter.\n" +
-  "- Keep only 2 to 5 short direct steps and the final answer.\n" +
-  "- Do not use phrases such as 'we need to', 'let's', 'consider', 'suppose', 'check', 'actually', or 'from here we can'.\n" +
+  "- Keep a concise worked solution with numbered steps and a final answer.\n" +
+  "- Preserve essential intermediate equations, matrices, substitutions, or elimination steps.\n" +
+  "- Do not use phrases such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
   "- Do not mention formatting rules, headings, or bullets.\n" +
   "- Return only the rewritten answer.";
 const GENERATION_REQUEST_PATTERNS: readonly RegExp[] = [
@@ -324,7 +327,7 @@ export function normalizeMathResponse(text: string): string {
 
 function extractMathCandidate(text: string, adapterError?: string | null): string {
   const extracted = extractUserFacingAnswer(text, { adapterError });
-  return extracted.reply ?? "";
+  return composeUserFacingReply(extracted, { preferExplanation: true }) ?? "";
 }
 
 function buildRewritePrompt(userMessage: string, draftAnswer: string): string {
