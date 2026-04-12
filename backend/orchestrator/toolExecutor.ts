@@ -106,13 +106,13 @@ async function execConversation(
     : input;
 
   // Math path
-  // If the query is mathematical, route through the direct MiniMax math solver
+  // If the query is mathematical, route through the direct DeepSeek math solver
   // instead of the standard single-model chat handler.
   if (!detectCodeQuery(input) && isMathQuery(input)) {
-    console.log(`[MathPipeline] math query detected — routing to direct minimax solver`);
+    console.log(`[MathPipeline] math query detected — routing to direct deepseek solver`);
     const mathResult = await solveMathDirect(augmentedInput, DEFAULT_SOLVER_SYSTEM_PROMPT);
     console.log(
-      `[MathPipeline] solved using minimax`,
+      `[MathPipeline] solved using deepseek`,
     );
     return {
       step: 0,

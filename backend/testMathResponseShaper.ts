@@ -142,7 +142,10 @@ assert(/Train A is 4 times as fast as Train B\./i.test(normalizedStructured), "w
 
 const normalizedLatex = normalizeMathResponse(latexAnswer);
 const formattedLatex = formatMathResponse(latexAnswer);
-assert(formattedLatex.includes("$$") && formattedLatex.includes("\\frac{v_1}{v_2}"), "LaTeX display math is preserved and normalized");
+assert(
+  formattedLatex.includes("$$") && /\\frac\{v_\{?1\}?\}\{v_\{?2\}?\}/.test(formattedLatex),
+  "LaTeX display math is preserved and normalized",
+);
 assert(
   /Train A is 4 times faster/i.test(normalizedLatex) || /\\frac\{v_1\}\{v_2\}/.test(normalizedLatex),
   "LaTeX answer stays readable even without forced section headings",
@@ -155,7 +158,10 @@ assert(includesNone(normalizedPromptEcho, [
   /\bbullet for final answer\b/i,
   /\bchain-of-th(?:ought)?\b/i,
 ]), "prompt-echo sample removes formatting commentary");
-assert(/\(\|0\>\s*\+\s*\|1\>\)\/sqrt\(2\)/i.test(normalizedPromptEcho), "prompt-echo sample preserves the actual math state");
+assert(
+  /\(\|0\>\s*\+\s*\|1\>\)\/(?:sqrt\(2\)|\\sqrt\{2\})/i.test(normalizedPromptEcho),
+  "prompt-echo sample preserves the actual math state",
+);
 
 const normalizedNarrative = normalizeMathResponse(narrativeTrainAnswer);
 assert(includesNone(normalizedNarrative, [
@@ -171,19 +177,35 @@ assert(shouldRewriteMathResponse(rewriteTriggerAnswer), "noisy narrative answer 
 assert(!shouldRewriteMathResponse(cleanShortAnswer), "clean short answer does not trigger rewrite fallback");
 
 const normalizedGauss = normalizeMathResponse(gaussEliminationAnswer);
+const formattedGauss = formatMathResponse(gaussEliminationAnswer);
 assert(/Step 1: Write the augmented matrix\./i.test(normalizedGauss), "gauss elimination sample preserves method step headings");
-assert(/R2 -> R2 - 2R1/i.test(normalizedGauss), "gauss elimination sample preserves intermediate row operations");
-assert(/9R3 - 11R2/i.test(normalizedGauss), "gauss elimination sample preserves final elimination step");
+assert(
+  /R(?:_\{?2\}?|2)\s*(?:\\to|->)\s*R(?:_\{?2\}?|2)\s*-\s*2R(?:_\{?1\}?|1)/i.test(normalizedGauss),
+  "gauss elimination sample preserves intermediate row operations",
+);
+assert(
+  /9R(?:_\{?3\}?|3)\s*-\s*11R(?:_\{?2\}?|2)\s*(?:\\Rightarrow|=>)/i.test(normalizedGauss),
+  "gauss elimination sample preserves final elimination step",
+);
 assert(/Back substitution/i.test(normalizedGauss), "gauss elimination sample preserves back substitution explanation");
 assert(/x = 3, y = 0, z = 1/i.test(normalizedGauss), "gauss elimination sample preserves final answer");
 assert(includesNone(normalizedGauss, [
   /\blet me think\b/i,
   /\bsystem prompt says\b/i,
 ]), "gauss elimination sample removes meta leakage without deleting the method");
+assert(/\\begin\{array\}\{ccc\|c\}/.test(formattedGauss), "gauss elimination matrix is upgraded into LaTeX array form");
+assert(
+  /R_\{2\}\s*\\to\s*R_\{2\}\s*-\s*2R_\{1\}/.test(formattedGauss),
+  "row operations are upgraded into LaTeX-friendly notation",
+);
+assert(/\$\$\s*x = 3, y = 0, z = 1\s*\$\$/.test(formattedGauss), "final assignment line is promoted to display math");
+
+const plainSentence = "This explanation is already readable.";
+assert(formatMathResponse(plainSentence) === plainSentence, "plain non-math text remains unchanged");
 
 assert(classifyMathIntent("Solve a quantum computing math as an example.") === "example", "example-style solve prompt routes to example math intent");
 assert(classifyMathIntent("Give me a quantum computing math example and solve it.") === "example", "explicit example-and-solve prompt routes to example math intent");
 assert(classifyMathIntent("Solve 3x + 7 = 19") === "solve", "concrete math solve prompt stays on solve intent");
-assert(selectModelForPrompt("Solve 3x + 7 = 19") === "minimax", "concrete solve prompt still routes to minimax");
+assert(selectModelForPrompt("Solve 3x + 7 = 19") === "deepseek", "concrete solve prompt still routes to deepseek");
 
 console.log("\nMath response shaping validation passed.");

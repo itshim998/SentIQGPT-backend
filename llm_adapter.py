@@ -388,8 +388,8 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     if logical in {"qwen3-coder-30b", "qwen3-coder"}:
         return "pollinations", CODING_MODEL
 
-    if logical == "minimax":
-        return "pollinations", "minimax"
+    if logical == "deepseek":
+        return "pollinations", "deepseek"
 
     if logical == "gemini-fast":
         return "pollinations", GENERAL_CHAT_MODEL
@@ -518,7 +518,7 @@ def _should_request_worked_explanation(
 
     if normalized_task == "math_reasoning":
         return True
-    if normalized_override == "minimax":
+    if normalized_override == "deepseek":
         return True
 
     explanation_patterns = [

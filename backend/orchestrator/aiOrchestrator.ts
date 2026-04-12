@@ -122,7 +122,7 @@ function planToolToRoute(tool: PlanTool): DetectedTool {
 
 function getBaseModelConfidence(model: string): number {
   const normalized = model.trim().toLowerCase();
-  if (normalized === "minimax") return 0.9;
+  if (normalized === "deepseek") return 0.9;
   if (normalized === "gemini" || normalized.startsWith("gemini")) return 0.8;
   if (normalized === "qwen-coder" || normalized.startsWith("qwen-coder")) return 0.75;
   return 0.7;
@@ -314,12 +314,12 @@ async function _orchestrateInner(
 
   if (!isCodingQuery && isMathQuery(userMessage)) {
     console.log(`[MathPipeline] math query detected on raw input — bypassing planner`);
-    console.log(`[MathPipeline] solving with minimax`);
+    console.log(`[MathPipeline] solving with deepseek`);
 
     const mathResult = await solveMathDirect(userMessage, DEFAULT_SOLVER_SYSTEM_PROMPT, rawContext?.userId);
 
     console.log(
-      `[MathPipeline] solved using minimax`,
+      `[MathPipeline] solved using deepseek`,
     );
     console.log(`[MathPipeline] reflection skipped — math query handled by direct math pipeline`);
     console.log(`[MathPipeline] returning result`);

@@ -8,7 +8,7 @@
 //   2. file (coding PDF)   -> qwen-coder (Pollinations) - coding PDFs get code model
 //   3. file (non-coding)   -> gemini-fast (Pollinations) - preserve file pipeline
 //   4. coding              -> qwen-coder (Pollinations)
-//   5. math_reasoning      -> minimax (Pollinations)
+//   5. math_reasoning      -> deepseek (Pollinations)
 //   6. general_chat        -> mistral (Pollinations) - human-like conversations
 //
 // Gemini direct API is NEVER selected by the router.
@@ -104,7 +104,7 @@ const FRONTEND_STACK_PATTERNS: readonly RegExp[] = [
 ];
 
 // Math / numerical reasoning detection.
-// Checked after coding so programming prompts never leak into minimax.
+// Checked after coding so programming prompts never leak into deepseek.
 const MATH_PATTERNS: readonly RegExp[] = [
   /\d+\s*[+\-*/^]\s*\d+/,
   /\balgebra(?:ic)?\b/i,
@@ -487,8 +487,8 @@ export function selectModelForPrompt(
       console.log("[Router] category=coding -> qwen-coder");
       break;
     case "math_reasoning":
-      model = "minimax";
-      console.log("[Router] category=math_reasoning -> minimax");
+      model = "deepseek";
+      console.log("[Router] category=math_reasoning -> deepseek");
       break;
     case "general_chat":
     default:
