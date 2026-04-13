@@ -39,6 +39,8 @@ export interface StepResult {
   readonly isMathResult?: boolean;
   /** Text output (conversation / file_analysis replies) */
   readonly reply?: string;
+  /** Optional internal reasoning extracted from think blocks */
+  readonly thinking?: string;
   readonly model_used?: string;
   readonly fallback?: boolean;
   /** Image output (image_generation) */
@@ -119,6 +121,7 @@ async function execConversation(
       tool: "conversation",
       isMathResult: true,
       reply: mathResult.answer,
+      thinking: mathResult.thinking,
       model_used: mathResult.model_used,
       fallback: mathResult.fallback,
     };
@@ -150,6 +153,7 @@ async function execConversation(
     step: 0,
     tool: "conversation",
     reply: result.reply,
+    thinking: result.thinking,
     model_used: result.model_used,
     fallback: result.fallback,
   };
@@ -208,6 +212,7 @@ async function execFileAnalysis(
     step: 0,
     tool: "file_analysis",
     reply: result.reply,
+    thinking: result.thinking,
     model_used: result.model_used,
     fallback: result.fallback,
   };

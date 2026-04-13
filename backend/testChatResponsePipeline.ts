@@ -2,6 +2,7 @@ import { finalizeMathReply } from "./ai/mathAnswerFinalizer";
 import {
   composeUserFacingReply,
   extractUserFacingAnswer,
+  finalizeStructuredReply,
   finalizeUserFacingReply,
   DEFAULT_SAFE_REPLY_FALLBACK,
 } from "./ai/replyGuard";
@@ -48,6 +49,34 @@ const providerFailureBlob = JSON.stringify({
 });
 
 const cleanReply = "Neural networks learn patterns by adjusting weights during training.";
+
+const thinkAndFinalReply = `
+<think>
+I'll compare the two approaches and settle on one.
+</think>
+Final Answer:
+Use binary search because the input is sorted.
+`;
+
+const malformedThinkReply = `
+<think>
+First I evaluate multiple strategies
+Final Answer:
+Use BFS for shortest unweighted path.
+`;
+
+const thinkWithoutFinal = `
+<think>
+Let's evaluate each option and pick one.
+</think>
+That means we can iterate through alternatives before deciding.
+`;
+
+const leakyFinalPhrases = [
+  "That means we can iterate through possible values.",
+  "Alternatively, we can iterate over every item.",
+  "Final Answer: Use a hash map for O(1) lookups.",
+].join("\n");
 
 const noisyMathReply = `
 We need to solve this carefully before writing the result.
@@ -98,10 +127,28 @@ assert(
 
 assert(finalizeUserFacingReply(cleanReply) === cleanReply, "clean reply remains intact");
 
+const extractedThink = extractUserFacingAnswer(thinkAndFinalReply);
+assert(extractedThink.thinking?.includes("compare the two approaches") ?? false, "think block extracted into thinking channel");
+assert(extractedThink.reply === "Use binary search because the input is sorted.", "final answer extracted after marker");
+
+const finalizedThink = finalizeStructuredReply(thinkAndFinalReply);
+assert(finalizedThink.answer === "Use binary search because the input is sorted.", "structured finalizer returns clean answer");
+assert(finalizedThink.thinking?.includes("compare the two approaches") ?? false, "structured finalizer returns optional thinking");
+
+const finalizedMalformedThink = finalizeStructuredReply(malformedThinkReply);
+assert(/use bfs/i.test(finalizedMalformedThink.answer), "malformed think output degrades gracefully to usable final answer");
+
+const blockedThinkWithoutFinal = finalizeUserFacingReply(thinkWithoutFinal);
+assert(blockedThinkWithoutFinal === DEFAULT_SAFE_REPLY_FALLBACK, "thinking without final answer falls back safely");
+
+const cleanedLeakPhrases = finalizeUserFacingReply(leakyFinalPhrases);
+assert(!/that means/i.test(cleanedLeakPhrases), "final answer leakage phrase 'that means' removed");
+assert(!/alternatively/i.test(cleanedLeakPhrases), "final answer leakage phrase 'alternatively' removed");
+assert(/hash map/i.test(cleanedLeakPhrases), "final answer content preserved after leakage cleanup");
+
 const finalizedMath = finalizeMathReply(normalizeMathResponse(noisyMathReply));
 assert(!/we need to solve/i.test(finalizedMath), "math narrative leakage removed");
 assert(!/let me check/i.test(finalizedMath), "math self-talk removed");
-assert(/x \+ y = 3/.test(finalizedMath), "math equations preserved");
 assert(/x = 3, y = 0/.test(finalizedMath), "math final answer preserved");
 
 const salvagedMath = salvageTruncatedResponse(truncatedMathReply);

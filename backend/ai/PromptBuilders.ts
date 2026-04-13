@@ -419,7 +419,12 @@ const MISTRAL_CONVERSATIONAL_SYSTEM_PROMPT =
   "KNOWLEDGE:\n" +
   "- If uncertain, say so honestly rather than guessing.\n" +
   "- Be helpful and thorough, but don't be preachy or overly cautious.\n\n" +
-  "OUTPUT: Respond naturally as yourself. No JSON unless explicitly asked.\n";
+  "OUTPUT CONTRACT (MANDATORY):\n" +
+  "- Put all internal reasoning only inside <think>...</think>.\n" +
+  "- Then write Final Answer: on its own line.\n" +
+  "- After Final Answer:, return only the clean user-facing answer.\n" +
+  "- Do not place reasoning outside <think> tags.\n" +
+  "- Do not add meta commentary.\n";
 
 // Default system prompt for file analysis and other models
 const DEFAULT_SYSTEM_PROMPT =
@@ -433,8 +438,12 @@ const DEFAULT_SYSTEM_PROMPT =
   "- If you are unsure about a factual claim, say so honestly.\n" +
   "- For medicines or health products: provide general factual information. " +
   "Do NOT provide diagnosis, treatment instructions, or medical advice.\n" +
-  "OUTPUT: Respond in clear, helpful natural language.\n" +
-  "OUTPUT RULE:\n- Respond ONLY in natural language\n- Do NOT output JSON unless explicitly asked\n";
+  "OUTPUT CONTRACT (MANDATORY):\n" +
+  "- Put all internal reasoning only inside <think>...</think>.\n" +
+  "- Then write Final Answer: on its own line.\n" +
+  "- After Final Answer:, return only the clean user-facing answer.\n" +
+  "- Do not place reasoning outside <think> tags.\n" +
+  "- Do not add meta commentary.\n";
 
 export interface ChatContext {
   readonly userMessage: string;

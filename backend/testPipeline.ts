@@ -57,6 +57,8 @@ async function testNormalConversation(): Promise<void> {
     `got: ${res.route}`,
   );
   assert(!!res.reply && res.reply.length > 20, "Reply is non-trivial", `length: ${res.reply?.length}`);
+  assert((res.answer ?? res.reply) === res.reply, "Structured answer mirrors user-facing reply for compatibility");
+  assert(!/<think>/i.test(res.reply ?? ""), "Public reply does not leak think tags");
   assert(res.memory.stored === false, "Memory is not auto-stored for normal conversation", `stored: ${res.memory.stored}`);
   assert(typeof res.confidence === "number" && res.confidence > 0, "Confidence > 0", `got: ${res.confidence}`);
 }

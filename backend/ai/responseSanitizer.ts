@@ -4,6 +4,7 @@ const DEFAULT_SAFE_REPLY_FALLBACK =
 export interface SanitizeResponseOptions {
   readonly preserveFormatting?: boolean;
   readonly safeFallback?: string;
+  readonly enforceFinalClean?: boolean;
 }
 
 const DROP_LINE_PATTERNS: readonly RegExp[] = [
@@ -27,6 +28,11 @@ const PROMPT_ECHO_PATTERNS: readonly RegExp[] = [
   /\b(?:no\s+markdown|no\s+json|valid json|final answer only)\b/i,
   /\b(?:do not reveal|do not leak|hidden scratchwork|chain[- ]of[- ]thought)\b/i,
   /\b(?:formatting rules?|bullet for final answer|one direct line)\b/i,
+];
+
+const FINAL_REASONING_PHRASE_PATTERNS: readonly RegExp[] = [
+  /^(?:that means|alternatively|we can iterate|we can try|let(?:'|\s)?s iterate)\b.*$/i,
+  /^(?:first|next|then),\s+we\b.*$/i,
 ];
 
 function looksLikeProviderFailurePayload(raw: string): boolean {
@@ -66,13 +72,14 @@ function stripStructuralPrefix(text: string): string {
     .trim();
 }
 
-function cleanLine(line: string): string {
+function cleanLine(line: string, enforceFinalClean: boolean): string {
   const sentences = splitSentences(line);
   if (sentences.length <= 1) {
     const normalizedLine = stripStructuralPrefix(line);
     if (
       DROP_SENTENCE_PATTERNS.some((pattern) => pattern.test(normalizedLine)) ||
-      PROMPT_ECHO_PATTERNS.some((pattern) => pattern.test(normalizedLine))
+      PROMPT_ECHO_PATTERNS.some((pattern) => pattern.test(normalizedLine)) ||
+      (enforceFinalClean && FINAL_REASONING_PHRASE_PATTERNS.some((pattern) => pattern.test(normalizedLine)))
     ) {
       return "";
     }
@@ -83,6 +90,10 @@ function cleanLine(line: string): string {
     const normalizedSentence = stripStructuralPrefix(sentence);
 
     if (DROP_SENTENCE_PATTERNS.some((pattern) => pattern.test(normalizedSentence))) {
+      return false;
+    }
+
+    if (enforceFinalClean && FINAL_REASONING_PHRASE_PATTERNS.some((pattern) => pattern.test(normalizedSentence))) {
       return false;
     }
 
@@ -124,6 +135,7 @@ export function sanitizeResponse(
   options: SanitizeResponseOptions = {},
 ): string {
   const fallback = options.safeFallback ?? DEFAULT_SAFE_REPLY_FALLBACK;
+  const enforceFinalClean = options.enforceFinalClean ?? true;
   const raw = (response ?? "").replace(/\r\n?/g, "\n").trim();
 
   if (!raw || looksLikeProviderFailurePayload(raw)) {
@@ -156,7 +168,7 @@ export function sanitizeResponse(
       continue;
     }
 
-    const cleanedLine = cleanLine(trimmed)
+    const cleanedLine = cleanLine(trimmed, enforceFinalClean)
       .replace(/^(?:final answer|answer)\s*:\s*/i, "")
       .replace(/\s+([,.;:!?])/g, "$1")
       .trim();

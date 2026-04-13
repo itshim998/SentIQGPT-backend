@@ -39,7 +39,11 @@ export const DEFAULT_SOLVER_SYSTEM_PROMPT =
   "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
   "- Do not mention the prompt, headings, bullets, or formatting rules.\n" +
   "- If the problem statement looks inconsistent, say so briefly and give the best resolution.\n" +
-  "- Keep the explanation concise, but do not skip the method.";
+  "- Keep the explanation concise, but do not skip the method.\n" +
+  "OUTPUT CONTRACT (MANDATORY):\n" +
+  "- Put all internal reasoning only inside <think>...</think>.\n" +
+  "- Then write Final Answer: on its own line.\n" +
+  "- After Final Answer:, return only the clean worked solution and answer.";
 const GENERATION_SYSTEM_PROMPT =
   "SYSTEM: You are generating math practice content.\n" +
   "RULES:\n" +
@@ -49,7 +53,11 @@ const GENERATION_SYSTEM_PROMPT =
   "- Return exactly 4 short exercise questions\n" +
   "- Keep matrix exercises compact and readable\n" +
   "- If you use matrices, prefer 2x2 or 3x3 examples\n" +
-  "- Finish every exercise completely";
+  "- Finish every exercise completely\n" +
+  "OUTPUT CONTRACT (MANDATORY):\n" +
+  "- Put all internal reasoning only inside <think>...</think>.\n" +
+  "- Then write Final Answer: on its own line.\n" +
+  "- After Final Answer:, return only the clean user-facing output.";
 const GENERATION_RETRY_SYSTEM_PROMPT =
   "SYSTEM: You are generating compact math practice content.\n" +
   "RULES:\n" +
@@ -58,7 +66,11 @@ const GENERATION_RETRY_SYSTEM_PROMPT =
   "- Keep each exercise on one line\n" +
   "- Use plain concise wording\n" +
   "- If you use matrices, keep them small and complete\n" +
-  "- Finish the response fully";
+  "- Finish the response fully\n" +
+  "OUTPUT CONTRACT (MANDATORY):\n" +
+  "- Put all internal reasoning only inside <think>...</think>.\n" +
+  "- Then write Final Answer: on its own line.\n" +
+  "- After Final Answer:, return only the clean user-facing output.";
 const EXAMPLE_SYSTEM_PROMPT =
   "SYSTEM: Create one relevant math example for the user's topic and solve it clearly.\n" +
   "RULES:\n" +
@@ -67,13 +79,21 @@ const EXAMPLE_SYSTEM_PROMPT =
   "- Keep the answer concise and user-facing.\n" +
   "- Do not reveal hidden reasoning, self-talk, retries, or formatting instructions.\n" +
   "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
-  "- Include the method briefly before the final answer.";
+  "- Include the method briefly before the final answer.\n" +
+  "OUTPUT CONTRACT (MANDATORY):\n" +
+  "- Put all internal reasoning only inside <think>...</think>.\n" +
+  "- Then write Final Answer: on its own line.\n" +
+  "- After Final Answer:, return only the clean worked example and answer.";
 const EXAMPLE_RETRY_SYSTEM_PROMPT =
   "SYSTEM: Provide one short solved math example for the user.\n" +
   "RULES:\n" +
   "- Keep the example, concise numbered steps, and the final answer.\n" +
   "- No prompt echo, no self-talk, and no formatting commentary.\n" +
-  "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.";
+  "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
+  "OUTPUT CONTRACT (MANDATORY):\n" +
+  "- Put all internal reasoning only inside <think>...</think>.\n" +
+  "- Then write Final Answer: on its own line.\n" +
+  "- After Final Answer:, return only the clean worked example and answer.";
 const COMPACT_SOLVER_SYSTEM_PROMPT =
   "SYSTEM: Give a concise user-facing worked math solution.\n" +
   "RULES:\n" +
@@ -82,7 +102,11 @@ const COMPACT_SOLVER_SYSTEM_PROMPT =
   "- No chain-of-thought, no self-talk, and no prompt echo.\n" +
   "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
   "- Do not mention bullets, headings, line counts, or formatting rules.\n" +
-  "- No repetition, no failed attempts, no meta commentary.";
+  "- No repetition, no failed attempts, no meta commentary.\n" +
+  "OUTPUT CONTRACT (MANDATORY):\n" +
+  "- Put all internal reasoning only inside <think>...</think>.\n" +
+  "- Then write Final Answer: on its own line.\n" +
+  "- After Final Answer:, return only the clean worked solution and answer.";
 const REWRITE_SYSTEM_PROMPT =
   "SYSTEM: Rewrite the draft math answer for the end user.\n" +
   "RULES:\n" +
@@ -92,7 +116,11 @@ const REWRITE_SYSTEM_PROMPT =
   "- Preserve essential intermediate equations, matrices, substitutions, or elimination steps.\n" +
   "- Do not use phrases such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
   "- Do not mention formatting rules, headings, or bullets.\n" +
-  "- Return only the rewritten answer.";
+  "- Return only the rewritten answer.\n" +
+  "OUTPUT CONTRACT (MANDATORY):\n" +
+  "- Put all internal reasoning only inside <think>...</think>.\n" +
+  "- Then write Final Answer: on its own line.\n" +
+  "- After Final Answer:, return only the rewritten user-facing answer.";
 const GENERATION_REQUEST_PATTERNS: readonly RegExp[] = [
   /\b(?:give|create|generate|provide|make|write|list|suggest)\b[\s\S]{0,40}\b(?:exercise(?:s)?|example(?:s)?|practice(?:\s+problems?)?|worksheet|quiz|problem\s+set)\b/i,
   /\b(?:exercise(?:s)?|example(?:s)?|practice(?:\s+problems?)?|worksheet|quiz|problem\s+set)\b[\s\S]{0,40}\b(?:please\s+)?(?:give|create|generate|provide|make|write|list|suggest)\b/i,
@@ -330,6 +358,12 @@ function extractMathCandidate(text: string, adapterError?: string | null): strin
   return composeUserFacingReply(extracted, { preferExplanation: true }) ?? "";
 }
 
+function extractMathThinking(text: string, adapterError?: string | null): string | undefined {
+  const extracted = extractUserFacingAnswer(text, { adapterError });
+  const thinking = extracted.thinking?.trim();
+  return thinking ? thinking : undefined;
+}
+
 function buildRewritePrompt(userMessage: string, draftAnswer: string): string {
   return [
     REWRITE_SYSTEM_PROMPT,
@@ -371,7 +405,7 @@ export async function solveMathDirect(
   userMessage: string,
   systemPrompt: string,
   userId?: string,
-): Promise<{ answer: string; model_used?: string; fallback?: boolean }> {
+): Promise<{ answer: string; thinking?: string; model_used?: string; fallback?: boolean }> {
   const intent = classifyMathIntent(userMessage);
   console.log(`[MathPipeline] intent=${intent}`);
 
@@ -394,6 +428,7 @@ export async function solveMathDirect(
   };
 
   let result = await makeCall("none");
+  let thinking = extractMathThinking(result.text, result.error);
   let processed = normalizeMathResponse(extractMathCandidate(result.text, result.error));
   let incompleteOutput =
     result.truncated || hasIncompleteMathTail(processed) || hasIncompleteProseTail(processed);
@@ -419,6 +454,7 @@ export async function solveMathDirect(
     }
     console.log(`[MathPipeline] retry_strategy=${retryMode}`);
     result = await makeCall(retryMode);
+    thinking = extractMathThinking(result.text, result.error) ?? thinking;
     processed = normalizeMathResponse(extractMathCandidate(result.text, result.error));
     incompleteOutput =
       result.truncated || hasIncompleteMathTail(processed) || hasIncompleteProseTail(processed);
@@ -446,6 +482,7 @@ export async function solveMathDirect(
 
   return {
     answer: processed,
+    thinking,
     model_used: result.model_used,
     fallback: result.fallback ?? false,
   };

@@ -28,8 +28,7 @@ import { routeImageGeneration } from "./tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "./tools/chartGeneration/chartRouter";
 import { isChartRequest } from "./tools/chartGeneration/chartDetector";
 import { uploadChatImage, getChatImages } from "./tools/imageGeneration/imageStorageService";
-import { callLLMAdapter, buildTitleGeneratePrompt, strictParseJsonObject, callLLMAdapterStream, buildChatPrompt } from "./ai/PromptBuilders";
-import type { ChatContext } from "./ai/PromptBuilders";
+import { callLLMAdapter, buildTitleGeneratePrompt, strictParseJsonObject } from "./ai/PromptBuilders";
 import { buildContext, buildContextFast } from "./context/contextBuilder";
 import { getOrAssignUserDatabase } from "./dbRouter";
 import {
@@ -903,7 +902,9 @@ app.post(
 
       res.json({
         route: "chat",
+        answer: guestResult.answer,
         reply: guestResult.reply,
+        thinking: guestResult.thinking,
         disclaimer: guestResult.disclaimer,
         image: undefined,
         chart: undefined,
@@ -1056,7 +1057,9 @@ app.post(
 
     res.json({
       route: result.route,
+      answer: result.answer ?? result.reply,
       reply: result.reply,
+      thinking: result.thinking,
       disclaimer: result.disclaimer,
       image: result.image,
       chart: result.chart,
@@ -1083,6 +1086,19 @@ app.post(
     const finishSse = () => {
       if (!res.writableEnded) {
         res.end();
+      }
+    };
+
+    const streamBufferedAnswer = (answer: string, thinking?: string) => {
+      const chunkSize = 24;
+
+      if (thinking && thinking.trim()) {
+        writeSseEvent(JSON.stringify({ type: "thinking", text: thinking.trim() }));
+      }
+
+      for (let i = 0; i < answer.length; i += chunkSize) {
+        const chunk = answer.slice(i, i + chunkSize);
+        writeSseEvent(JSON.stringify({ type: "token", text: chunk }));
       }
     };
 
@@ -1123,81 +1139,26 @@ app.post(
         userMessage: parsed.data.message,
       }, undefined, userId);
 
-      const chatCtx: ChatContext = {
-        userMessage: parsed.data.message,
-        recentMessages: guestCtx.recentMessages,
-        memories: [],
-        fileReferences: guestCtx.fileReferences,
-        conversationSummary: guestCtx.conversationSummary,
-        modelOverride: GUEST_MODEL_OVERRIDE,
-        userId,
-        streaming: true,
-      };
-
-      const call = buildChatPrompt(chatCtx);
-      console.log(`[Latency] guest LLM request started (+${Date.now() - requestStart}ms)`);
-      console.log(`[Stream] guest model=${chatCtx.modelOverride} hasFiles=${guestCtx.hasFileContext} msgLen=${parsed.data.message.length}`);
+      console.log(`[Latency] guest buffered response request started (+${Date.now() - requestStart}ms)`);
+      console.log(`[Stream] guest model=${GUEST_MODEL_OVERRIDE} hasFiles=${guestCtx.hasFileContext} msgLen=${parsed.data.message.length}`);
 
       try {
         const streamStart = Date.now();
-        const stream = await callLLMAdapterStream(call);
-        const reader = stream.getReader();
-        let tokenCount = 0;
-        let firstTokenReceived = false;
-        let streamTimedOut = false;
-
-        const STREAM_TIMEOUT_MS = 60_000;
-        const FIRST_TOKEN_SLOW_MS = 8_000;
-
-        const firstTokenTimer = setTimeout(() => {
-          if (!firstTokenReceived && !clientDisconnected) {
-            console.log(`[Timeout] guest first token delayed beyond ${FIRST_TOKEN_SLOW_MS}ms`);
-          }
-        }, FIRST_TOKEN_SLOW_MS);
-
-        const streamTimer = setTimeout(() => {
-          if (!clientDisconnected && tokenCount > 0) {
-            streamTimedOut = true;
-            console.log(`[Timeout] guest stream timeout after ${tokenCount} chunks, completing gracefully`);
-          }
-        }, STREAM_TIMEOUT_MS);
-
-        try {
-          while (true) {
-            if (clientDisconnected || streamTimedOut) {
-              reader.cancel();
-              break;
-            }
-
-            const result = await reader.read();
-            if (result.done) break;
-
-            const value = result.value;
-            tokenCount++;
-
-            if (tokenCount === 1) {
-              firstTokenReceived = true;
-              clearTimeout(firstTokenTimer);
-              console.log(`[Latency] guest first token streamed (+${Date.now() - requestStart}ms)`);
-            }
-
-            writeSseEvent(JSON.stringify({ type: "token", text: value }));
-          }
-        } finally {
-          clearTimeout(firstTokenTimer);
-          clearTimeout(streamTimer);
-        }
+        const result = await handleChat({
+          userMessage: parsed.data.message,
+          recentMessages: guestCtx.recentMessages,
+          memories: [],
+          fileReferences: guestCtx.fileReferences,
+          conversationSummary: guestCtx.conversationSummary,
+          modelOverride: GUEST_MODEL_OVERRIDE,
+          userId,
+        });
 
         if (!clientDisconnected) {
-          if (streamTimedOut && tokenCount > 0) {
-            writeSseEvent(JSON.stringify({
-              type: "error",
-              error: "Response interrupted after a long stream. Showing partial output.",
-            }));
-          }
+          streamBufferedAnswer(result.reply, result.thinking);
           writeSseEvent("[DONE]");
         }
-        console.log(`[Stream] guest completed: ${tokenCount} chunks in ${Date.now() - streamStart}ms`);
+        console.log(`[Stream] guest buffered stream completed in ${Date.now() - streamStart}ms`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[Stream] guest error: ${message}`);
@@ -1378,7 +1339,9 @@ app.post(
         await persistStoredMemory(result.memory);
         res.json({
           route: result.route,
+          answer: result.answer ?? result.reply,
           reply: result.reply,
+          thinking: result.thinking,
           disclaimer: result.disclaimer,
           image: result.image,
           chart: result.chart,
@@ -1416,7 +1379,9 @@ app.post(
         // can use deliverAssistantResponse to render the chart.
         res.json({
           route: result.route,
+          answer: result.answer ?? result.reply,
           reply: result.reply,
+          thinking: result.thinking,
           disclaimer: result.disclaimer,
           image: result.image,
           chart: result.chart,
@@ -1464,6 +1429,9 @@ app.post(
           },
         });
         // Return as SSE stream so the frontend handles it uniformly
+        if (result.thinking && result.thinking.trim()) {
+          writeSseEvent(JSON.stringify({ type: "thinking", text: result.thinking.trim() }));
+        }
         if (result.reply) {
           // Stream the math answer in chunks for smooth typing effect
           const CHUNK_SIZE = 24;
@@ -1530,6 +1498,9 @@ app.post(
           },
         });
         // Return as SSE stream so the frontend handles it uniformly
+        if (result.thinking && result.thinking.trim()) {
+          writeSseEvent(JSON.stringify({ type: "thinking", text: result.thinking.trim() }));
+        }
         if (result.reply) {
           // Stream the web search answer in chunks for smooth typing effect
           const CHUNK_SIZE = 24;
@@ -1603,96 +1574,30 @@ app.post(
 
     console.log(`[Latency] context built (+${Date.now() - requestStart}ms)`);
 
-    const chatCtx: ChatContext = {
-      userMessage: parsed.data.message,
-      recentMessages: ctx.recentMessages,
-      memories: ctx.memories,
-      fileReferences: ctx.fileReferences,
-      conversationSummary: ctx.conversationSummary,
-      modelOverride,
-      userId,
-      streaming: true,
-    };
-
-    const call = buildChatPrompt(chatCtx);
-    console.log(`[Latency] LLM request started (+${Date.now() - requestStart}ms)`);
-    console.log(`[Stream] model=${chatCtx.modelOverride} hasFiles=${ctx.hasFileContext} msgLen=${parsed.data.message.length}`);
+    console.log(`[Latency] buffered response request started (+${Date.now() - requestStart}ms)`);
+    console.log(`[Stream] model=${modelOverride} hasFiles=${ctx.hasFileContext} msgLen=${parsed.data.message.length}`);
 
     try {
       const streamStart = Date.now();
-      const stream = await callLLMAdapterStream(call);
-      const reader = stream.getReader();
-      let tokenCount = 0;
-      let fullReply = "";
-
-      // Timeout safety: allow buffered providers to deliver a late first chunk
-      // without treating it as a fatal error. The hard request bound stays in
-      // the LLM fetch timeout; this timer is only a soft observability signal.
-      const STREAM_TIMEOUT_MS = 60_000; // 60s max streaming time
-      const FIRST_TOKEN_SLOW_MS = 8_000; // soft threshold for late first token
-      let firstTokenReceived = false;
-      let streamTimedOut = false;
-
-      // Slow-first-token note: useful for buffered models like Pollinations,
-      // but it must not cancel the stream on its own.
-      const firstTokenTimer = setTimeout(() => {
-        if (!firstTokenReceived && !clientDisconnected) {
-          console.log(`[Timeout] first token delayed beyond ${FIRST_TOKEN_SLOW_MS}ms`);
-        }
-      }, FIRST_TOKEN_SLOW_MS);
-
-      // Overall stream timeout
-      const streamTimer = setTimeout(() => {
-        if (!clientDisconnected && tokenCount > 0) {
-          streamTimedOut = true;
-          console.log(`[Timeout] stream timeout after ${tokenCount} chunks, completing gracefully`);
-        }
-      }, STREAM_TIMEOUT_MS);
-
-      try {
-        while (true) {
-          if (clientDisconnected || streamTimedOut) {
-            reader.cancel();
-            break;
-          }
-
-          const result = await reader.read();
-          if (result.done) break;
-
-          const value = result.value;
-          tokenCount++;
-          fullReply += value;
-
-          if (tokenCount === 1) {
-            firstTokenReceived = true;
-            clearTimeout(firstTokenTimer);
-            console.log(`[Latency] first token streamed (+${Date.now() - requestStart}ms)`);
-          }
-          writeSseEvent(JSON.stringify({ type: "token", text: value }));
-        }
-      } finally {
-        clearTimeout(firstTokenTimer);
-        clearTimeout(streamTimer);
-      }
+      const result = await handleChat({
+        userMessage: parsed.data.message,
+        recentMessages: ctx.recentMessages,
+        memories: ctx.memories,
+        fileReferences: ctx.fileReferences,
+        conversationSummary: ctx.conversationSummary,
+        modelOverride,
+        userId,
+      });
 
       if (!clientDisconnected) {
-        if (!streamTimedOut && fullReply) {
-          await persistAssistantMessage(fullReply);
+        if (result.reply) {
+          await persistAssistantMessage(result.reply);
         }
-        if (streamTimedOut && tokenCount > 0) {
-          writeSseEvent(JSON.stringify({
-            type: "error",
-            error: "Response interrupted after a long stream. Showing partial output.",
-          }));
-        }
+        streamBufferedAnswer(result.reply, result.thinking);
         writeSseEvent("[DONE]");
-        if (streamTimedOut && tokenCount > 0) {
-          console.log(`[Latency] response completed (timeout, partial) (+${Date.now() - requestStart}ms)`);
-        } else {
-          console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
-        }
+        console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
       }
-      console.log(`[Stream] completed: ${tokenCount} chunks in ${Date.now() - streamStart}ms`);
+      console.log(`[Stream] buffered stream completed in ${Date.now() - streamStart}ms`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[Stream] error: ${message}`);
@@ -2052,7 +1957,9 @@ app.post(
 
       res.json({
         route: "chat",
+        answer: guestResult.answer,
         reply: guestResult.reply,
+        thinking: guestResult.thinking,
         disclaimer: guestResult.disclaimer,
         image: undefined,
         chart: undefined,
@@ -2073,7 +1980,9 @@ app.post(
 
     res.json({
       route: result.route,
+      answer: result.answer ?? result.reply,
       reply: result.reply,
+      thinking: result.thinking,
       disclaimer: result.disclaimer,
       image: result.image,
       chart: result.chart,

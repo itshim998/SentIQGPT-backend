@@ -4,10 +4,12 @@ import {
   getDemoFallbackResponse,
 } from "./PromptBuilders";
 import type { ChatContext } from "./PromptBuilders";
-import { extractUserFacingAnswer, finalizeUserFacingReply } from "./replyGuard";
+import { extractUserFacingAnswer, finalizeStructuredReply } from "./replyGuard";
 
 export interface ChatResponse {
+  readonly answer: string;
   readonly reply: string;
+  readonly thinking?: string;
   readonly disclaimer: string;
   readonly model_used?: string;
   readonly fallback?: boolean;
@@ -59,8 +61,12 @@ export async function handleChat(args: {
     disclaimer = extracted.disclaimer;
   }
 
+  const finalized = finalizeStructuredReply(raw, { adapterError });
+
   return {
-    reply: finalizeUserFacingReply(raw, { adapterError }),
+    answer: finalized.answer,
+    reply: finalized.answer,
+    thinking: finalized.thinking,
     disclaimer,
     model_used,
     fallback,

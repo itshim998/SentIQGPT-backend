@@ -4,6 +4,18 @@ export const DEFAULT_SAFE_REPLY_FALLBACK =
   "Sorry, I couldn't generate a proper response. Please try again.";
 
 const REPLY_KEYS = ["reply", "answer", "final_answer"] as const;
+const THINKING_KEYS = ["thinking", "thoughts", "reasoning"] as const;
+
+const THINK_OPEN_TAG = "<think";
+const THINK_CLOSE_TAG = "</think>";
+
+const FINAL_ANSWER_MARKER = /(?:^|\n)\s*(?:#{1,6}\s*)?Final Answer\s*:?\s*/i;
+
+const REASONING_LIKE_PREFIX_PATTERNS: readonly RegExp[] = [
+  /^(?:that means|alternatively|we can iterate|we can try|let(?:'|\s)?s|first,|next,|then,)\b/i,
+  /^(?:analysis|reasoning|approach|plan|thinking)\b/i,
+  /^(?:i(?:'|\s)?(?:am|will|should|need)|we(?:'|\s)?(?:re|are|should|need))\b/i,
+];
 
 export interface ExtractReplyOptions {
   readonly adapterError?: string | null;
@@ -11,6 +23,7 @@ export interface ExtractReplyOptions {
 
 export interface ExtractedReply {
   readonly reply: string | null;
+  readonly thinking?: string;
   readonly explanation?: string;
   readonly finalAnswer?: string;
   readonly disclaimer?: string;
@@ -22,6 +35,134 @@ export interface FinalizeReplyOptions extends ExtractReplyOptions {
   readonly preserveFormatting?: boolean;
   readonly emptyFallback?: string;
   readonly preferExplanation?: boolean;
+}
+
+export interface FinalizedReply {
+  readonly answer: string;
+  readonly thinking?: string;
+}
+
+function normalizeOptionalText(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function stripThinkMarkers(value: string): string {
+  return value.replace(/<\/?think[^>]*>/gi, "").trim();
+}
+
+function looksReasoningLikePrefix(value: string): boolean {
+  const firstLine = value.split(/\n+/)[0]?.trim() ?? "";
+  return REASONING_LIKE_PREFIX_PATTERNS.some((pattern) => pattern.test(firstLine));
+}
+
+function splitThinkAndBody(raw: string): {
+  thinking?: string;
+  body: string;
+  hadThink: boolean;
+} {
+  const source = raw ?? "";
+  const lower = source.toLowerCase();
+  const thinkingParts: string[] = [];
+  let hadThink = false;
+  let cursor = 0;
+  let body = "";
+
+  while (cursor < source.length) {
+    const openIdx = lower.indexOf(THINK_OPEN_TAG, cursor);
+    if (openIdx < 0) {
+      body += source.slice(cursor);
+      break;
+    }
+
+    hadThink = true;
+    body += source.slice(cursor, openIdx);
+
+    const openEndIdx = lower.indexOf(">", openIdx);
+    if (openEndIdx < 0) {
+      const malformedThinkTail = source.slice(openIdx + THINK_OPEN_TAG.length).trim();
+      if (malformedThinkTail) {
+        thinkingParts.push(malformedThinkTail);
+      }
+      cursor = source.length;
+      break;
+    }
+
+    const closeIdx = lower.indexOf(THINK_CLOSE_TAG, openEndIdx + 1);
+    if (closeIdx < 0) {
+      const unterminatedThink = source.slice(openEndIdx + 1).trim();
+      if (unterminatedThink) {
+        const malformedFinalMatch = FINAL_ANSWER_MARKER.exec(unterminatedThink);
+        if (malformedFinalMatch && malformedFinalMatch.index !== undefined) {
+          const markerIndex = malformedFinalMatch.index;
+          const markerEnd = markerIndex + malformedFinalMatch[0].length;
+          const salvagedThinking = unterminatedThink.slice(0, markerIndex).trim();
+          const salvagedAnswer = unterminatedThink.slice(markerEnd).trim();
+          if (salvagedThinking) {
+            thinkingParts.push(salvagedThinking);
+          }
+          if (salvagedAnswer) {
+            body = [body, salvagedAnswer].filter(Boolean).join("\n\n");
+          }
+        } else {
+          thinkingParts.push(unterminatedThink);
+        }
+      }
+      cursor = source.length;
+      break;
+    }
+
+    const thinkSegment = source.slice(openEndIdx + 1, closeIdx).trim();
+    if (thinkSegment) {
+      thinkingParts.push(thinkSegment);
+    }
+
+    cursor = closeIdx + THINK_CLOSE_TAG.length;
+  }
+
+  const thinking = thinkingParts
+    .map(stripThinkMarkers)
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+
+  return {
+    thinking: thinking || undefined,
+    body: body.trim(),
+    hadThink,
+  };
+}
+
+function extractFinalAnswerSection(raw: string): {
+  answer?: string;
+  markerFound: boolean;
+} {
+  const match = FINAL_ANSWER_MARKER.exec(raw);
+  if (!match || match.index === undefined) {
+    return { markerFound: false };
+  }
+
+  const markerStart = match.index;
+  const markerLength = match[0].length;
+  const answer = raw.slice(markerStart + markerLength).trim();
+
+  return {
+    markerFound: true,
+    answer: answer || undefined,
+  };
+}
+
+function extractThinkingFromParsedEnvelope(parsed: Record<string, unknown>): string | undefined {
+  for (const key of THINKING_KEYS) {
+    const normalized = normalizeOptionalText(parsed[key]);
+    if (normalized) {
+      return stripThinkMarkers(normalized);
+    }
+  }
+  return undefined;
 }
 
 function unwrapFencedBlock(raw: string): { content: string; fenced: boolean } {
@@ -139,10 +280,12 @@ export function extractUserFacingAnswer(
     const finalAnswer = typeof parsed.final_answer === "string" && parsed.final_answer.trim()
       ? parsed.final_answer.trim()
       : undefined;
+    const thinking = extractThinkingFromParsedEnvelope(parsed);
 
     if (explanation && finalAnswer) {
       return {
         reply: finalAnswer,
+        thinking,
         explanation,
         finalAnswer,
         disclaimer: typeof parsed.disclaimer === "string" ? parsed.disclaimer : undefined,
@@ -154,6 +297,7 @@ export function extractUserFacingAnswer(
       if (typeof parsed[key] === "string" && parsed[key].trim()) {
         return {
           reply: parsed[key].trim(),
+          thinking,
           disclaimer: typeof parsed.disclaimer === "string" ? parsed.disclaimer : undefined,
           source: fenced ? "fenced_json" : "json",
         };
@@ -162,15 +306,44 @@ export function extractUserFacingAnswer(
 
     return {
       reply: null,
+      thinking,
       disclaimer: typeof parsed.disclaimer === "string" ? parsed.disclaimer : undefined,
       source: fenced ? "fenced_json" : "json",
       blockedReason: "missing_reply",
     };
   }
 
+  const split = splitThinkAndBody(content);
+  const finalSection = extractFinalAnswerSection(split.body);
+
+  if (finalSection.answer) {
+    return {
+      reply: finalSection.answer,
+      thinking: split.thinking,
+      source: "plain_text",
+    };
+  }
+
+  if (!split.hadThink) {
+    return {
+      reply: split.body,
+      source: "plain_text",
+    };
+  }
+
+  if (split.body && !looksReasoningLikePrefix(split.body)) {
+    return {
+      reply: split.body,
+      thinking: split.thinking,
+      source: "plain_text",
+    };
+  }
+
   return {
-    reply: content,
+    reply: null,
+    thinking: split.thinking,
     source: "plain_text",
+    blockedReason: "missing_reply",
   };
 }
 
@@ -185,10 +358,18 @@ export function composeUserFacingReply(
   return extracted.reply;
 }
 
-export function finalizeUserFacingReply(
+function sanitizeThinkingPayload(thinking?: string): string | undefined {
+  if (!thinking) {
+    return undefined;
+  }
+  const cleaned = stripThinkMarkers(thinking).trim();
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+export function finalizeStructuredReply(
   raw: string | undefined,
   options: FinalizeReplyOptions = {},
-): string {
+): FinalizedReply {
   const fallback = options.emptyFallback ?? DEFAULT_SAFE_REPLY_FALLBACK;
   const extracted = extractUserFacingAnswer(raw, { adapterError: options.adapterError });
   const composed = composeUserFacingReply(extracted, {
@@ -196,11 +377,25 @@ export function finalizeUserFacingReply(
   });
 
   if (!composed) {
-    return fallback;
+    return {
+      answer: fallback,
+      thinking: sanitizeThinkingPayload(extracted.thinking),
+    };
   }
 
-  return sanitizeResponse(composed, {
-    preserveFormatting: options.preserveFormatting ?? false,
-    safeFallback: fallback,
-  });
+  return {
+    answer: sanitizeResponse(composed, {
+      preserveFormatting: options.preserveFormatting ?? false,
+      safeFallback: fallback,
+      enforceFinalClean: true,
+    }),
+    thinking: sanitizeThinkingPayload(extracted.thinking),
+  };
+}
+
+export function finalizeUserFacingReply(
+  raw: string | undefined,
+  options: FinalizeReplyOptions = {},
+): string {
+  return finalizeStructuredReply(raw, options).answer;
 }

@@ -50,8 +50,12 @@ export interface OrchestratorRequest {
 export interface OrchestratorResponse {
   /** Which handler processed the request */
   readonly route: DetectedTool;
+  /** Primary user-facing answer */
+  readonly answer?: string;
   /** Text reply (for chat/file_analysis) */
   readonly reply?: string;
+  /** Optional extracted internal reasoning */
+  readonly thinking?: string;
   /** Standard AI disclaimer */
   readonly disclaimer?: string;
   /** Image result (for image_generation) */
@@ -174,6 +178,7 @@ function mergeResults(
   memoryPayload: OrchestratorResponse["memory"],
 ): InternalMergedResponse {
   let reply: string | undefined;
+  let thinking: string | undefined;
   let image: OrchestratorResponse["image"] | undefined;
   let chart: OrchestratorResponse["chart"] | undefined;
   let memory = memoryPayload;
@@ -183,6 +188,7 @@ function mergeResults(
   let _fallback = false;
 
   const replyParts: string[] = [];
+  const thinkingParts: string[] = [];
 
   for (const step of steps) {
     // Track the primary route from the first step
@@ -200,6 +206,10 @@ function mergeResults(
       replyParts.push(step.reply);
       _model_used = step.model_used ?? _model_used;
       _fallback = step.fallback ?? _fallback;
+    }
+
+    if (step.thinking && step.thinking.trim()) {
+      thinkingParts.push(step.thinking.trim());
     }
 
     if (step.image) {
@@ -231,9 +241,15 @@ function mergeResults(
     reply = replyParts.join("\n\n");
   }
 
+  if (thinkingParts.length > 0) {
+    thinking = thinkingParts.join("\n\n");
+  }
+
   return {
     route,
+    answer: reply,
     reply,
+    thinking,
     disclaimer: reply
       ? "SentIQGPT is an AI assistant. Verify important information independently."
       : undefined,
@@ -303,6 +319,7 @@ async function _orchestrateInner(
 
     return {
       route: "memory_update",
+      answer: reply,
       reply,
       disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
       memory: merged.memory,
@@ -333,7 +350,9 @@ async function _orchestrateInner(
 
     return {
       route: "math_reasoning" as DetectedTool,
+      answer: finalReply,
       reply: finalReply,
+      thinking: mathResult.thinking,
       disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
       memory: { stored: false },
       confidence: computedConfidence,
@@ -410,7 +429,9 @@ async function _orchestrateInner(
 
   const finalResponse: OrchestratorResponse = {
     ...publicMerged,
+    answer: finalReply,
     reply: finalReply,
+    thinking: reflected.merged.thinking,
     reflection: reflected.reflection,
     confidence: computedConfidence,
   };
