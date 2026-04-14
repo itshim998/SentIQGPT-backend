@@ -1,4 +1,5 @@
 import { finalizeMathReply } from "./ai/mathAnswerFinalizer";
+import { formatMathResponse } from "./ai/mathFormatter";
 import {
   composeUserFacingReply,
   extractUserFacingAnswer,
@@ -72,6 +73,16 @@ Let's evaluate each option and pick one.
 That means we can iterate through alternatives before deciding.
 `;
 
+const truncatedThinkReply = `
+<think>
+I'll test several branches and compare them before answering.
+</think>
+Final Answer:
+The best choice is option B because it preserves the invariant.
+`;
+
+const latexMathReply = "x^2 = 9\nx = \\pm 3";
+
 const leakyFinalPhrases = [
   "That means we can iterate through possible values.",
   "Alternatively, we can iterate over every item.",
@@ -135,6 +146,10 @@ const finalizedThink = finalizeStructuredReply(thinkAndFinalReply);
 assert(finalizedThink.answer === "Use binary search because the input is sorted.", "structured finalizer returns clean answer");
 assert(finalizedThink.thinking?.includes("compare the two approaches") ?? false, "structured finalizer returns optional thinking");
 
+const truncatedThinkFinalized = finalizeStructuredReply(truncatedThinkReply, { truncated: true });
+assert(/option B/i.test(truncatedThinkFinalized.answer), "truncated structured finalizer preserves valid final answer");
+assert(!truncatedThinkFinalized.thinking, "truncated structured finalizer drops partial thinking");
+
 const finalizedMalformedThink = finalizeStructuredReply(malformedThinkReply);
 assert(/use bfs/i.test(finalizedMalformedThink.answer), "malformed think output degrades gracefully to usable final answer");
 
@@ -150,6 +165,10 @@ const finalizedMath = finalizeMathReply(normalizeMathResponse(noisyMathReply));
 assert(!/we need to solve/i.test(finalizedMath), "math narrative leakage removed");
 assert(!/let me check/i.test(finalizedMath), "math self-talk removed");
 assert(/x = 3, y = 0/.test(finalizedMath), "math final answer preserved");
+
+const latexNormalizedMath = formatMathResponse(latexMathReply);
+assert(/\\\[/.test(latexNormalizedMath), "math normalizer emits display LaTeX delimiters");
+assert(/x = \\pm 3/.test(latexNormalizedMath), "math normalizer preserves readable LaTeX symbols");
 
 const salvagedMath = salvageTruncatedResponse(truncatedMathReply);
 assert(/z = 1/.test(salvagedMath) && /y = 0/.test(salvagedMath), "truncated math keeps valid solved prefix");

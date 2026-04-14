@@ -23,7 +23,7 @@ const WORD_MATH_TERMS = new Set([
 ]);
 
 function toDisplayMath(tex: string): string {
-  return `$$\n${tex.trim()}\n$$`;
+  return `\\[\n${tex.trim()}\n\\]`;
 }
 
 function stripBullet(line: string): string {
@@ -348,13 +348,31 @@ export function formatMathResponse(text: string): string {
   );
   formatted = formatted.replace(
     /\\+\(\s*([\s\S]+?)\s*\\+\)/g,
-    (_, tex) => `$${normalizeMathExpression(tex)}$`,
+    (_, tex) => `\\(${normalizeMathExpression(tex)}\\)`,
+  );
+
+  formatted = formatted.replace(
+    /\$\$([\s\S]+?)\$\$/g,
+    (_, tex) => toDisplayMath(normalizeMathExpression(tex)),
+  );
+  formatted = formatted.replace(
+    /(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g,
+    (_, tex) => {
+      const trimmed = String(tex || "").trim();
+      if (!trimmed || /^\d/.test(trimmed)) return `$${tex}$`;
+      return `\\(${normalizeMathExpression(trimmed)}\\)`;
+    },
   );
 
   // Restore pre-existing display blocks.
   formatted = formatted.replace(
     /\x00DISPLAY(\d+)\x00/g,
-    (_, idx) => displayBlocks[parseInt(idx, 10)],
+    (_, idx) => {
+      const block = displayBlocks[parseInt(idx, 10)];
+      const match = block.match(/^\$\$([\s\S]+?)\$\$$/);
+      if (!match) return block;
+      return toDisplayMath(normalizeMathExpression(match[1]));
+    },
   );
 
   // Collapse excessive blank lines.

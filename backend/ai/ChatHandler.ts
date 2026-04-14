@@ -43,6 +43,7 @@ export async function handleChat(args: {
   let raw: string;
   let model_used: string | undefined;
   let fallback = false;
+  let truncated = false;
   let adapterError: string | null | undefined;
 
   try {
@@ -50,6 +51,7 @@ export async function handleChat(args: {
     raw = result.text;
     model_used = result.model_used;
     fallback = result.fallback ?? false;
+    truncated = result.truncated ?? false;
     adapterError = result.error;
   } catch {
     raw = getDemoFallbackResponse("chat");
@@ -61,7 +63,10 @@ export async function handleChat(args: {
     disclaimer = extracted.disclaimer;
   }
 
-  const finalized = finalizeStructuredReply(raw, { adapterError });
+  const finalized = finalizeStructuredReply(raw, {
+    adapterError,
+    truncated,
+  });
 
   return {
     answer: finalized.answer,

@@ -420,11 +420,12 @@ const MISTRAL_CONVERSATIONAL_SYSTEM_PROMPT =
   "- If uncertain, say so honestly rather than guessing.\n" +
   "- Be helpful and thorough, but don't be preachy or overly cautious.\n\n" +
   "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put all internal reasoning only inside <think>...</think>.\n" +
+  "- Put all internal reasoning only inside one short <think>...</think> block.\n" +
   "- Then write Final Answer: on its own line.\n" +
   "- After Final Answer:, return only the clean user-facing answer.\n" +
   "- Do not place reasoning outside <think> tags.\n" +
-  "- Do not add meta commentary.\n";
+  "- Do not add meta commentary.\n" +
+  "- For mathematics, write readable LaTeX and prefer \\(...\\) for inline math and \\[...\\] for display math.\n";
 
 // Default system prompt for file analysis and other models
 const DEFAULT_SYSTEM_PROMPT =
@@ -439,11 +440,12 @@ const DEFAULT_SYSTEM_PROMPT =
   "- For medicines or health products: provide general factual information. " +
   "Do NOT provide diagnosis, treatment instructions, or medical advice.\n" +
   "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put all internal reasoning only inside <think>...</think>.\n" +
+  "- Put all internal reasoning only inside one short <think>...</think> block.\n" +
   "- Then write Final Answer: on its own line.\n" +
   "- After Final Answer:, return only the clean user-facing answer.\n" +
   "- Do not place reasoning outside <think> tags.\n" +
-  "- Do not add meta commentary.\n";
+  "- Do not add meta commentary.\n" +
+  "- For mathematics, write readable LaTeX and prefer \\(...\\) for inline math and \\[...\\] for display math.\n";
 
 export interface ChatContext {
   readonly userMessage: string;

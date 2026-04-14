@@ -21,6 +21,7 @@ const DROP_SENTENCE_PATTERNS: readonly RegExp[] = [
   /^(?:following the rules|based on the prompt|the prompt asks|the system prompt|the hidden instructions)\b.*$/i,
   /^(?:first,?\s+)?(?:i(?:'| a)?ll|i will|let me|we need to)\s+(?:analyze|reason|think|check|solve|walk through)\b.*$/i,
   /^(?:analysis|reasoning|plan|approach|internal note|meta)\s*[:\-].*$/i,
+  /^(?:alternatively|that means|we can\s+(?:iterate|try|analyze|reason|solve|check)|first,?\s+we|next,?\s+we|then,?\s+we)\b.*$/i,
 ];
 
 const PROMPT_ECHO_PATTERNS: readonly RegExp[] = [
@@ -31,7 +32,7 @@ const PROMPT_ECHO_PATTERNS: readonly RegExp[] = [
 ];
 
 const FINAL_REASONING_PHRASE_PATTERNS: readonly RegExp[] = [
-  /^(?:that means|alternatively|we can iterate|we can try|let(?:'|\s)?s iterate)\b.*$/i,
+  /^(?:that means|alternatively|we can\s+(?:iterate|try|analyze|reason|solve|check)|let(?:'|\s)?s iterate)\b.*$/i,
   /^(?:first|next|then),\s+we\b.*$/i,
 ];
 

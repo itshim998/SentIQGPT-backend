@@ -160,6 +160,27 @@ const MATH_PATTERNS: readonly RegExp[] = [
   /\btrigonometr(?:y|ic)\b/i,
 ];
 
+const LOGIC_REASONING_PATTERNS: readonly RegExp[] = [
+  /\blogic(?:al)?\s+(?:puzzle|problem|question|reasoning)\b/i,
+  /\briddle\b/i,
+  /\bsyllogism\b/i,
+  /\btruth\s+table\b/i,
+  /\bpropositional\s+logic\b/i,
+  /\bpredicate\s+logic\b/i,
+  /\bmodus\s+ponens\b/i,
+  /\bmodus\s+tollens\b/i,
+  /\bif\b[\s\S]{0,30}\bthen\b[\s\S]{0,30}\btherefore\b/i,
+  /\bwhich\s+(?:statement|conclusion)\s+(?:must|necessarily)\s+be\s+true\b/i,
+  /\bdoes\s+it\s+follow\s+that\b/i,
+  /\bprove\s+or\s+disprove\b/i,
+  /\bshow\s+that\b/i,
+  /\bprove\s+that\b/i,
+  /\bcontradiction\b/i,
+  /\bcontrapositive\b/i,
+  /\bnecessary\s+and\s+sufficient\b/i,
+  /\bcan\s+you\s+deduce\b/i,
+];
+
 const WORD_PROBLEM_CONSTRAINT_WORDS: readonly RegExp[] = [
   /\bprofit\b/i,
   /\bcost\b/i,
@@ -315,6 +336,45 @@ export function detectMathReasoning(query: string): boolean {
 
 export function isMathQuery(query: string): boolean {
   return detectMathReasoning(query);
+}
+
+export function detectLogicReasoning(query: string): boolean {
+  if (detectCodeQuery(query)) {
+    return false;
+  }
+
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (LOGIC_REASONING_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+    return true;
+  }
+
+  const implicationHits = countMatches(trimmed, [
+    /\bif\b/i,
+    /\bthen\b/i,
+    /\btherefore\b/i,
+    /\bassume\b/i,
+    /\bimplies\b/i,
+    /\bconclude\b/i,
+  ]);
+  const proofHits = countMatches(trimmed, [
+    /\bmust\b/i,
+    /\balways\b/i,
+    /\bnever\b/i,
+    /\bvalid\b/i,
+    /\binvalid\b/i,
+    /\bconsistent\b/i,
+    /\binconsistent\b/i,
+  ]);
+
+  return implicationHits >= 2 && proofHits >= 1;
+}
+
+export function isBufferedReasoningQuery(query: string): boolean {
+  return isMathQuery(query) || detectLogicReasoning(query);
 }
 
 const VISION_PATTERNS: readonly RegExp[] = [

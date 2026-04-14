@@ -35,6 +35,7 @@ export interface FinalizeReplyOptions extends ExtractReplyOptions {
   readonly preserveFormatting?: boolean;
   readonly emptyFallback?: string;
   readonly preferExplanation?: boolean;
+  readonly truncated?: boolean;
 }
 
 export interface FinalizedReply {
@@ -63,11 +64,13 @@ function splitThinkAndBody(raw: string): {
   thinking?: string;
   body: string;
   hadThink: boolean;
+  recoveredFromMalformedThink: boolean;
 } {
   const source = raw ?? "";
   const lower = source.toLowerCase();
   const thinkingParts: string[] = [];
   let hadThink = false;
+  let recoveredFromMalformedThink = false;
   let cursor = 0;
   let body = "";
 
@@ -87,6 +90,7 @@ function splitThinkAndBody(raw: string): {
       if (malformedThinkTail) {
         thinkingParts.push(malformedThinkTail);
       }
+      recoveredFromMalformedThink = true;
       cursor = source.length;
       break;
     }
@@ -106,9 +110,11 @@ function splitThinkAndBody(raw: string): {
           }
           if (salvagedAnswer) {
             body = [body, salvagedAnswer].filter(Boolean).join("\n\n");
+            recoveredFromMalformedThink = true;
           }
         } else {
           thinkingParts.push(unterminatedThink);
+          recoveredFromMalformedThink = true;
         }
       }
       cursor = source.length;
@@ -133,6 +139,7 @@ function splitThinkAndBody(raw: string): {
     thinking: thinking || undefined,
     body: body.trim(),
     hadThink,
+    recoveredFromMalformedThink,
   };
 }
 
@@ -331,7 +338,7 @@ export function extractUserFacingAnswer(
     };
   }
 
-  if (split.body && !looksReasoningLikePrefix(split.body)) {
+  if (split.recoveredFromMalformedThink && split.body && !looksReasoningLikePrefix(split.body)) {
     return {
       reply: split.body,
       thinking: split.thinking,
@@ -358,7 +365,10 @@ export function composeUserFacingReply(
   return extracted.reply;
 }
 
-function sanitizeThinkingPayload(thinking?: string): string | undefined {
+function sanitizeThinkingPayload(thinking?: string, options: { truncated?: boolean } = {}): string | undefined {
+  if (options.truncated) {
+    return undefined;
+  }
   if (!thinking) {
     return undefined;
   }
@@ -379,7 +389,7 @@ export function finalizeStructuredReply(
   if (!composed) {
     return {
       answer: fallback,
-      thinking: sanitizeThinkingPayload(extracted.thinking),
+      thinking: sanitizeThinkingPayload(extracted.thinking, { truncated: options.truncated }),
     };
   }
 
@@ -389,7 +399,7 @@ export function finalizeStructuredReply(
       safeFallback: fallback,
       enforceFinalClean: true,
     }),
-    thinking: sanitizeThinkingPayload(extracted.thinking),
+    thinking: sanitizeThinkingPayload(extracted.thinking, { truncated: options.truncated }),
   };
 }
 

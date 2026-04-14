@@ -1,10 +1,18 @@
-import { detectCodeQuery, detectMathReasoning, selectModelForPrompt, isCodingPDF } from "./orchestrator/modelRouter";
+import {
+  detectCodeQuery,
+  detectLogicReasoning,
+  detectMathReasoning,
+  isBufferedReasoningQuery,
+  selectModelForPrompt,
+  isCodingPDF,
+} from "./orchestrator/modelRouter";
 
 type RoutingCase = {
   name: string;
   query: string;
   expectCode: boolean;
   expectMath: boolean;
+  expectBufferedReasoning: boolean;
   expectedModel: string;
   options?: { hasFile?: boolean; hasImage?: boolean; fileNames?: string[]; fileContent?: string };
 };
@@ -15,6 +23,7 @@ const cases: readonly RoutingCase[] = [
     query: "Why is this Python calculator code not printing anything?",
     expectCode: true,
     expectMath: false,
+    expectBufferedReasoning: false,
     expectedModel: "qwen-coder",
   },
   {
@@ -22,6 +31,7 @@ const cases: readonly RoutingCase[] = [
     query: "Solve 3x + 7 = 19",
     expectCode: false,
     expectMath: true,
+    expectBufferedReasoning: true,
     expectedModel: "deepseek",
   },
   {
@@ -29,13 +39,23 @@ const cases: readonly RoutingCase[] = [
     query: "A factory makes 2 products with 3 machines and 8 labor hours. How many units maximize profit?",
     expectCode: false,
     expectMath: true,
+    expectBufferedReasoning: true,
     expectedModel: "deepseek",
+  },
+  {
+    name: "Logic proof prompt is buffered but keeps chat model",
+    query: "Prove or disprove: if all bloops are razzies and all razzies are lazzies, then all bloops are lazzies.",
+    expectCode: false,
+    expectMath: false,
+    expectBufferedReasoning: true,
+    expectedModel: "mistral",
   },
   {
     name: "Normal chat routes to mistral",
     query: "Tell me a short story about spring rain.",
     expectCode: false,
     expectMath: false,
+    expectBufferedReasoning: false,
     expectedModel: "mistral",
   },
   {
@@ -43,6 +63,7 @@ const cases: readonly RoutingCase[] = [
     query: "Summarize this document",
     expectCode: false,
     expectMath: false,
+    expectBufferedReasoning: false,
     expectedModel: "gemini-fast",
     options: { hasFile: true, fileNames: ["report.pdf"], fileContent: "This is a business report about Q4 earnings." },
   },
@@ -51,6 +72,7 @@ const cases: readonly RoutingCase[] = [
     query: "Explain the code in this PDF",
     expectCode: false,
     expectMath: false,
+    expectBufferedReasoning: false,
     expectedModel: "qwen-coder",
     options: { hasFile: true, fileNames: ["python-tutorial.pdf"], fileContent: "def hello_world():\n    print('Hello')" },
   },
@@ -61,15 +83,18 @@ let failed = 0;
 for (const testCase of cases) {
   const codeDetected = detectCodeQuery(testCase.query);
   const mathDetected = detectMathReasoning(testCase.query);
+  const logicDetected = detectLogicReasoning(testCase.query);
+  const bufferedReasoning = isBufferedReasoningQuery(testCase.query);
   const model = selectModelForPrompt(testCase.query, undefined, testCase.options);
 
   const passed =
     codeDetected === testCase.expectCode &&
     mathDetected === testCase.expectMath &&
+    bufferedReasoning === testCase.expectBufferedReasoning &&
     model === testCase.expectedModel;
 
   console.log(
-    `${passed ? "PASS" : "FAIL"} | ${testCase.name} | code=${codeDetected} math=${mathDetected} model=${model}`,
+    `${passed ? "PASS" : "FAIL"} | ${testCase.name} | code=${codeDetected} math=${mathDetected} logic=${logicDetected} buffered=${bufferedReasoning} model=${model}`,
   );
 
   if (!passed) {

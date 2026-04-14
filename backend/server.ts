@@ -60,7 +60,7 @@ import {
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
 
-import { detectCodeQuery, isMathQuery, selectModelForPrompt } from "./orchestrator/modelRouter";
+import { detectCodeQuery, isBufferedReasoningQuery, isMathQuery, selectModelForPrompt } from "./orchestrator/modelRouter";
 import { detectExplicitMemoryWriteIntent, classifyQueryType, shouldForceWebSearch } from "./orchestrator/queryClassifier";
 import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 
@@ -1118,9 +1118,73 @@ app.post(
     // If the message is a chart request, redirect to the orchestrator and return
     // the result as a single SSE JSON payload so the frontend can render it.
     const { sub: userId, isGuest } = getRequestUser(req);
+    const isBufferedReasoning = isBufferedReasoningQuery(parsed.data.message);
+    const isMathReasoningQuery = !detectCodeQuery(parsed.data.message) && isMathQuery(parsed.data.message);
     if (isGuest) {
       const requestStart = Date.now();
       console.log(`[Latency] guest user query received`);
+
+      if (isBufferedReasoning) {
+        try {
+          if (isMathReasoningQuery) {
+            const result = await orchestrate({
+              userMessage: parsed.data.message,
+              context: {
+                recent_messages: parsed.data.context?.recent_messages,
+                memories: [],
+                file_references: parsed.data.context?.file_references,
+                userId,
+              },
+            });
+            res.json({
+              route: result.route,
+              answer: result.answer ?? result.reply,
+              reply: result.reply,
+              thinking: result.thinking,
+              disclaimer: result.disclaimer,
+              image: result.image,
+              chart: result.chart,
+              memory: result.memory,
+              confidence: result.confidence,
+            });
+            return;
+          }
+
+          const guestReasoningContext = await buildContext({
+            recent_messages: parsed.data.context?.recent_messages,
+            memories: [],
+            file_references: parsed.data.context?.file_references,
+            userMessage: parsed.data.message,
+          }, undefined, userId);
+
+          const result = await handleChat({
+            userMessage: parsed.data.message,
+            recentMessages: guestReasoningContext.recentMessages,
+            memories: [],
+            fileReferences: guestReasoningContext.fileReferences,
+            conversationSummary: guestReasoningContext.conversationSummary,
+            modelOverride: GUEST_MODEL_OVERRIDE,
+            userId,
+          });
+
+          res.json({
+            route: "chat",
+            answer: result.answer,
+            reply: result.reply,
+            thinking: result.thinking,
+            disclaimer: result.disclaimer,
+            image: undefined,
+            chart: undefined,
+            memory: undefined,
+            confidence: undefined,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[Stream] guest buffered reasoning error: ${message}`);
+          res.status(500).json({ error: message });
+        }
+        return;
+      }
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -1400,8 +1464,78 @@ app.post(
     // ── Safety gate: math queries use the direct math pipeline via orchestrator ──
     // Math queries need the direct DeepSeek pipeline, which
     // is only available through the orchestrator.  Redirect like chart requests.
-    const isCodingQuery = detectCodeQuery(parsed.data.message);
-    const isMathReasoningQuery = !isCodingQuery && isMathQuery(parsed.data.message);
+    if (isBufferedReasoning) {
+      console.log(`[Stream] buffered reasoning query detected - returning structured JSON`);
+      try {
+        if (isMathReasoningQuery) {
+          const result = await orchestrate({
+            userMessage: parsed.data.message,
+            context: {
+              recent_messages: parsed.data.context?.recent_messages,
+              memories: parsed.data.context?.memories,
+              file_references: parsed.data.context?.file_references,
+              conversationId: activeConversationId || undefined,
+              userDb,
+              userId,
+            },
+          });
+          if (result.reply) {
+            await persistAssistantMessage(result.reply);
+          }
+          await persistStoredMemory(result.memory);
+          res.json({
+            route: result.route,
+            answer: result.answer ?? result.reply,
+            reply: result.reply,
+            thinking: result.thinking,
+            disclaimer: result.disclaimer,
+            image: result.image,
+            chart: result.chart,
+            memory: result.memory,
+            confidence: result.confidence,
+            sync,
+          });
+          return;
+        }
+
+        const reasoningContext = await buildContext({
+          recent_messages: parsed.data.context?.recent_messages,
+          memories: parsed.data.context?.memories,
+          file_references: parsed.data.context?.file_references,
+          userMessage: parsed.data.message,
+          conversationId: activeConversationId || undefined,
+        }, userDb, userId);
+
+        const result = await handleChat({
+          userMessage: parsed.data.message,
+          recentMessages: reasoningContext.recentMessages,
+          memories: reasoningContext.memories,
+          fileReferences: reasoningContext.fileReferences,
+          conversationSummary: reasoningContext.conversationSummary,
+          userId,
+        });
+        if (result.reply) {
+          await persistAssistantMessage(result.reply);
+        }
+        res.json({
+          route: "chat",
+          answer: result.answer,
+          reply: result.reply,
+          thinking: result.thinking,
+          disclaimer: result.disclaimer,
+          image: undefined,
+          chart: undefined,
+          memory: undefined,
+          confidence: undefined,
+          sync,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Stream] buffered reasoning failed: ${message}`);
+        res.status(500).json({ error: message });
+      }
+      return;
+    }
 
     if (isMathReasoningQuery) {
       console.log(`[MathPipeline] streaming math query — redirecting to orchestrator`);
