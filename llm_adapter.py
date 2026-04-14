@@ -373,6 +373,7 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     Routing table (Pollinations is always preferred):
         qwen3-coder-30b    → pollinations  (CODING_MODEL = qwen-coder)
         qwen3-coder        → pollinations  (CODING_MODEL = qwen-coder)
+        mistral            → pollinations  (mistral)
         gemini-fast         → pollinations  (GENERAL_CHAT_MODEL)
         gemini-search       → pollinations  (SEARCH_MODEL)
         gemini-vision       → gemini        (GEMINI_VISION_MODEL, direct API)
@@ -396,6 +397,9 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
 
     if logical == "gemini-search":
         return "pollinations", SEARCH_MODEL
+
+    if logical == "mistral":
+        return "pollinations", "mistral"
 
     # --- Gemini direct routes (vision, explicit gemini models) ---
     if logical == "gemini-vision":
