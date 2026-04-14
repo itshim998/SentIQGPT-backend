@@ -371,6 +371,7 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     Resolve logical model names to concrete provider/model pairs.
 
     Routing table (Pollinations is always preferred):
+        qwen-coder         -> pollinations  (CODING_MODEL = qwen-coder)
         qwen3-coder-30b    → pollinations  (CODING_MODEL = qwen-coder)
         qwen3-coder        → pollinations  (CODING_MODEL = qwen-coder)
         mistral            → pollinations  (mistral)
@@ -386,7 +387,7 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     logical = model_override.strip().lower()
 
     # --- Pollinations routes (preferred) ---
-    if logical in {"qwen3-coder-30b", "qwen3-coder"}:
+    if logical in {"qwen-coder", "qwen3-coder-30b", "qwen3-coder"}:
         return "pollinations", CODING_MODEL
 
     if logical == "deepseek":

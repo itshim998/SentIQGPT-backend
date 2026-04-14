@@ -9,7 +9,7 @@
 //   3. file (non-coding)   -> gemini-fast (Pollinations) - preserve file pipeline
 //   4. coding              -> qwen-coder (Pollinations)
 //   5. math_reasoning      -> deepseek (Pollinations)
-//   6. general_chat        -> mistral (Pollinations) - human-like conversations
+//   6. general_chat        -> gemini-fast (Pollinations) - human-like conversations
 //
 // Gemini direct API is NEVER selected by the router.
 // It is a last-resort fallback handled by the Python gateway.
@@ -517,7 +517,7 @@ function detectPromptCategory(
     return "math_reasoning";
   }
 
-  // Priority 6: General chat (default) -> mistral for human-like conversations
+  // Priority 6: General chat (default) -> gemini-fast for human-like conversations
   return "general_chat";
 }
 
@@ -552,8 +552,8 @@ export function selectModelForPrompt(
       break;
     case "general_chat":
     default:
-      model = "mistral";
-      console.log("[Router] category=general_chat -> mistral");
+      model = "gemini-fast";
+      console.log("[Router] category=general_chat -> gemini-fast");
       break;
   }
 

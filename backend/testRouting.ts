@@ -48,15 +48,15 @@ const cases: readonly RoutingCase[] = [
     expectCode: false,
     expectMath: false,
     expectBufferedReasoning: true,
-    expectedModel: "mistral",
+    expectedModel: "gemini-fast",
   },
   {
-    name: "Normal chat routes to mistral",
+    name: "Normal chat routes to gemini-fast",
     query: "Tell me a short story about spring rain.",
     expectCode: false,
     expectMath: false,
     expectBufferedReasoning: false,
-    expectedModel: "mistral",
+    expectedModel: "gemini-fast",
   },
   {
     name: "File upload (non-coding) routes to gemini-fast",

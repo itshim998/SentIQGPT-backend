@@ -395,7 +395,7 @@ function stableJsonStringify(value: unknown): string {
 // Chat prompt builder
 // ==============================
 
-// Mistral-specific system prompt for more human-like, engaging conversations
+// Conversational system prompt for general text chat on friendly Pollinations models
 const MISTRAL_CONVERSATIONAL_SYSTEM_PROMPT =
   "SYSTEM: You are SentIQGPT, a warm and engaging AI companion.\n\n" +
   "PERSONALITY:\n" +
@@ -461,16 +461,16 @@ export interface ChatContext {
 export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
 
-  // Select system prompt based on model
-  // Use Mistral conversational prompt for pure text conversations
-  // Use default prompt for file analysis and other specialized models
+  // Select system prompt based on model.
+  // Use the conversational prompt for pure text chat on general chat models.
+  // Use the default prompt for file analysis and other specialized models.
   let SYSTEM_PROMPT: string;
   
-  if (ctx.modelOverride === "mistral" && !hasFiles) {
-    // Mistral for pure text conversations - more human-like
+  if ((ctx.modelOverride === "mistral" || ctx.modelOverride === "gemini-fast") && !hasFiles) {
+    // General text chat stays warm and conversational after the default model switch.
     SYSTEM_PROMPT = MISTRAL_CONVERSATIONAL_SYSTEM_PROMPT;
   } else {
-    // Default prompt for file analysis (gemini-fast), coding (qwen-coder), etc.
+    // Default prompt for file analysis, coding, math, and other specialized routes.
     SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT;
   }
 
