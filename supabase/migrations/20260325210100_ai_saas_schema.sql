@@ -1,3 +1,5 @@
+-- RUN ON: Database 1, 2, 3, 4 (Control DB + Data shards)
+
 create extension if not exists pgcrypto;
 
 create table if not exists public.users (

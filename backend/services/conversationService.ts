@@ -102,7 +102,7 @@ export async function getConversationById(userDb: any, conversationId: string) {
     .from("conversations")
     .select("id, user_id, title, created_at")
     .eq("id", conversationId)
-    .single();
+    .maybeSingle();
 
   return {
     data: result.data as ConversationRow | null,

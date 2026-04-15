@@ -78,6 +78,8 @@ USER_DB_CACHE_TTL_SECONDS = 300
 
 _user_db_cache_lock = threading.Lock()
 _user_db_cache: dict[str, tuple[int, float]] = {}
+_quota_rpc_alert_lock = threading.Lock()
+_quota_rpc_alerted_dbs: set[int] = set()
 
 # ============================
 # Safety Audit Log (In-Memory)
@@ -215,6 +217,44 @@ class SupabaseRequestError(Exception):
             f"Supabase {kind} failed db={db_number} target={target} "
             f"status={status_code} details={details}"
         )
+
+
+def details_contain_missing_function_marker(details: str) -> bool:
+    lowered = (details or "").lower()
+    if "pgrst202" in lowered:
+        return True
+
+    if "reserve_daily_llm_request" not in lowered:
+        return False
+
+    return "does not exist" in lowered or "function" in lowered
+
+
+def is_missing_quota_rpc_error(error: SupabaseRequestError) -> bool:
+    if error.kind != "rpc":
+        return False
+
+    # PostgREST returns 404/406 for unresolved rpc signatures depending on gateway mode.
+    if error.status_code in {404, 406}:
+        return True
+
+    return details_contain_missing_function_marker(error.details)
+
+
+def log_quota_rpc_drift_once(error: SupabaseRequestError) -> None:
+    with _quota_rpc_alert_lock:
+        if error.db_number in _quota_rpc_alerted_dbs:
+            return
+        _quota_rpc_alerted_dbs.add(error.db_number)
+
+    logger.critical(
+        "[quota] reserve.rpc_missing_on_shard db=%s target=%s status=%s details=%s "
+        "action=apply migration 20260326190000_atomic_llm_request_quota.sql on this shard",
+        error.db_number,
+        error.target,
+        error.status_code,
+        error.details,
+    )
 
 
 def read_required_env(name: str) -> str:
@@ -489,6 +529,9 @@ def reserve_llm_request_slot(user_id: str) -> int:
         logger.info("[quota] reserve.rpc.ok user_id=%s db=%s", user_id, assigned_db)
         return assigned_db
     except SupabaseRequestError as error:
+        if is_missing_quota_rpc_error(error):
+            log_quota_rpc_drift_once(error)
+
         if not should_fallback_quota_rpc(error):
             raise
 

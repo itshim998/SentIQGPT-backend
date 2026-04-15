@@ -2,7 +2,18 @@ import type { NextFunction, Request, Response } from "express";
 import { jwtVerify } from "jose";
 
 const GUEST_USER_ID = "guest";
-const JWT_TIMEOUT_MS = 3000;
+const DEFAULT_JWT_TIMEOUT_MS = 1500;
+const JWT_TIMEOUT_MS = (() => {
+  const raw = process.env.JWT_TIMEOUT_MS?.trim();
+  if (!raw) {
+    return DEFAULT_JWT_TIMEOUT_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_JWT_TIMEOUT_MS;
+  }
+  return parsed;
+})();
 
 export type VerificationMethod = "guest" | "local" | "fallback";
 

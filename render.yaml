@@ -2,6 +2,8 @@ services:
   - type: web
     name: sentiqgpt-backend
     runtime: node
+    # Governance note: run `npm run check:migrations` pre-deploy to validate shard schema coverage.
+    # Startup also fail-checks migrations via backend/dbRouter.ts before serving traffic.
     buildCommand: pip3 install -r requirements.txt && npm install && npm run build
     startCommand: python backend/llm_service.py & sleep 3 && node dist/backend/server.js
     envVars:

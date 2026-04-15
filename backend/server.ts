@@ -30,15 +30,13 @@ import { isChartRequest } from "./tools/chartGeneration/chartDetector";
 import { uploadChatImage, getChatImages } from "./tools/imageGeneration/imageStorageService";
 import { callLLMAdapter, buildTitleGeneratePrompt, strictParseJsonObject } from "./ai/PromptBuilders";
 import { buildContext, buildContextFast } from "./context/contextBuilder";
-import { getOrAssignUserDatabase } from "./dbRouter";
+import { getOrAssignUserDatabase, verifyShardMigrations } from "./dbRouter";
 import {
   createConversation,
   deleteConversation,
-  deleteConversations,
   getConversationById,
   getConversationMessages,
   getUserConversations,
-  getUserConversationsOldestFirst,
   insertConversationMessage,
   updateConversationTitle,
   type ConversationListRow,
@@ -172,11 +170,6 @@ const GUEST_MODEL_OVERRIDE = "gemini-fast";
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Maximum conversations per user. When exceeded, oldest conversation is deleted.
- */
-const MAX_CONVERSATIONS_PER_USER = 50;
-
-/**
  * Maximum memory storage per user in bytes (25 KB).
  * Memories exceeding this are rejected.
  */
@@ -198,6 +191,16 @@ type DbErrorLike = {
   details?: string | null;
   hint?: string | null;
 } | null | undefined;
+
+class HttpError extends Error {
+  statusCode: number;
+
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.name = "HttpError";
+    this.statusCode = statusCode;
+  }
+}
 
 function formatDbError(error: DbErrorLike): string {
   if (!error) return "unknown";
@@ -272,79 +275,28 @@ async function getOwnedConversationOrThrow(
   logDbEvent(`${scope}.conversation-owner.start`, userId, { conversationId });
   const { data, error } = await getConversationById(userDb, conversationId);
 
-  if (error || !data || data.user_id !== userId) {
-    if (error) {
-      logDbFailure(`${scope}.conversation-owner`, userId, error, { conversationId });
-    } else {
-      logDbFailure(`${scope}.conversation-owner`, userId, new Error("Unauthorized conversation access"), { conversationId });
-    }
-    throw new Error("Unauthorized conversation access");
+  if (error) {
+    logDbFailure(`${scope}.conversation-owner`, userId, error, { conversationId });
+    throw new HttpError(500, "Failed to resolve conversation.");
+  }
+
+  if (!data) {
+    logDbEvent(`${scope}.conversation-owner.not-found`, userId, { conversationId });
+    throw new HttpError(404, "Conversation not found.");
+  }
+
+  if (data.user_id !== userId) {
+    logDbFailure(
+      `${scope}.conversation-owner`,
+      userId,
+      new Error("Unauthorized conversation access"),
+      { conversationId },
+    );
+    throw new HttpError(403, "Unauthorized conversation access.");
   }
 
   logDbEvent(`${scope}.conversation-owner.ok`, userId, { conversationId });
   return data as ConversationRow;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// CONVERSATION LIMIT ENFORCEMENT
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Enforces the max conversations per user limit.
- * If user has >= MAX_CONVERSATIONS_PER_USER, deletes the oldest conversation(s)
- * to make room for a new one.
- * 
- * Called BEFORE creating a new conversation.
- */
-async function enforceConversationLimit(
-  userDb: any,
-  userId: string,
-  scope: string,
-): Promise<void> {
-  logDbEvent(`${scope}.conversation-limit.check`, userId);
-
-  // Get all conversations for the user, ordered by created_at ascending (oldest first)
-  const { data: conversations, error: listError } = await getUserConversationsOldestFirst(userDb, userId);
-
-  if (listError) {
-    // Non-fatal: if we can't check, proceed with creation
-    console.warn(`[SentIQGPT][db] ${scope}.conversation-limit.list-failed userId=${userId} error=${listError.message}`);
-    return;
-  }
-
-  const conversationCount = conversations?.length ?? 0;
-  
-  if (conversationCount < MAX_CONVERSATIONS_PER_USER) {
-    logDbEvent(`${scope}.conversation-limit.ok`, userId, { count: conversationCount, limit: MAX_CONVERSATIONS_PER_USER });
-    return;
-  }
-
-  // Need to delete oldest conversation(s) to make room
-  const toDelete = conversationCount - MAX_CONVERSATIONS_PER_USER + 1; // +1 to make room for new one
-  const conversationsToDelete = conversations.slice(0, toDelete);
-
-  logDbEvent(`${scope}.conversation-limit.enforce`, userId, {
-    count: conversationCount,
-    limit: MAX_CONVERSATIONS_PER_USER,
-    deleting: toDelete,
-  });
-
-  const conversationIdsToDelete = conversationsToDelete.map((conv) => conv.id);
-  if (conversationIdsToDelete.length === 0) {
-    return;
-  }
-
-  const { error: deleteError } = await deleteConversations(userDb, conversationIdsToDelete, userId);
-  if (deleteError) {
-    console.warn(
-      `[SentIQGPT][db] ${scope}.conversation-limit.delete-failed userId=${userId} conversationIds=${conversationIdsToDelete.join(",")} error=${deleteError.message}`
-    );
-    return;
-  }
-
-  for (const conv of conversationsToDelete) {
-    logDbEvent(`${scope}.conversation-limit.deleted`, userId, { conversationId: conv.id });
-  }
 }
 
 async function createConversationOrThrow(
@@ -353,9 +305,6 @@ async function createConversationOrThrow(
   scope: string,
   title = "New Chat",
 ): Promise<ConversationListRow> {
-  // Enforce conversation limit before creating new one
-  await enforceConversationLimit(userDb, userId, scope);
-
   logDbEvent(`${scope}.conversation-create.start`, userId, { title });
   const startedAt = Date.now();
   const { data, error } = await createConversation(userDb, { userId, title });
@@ -941,14 +890,19 @@ app.post(
         await getOwnedConversationOrThrow(userDb, userId, activeConversationId, "chat");
         sync.conversationId = activeConversationId;
       } catch (conversationLookupError) {
-        sync.persisted = false;
         sync.deferred = true;
-        logDbFailure(
-          "chat.conversation.resolve",
-          userId,
-          conversationLookupError instanceof Error ? conversationLookupError : new Error(String(conversationLookupError)),
-          { conversationId: activeConversationId },
-        );
+        const normalizedLookupError =
+          conversationLookupError instanceof Error
+            ? conversationLookupError
+            : new Error(String(conversationLookupError));
+        if (normalizedLookupError instanceof HttpError && normalizedLookupError.statusCode === 404) {
+          logDbEvent("chat.conversation.resolve.not-found", userId, { conversationId: activeConversationId });
+        } else {
+          sync.persisted = false;
+          logDbFailure("chat.conversation.resolve", userId, normalizedLookupError, {
+            conversationId: activeConversationId,
+          });
+        }
         activeConversationId = null;
       }
     }
@@ -1260,14 +1214,19 @@ app.post(
       try {
         await getOwnedConversationOrThrow(userDb, userId, activeConversationId, "chat.stream");
       } catch (conversationOwnershipError) {
-        sync.persisted = false;
         sync.deferred = true;
-        logDbFailure(
-          "chat.stream.conversation-resolve",
-          userId,
-          conversationOwnershipError instanceof Error ? conversationOwnershipError : new Error(String(conversationOwnershipError)),
-          { conversationId: activeConversationId },
-        );
+        const normalizedOwnershipError =
+          conversationOwnershipError instanceof Error
+            ? conversationOwnershipError
+            : new Error(String(conversationOwnershipError));
+        if (normalizedOwnershipError instanceof HttpError && normalizedOwnershipError.statusCode === 404) {
+          logDbEvent("chat.stream.conversation-resolve.not-found", userId, { conversationId: activeConversationId });
+        } else {
+          sync.persisted = false;
+          logDbFailure("chat.stream.conversation-resolve", userId, normalizedOwnershipError, {
+            conversationId: activeConversationId,
+          });
+        }
         activeConversationId = null;
       }
     }
@@ -1533,65 +1492,6 @@ app.post(
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[Stream] buffered reasoning failed: ${message}`);
         res.status(500).json({ error: message });
-      }
-      return;
-    }
-
-    if (isMathReasoningQuery) {
-      console.log(`[MathPipeline] streaming math query — redirecting to orchestrator`);
-      let sseStarted = false;
-      try {
-        // Send SSE headers early so frontend can detect route before answer arrives
-        res.setHeader("Content-Type", "text/event-stream");
-        res.setHeader("Cache-Control", "no-cache");
-        res.setHeader("Connection", "keep-alive");
-        res.setHeader("X-Accel-Buffering", "no");
-        res.flushHeaders();
-        sseStarted = true;
-        // Emit route metadata so frontend can show "Reasoning..." indicator
-        writeSseEvent(JSON.stringify({ type: "route", route: "math_reasoning" }));
-
-        const result = await orchestrate({
-          userMessage: parsed.data.message,
-          context: {
-            recent_messages: parsed.data.context?.recent_messages,
-            memories: parsed.data.context?.memories,
-            file_references: parsed.data.context?.file_references,
-            conversationId: activeConversationId || undefined,
-            userDb,
-            userId,
-          },
-        });
-        // Return as SSE stream so the frontend handles it uniformly
-        if (result.thinking && result.thinking.trim()) {
-          writeSseEvent(JSON.stringify({ type: "thinking", text: result.thinking.trim() }));
-        }
-        if (result.reply) {
-          // Stream the math answer in chunks for smooth typing effect
-          const CHUNK_SIZE = 24;
-          for (let i = 0; i < result.reply.length; i += CHUNK_SIZE) {
-            const chunk = result.reply.slice(i, i + CHUNK_SIZE);
-            writeSseEvent(JSON.stringify({ type: "token", text: chunk }));
-          }
-        }
-        if (!clientDisconnected && result.reply) {
-          await persistAssistantMessage(result.reply);
-        }
-        if (!clientDisconnected) {
-          await persistStoredMemory(result.memory);
-        }
-        writeSseEvent("[DONE]");
-        finishSse();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[MathPipeline] streaming orchestration failed: ${message}`);
-        if (sseStarted || res.headersSent) {
-          writeSseEvent(JSON.stringify({ type: "error", error: message }));
-          writeSseEvent("[DONE]");
-          finishSse();
-        } else {
-          res.status(500).json({ error: message });
-        }
       }
       return;
     }
@@ -2337,44 +2237,58 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     return;
   }
 
-  console.error("[SentIQGPT] Unhandled error:", err.message);
+  const statusCode = err instanceof HttpError && Number.isInteger(err.statusCode)
+    ? err.statusCode
+    : 500;
+  const logMethod = statusCode >= 500 ? console.error : console.warn;
+  logMethod("[SentIQGPT] Unhandled error:", err.message);
   if (res.headersSent || res.writableEnded) {
     if (!res.writableEnded) {
       res.end();
     }
     return;
   }
-  res.status(500).json({ error: "Internal server error." });
+  res.status(statusCode).json({
+    error: statusCode >= 500 ? "Internal server error." : err.message,
+  });
 });
 
 // ===============================
 // Start
 // ===============================
-const server = app.listen(PORT, () => {
-  console.log(`[SentIQGPT v2] Server running on port ${PORT}`);
-  console.log(`[SentIQGPT v2] Architecture: Orchestrated Dual-Model (Gemini + Groq)`);
-  console.log(`[SentIQGPT v2] LLM Service expected on port ${process.env.LLM_SERVICE_PORT || "3002"}`);
-  
-  // Log Tavily availability for debugging
-  const tavilyStatus = isTavilyAvailable();
-  console.log(`[SentIQGPT v2] Tavily Web Search: ${tavilyStatus ? "ENABLED" : "DISABLED (set TAVILY_KEYS in env)"}`);
-});
+verifyShardMigrations().then(() => {
+  const server = app.listen(PORT, () => {
+    console.log(`[SentIQGPT v2] Server running on port ${PORT}`);
+    console.log(`[SentIQGPT v2] Architecture: Orchestrated Dual-Model (Gemini + Groq)`);
+    console.log(`[SentIQGPT v2] LLM Service expected on port ${process.env.LLM_SERVICE_PORT || "3002"}`);
 
-// ---- Graceful shutdown ----
-function gracefulShutdown(signal: string) {
-  console.log(`[SentIQGPT] ${signal} received — shutting down gracefully`);
-  server.close(() => {
-    console.log("[SentIQGPT] HTTP server closed");
-    process.exit(0);
+    const jwtSecret = process.env.SUPABASE_JWT_SECRET?.trim();
+    if (!jwtSecret) {
+      console.warn("[SentIQGPT v2] WARNING: SUPABASE_JWT_SECRET is not set; auth will fall back to Supabase and add latency.");
+    }
+
+    // Log Tavily availability for debugging
+    const tavilyStatus = isTavilyAvailable();
+    console.log(`[SentIQGPT v2] Tavily Web Search: ${tavilyStatus ? "ENABLED" : "DISABLED (set TAVILY_KEYS in env)"}`);
   });
-  // Force exit after 10s if connections don't drain
-  setTimeout(() => process.exit(1), 10_000).unref();
-}
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
-// ---- Crash safety net ----
-// Prevent stray async throws (e.g. from native addons) from killing the process.
+  // ---- Graceful shutdown ----
+  function gracefulShutdown(signal: string) {
+    console.log(`[SentIQGPT] ${signal} received — shutting down gracefully`);
+    server.close(() => {
+      console.log("[SentIQGPT] HTTP server closed");
+      process.exit(0);
+    });
+    // Force exit after 10s if connections don't drain
+    setTimeout(() => process.exit(1), 10_000).unref();
+  }
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+}).catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[SentIQGPT] FATAL: startup migration verification failed: ${message}`);
+  process.exit(1);
+});
 process.on("uncaughtException", (err) => {
   console.error("[SentIQGPT] UNCAUGHT EXCEPTION (kept alive):", err.message);
   console.error(err.stack);

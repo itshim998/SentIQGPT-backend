@@ -1,3 +1,5 @@
+-- RUN ON: Database 1, 2, 3, 4 (Control DB + Data shards)
+
 create or replace function public.ensure_user_exists(user_id uuid)
 returns void
 language plpgsql

@@ -1,3 +1,5 @@
+-- RUN ON: Database 1, 2, 3, 4 (Control DB + Data shards)
+
 alter table public.users
 drop constraint if exists users_id_fkey;
 

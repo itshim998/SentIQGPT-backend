@@ -1,4 +1,4 @@
-import { randomInt } from "crypto";
+import { randomInt, randomUUID } from "crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export type DatabaseId = 1 | 2 | 3 | 4;
@@ -167,6 +167,12 @@ async function fetchAssignedDatabase(userId: string): Promise<DatabaseId | null>
   if (!isDatabaseId(data.assigned_db)) {
     throw new Error(
       `[dbRouter] Control database returned out-of-range assigned_db=${String(data.assigned_db)} for user ${normalizedUserId}`,
+    );
+  }
+
+  if (data.assigned_db === CONTROL_DATABASE_ID) {
+    throw new Error(
+      `[dbRouter] Invalid routing: user ${normalizedUserId} assigned to control DB (assigned_db=1). Only data shards (2-4) are valid. Remediate user_db_map and retry.`,
     );
   }
 
@@ -381,4 +387,87 @@ export async function getOrAssignUserDatabase(userId: string): Promise<SupabaseC
 
   logDbRouter("resolve.missing-map", normalizedUserId);
   return assignDatabaseToUser(normalizedUserId);
+}
+
+export async function verifyShardMigrations(): Promise<void> {
+  const dummyId = randomUUID();
+  console.log(`[SentIQGPT] Running startup migration verification checks...`);
+  const shardIds: DatabaseId[] = [2, 3, 4];
+  let failed = false;
+
+  const markFailure = (dbId: DatabaseId, message: string): void => {
+    console.error(`[SentIQGPT] FATAL: Shard DB ${dbId} ${message}`);
+    failed = true;
+  };
+
+  for (const id of shardIds) {
+    const client = clientByDatabaseId[id];
+    try {
+      // Check: 20260326213000_fix_multi_db_session_bootstrap
+      const { error: sessionInitError } = await client.rpc("initialize_user_session", { p_user_id: dummyId });
+      if (sessionInitError) {
+        if (sessionInitError.message?.includes("function") && sessionInitError.message?.includes("does not exist")) {
+          markFailure(id, `is missing migration 20260326213000_fix_multi_db_session_bootstrap (or earlier). RPC error: ${sessionInitError.message}`);
+        } else if (sessionInitError.code === "23503" || sessionInitError.message?.includes("foreign key constraint")) {
+          markFailure(id, `has outdated ensure_user_exists; apply 20260326213000_fix_multi_db_session_bootstrap. Error: ${sessionInitError.message}`);
+        } else {
+          markFailure(id, `failed initialize_user_session probe. code=${sessionInitError.code ?? "unknown"} message=${sessionInitError.message}`);
+        }
+      }
+
+      // Check: 20260406160000_capacity_limits.sql
+      const { error: conversationCountFnError } = await client.rpc("get_user_conversation_count", { p_user_id: dummyId });
+      if (conversationCountFnError) {
+        markFailure(
+          id,
+          `is missing required capacity-limits function get_user_conversation_count (migration 20260406160000). code=${conversationCountFnError.code ?? "unknown"} message=${conversationCountFnError.message}`,
+        );
+      }
+
+      // Check: 20260407030000_chat_images_table.sql
+      const { error: chatImagesTableError } = await client
+        .from("chat_images")
+        .select("id", { head: true, count: "exact" })
+        .limit(1);
+      if (chatImagesTableError) {
+        markFailure(
+          id,
+          `is missing chat_images schema objects (migration 20260407030000). code=${chatImagesTableError.code ?? "unknown"} message=${chatImagesTableError.message}`,
+        );
+      }
+
+      // Check: 20260412090000_incremental_memory_usage_tracking.sql
+      const { error: adjustMemoryFnError } = await client.rpc("adjust_user_memory_usage", {
+        p_user_id: dummyId,
+        p_delta_bytes: 0,
+      });
+      if (adjustMemoryFnError) {
+        markFailure(
+          id,
+          `is missing adjust_user_memory_usage RPC (migration 20260412090000). code=${adjustMemoryFnError.code ?? "unknown"} message=${adjustMemoryFnError.message}`,
+        );
+      }
+
+      const { error: memoryUsageColumnError } = await client
+        .from("users")
+        .select("user_memory_usage_bytes")
+        .eq("id", dummyId)
+        .maybeSingle();
+      if (memoryUsageColumnError) {
+        markFailure(
+          id,
+          `is missing users.user_memory_usage_bytes column (migration 20260412090000). code=${memoryUsageColumnError.code ?? "unknown"} message=${memoryUsageColumnError.message}`,
+        );
+      }
+    } finally {
+      // Best-effort cleanup for probe records.
+      await client.from("usage_logs").delete().eq("user_id", dummyId);
+      await client.from("users").delete().eq("id", dummyId);
+    }
+  }
+
+  if (failed) {
+    console.error(`[SentIQGPT] Migration check failed! Exiting.`);
+    process.exit(1);
+  }
 }

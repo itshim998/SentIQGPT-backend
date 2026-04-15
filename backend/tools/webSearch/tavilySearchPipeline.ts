@@ -94,7 +94,7 @@ async function synthesizeWithLLM(
     .replace("{context}", context);
 
   try {
-    const response = await fetch(`${LLM_SERVICE_URL}/llm`, {
+    const response = await fetch(`${LLM_SERVICE_URL}/llm/invoke`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -116,8 +116,12 @@ async function synthesizeWithLLM(
       };
     }
 
-    const data = await response.json() as { response?: string; text?: string };
-    const answer = data.response ?? data.text ?? "";
+    const data = await response.json() as {
+      result?: string | { text?: string };
+    };
+    const answer = typeof data.result === "string"
+      ? data.result
+      : data.result?.text ?? "";
 
     if (!answer || answer.trim().length < 10) {
       return {

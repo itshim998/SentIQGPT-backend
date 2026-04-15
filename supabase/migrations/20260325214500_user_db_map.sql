@@ -1,3 +1,5 @@
+-- RUN ON: Database 1, 2, 3, 4 (Control DB + Data shards)
+
 create table if not exists public.user_db_map (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null unique references public.users (id) on delete cascade,
