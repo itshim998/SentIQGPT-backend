@@ -418,14 +418,7 @@ const MISTRAL_CONVERSATIONAL_SYSTEM_PROMPT =
   "- For medical/health topics: provide general info only, not diagnosis or treatment.\n\n" +
   "KNOWLEDGE:\n" +
   "- If uncertain, say so honestly rather than guessing.\n" +
-  "- Be helpful and thorough, but don't be preachy or overly cautious.\n\n" +
-  "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put all internal reasoning only inside one short <think>...</think> block.\n" +
-  "- Then write Final Answer: on its own line.\n" +
-  "- After Final Answer:, return only the clean user-facing answer.\n" +
-  "- Do not place reasoning outside <think> tags.\n" +
-  "- Do not add meta commentary.\n" +
-  "- For mathematics, write readable LaTeX and prefer \\(...\\) for inline math and \\[...\\] for display math.\n";
+  "- Be helpful and thorough, but don't be preachy or overly cautious.\n";
 
 // Default system prompt for file analysis and other models
 const DEFAULT_SYSTEM_PROMPT =

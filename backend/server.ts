@@ -163,6 +163,16 @@ function formatZodError(err: ZodError): string {
   return err.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join("; ");
 }
 
+function gateThinking(
+  thinking: string | undefined,
+  options: { route?: string; modelOverride?: string },
+): string | undefined {
+  if (options.route === "math_reasoning" || options.modelOverride === "deepseek") {
+    return thinking;
+  }
+  return undefined;
+}
+
 const GUEST_MODEL_OVERRIDE = "gemini-fast";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -853,7 +863,7 @@ app.post(
         route: "chat",
         answer: guestResult.answer,
         reply: guestResult.reply,
-        thinking: guestResult.thinking,
+        thinking: gateThinking(guestResult.thinking, { modelOverride: GUEST_MODEL_OVERRIDE }),
         disclaimer: guestResult.disclaimer,
         image: undefined,
         chart: undefined,
@@ -1013,7 +1023,7 @@ app.post(
       route: result.route,
       answer: result.answer ?? result.reply,
       reply: result.reply,
-      thinking: result.thinking,
+      thinking: gateThinking(result.thinking, { route: result.route }),
       disclaimer: result.disclaimer,
       image: result.image,
       chart: result.chart,
@@ -1043,10 +1053,10 @@ app.post(
       }
     };
 
-    const streamBufferedAnswer = (answer: string, thinking?: string) => {
+    const streamBufferedAnswer = (answer: string, thinking?: string, showThinking = false) => {
       const chunkSize = 24;
 
-      if (thinking && thinking.trim()) {
+      if (showThinking && thinking && thinking.trim()) {
         writeSseEvent(JSON.stringify({ type: "thinking", text: thinking.trim() }));
       }
 
@@ -1094,7 +1104,7 @@ app.post(
               route: result.route,
               answer: result.answer ?? result.reply,
               reply: result.reply,
-              thinking: result.thinking,
+              thinking: gateThinking(result.thinking, { route: result.route }),
               disclaimer: result.disclaimer,
               image: result.image,
               chart: result.chart,
@@ -1125,7 +1135,7 @@ app.post(
             route: "chat",
             answer: result.answer,
             reply: result.reply,
-            thinking: result.thinking,
+            thinking: gateThinking(result.thinking, { modelOverride: GUEST_MODEL_OVERRIDE }),
             disclaimer: result.disclaimer,
             image: undefined,
             chart: undefined,
@@ -1173,7 +1183,7 @@ app.post(
         });
 
         if (!clientDisconnected) {
-          streamBufferedAnswer(result.reply, result.thinking);
+          streamBufferedAnswer(result.reply, result.thinking, false);
           writeSseEvent("[DONE]");
         }
         console.log(`[Stream] guest buffered stream completed in ${Date.now() - streamStart}ms`);
@@ -1364,7 +1374,7 @@ app.post(
           route: result.route,
           answer: result.answer ?? result.reply,
           reply: result.reply,
-          thinking: result.thinking,
+          thinking: gateThinking(result.thinking, { route: result.route }),
           disclaimer: result.disclaimer,
           image: result.image,
           chart: result.chart,
@@ -1404,7 +1414,7 @@ app.post(
           route: result.route,
           answer: result.answer ?? result.reply,
           reply: result.reply,
-          thinking: result.thinking,
+          thinking: gateThinking(result.thinking, { route: result.route }),
           disclaimer: result.disclaimer,
           image: result.image,
           chart: result.chart,
@@ -1446,7 +1456,7 @@ app.post(
             route: result.route,
             answer: result.answer ?? result.reply,
             reply: result.reply,
-            thinking: result.thinking,
+            thinking: gateThinking(result.thinking, { route: result.route }),
             disclaimer: result.disclaimer,
             image: result.image,
             chart: result.chart,
@@ -1480,7 +1490,7 @@ app.post(
           route: "chat",
           answer: result.answer,
           reply: result.reply,
-          thinking: result.thinking,
+          thinking: gateThinking(result.thinking, {}),
           disclaimer: result.disclaimer,
           image: undefined,
           chart: undefined,
@@ -1532,8 +1542,9 @@ app.post(
           },
         });
         // Return as SSE stream so the frontend handles it uniformly
-        if (result.thinking && result.thinking.trim()) {
-          writeSseEvent(JSON.stringify({ type: "thinking", text: result.thinking.trim() }));
+        const webSearchThinking = gateThinking(result.thinking, { route: result.route });
+        if (webSearchThinking && webSearchThinking.trim()) {
+          writeSseEvent(JSON.stringify({ type: "thinking", text: webSearchThinking.trim() }));
         }
         if (result.reply) {
           // Stream the web search answer in chunks for smooth typing effect
@@ -1627,7 +1638,8 @@ app.post(
         if (result.reply) {
           await persistAssistantMessage(result.reply);
         }
-        streamBufferedAnswer(result.reply, result.thinking);
+        const showThinking = modelOverride === "deepseek";
+        streamBufferedAnswer(result.reply, result.thinking, showThinking);
         writeSseEvent("[DONE]");
         console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
       }
@@ -1993,7 +2005,7 @@ app.post(
         route: "chat",
         answer: guestResult.answer,
         reply: guestResult.reply,
-        thinking: guestResult.thinking,
+        thinking: gateThinking(guestResult.thinking, { modelOverride: GUEST_MODEL_OVERRIDE }),
         disclaimer: guestResult.disclaimer,
         image: undefined,
         chart: undefined,
@@ -2016,7 +2028,7 @@ app.post(
       route: result.route,
       answer: result.answer ?? result.reply,
       reply: result.reply,
-      thinking: result.thinking,
+      thinking: gateThinking(result.thinking, { route: result.route }),
       disclaimer: result.disclaimer,
       image: result.image,
       chart: result.chart,
