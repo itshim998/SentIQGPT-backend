@@ -165,9 +165,9 @@ function formatZodError(err: ZodError): string {
 
 function gateThinking(
   thinking: string | undefined,
-  options: { route?: string; modelOverride?: string },
+  options: { route?: string; modelOverride?: string; isReasoning?: boolean },
 ): string | undefined {
-  if (options.route === "math_reasoning" || options.modelOverride === "deepseek") {
+  if (options.route === "math_reasoning" || options.isReasoning) {
     return thinking;
   }
   return undefined;
@@ -826,6 +826,9 @@ app.post(
       return;
     }
     const { sub: userId, isGuest } = getRequestUser(req);
+    const isReasoningQuery = isBufferedReasoningQuery(parsed.data.message);
+    const isMathReasoningQuery = !detectCodeQuery(parsed.data.message) && isMathQuery(parsed.data.message);
+    const isLogicReasoningQuery = isReasoningQuery && !isMathReasoningQuery;
 
     // Prompt injection detection
     if (detectPromptInjection(parsed.data.message)) {
@@ -857,13 +860,14 @@ app.post(
         conversationSummary: guestContext.conversationSummary,
         modelOverride: GUEST_MODEL_OVERRIDE,
         userId,
+        reasoningMode: isReasoningQuery,
       });
 
       res.json({
         route: "chat",
         answer: guestResult.answer,
         reply: guestResult.reply,
-        thinking: gateThinking(guestResult.thinking, { modelOverride: GUEST_MODEL_OVERRIDE }),
+        thinking: gateThinking(guestResult.thinking, { modelOverride: GUEST_MODEL_OVERRIDE, isReasoning: isReasoningQuery }),
         disclaimer: guestResult.disclaimer,
         image: undefined,
         chart: undefined,
@@ -954,6 +958,62 @@ app.post(
       }
     }
 
+    if (isLogicReasoningQuery) {
+      const reasoningContext = await buildContext({
+        recent_messages: parsed.data.context?.recent_messages,
+        memories: parsed.data.context?.memories,
+        file_references: orcFileRefs,
+        userMessage: parsed.data.message,
+        conversationId: activeConversationId || undefined,
+      }, userDb, userId);
+
+      const result = await handleChat({
+        userMessage: parsed.data.message,
+        recentMessages: reasoningContext.recentMessages,
+        memories: reasoningContext.memories,
+        fileReferences: reasoningContext.fileReferences,
+        conversationSummary: reasoningContext.conversationSummary,
+        userId,
+        reasoningMode: true,
+      });
+
+      if (userDb && activeConversationId) {
+        try {
+          await insertConversationMessageOrThrow(
+            userDb,
+            userId,
+            activeConversationId,
+            "assistant",
+            result.reply ?? "",
+            "chat",
+          );
+        } catch (assistantPersistError) {
+          sync.persisted = false;
+          sync.deferred = true;
+          logDbFailure(
+            "chat.assistant-message.persist",
+            userId,
+            assistantPersistError instanceof Error ? assistantPersistError : new Error(String(assistantPersistError)),
+            { conversationId: activeConversationId },
+          );
+        }
+      }
+
+      res.json({
+        route: "chat",
+        answer: result.answer,
+        reply: result.reply,
+        thinking: gateThinking(result.thinking, { isReasoning: true }),
+        disclaimer: result.disclaimer,
+        image: undefined,
+        chart: undefined,
+        memory: undefined,
+        confidence: undefined,
+        sync,
+      });
+      return;
+    }
+
     const result = await orchestrate({
       userMessage: parsed.data.message,
       context: {
@@ -1023,7 +1083,7 @@ app.post(
       route: result.route,
       answer: result.answer ?? result.reply,
       reply: result.reply,
-      thinking: gateThinking(result.thinking, { route: result.route }),
+      thinking: gateThinking(result.thinking, { route: result.route, isReasoning: isReasoningQuery }),
       disclaimer: result.disclaimer,
       image: result.image,
       chart: result.chart,
@@ -1056,13 +1116,13 @@ app.post(
     const streamBufferedAnswer = (answer: string, thinking?: string, showThinking = false) => {
       const chunkSize = 24;
 
-      if (showThinking && thinking && thinking.trim()) {
-        writeSseEvent(JSON.stringify({ type: "thinking", text: thinking.trim() }));
-      }
-
       for (let i = 0; i < answer.length; i += chunkSize) {
         const chunk = answer.slice(i, i + chunkSize);
         writeSseEvent(JSON.stringify({ type: "token", text: chunk }));
+      }
+
+      if (showThinking && thinking && thinking.trim()) {
+        writeSseEvent(JSON.stringify({ type: "thinking", text: thinking.trim() }));
       }
     };
 
@@ -1089,6 +1149,15 @@ app.post(
       console.log(`[Latency] guest user query received`);
 
       if (isBufferedReasoning) {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        res.flushHeaders();
+
+        let clientDisconnected = false;
+        req.on("close", () => { clientDisconnected = true; });
+
         try {
           if (isMathReasoningQuery) {
             const result = await orchestrate({
@@ -1100,17 +1169,11 @@ app.post(
                 userId,
               },
             });
-            res.json({
-              route: result.route,
-              answer: result.answer ?? result.reply,
-              reply: result.reply,
-              thinking: gateThinking(result.thinking, { route: result.route }),
-              disclaimer: result.disclaimer,
-              image: result.image,
-              chart: result.chart,
-              memory: result.memory,
-              confidence: result.confidence,
-            });
+            if (!clientDisconnected) {
+              const thinking = gateThinking(result.thinking, { route: result.route, isReasoning: true });
+              streamBufferedAnswer(result.reply ?? "", thinking, true);
+              writeSseEvent("[DONE]");
+            }
             return;
           }
 
@@ -1129,23 +1192,22 @@ app.post(
             conversationSummary: guestReasoningContext.conversationSummary,
             modelOverride: GUEST_MODEL_OVERRIDE,
             userId,
+            reasoningMode: true,
           });
 
-          res.json({
-            route: "chat",
-            answer: result.answer,
-            reply: result.reply,
-            thinking: gateThinking(result.thinking, { modelOverride: GUEST_MODEL_OVERRIDE }),
-            disclaimer: result.disclaimer,
-            image: undefined,
-            chart: undefined,
-            memory: undefined,
-            confidence: undefined,
-          });
+          if (!clientDisconnected) {
+            const thinking = gateThinking(result.thinking, { isReasoning: true });
+            streamBufferedAnswer(result.reply, thinking, true);
+            writeSseEvent("[DONE]");
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.error(`[Stream] guest buffered reasoning error: ${message}`);
-          res.status(500).json({ error: message });
+          if (!clientDisconnected) {
+            writeSseEvent(JSON.stringify({ type: "error", error: message }));
+          }
+        } finally {
+          finishSse();
         }
         return;
       }
@@ -1434,7 +1496,13 @@ app.post(
     // Math queries need the direct DeepSeek pipeline, which
     // is only available through the orchestrator.  Redirect like chart requests.
     if (isBufferedReasoning) {
-      console.log(`[Stream] buffered reasoning query detected - returning structured JSON`);
+      console.log(`[Stream] buffered reasoning query detected - streaming SSE response`);
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+
       try {
         if (isMathReasoningQuery) {
           const result = await orchestrate({
@@ -1452,18 +1520,11 @@ app.post(
             await persistAssistantMessage(result.reply);
           }
           await persistStoredMemory(result.memory);
-          res.json({
-            route: result.route,
-            answer: result.answer ?? result.reply,
-            reply: result.reply,
-            thinking: gateThinking(result.thinking, { route: result.route }),
-            disclaimer: result.disclaimer,
-            image: result.image,
-            chart: result.chart,
-            memory: result.memory,
-            confidence: result.confidence,
-            sync,
-          });
+          if (!clientDisconnected) {
+            const thinking = gateThinking(result.thinking, { route: result.route, isReasoning: true });
+            streamBufferedAnswer(result.reply ?? "", thinking, true);
+            writeSseEvent("[DONE]");
+          }
           return;
         }
 
@@ -1482,26 +1543,24 @@ app.post(
           fileReferences: reasoningContext.fileReferences,
           conversationSummary: reasoningContext.conversationSummary,
           userId,
+          reasoningMode: true,
         });
         if (result.reply) {
           await persistAssistantMessage(result.reply);
         }
-        res.json({
-          route: "chat",
-          answer: result.answer,
-          reply: result.reply,
-          thinking: gateThinking(result.thinking, {}),
-          disclaimer: result.disclaimer,
-          image: undefined,
-          chart: undefined,
-          memory: undefined,
-          confidence: undefined,
-          sync,
-        });
+        if (!clientDisconnected) {
+          const thinking = gateThinking(result.thinking, { isReasoning: true });
+          streamBufferedAnswer(result.reply, thinking, true);
+          writeSseEvent("[DONE]");
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[Stream] buffered reasoning failed: ${message}`);
-        res.status(500).json({ error: message });
+        if (!clientDisconnected) {
+          writeSseEvent(JSON.stringify({ type: "error", error: message }));
+        }
+      } finally {
+        finishSse();
       }
       return;
     }
@@ -1638,8 +1697,7 @@ app.post(
         if (result.reply) {
           await persistAssistantMessage(result.reply);
         }
-        const showThinking = modelOverride === "deepseek";
-        streamBufferedAnswer(result.reply, result.thinking, showThinking);
+        streamBufferedAnswer(result.reply, result.thinking, false);
         writeSseEvent("[DONE]");
         console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
       }

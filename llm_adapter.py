@@ -269,9 +269,10 @@ def _cache_key(
     provider: str,
     user_id: str = "",
     max_output_tokens: Optional[int] = None,
+    skip_wrappers: bool = False,
 ) -> str:
     h = hashlib.sha256()
-    h.update(f"{provider}|{task}|{model}|{user_id}|{max_output_tokens or ''}|{prompt}".encode())
+    h.update(f"{provider}|{task}|{model}|{user_id}|{max_output_tokens or ''}|{int(skip_wrappers)}|{prompt}".encode())
     return h.hexdigest()
 
 def _cache_get(key: str) -> Optional[str]:
@@ -1039,6 +1040,7 @@ def call_llm_router(
     model_override: Optional[str] = None,
     user_id: Optional[str] = None,
     max_output_tokens: Optional[int] = None,
+    skip_wrappers: bool = False,
 ) -> dict[str, Any]:
     """
     Route an LLM call to the correct provider based on task.
@@ -1096,7 +1098,7 @@ def call_llm_router(
     logger.info("[LLM Request] model=%s  provider=%s  task=%s  override=%s", model, provider, task, model_override)
 
     # Check cache
-    key = _cache_key(prompt, task, model, provider, user_id or "", max_output_tokens)
+    key = _cache_key(prompt, task, model, provider, user_id or "", max_output_tokens, skip_wrappers)
     cached = _cache_get(key)
     if cached is not None:
         logger.info("Cache hit for task=%s provider=%s", task, provider)
@@ -1118,10 +1120,11 @@ def call_llm_router(
     # Enforce JSON if needed
     effective_prompt = prompt
     if task in CHATLIKE_TASKS:
-        if _should_request_worked_explanation(prompt=prompt, task=task, model_override=resolved_override or model_override):
-            effective_prompt = _wrap_explanation_prompt(prompt)
-        else:
-            effective_prompt = _wrap_chatlike_prompt(prompt)
+        if not skip_wrappers:
+            if _should_request_worked_explanation(prompt=prompt, task=task, model_override=resolved_override or model_override):
+                effective_prompt = _wrap_explanation_prompt(prompt)
+            else:
+                effective_prompt = _wrap_chatlike_prompt(prompt)
     else:
         if task in STRICT_JSON_TASKS:
             effective_prompt = (

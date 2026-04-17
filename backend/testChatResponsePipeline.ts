@@ -172,6 +172,6 @@ assert(/x = \\pm 3/.test(latexNormalizedMath), "math normalizer preserves readab
 
 const salvagedMath = salvageTruncatedResponse(truncatedMathReply);
 assert(/z = 1/.test(salvagedMath) && /y = 0/.test(salvagedMath), "truncated math keeps valid solved prefix");
-assert(/\[Response truncated before completion\./.test(salvagedMath), "truncated math appends concise truncation notice");
+assert(!/Response truncated before completion/.test(salvagedMath), "truncated math omits user-facing truncation notice");
 
 console.log("\nChat response pipeline validation passed.");

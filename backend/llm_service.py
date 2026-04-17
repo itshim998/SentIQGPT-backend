@@ -187,6 +187,7 @@ class LLMInvokeRequest(BaseModel):
     model_override: Optional[str] = None
     user_id: Optional[str] = None
     max_output_tokens: Optional[int] = None
+    skip_wrappers: Optional[bool] = None
 
 
 class LLMInvokeResponse(BaseModel):
@@ -605,6 +606,7 @@ async def invoke_llm(request: LLMInvokeRequest):
             model_override=effective_model_override,
             user_id=user_id,
             max_output_tokens=request.max_output_tokens,
+            skip_wrappers=bool(request.skip_wrappers),
         )
         # Resolve the actual provider (not just the prefer hint)
         from llm_adapter import resolve_model_override, get_provider_for_task

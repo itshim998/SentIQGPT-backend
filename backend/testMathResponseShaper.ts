@@ -143,7 +143,8 @@ assert(/Train A is 4 times as fast as Train B\./i.test(normalizedStructured), "w
 const normalizedLatex = normalizeMathResponse(latexAnswer);
 const formattedLatex = formatMathResponse(latexAnswer);
 assert(
-  formattedLatex.includes("$$") && /\\frac\{v_\{?1\}?\}\{v_\{?2\}?\}/.test(formattedLatex),
+  (formattedLatex.includes("\\[") || formattedLatex.includes("$$")) &&
+    /\\frac\{v_\{?1\}?\}\{v_\{?2\}?\}/.test(formattedLatex),
   "LaTeX display math is preserved and normalized",
 );
 assert(
@@ -198,7 +199,11 @@ assert(
   /R_\{2\}\s*\\to\s*R_\{2\}\s*-\s*2R_\{1\}/.test(formattedGauss),
   "row operations are upgraded into LaTeX-friendly notation",
 );
-assert(/\$\$\s*x = 3, y = 0, z = 1\s*\$\$/.test(formattedGauss), "final assignment line is promoted to display math");
+assert(
+  /\\\[\s*x = 3, y = 0, z = 1\s*\\\]/.test(formattedGauss) ||
+    /\$\$\s*x = 3, y = 0, z = 1\s*\$\$/.test(formattedGauss),
+  "final assignment line is promoted to display math",
+);
 
 const plainSentence = "This explanation is already readable.";
 assert(formatMathResponse(plainSentence) === plainSentence, "plain non-math text remains unchanged");

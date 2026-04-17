@@ -27,22 +27,25 @@ const GENERATION_RETRY_MAX_OUTPUT_TOKENS = 1400;
 const EXAMPLE_MAX_OUTPUT_TOKENS = 2200;
 const EXAMPLE_RETRY_MAX_OUTPUT_TOKENS = 1400;
 const REWRITE_MAX_OUTPUT_TOKENS = 900;
-const TRUNCATION_NOTICE =
-  "[Response truncated before completion. Ask for a shorter or more focused solution if you want the remaining steps.]";
+const CONTINUATION_MAX_OUTPUT_TOKENS = 2000;
+const MAX_CONTINUATION_ATTEMPTS = 3;
+const INCOMPLETE_RESPONSE_FALLBACK =
+  "Sorry, I couldn't complete the response. Please try again.";
 export const DEFAULT_SOLVER_SYSTEM_PROMPT =
   "SYSTEM: You are a precise mathematical reasoning engine for end users.\n" +
   "RULES:\n" +
-  "- Think internally, but keep hidden reasoning minimal and present a concise worked solution for the user.\n" +
+  "- Think internally, but provide only a short reasoning summary inside <think> (no chain-of-thought).\n" +
   "- Use short numbered steps that show the method, then end with a definitive final answer.\n" +
   "- Include essential intermediate equations, matrices, substitutions, or row operations when they are part of the method.\n" +
   "- Format mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...\\] for display math.\n" +
-  "- Do not reveal hidden scratchwork, retries, self-corrections, or chain-of-thought.\n" +
+  "- Do not reveal hidden scratchwork, retries, or full chain-of-thought.\n" +
   "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
   "- Do not mention the prompt, headings, bullets, or formatting rules.\n" +
   "- If the problem statement looks inconsistent, say so briefly and give the best resolution.\n" +
   "- Keep the explanation concise, but do not skip the method.\n" +
+  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
   "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put all internal reasoning only inside one short <think>...</think> block.\n" +
+  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
   "- Then write Final Answer: on its own line.\n" +
   "- After Final Answer:, return only the clean worked solution and answer.";
 const GENERATION_SYSTEM_PROMPT =
@@ -56,8 +59,9 @@ const GENERATION_SYSTEM_PROMPT =
   "- Keep matrix exercises compact and readable\n" +
   "- If you use matrices, prefer 2x2 or 3x3 examples\n" +
   "- Finish every exercise completely\n" +
+  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
   "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put all internal reasoning only inside one short <think>...</think> block.\n" +
+  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
   "- Then write Final Answer: on its own line.\n" +
   "- After Final Answer:, return only the clean user-facing output.";
 const GENERATION_RETRY_SYSTEM_PROMPT =
@@ -70,8 +74,9 @@ const GENERATION_RETRY_SYSTEM_PROMPT =
   "- Use plain concise wording\n" +
   "- If you use matrices, keep them small and complete\n" +
   "- Finish the response fully\n" +
+  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
   "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put all internal reasoning only inside one short <think>...</think> block.\n" +
+  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
   "- Then write Final Answer: on its own line.\n" +
   "- After Final Answer:, return only the clean user-facing output.";
 const EXAMPLE_SYSTEM_PROMPT =
@@ -84,8 +89,9 @@ const EXAMPLE_SYSTEM_PROMPT =
   "- Do not reveal hidden reasoning, self-talk, retries, or formatting instructions.\n" +
   "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
   "- Include the method briefly before the final answer.\n" +
+  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
   "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put all internal reasoning only inside one short <think>...</think> block.\n" +
+  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
   "- Then write Final Answer: on its own line.\n" +
   "- After Final Answer:, return only the clean worked example and answer.";
 const EXAMPLE_RETRY_SYSTEM_PROMPT =
@@ -95,8 +101,9 @@ const EXAMPLE_RETRY_SYSTEM_PROMPT =
   "- No prompt echo, no self-talk, and no formatting commentary.\n" +
   "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
   "- Format mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...\\] for display math.\n" +
+  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
   "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put all internal reasoning only inside one short <think>...</think> block.\n" +
+  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
   "- Then write Final Answer: on its own line.\n" +
   "- After Final Answer:, return only the clean worked example and answer.";
 const COMPACT_SOLVER_SYSTEM_PROMPT =
@@ -109,8 +116,9 @@ const COMPACT_SOLVER_SYSTEM_PROMPT =
   "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
   "- Do not mention bullets, headings, line counts, or formatting rules.\n" +
   "- No repetition, no failed attempts, no meta commentary.\n" +
+  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
   "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put all internal reasoning only inside one short <think>...</think> block.\n" +
+  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
   "- Then write Final Answer: on its own line.\n" +
   "- After Final Answer:, return only the clean worked solution and answer.";
 const REWRITE_SYSTEM_PROMPT =
@@ -124,8 +132,9 @@ const REWRITE_SYSTEM_PROMPT =
   "- Do not use phrases such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
   "- Do not mention formatting rules, headings, or bullets.\n" +
   "- Return only the rewritten answer.\n" +
+  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
   "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put all internal reasoning only inside one short <think>...</think> block.\n" +
+  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
   "- Then write Final Answer: on its own line.\n" +
   "- After Final Answer:, return only the rewritten user-facing answer.";
 const GENERATION_REQUEST_PATTERNS: readonly RegExp[] = [
@@ -190,6 +199,51 @@ function buildMathPrompt(
   return effectiveSystemPrompt
     ? `${effectiveSystemPrompt}\n\nUser: ${userMessage}`
     : userMessage;
+}
+
+function buildContinuationPrompt(
+  userMessage: string,
+  systemPrompt: string,
+  answerSoFar: string,
+): string {
+  return [
+    systemPrompt,
+    "",
+    "User: The previous answer was cut off. Continue the Final Answer only.",
+    "Do not repeat any earlier text. Do not include a <think> block or the words 'Final Answer'.",
+    "",
+    "Original problem:",
+    userMessage,
+    "",
+    "Final Answer so far:",
+    answerSoFar,
+  ].join("\n");
+}
+
+function cleanContinuationText(text: string): string {
+  return text
+    .replace(/^(?:final answer|answer)\s*[:\-]\s*/i, "")
+    .replace(/<\/?.*?think[^>]*>/gi, "")
+    .trim();
+}
+
+function mergeContinuation(base: string, continuation: string): string {
+  const left = base.trimEnd();
+  const right = cleanContinuationText(continuation);
+  if (!right) return left;
+
+  const maxOverlap = Math.min(400, left.length, right.length);
+  let overlap = 0;
+  for (let size = maxOverlap; size >= 20; size -= 1) {
+    if (left.endsWith(right.slice(0, size))) {
+      overlap = size;
+      break;
+    }
+  }
+
+  const glue = left.endsWith("\n") || right.startsWith("\n") ? "" : "\n";
+  const merged = `${left}${glue}${right.slice(overlap)}`.trim();
+  return merged || left;
 }
 
 function findIncompleteMathStart(text: string): number | null {
@@ -326,7 +380,7 @@ function finalizeSalvagedText(text: string): string {
     .replace(/[=:]\s*$/, "")
     .trim();
   if (!trimmed) {
-    return TRUNCATION_NOTICE;
+    return INCOMPLETE_RESPONSE_FALLBACK;
   }
 
   if (/[.!?\])]$/.test(trimmed)) {
@@ -345,15 +399,15 @@ export function salvageTruncatedResponse(text: string): string {
     .trim();
 
   if (candidate && !hasIncompleteMathTail(candidate) && !hasIncompleteProseTail(candidate)) {
-    return `${finalizeSalvagedText(candidate)}\n\n${TRUNCATION_NOTICE}`;
+    return finalizeSalvagedText(candidate);
   }
 
   const bounded = trimToLastCompleteBoundary(candidate);
   if (bounded) {
-    return `${finalizeSalvagedText(bounded)}\n\n${TRUNCATION_NOTICE}`;
+    return finalizeSalvagedText(bounded);
   }
 
-  return TRUNCATION_NOTICE;
+  return INCOMPLETE_RESPONSE_FALLBACK;
 }
 
 export function normalizeMathResponse(text: string): string {
@@ -363,6 +417,11 @@ export function normalizeMathResponse(text: string): string {
 function extractMathCandidate(text: string, adapterError?: string | null): string {
   const extracted = extractUserFacingAnswer(text, { adapterError });
   return composeUserFacingReply(extracted, { preferExplanation: true }) ?? "";
+}
+
+function extractMathContinuationCandidate(text: string, adapterError?: string | null): string {
+  const extracted = extractUserFacingAnswer(text, { adapterError });
+  return extracted.reply?.trim() ?? "";
 }
 
 function extractMathThinking(text: string, adapterError?: string | null): string | undefined {
@@ -395,6 +454,7 @@ async function rewriteMathAnswer(
     user_id: userId,
     timeout_ms: 75_000,
     max_output_tokens: REWRITE_MAX_OUTPUT_TOKENS,
+    skip_wrappers: true,
   };
 
   const rewriteResult = await callLLMAdapterDetailed(rewriteCall);
@@ -429,8 +489,22 @@ export async function solveMathDirect(
           : intent === "example"
             ? (retryMode === "compact-generation" ? EXAMPLE_RETRY_MAX_OUTPUT_TOKENS : EXAMPLE_MAX_OUTPUT_TOKENS)
           : (retryMode === "compact-solve" ? SOLVER_RETRY_MAX_OUTPUT_TOKENS : SOLVER_MAX_OUTPUT_TOKENS),
+      skip_wrappers: true,
     };
 
+    return callLLMAdapterDetailed(call);
+  };
+
+  const makeContinuationCall = async (answerSoFar: string) => {
+    const call: LLMAdapterCall = {
+      task: "chat",
+      prompt: buildContinuationPrompt(userMessage, systemPrompt, answerSoFar),
+      model_override: PRIMARY_MODEL,
+      user_id: userId,
+      timeout_ms: 95_000,
+      max_output_tokens: CONTINUATION_MAX_OUTPUT_TOKENS,
+      skip_wrappers: true,
+    };
     return callLLMAdapterDetailed(call);
   };
 
@@ -443,10 +517,10 @@ export async function solveMathDirect(
   const hasPromptEcho = hasMathPromptEchoSignals(result.text) || hasMathPromptEchoSignals(processed);
   const hasNarrativeStyle = hasMathNarrativeSignals(result.text) || hasMathNarrativeSignals(processed);
 
-  const needsRetry = incompleteOutput || hasLeakage || hasPromptEcho || hasNarrativeStyle;
+  const needsRetry = !incompleteOutput && (hasLeakage || hasPromptEcho || hasNarrativeStyle);
   if (needsRetry) {
     const retryMode = intent === "generation" || intent === "example" ? "compact-generation" : "compact-solve";
-    console.log(`[MathPipeline] compact retry triggered for incomplete or truncated ${intent} output`);
+    console.log(`[MathPipeline] compact retry triggered for quality issues (${intent})`);
     if (result.finish_reason) {
       console.log(`[MathPipeline] provider finish_reason=${result.finish_reason}`);
     }
@@ -468,8 +542,34 @@ export async function solveMathDirect(
   }
 
   if (incompleteOutput) {
+    console.log(`[MathPipeline] continuation_loop start truncated=${result.truncated ? "true" : "false"}`);
+    for (let attempt = 0; attempt < MAX_CONTINUATION_ATTEMPTS && incompleteOutput; attempt += 1) {
+      if (!processed || processed.trim().length < 20) {
+        break;
+      }
+
+      const continuationResult = await makeContinuationCall(processed);
+      const continuationText = normalizeMathResponse(
+        extractMathContinuationCandidate(continuationResult.text, continuationResult.error),
+      );
+      if (!continuationText) {
+        break;
+      }
+
+      const merged = mergeContinuation(processed, continuationText);
+      if (merged === processed) {
+        break;
+      }
+
+      processed = merged;
+      incompleteOutput =
+        continuationResult.truncated || hasIncompleteMathTail(processed) || hasIncompleteProseTail(processed);
+    }
+  }
+
+  if (incompleteOutput) {
     console.log(
-      `[MathPipeline] salvaging truncated output finish_reason=${result.finish_reason ?? "unknown"} truncated=${result.truncated ? "true" : "false"} chars=${processed.length}`,
+      `[MathPipeline] salvaging incomplete output finish_reason=${result.finish_reason ?? "unknown"} truncated=${result.truncated ? "true" : "false"} chars=${processed.length}`,
     );
     processed = salvageTruncatedResponse(processed);
     thinking = undefined;
