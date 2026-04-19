@@ -186,8 +186,11 @@ export async function callLLMAdapterStream(
     body: JSON.stringify({
       prompt: call.prompt,
       task: call.task,
+      use_simulation: call.use_simulation ?? false,
+      prefer: call.prefer,
       model_override: call.model_override,
       user_id: call.user_id,
+      max_output_tokens: call.max_output_tokens,
       skip_wrappers: call.skip_wrappers,
     }),
     signal: AbortSignal.timeout(call.timeout_ms ?? 120_000), // 120s default; override when needed

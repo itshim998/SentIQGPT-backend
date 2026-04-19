@@ -28,7 +28,13 @@ import { routeImageGeneration } from "./tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "./tools/chartGeneration/chartRouter";
 import { isChartRequest } from "./tools/chartGeneration/chartDetector";
 import { uploadChatImage, getChatImages } from "./tools/imageGeneration/imageStorageService";
-import { callLLMAdapter, buildTitleGeneratePrompt, strictParseJsonObject } from "./ai/PromptBuilders";
+import {
+  buildChatPrompt,
+  callLLMAdapter,
+  callLLMAdapterStream,
+  buildTitleGeneratePrompt,
+  strictParseJsonObject,
+} from "./ai/PromptBuilders";
 import { buildContext, buildContextFast } from "./context/contextBuilder";
 import { getOrAssignUserDatabase, verifyShardMigrations } from "./dbRouter";
 import {
@@ -171,6 +177,141 @@ function gateThinking(
     return thinking;
   }
   return undefined;
+}
+
+type SseWriter = {
+  write: (payload: string) => Promise<void>;
+  close: () => void;
+  getPendingBytes: () => number;
+};
+
+type SseWriterOptions = {
+  maxBufferedBytes?: number;
+};
+
+function createSseWriter(res: Response, options?: SseWriterOptions): SseWriter {
+  const maxBufferedBytes = options?.maxBufferedBytes ?? 512 * 1024;
+  const queue: string[] = [];
+  let queuedBytes = 0;
+  let pumping = false;
+  let closed = false;
+
+  const pump = async () => {
+    if (pumping) return;
+    pumping = true;
+    while (queue.length > 0) {
+      const data = queue.shift();
+      if (!data) break;
+      queuedBytes -= data.length;
+      if (closed || res.writableEnded) break;
+      const ok = res.write(data);
+      if (!ok) {
+        await new Promise<void>((resolve) => res.once("drain", resolve));
+      }
+    }
+    pumping = false;
+  };
+
+  const write = async (payload: string) => {
+    if (closed || res.writableEnded) return;
+    const data = `data: ${payload}\n\n`;
+    if (queuedBytes + data.length > maxBufferedBytes) {
+      throw new Error(`SSE buffer limit exceeded (${maxBufferedBytes} bytes)`);
+    }
+    queue.push(data);
+    queuedBytes += data.length;
+    await pump();
+  };
+
+  const close = () => {
+    closed = true;
+    if (!res.writableEnded) {
+      res.end();
+    }
+  };
+
+  return {
+    write,
+    close,
+    getPendingBytes: () => queuedBytes,
+  };
+}
+
+function estimateTokensFromText(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return Math.max(1, Math.ceil(trimmed.length / 4));
+}
+
+type StreamMetrics = {
+  label: string;
+  requestStart: number;
+  model?: string;
+  fastPath?: boolean;
+  firstChunkAt?: number;
+  lastChunkAt?: number;
+  chunkCount: number;
+  approxTokens: number;
+  totalChunkGapMs: number;
+  maxChunkGapMs: number;
+  minChunkGapMs: number;
+};
+
+function createStreamMetrics(
+  label: string,
+  requestStart: number,
+  meta?: { model?: string; fastPath?: boolean },
+): StreamMetrics {
+  return {
+    label,
+    requestStart,
+    model: meta?.model,
+    fastPath: meta?.fastPath,
+    chunkCount: 0,
+    approxTokens: 0,
+    totalChunkGapMs: 0,
+    maxChunkGapMs: 0,
+    minChunkGapMs: Number.POSITIVE_INFINITY,
+  };
+}
+
+function recordStreamChunk(metrics: StreamMetrics, text: string): void {
+  const now = Date.now();
+  if (!metrics.firstChunkAt) {
+    metrics.firstChunkAt = now;
+  }
+  if (metrics.lastChunkAt) {
+    const gap = now - metrics.lastChunkAt;
+    metrics.totalChunkGapMs += gap;
+    metrics.maxChunkGapMs = Math.max(metrics.maxChunkGapMs, gap);
+    metrics.minChunkGapMs = Math.min(metrics.minChunkGapMs, gap);
+  }
+  metrics.lastChunkAt = now;
+  metrics.chunkCount += 1;
+  metrics.approxTokens += estimateTokensFromText(text);
+}
+
+function logStreamMetrics(metrics: StreamMetrics, reason: string): void {
+  const ttftMs = metrics.firstChunkAt ? metrics.firstChunkAt - metrics.requestStart : -1;
+  const streamDurationMs =
+    metrics.firstChunkAt && metrics.lastChunkAt
+      ? metrics.lastChunkAt - metrics.firstChunkAt
+      : 0;
+  const tokensPerSec = streamDurationMs > 0
+    ? Math.round(metrics.approxTokens / (streamDurationMs / 1000))
+    : metrics.approxTokens;
+  const avgGapMs = metrics.chunkCount > 1
+    ? Math.round(metrics.totalChunkGapMs / (metrics.chunkCount - 1))
+    : 0;
+  const minGapMs = metrics.minChunkGapMs === Number.POSITIVE_INFINITY
+    ? 0
+    : metrics.minChunkGapMs;
+  console.log(
+    `[StreamMetrics] label=${metrics.label} model=${metrics.model ?? "unknown"}` +
+    ` fastPath=${metrics.fastPath ?? false} ttft_ms=${ttftMs} tokens=${metrics.approxTokens}` +
+    ` tps=${tokensPerSec} chunks=${metrics.chunkCount} avg_chunk_gap_ms=${avgGapMs}` +
+    ` max_chunk_gap_ms=${metrics.maxChunkGapMs} min_chunk_gap_ms=${minGapMs} reason=${reason}`,
+  );
 }
 
 const GUEST_MODEL_OVERRIDE = "gemini-fast";
@@ -574,6 +715,34 @@ async function deleteConversationIfOwned(
   logDbEvent(`${scope}.conversation-delete.ok`, userId, { conversationId });
 }
 
+type FileAnalysisStatus = "processing" | "complete" | "error";
+
+type FileAnalysisEvent = {
+  type: "file_analysis";
+  event: "processing" | "update" | "error";
+  analysis_id: string;
+  filename: string;
+  file_type: "pdf" | "txt" | "image";
+  status: FileAnalysisStatus;
+  size_bytes: number;
+  extracted_text?: string;
+  error?: string;
+  updated_at: number;
+};
+
+const fileAnalysisSubscribers: Map<string, SseWriter> = new Map();
+
+function emitFileAnalysisEvent(event: FileAnalysisEvent): void {
+  const payload = JSON.stringify(event);
+  for (const [subscriberId, writer] of fileAnalysisSubscribers) {
+    writer.write(payload).catch((err) => {
+      console.warn(`[FileAnalysis] subscriber ${subscriberId} dropped: ${err instanceof Error ? err.message : err}`);
+      writer.close();
+      fileAnalysisSubscribers.delete(subscriberId);
+    });
+  }
+}
+
 // ---- File Session Manager ----
 // Maintains the most recently uploaded file per IP to prevent old file references.
 interface FileSession {
@@ -581,6 +750,7 @@ interface FileSession {
   type: string;
   extractedText: string;
   uploadTime: number;
+  analysisId?: string;
 }
 const fileSessionMap: Map<string, FileSession> = new Map();
 
@@ -1102,27 +1272,62 @@ app.post(
   aiRateLimiter,
   verifyJWT({ allowGuest: true }),
   asyncHandler(async (req, res) => {
-    const writeSseEvent = (payload: string) => {
-      if (!res.writableEnded) {
-        res.write(`data: ${payload}\n\n`);
-      }
+    let clientDisconnected = false;
+    req.on("close", () => { clientDisconnected = true; });
+
+    const sseWriter = createSseWriter(res, { maxBufferedBytes: 512 * 1024 });
+    const writeSseEvent = async (payload: string) => {
+      if (clientDisconnected) return;
+      await sseWriter.write(payload);
+    };
+    const writeSseJson = async (payload: unknown) => {
+      await writeSseEvent(JSON.stringify(payload));
     };
     const finishSse = () => {
-      if (!res.writableEnded) {
-        res.end();
-      }
+      sseWriter.close();
     };
 
-    const streamBufferedAnswer = (answer: string, thinking?: string, showThinking = false) => {
-      const chunkSize = 24;
+    const streamBufferedAnswer = async (
+      answer: string,
+      thinking?: string,
+      showThinking = false,
+      metrics?: StreamMetrics,
+    ) => {
+      const chunkSize = 128;
 
       for (let i = 0; i < answer.length; i += chunkSize) {
+        if (clientDisconnected) break;
         const chunk = answer.slice(i, i + chunkSize);
-        writeSseEvent(JSON.stringify({ type: "token", text: chunk }));
+        if (metrics) {
+          recordStreamChunk(metrics, chunk);
+        }
+        await writeSseJson({ type: "token", text: chunk });
       }
 
       if (showThinking && thinking && thinking.trim()) {
-        writeSseEvent(JSON.stringify({ type: "thinking", text: thinking.trim() }));
+        await writeSseJson({ type: "thinking", text: thinking.trim() });
+      }
+    };
+
+    const sendStreamError = async (err: unknown, metrics?: StreamMetrics) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[Stream] error: ${message}`);
+      if (!clientDisconnected) {
+        try {
+          await writeSseJson({
+            type: "error",
+            error: message,
+            partial: Boolean(metrics && metrics.chunkCount > 0),
+            streamed_chunks: metrics?.chunkCount ?? 0,
+            approx_tokens: metrics?.approxTokens ?? 0,
+          });
+          await writeSseEvent("[DONE]");
+        } catch (writeErr) {
+          console.error(`[Stream] failed to emit error event: ${writeErr instanceof Error ? writeErr.message : writeErr}`);
+        }
+      }
+      if (metrics) {
+        logStreamMetrics(metrics, "error");
       }
     };
 
@@ -1155,8 +1360,11 @@ app.post(
         res.setHeader("X-Accel-Buffering", "no");
         res.flushHeaders();
 
-        let clientDisconnected = false;
-        req.on("close", () => { clientDisconnected = true; });
+        const streamMetrics = createStreamMetrics(
+          "chat.stream.guest.reasoning",
+          requestStart,
+          { model: isMathReasoningQuery ? "orchestrator" : GUEST_MODEL_OVERRIDE },
+        );
 
         try {
           if (isMathReasoningQuery) {
@@ -1171,8 +1379,9 @@ app.post(
             });
             if (!clientDisconnected) {
               const thinking = gateThinking(result.thinking, { route: result.route, isReasoning: true });
-              streamBufferedAnswer(result.reply ?? "", thinking, true);
-              writeSseEvent("[DONE]");
+              await streamBufferedAnswer(result.reply ?? "", thinking, true, streamMetrics);
+              await writeSseEvent("[DONE]");
+              logStreamMetrics(streamMetrics, "complete");
             }
             return;
           }
@@ -1197,15 +1406,12 @@ app.post(
 
           if (!clientDisconnected) {
             const thinking = gateThinking(result.thinking, { isReasoning: true });
-            streamBufferedAnswer(result.reply, thinking, true);
-            writeSseEvent("[DONE]");
+            await streamBufferedAnswer(result.reply, thinking, true, streamMetrics);
+            await writeSseEvent("[DONE]");
+            logStreamMetrics(streamMetrics, "complete");
           }
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.error(`[Stream] guest buffered reasoning error: ${message}`);
-          if (!clientDisconnected) {
-            writeSseEvent(JSON.stringify({ type: "error", error: message }));
-          }
+          await sendStreamError(err, streamMetrics);
         } finally {
           finishSse();
         }
@@ -1218,9 +1424,6 @@ app.post(
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders();
 
-      let clientDisconnected = false;
-      req.on("close", () => { clientDisconnected = true; });
-
       const fileRefs = parsed.data.context?.file_references;
       const guestCtx = await buildContextFast({
         recent_messages: parsed.data.context?.recent_messages,
@@ -1229,12 +1432,22 @@ app.post(
         userMessage: parsed.data.message,
       }, undefined, userId);
 
+      const guestFastPath = !guestCtx.hasFileContext
+        && parsed.data.message.length <= 280
+        && !detectCodeQuery(parsed.data.message)
+        && !isMathQuery(parsed.data.message);
+      const streamMetrics = createStreamMetrics(
+        "chat.stream.guest.general",
+        requestStart,
+        { model: GUEST_MODEL_OVERRIDE, fastPath: guestFastPath },
+      );
+
       console.log(`[Latency] guest buffered response request started (+${Date.now() - requestStart}ms)`);
       console.log(`[Stream] guest model=${GUEST_MODEL_OVERRIDE} hasFiles=${guestCtx.hasFileContext} msgLen=${parsed.data.message.length}`);
 
       try {
         const streamStart = Date.now();
-        const result = await handleChat({
+        const call = buildChatPrompt({
           userMessage: parsed.data.message,
           recentMessages: guestCtx.recentMessages,
           memories: [],
@@ -1242,19 +1455,27 @@ app.post(
           conversationSummary: guestCtx.conversationSummary,
           modelOverride: GUEST_MODEL_OVERRIDE,
           userId,
+          streaming: true,
         });
+        const adapterStream = await callLLMAdapterStream(call);
+        const reader = adapterStream.getReader();
+
+        while (true) {
+          if (clientDisconnected) break;
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          recordStreamChunk(streamMetrics, value);
+          await writeSseJson({ type: "token", text: value });
+        }
 
         if (!clientDisconnected) {
-          streamBufferedAnswer(result.reply, result.thinking, false);
-          writeSseEvent("[DONE]");
+          await writeSseEvent("[DONE]");
+          logStreamMetrics(streamMetrics, "complete");
         }
-        console.log(`[Stream] guest buffered stream completed in ${Date.now() - streamStart}ms`);
+        console.log(`[Stream] guest live stream completed in ${Date.now() - streamStart}ms`);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Stream] guest error: ${message}`);
-        if (!clientDisconnected) {
-          writeSseEvent(JSON.stringify({ type: "error", error: message }));
-        }
+        await sendStreamError(err, streamMetrics);
       } finally {
         finishSse();
       }
@@ -1411,9 +1632,6 @@ app.post(
       }
     };
 
-    let clientDisconnected = false;
-    req.on("close", () => { clientDisconnected = true; });
-
     if (detectExplicitMemoryWriteIntent(parsed.data.message)) {
       console.log(`[Stream] explicit memory write detected — redirecting to orchestrator`);
       try {
@@ -1503,6 +1721,12 @@ app.post(
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders();
 
+      const streamMetrics = createStreamMetrics(
+        "chat.stream.reasoning",
+        Date.now(),
+        { model: isMathReasoningQuery ? "orchestrator" : "deepseek" },
+      );
+
       try {
         if (isMathReasoningQuery) {
           const result = await orchestrate({
@@ -1522,8 +1746,9 @@ app.post(
           await persistStoredMemory(result.memory);
           if (!clientDisconnected) {
             const thinking = gateThinking(result.thinking, { route: result.route, isReasoning: true });
-            streamBufferedAnswer(result.reply ?? "", thinking, true);
-            writeSseEvent("[DONE]");
+            await streamBufferedAnswer(result.reply ?? "", thinking, true, streamMetrics);
+            await writeSseEvent("[DONE]");
+            logStreamMetrics(streamMetrics, "complete");
           }
           return;
         }
@@ -1550,15 +1775,12 @@ app.post(
         }
         if (!clientDisconnected) {
           const thinking = gateThinking(result.thinking, { isReasoning: true });
-          streamBufferedAnswer(result.reply, thinking, true);
-          writeSseEvent("[DONE]");
+          await streamBufferedAnswer(result.reply, thinking, true, streamMetrics);
+          await writeSseEvent("[DONE]");
+          logStreamMetrics(streamMetrics, "complete");
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Stream] buffered reasoning failed: ${message}`);
-        if (!clientDisconnected) {
-          writeSseEvent(JSON.stringify({ type: "error", error: message }));
-        }
+        await sendStreamError(err, streamMetrics);
       } finally {
         finishSse();
       }
@@ -1578,6 +1800,7 @@ app.post(
     if ((queryClassification.needsWebSearch || forceWebSearch) && tavilyAvailable) {
       console.log(`[Stream] web search detected — redirecting to orchestrator (rule: ${queryClassification.matchedRule}, category: ${queryClassification.category})`);
       let sseStarted = false;
+      const streamMetrics = createStreamMetrics("chat.stream.web_search", Date.now(), { model: "orchestrator" });
       try {
         // Send SSE headers early so frontend can detect route before answer arrives
         res.setHeader("Content-Type", "text/event-stream");
@@ -1587,7 +1810,7 @@ app.post(
         res.flushHeaders();
         sseStarted = true;
         // Emit route metadata so frontend can show "Searching..." indicator
-        writeSseEvent(JSON.stringify({ type: "route", route: "web_search" }));
+        await writeSseJson({ type: "route", route: "web_search" });
 
         const result = await orchestrate({
           userMessage: parsed.data.message,
@@ -1603,14 +1826,16 @@ app.post(
         // Return as SSE stream so the frontend handles it uniformly
         const webSearchThinking = gateThinking(result.thinking, { route: result.route });
         if (webSearchThinking && webSearchThinking.trim()) {
-          writeSseEvent(JSON.stringify({ type: "thinking", text: webSearchThinking.trim() }));
+          await writeSseJson({ type: "thinking", text: webSearchThinking.trim() });
         }
         if (result.reply) {
           // Stream the web search answer in chunks for smooth typing effect
-          const CHUNK_SIZE = 24;
+          const CHUNK_SIZE = 128;
           for (let i = 0; i < result.reply.length; i += CHUNK_SIZE) {
+            if (clientDisconnected) break;
             const chunk = result.reply.slice(i, i + CHUNK_SIZE);
-            writeSseEvent(JSON.stringify({ type: "token", text: chunk }));
+            recordStreamChunk(streamMetrics, chunk);
+            await writeSseJson({ type: "token", text: chunk });
           }
         }
         if (!clientDisconnected && result.reply) {
@@ -1619,16 +1844,15 @@ app.post(
         if (!clientDisconnected) {
           await persistStoredMemory(result.memory);
         }
-        writeSseEvent("[DONE]");
+        await writeSseEvent("[DONE]");
+        logStreamMetrics(streamMetrics, "complete");
         finishSse();
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Stream] web search orchestration failed: ${message}`);
         if (sseStarted || res.headersSent) {
-          writeSseEvent(JSON.stringify({ type: "error", error: message }));
-          writeSseEvent("[DONE]");
+          await sendStreamError(err, streamMetrics);
           finishSse();
         } else {
+          const message = err instanceof Error ? err.message : String(err);
           res.status(500).json({ error: message });
         }
       }
@@ -1654,6 +1878,13 @@ app.post(
     );
     if (hasFile) console.log(`[File] stream: ${fileRefs.length} file(s) in context, hasImage: ${hasImage}`);
 
+    const recentMessageCount = parsed.data.context?.recent_messages?.length ?? 0;
+    const lowComplexity =
+      parsed.data.message.length <= 280 &&
+      recentMessageCount <= 6 &&
+      !detectCodeQuery(parsed.data.message) &&
+      !isMathQuery(parsed.data.message);
+
     // Extract file names and content for coding PDF detection
     const fileNames = hasFile ? fileRefs.map((f: { filename?: string }) => f.filename || "") : undefined;
     const fileContent = hasFile ? fileRefs.map((f: { extractedText?: string }) => f.extractedText || "").join("\n") : undefined;
@@ -1664,6 +1895,18 @@ app.post(
       fileNames,
       fileContent,
     });
+
+    const fastPathEligible =
+      !hasFile &&
+      lowComplexity &&
+      !isBufferedReasoning &&
+      !queryClassification.needsWebSearch &&
+      !forceWebSearch;
+
+    console.log(
+      `[FastPath] eligible=${fastPathEligible} lowComplexity=${lowComplexity} ` +
+      `msgLen=${parsed.data.message.length} recentMsgs=${recentMessageCount} hasFile=${hasFile}`,
+    );
 
     // ── FAST context build (NO LLM calls, minimal latency) ──
     // Use buildContextFast which skips conversation compression for speed.
@@ -1680,10 +1923,15 @@ app.post(
 
     console.log(`[Latency] buffered response request started (+${Date.now() - requestStart}ms)`);
     console.log(`[Stream] model=${modelOverride} hasFiles=${ctx.hasFileContext} msgLen=${parsed.data.message.length}`);
+    const streamMetrics = createStreamMetrics(
+      "chat.stream.general",
+      requestStart,
+      { model: modelOverride, fastPath: fastPathEligible },
+    );
 
     try {
       const streamStart = Date.now();
-      const result = await handleChat({
+      const call = buildChatPrompt({
         userMessage: parsed.data.message,
         recentMessages: ctx.recentMessages,
         memories: ctx.memories,
@@ -1691,23 +1939,33 @@ app.post(
         conversationSummary: ctx.conversationSummary,
         modelOverride,
         userId,
+        streaming: true,
       });
+      const adapterStream = await callLLMAdapterStream(call);
+      const reader = adapterStream.getReader();
+      let fullReply = "";
+
+      while (true) {
+        if (clientDisconnected) break;
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        fullReply += value;
+        recordStreamChunk(streamMetrics, value);
+        await writeSseJson({ type: "token", text: value });
+      }
 
       if (!clientDisconnected) {
-        if (result.reply) {
-          await persistAssistantMessage(result.reply);
+        if (fullReply) {
+          await persistAssistantMessage(fullReply);
         }
-        streamBufferedAnswer(result.reply, result.thinking, false);
-        writeSseEvent("[DONE]");
+        await writeSseEvent("[DONE]");
+        logStreamMetrics(streamMetrics, "complete");
         console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
       }
-      console.log(`[Stream] buffered stream completed in ${Date.now() - streamStart}ms`);
+      console.log(`[Stream] live stream completed in ${Date.now() - streamStart}ms`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[Stream] error: ${message}`);
-      if (!clientDisconnected) {
-        writeSseEvent(JSON.stringify({ type: "error", error: message }));
-      }
+      await sendStreamError(err, streamMetrics);
     } finally {
       finishSse();
     }
@@ -1770,6 +2028,36 @@ app.post(
 );
 
 // ===============================
+// GET /api/files/updates — SSE stream for async file analysis updates
+// ===============================
+app.get(
+  "/api/files/updates",
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const { isGuest } = await getRequestIdentity(req);
+    if (isGuest) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    const subscriberId = randomUUID();
+    const writer = createSseWriter(res, { maxBufferedBytes: 256 * 1024 });
+    fileAnalysisSubscribers.set(subscriberId, writer);
+
+    req.on("close", () => {
+      fileAnalysisSubscribers.delete(subscriberId);
+      writer.close();
+    });
+  }),
+);
+
+// ===============================
 // POST /api/files/upload — Upload & extract file
 // ===============================
 app.post(
@@ -1785,16 +2073,61 @@ app.post(
     }
 
     const validation = validateFileUpload(file.mimetype, file.size, file.originalname);
-    if (!validation.valid) {
+    if (!validation.valid || !validation.type) {
       res.status(400).json({ error: validation.error });
       return;
     }
 
-    const result = await extractTextFromFile({
-      buffer: file.buffer,
+    const analysisId = randomUUID();
+    const fileType = validation.type;
+    const baseEvent = {
+      type: "file_analysis" as const,
+      analysis_id: analysisId,
       filename: file.originalname,
-      mimetype: file.mimetype,
-      userId,
+      file_type: fileType,
+      size_bytes: file.size,
+    };
+
+    emitFileAnalysisEvent({
+      ...baseEvent,
+      event: "processing",
+      status: "processing",
+      updated_at: Date.now(),
+    });
+
+    let result: Awaited<ReturnType<typeof extractTextFromFile>>;
+    try {
+      result = await extractTextFromFile({
+        buffer: file.buffer,
+        filename: file.originalname,
+        mimetype: file.mimetype,
+        userId,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      emitFileAnalysisEvent({
+        ...baseEvent,
+        event: "error",
+        status: "error",
+        error: message,
+        updated_at: Date.now(),
+      });
+      res.status(500).json({
+        error: message,
+        analysis_id: analysisId,
+        analysis_status: "error",
+        update_protocol: "sse",
+        update_endpoint: "/api/files/updates",
+      });
+      return;
+    }
+
+    emitFileAnalysisEvent({
+      ...baseEvent,
+      event: "update",
+      status: "complete",
+      extracted_text: result.extracted_text,
+      updated_at: Date.now(),
     });
 
     console.log(`[File Upload] ${result.filename} → type=${result.type}, extracted=${result.extracted_text.length} chars, size=${result.size_bytes}B`);
@@ -1809,6 +2142,7 @@ app.post(
       type: result.type,
       extractedText: result.extracted_text,
       uploadTime: Date.now(),
+      analysisId,
     });
     console.log(`[FileSession] stored for ${clientIp}: ${result.filename}`);
 
@@ -1817,6 +2151,10 @@ app.post(
       type: result.type,
       extracted_text: result.extracted_text,
       size_bytes: result.size_bytes,
+      analysis_id: analysisId,
+      analysis_status: "complete",
+      update_protocol: "sse",
+      update_endpoint: "/api/files/updates",
     });
   }),
 );
