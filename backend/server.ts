@@ -31,6 +31,7 @@ import { uploadChatImage, getChatImages } from "./tools/imageGeneration/imageSto
 import {
   buildChatPrompt,
   callLLMAdapter,
+  callLLMAdapterDetailed,
   callLLMAdapterStream,
   buildTitleGeneratePrompt,
   strictParseJsonObject,
@@ -1331,6 +1332,17 @@ app.post(
       }
     };
 
+    const startStreamHeartbeat = (intervalMs: number, tag: string) => {
+      if (!intervalMs || intervalMs <= 0) return () => {};
+      const timer = setInterval(() => {
+        if (clientDisconnected) return;
+        writeSseJson({ type: "heartbeat", tag, ts: Date.now() }).catch((err) => {
+          console.warn(`[Stream] heartbeat failed: ${err instanceof Error ? err.message : err}`);
+        });
+      }, intervalMs);
+      return () => clearInterval(timer);
+    };
+
     const parsed = ChatRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
@@ -1726,6 +1738,7 @@ app.post(
         Date.now(),
         { model: isMathReasoningQuery ? "orchestrator" : "deepseek" },
       );
+      const stopHeartbeat = startStreamHeartbeat(10_000, "reasoning");
 
       try {
         if (isMathReasoningQuery) {
@@ -1782,6 +1795,7 @@ app.post(
       } catch (err) {
         await sendStreamError(err, streamMetrics);
       } finally {
+        stopHeartbeat();
         finishSse();
       }
       return;
@@ -1928,20 +1942,26 @@ app.post(
       requestStart,
       { model: modelOverride, fastPath: fastPathEligible },
     );
+    let stopHeartbeat = () => {};
+    const call = buildChatPrompt({
+      userMessage: parsed.data.message,
+      recentMessages: ctx.recentMessages,
+      memories: ctx.memories,
+      fileReferences: ctx.fileReferences,
+      conversationSummary: ctx.conversationSummary,
+      modelOverride,
+      userId,
+      streaming: true,
+    });
 
     try {
       const streamStart = Date.now();
-      const call = buildChatPrompt({
-        userMessage: parsed.data.message,
-        recentMessages: ctx.recentMessages,
-        memories: ctx.memories,
-        fileReferences: ctx.fileReferences,
-        conversationSummary: ctx.conversationSummary,
-        modelOverride,
-        userId,
-        streaming: true,
-      });
-      const adapterStream = await callLLMAdapterStream(call);
+      const streamTimeoutMs = modelOverride === "deepseek" ? 240_000 : undefined;
+      const streamCall = streamTimeoutMs ? { ...call, timeout_ms: streamTimeoutMs } : call;
+      stopHeartbeat = modelOverride === "deepseek"
+        ? startStreamHeartbeat(10_000, "deepseek")
+        : () => {};
+      const adapterStream = await callLLMAdapterStream(streamCall);
       const reader = adapterStream.getReader();
       let fullReply = "";
 
@@ -1955,6 +1975,8 @@ app.post(
         await writeSseJson({ type: "token", text: value });
       }
 
+      stopHeartbeat();
+
       if (!clientDisconnected) {
         if (fullReply) {
           await persistAssistantMessage(fullReply);
@@ -1965,8 +1987,30 @@ app.post(
       }
       console.log(`[Stream] live stream completed in ${Date.now() - streamStart}ms`);
     } catch (err) {
+      if (modelOverride === "deepseek" && streamMetrics.chunkCount === 0 && !clientDisconnected) {
+        try {
+          const fallback = await callLLMAdapterDetailed({
+            ...call,
+            timeout_ms: 180_000,
+          });
+          const fallbackText = fallback.text || "";
+          if (fallbackText) {
+            await persistAssistantMessage(fallbackText);
+          }
+          await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
+          await writeSseEvent("[DONE]");
+          logStreamMetrics(streamMetrics, "fallback");
+          finishSse();
+          return;
+        } catch (fallbackErr) {
+          console.error(
+            `[Stream] deepseek fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
+          );
+        }
+      }
       await sendStreamError(err, streamMetrics);
     } finally {
+      stopHeartbeat();
       finishSse();
     }
   }),

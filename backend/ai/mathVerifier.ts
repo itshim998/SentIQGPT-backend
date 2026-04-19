@@ -452,7 +452,7 @@ async function rewriteMathAnswer(
     prompt: buildRewritePrompt(userMessage, draftAnswer),
     model_override: PRIMARY_MODEL,
     user_id: userId,
-    timeout_ms: 75_000,
+    timeout_ms: 120_000,
     max_output_tokens: REWRITE_MAX_OUTPUT_TOKENS,
     skip_wrappers: true,
   };
@@ -482,7 +482,7 @@ export async function solveMathDirect(
       prompt: buildMathPrompt(userMessage, systemPrompt, intent, retryMode),
       model_override: PRIMARY_MODEL,
       user_id: userId,
-      timeout_ms: 115_000,
+      timeout_ms: 180_000,
       max_output_tokens:
         intent === "generation"
           ? (retryMode === "compact-generation" ? GENERATION_RETRY_MAX_OUTPUT_TOKENS : GENERATION_MAX_OUTPUT_TOKENS)
@@ -501,7 +501,7 @@ export async function solveMathDirect(
       prompt: buildContinuationPrompt(userMessage, systemPrompt, answerSoFar),
       model_override: PRIMARY_MODEL,
       user_id: userId,
-      timeout_ms: 95_000,
+      timeout_ms: 160_000,
       max_output_tokens: CONTINUATION_MAX_OUTPUT_TOKENS,
       skip_wrappers: true,
     };

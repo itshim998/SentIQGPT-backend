@@ -99,11 +99,20 @@ POLLINATIONS_FALLBACK_OPENAI_ENDPOINT = os.getenv(
     "https://gen.pollinations.ai/v1/chat/completions",
 )
 POLLINATIONS_TIMEOUT = int(os.getenv("POLLINATIONS_TIMEOUT", "90"))
+POLLINATIONS_TIMEOUT_DEEPSEEK = int(
+    os.getenv("POLLINATIONS_TIMEOUT_DEEPSEEK", "180")
+)
 POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT = int(
     os.getenv("POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT", "20")
 )
+POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT_DEEPSEEK = int(
+    os.getenv("POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT_DEEPSEEK", "120")
+)
 POLLINATIONS_STREAM_IDLE_TIMEOUT = int(
     os.getenv("POLLINATIONS_STREAM_IDLE_TIMEOUT", "45")
+)
+POLLINATIONS_STREAM_IDLE_TIMEOUT_DEEPSEEK = int(
+    os.getenv("POLLINATIONS_STREAM_IDLE_TIMEOUT_DEEPSEEK", "120")
 )
 
 # --- Safety Model Configuration ---
@@ -800,10 +809,6 @@ def _should_retry_pollinations(resp: _requests_lib.Response) -> bool:
     return "model not found" in body or "legacy api" in body or "nothing here" in body
 
 
-def _pollinations_stream_request_timeout() -> tuple[int, int]:
-    return (FAST_FAIL_TIMEOUT, POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT)
-
-
 def _set_response_socket_timeout(resp: _requests_lib.Response, read_timeout: int) -> None:
     try:
         raw = getattr(resp, "raw", None)
@@ -854,6 +859,29 @@ def _parse_pollinations_sse_event(raw_line: str) -> dict[str, Any]:
         "finish_reason": finish_reason,
         "payload": payload,
     }
+
+
+def _is_deepseek_model(model: Optional[str]) -> bool:
+    return (model or "").strip().lower().startswith("deepseek")
+
+
+def _pollinations_request_timeout(model: Optional[str]) -> int:
+    if _is_deepseek_model(model):
+        return POLLINATIONS_TIMEOUT_DEEPSEEK
+    return POLLINATIONS_TIMEOUT
+
+
+def _pollinations_stream_request_timeout(model: Optional[str]) -> tuple[int, int]:
+    first_chunk_timeout = POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT
+    if _is_deepseek_model(model):
+        first_chunk_timeout = POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT_DEEPSEEK
+    return (FAST_FAIL_TIMEOUT, first_chunk_timeout)
+
+
+def _pollinations_stream_idle_timeout(model: Optional[str]) -> int:
+    if _is_deepseek_model(model):
+        return POLLINATIONS_STREAM_IDLE_TIMEOUT_DEEPSEEK
+    return POLLINATIONS_STREAM_IDLE_TIMEOUT
 
 
 def _post_pollinations(
@@ -922,7 +950,11 @@ def _call_pollinations(
 
     payload = _build_pollinations_payload(prompt, model, temperature, max_output_tokens)
 
-    endpoint_used, resp = _post_pollinations(payload, headers)
+    endpoint_used, resp = _post_pollinations(
+        payload,
+        headers,
+        timeout=_pollinations_request_timeout(model),
+    )
 
     result, finish_reason = _extract_pollinations_response(resp)
     truncated = finish_reason in {"length", "max_tokens", "content_filter", "reason-length"}
@@ -963,10 +995,12 @@ def _call_pollinations_stream(
 
     logger.info("[Pollinations] provider_sse stream mode enabled")
     stream_started = time.monotonic()
+    stream_model = model
+    first_chunk_timeout = _pollinations_stream_request_timeout(stream_model)[1]
     endpoint_used, resp = _post_pollinations(
         payload,
         headers,
-        timeout=_pollinations_stream_request_timeout(),
+        timeout=_pollinations_stream_request_timeout(stream_model),
         stream=True,
     )
 
@@ -1005,7 +1039,7 @@ def _call_pollinations_stream(
                     payload["model"],
                     first_text_ms,
                 )
-                _set_response_socket_timeout(resp, POLLINATIONS_STREAM_IDLE_TIMEOUT)
+                _set_response_socket_timeout(resp, _pollinations_stream_idle_timeout(stream_model))
 
             text_chunks += 1
             yield text
@@ -1025,7 +1059,7 @@ def _call_pollinations_stream(
     )
     if first_text_ms is None:
         raise RuntimeError(
-            f"Pollinations stream produced no text within {POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT}s"
+            f"Pollinations stream produced no text within {first_chunk_timeout}s"
         )
 
 
