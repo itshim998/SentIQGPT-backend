@@ -99,20 +99,20 @@ POLLINATIONS_FALLBACK_OPENAI_ENDPOINT = os.getenv(
     "https://gen.pollinations.ai/v1/chat/completions",
 )
 POLLINATIONS_TIMEOUT = int(os.getenv("POLLINATIONS_TIMEOUT", "90"))
-POLLINATIONS_TIMEOUT_DEEPSEEK = int(
-    os.getenv("POLLINATIONS_TIMEOUT_DEEPSEEK", "180")
+POLLINATIONS_TIMEOUT_OPENAI_LARGE = int(
+    os.getenv("POLLINATIONS_TIMEOUT_OPENAI_LARGE", "180")
 )
 POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT = int(
     os.getenv("POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT", "20")
 )
-POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT_DEEPSEEK = int(
-    os.getenv("POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT_DEEPSEEK", "120")
+POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT_OPENAI_LARGE = int(
+    os.getenv("POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT_OPENAI_LARGE", "120")
 )
 POLLINATIONS_STREAM_IDLE_TIMEOUT = int(
     os.getenv("POLLINATIONS_STREAM_IDLE_TIMEOUT", "45")
 )
-POLLINATIONS_STREAM_IDLE_TIMEOUT_DEEPSEEK = int(
-    os.getenv("POLLINATIONS_STREAM_IDLE_TIMEOUT_DEEPSEEK", "120")
+POLLINATIONS_STREAM_IDLE_TIMEOUT_OPENAI_LARGE = int(
+    os.getenv("POLLINATIONS_STREAM_IDLE_TIMEOUT_OPENAI_LARGE", "120")
 )
 
 # --- Safety Model Configuration ---
@@ -386,6 +386,7 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
         qwen3-coder        → pollinations  (CODING_MODEL = qwen-coder)
         mistral            → pollinations  (mistral)
         gemini-fast         → pollinations  (GENERAL_CHAT_MODEL)
+        openai-large        → pollinations  (openai-large)
         gemini-search       → pollinations  (SEARCH_MODEL)
         gemini-vision       → gemini        (GEMINI_VISION_MODEL, direct API)
         gemini-*            → gemini        (passthrough, direct API)
@@ -400,8 +401,8 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     if logical in {"qwen-coder", "qwen3-coder-30b", "qwen3-coder"}:
         return "pollinations", CODING_MODEL
 
-    if logical == "deepseek":
-        return "pollinations", "deepseek"
+    if logical == "openai-large":
+        return "pollinations", "openai-large"
 
     if logical == "gemini-fast":
         return "pollinations", GENERAL_CHAT_MODEL
@@ -533,7 +534,7 @@ def _should_request_worked_explanation(
 
     if normalized_task == "math_reasoning":
         return True
-    if normalized_override == "deepseek":
+    if normalized_override == "openai-large":
         return True
 
     explanation_patterns = [
@@ -861,26 +862,26 @@ def _parse_pollinations_sse_event(raw_line: str) -> dict[str, Any]:
     }
 
 
-def _is_deepseek_model(model: Optional[str]) -> bool:
-    return (model or "").strip().lower().startswith("deepseek")
+def _is_openai_large_model(model: Optional[str]) -> bool:
+    return (model or "").strip().lower() == "openai-large"
 
 
 def _pollinations_request_timeout(model: Optional[str]) -> int:
-    if _is_deepseek_model(model):
-        return POLLINATIONS_TIMEOUT_DEEPSEEK
+    if _is_openai_large_model(model):
+        return POLLINATIONS_TIMEOUT_OPENAI_LARGE
     return POLLINATIONS_TIMEOUT
 
 
 def _pollinations_stream_request_timeout(model: Optional[str]) -> tuple[int, int]:
     first_chunk_timeout = POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT
-    if _is_deepseek_model(model):
-        first_chunk_timeout = POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT_DEEPSEEK
+    if _is_openai_large_model(model):
+        first_chunk_timeout = POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT_OPENAI_LARGE
     return (FAST_FAIL_TIMEOUT, first_chunk_timeout)
 
 
 def _pollinations_stream_idle_timeout(model: Optional[str]) -> int:
-    if _is_deepseek_model(model):
-        return POLLINATIONS_STREAM_IDLE_TIMEOUT_DEEPSEEK
+    if _is_openai_large_model(model):
+        return POLLINATIONS_STREAM_IDLE_TIMEOUT_OPENAI_LARGE
     return POLLINATIONS_STREAM_IDLE_TIMEOUT
 
 

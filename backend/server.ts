@@ -1723,7 +1723,7 @@ app.post(
     }
 
     // ── Safety gate: math queries use the direct math pipeline via orchestrator ──
-    // Math queries need the direct DeepSeek pipeline, which
+    // Math queries need the direct openai-large pipeline, which
     // is only available through the orchestrator.  Redirect like chart requests.
     if (isBufferedReasoning) {
       console.log(`[Stream] buffered reasoning query detected - streaming SSE response`);
@@ -1736,7 +1736,7 @@ app.post(
       const streamMetrics = createStreamMetrics(
         "chat.stream.reasoning",
         Date.now(),
-        { model: isMathReasoningQuery ? "orchestrator" : "deepseek" },
+        { model: isMathReasoningQuery ? "orchestrator" : "openai-large" },
       );
       const stopHeartbeat = startStreamHeartbeat(10_000, "reasoning");
 
@@ -1956,10 +1956,10 @@ app.post(
 
     try {
       const streamStart = Date.now();
-      const streamTimeoutMs = modelOverride === "deepseek" ? 240_000 : undefined;
+      const streamTimeoutMs = modelOverride === "openai-large" ? 240_000 : undefined;
       const streamCall = streamTimeoutMs ? { ...call, timeout_ms: streamTimeoutMs } : call;
-      stopHeartbeat = modelOverride === "deepseek"
-        ? startStreamHeartbeat(10_000, "deepseek")
+      stopHeartbeat = modelOverride === "openai-large"
+        ? startStreamHeartbeat(10_000, "openai-large")
         : () => {};
       const adapterStream = await callLLMAdapterStream(streamCall);
       const reader = adapterStream.getReader();
@@ -1987,7 +1987,7 @@ app.post(
       }
       console.log(`[Stream] live stream completed in ${Date.now() - streamStart}ms`);
     } catch (err) {
-      if (modelOverride === "deepseek" && streamMetrics.chunkCount === 0 && !clientDisconnected) {
+      if (modelOverride === "openai-large" && streamMetrics.chunkCount === 0 && !clientDisconnected) {
         try {
           const fallback = await callLLMAdapterDetailed({
             ...call,
@@ -2004,7 +2004,7 @@ app.post(
           return;
         } catch (fallbackErr) {
           console.error(
-            `[Stream] deepseek fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
+            `[Stream] openai-large fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
           );
         }
       }

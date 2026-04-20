@@ -126,7 +126,7 @@ function planToolToRoute(tool: PlanTool): DetectedTool {
 
 function getBaseModelConfidence(model: string): number {
   const normalized = model.trim().toLowerCase();
-  if (normalized === "deepseek") return 0.9;
+  if (normalized === "openai-large") return 0.9;
   if (normalized === "gemini" || normalized.startsWith("gemini")) return 0.8;
   if (normalized === "qwen-coder" || normalized.startsWith("qwen-coder")) return 0.75;
   return 0.7;
@@ -299,7 +299,7 @@ async function _orchestrateInner(
   // input. The planner (Groq) compresses/summarizes the query, which strips
   // numerical context and causes word problems to be misclassified as general chat.
   // When math is detected, we bypass the planner entirely and go straight to
-  // the DeepSeek math pipeline.
+  // the openai-large math pipeline.
   if (detectExplicitMemoryWriteIntent(userMessage)) {
     console.log(`[ORCHESTRATOR] explicit memory write detected — bypassing planner`);
     const ctx = await buildContext(
@@ -331,12 +331,12 @@ async function _orchestrateInner(
 
   if (!isCodingQuery && isMathQuery(userMessage)) {
     console.log(`[MathPipeline] math query detected on raw input — bypassing planner`);
-    console.log(`[MathPipeline] solving with deepseek`);
+    console.log(`[MathPipeline] solving with openai-large`);
 
     const mathResult = await solveMathDirect(userMessage, DEFAULT_SOLVER_SYSTEM_PROMPT, rawContext?.userId);
 
     console.log(
-      `[MathPipeline] solved using deepseek`,
+      `[MathPipeline] solved using openai-large`,
     );
     console.log(`[MathPipeline] reflection skipped — math query handled by direct math pipeline`);
     console.log(`[MathPipeline] returning result`);

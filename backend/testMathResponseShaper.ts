@@ -211,6 +211,6 @@ assert(formatMathResponse(plainSentence) === plainSentence, "plain non-math text
 assert(classifyMathIntent("Solve a quantum computing math as an example.") === "example", "example-style solve prompt routes to example math intent");
 assert(classifyMathIntent("Give me a quantum computing math example and solve it.") === "example", "explicit example-and-solve prompt routes to example math intent");
 assert(classifyMathIntent("Solve 3x + 7 = 19") === "solve", "concrete math solve prompt stays on solve intent");
-assert(selectModelForPrompt("Solve 3x + 7 = 19") === "deepseek", "concrete solve prompt still routes to deepseek");
+assert(selectModelForPrompt("Solve 3x + 7 = 19") === "openai-large", "concrete solve prompt still routes to openai-large");
 
 console.log("\nMath response shaping validation passed.");

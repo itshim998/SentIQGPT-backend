@@ -6,6 +6,7 @@ CASES = [
     ("qwen3-coder", "gemini", ("pollinations", CODING_MODEL)),
     ("qwen3-coder-30b", "gemini", ("pollinations", CODING_MODEL)),
     ("gemini-fast", "gemini", ("pollinations", GENERAL_CHAT_MODEL)),
+    ("openai-large", "gemini", ("pollinations", "openai-large")),
 ]
 
 

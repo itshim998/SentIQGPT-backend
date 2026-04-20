@@ -108,13 +108,13 @@ async function execConversation(
     : input;
 
   // Math path
-  // If the query is mathematical, route through the direct DeepSeek math solver
+  // If the query is mathematical, route through the direct openai-large math solver
   // instead of the standard single-model chat handler.
   if (!detectCodeQuery(input) && isMathQuery(input)) {
-    console.log(`[MathPipeline] math query detected — routing to direct deepseek solver`);
+    console.log(`[MathPipeline] math query detected — routing to direct openai-large solver`);
     const mathResult = await solveMathDirect(augmentedInput, DEFAULT_SOLVER_SYSTEM_PROMPT);
     console.log(
-      `[MathPipeline] solved using deepseek`,
+      `[MathPipeline] solved using openai-large`,
     );
     return {
       step: 0,
