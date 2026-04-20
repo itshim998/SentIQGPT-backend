@@ -967,10 +967,11 @@ def _call_pollinations(
     )
     if truncated:
         logger.warning(
-            "[Pollinations] completion may be truncated finish_reason=%s chars=%d model=%s",
+            "[Pollinations] completion may be truncated finish_reason=%s chars=%d model=%s max_tokens=%s",
             finish_reason,
             len(result),
             payload["model"],
+            payload.get("max_tokens") if payload.get("max_tokens") is not None else "none",
         )
     return result, finish_reason, truncated
 

@@ -6,6 +6,9 @@ import {
 import type { ChatContext } from "./PromptBuilders";
 import { extractUserFacingAnswer, finalizeStructuredReply } from "./replyGuard";
 
+const REASONING_MAX_OUTPUT_TOKENS = 2600;
+const CONTINUATION_MAX_OUTPUT_TOKENS = 1800;
+
 function mergeContinuation(base: string, continuation: string): string {
   const left = base.trimEnd();
   const right = continuation.trim();
@@ -71,13 +74,21 @@ export async function handleChat(args: {
     reasoningMode: args.reasoningMode,
   };
 
-  const call = buildChatPrompt(ctx);
+  const baseCall = buildChatPrompt(ctx);
+  const call = args.reasoningMode
+    ? { ...baseCall, max_output_tokens: REASONING_MAX_OUTPUT_TOKENS }
+    : baseCall;
+
+  console.log(
+    `[ChatHandler] invoke model=${call.model_override ?? "default"} reasoning=${args.reasoningMode ? "true" : "false"} max_output_tokens=${call.max_output_tokens ?? "none"}`,
+  );
 
   let raw: string;
   let model_used: string | undefined;
   let fallback = false;
   let truncated = false;
   let adapterError: string | null | undefined;
+  let finishReason: string | null | undefined;
 
   try {
     const result = await callLLMAdapterDetailed(call);
@@ -86,8 +97,15 @@ export async function handleChat(args: {
     fallback = result.fallback ?? false;
     truncated = result.truncated ?? false;
     adapterError = result.error;
+    finishReason = result.finish_reason;
   } catch {
     raw = getDemoFallbackResponse("chat");
+  }
+
+  if (finishReason || truncated) {
+    console.log(
+      `[ChatHandler] result finish_reason=${finishReason ?? "none"} truncated=${truncated ? "true" : "false"} chars=${raw.length}`,
+    );
   }
 
   let disclaimer = "SentIQGPT is an AI assistant. Verify important information independently.";
@@ -104,9 +122,13 @@ export async function handleChat(args: {
   let finalAnswer = finalized.answer;
   let finalThinking = finalized.thinking;
 
-  if (args.reasoningMode && truncated && finalAnswer.trim().length >= 20) {
+  const shouldAttemptContinuation = truncated && finalAnswer.trim().length >= 20;
+  if (shouldAttemptContinuation) {
     try {
-      const continuationCall = buildChatPrompt({
+      console.log(
+        `[ChatHandler] continuation triggered reasoning=${args.reasoningMode ? "true" : "false"} chars=${finalAnswer.length}`,
+      );
+      const continuationBaseCall = buildChatPrompt({
         userMessage: buildContinuationMessage(args.userMessage, finalAnswer),
         recentMessages: [],
         memories: [],
@@ -114,9 +136,17 @@ export async function handleChat(args: {
         conversationSummary: undefined,
         modelOverride: args.modelOverride,
         userId: args.userId,
-        reasoningMode: true,
+        reasoningMode: args.reasoningMode,
       });
+      const continuationCall = args.reasoningMode
+        ? { ...continuationBaseCall, max_output_tokens: CONTINUATION_MAX_OUTPUT_TOKENS }
+        : continuationBaseCall;
       const continuationResult = await callLLMAdapterDetailed(continuationCall);
+      if (continuationResult.finish_reason || continuationResult.truncated) {
+        console.log(
+          `[ChatHandler] continuation finish_reason=${continuationResult.finish_reason ?? "none"} truncated=${continuationResult.truncated ? "true" : "false"}`,
+        );
+      }
       const continuationFinal = finalizeStructuredReply(continuationResult.text, {
         adapterError: continuationResult.error,
         truncated: continuationResult.truncated ?? false,

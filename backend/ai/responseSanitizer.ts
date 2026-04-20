@@ -29,12 +29,23 @@ const PROMPT_ECHO_PATTERNS: readonly RegExp[] = [
   /\b(?:no\s+markdown|no\s+json|valid json|final answer only)\b/i,
   /\b(?:do not reveal|do not leak|hidden scratchwork|chain[- ]of[- ]thought)\b/i,
   /\b(?:formatting rules?|bullet for final answer|one direct line)\b/i,
+  /\bnow,?\s+write\s+the\s+output\b/i,
+  /\bthen,?\s+(?:the\s+)?list\s+of\s+steps\b/i,
+  /\bthe\s+reasoning\s+summary\s+should\b/i,
+  /\bshort\s+reasoning\s+summary\b/i,
+  /\bwe'?ll\s+put\s+that\s+inside\b/i,
+  /\boutput\s+contract\b/i,
+  /\bfinal answer\s+on\s+its\s+own\s+line\b/i,
+  /\bdo not include\b[^.]*<think>/i,
 ];
 
 const FINAL_REASONING_PHRASE_PATTERNS: readonly RegExp[] = [
   /^(?:that means|alternatively|we can\s+(?:iterate|try|analyze|reason|solve|check)|let(?:'|\s)?s iterate)\b.*$/i,
   /^(?:first|next|then),\s+we\b.*$/i,
 ];
+
+const STEP_LINE_PATTERN = /^\s*(?:step\s*\d+[:.)-]?|\d+[.)-])\s+/i;
+const FINAL_ANSWER_LINE_PATTERN = /^\s*(?:#{1,6}\s*)?final answer\s*:?\s*/i;
 
 function looksLikeProviderFailurePayload(raw: string): boolean {
   if (!raw.startsWith("{") || !raw.endsWith("}")) {
@@ -131,6 +142,24 @@ function collapseBlankLines(lines: readonly string[]): string[] {
   return collapsed;
 }
 
+function trimPromptEchoPreamble(lines: readonly string[], hasPromptEcho: boolean): string[] {
+  if (!hasPromptEcho || lines.length === 0) {
+    return Array.from(lines);
+  }
+
+  const startIndex = lines.findIndex((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+    return STEP_LINE_PATTERN.test(trimmed) || FINAL_ANSWER_LINE_PATTERN.test(trimmed);
+  });
+
+  if (startIndex > 0) {
+    return lines.slice(startIndex);
+  }
+
+  return Array.from(lines);
+}
+
 export function sanitizeResponse(
   response: string,
   options: SanitizeResponseOptions = {},
@@ -147,10 +176,13 @@ export function sanitizeResponse(
     .split("\n")
     .map((line) => line.replace(/[ \t]+$/g, ""));
 
+  const hasPromptEcho = PROMPT_ECHO_PATTERNS.some((pattern) => pattern.test(raw));
+  const preparedLines = trimPromptEchoPreamble(rawLines, hasPromptEcho);
+
   const keptLines: string[] = [];
   let startedContent = false;
 
-  for (const originalLine of rawLines) {
+  for (const originalLine of preparedLines) {
     const trimmed = originalLine.trim();
     const normalizedLine = stripStructuralPrefix(trimmed);
 

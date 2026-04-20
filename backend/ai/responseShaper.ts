@@ -20,6 +20,14 @@ const PROMPT_ECHO_PATTERNS = [
   /\bchain-of-th(?:ought)?\b/i,
   /\bformatting rules?\b/i,
   /\bdo not mention headings, bullets, or line counts\b/i,
+  /\bnow,?\s+write\s+the\s+output\b/i,
+  /\bthen,?\s+(?:the\s+)?list\s+of\s+steps\b/i,
+  /\bthe\s+reasoning\s+summary\s+should\b/i,
+  /\bshort\s+reasoning\s+summary\b/i,
+  /\bwe'?ll\s+put\s+that\s+inside\b/i,
+  /\boutput\s+contract\b/i,
+  /\bfinal answer\s+on\s+its\s+own\s+line\b/i,
+  /\bdo not include\b[^.]*<think>/i,
 ];
 
 const NARRATIVE_SENTENCE_PATTERNS = [
