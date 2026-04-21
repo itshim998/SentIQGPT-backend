@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.backend.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["backend/**/*.ts"]
+}

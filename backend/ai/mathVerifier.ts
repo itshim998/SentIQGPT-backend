@@ -503,19 +503,6 @@ export async function solveMathDirect(
     thinking = undefined;
   }
 
-  if (!incompleteOutput && shouldRewriteMathResponse(processed)) {
-    console.log("[MathPipeline] rewrite_fallback_triggered");
-    try {
-      const rewritten = await rewriteMathAnswer(userMessage, processed, userId);
-      if (rewritten && rewritten.trim().length >= 20) {
-        processed = rewritten;
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(`[MathPipeline] rewrite_fallback_failed: ${message}`);
-    }
-  }
-
   return {
     answer: processed,
     thinking,
