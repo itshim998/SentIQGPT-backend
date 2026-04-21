@@ -352,7 +352,6 @@ async function _orchestrateInner(
       route: "math_reasoning" as DetectedTool,
       answer: finalReply,
       reply: finalReply,
-      thinking: mathResult.thinking,
       disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
       memory: { stored: false },
       confidence: computedConfidence,

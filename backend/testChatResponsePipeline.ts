@@ -127,8 +127,8 @@ assert(
   "structured explanation composes into explanation plus final answer",
 );
 assert(
-  finalizeMathReply(explanationJson).includes("Step 2: Eliminate x from rows 2 and 3."),
-  "math finalizer preserves structured explanation JSON",
+  finalizeMathReply(explanationJson).includes("x = 3, y = 0, z = 1"),
+  "math finalizer returns final answer without forcing explanation",
 );
 
 assert(
@@ -162,9 +162,13 @@ assert(!/alternatively/i.test(cleanedLeakPhrases), "final answer leakage phrase 
 assert(/hash map/i.test(cleanedLeakPhrases), "final answer content preserved after leakage cleanup");
 
 const finalizedMath = finalizeMathReply(normalizeMathResponse(noisyMathReply));
-assert(!/we need to solve/i.test(finalizedMath), "math narrative leakage removed");
-assert(!/let me check/i.test(finalizedMath), "math self-talk removed");
+assert(/we need to solve/i.test(finalizedMath), "math narrative preserved in relaxed mode");
+assert(/let me check/i.test(finalizedMath), "math self-talk preserved in relaxed mode");
 assert(/x = 3, y = 0/.test(finalizedMath), "math final answer preserved");
+
+const relaxedThinkReply = "<think>hidden reasoning</think>\nHere is the answer.";
+const relaxedFinalized = finalizeStructuredReply(relaxedThinkReply, { sanitizeMode: "minimal" });
+assert(relaxedFinalized.answer === "Here is the answer.", "minimal sanitizer strips think blocks");
 
 const latexNormalizedMath = formatMathResponse(latexMathReply);
 assert(/\\\[/.test(latexNormalizedMath), "math normalizer emits display LaTeX delimiters");

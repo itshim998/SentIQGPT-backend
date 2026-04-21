@@ -1,4 +1,4 @@
-import { sanitizeResponse } from "./responseSanitizer";
+import { sanitizeResponse, sanitizeResponseMinimal } from "./responseSanitizer";
 
 export const DEFAULT_SAFE_REPLY_FALLBACK =
   "Sorry, I couldn't generate a proper response. Please try again.";
@@ -11,11 +11,6 @@ const THINK_CLOSE_TAG = "</think>";
 
 const FINAL_ANSWER_MARKER = /(?:^|\n)\s*(?:#{1,6}\s*)?Final Answer\s*:?\s*/i;
 
-const REASONING_LIKE_PREFIX_PATTERNS: readonly RegExp[] = [
-  /^(?:that means|alternatively|we can iterate|we can try|let(?:'|\s)?s|first,|next,|then,)\b/i,
-  /^(?:analysis|reasoning|approach|plan|thinking)\b/i,
-  /^(?:i(?:'|\s)?(?:am|will|should|need)|we(?:'|\s)?(?:re|are|should|need))\b/i,
-];
 
 export interface ExtractReplyOptions {
   readonly adapterError?: string | null;
@@ -36,6 +31,7 @@ export interface FinalizeReplyOptions extends ExtractReplyOptions {
   readonly emptyFallback?: string;
   readonly preferExplanation?: boolean;
   readonly truncated?: boolean;
+  readonly sanitizeMode?: "strict" | "minimal";
 }
 
 export interface FinalizedReply {
@@ -53,11 +49,6 @@ function normalizeOptionalText(value: unknown): string | undefined {
 
 function stripThinkMarkers(value: string): string {
   return value.replace(/<\/?think[^>]*>/gi, "").trim();
-}
-
-function looksReasoningLikePrefix(value: string): boolean {
-  const firstLine = value.split(/\n+/)[0]?.trim() ?? "";
-  return REASONING_LIKE_PREFIX_PATTERNS.some((pattern) => pattern.test(firstLine));
 }
 
 function splitThinkAndBody(raw: string): {
@@ -331,17 +322,17 @@ export function extractUserFacingAnswer(
     };
   }
 
-  if (!split.hadThink) {
+  if (split.body) {
     return {
       reply: split.body,
+      thinking: split.thinking,
       source: "plain_text",
     };
   }
 
-  if (split.recoveredFromMalformedThink && split.body && !looksReasoningLikePrefix(split.body)) {
+  if (!split.hadThink) {
     return {
       reply: split.body,
-      thinking: split.thinking,
       source: "plain_text",
     };
   }
@@ -393,12 +384,20 @@ export function finalizeStructuredReply(
     };
   }
 
+  const sanitizeMode = options.sanitizeMode ?? "strict";
+  const sanitized = sanitizeMode === "minimal"
+    ? sanitizeResponseMinimal(composed, {
+        preserveFormatting: options.preserveFormatting ?? false,
+        safeFallback: fallback,
+      })
+    : sanitizeResponse(composed, {
+        preserveFormatting: options.preserveFormatting ?? false,
+        safeFallback: fallback,
+        enforceFinalClean: true,
+      });
+
   return {
-    answer: sanitizeResponse(composed, {
-      preserveFormatting: options.preserveFormatting ?? false,
-      safeFallback: fallback,
-      enforceFinalClean: true,
-    }),
+    answer: sanitized,
     thinking: sanitizeThinkingPayload(extracted.thinking, { truncated: options.truncated }),
   };
 }

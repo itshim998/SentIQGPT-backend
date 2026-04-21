@@ -29,13 +29,13 @@ function mergeContinuation(base: string, continuation: string): string {
 
 function buildContinuationMessage(userMessage: string, answerSoFar: string): string {
   return [
-    "Continue the Final Answer only.",
-    "Do not repeat any earlier text. Do not include a <think> block or the words 'Final Answer'.",
+    "Continue the answer only.",
+    "Do not repeat any earlier text. Do not include chain-of-thought or a <think> block.",
     "",
     "Original question:",
     userMessage,
     "",
-    "Final Answer so far:",
+    "Answer so far:",
     answerSoFar,
   ].join("\n");
 }
@@ -76,7 +76,7 @@ export async function handleChat(args: {
 
   const baseCall = buildChatPrompt(ctx);
   const call = args.reasoningMode
-    ? { ...baseCall, max_output_tokens: REASONING_MAX_OUTPUT_TOKENS }
+    ? { ...baseCall, max_output_tokens: REASONING_MAX_OUTPUT_TOKENS, skip_wrappers: true }
     : baseCall;
 
   console.log(
@@ -117,10 +117,14 @@ export async function handleChat(args: {
   const finalized = finalizeStructuredReply(raw, {
     adapterError,
     truncated: args.reasoningMode ? false : truncated,
+    sanitizeMode: args.reasoningMode ? "minimal" : "strict",
   });
 
   let finalAnswer = finalized.answer;
   let finalThinking = finalized.thinking;
+  if (args.reasoningMode) {
+    finalThinking = undefined;
+  }
 
   const shouldAttemptContinuation = truncated && finalAnswer.trim().length >= 20;
   if (shouldAttemptContinuation) {
@@ -139,7 +143,7 @@ export async function handleChat(args: {
         reasoningMode: args.reasoningMode,
       });
       const continuationCall = args.reasoningMode
-        ? { ...continuationBaseCall, max_output_tokens: CONTINUATION_MAX_OUTPUT_TOKENS }
+        ? { ...continuationBaseCall, max_output_tokens: CONTINUATION_MAX_OUTPUT_TOKENS, skip_wrappers: true }
         : continuationBaseCall;
       const continuationResult = await callLLMAdapterDetailed(continuationCall);
       if (continuationResult.finish_reason || continuationResult.truncated) {
@@ -150,6 +154,7 @@ export async function handleChat(args: {
       const continuationFinal = finalizeStructuredReply(continuationResult.text, {
         adapterError: continuationResult.error,
         truncated: continuationResult.truncated ?? false,
+        sanitizeMode: args.reasoningMode ? "minimal" : "strict",
       });
       const merged = mergeContinuation(finalAnswer, continuationFinal.answer);
       if (merged && merged !== finalAnswer) {

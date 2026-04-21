@@ -46,6 +46,9 @@ const FINAL_REASONING_PHRASE_PATTERNS: readonly RegExp[] = [
 
 const STEP_LINE_PATTERN = /^\s*(?:step\s*\d+[:.)-]?|\d+[.)-])\s+/i;
 const FINAL_ANSWER_LINE_PATTERN = /^\s*(?:#{1,6}\s*)?final answer\s*:?\s*/i;
+const ANALYSIS_LINE_PATTERN = /^\s*(?:analysis|reasoning|chain[- ]of[- ]thought|cot|scratch(?: |-)?work)\s*[:\-]/i;
+const THINK_BLOCK_PATTERN = /<think[^>]*>[\s\S]*?<\/think>/gi;
+const THINK_TAG_PATTERN = /<\/?think[^>]*>/gi;
 
 function looksLikeProviderFailurePayload(raw: string): boolean {
   if (!raw.startsWith("{") || !raw.endsWith("}")) {
@@ -233,4 +236,51 @@ export function sanitizeResponse(
   }
 
   return cleaned;
+}
+
+export function sanitizeResponseMinimal(
+  response: string,
+  options: Pick<SanitizeResponseOptions, "preserveFormatting" | "safeFallback"> = {},
+): string {
+  const fallback = options.safeFallback ?? DEFAULT_SAFE_REPLY_FALLBACK;
+  const raw = (response ?? "").replace(/\r\n?/g, "\n").trim();
+
+  if (!raw || looksLikeProviderFailurePayload(raw)) {
+    return fallback;
+  }
+
+  let cleaned = raw
+    .replace(THINK_BLOCK_PATTERN, "")
+    .replace(THINK_TAG_PATTERN, "");
+
+  const rawLines = cleaned
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""));
+
+  const keptLines: string[] = [];
+  for (const originalLine of rawLines) {
+    const trimmed = originalLine.trim();
+    if (!trimmed) {
+      if (keptLines.length > 0 && keptLines[keptLines.length - 1] !== "") {
+        keptLines.push("");
+      }
+      continue;
+    }
+
+    if (ANALYSIS_LINE_PATTERN.test(trimmed)) {
+      continue;
+    }
+
+    const withoutFinalLabel = originalLine.replace(FINAL_ANSWER_LINE_PATTERN, "").replace(/[ \t]+$/g, "");
+    if (withoutFinalLabel.trim()) {
+      keptLines.push(withoutFinalLabel);
+    }
+  }
+
+  const normalizedLines = collapseBlankLines(keptLines);
+  const joined = options.preserveFormatting
+    ? normalizedLines.join("\n").replace(/\n{3,}/g, "\n\n").trim()
+    : normalizedLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+
+  return joined || fallback;
 }

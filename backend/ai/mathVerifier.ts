@@ -7,13 +7,6 @@ import { callLLMAdapterDetailed } from "./PromptBuilders";
 import type { LLMAdapterCall } from "./PromptBuilders";
 import { formatMathResponse } from "./mathFormatter";
 import { composeUserFacingReply, extractUserFacingAnswer } from "./replyGuard";
-import {
-  hasMathLeakageSignals,
-  hasMathNarrativeSignals,
-  hasMathPromptEchoSignals,
-  shapeMathResponse,
-  shouldRewriteMathResponse,
-} from "./responseShaper";
 
 // ==============================
 // Constants
@@ -32,111 +25,70 @@ const MAX_CONTINUATION_ATTEMPTS = 3;
 const INCOMPLETE_RESPONSE_FALLBACK =
   "Sorry, I couldn't complete the response. Please try again.";
 export const DEFAULT_SOLVER_SYSTEM_PROMPT =
-  "SYSTEM: You are a precise mathematical reasoning engine for end users.\n" +
+  "SYSTEM: You are a precise mathematical assistant for end users.\n" +
   "RULES:\n" +
-  "- Think internally, but provide only a short reasoning summary inside <think> (no chain-of-thought).\n" +
-  "- Use short numbered steps that show the method, then end with a definitive final answer.\n" +
-  "- Include essential intermediate equations, matrices, substitutions, or row operations when they are part of the method.\n" +
-  "- Format mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...\\] for display math.\n" +
-  "- Do not reveal hidden scratchwork, retries, or full chain-of-thought.\n" +
-  "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
-  "- Do not mention the prompt, headings, bullets, or formatting rules.\n" +
+  "- Provide a clear user-facing solution.\n" +
+  "- Do not include chain-of-thought or hidden reasoning.\n" +
+  "- If the user asks for steps, show concise steps.\n" +
+  "- Format mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...] for display math.\n" +
   "- If the problem statement looks inconsistent, say so briefly and give the best resolution.\n" +
-  "- Keep the explanation concise, but do not skip the method.\n" +
-  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
-  "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
-  "- Then write Final Answer: on its own line.\n" +
-  "- After Final Answer:, return only the clean worked solution and answer.";
+  "- If the user asks to continue, return only the continuation of the answer.";
 const GENERATION_SYSTEM_PROMPT =
   "SYSTEM: You are generating math practice content.\n" +
   "RULES:\n" +
-  "- Respond concisely and completely\n" +
-  "- Do NOT use long preambles or teaching paragraphs\n" +
-  "- Do NOT include meta commentary\n" +
-  "- Format any mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...\\] for display math\n" +
-  "- Return exactly 4 short exercise questions\n" +
-  "- Keep matrix exercises compact and readable\n" +
-  "- If you use matrices, prefer 2x2 or 3x3 examples\n" +
-  "- Finish every exercise completely\n" +
-  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
-  "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
-  "- Then write Final Answer: on its own line.\n" +
-  "- After Final Answer:, return only the clean user-facing output.";
+  "- Return exactly 4 short exercise questions.\n" +
+  "- Format any mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...] for display math.\n" +
+  "- Keep matrix exercises compact and readable.\n" +
+  "- If you use matrices, prefer 2x2 or 3x3 examples.\n" +
+  "- Finish every exercise completely.\n" +
+  "- If the user asks to continue, return only the continuation of the answer.";
 const GENERATION_RETRY_SYSTEM_PROMPT =
   "SYSTEM: You are generating compact math practice content.\n" +
   "RULES:\n" +
-  "- Return exactly 3 short exercise questions\n" +
-  "- No explanations, no preamble, no commentary\n" +
-  "- Format any mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...\\] for display math\n" +
-  "- Keep each exercise on one line\n" +
-  "- Use plain concise wording\n" +
-  "- If you use matrices, keep them small and complete\n" +
-  "- Finish the response fully\n" +
-  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
-  "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
-  "- Then write Final Answer: on its own line.\n" +
-  "- After Final Answer:, return only the clean user-facing output.";
+  "- Return exactly 3 short exercise questions.\n" +
+  "- Format any mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...] for display math.\n" +
+  "- Keep each exercise on one line.\n" +
+  "- Use plain concise wording.\n" +
+  "- If you use matrices, keep them small and complete.\n" +
+  "- Finish the response fully.\n" +
+  "- If the user asks to continue, return only the continuation of the answer.";
 const EXAMPLE_SYSTEM_PROMPT =
   "SYSTEM: Create one relevant math example for the user's topic and solve it clearly.\n" +
   "RULES:\n" +
   "- If the user gives a topic instead of a concrete problem, choose one representative example.\n" +
-  "- Present the example, short numbered steps, and the final answer.\n" +
+  "- Provide the example and its solution.\n" +
+  "- If the user asks for steps, show concise steps.\n" +
   "- Keep the answer concise and user-facing.\n" +
-  "- Format mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...\\] for display math.\n" +
-  "- Do not reveal hidden reasoning, self-talk, retries, or formatting instructions.\n" +
-  "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
-  "- Include the method briefly before the final answer.\n" +
-  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
-  "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
-  "- Then write Final Answer: on its own line.\n" +
-  "- After Final Answer:, return only the clean worked example and answer.";
+  "- Format mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...] for display math.\n" +
+  "- Do not include chain-of-thought or hidden reasoning.\n" +
+  "- If the user asks to continue, return only the continuation of the answer.";
 const EXAMPLE_RETRY_SYSTEM_PROMPT =
   "SYSTEM: Provide one short solved math example for the user.\n" +
   "RULES:\n" +
-  "- Keep the example, concise numbered steps, and the final answer.\n" +
-  "- No prompt echo, no self-talk, and no formatting commentary.\n" +
-  "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
-  "- Format mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...\\] for display math.\n" +
-  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
-  "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
-  "- Then write Final Answer: on its own line.\n" +
-  "- After Final Answer:, return only the clean worked example and answer.";
+  "- Keep the example and solution concise.\n" +
+  "- If the user asks for steps, show concise steps.\n" +
+  "- Format mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...] for display math.\n" +
+  "- Do not include chain-of-thought or hidden reasoning.\n" +
+  "- If the user asks to continue, return only the continuation of the answer.";
 const COMPACT_SOLVER_SYSTEM_PROMPT =
-  "SYSTEM: Give a concise user-facing worked math solution.\n" +
+  "SYSTEM: Give a concise user-facing math solution.\n" +
   "RULES:\n" +
-  "- Keep 3 to 6 concise numbered steps and the final answer.\n" +
-  "- Preserve the key method, including intermediate equations or matrix operations when needed.\n" +
-  "- Format mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...\\] for display math.\n" +
-  "- No chain-of-thought, no self-talk, and no prompt echo.\n" +
-  "- Do not use narration such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
-  "- Do not mention bullets, headings, line counts, or formatting rules.\n" +
-  "- No repetition, no failed attempts, no meta commentary.\n" +
-  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
-  "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
-  "- Then write Final Answer: on its own line.\n" +
-  "- After Final Answer:, return only the clean worked solution and answer.";
+  "- Provide a clear answer; include key method details when useful.\n" +
+  "- If the user asks for steps, show concise steps.\n" +
+  "- Format mathematics as readable LaTeX; prefer \\(...\\) for inline math and \\[...] for display math.\n" +
+  "- Do not include chain-of-thought or hidden reasoning.\n" +
+  "- If the user asks to continue, return only the continuation of the answer.";
 const REWRITE_SYSTEM_PROMPT =
   "SYSTEM: Rewrite the draft math answer for the end user.\n" +
   "RULES:\n" +
   "- Keep the mathematics unchanged.\n" +
-  "- Remove narration, meta wording, and explanatory chatter.\n" +
-  "- Keep a concise worked solution with numbered steps and a final answer.\n" +
-  "- Normalize mathematics into readable LaTeX; prefer \\(...\\) for inline math and \\[...\\] for display math.\n" +
+  "- Remove narration, meta wording, and prompt echo.\n" +
+  "- Keep a concise user-facing answer; include steps only if the user asked for them.\n" +
+  "- Normalize mathematics into readable LaTeX; prefer \\(...\\) for inline math and \\[...] for display math.\n" +
   "- Preserve essential intermediate equations, matrices, substitutions, or elimination steps.\n" +
-  "- Do not use phrases such as 'I should', 'let me think', 'the prompt says', or 'the system prompt instructs'.\n" +
-  "- Do not mention formatting rules, headings, or bullets.\n" +
+  "- Do not include chain-of-thought or hidden reasoning.\n" +
   "- Return only the rewritten answer.\n" +
-  "- If the user asks to continue, return only the continuation of the final answer (no <think> block, no 'Final Answer:' line).\n" +
-  "OUTPUT CONTRACT (MANDATORY):\n" +
-  "- Put the short reasoning summary inside one <think>...</think> block.\n" +
-  "- Then write Final Answer: on its own line.\n" +
-  "- After Final Answer:, return only the rewritten user-facing answer.";
+  "- If the user asks to continue, return only the continuation of the answer.";
 const GENERATION_REQUEST_PATTERNS: readonly RegExp[] = [
   /\b(?:give|create|generate|provide|make|write|list|suggest)\b[\s\S]{0,40}\b(?:exercise(?:s)?|example(?:s)?|practice(?:\s+problems?)?|worksheet|quiz|problem\s+set)\b/i,
   /\b(?:exercise(?:s)?|example(?:s)?|practice(?:\s+problems?)?|worksheet|quiz|problem\s+set)\b[\s\S]{0,40}\b(?:please\s+)?(?:give|create|generate|provide|make|write|list|suggest)\b/i,
@@ -161,7 +113,6 @@ const SOLVE_SECTION_PATTERNS: readonly RegExp[] = [
   /\bmaximi[sz]e\b/i,
   /\bsubject\s+to\b/i,
 ];
-const META_REASONING_PATTERN = /i will|let's solve|we are given/gi;
 
 // ==============================
 // Math Pipeline
@@ -209,13 +160,13 @@ function buildContinuationPrompt(
   return [
     systemPrompt,
     "",
-    "User: The previous answer was cut off. Continue the Final Answer only.",
-    "Do not repeat any earlier text. Do not include a <think> block or the words 'Final Answer'.",
+    "User: The previous answer was cut off. Continue the answer only.",
+    "Do not repeat any earlier text. Do not include chain-of-thought or a <think> block.",
     "",
     "Original problem:",
     userMessage,
     "",
-    "Final Answer so far:",
+    "Answer so far:",
     answerSoFar,
   ].join("\n");
 }
@@ -411,7 +362,11 @@ export function salvageTruncatedResponse(text: string): string {
 }
 
 export function normalizeMathResponse(text: string): string {
-  return shapeMathResponse(formatMathResponse(text)).replace(META_REASONING_PATTERN, "").trim();
+  return formatMathResponse(text)
+    .replace(/<think[^>]*>[\s\S]*?<\/think>/gi, "")
+    .replace(/<\/?think[^>]*>/gi, "")
+    .replace(/(?:^|\n)\s*(?:#{1,6}\s*)?final answer\s*:?\s*/gi, "\n")
+    .trim();
 }
 
 function extractMathCandidate(text: string, adapterError?: string | null): string {
@@ -513,33 +468,6 @@ export async function solveMathDirect(
   let processed = normalizeMathResponse(extractMathCandidate(result.text, result.error));
   let incompleteOutput =
     result.truncated || hasIncompleteMathTail(processed) || hasIncompleteProseTail(processed);
-  const hasLeakage = hasMathLeakageSignals(result.text) || hasMathLeakageSignals(processed);
-  const hasPromptEcho = hasMathPromptEchoSignals(result.text) || hasMathPromptEchoSignals(processed);
-  const hasNarrativeStyle = hasMathNarrativeSignals(result.text) || hasMathNarrativeSignals(processed);
-
-  const needsRetry = !incompleteOutput && (hasLeakage || hasPromptEcho || hasNarrativeStyle);
-  if (needsRetry) {
-    const retryMode = intent === "generation" || intent === "example" ? "compact-generation" : "compact-solve";
-    console.log(`[MathPipeline] compact retry triggered for quality issues (${intent})`);
-    if (result.finish_reason) {
-      console.log(`[MathPipeline] provider finish_reason=${result.finish_reason}`);
-    }
-    if (hasLeakage) {
-      console.log("[MathPipeline] retry_trigger=leakage");
-    }
-    if (hasPromptEcho) {
-      console.log("[MathPipeline] retry_trigger=prompt_echo");
-    }
-    if (hasNarrativeStyle) {
-      console.log("[MathPipeline] retry_trigger=narrative_style");
-    }
-    console.log(`[MathPipeline] retry_strategy=${retryMode}`);
-    result = await makeCall(retryMode);
-    thinking = extractMathThinking(result.text, result.error) ?? thinking;
-    processed = normalizeMathResponse(extractMathCandidate(result.text, result.error));
-    incompleteOutput =
-      result.truncated || hasIncompleteMathTail(processed) || hasIncompleteProseTail(processed);
-  }
 
   if (incompleteOutput) {
     console.log(`[MathPipeline] continuation_loop start truncated=${result.truncated ? "true" : "false"}`);

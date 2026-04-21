@@ -528,23 +528,16 @@ def _should_request_worked_explanation(
     task: str,
     model_override: Optional[str],
 ) -> bool:
-    normalized_task = (task or "").strip().lower()
-    normalized_override = (model_override or "").strip().lower()
     prompt_text = (prompt or "").lower()
-
-    if normalized_task == "math_reasoning":
-        return True
-    if normalized_override == "openai-large":
-        return True
 
     explanation_patterns = [
         r"\bshow\s+(?:the\s+)?steps?\b",
         r"\bstep[- ]by[- ]step\b",
         r"\bwalk\s+me\s+through\b",
-        r"\busing\s+the\b",
-        r"\bgauss[- ](?:elimination|seidel)\b",
-        r"\bmethod\b",
-        r"\bsolve\b",
+        r"\bshow\s+(?:your\s+)?work\b",
+        r"\bfull\s+working\b",
+        r"\bexplain\s+(?:your|the)\s+reasoning\b",
+        r"\bplease\s+explain\b",
         r"\bprove\b",
         r"\bderive\b",
     ]
