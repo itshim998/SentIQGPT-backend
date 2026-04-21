@@ -8,6 +8,8 @@ import { extractUserFacingAnswer, finalizeStructuredReply } from "./replyGuard";
 
 const REASONING_MAX_OUTPUT_TOKENS = 2600;
 const CONTINUATION_MAX_OUTPUT_TOKENS = 1800;
+const RAW_REASONING_FALLBACK =
+  "I'm currently unable to process your request. Please try again shortly.";
 
 function mergeContinuation(base: string, continuation: string): string {
   const left = base.trimEnd();
@@ -99,13 +101,25 @@ export async function handleChat(args: {
     adapterError = result.error;
     finishReason = result.finish_reason;
   } catch {
-    raw = getDemoFallbackResponse("chat");
+    raw = args.reasoningMode ? RAW_REASONING_FALLBACK : getDemoFallbackResponse("chat");
   }
 
   if (finishReason || truncated) {
     console.log(
       `[ChatHandler] result finish_reason=${finishReason ?? "none"} truncated=${truncated ? "true" : "false"} chars=${raw.length}`,
     );
+  }
+
+  if (args.reasoningMode) {
+    const finalAnswer = raw.trim() || RAW_REASONING_FALLBACK;
+    return {
+      answer: finalAnswer,
+      reply: finalAnswer,
+      thinking: undefined,
+      disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+      model_used,
+      fallback,
+    };
   }
 
   let disclaimer = "SentIQGPT is an AI assistant. Verify important information independently.";

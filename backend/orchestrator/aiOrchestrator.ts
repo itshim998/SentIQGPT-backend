@@ -21,8 +21,7 @@
 //   6. Knowledge Cache Layer
 //        └── LLM answer cache (check before pipeline, store after reflection)
 
-import { DEFAULT_SOLVER_SYSTEM_PROMPT, solveMathDirect } from "../ai/mathVerifier";
-import { finalizeMathReply } from "../ai/mathAnswerFinalizer";
+import { solveMathDirect } from "../ai/mathVerifier";
 import { finalizeUserFacingReply } from "../ai/replyGuard";
 import { buildContext } from "../context/contextBuilder";
 import { planTask } from "./planner";
@@ -333,7 +332,7 @@ async function _orchestrateInner(
     console.log(`[MathPipeline] math query detected on raw input — bypassing planner`);
     console.log(`[MathPipeline] solving with openai-large`);
 
-    const mathResult = await solveMathDirect(userMessage, DEFAULT_SOLVER_SYSTEM_PROMPT, rawContext?.userId);
+    const mathResult = await solveMathDirect(userMessage, rawContext?.userId);
 
     console.log(
       `[MathPipeline] solved using openai-large`,
@@ -341,7 +340,7 @@ async function _orchestrateInner(
     console.log(`[MathPipeline] reflection skipped — math query handled by direct math pipeline`);
     console.log(`[MathPipeline] returning result`);
 
-    const finalReply = finalizeMathReply(mathResult.answer);
+    const finalReply = mathResult.answer;
     const computedConfidence = computeConfidence(
       mathResult.model_used,
       mathResult.fallback,
@@ -405,7 +404,7 @@ async function _orchestrateInner(
 
   const finalReply =
     reflected.merged._isMathResult
-      ? finalizeMathReply(reflected.merged.reply)
+      ? (reflected.merged.reply?.trim() || "Sorry, something went wrong. Please try again.")
       : reflected.merged.reply !== undefined
       ? finalizeReply(reflected.merged.reply)
       : reflected.merged.route === "memory_update" && reflected.merged.memory.stored

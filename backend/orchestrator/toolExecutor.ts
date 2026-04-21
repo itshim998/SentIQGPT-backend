@@ -23,7 +23,7 @@ import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
 import { executeTavilySearchPipeline } from "../tools/webSearch/tavilySearchPipeline";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
-import { DEFAULT_SOLVER_SYSTEM_PROMPT, solveMathDirect } from "../ai/mathVerifier";
+import { solveMathDirect } from "../ai/mathVerifier";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
 import { detectCodeQuery, selectModelForPrompt, isMathQuery } from "./modelRouter";
@@ -112,7 +112,7 @@ async function execConversation(
   // instead of the standard single-model chat handler.
   if (!detectCodeQuery(input) && isMathQuery(input)) {
     console.log(`[MathPipeline] math query detected — routing to direct openai-large solver`);
-    const mathResult = await solveMathDirect(augmentedInput, DEFAULT_SOLVER_SYSTEM_PROMPT);
+    const mathResult = await solveMathDirect(augmentedInput);
     console.log(
       `[MathPipeline] solved using openai-large`,
     );
@@ -476,3 +476,4 @@ export async function executePlan(
   console.log(`[EXECUTOR] plan complete: ${results.length} steps executed`);
   return { steps: results };
 }
+

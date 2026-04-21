@@ -425,14 +425,6 @@ const DEFAULT_SYSTEM_PROMPT =
   "- For medicines or health products: provide general factual information. " +
   "Do NOT provide diagnosis, treatment instructions, or medical advice.\n";
 
-const REASONING_SYSTEM_PROMPT =
-  "SYSTEM: You are SentIQGPT, a precise reasoning assistant for end users.\n" +
-  "RULES:\n" +
-  "- Provide a clear user-facing answer.\n" +
-  "- Do not include chain-of-thought or hidden reasoning.\n" +
-  "- If the user asks for steps, show concise steps.\n" +
-  "- Do not add meta commentary.\n";
-
 export interface ChatContext {
   readonly userMessage: string;
   readonly recentMessages?: readonly { role: string; content: string }[];
@@ -454,7 +446,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   let SYSTEM_PROMPT: string;
   
   if (ctx.reasoningMode) {
-    SYSTEM_PROMPT = REASONING_SYSTEM_PROMPT;
+    SYSTEM_PROMPT = "";
   } else if ((ctx.modelOverride === "mistral" || ctx.modelOverride === "gemini-fast") && !hasFiles) {
     // General text chat stays warm and conversational after the default model switch.
     SYSTEM_PROMPT = MISTRAL_CONVERSATIONAL_SYSTEM_PROMPT;
@@ -464,7 +456,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   }
 
   // When files are present, add explicit file-analysis instructions
-  if (hasFiles) {
+  if (hasFiles && !ctx.reasoningMode) {
     const filenames = ctx.fileReferences!.map((f) => f.filename).join(", ");
     SYSTEM_PROMPT +=
       "\nFILE ANALYSIS MODE:\n" +
