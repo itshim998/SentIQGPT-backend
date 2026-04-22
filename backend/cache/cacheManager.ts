@@ -75,8 +75,12 @@ export interface CachedSearchResult {
     title: string;
     url: string;
     snippet: string;
+    content?: string;
+    images?: string[];
+    favicon?: string;
     body?: string;
     source: SearchSource;
+    score?: number;
   }[];
   readonly provider_used?: string;
 }

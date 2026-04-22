@@ -1813,19 +1813,7 @@ app.post(
     
     if ((queryClassification.needsWebSearch || forceWebSearch) && tavilyAvailable) {
       console.log(`[Stream] web search detected — redirecting to orchestrator (rule: ${queryClassification.matchedRule}, category: ${queryClassification.category})`);
-      let sseStarted = false;
-      const streamMetrics = createStreamMetrics("chat.stream.web_search", Date.now(), { model: "orchestrator" });
       try {
-        // Send SSE headers early so frontend can detect route before answer arrives
-        res.setHeader("Content-Type", "text/event-stream");
-        res.setHeader("Cache-Control", "no-cache");
-        res.setHeader("Connection", "keep-alive");
-        res.setHeader("X-Accel-Buffering", "no");
-        res.flushHeaders();
-        sseStarted = true;
-        // Emit route metadata so frontend can show "Searching..." indicator
-        await writeSseJson({ type: "route", route: "web_search" });
-
         const result = await orchestrate({
           userMessage: parsed.data.message,
           context: {
@@ -1837,38 +1825,14 @@ app.post(
             userId,
           },
         });
-        // Return as SSE stream so the frontend handles it uniformly
-        const webSearchThinking = gateThinking(result.thinking, { route: result.route });
-        if (webSearchThinking && webSearchThinking.trim()) {
-          await writeSseJson({ type: "thinking", text: webSearchThinking.trim() });
-        }
         if (result.reply) {
-          // Stream the web search answer in chunks for smooth typing effect
-          const CHUNK_SIZE = 128;
-          for (let i = 0; i < result.reply.length; i += CHUNK_SIZE) {
-            if (clientDisconnected) break;
-            const chunk = result.reply.slice(i, i + CHUNK_SIZE);
-            recordStreamChunk(streamMetrics, chunk);
-            await writeSseJson({ type: "token", text: chunk });
-          }
-        }
-        if (!clientDisconnected && result.reply) {
           await persistAssistantMessage(result.reply);
         }
-        if (!clientDisconnected) {
-          await persistStoredMemory(result.memory);
-        }
-        await writeSseEvent("[DONE]");
-        logStreamMetrics(streamMetrics, "complete");
-        finishSse();
+        await persistStoredMemory(result.memory);
+        res.json(result);
       } catch (err) {
-        if (sseStarted || res.headersSent) {
-          await sendStreamError(err, streamMetrics);
-          finishSse();
-        } else {
-          const message = err instanceof Error ? err.message : String(err);
-          res.status(500).json({ error: message });
-        }
+        const message = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ error: message });
       }
       return;
     }

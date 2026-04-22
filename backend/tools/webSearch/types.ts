@@ -9,6 +9,12 @@ export interface SearchResult {
   readonly title: string;
   readonly url: string;
   readonly snippet: string;
+  /** Provider preview content (Tavily `content`). */
+  readonly content?: string;
+  /** Provider-provided images for this result (if available). */
+  readonly images?: string[];
+  /** Provider favicon URL for this result (if available). */
+  readonly favicon?: string;
   /** Full extracted body text (populated by contentExtractor). */
   readonly body?: string;
   /** Which provider produced this result. */

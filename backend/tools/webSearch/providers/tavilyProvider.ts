@@ -34,12 +34,22 @@ interface TavilySearchResult {
   url: string;
   content: string;
   score: number;
+  images?: string[];
+  favicon?: string;
 }
 
 interface TavilyResponse {
   results: TavilySearchResult[];
   answer?: string;
   query: string;
+  images?: string[];
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item || "").trim())
+    .filter((item) => item.length > 0);
 }
 
 // ==============================
@@ -158,6 +168,31 @@ export class TavilyProvider implements WebSearchProvider {
   }
 
   async search(query: string, maxResults = 5): Promise<readonly SearchResult[]> {
+    const data = await this.executeWithRotation(query, maxResults, (apiKey) =>
+      this.executeRequest(query, apiKey, maxResults)
+    );
+    return this.mapResults(data);
+  }
+
+  async searchWithMetadata(
+    query: string,
+    maxResults = 5
+  ): Promise<{ results: SearchResult[]; answer?: string; images: string[] }> {
+    const data = await this.executeWithRotation(query, maxResults, (apiKey) =>
+      this.executeRequest(query, apiKey, maxResults)
+    );
+    return {
+      results: this.mapResults(data),
+      answer: typeof data.answer === "string" ? data.answer.trim() : undefined,
+      images: normalizeStringArray(data.images),
+    };
+  }
+
+  private async executeWithRotation<T>(
+    query: string,
+    maxResults: number,
+    runner: (apiKey: string) => Promise<T>
+  ): Promise<T> {
     const totalKeys = keyManager.getTotalCount();
     if (totalKeys === 0) {
       throw new Error("No Tavily API keys configured");
@@ -173,9 +208,9 @@ export class TavilyProvider implements WebSearchProvider {
       }
 
       try {
-        const results = await this.executeSearch(query, apiKey, maxResults);
+        const result = await runner(apiKey);
         keyManager.markSuccess(apiKey);
-        return results;
+        return result;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
 
@@ -198,11 +233,11 @@ export class TavilyProvider implements WebSearchProvider {
     throw lastError ?? new Error("All Tavily API keys failed");
   }
 
-  private async executeSearch(
+  private async executeRequest(
     query: string,
     apiKey: string,
     maxResults: number
-  ): Promise<SearchResult[]> {
+  ): Promise<TavilyResponse> {
     const response = await fetch(TAVILY_API_ENDPOINT, {
       method: "POST",
       headers: {
@@ -211,7 +246,10 @@ export class TavilyProvider implements WebSearchProvider {
       },
       body: JSON.stringify({
         query,
-        search_depth: "basic",
+        search_depth: "advanced",
+        include_answer: "advanced",
+        include_images: true,
+        include_favicon: true,
         max_results: maxResults,
       }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -228,19 +266,24 @@ export class TavilyProvider implements WebSearchProvider {
       throw new Error("Invalid Tavily response: missing results array");
     }
 
-    const results: SearchResult[] = data.results.map((r) => ({
+    console.log(
+      `[Tavily] returned ${data.results.length} result(s) for "${query.slice(0, 50)}..."`
+    );
+
+    return data;
+  }
+
+  private mapResults(data: TavilyResponse): SearchResult[] {
+    return data.results.map((r) => ({
       title: r.title || "Untitled",
       url: r.url,
       snippet: r.content?.slice(0, 500) ?? "",
+      content: r.content ?? "",
+      images: normalizeStringArray(r.images),
+      favicon: r.favicon ? String(r.favicon) : undefined,
       source: this.source,
       score: r.score,
     }));
-
-    console.log(
-      `[Tavily] returned ${results.length} result(s) for "${query.slice(0, 50)}..."`
-    );
-
-    return results;
   }
 }
 

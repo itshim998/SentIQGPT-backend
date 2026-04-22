@@ -27,6 +27,7 @@ import { solveMathDirect } from "../ai/mathVerifier";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
 import { detectCodeQuery, selectModelForPrompt, isMathQuery } from "./modelRouter";
+import type { SearchResult } from "../tools/webSearch/types";
 
 // ==============================
 // Types
@@ -75,6 +76,16 @@ export interface StepResult {
     importance?: number;
     scope?: "global" | "chat";
     chat_id?: string | null;
+  };
+  /** Web search payload (web_search) */
+  readonly web_search?: {
+    query: string;
+    answer?: string;
+    images?: string[];
+    results: SearchResult[];
+    sources: Array<{ title: string; url: string }>;
+    queriesUsed: number;
+    provider?: string;
   };
   readonly error?: string;
 }
@@ -278,7 +289,7 @@ async function execWebSearch(
     const result = await executeTavilySearchPipeline({
       query: input,
       maxResults: 8,
-      skipLLMSynthesis: false,
+      skipLLMSynthesis: true,
     });
 
     if (!result.success) {
@@ -298,8 +309,17 @@ async function execWebSearch(
       step: 0,
       tool: "web_search",
       reply: result.answer,
-      model_used: "gemini-fast",
-      fallback: false,
+      model_used: "tavily",
+      fallback: !result.answer,
+      web_search: {
+        query: result.query,
+        answer: result.answer,
+        images: result.images ?? [],
+        results: result.results,
+        sources: result.sources,
+        queriesUsed: result.queriesUsed,
+        provider: result.provider,
+      },
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

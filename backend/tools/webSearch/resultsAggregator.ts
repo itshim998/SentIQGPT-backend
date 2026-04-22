@@ -81,7 +81,7 @@ function calculateRelevanceScore(
 ): number {
   const queryKeywords = extractKeywords(originalQuery);
   const titleKeywords = extractKeywords(result.title);
-  const snippetKeywords = extractKeywords(result.snippet);
+  const snippetKeywords = extractKeywords(result.content ?? result.snippet ?? "");
 
   // Calculate keyword overlap
   let titleMatches = 0;
@@ -119,7 +119,7 @@ function calculateAggregateScore(
   let qualityBonus = 0;
 
   // Prefer results with longer snippets (more content)
-  if ((result.snippet?.length ?? 0) > 200) {
+  if (((result.content ?? result.snippet ?? "").length) > 200) {
     qualityBonus += 0.05;
   }
 
@@ -270,6 +270,7 @@ export function formatResultsForLLM(
   const formattedResults = results.map((result, index) => {
     const title = result.title.slice(0, 100);
     const content = result.body?.slice(0, maxCharsPerResult) ||
+      result.content?.slice(0, maxCharsPerResult) ||
       result.snippet?.slice(0, maxCharsPerResult) ||
       "No content available";
 

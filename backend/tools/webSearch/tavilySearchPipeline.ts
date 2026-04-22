@@ -51,9 +51,11 @@ export interface TavilySearchResponse {
   success: boolean;
   query: string;
   answer?: string;
+  images?: string[];
   results: SearchResult[];
   sources: Array<{ title: string; url: string }>;
   queriesUsed: number;
+  provider?: string;
   error?: string;
 }
 
@@ -277,14 +279,33 @@ export async function executeTavilySearchPipeline(
   const expanded = expandQuery(query);
   console.log(`[TavilyPipeline] expanded to ${expanded.all.length} queries`);
 
-  // Step 2: Execute parallel searches
-  const resultSets = await executeParallelSearches(
-    expanded.all,
+  // Step 2: Execute primary query with metadata (answer/images)
+  let primaryAnswer: string | undefined;
+  let primaryImages: string[] = [];
+  let primaryResults: SearchResult[] = [];
+
+  try {
+    const primary = await provider.searchWithMetadata(
+      expanded.original,
+      MAX_RESULTS_PER_QUERY
+    );
+    primaryAnswer = primary.answer;
+    primaryImages = primary.images;
+    primaryResults = primary.results;
+  } catch (err) {
+    console.log(`[TavilyPipeline] primary query failed: ${err}`);
+  }
+
+  // Step 3: Execute parallel searches for variations
+  const variationResults = await executeParallelSearches(
+    expanded.variations,
     provider,
     MAX_RESULTS_PER_QUERY
   );
 
-  // Step 3: Aggregate results
+  const resultSets = [primaryResults, ...variationResults];
+
+  // Step 4: Aggregate results
   const aggregated = aggregateResults(resultSets, expanded.original, maxResults);
 
   if (aggregated.results.length === 0) {
@@ -298,7 +319,7 @@ export async function executeTavilySearchPipeline(
     };
   }
 
-  // Step 4: Extract content from top results
+  // Step 5: Extract content from top results
   let enrichedResults: SearchResult[];
   try {
     enrichedResults = await extractContent(
@@ -317,14 +338,15 @@ export async function executeTavilySearchPipeline(
     enrichedResults = aggregated.results;
   }
 
-  // Step 5: Prepare context for LLM
+  // Step 6: Prepare context for LLM (fallback only)
   const context = formatResultsForLLM(enrichedResults);
   const sources = extractSourceReferences(enrichedResults);
 
-  // Step 6: Synthesize with LLM (unless skipped)
+  // Step 7: Prefer Tavily answer, fallback to LLM when missing
   let answer: string | undefined;
-
-  if (!skipLLMSynthesis) {
+  if (primaryAnswer && primaryAnswer.trim()) {
+    answer = primaryAnswer.trim();
+  } else if (!skipLLMSynthesis) {
     const synthesis = await synthesizeWithLLM(query, context);
 
     if (synthesis.success) {
@@ -338,15 +360,6 @@ export async function executeTavilySearchPipeline(
     answer = generateFallbackAnswer(enrichedResults, query);
   }
 
-  // Append source references to answer
-  if (answer && sources.length > 0) {
-    const sourceList = sources
-      .slice(0, 5)
-      .map((s, i) => `${i + 1}. [${s.title}](${s.url})`)
-      .join("\n");
-    answer = `${answer}\n\n**Sources:**\n${sourceList}`;
-  }
-
   console.log(
     `[TavilyPipeline] pipeline complete: ${enrichedResults.length} results, ${expanded.all.length} queries used`
   );
@@ -355,9 +368,11 @@ export async function executeTavilySearchPipeline(
     success: true,
     query,
     answer,
+    images: primaryImages,
     results: enrichedResults,
     sources,
     queriesUsed: expanded.all.length,
+    provider: "tavily",
   };
 }
 

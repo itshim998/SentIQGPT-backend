@@ -34,6 +34,7 @@ import type { RawMessageContext } from "../context/contextBuilder";
 import type { DetectedTool } from "./toolDetector";
 import type { PlanTool } from "./planner";
 import type { StepResult } from "./toolExecutor";
+import type { SearchResult } from "../tools/webSearch/types";
 
 // ==============================
 // Types
@@ -89,6 +90,16 @@ export interface OrchestratorResponse {
     importance?: number;
     scope?: "global" | "chat";
     chat_id?: string | null;
+  };
+  /** Web search payload (for structured rendering) */
+  readonly web_search?: {
+    query: string;
+    answer?: string;
+    images?: string[];
+    results: SearchResult[];
+    sources: Array<{ title: string; url: string }>;
+    queriesUsed: number;
+    provider?: string;
   };
   /** Self-reflection evaluation (if run) */
   readonly reflection?: {
@@ -181,6 +192,7 @@ function mergeResults(
   let image: OrchestratorResponse["image"] | undefined;
   let chart: OrchestratorResponse["chart"] | undefined;
   let memory = memoryPayload;
+  let web_search: OrchestratorResponse["web_search"] | undefined;
   let route: DetectedTool = "normal_chat";
   let _isMathResult = false;
   let _model_used: string | undefined;
@@ -234,6 +246,10 @@ function mergeResults(
         importance: step.memory.importance,
       };
     }
+
+    if (step.web_search) {
+      web_search = step.web_search;
+    }
   }
 
   if (replyParts.length > 0) {
@@ -255,6 +271,7 @@ function mergeResults(
     image,
     chart,
     memory,
+    web_search,
     _isMathResult,
     _model_used,
     _fallback,
