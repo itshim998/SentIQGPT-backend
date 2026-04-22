@@ -23,6 +23,7 @@
 //   - Graceful fallback on total failure
 
 import { TavilyProvider, isTavilyAvailable, getTavilyKeyStatus } from "./providers/tavilyProvider";
+import { normalizeWebSearchMode, type WebSearchMode } from "./webSearchMode";
 import { expandQuery } from "./queryExpander";
 import { aggregateResults, formatResultsForLLM, extractSourceReferences } from "./resultsAggregator";
 import { extractContent } from "./contentExtractor";
@@ -45,6 +46,7 @@ export interface TavilySearchRequest {
   query: string;
   maxResults?: number;
   skipLLMSynthesis?: boolean;
+  webSearchMode?: WebSearchMode;
 }
 
 export interface TavilySearchResponse {
@@ -152,13 +154,14 @@ async function synthesizeWithLLM(
 async function executeParallelSearches(
   queries: string[],
   provider: TavilyProvider,
-  maxResultsPerQuery: number
+  maxResultsPerQuery: number,
+  mode: WebSearchMode
 ): Promise<ReadonlyArray<readonly SearchResult[]>> {
   console.log(`[TavilyPipeline] executing ${queries.length} parallel searches`);
 
   const searchPromises = queries.map(async (q) => {
     try {
-      return await provider.search(q, maxResultsPerQuery);
+      return await provider.search(q, maxResultsPerQuery, mode);
     } catch (err) {
       console.log(`[TavilyPipeline] search failed for "${q.slice(0, 40)}...": ${err}`);
       return [] as readonly SearchResult[];
@@ -255,7 +258,13 @@ function generateFallbackAnswer(
 export async function executeTavilySearchPipeline(
   request: TavilySearchRequest
 ): Promise<TavilySearchResponse> {
-  const { query, maxResults = TOTAL_MAX_RESULTS, skipLLMSynthesis = false } = request;
+  const {
+    query,
+    maxResults = TOTAL_MAX_RESULTS,
+    skipLLMSynthesis = false,
+    webSearchMode,
+  } = request;
+  const mode = normalizeWebSearchMode(webSearchMode);
 
   console.log(`[TavilyPipeline] starting pipeline for: "${query.slice(0, 60)}..."`);
 
@@ -287,7 +296,8 @@ export async function executeTavilySearchPipeline(
   try {
     const primary = await provider.searchWithMetadata(
       expanded.original,
-      MAX_RESULTS_PER_QUERY
+      MAX_RESULTS_PER_QUERY,
+      mode
     );
     primaryAnswer = primary.answer;
     primaryImages = primary.images;
@@ -300,7 +310,8 @@ export async function executeTavilySearchPipeline(
   const variationResults = await executeParallelSearches(
     expanded.variations,
     provider,
-    MAX_RESULTS_PER_QUERY
+    MAX_RESULTS_PER_QUERY,
+    mode
   );
 
   const resultSets = [primaryResults, ...variationResults];

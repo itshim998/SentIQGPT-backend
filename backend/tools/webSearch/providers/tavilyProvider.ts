@@ -10,6 +10,11 @@
 // making it ideal for AI research-style queries.
 
 import type { WebSearchProvider, SearchResult } from "../types";
+import {
+  DEFAULT_WEB_SEARCH_MODE,
+  normalizeWebSearchMode,
+  type WebSearchMode,
+} from "../webSearchMode";
 
 // ==============================
 // Configuration
@@ -167,24 +172,31 @@ export class TavilyProvider implements WebSearchProvider {
     return keyManager.hasKeys() && keyManager.getAvailableCount() > 0;
   }
 
-  async search(query: string, maxResults = 5): Promise<readonly SearchResult[]> {
+  async search(
+    query: string,
+    maxResults = 5,
+    mode: WebSearchMode = DEFAULT_WEB_SEARCH_MODE
+  ): Promise<readonly SearchResult[]> {
+    const normalizedMode = normalizeWebSearchMode(mode);
     const data = await this.executeWithRotation(query, maxResults, (apiKey) =>
-      this.executeRequest(query, apiKey, maxResults)
+      this.executeRequest(query, apiKey, maxResults, normalizedMode)
     );
-    return this.mapResults(data);
+    return this.mapResults(data, normalizedMode);
   }
 
   async searchWithMetadata(
     query: string,
-    maxResults = 5
+    maxResults = 5,
+    mode: WebSearchMode = DEFAULT_WEB_SEARCH_MODE
   ): Promise<{ results: SearchResult[]; answer?: string; images: string[] }> {
+    const normalizedMode = normalizeWebSearchMode(mode);
     const data = await this.executeWithRotation(query, maxResults, (apiKey) =>
-      this.executeRequest(query, apiKey, maxResults)
+      this.executeRequest(query, apiKey, maxResults, normalizedMode)
     );
     return {
-      results: this.mapResults(data),
+      results: this.mapResults(data, normalizedMode),
       answer: typeof data.answer === "string" ? data.answer.trim() : undefined,
-      images: normalizeStringArray(data.images),
+      images: normalizedMode === "advanced" ? normalizeStringArray(data.images) : [],
     };
   }
 
@@ -236,22 +248,28 @@ export class TavilyProvider implements WebSearchProvider {
   private async executeRequest(
     query: string,
     apiKey: string,
-    maxResults: number
+    maxResults: number,
+    mode: WebSearchMode
   ): Promise<TavilyResponse> {
+    const requestBody: Record<string, unknown> = {
+      query,
+      search_depth: "advanced",
+      include_answer: mode === "advanced" ? "advanced" : "basic",
+      max_results: maxResults,
+    };
+
+    if (mode === "advanced") {
+      requestBody.include_images = true;
+      requestBody.include_favicon = true;
+    }
+
     const response = await fetch(TAVILY_API_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        query,
-        search_depth: "advanced",
-        include_answer: "advanced",
-        include_images: true,
-        include_favicon: true,
-        max_results: maxResults,
-      }),
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -273,14 +291,14 @@ export class TavilyProvider implements WebSearchProvider {
     return data;
   }
 
-  private mapResults(data: TavilyResponse): SearchResult[] {
+  private mapResults(data: TavilyResponse, mode: WebSearchMode): SearchResult[] {
     return data.results.map((r) => ({
       title: r.title || "Untitled",
       url: r.url,
       snippet: r.content?.slice(0, 500) ?? "",
       content: r.content ?? "",
-      images: normalizeStringArray(r.images),
-      favicon: r.favicon ? String(r.favicon) : undefined,
+      images: mode === "advanced" ? normalizeStringArray(r.images) : [],
+      favicon: mode === "advanced" && r.favicon ? String(r.favicon) : undefined,
       source: this.source,
       score: r.score,
     }));

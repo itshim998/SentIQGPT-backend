@@ -21,6 +21,7 @@ import { formatMemoriesForPrompt } from "../memory/memoryStore";
 import { selectMemoriesForQuery } from "./memorySelector";
 import { compressConversation, CONVERSATION_WINDOW } from "./contextCompressor";
 import { semanticMemorySearch } from "../memory/semanticSearch";
+import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 
 export interface RawMessageContext {
   readonly recent_messages?: readonly { role: string; content: string }[];
@@ -29,6 +30,7 @@ export interface RawMessageContext {
     filename: string;
     extractedText: string;
   }[];
+  readonly web_search_mode?: WebSearchMode;
   readonly userMessage?: string;
   readonly userDb?: SupabaseClient;
   readonly userId?: string;
@@ -45,6 +47,7 @@ export interface BuiltContext {
   readonly memoryPromptBlock: string;
   readonly conversationSummary?: string;
   readonly hasFileContext: boolean;
+  readonly webSearchMode?: WebSearchMode;
   readonly userId?: string;
 }
 
@@ -193,6 +196,7 @@ export async function buildContext(
     memoryPromptBlock,
     conversationSummary: summary,
     hasFileContext: fileReferences.length > 0,
+    webSearchMode: raw.web_search_mode,
     userId: normalizedUserId,
   };
 }
@@ -265,6 +269,7 @@ export async function buildContextFast(
     memoryPromptBlock,
     conversationSummary: undefined, // No compression = no summary
     hasFileContext: fileReferences.length > 0,
+    webSearchMode: raw.web_search_mode,
     userId: normalizedUserId,
   };
 }

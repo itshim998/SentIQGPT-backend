@@ -23,6 +23,7 @@ export const ChatRequestSchema = z.object({
       filename: z.string(),
       extractedText: z.string(),
     })).max(10).optional(),
+    web_search_mode: z.enum(["basic", "advanced"]).optional(),
   }).optional(),
 }).transform(({ conversation_id, ...rest }) => ({
   ...rest,

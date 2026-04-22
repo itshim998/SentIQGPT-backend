@@ -22,6 +22,7 @@ import { handleChat } from "../ai/ChatHandler";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
 import { executeTavilySearchPipeline } from "../tools/webSearch/tavilySearchPipeline";
+import { normalizeWebSearchMode } from "../tools/webSearch/webSearchMode";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
 import { solveMathDirect } from "../ai/mathVerifier";
 import type { BuiltContext } from "../context/contextBuilder";
@@ -282,14 +283,17 @@ async function execChartGeneration(
 
 async function execWebSearch(
   input: string,
+  ctx: BuiltContext,
 ): Promise<StepResult> {
   console.log(`[WebSearch] executing Tavily pipeline for: "${input.slice(0, 60)}..."`);
+  const webSearchMode = normalizeWebSearchMode(ctx.webSearchMode);
 
   try {
     const result = await executeTavilySearchPipeline({
       query: input,
       maxResults: 8,
       skipLLMSynthesis: true,
+      webSearchMode,
     });
 
     if (!result.success) {
@@ -384,7 +388,7 @@ async function executeStep(
         result = await execChartGeneration(planStep.input);
         break;
       case "web_search":
-        result = await execWebSearch(planStep.input);
+        result = await execWebSearch(planStep.input, ctx);
         break;
       case "conversation":
       default:

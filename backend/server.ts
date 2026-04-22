@@ -68,6 +68,7 @@ import { orchestrate } from "./orchestrator/aiOrchestrator";
 import { detectCodeQuery, isBufferedReasoningQuery, isMathQuery, selectModelForPrompt } from "./orchestrator/modelRouter";
 import { detectExplicitMemoryWriteIntent, classifyQueryType, shouldForceWebSearch } from "./orchestrator/queryClassifier";
 import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
+import { normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
 
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
@@ -997,6 +998,7 @@ app.post(
       return;
     }
     const { sub: userId, isGuest } = getRequestUser(req);
+    const webSearchMode = parsed.data.context?.web_search_mode;
     const isReasoningQuery = isBufferedReasoningQuery(parsed.data.message);
     const isMathReasoningQuery = !detectCodeQuery(parsed.data.message) && isMathQuery(parsed.data.message);
     const isLogicReasoningQuery = isReasoningQuery && !isMathReasoningQuery;
@@ -1020,6 +1022,7 @@ app.post(
         recent_messages: parsed.data.context?.recent_messages,
         memories: [],
         file_references: orcFileRefs,
+        web_search_mode: webSearchMode,
         userMessage: parsed.data.message,
       }, undefined, userId);
 
@@ -1134,6 +1137,7 @@ app.post(
         recent_messages: parsed.data.context?.recent_messages,
         memories: parsed.data.context?.memories,
         file_references: orcFileRefs,
+        web_search_mode: webSearchMode,
         userMessage: parsed.data.message,
         conversationId: activeConversationId || undefined,
       }, userDb, userId);
@@ -1191,6 +1195,7 @@ app.post(
         recent_messages: parsed.data.context?.recent_messages,
         memories: parsed.data.context?.memories,
         file_references: orcFileRefs,
+        web_search_mode: webSearchMode,
         userDb,
         userId,
         conversationId: activeConversationId || undefined,
@@ -1359,6 +1364,7 @@ app.post(
     // If the message is a chart request, redirect to the orchestrator and return
     // the result as a single SSE JSON payload so the frontend can render it.
     const { sub: userId, isGuest } = getRequestUser(req);
+    const webSearchMode = parsed.data.context?.web_search_mode;
     const isBufferedReasoning = isBufferedReasoningQuery(parsed.data.message);
     const isMathReasoningQuery = !detectCodeQuery(parsed.data.message) && isMathQuery(parsed.data.message);
     if (isGuest) {
@@ -1386,6 +1392,7 @@ app.post(
                 recent_messages: parsed.data.context?.recent_messages,
                 memories: [],
                 file_references: parsed.data.context?.file_references,
+                web_search_mode: webSearchMode,
                 userId,
               },
             });
@@ -1402,6 +1409,7 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: [],
             file_references: parsed.data.context?.file_references,
+            web_search_mode: webSearchMode,
             userMessage: parsed.data.message,
           }, undefined, userId);
 
@@ -1441,6 +1449,7 @@ app.post(
         recent_messages: parsed.data.context?.recent_messages,
         memories: [],
         file_references: fileRefs,
+        web_search_mode: webSearchMode,
         userMessage: parsed.data.message,
       }, undefined, userId);
 
@@ -1653,6 +1662,7 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            web_search_mode: webSearchMode,
             conversationId: activeConversationId || undefined,
             userDb,
             userId,
@@ -1691,6 +1701,7 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            web_search_mode: webSearchMode,
             conversationId: activeConversationId || undefined,
             userDb,
             userId,
@@ -1748,6 +1759,7 @@ app.post(
               recent_messages: parsed.data.context?.recent_messages,
               memories: parsed.data.context?.memories,
               file_references: parsed.data.context?.file_references,
+              web_search_mode: webSearchMode,
               conversationId: activeConversationId || undefined,
               userDb,
               userId,
@@ -1770,6 +1782,7 @@ app.post(
           recent_messages: parsed.data.context?.recent_messages,
           memories: parsed.data.context?.memories,
           file_references: parsed.data.context?.file_references,
+          web_search_mode: webSearchMode,
           userMessage: parsed.data.message,
           conversationId: activeConversationId || undefined,
         }, userDb, userId);
@@ -1820,6 +1833,7 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            web_search_mode: webSearchMode,
             conversationId: activeConversationId || undefined,
             userDb,
             userId,
@@ -1893,6 +1907,7 @@ app.post(
       recent_messages: parsed.data.context?.recent_messages,
       memories: parsed.data.context?.memories,
       file_references: fileRefs,
+      web_search_mode: webSearchMode,
       userMessage: parsed.data.message,
       conversationId: activeConversationId || undefined,
     }, userDb, userId);
@@ -2510,6 +2525,7 @@ app.post(
   aiRateLimiter,
   asyncHandler(async (req, res) => {
     const { query, maxResults, skipLLMSynthesis } = req.body;
+    const webSearchMode = normalizeWebSearchMode(req.body?.web_search_mode);
 
     if (typeof query !== "string" || !query.trim()) {
       res.status(400).json({ error: "Query is required." });
@@ -2523,6 +2539,7 @@ app.post(
         query: query.trim(),
         maxResults: typeof maxResults === "number" ? maxResults : undefined,
         skipLLMSynthesis: skipLLMSynthesis === true,
+        webSearchMode,
       });
 
       res.json(result);
