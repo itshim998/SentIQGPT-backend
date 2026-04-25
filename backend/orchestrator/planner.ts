@@ -1,7 +1,7 @@
-// SentIQGPT v2 — Task Planner
+// SentIQGPT v2 - Task Planner
 //
 // Analyzes a user query and produces a structured execution plan
-// of 1–3 steps. Uses Groq (route_classify) for fast classification.
+// of 1-3 steps. Uses Groq (route_classify) for fast classification.
 //
 // For simple single-tool requests the plan has a single step,
 // keeping latency identical to the old tool-detector path.
@@ -9,10 +9,10 @@
 // it produces multiple ordered steps.
 //
 // Safety constraints:
-//   • Max 3 steps per plan
-//   • Only permitted tools: conversation, image_generation,
+//   - Max 3 steps per plan
+//   - Only permitted tools: conversation, image_generation,
 //     file_analysis, memory_update, chart_generation, web_search
-//   • No recursive/self-referencing steps
+//   - No recursive/self-referencing steps
 
 import {
   callLLMAdapter,
@@ -21,8 +21,9 @@ import {
 } from "../ai/PromptBuilders";
 import type { LLMAdapterCall } from "../ai/PromptBuilders";
 import { isChartRequest } from "../tools/chartGeneration/chartDetector";
-import { classifyQueryType, shouldForceWebSearch } from "./queryClassifier";
+import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 import { isTavilyAvailable } from "../tools/webSearch/providers/tavilyProvider";
+import { classifyQueryType, shouldForceWebSearch } from "./queryClassifier";
 
 // ==============================
 // Types
@@ -57,6 +58,12 @@ export interface ExecutionPlan {
   readonly steps: readonly PlanStep[];
 }
 
+function createSingleStepPlan(tool: PlanTool, input: string): ExecutionPlan {
+  return {
+    steps: [{ step: 1, tool, input }],
+  };
+}
+
 // ==============================
 // Prompt
 // ==============================
@@ -78,17 +85,17 @@ function buildPlannerPrompt(
     '- "conversation": Answer questions, explain concepts, provide analysis\n' +
     '- "image_generation": Generate an image from a text description\n' +
     '- "file_analysis": Analyze uploaded file content' +
-    (hasFileContext ? " (files ARE in context)" : " (NO files in context — do NOT select this)") +
+    (hasFileContext ? " (files ARE in context)" : " (NO files in context - do NOT select this)") +
     "\n" +
     '- "memory_update": Store a personal fact the user wants remembered\n' +
     '- "chart_generation": Generate a chart or data visualization (scatter, bar, histogram, heatmap, etc.)\n' +
     webSearchTool +
     "\nRULES:\n" +
     "- Return 1 to 3 steps maximum.\n" +
-    "- Most requests need only 1 step — keep it simple.\n" +
+    "- Most requests need only 1 step - keep it simple.\n" +
     "- Use multiple steps ONLY when the user explicitly asks for more than one action.\n" +
-    "  Example multi-step: \"Generate an image of a cat and explain cat breeds.\"\n" +
-    "  Example single-step: \"What is quantum computing?\" → 1 step (conversation).\n" +
+    '  Example multi-step: "Generate an image of a cat and explain cat breeds."\n' +
+    '  Example single-step: "What is quantum computing?" -> 1 step (conversation).\n' +
     "- Each step must have a clear, self-contained input string.\n" +
     "- Only choose image_generation if the user EXPLICITLY asks to create/generate an image.\n" +
     "- Only choose chart_generation for an explicit chart or data-visualization request, not for frontend/design prompts that merely mention visualization.\n" +
@@ -122,9 +129,7 @@ function buildPlannerPrompt(
 
 function parsePlan(raw: string): ExecutionPlan {
   const parsed = strictParseJsonObject(raw);
-
   const rawPlan = Array.isArray(parsed.plan) ? parsed.plan : [];
-
   const steps: PlanStep[] = [];
 
   for (const item of rawPlan) {
@@ -158,6 +163,32 @@ function parsePlan(raw: string): ExecutionPlan {
   return { steps };
 }
 
+export function resolveHardRoutedPlan(args: {
+  readonly userMessage: string;
+  readonly hasWebSearch: boolean;
+  readonly explicitWebSearchMode?: WebSearchMode;
+}): ExecutionPlan | null {
+  if (args.hasWebSearch && args.explicitWebSearchMode) {
+    console.log(`[PLANNER] explicit WebSurf mode=${args.explicitWebSearchMode} - hard-routing to web_search`);
+    return createSingleStepPlan("web_search", args.userMessage);
+  }
+
+  if (isChartRequest(args.userMessage)) {
+    console.log("[PLANNER] chart keywords detected - hard-routing to chart_generation");
+    return createSingleStepPlan("chart_generation", args.userMessage);
+  }
+
+  const queryClassification = classifyQueryType(args.userMessage);
+  const forceWebSearch = shouldForceWebSearch(args.userMessage);
+
+  if (args.hasWebSearch && (queryClassification.needsWebSearch || forceWebSearch)) {
+    console.log(`[PLANNER] web search needed (rule: ${queryClassification.matchedRule}) - hard-routing to web_search`);
+    return createSingleStepPlan("web_search", args.userMessage);
+  }
+
+  return null;
+}
+
 // ==============================
 // Public API
 // ==============================
@@ -172,29 +203,16 @@ export async function planTask(args: {
   readonly userMessage: string;
   readonly hasFileContext?: boolean;
   readonly userId?: string;
+  readonly explicitWebSearchMode?: WebSearchMode;
 }): Promise<ExecutionPlan> {
-  // Hard safety rule: chart keywords ALWAYS produce a single chart_generation step.
-  // This pre-check bypasses the LLM entirely and guarantees chart requests
-  // are never accidentally routed to image_generation in multi-step plans.
-  if (isChartRequest(args.userMessage)) {
-    console.log(`[PLANNER] chart keywords detected — hard-routing to chart_generation`);
-    return {
-      steps: [{ step: 1, tool: "chart_generation", input: args.userMessage }],
-    };
-  }
-
-  // Check if web search is available and if the query needs it
   const hasWebSearch = isTavilyAvailable();
-  const queryClassification = classifyQueryType(args.userMessage);
-  const forceWebSearch = shouldForceWebSearch(args.userMessage);
-
-  // Pre-check: if query clearly needs web search and Tavily is available,
-  // bypass LLM planner for faster routing
-  if (hasWebSearch && (queryClassification.needsWebSearch || forceWebSearch)) {
-    console.log(`[PLANNER] web search needed (rule: ${queryClassification.matchedRule}) — hard-routing to web_search`);
-    return {
-      steps: [{ step: 1, tool: "web_search", input: args.userMessage }],
-    };
+  const hardRoutedPlan = resolveHardRoutedPlan({
+    userMessage: args.userMessage,
+    hasWebSearch,
+    explicitWebSearchMode: args.explicitWebSearchMode,
+  });
+  if (hardRoutedPlan) {
+    return hardRoutedPlan;
   }
 
   const call = buildPlannerPrompt(
@@ -214,23 +232,18 @@ export async function planTask(args: {
   try {
     const plan = parsePlan(raw);
 
-    // Guarantee at least one step
     if (plan.steps.length === 0) {
-      return {
-        steps: [{ step: 1, tool: "conversation", input: args.userMessage }],
-      };
+      return createSingleStepPlan("conversation", args.userMessage);
     }
 
     console.log(`[PLANNER] steps generated: ${plan.steps.length}`);
-    for (const s of plan.steps) {
-      console.log(`[PLANNER]   step ${s.step}: ${s.tool} → "${s.input.slice(0, 60)}"`);
+    for (const step of plan.steps) {
+      console.log(`[PLANNER]   step ${step.step}: ${step.tool} -> "${step.input.slice(0, 60)}"`);
     }
 
     return plan;
   } catch {
-    console.log(`[PLANNER] parse failed, fallback: single conversation step`);
-    return {
-      steps: [{ step: 1, tool: "conversation", input: args.userMessage }],
-    };
+    console.log("[PLANNER] parse failed, fallback: single conversation step");
+    return createSingleStepPlan("conversation", args.userMessage);
   }
 }

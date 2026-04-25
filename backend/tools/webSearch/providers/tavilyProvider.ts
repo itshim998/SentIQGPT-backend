@@ -254,7 +254,7 @@ export class TavilyProvider implements WebSearchProvider {
     const requestBody: Record<string, unknown> = {
       query,
       search_depth: "advanced",
-      include_answer: mode === "advanced" ? "advanced" : "basic",
+      include_answer: "advanced",
       max_results: maxResults,
     };
 

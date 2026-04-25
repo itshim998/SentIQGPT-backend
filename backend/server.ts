@@ -68,7 +68,7 @@ import { orchestrate } from "./orchestrator/aiOrchestrator";
 import { detectCodeQuery, isBufferedReasoningQuery, isMathQuery, selectModelForPrompt } from "./orchestrator/modelRouter";
 import { detectExplicitMemoryWriteIntent, classifyQueryType, shouldForceWebSearch } from "./orchestrator/queryClassifier";
 import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
-import { normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
+import { isWebSearchMode, normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
 
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
@@ -90,6 +90,10 @@ import { ZodError } from "zod";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
+
+function getExplicitWebSearchMode(value: unknown): "basic" | "advanced" | undefined {
+  return isWebSearchMode(value) ? value : undefined;
+}
 
 // ---- CORS ----
 const DEFAULT_ORIGINS = [
@@ -998,7 +1002,8 @@ app.post(
       return;
     }
     const { sub: userId, isGuest } = getRequestUser(req);
-    const webSearchMode = parsed.data.context?.web_search_mode;
+    const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
+    const hasExplicitWebSearchMode = Boolean(webSearchMode);
     const isReasoningQuery = isBufferedReasoningQuery(parsed.data.message);
     const isMathReasoningQuery = !detectCodeQuery(parsed.data.message) && isMathQuery(parsed.data.message);
     const isLogicReasoningQuery = isReasoningQuery && !isMathReasoningQuery;
@@ -1015,6 +1020,32 @@ app.post(
     const orcFileRefs = parsed.data.context?.file_references;
     if (Array.isArray(orcFileRefs) && orcFileRefs.length > 0) {
       console.log(`[File] orchestrator: ${orcFileRefs.length} file(s) included in context`);
+    }
+
+    if (isGuest && hasExplicitWebSearchMode) {
+      const result = await orchestrate({
+        userMessage: parsed.data.message,
+        context: {
+          recent_messages: parsed.data.context?.recent_messages,
+          memories: [],
+          file_references: orcFileRefs,
+          web_search_mode: webSearchMode,
+          userId,
+        },
+      });
+
+      res.json({
+        route: result.route,
+        answer: result.answer ?? result.reply,
+        reply: result.reply,
+        thinking: gateThinking(result.thinking, { route: result.route, isReasoning: isReasoningQuery }),
+        disclaimer: result.disclaimer,
+        image: result.image,
+        chart: result.chart,
+        memory: result.memory,
+        confidence: result.confidence,
+      });
+      return;
     }
 
     if (isGuest) {
@@ -1132,7 +1163,7 @@ app.post(
       }
     }
 
-    if (isLogicReasoningQuery) {
+    if (isLogicReasoningQuery && !hasExplicitWebSearchMode) {
       const reasoningContext = await buildContext({
         recent_messages: parsed.data.context?.recent_messages,
         memories: parsed.data.context?.memories,
@@ -1364,9 +1395,35 @@ app.post(
     // If the message is a chart request, redirect to the orchestrator and return
     // the result as a single SSE JSON payload so the frontend can render it.
     const { sub: userId, isGuest } = getRequestUser(req);
-    const webSearchMode = parsed.data.context?.web_search_mode;
+    const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
+    const hasExplicitWebSearchMode = Boolean(webSearchMode);
     const isBufferedReasoning = isBufferedReasoningQuery(parsed.data.message);
     const isMathReasoningQuery = !detectCodeQuery(parsed.data.message) && isMathQuery(parsed.data.message);
+    if (isGuest && hasExplicitWebSearchMode) {
+      const result = await orchestrate({
+        userMessage: parsed.data.message,
+        context: {
+          recent_messages: parsed.data.context?.recent_messages,
+          memories: [],
+          file_references: parsed.data.context?.file_references,
+          web_search_mode: webSearchMode,
+          userId,
+        },
+      });
+      res.json({
+        route: result.route,
+        answer: result.answer ?? result.reply,
+        reply: result.reply,
+        thinking: gateThinking(result.thinking, { route: result.route, isReasoning: isBufferedReasoning }),
+        disclaimer: result.disclaimer,
+        image: result.image,
+        chart: result.chart,
+        memory: result.memory,
+        confidence: result.confidence,
+      });
+      return;
+    }
+
     if (isGuest) {
       const requestStart = Date.now();
       console.log(`[Latency] guest user query received`);
@@ -1652,6 +1709,45 @@ app.post(
         );
       }
     };
+
+    if (hasExplicitWebSearchMode) {
+      console.log(`[Stream] explicit WebSurf mode=${webSearchMode} - redirecting to orchestrator`);
+      try {
+        const result = await orchestrate({
+          userMessage: parsed.data.message,
+          context: {
+            recent_messages: parsed.data.context?.recent_messages,
+            memories: parsed.data.context?.memories,
+            file_references: parsed.data.context?.file_references,
+            web_search_mode: webSearchMode,
+            conversationId: activeConversationId || undefined,
+            userDb,
+            userId,
+          },
+        });
+        if (result.reply) {
+          await persistAssistantMessage(result.reply);
+        }
+        await persistStoredMemory(result.memory);
+        res.json({
+          route: result.route,
+          answer: result.answer ?? result.reply,
+          reply: result.reply,
+          thinking: gateThinking(result.thinking, { route: result.route }),
+          disclaimer: result.disclaimer,
+          image: result.image,
+          chart: result.chart,
+          memory: result.memory,
+          confidence: result.confidence,
+          sync,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Stream] explicit WebSurf orchestration failed: ${message}`);
+        res.status(500).json({ error: message });
+      }
+      return;
+    }
 
     if (detectExplicitMemoryWriteIntent(parsed.data.message)) {
       console.log(`[Stream] explicit memory write detected — redirecting to orchestrator`);
@@ -2566,6 +2662,7 @@ app.post(
   aiRateLimiter,
   asyncHandler(async (req, res) => {
     const { query, maxResults } = req.body;
+    const webSearchMode = normalizeWebSearchMode(req.body?.web_search_mode);
 
     if (typeof query !== "string" || !query.trim()) {
       res.status(400).json({ error: "Query is required." });
@@ -2575,7 +2672,8 @@ app.post(
     try {
       const result = await searchTavily(
         query.trim(),
-        typeof maxResults === "number" ? maxResults : 5
+        typeof maxResults === "number" ? maxResults : 5,
+        webSearchMode,
       );
 
       res.json(result);

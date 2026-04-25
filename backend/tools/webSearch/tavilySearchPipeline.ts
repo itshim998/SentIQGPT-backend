@@ -397,7 +397,8 @@ export async function executeTavilySearchPipeline(
  */
 export async function searchTavily(
   query: string,
-  maxResults = 5
+  maxResults = 5,
+  webSearchMode?: WebSearchMode,
 ): Promise<{ success: boolean; results: SearchResult[]; error?: string }> {
   if (!isTavilyAvailable()) {
     return {
@@ -408,9 +409,10 @@ export async function searchTavily(
   }
 
   const provider = new TavilyProvider();
+  const mode = normalizeWebSearchMode(webSearchMode);
 
   try {
-    const results = await provider.search(query, maxResults);
+    const results = await provider.search(query, maxResults, mode);
     return { success: true, results: [...results] };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -386,6 +386,7 @@ async function _orchestrateInner(
       userMessage,
       hasFileContext: (rawContext?.file_references?.length ?? 0) > 0,
       userId: rawContext?.userId,
+      explicitWebSearchMode: rawContext?.web_search_mode,
     }),
   ]);
 
