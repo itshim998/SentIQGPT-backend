@@ -1,11 +1,11 @@
-from llm_adapter import CODING_MODEL, GENERAL_CHAT_MODEL, resolve_model_override
+from llm_adapter import CODING_MODEL, SEARCH_MODEL, resolve_model_override
 
 
 CASES = [
     ("qwen-coder", "gemini", ("pollinations", CODING_MODEL)),
     ("qwen3-coder", "gemini", ("pollinations", CODING_MODEL)),
     ("qwen3-coder-30b", "gemini", ("pollinations", CODING_MODEL)),
-    ("gemini-fast", "gemini", ("pollinations", GENERAL_CHAT_MODEL)),
+    ("gemini-search", "gemini", ("pollinations", SEARCH_MODEL)),
     ("openai-large", "gemini", ("pollinations", "openai-large")),
 ]
 

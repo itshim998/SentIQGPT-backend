@@ -12,7 +12,7 @@
 //       ↓
 //   Content Preparation (clean context)
 //       ↓
-//   LLM Synthesis (gemini-fast)
+//   LLM Synthesis (gemini-search)
 //       ↓
 //   Final Answer (with source references)
 //
@@ -104,7 +104,7 @@ async function synthesizeWithLLM(
       body: JSON.stringify({
         prompt,
         task: "web_search_synthesis",
-        model_override: "gemini-fast",
+        model_override: "gemini-search",
         user_id: "system",
       }),
       signal: AbortSignal.timeout(60_000),

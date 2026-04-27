@@ -447,7 +447,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   
   if (ctx.reasoningMode) {
     SYSTEM_PROMPT = "";
-  } else if ((ctx.modelOverride === "mistral" || ctx.modelOverride === "gemini-fast") && !hasFiles) {
+  } else if ((ctx.modelOverride === "mistral" || ctx.modelOverride === "gemini-search") && !hasFiles) {
     // General text chat stays warm and conversational after the default model switch.
     SYSTEM_PROMPT = MISTRAL_CONVERSATIONAL_SYSTEM_PROMPT;
   } else {
@@ -489,7 +489,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     ctx.modelOverride === "qwen-coder" ||
     ctx.modelOverride === "qwen3-coder" ||
     ctx.modelOverride === "qwen3-coder-30b" ||
-    ctx.modelOverride === "gemini-fast" ||
+    ctx.modelOverride === "gemini-search" ||
     ctx.modelOverride === "openai-large" ||
     ctx.modelOverride === "mistral";
 

@@ -385,9 +385,8 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
         qwen3-coder-30b    → pollinations  (CODING_MODEL = qwen-coder)
         qwen3-coder        → pollinations  (CODING_MODEL = qwen-coder)
         mistral            → pollinations  (mistral)
-        gemini-fast         → pollinations  (GENERAL_CHAT_MODEL)
-        openai-large        → pollinations  (openai-large)
         gemini-search       → pollinations  (SEARCH_MODEL)
+        openai-large        → pollinations  (openai-large)
         gemini-vision       → gemini        (GEMINI_VISION_MODEL, direct API)
         gemini-*            → gemini        (passthrough, direct API)
         unknown             → default_provider (passthrough)
@@ -403,9 +402,6 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
 
     if logical == "openai-large":
         return "pollinations", "openai-large"
-
-    if logical == "gemini-fast":
-        return "pollinations", GENERAL_CHAT_MODEL
 
     if logical == "gemini-search":
         return "pollinations", SEARCH_MODEL
@@ -707,7 +703,9 @@ def _normalize_pollinations_model(model: str) -> str:
     logical = (model or "").strip().lower()
     if logical in {"qwen3-coder-30b", "qwen3-coder", "qwen-coder"}:
         return CODING_MODEL
-    if logical in {"gemini-2.5-flash-lite", "gemini-fast", "gemini-search"}:
+    if logical == "gemini-search":
+        return SEARCH_MODEL
+    if logical in {"gemini-2.5-flash-lite"}:
         return GENERAL_CHAT_MODEL
     return model
 

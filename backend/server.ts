@@ -37,7 +37,7 @@ import {
   strictParseJsonObject,
 } from "./ai/PromptBuilders";
 import { buildContext, buildContextFast } from "./context/contextBuilder";
-import { getOrAssignUserDatabase, verifyShardMigrations } from "./dbRouter";
+import { getOrAssignUserDatabase, ShardCapacityError, verifyShardMigrations } from "./dbRouter";
 import {
   createConversation,
   deleteConversation,
@@ -75,6 +75,7 @@ import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middlewa
 import { auditMiddleware, getRecentAuditEntries } from "./middleware/audit";
 import { imageQuotaMiddleware, getQuotaInfo, isImageRequest } from "./middleware/imageQuota";
 import { AuthError, getRequestUser, resolveRequestUser, verifyJWT } from "./middleware/auth";
+import { HttpError, buildHttpErrorResponse } from "./httpErrors";
 
 // Validation
 import {
@@ -320,7 +321,7 @@ function logStreamMetrics(metrics: StreamMetrics, reason: string): void {
   );
 }
 
-const GUEST_MODEL_OVERRIDE = "gemini-fast";
+const GUEST_MODEL_OVERRIDE = "gemini-search";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CAPACITY LIMITS (enforced per user to keep DBs under 95% usage)
@@ -348,16 +349,6 @@ type DbErrorLike = {
   details?: string | null;
   hint?: string | null;
 } | null | undefined;
-
-class HttpError extends Error {
-  statusCode: number;
-
-  constructor(statusCode: number, message: string) {
-    super(message);
-    this.name = "HttpError";
-    this.statusCode = statusCode;
-  }
-}
 
 function formatDbError(error: DbErrorLike): string {
   if (!error) return "unknown";
@@ -407,6 +398,18 @@ async function resolveUserDatabaseOrThrow(userId: string, scope: string) {
     logDbEvent(`${scope}.resolve-db.ok`, userId);
     return userDb;
   } catch (error) {
+    if (error instanceof ShardCapacityError) {
+      console.error(
+        `[SentIQGPT][alert] shard-capacity.exhausted userId=${userId} scope=${scope}` +
+        ` total_users=${error.totalUsers} threshold=${error.threshold}` +
+        ` retry_after_seconds=${error.retryAfterSeconds} counts=${JSON.stringify(error.counts)}`,
+      );
+      throw new HttpError(503, "Service is temporarily at capacity. Please try again later.", {
+        code: error.code,
+        expose: true,
+        headers: { "Retry-After": String(error.retryAfterSeconds) },
+      });
+    }
     logDbFailure(`${scope}.resolve-db`, userId, error instanceof Error ? error : new Error(String(error)));
     throw error;
   }
@@ -439,7 +442,7 @@ async function getOwnedConversationOrThrow(
 
   if (!data) {
     logDbEvent(`${scope}.conversation-owner.not-found`, userId, { conversationId });
-    throw new HttpError(404, "Conversation not found.");
+    throw new HttpError(404, "Conversation not found.", { code: "conversation_not_found" });
   }
 
   if (data.user_id !== userId) {
@@ -449,7 +452,7 @@ async function getOwnedConversationOrThrow(
       new Error("Unauthorized conversation access"),
       { conversationId },
     );
-    throw new HttpError(403, "Unauthorized conversation access.");
+    throw new HttpError(403, "Unauthorized conversation access.", { code: "conversation_forbidden" });
   }
 
   logDbEvent(`${scope}.conversation-owner.ok`, userId, { conversationId });
@@ -2365,7 +2368,7 @@ app.post(
     }
 
     // Get user's database client
-    const userDb = await getOrAssignUserDatabase(userId);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "images.store");
     if (!userDb) {
       console.error(`[IMAGE_STORE] db.error userId=${userId}`);
       res.status(500).json({ error: "Database not available" });
@@ -2414,7 +2417,7 @@ app.get(
     }
 
     // Get user's database client
-    const userDb = await getOrAssignUserDatabase(userId);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "images.list");
     if (!userDb) {
       res.status(500).json({ error: "Database not available" });
       return;
@@ -2768,9 +2771,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     return;
   }
 
-  const statusCode = err instanceof HttpError && Number.isInteger(err.statusCode)
-    ? err.statusCode
-    : 500;
+  const { statusCode, headers, body } = buildHttpErrorResponse(err);
   const logMethod = statusCode >= 500 ? console.error : console.warn;
   logMethod("[SentIQGPT] Unhandled error:", err.message);
   if (res.headersSent || res.writableEnded) {
@@ -2779,9 +2780,10 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     }
     return;
   }
-  res.status(statusCode).json({
-    error: statusCode >= 500 ? "Internal server error." : err.message,
-  });
+  for (const [name, value] of Object.entries(headers)) {
+    res.setHeader(name, value);
+  }
+  res.status(statusCode).json(body);
 });
 
 // ===============================

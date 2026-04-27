@@ -2,15 +2,10 @@ import { randomInt, randomUUID } from "crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export type DatabaseId = 1 | 2 | 3 | 4;
-type AssignableDatabaseId = 2 | 3 | 4;
+export type AssignableDatabaseId = 2 | 3 | 4;
 
 type UserDbMapRow = {
   assigned_db: number;
-};
-
-type DbUserCountRow = {
-  assigned_db: number;
-  user_count: number;
 };
 
 type DbRouterErrorLike = {
@@ -26,14 +21,14 @@ type DbRouterErrorLike = {
 
 /**
  * Maximum users per data database before it's considered "full".
- * 
+ *
  * Supabase free tier: 500MB storage
  * With conversation limit (50) and memory limit (25KB), each user uses roughly:
  *   - 50 conversations × ~2KB average = 100KB
  *   - 25KB memories
  *   - ~5KB usage_logs, user record
  *   Total: ~130KB per active user
- * 
+ *
  * 500MB / 130KB ≈ 3,800 users at max capacity
  * 90% threshold = ~3,400 users per DB
  * 
@@ -47,29 +42,47 @@ const MAX_USERS_PER_DATABASE = 3400;
  */
 const DB_FULL_THRESHOLD_RATIO = 0.90;
 
-/**
- * Cache TTL for user counts (in milliseconds).
- * Counts are expensive to compute, so we cache them.
- */
-const USER_COUNT_CACHE_TTL_MS = 60_000; // 1 minute
-
 const CONTROL_DATABASE_ID: DatabaseId = 1;
 const ALL_DATABASE_IDS: readonly DatabaseId[] = [1, 2, 3, 4];
 const ASSIGNABLE_DATABASE_IDS: readonly AssignableDatabaseId[] = [2, 3, 4];
+const USER_ASSIGNMENT_THRESHOLD = Math.floor(MAX_USERS_PER_DATABASE * DB_FULL_THRESHOLD_RATIO);
+export const SHARD_CAPACITY_RETRY_AFTER_SECONDS = 60;
+
+export const SHARD_USER_CAPACITY = {
+  maxUsersPerDatabase: MAX_USERS_PER_DATABASE,
+  fullThresholdRatio: DB_FULL_THRESHOLD_RATIO,
+  assignmentThreshold: USER_ASSIGNMENT_THRESHOLD,
+} as const;
+
+export class ShardCapacityError extends Error {
+  readonly code = "shard_capacity_exhausted";
+  readonly retryAfterSeconds = SHARD_CAPACITY_RETRY_AFTER_SECONDS;
+  readonly totalUsers: number;
+  readonly threshold: number;
+  readonly maxUsersPerDatabase: number;
+  readonly thresholdRatio: number;
+  readonly counts: Readonly<Record<AssignableDatabaseId, number>>;
+
+  constructor(counts: ReadonlyMap<AssignableDatabaseId, number>) {
+    const totalUsers = ASSIGNABLE_DATABASE_IDS.reduce((sum, dbId) => sum + (counts.get(dbId) ?? 0), 0);
+    super(
+      `[dbRouter] All databases at capacity. Total users: ${totalUsers}. ` +
+      `Each DB threshold: ${USER_ASSIGNMENT_THRESHOLD} users (${(DB_FULL_THRESHOLD_RATIO * 100).toFixed(0)}% of ${MAX_USERS_PER_DATABASE}).`,
+    );
+    this.name = "ShardCapacityError";
+    this.totalUsers = totalUsers;
+    this.threshold = USER_ASSIGNMENT_THRESHOLD;
+    this.maxUsersPerDatabase = MAX_USERS_PER_DATABASE;
+    this.thresholdRatio = DB_FULL_THRESHOLD_RATIO;
+    this.counts = Object.fromEntries(
+      ASSIGNABLE_DATABASE_IDS.map((dbId) => [dbId, counts.get(dbId) ?? 0]),
+    ) as Record<AssignableDatabaseId, number>;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// USER COUNT CACHE (for load-aware DB selection)
+// ENVIRONMENT + DATABASE CLIENTS
 // ═══════════════════════════════════════════════════════════════════════════════
-
-type UserCountCache = {
-  counts: Map<AssignableDatabaseId, number>;
-  lastUpdated: number;
-};
-
-let userCountCache: UserCountCache = {
-  counts: new Map(),
-  lastUpdated: 0,
-};
 
 function readRequiredEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -199,11 +212,6 @@ async function ensureControlUserSession(userId: string): Promise<void> {
   logDbRouter("control-session.init.ok", normalizedUserId, { db: CONTROL_DATABASE_ID });
 }
 
-function pickRandomDataDatabase(): AssignableDatabaseId {
-  const index = randomInt(0, ASSIGNABLE_DATABASE_IDS.length);
-  return ASSIGNABLE_DATABASE_IDS[index];
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // LOAD-AWARE DATABASE SELECTION
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -239,84 +247,69 @@ async function fetchUserCountsPerDatabase(): Promise<Map<AssignableDatabaseId, n
   return counts;
 }
 
-/**
- * Gets cached user counts, refreshing if cache is stale.
- */
-async function getCachedUserCounts(): Promise<Map<AssignableDatabaseId, number>> {
-  const now = Date.now();
-  
-  if (now - userCountCache.lastUpdated < USER_COUNT_CACHE_TTL_MS && userCountCache.counts.size > 0) {
-    return userCountCache.counts;
-  }
+type ShardTieBreaker = (candidateCount: number) => number;
 
-  const freshCounts = await fetchUserCountsPerDatabase();
-  userCountCache = {
-    counts: freshCounts,
-    lastUpdated: now,
-  };
-
-  // Log current DB utilization
-  for (const [dbId, count] of freshCounts) {
+function logUserCounts(counts: ReadonlyMap<AssignableDatabaseId, number>): void {
+  for (const dbId of ASSIGNABLE_DATABASE_IDS) {
+    const count = counts.get(dbId) ?? 0;
     const utilization = ((count / MAX_USERS_PER_DATABASE) * 100).toFixed(1);
     console.log(`[dbRouter] db-stats db=${dbId} users=${count} utilization=${utilization}%`);
   }
-
-  return freshCounts;
 }
 
-/**
- * Selects the best database for a new user based on current load.
- * 
- * Algorithm:
- * 1. Filter out databases that are at or above 90% capacity
- * 2. From remaining DBs, select the one with the fewest users
- * 3. If all DBs are full, throw an error (system at capacity)
- * 
- * This ensures even distribution and prevents any single DB from exceeding 95%.
- */
-async function selectLeastLoadedDatabase(): Promise<AssignableDatabaseId> {
-  const counts = await getCachedUserCounts();
-  const threshold = Math.floor(MAX_USERS_PER_DATABASE * DB_FULL_THRESHOLD_RATIO);
+function normalizeTieIndex(index: number, candidateCount: number): number {
+  if (!Number.isInteger(index) || index < 0) {
+    return 0;
+  }
+  return index % candidateCount;
+}
 
-  // Find available DBs (under 90% capacity)
+export function selectLeastLoadedDatabaseFromCounts(
+  counts: ReadonlyMap<AssignableDatabaseId, number>,
+  chooseTieIndex: ShardTieBreaker = (candidateCount) => randomInt(0, candidateCount),
+): AssignableDatabaseId {
   const availableDbs: { id: AssignableDatabaseId; count: number }[] = [];
 
   for (const dbId of ASSIGNABLE_DATABASE_IDS) {
     const count = counts.get(dbId) ?? 0;
-    if (count < threshold) {
+    if (count < USER_ASSIGNMENT_THRESHOLD) {
       availableDbs.push({ id: dbId, count });
     } else {
-      console.log(`[dbRouter] db-full db=${dbId} users=${count} threshold=${threshold}`);
+      console.log(`[dbRouter] db-full db=${dbId} users=${count} threshold=${USER_ASSIGNMENT_THRESHOLD}`);
     }
   }
 
-  // If no DBs available, system is at capacity
   if (availableDbs.length === 0) {
-    const totalUsers = Array.from(counts.values()).reduce((a, b) => a + b, 0);
-    throw new Error(
-      `[dbRouter] All databases at capacity. Total users: ${totalUsers}. ` +
-      `Each DB threshold: ${threshold} users (${(DB_FULL_THRESHOLD_RATIO * 100).toFixed(0)}% of ${MAX_USERS_PER_DATABASE}).`
-    );
+    throw new ShardCapacityError(counts);
   }
 
-  // Sort by count (ascending) and pick the least loaded
-  availableDbs.sort((a, b) => a.count - b.count);
-  const selected = availableDbs[0];
+  availableDbs.sort((a, b) => a.count - b.count || a.id - b.id);
+  const lowestCount = availableDbs[0].count;
+  const leastLoadedDbs = availableDbs.filter((db) => db.count === lowestCount);
+  const selected = leastLoadedDbs[normalizeTieIndex(chooseTieIndex(leastLoadedDbs.length), leastLoadedDbs.length)];
 
   console.log(
     `[dbRouter] load-aware-select selected_db=${selected.id} user_count=${selected.count} ` +
-    `available_dbs=${availableDbs.map(d => `${d.id}:${d.count}`).join(",")}`
+    `available_dbs=${availableDbs.map(d => `${d.id}:${d.count}`).join(",")}`,
   );
 
   return selected.id;
 }
 
 /**
- * Invalidates the user count cache.
- * Call this after successfully assigning a user to ensure accurate counts.
+ * Selects the best database for a new user based on current load.
+ *
+ * Algorithm:
+ * 1. Filter out databases that are at or above 90% capacity
+ * 2. From remaining DBs, select the one with the fewest users
+ * 3. If all DBs are full, throw an error (system at capacity)
+ *
+ * This ensures even distribution and prevents any single DB from exceeding 95%.
  */
-function invalidateUserCountCache(): void {
-  userCountCache.lastUpdated = 0;
+async function selectLeastLoadedDatabase(): Promise<AssignableDatabaseId> {
+  const counts = await fetchUserCountsPerDatabase();
+  logUserCounts(counts);
+  return selectLeastLoadedDatabaseFromCounts(counts);
 }
 
 function isUniqueConstraintViolation(error: { code?: string; message?: string } | null): boolean {
@@ -368,10 +361,7 @@ export async function assignDatabaseToUser(userId: string): Promise<SupabaseClie
   }
 
   logDbRouter("assign.ok", normalizedUserId, { assigned_db: assignedDb });
-  
-  // Invalidate cache so next assignment gets fresh counts
-  invalidateUserCountCache();
-  
+
   return getClientForDatabase(assignedDb);
 }
 

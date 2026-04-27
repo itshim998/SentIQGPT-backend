@@ -73,7 +73,7 @@ SUPABASE_ERROR_BODY_LIMIT = 400
 CONTROL_DB_NUMBER = 1
 VALID_DB_NUMBERS = {1, 2, 3, 4}
 GUEST_USER_ID = "guest"
-GUEST_MODEL_OVERRIDE = "gemini-fast"
+GUEST_MODEL_OVERRIDE = "gemini-search"
 USER_DB_CACHE_TTL_SECONDS = 300
 
 _user_db_cache_lock = threading.Lock()

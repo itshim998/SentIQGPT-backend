@@ -4,12 +4,12 @@
 // detected capabilities. Regex-only - no LLM calls.
 //
 // Detection priority (first match wins):
-//   1. vision              -> gemini-fast (Pollinations) - native vision support
+//   1. vision              -> gemini-search (Pollinations) - native vision support
 //   2. file (coding PDF)   -> qwen-coder (Pollinations) - coding PDFs get code model
-//   3. file (non-coding)   -> gemini-fast (Pollinations) - preserve file pipeline
+//   3. file (non-coding)   -> gemini-search (Pollinations) - preserve file pipeline
 //   4. coding              -> qwen-coder (Pollinations)
 //   5. math_reasoning      -> openai-large (Pollinations)
-//   6. general_chat        -> gemini-fast (Pollinations) - human-like conversations
+//   6. general_chat        -> gemini-search (Pollinations) - human-like conversations
 //
 // Gemini direct API is NEVER selected by the router.
 // It is a last-resort fallback handled by the Python gateway.
@@ -503,7 +503,7 @@ function detectPromptCategory(
       console.log("[Router] file_input_detected (coding PDF) -> qwen-coder");
       return "file_coding";
     }
-    console.log("[Router] file_input_detected (non-coding) -> gemini-fast");
+    console.log("[Router] file_input_detected (non-coding) -> gemini-search");
     return "file_general";
   }
 
@@ -517,7 +517,7 @@ function detectPromptCategory(
     return "math_reasoning";
   }
 
-  // Priority 6: General chat (default) -> gemini-fast for human-like conversations
+  // Priority 6: General chat (default) -> gemini-search for human-like conversations
   return "general_chat";
 }
 
@@ -531,16 +531,16 @@ export function selectModelForPrompt(
 
   switch (category) {
     case "vision":
-      model = "gemini-fast";
-      console.log("[Router] category=vision -> gemini-fast");
+      model = "gemini-search";
+      console.log("[Router] category=vision -> gemini-search");
       break;
     case "file_coding":
       model = "qwen-coder";
       console.log("[Router] category=file_coding -> qwen-coder");
       break;
     case "file_general":
-      model = "gemini-fast";
-      console.log("[Router] category=file_general -> gemini-fast");
+      model = "gemini-search";
+      console.log("[Router] category=file_general -> gemini-search");
       break;
     case "coding":
       model = "qwen-coder";
@@ -552,8 +552,8 @@ export function selectModelForPrompt(
       break;
     case "general_chat":
     default:
-      model = "gemini-fast";
-      console.log("[Router] category=general_chat -> gemini-fast");
+      model = "gemini-search";
+      console.log("[Router] category=general_chat -> gemini-search");
       break;
   }
 

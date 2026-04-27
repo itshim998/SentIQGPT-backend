@@ -41,7 +41,7 @@ async function main(): Promise<void> {
   const queuedResponses: QueuedResponse[] = [
     {
       text: "Premise 1: All bloops are razzies.\nPremise 2: All razzies are lazzies.\nTherefore, all bloops are lazzies.",
-      model_used: "gemini-fast",
+      model_used: "gemini-search",
       truncated: true,
       finish_reason: "length",
     },
@@ -99,7 +99,7 @@ async function main(): Promise<void> {
     const reasoningReply = await handleChat({
       userMessage: "Prove or disprove: all bloops are lazzies.",
       reasoningMode: true,
-      modelOverride: "gemini-fast",
+      modelOverride: "gemini-search",
     });
 
     assert(capturedRequests.length === 1, "reasoning mode makes a single raw LLM call");
@@ -122,7 +122,7 @@ async function main(): Promise<void> {
     );
     assert(mathReply.thinking === undefined, "math solver no longer extracts thinking");
 
-    assert(selectModelForPrompt("Tell me a joke.") === "gemini-fast", "normal chat routing stays on gemini-fast");
+    assert(selectModelForPrompt("Tell me a joke.") === "gemini-search", "normal chat routing stays on gemini-search");
     assert(selectModelForPrompt("Why is this Python loop failing?") === "qwen-coder", "coding routing stays on qwen-coder");
 
     console.log("\nReasoning freedom validation passed.");

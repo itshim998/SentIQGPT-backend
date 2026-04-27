@@ -23,9 +23,11 @@ export type VerifiedRequestUser = {
   verificationMethod: VerificationMethod;
 };
 
+type AuthResolutionCacheKey = "allow_guest" | "require_user";
+
 export type AuthenticatedRequest = Request & {
   user?: VerifiedRequestUser;
-  authResolutionPromise?: Promise<VerifiedRequestUser>;
+  authResolutionPromises?: Partial<Record<AuthResolutionCacheKey, Promise<VerifiedRequestUser>>>;
 };
 
 type ResolveRequestUserOptions = {
@@ -33,6 +35,16 @@ type ResolveRequestUserOptions = {
 };
 
 type AuthErrorCode = "missing_token" | "expired_token" | "invalid_token";
+
+type AuthVerificationStats = {
+  localVerifications: number;
+  fallbackVerifications: number;
+};
+
+const authVerificationStats: AuthVerificationStats = {
+  localVerifications: 0,
+  fallbackVerifications: 0,
+};
 
 export class AuthError extends Error {
   readonly status: number;
@@ -66,6 +78,36 @@ function logAuth(
     return;
   }
   console.error(JSON.stringify(payload));
+}
+
+function incrementAuthVerificationMetric(method: "local" | "fallback", userId: string): void {
+  if (method === "local") {
+    authVerificationStats.localVerifications += 1;
+    logAuth("info", "auth.local_verifications", {
+      method,
+      userId,
+      isGuest: false,
+      count: authVerificationStats.localVerifications,
+    });
+    return;
+  }
+
+  authVerificationStats.fallbackVerifications += 1;
+  logAuth("info", "auth.fallback_verifications", {
+    method,
+    userId,
+    isGuest: false,
+    count: authVerificationStats.fallbackVerifications,
+  });
+}
+
+export function getAuthVerificationStats(): AuthVerificationStats {
+  return { ...authVerificationStats };
+}
+
+export function resetAuthVerificationStats(): void {
+  authVerificationStats.localVerifications = 0;
+  authVerificationStats.fallbackVerifications = 0;
 }
 
 function getAuthorizationHeader(req: Request): string {
@@ -202,6 +244,7 @@ async function resolveFreshRequestUser(
 
   try {
     const localUser = await verifyLocally(token);
+    incrementAuthVerificationMetric("local", localUser.sub);
     logAuth("info", "verify.success", {
       method: localUser.verificationMethod,
       userId: localUser.sub,
@@ -210,15 +253,27 @@ async function resolveFreshRequestUser(
     return localUser;
   } catch (error) {
     const localFailure = classifyJwtFailure(error);
+    const shouldUseFallback = localFailure.code !== "expired_token";
     logAuth("warn", "verify.local_failed", {
       reason: localFailure.code,
-      hasFallback: true,
+      hasFallback: shouldUseFallback,
       isGuest: false,
       userId: null,
     });
 
+    if (!shouldUseFallback) {
+      logAuth("warn", "verify.failed", {
+        reason: localFailure.code,
+        method: "local",
+        isGuest: false,
+        userId: null,
+      });
+      throw localFailure;
+    }
+
     try {
       const fallbackUser = await verifyWithSupabase(token);
+      incrementAuthVerificationMetric("fallback", fallbackUser.sub);
       logAuth("info", "verify.success", {
         method: fallbackUser.verificationMethod,
         userId: fallbackUser.sub,
@@ -244,6 +299,10 @@ async function resolveFreshRequestUser(
   }
 }
 
+function getAuthResolutionCacheKey(options: ResolveRequestUserOptions): AuthResolutionCacheKey {
+  return options.allowGuest ? "allow_guest" : "require_user";
+}
+
 export async function resolveRequestUser(
   req: Request,
   options: ResolveRequestUserOptions,
@@ -257,18 +316,24 @@ export async function resolveRequestUser(
     return authReq.user;
   }
 
-  if (!authReq.authResolutionPromise) {
-    authReq.authResolutionPromise = resolveFreshRequestUser(req, options)
+  const cacheKey = getAuthResolutionCacheKey(options);
+  authReq.authResolutionPromises ??= {};
+
+  if (!authReq.authResolutionPromises[cacheKey]) {
+    authReq.authResolutionPromises[cacheKey] = resolveFreshRequestUser(req, options)
       .then((user) => {
         authReq.user = user;
         return user;
       })
       .finally(() => {
-        delete authReq.authResolutionPromise;
+        delete authReq.authResolutionPromises?.[cacheKey];
+        if (authReq.authResolutionPromises && Object.keys(authReq.authResolutionPromises).length === 0) {
+          delete authReq.authResolutionPromises;
+        }
       });
   }
 
-  const resolvedUser = await authReq.authResolutionPromise;
+  const resolvedUser = await authReq.authResolutionPromises[cacheKey];
   if (!options.allowGuest && resolvedUser.isGuest) {
     throw new AuthError("Missing token.", "missing_token");
   }
