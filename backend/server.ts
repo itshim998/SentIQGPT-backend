@@ -92,8 +92,8 @@ import { ZodError } from "zod";
 const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
 
-function getExplicitWebSearchMode(value: unknown): "basic" | "advanced" | undefined {
-  return isWebSearchMode(value) ? value : undefined;
+function getExplicitWebSearchMode(value: unknown): "basic" | undefined {
+  return isWebSearchMode(value) ? normalizeWebSearchMode(value) : undefined;
 }
 
 // ---- CORS ----

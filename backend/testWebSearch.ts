@@ -18,14 +18,14 @@ async function main(): Promise<void> {
     hasWebSearch: true,
     explicitWebSearchMode: "basic",
   });
-  assert(forcedBasicPlan?.steps[0]?.tool === "web_search", "explicit WebSurf Basic hard-routes to web_search");
+  assert(forcedBasicPlan?.steps[0]?.tool === "web_search", "explicit WebSurf hard-routes to web_search");
 
   const forcedAdvancedPlan = resolveHardRoutedPlan({
     userMessage: "Summarize this company in plain English.",
     hasWebSearch: true,
     explicitWebSearchMode: "advanced",
   });
-  assert(forcedAdvancedPlan?.steps[0]?.tool === "web_search", "explicit WebSurf Advanced hard-routes to web_search");
+  assert(forcedAdvancedPlan?.steps[0]?.tool === "web_search", "explicit WebSurf (legacy advanced) hard-routes to web_search");
 
   const normalChatPlan = resolveHardRoutedPlan({
     userMessage: "Tell me a joke about spring rain.",
@@ -77,7 +77,7 @@ async function main(): Promise<void> {
     assert(basicSearch.answer === "Advanced Tavily answer", "basic metadata search returns answer");
 
     const advancedSearch = await provider.searchWithMetadata("climate policy", 3, "advanced");
-    assert(advancedSearch.images.length === 1, "advanced metadata search returns top images");
+    assert(advancedSearch.images.length === 0, "legacy advanced metadata search behaves like basic");
 
     const simpleAdvancedSearch = await searchTavily("climate policy", 3, "advanced");
     assert(simpleAdvancedSearch.success === true, "simple search path accepts explicit advanced mode");
@@ -91,11 +91,11 @@ async function main(): Promise<void> {
 
     assert(advancedRequest.include_answer === "advanced", "advanced Tavily request keeps include_answer advanced");
     assert(advancedRequest.search_depth === "advanced", "advanced Tavily request keeps advanced search depth");
-    assert(advancedRequest.include_images === true, "advanced Tavily request includes top images");
-    assert(advancedRequest.include_favicon === true, "advanced Tavily request includes favicons");
+    assert(!("include_images" in advancedRequest), "legacy advanced Tavily request does not request top images");
+    assert(!("include_favicon" in advancedRequest), "legacy advanced Tavily request does not request favicons");
 
-    assert(simpleAdvancedRequest.include_images === true, "simple search path forwards advanced image mode");
-    assert(simpleAdvancedRequest.include_favicon === true, "simple search path forwards advanced favicon mode");
+    assert(!("include_images" in simpleAdvancedRequest), "simple search path ignores legacy advanced image mode");
+    assert(!("include_favicon" in simpleAdvancedRequest), "simple search path ignores legacy advanced favicon mode");
   } finally {
     globalThis.fetch = originalFetch;
   }

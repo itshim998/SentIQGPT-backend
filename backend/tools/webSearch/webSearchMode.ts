@@ -12,5 +12,6 @@ export function normalizeWebSearchMode(
 ): WebSearchMode {
   if (typeof value !== "string") return fallback;
   const normalized = value.trim().toLowerCase();
+  if (normalized === "advanced") return "basic";
   return isWebSearchMode(normalized) ? normalized : fallback;
 }

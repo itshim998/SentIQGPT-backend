@@ -196,7 +196,7 @@ export class TavilyProvider implements WebSearchProvider {
     return {
       results: this.mapResults(data, normalizedMode),
       answer: typeof data.answer === "string" ? data.answer.trim() : undefined,
-      images: normalizedMode === "advanced" ? normalizeStringArray(data.images) : [],
+      images: [],
     };
   }
 
@@ -258,11 +258,6 @@ export class TavilyProvider implements WebSearchProvider {
       max_results: maxResults,
     };
 
-    if (mode === "advanced") {
-      requestBody.include_images = true;
-      requestBody.include_favicon = true;
-    }
-
     const response = await fetch(TAVILY_API_ENDPOINT, {
       method: "POST",
       headers: {
@@ -297,8 +292,8 @@ export class TavilyProvider implements WebSearchProvider {
       url: r.url,
       snippet: r.content?.slice(0, 500) ?? "",
       content: r.content ?? "",
-      images: mode === "advanced" ? normalizeStringArray(r.images) : [],
-      favicon: mode === "advanced" && r.favicon ? String(r.favicon) : undefined,
+      images: [],
+      favicon: undefined,
       source: this.source,
       score: r.score,
     }));
