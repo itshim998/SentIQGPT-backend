@@ -93,7 +93,8 @@ const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
 
 function getExplicitWebSearchMode(value: unknown): "basic" | undefined {
-  return isWebSearchMode(value) ? normalizeWebSearchMode(value) : undefined;
+  if (!isWebSearchMode(value)) return undefined;
+  return normalizeWebSearchMode(value) === "basic" ? "basic" : undefined;
 }
 
 // ---- CORS ----
