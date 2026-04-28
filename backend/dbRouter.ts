@@ -129,6 +129,18 @@ const clientByDatabaseId: Readonly<Record<DatabaseId, SupabaseClient>> = {
 
 const controlDbClient = clientByDatabaseId[CONTROL_DATABASE_ID];
 
+function readDatabaseIdEnv(name: string, fallback: DatabaseId): DatabaseId {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!isDatabaseId(parsed)) {
+    throw new Error(`[dbRouter] Invalid ${name} value "${raw}". Expected one of: ${ALL_DATABASE_IDS.join(", ")}`);
+  }
+
+  return parsed;
+}
+
 function getClientForDatabase(dbNumber: number): SupabaseClient {
   if (!isDatabaseId(dbNumber)) {
     throw new Error(`[dbRouter] Invalid assigned_db value "${dbNumber}" in control database`);
@@ -320,6 +332,14 @@ function isUniqueConstraintViolation(error: { code?: string; message?: string } 
 export async function getUserDatabase(userId: string): Promise<SupabaseClient | null> {
   const assignedDb = await fetchAssignedDatabase(userId);
   return assignedDb === null ? null : getClientForDatabase(assignedDb);
+}
+
+export function getImageStorageDatabaseId(): DatabaseId {
+  return readDatabaseIdEnv("SENTIQ_IMAGE_STORAGE_DB", CONTROL_DATABASE_ID);
+}
+
+export function getImageStorageDatabase(): SupabaseClient {
+  return getClientForDatabase(getImageStorageDatabaseId());
 }
 
 export async function assignDatabaseToUser(userId: string): Promise<SupabaseClient> {

@@ -2,7 +2,8 @@
 -- SentIQGPT Chat Images Metadata Table
 -- 
 -- Stores ONLY metadata (URLs) for images stored in Supabase Storage.
--- Actual image files are stored in the 'sentiq-images' bucket.
+-- Actual image files are stored in the configured image storage project
+-- (SENTIQ_IMAGE_STORAGE_DB, default db1) in the 'sentiq-images' bucket.
 --
 -- RUN ON: Database 2, 3, 4 (Data shards only, NOT on Control DB 1)
 -- ═══════════════════════════════════════════════════════════════════════════════

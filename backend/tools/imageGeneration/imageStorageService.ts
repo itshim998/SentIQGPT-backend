@@ -18,8 +18,10 @@ import sharp from "sharp";
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const STORAGE_BUCKET = "sentiq-images";
+const DEFAULT_STORAGE_BUCKET = "sentiq-images";
 const TARGET_MAX_SIZE_BYTES = 700 * 1024; // 700KB target
+const STORAGE_BUCKET_LIMIT_BYTES = 1024 * 1024; // Current Supabase bucket limit
+const MAX_INPUT_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_UPLOAD_RETRIES = 2;
 const UPLOAD_RETRY_DELAY_MS = 1000;
 
@@ -27,6 +29,8 @@ const UPLOAD_RETRY_DELAY_MS = 1000;
 const INITIAL_QUALITY = 85;
 const MIN_QUALITY = 50;
 const QUALITY_STEP = 10;
+
+const bucketReadyPromises = new WeakMap<SupabaseClient, Promise<void>>();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -49,6 +53,10 @@ export interface ImageUploadResult {
   readonly error?: string;
 }
 
+export interface ImageStorageOptions {
+  readonly storageDb?: SupabaseClient;
+}
+
 export interface ChatImage {
   readonly id: string;
   readonly imageUrl: string;
@@ -63,82 +71,116 @@ export interface ChatImage {
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+type PreparedImage = {
+  readonly buffer: Buffer;
+  readonly mimeType: "image/webp" | "image/jpeg";
+  readonly extension: "webp" | "jpg";
+};
+
+function getStorageBucketName(): string {
+  return process.env.SENTIQ_IMAGE_STORAGE_BUCKET?.trim() || DEFAULT_STORAGE_BUCKET;
+}
+
 /**
- * Extract raw base64 data from various input formats.
- * Handles: raw base64, data:image/... URLs
+ * Extract raw base64 data from raw base64 or data:image/... URLs.
  */
 function extractBase64Data(input: string): Buffer {
-  let base64 = input;
-  
-  // Remove data URL prefix if present
+  let base64 = input.trim();
+
   if (base64.startsWith("data:")) {
-    const commaIndex = base64.indexOf(",");
-    if (commaIndex !== -1) {
-      base64 = base64.slice(commaIndex + 1);
+    if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(base64)) {
+      throw new Error("Invalid image data URL");
     }
+    const commaIndex = base64.indexOf(",");
+    base64 = commaIndex === -1 ? "" : base64.slice(commaIndex + 1);
   }
-  
-  return Buffer.from(base64, "base64");
+
+  base64 = base64.replace(/\s/g, "");
+  if (!base64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+    throw new Error("image_data must be base64 image data");
+  }
+
+  const buffer = Buffer.from(base64, "base64");
+  if (buffer.length === 0) {
+    throw new Error("Invalid image data");
+  }
+  if (buffer.length > MAX_INPUT_IMAGE_BYTES) {
+    throw new Error(`Image is too large to store. Maximum decoded size is ${MAX_INPUT_IMAGE_BYTES} bytes.`);
+  }
+
+  return buffer;
+}
+
+async function assertValidImage(imageBuffer: Buffer): Promise<void> {
+  try {
+    await sharp(imageBuffer).metadata();
+  } catch {
+    throw new Error("Invalid image data; unable to decode image");
+  }
 }
 
 /**
  * Compress image to target size using sharp.
- * Uses progressive quality reduction until target is met.
+ * Uses WebP first for generated images, with JPEG as a compatibility fallback.
  */
-async function compressImage(imageBuffer: Buffer): Promise<Buffer> {
+async function compressImage(imageBuffer: Buffer): Promise<PreparedImage> {
+  await assertValidImage(imageBuffer);
+
   let quality = INITIAL_QUALITY;
-  let compressed = imageBuffer;
-  
-  // First pass: convert to PNG and get initial size
-  try {
-    compressed = await sharp(imageBuffer)
-      .png({ quality: INITIAL_QUALITY, compressionLevel: 9 })
-      .toBuffer();
-  } catch {
-    // If sharp fails, return original
-    return imageBuffer;
-  }
-  
-  // Progressive compression if still too large
-  while (compressed.length > TARGET_MAX_SIZE_BYTES && quality > MIN_QUALITY) {
+  let prepared: PreparedImage = {
+    buffer: await sharp(imageBuffer)
+      .rotate()
+      .resize(1536, 1536, { fit: "inside", withoutEnlargement: true })
+      .webp({ quality })
+      .toBuffer(),
+    mimeType: "image/webp",
+    extension: "webp",
+  };
+
+  while (prepared.buffer.length > TARGET_MAX_SIZE_BYTES && quality > MIN_QUALITY) {
     quality -= QUALITY_STEP;
-    
-    try {
-      compressed = await sharp(imageBuffer)
-        .resize(1024, 1024, { fit: "inside", withoutEnlargement: true })
-        .png({ quality, compressionLevel: 9 })
-        .toBuffer();
-    } catch {
-      break;
-    }
+    prepared = {
+      buffer: await sharp(imageBuffer)
+        .rotate()
+        .resize(1280, 1280, { fit: "inside", withoutEnlargement: true })
+        .webp({ quality })
+        .toBuffer(),
+      mimeType: "image/webp",
+      extension: "webp",
+    };
   }
-  
-  // Final fallback: JPEG with aggressive compression
-  if (compressed.length > TARGET_MAX_SIZE_BYTES) {
-    try {
-      compressed = await sharp(imageBuffer)
+
+  if (prepared.buffer.length > TARGET_MAX_SIZE_BYTES) {
+    prepared = {
+      buffer: await sharp(imageBuffer)
+        .rotate()
         .resize(1024, 1024, { fit: "inside", withoutEnlargement: true })
-        .jpeg({ quality: 70 })
-        .toBuffer();
-    } catch {
-      // Return best effort
-    }
+        .flatten({ background: "#ffffff" })
+        .jpeg({ quality: 72, mozjpeg: true })
+        .toBuffer(),
+      mimeType: "image/jpeg",
+      extension: "jpg",
+    };
   }
-  
+
   console.log(
-    `[ImageStorage] compress original=${imageBuffer.length} compressed=${compressed.length} ` +
-    `ratio=${((1 - compressed.length / imageBuffer.length) * 100).toFixed(1)}%`
+    `[ImageStorage] compress original=${imageBuffer.length} compressed=${prepared.buffer.length} ` +
+    `ratio=${((1 - prepared.buffer.length / imageBuffer.length) * 100).toFixed(1)}% mime=${prepared.mimeType}`
   );
-  
-  return compressed;
+
+  if (prepared.buffer.length > STORAGE_BUCKET_LIMIT_BYTES) {
+    throw new Error("Compressed image exceeds the configured storage bucket size limit");
+  }
+
+  return prepared;
 }
 
 /**
  * Generate storage path for an image.
- * Format: ${user_id}/${chat_id}/${image_id}.png
+ * Format: ${user_id}/${chat_id}/${image_id}.${extension}
  */
-function generateStoragePath(userId: string, chatId: string, imageId: string): string {
-  return `${userId}/${chatId}/${imageId}.png`;
+function generateStoragePath(userId: string, chatId: string, imageId: string, extension: string): string {
+  return `${userId}/${chatId}/${imageId}.${extension}`;
 }
 
 /**
@@ -146,6 +188,77 @@ function generateStoragePath(userId: string, chatId: string, imageId: string): s
  */
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getStorageErrorMessage(error: unknown): string {
+  if (!error) return "";
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && "message" in error) {
+    return String((error as { message?: unknown }).message || "");
+  }
+  return String(error);
+}
+
+function looksLikeMissingBucket(error: unknown): boolean {
+  const message = getStorageErrorMessage(error).toLowerCase();
+  return message.includes("bucket not found") || message.includes("not found");
+}
+
+function looksLikeExistingBucket(error: unknown): boolean {
+  const message = getStorageErrorMessage(error).toLowerCase();
+  return message.includes("already exists") || message.includes("duplicate");
+}
+
+async function ensureStorageBucket(supabaseClient: SupabaseClient): Promise<void> {
+  const existingPromise = bucketReadyPromises.get(supabaseClient);
+  if (existingPromise) return existingPromise;
+
+  const promise = (async () => {
+    const bucketName = getStorageBucketName();
+    const { data, error } = await supabaseClient.storage.getBucket(bucketName);
+
+    if (!error && data) {
+      const isPublic = Boolean((data as { public?: boolean }).public);
+      if (!isPublic) {
+        const { error: updateError } = await supabaseClient.storage.updateBucket(bucketName, {
+          public: true,
+          fileSizeLimit: STORAGE_BUCKET_LIMIT_BYTES,
+          allowedMimeTypes: ["image/*"],
+        });
+        if (updateError) {
+          throw new Error(`Failed to make image storage bucket public: ${updateError.message}`);
+        }
+        console.log(`[ImageStorage] bucket.public.ok bucket=${bucketName}`);
+      }
+      return;
+    }
+
+    if (error && !looksLikeMissingBucket(error)) {
+      throw new Error(`Failed to inspect image storage bucket: ${getStorageErrorMessage(error)}`);
+    }
+
+    console.warn(`[ImageStorage] bucket.missing bucket=${bucketName} - creating`);
+    const { error: createError } = await supabaseClient.storage.createBucket(bucketName, {
+      public: true,
+      fileSizeLimit: STORAGE_BUCKET_LIMIT_BYTES,
+      allowedMimeTypes: ["image/*"],
+    });
+
+    if (createError && !looksLikeExistingBucket(createError)) {
+      throw new Error(`Failed to create image storage bucket: ${createError.message}`);
+    }
+
+    console.log(`[ImageStorage] bucket.ready bucket=${bucketName}`);
+  })();
+
+  bucketReadyPromises.set(supabaseClient, promise);
+
+  try {
+    await promise;
+  } catch (error) {
+    bucketReadyPromises.delete(supabaseClient);
+    throw error;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -160,17 +273,24 @@ async function uploadToStorage(
   supabaseClient: SupabaseClient,
   storagePath: string,
   imageBuffer: Buffer,
+  contentType: string,
 ): Promise<{ publicUrl: string; sizeBytes: number }> {
   let lastError: Error | null = null;
+  const bucketName = getStorageBucketName();
+
+  await ensureStorageBucket(supabaseClient);
   
   for (let attempt = 1; attempt <= MAX_UPLOAD_RETRIES; attempt++) {
     try {
-      console.log(`[ImageStorage] upload.start path=${storagePath} attempt=${attempt} size=${imageBuffer.length}`);
+      console.log(
+        `[ImageStorage] upload.start bucket=${bucketName} path=${storagePath} ` +
+        `attempt=${attempt} size=${imageBuffer.length} contentType=${contentType}`
+      );
       
       const { error: uploadError } = await supabaseClient.storage
-        .from(STORAGE_BUCKET)
+        .from(bucketName)
         .upload(storagePath, imageBuffer, {
-          contentType: "image/png",
+          contentType,
           cacheControl: "31536000", // 1 year cache
           upsert: false, // Don't overwrite existing
         });
@@ -181,7 +301,7 @@ async function uploadToStorage(
       
       // Get public URL
       const { data: urlData } = supabaseClient.storage
-        .from(STORAGE_BUCKET)
+        .from(bucketName)
         .getPublicUrl(storagePath);
       
       if (!urlData?.publicUrl) {
@@ -258,27 +378,32 @@ async function saveImageMetadata(
 export async function uploadChatImage(
   userDb: SupabaseClient,
   params: ImageUploadParams,
+  options: ImageStorageOptions = {},
 ): Promise<ImageUploadResult> {
   const { userId, chatId, imageData, prompt, provider } = params;
+  const storageDb = options.storageDb ?? userDb;
   const imageId = randomUUID();
+  let uploadedStoragePath: string | null = null;
   
   try {
     // 1. Extract and validate image data
     console.log(`[ImageStorage] process.start userId=${userId} chatId=${chatId}`);
     const rawBuffer = extractBase64Data(imageData);
-    
-    if (rawBuffer.length === 0) {
-      return { success: false, error: "Invalid image data" };
-    }
-    
+
     // 2. Compress image to target size
-    const compressedBuffer = await compressImage(rawBuffer);
+    const preparedImage = await compressImage(rawBuffer);
     
     // 3. Generate storage path
-    const storagePath = generateStoragePath(userId, chatId, imageId);
+    const storagePath = generateStoragePath(userId, chatId, imageId, preparedImage.extension);
     
     // 4. Upload to Supabase Storage
-    const { publicUrl, sizeBytes } = await uploadToStorage(userDb, storagePath, compressedBuffer);
+    const { publicUrl, sizeBytes } = await uploadToStorage(
+      storageDb,
+      storagePath,
+      preparedImage.buffer,
+      preparedImage.mimeType,
+    );
+    uploadedStoragePath = storagePath;
     
     // 5. Save metadata to database
     await saveImageMetadata(userDb, {
@@ -304,6 +429,23 @@ export async function uploadChatImage(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[ImageStorage] process.failed userId=${userId} chatId=${chatId} error=${message}`);
+
+    if (uploadedStoragePath) {
+      await storageDb.storage
+        .from(getStorageBucketName())
+        .remove([uploadedStoragePath])
+        .then(({ error }) => {
+          if (error) {
+            console.warn(`[ImageStorage] cleanup.failed path=${uploadedStoragePath} error=${error.message}`);
+          } else {
+            console.log(`[ImageStorage] cleanup.ok path=${uploadedStoragePath}`);
+          }
+        })
+        .catch((cleanupError) => {
+          const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+          console.warn(`[ImageStorage] cleanup.error path=${uploadedStoragePath} error=${cleanupMessage}`);
+        });
+    }
     
     return {
       success: false,
@@ -355,7 +497,9 @@ export async function deleteChatImage(
   userDb: SupabaseClient,
   userId: string,
   imageId: string,
+  options: ImageStorageOptions = {},
 ): Promise<boolean> {
+  const storageDb = options.storageDb ?? userDb;
   try {
     // Get image metadata first
     const { data: image, error: fetchError } = await userDb
@@ -371,8 +515,8 @@ export async function deleteChatImage(
     }
     
     // Delete from storage
-    const { error: storageError } = await userDb.storage
-      .from(STORAGE_BUCKET)
+    const { error: storageError } = await storageDb.storage
+      .from(getStorageBucketName())
       .remove([image.storage_path]);
     
     if (storageError) {

@@ -37,7 +37,13 @@ import {
   strictParseJsonObject,
 } from "./ai/PromptBuilders";
 import { buildContext, buildContextFast } from "./context/contextBuilder";
-import { getOrAssignUserDatabase, ShardCapacityError, verifyShardMigrations } from "./dbRouter";
+import {
+  getImageStorageDatabase,
+  getImageStorageDatabaseId,
+  getOrAssignUserDatabase,
+  ShardCapacityError,
+  verifyShardMigrations,
+} from "./dbRouter";
 import {
   createConversation,
   deleteConversation,
@@ -91,10 +97,16 @@ import { ZodError } from "zod";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
+const JSON_BODY_LIMIT = process.env.SENTIQ_JSON_BODY_LIMIT?.trim() || "6mb";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function getExplicitWebSearchMode(value: unknown): "basic" | undefined {
   if (!isWebSearchMode(value)) return undefined;
   return normalizeWebSearchMode(value) === "basic" ? "basic" : undefined;
+}
+
+function isUuid(value: string): boolean {
+  return UUID_PATTERN.test(value.trim());
 }
 
 // ---- CORS ----
@@ -135,7 +147,7 @@ const corsOptions: cors.CorsOptions = {
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // ---- Security headers ----
 app.use(
@@ -2363,6 +2375,10 @@ app.post(
       res.status(400).json({ error: "chat_id is required" });
       return;
     }
+    if (!isUuid(chat_id)) {
+      res.status(400).json({ error: "chat_id must be a valid conversation id" });
+      return;
+    }
     if (!image_data || typeof image_data !== "string") {
       res.status(400).json({ error: "image_data (base64 or data URL) is required" });
       return;
@@ -2376,14 +2392,24 @@ app.post(
       return;
     }
 
-    // Upload to storage and save metadata
-    const result = await uploadChatImage(userDb, {
-      userId,
-      chatId: chat_id,
-      imageData: image_data,
-      prompt: typeof prompt === "string" ? prompt : undefined,
-      provider: typeof provider === "string" ? provider : undefined,
-    });
+    await getOwnedConversationOrThrow(userDb, userId, chat_id, "images.store");
+
+    const imageStorageDb = getImageStorageDatabase();
+    const imageStorageDbId = getImageStorageDatabaseId();
+    console.log(`[IMAGE_STORE] storage-db userId=${userId} chatId=${chat_id} db=${imageStorageDbId}`);
+
+    // Upload binary to the central image bucket and save metadata on the user's shard.
+    const result = await uploadChatImage(
+      userDb,
+      {
+        userId,
+        chatId: chat_id,
+        imageData: image_data,
+        prompt: typeof prompt === "string" ? prompt : undefined,
+        provider: typeof provider === "string" ? provider : undefined,
+      },
+      { storageDb: imageStorageDb },
+    );
 
     if (!result.success) {
       console.error(`[IMAGE_STORE] failed userId=${userId} chatId=${chat_id} error=${result.error}`);

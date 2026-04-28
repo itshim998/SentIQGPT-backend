@@ -179,6 +179,11 @@ export function resolveHardRoutedPlan(args: {
   }
 
   const queryClassification = classifyQueryType(args.userMessage);
+  if (queryClassification.category === "image_generation") {
+    console.log(`[PLANNER] image request detected (rule: ${queryClassification.matchedRule}) - hard-routing to image_generation`);
+    return createSingleStepPlan("image_generation", args.userMessage);
+  }
+
   const forceWebSearch = shouldForceWebSearch(args.userMessage);
 
   if (args.hasWebSearch && (queryClassification.needsWebSearch || forceWebSearch)) {
