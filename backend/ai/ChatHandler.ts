@@ -57,6 +57,8 @@ export async function handleChat(args: {
   readonly memories?: readonly { type: string; summary: string }[];
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
   readonly conversationSummary?: string;
+  readonly priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
+  readonly isExplicitRecallQuery?: boolean;
   readonly trustedProfile?: { displayName: string };
   readonly modelOverride?: string;
   readonly userId?: string;
@@ -72,6 +74,8 @@ export async function handleChat(args: {
     memories: args.memories,
     fileReferences: args.fileReferences,
     conversationSummary: args.conversationSummary,
+    priorConversationEvidence: args.priorConversationEvidence,
+    isExplicitRecallQuery: args.isExplicitRecallQuery,
     trustedProfile: args.trustedProfile,
     modelOverride: args.modelOverride,
     userId: args.userId,

@@ -19,6 +19,19 @@ assert.deepEqual(forbiddenResponse.body, {
   code: "conversation_forbidden",
 });
 
+const profileGateResponse = buildHttpErrorResponse(
+  new HttpError(403, "Add your name to continue.", {
+    code: "profile_name_required",
+    requires_name: true,
+  }),
+);
+assert.equal(profileGateResponse.statusCode, 403);
+assert.deepEqual(profileGateResponse.body, {
+  error: "Add your name to continue.",
+  code: "profile_name_required",
+  requires_name: true,
+});
+
 const capacityResponse = buildHttpErrorResponse(
   new HttpError(503, "Service is temporarily at capacity. Please try again later.", {
     code: "shard_capacity_exhausted",

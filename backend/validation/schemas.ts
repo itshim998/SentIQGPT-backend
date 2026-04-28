@@ -10,6 +10,8 @@ export const ChatRequestSchema = z.object({
   message: z.string().min(1, "Message is required").max(10000, "Message too long"),
   conversationId: z.string().min(1).optional(),
   conversation_id: z.string().min(1).optional(),
+  clientRequestId: z.string().min(1).max(120).optional(),
+  client_request_id: z.string().min(1).max(120).optional(),
   context: z.object({
     recent_messages: z.array(z.object({
       role: z.enum(["user", "assistant"]),
@@ -25,9 +27,10 @@ export const ChatRequestSchema = z.object({
     })).max(10).optional(),
     web_search_mode: z.enum(["basic", "advanced"]).optional(),
   }).optional(),
-}).transform(({ conversation_id, ...rest }) => ({
+}).transform(({ conversation_id, client_request_id, ...rest }) => ({
   ...rest,
   conversationId: rest.conversationId ?? conversation_id,
+  clientRequestId: rest.clientRequestId ?? client_request_id,
 }));
 
 // --- Memory ---

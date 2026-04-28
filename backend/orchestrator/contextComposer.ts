@@ -28,6 +28,7 @@ export interface ComposerInput {
   userMessage: string;
   conversation?: readonly { role: string; content: string }[];
   conversationSummary?: string;
+  recallEvidence?: readonly { content: string; createdAt?: string }[];
   memories?: readonly { type: string; summary: string; importance?: number }[];
   fileReferences?: readonly { filename: string; extractedText: string }[];
   budgetProfile?: ContextBudgetProfile;
@@ -108,6 +109,20 @@ function buildMemoryBlock(
   return "MEMORY CONTEXT (things you remember about this user):\n" + lines.join("\n") + "\n";
 }
 
+function buildRecallEvidenceBlock(
+  evidence: readonly { content: string; createdAt?: string }[] | undefined,
+): string {
+  if (!evidence || evidence.length === 0) return "";
+  const lines = evidence.map((item) => {
+    const createdLabel = item.createdAt ? item.createdAt.slice(0, 10) : "unknown-date";
+    const content = item.content.length > 600
+      ? `${item.content.slice(0, 600).trimEnd()}...`
+      : item.content;
+    return `  [${createdLabel}] ${content}`;
+  });
+  return "PRIOR CONVERSATION EVIDENCE (earlier user prompts from other chats):\n" + lines.join("\n") + "\n";
+}
+
 /**
  * Build the file context block (all uploaded files combined).
  */
@@ -151,11 +166,13 @@ export function composeContext(input: ComposerInput): string {
     system: input.systemPrompt,
     user: `USER: ${input.userMessage}\n`,
     file: buildFileBlock(input.fileReferences, budget.file),
-    conversation: trimConversation(
-      input.conversation ?? [],
-      input.conversationSummary,
-      budget.conversation,
-    ),
+    conversation:
+      buildRecallEvidenceBlock(input.recallEvidence) +
+      trimConversation(
+        input.conversation ?? [],
+        input.conversationSummary,
+        budget.conversation,
+      ),
     memory: buildMemoryBlock(input.memories ?? []),
   };
 

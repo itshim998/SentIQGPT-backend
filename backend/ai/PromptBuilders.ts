@@ -431,6 +431,8 @@ export interface ChatContext {
   readonly memories?: readonly { type: string; summary: string }[];
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
   readonly conversationSummary?: string;
+  readonly priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
+  readonly isExplicitRecallQuery?: boolean;
   readonly trustedProfile?: {
     displayName: string;
   };
@@ -467,6 +469,16 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
         "- Use their name naturally when it helps, but do not overuse it.\n";
     }
   }
+  if (!ctx.reasoningMode) {
+    SYSTEM_PROMPT +=
+      "\nCONTEXT PROVENANCE RULES:\n" +
+      "- Only say the user mentioned something earlier if it appears in the current conversation history or in a PRIOR CONVERSATION EVIDENCE block.\n" +
+      "- Do not claim earlier mentions based on guesswork.\n";
+    if (ctx.isExplicitRecallQuery) {
+      SYSTEM_PROMPT +=
+        "- If the user asks whether they mentioned something before and there is no matching earlier evidence, say you cannot confirm it from the available history.\n";
+    }
+  }
 
   // When files are present, add explicit file-analysis instructions
   if (hasFiles && !ctx.reasoningMode) {
@@ -488,6 +500,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     userMessage: ctx.userMessage,
     conversation: ctx.recentMessages,
     conversationSummary: ctx.conversationSummary,
+    recallEvidence: ctx.priorConversationEvidence,
     memories: hasFiles ? [] : ctx.memories, // When files present, skip memory to avoid confusion
     fileReferences: ctx.fileReferences,
     budgetProfile: ctx.streaming ? "streaming" : "standard",

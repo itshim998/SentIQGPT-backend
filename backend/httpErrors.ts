@@ -1,6 +1,7 @@
 export type HttpErrorBody = {
   error: string;
   code?: string;
+  requires_name?: boolean;
 };
 
 export type HttpErrorResponse = {
@@ -13,6 +14,7 @@ type HttpErrorOptions = {
   code?: string;
   expose?: boolean;
   headers?: Record<string, string>;
+  requires_name?: boolean;
 };
 
 export class HttpError extends Error {
@@ -20,6 +22,7 @@ export class HttpError extends Error {
   readonly code?: string;
   readonly expose: boolean;
   readonly headers: Record<string, string>;
+  readonly requiresName?: boolean;
 
   constructor(statusCode: number, message: string, options: HttpErrorOptions = {}) {
     super(message);
@@ -28,6 +31,7 @@ export class HttpError extends Error {
     this.code = options.code;
     this.expose = options.expose ?? statusCode < 500;
     this.headers = options.headers ?? {};
+    this.requiresName = options.requires_name;
   }
 }
 
@@ -43,6 +47,9 @@ export function buildHttpErrorResponse(err: Error): HttpErrorResponse {
 
   if (isHttpError && err.code) {
     body.code = err.code;
+  }
+  if (isHttpError && err.requiresName) {
+    body.requires_name = true;
   }
 
   return {

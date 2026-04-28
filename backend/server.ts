@@ -103,6 +103,7 @@ import {
   detectPromptInjection,
 } from "./validation/schemas";
 import { ZodError } from "zod";
+import { collapseAdjacentDuplicateMessages } from "./context/messageDeduper";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -405,6 +406,30 @@ async function resolveTrustedProfileContext(
   }
 }
 
+async function ensureNamedWorkspaceProfile(
+  userId: string,
+  scope: string,
+  userDb?: any,
+): Promise<{ displayName: string } | undefined> {
+  await initializeControlUserSession(userId);
+  const profile = await getMirroredUserProfile({
+    userId,
+    controlDb: getControlDatabase(),
+    userDb,
+    logger: logProfileEvent,
+  });
+
+  if (profile.requiresName) {
+    logProfileEvent("gate.blocked", { userId, scope });
+    throw new HttpError(403, "Add your name to continue.", {
+      code: "profile_name_required",
+      requires_name: true,
+    });
+  }
+
+  return profile.displayName ? { displayName: profile.displayName } : undefined;
+}
+
 type DbErrorLike = {
   code?: string;
   message?: string;
@@ -554,14 +579,28 @@ async function insertConversationMessageOrThrow(
   role: "user" | "assistant",
   content: string,
   scope: string,
+  options: { clientRequestId?: string } = {},
 ): Promise<void> {
-  logDbEvent(`${scope}.message-insert.start`, userId, { conversationId, role });
-  const { error } = await insertConversationMessage(userDb, { conversationId, role, content });
+  logDbEvent(`${scope}.message-insert.start`, userId, {
+    conversationId,
+    role,
+    clientRequestId: options.clientRequestId || null,
+  });
+  const { error, duplicate } = await insertConversationMessage(userDb, {
+    conversationId,
+    role,
+    content,
+    clientRequestId: options.clientRequestId,
+  });
   if (error) {
     logDbFailure(`${scope}.message-insert`, userId, error, { conversationId, role });
     throw new Error(error.message);
   }
-  logDbEvent(`${scope}.message-insert.ok`, userId, { conversationId, role });
+  logDbEvent(`${scope}.message-insert.ok`, userId, {
+    conversationId,
+    role,
+    duplicate: duplicate === true ? "true" : "false",
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -741,12 +780,14 @@ async function listConversationMessagesOrThrow(
     throw new Error(error.message);
   }
 
+  const collapsedMessages = collapseAdjacentDuplicateMessages(data || []);
+
   logDbEvent(`${scope}.message-list.ok`, userId, {
     conversationId,
-    count: data?.length || 0,
+    count: collapsedMessages.length,
     duration_ms: Date.now() - startedAt,
   });
-  return (data || []) as ConversationMessageRow[];
+  return collapsedMessages as ConversationMessageRow[];
 }
 
 async function updateConversationTitleIfOwned(
@@ -960,6 +1001,7 @@ app.get(
     const userId = await getVerifiedUserId(req);
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.list");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.list");
+    await ensureNamedWorkspaceProfile(userId, "conversations.list", userDb);
     const conversations = await listConversationsOrThrow(userDb, userId, "conversations.list");
     logDbEvent("conversations.list.request.ok", userId, {
       duration_ms: Date.now() - requestStartedAt,
@@ -983,6 +1025,7 @@ app.post(
         : "New Chat";
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.create");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.create");
+    await ensureNamedWorkspaceProfile(userId, "conversations.create", userDb);
     const conversation = await createConversationOrThrow(userDb, userId, "conversations.create", requestedTitle);
     logDbEvent("conversations.create.request.ok", userId, {
       duration_ms: Date.now() - requestStartedAt,
@@ -1017,6 +1060,7 @@ app.patch(
 
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.title");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.title");
+    await ensureNamedWorkspaceProfile(userId, "conversations.title", userDb);
     await updateConversationTitleIfOwned(userDb, userId, conversationId, title, "conversations.title");
     logDbEvent("conversations.title.request.ok", userId, {
       duration_ms: Date.now() - requestStartedAt,
@@ -1041,6 +1085,7 @@ app.get(
     }
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.messages");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.messages");
+    await ensureNamedWorkspaceProfile(userId, "conversations.messages", userDb);
     
     // Fetch conversation details (including title) along with messages
     const conversation = await getOwnedConversationOrThrow(
@@ -1088,6 +1133,7 @@ app.delete(
     }
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.delete");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.delete");
+    await ensureNamedWorkspaceProfile(userId, "conversations.delete", userDb);
     await deleteConversationIfOwned(userDb, userId, conversationId, "conversations.delete");
     res.json({ success: true });
   }),
@@ -1110,6 +1156,7 @@ app.get(
         sessionError instanceof Error ? sessionError : new Error(String(sessionError)),
       );
     }
+    await ensureNamedWorkspaceProfile(userId, "memories.list", userDb);
     const memories = await listMemoriesOrThrow(userDb, userId, "memories.list");
     res.json({ memories });
   }),
@@ -1129,6 +1176,7 @@ app.delete(
     }
     const userDb = await resolveUserDatabaseOrThrow(userId, "memories.delete");
     await initializeUserSessionOrThrow(userDb, userId, "memories.delete");
+    await ensureNamedWorkspaceProfile(userId, "memories.delete", userDb);
     await deleteMemoryIfOwned(userDb, userId, memoryId, "memories.delete");
     res.json({ success: true });
   }),
@@ -1147,6 +1195,9 @@ app.post(
       res.status(400).json({ error: formatZodError(parsed.error) });
       return;
     }
+    const normalizedRecentMessages = collapseAdjacentDuplicateMessages(
+      parsed.data.context?.recent_messages ?? [],
+    );
     const { sub: userId, isGuest } = getRequestUser(req);
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
@@ -1172,7 +1223,7 @@ app.post(
       const result = await orchestrate({
         userMessage: parsed.data.message,
         context: {
-          recent_messages: parsed.data.context?.recent_messages,
+          recent_messages: normalizedRecentMessages,
           memories: [],
           file_references: orcFileRefs,
           web_search_mode: webSearchMode,
@@ -1196,7 +1247,7 @@ app.post(
 
     if (isGuest) {
       const guestContext = await buildContext({
-        recent_messages: parsed.data.context?.recent_messages,
+        recent_messages: normalizedRecentMessages,
         memories: [],
         file_references: orcFileRefs,
         web_search_mode: webSearchMode,
@@ -1209,6 +1260,8 @@ app.post(
         memories: [],
         fileReferences: guestContext.fileReferences,
         conversationSummary: guestContext.conversationSummary,
+        priorConversationEvidence: guestContext.priorConversationEvidence,
+        isExplicitRecallQuery: guestContext.isExplicitRecallQuery,
         modelOverride: GUEST_MODEL_OVERRIDE,
         userId,
         reasoningMode: isReasoningQuery,
@@ -1249,6 +1302,8 @@ app.post(
       );
       userDb = null;
     }
+
+    const trustedProfile = await ensureNamedWorkspaceProfile(userId, "chat", userDb || undefined);
 
     if (userDb && activeConversationId) {
       try {
@@ -1296,6 +1351,7 @@ app.post(
           "user",
           parsed.data.message,
           "chat",
+          { clientRequestId: parsed.data.clientRequestId },
         );
       } catch (userMessagePersistError) {
         sync.persisted = false;
@@ -1309,11 +1365,9 @@ app.post(
       }
     }
 
-    const trustedProfile = await resolveTrustedProfileContext(userId, userDb);
-
     if (isLogicReasoningQuery && !hasExplicitWebSearchMode) {
       const reasoningContext = await buildContext({
-        recent_messages: parsed.data.context?.recent_messages,
+        recent_messages: normalizedRecentMessages,
         memories: parsed.data.context?.memories,
         file_references: orcFileRefs,
         trustedProfile,
@@ -1328,6 +1382,8 @@ app.post(
         memories: reasoningContext.memories,
         fileReferences: reasoningContext.fileReferences,
         conversationSummary: reasoningContext.conversationSummary,
+        priorConversationEvidence: reasoningContext.priorConversationEvidence,
+        isExplicitRecallQuery: reasoningContext.isExplicitRecallQuery,
         trustedProfile: reasoningContext.trustedProfile,
         userId,
         reasoningMode: true,
@@ -1373,7 +1429,7 @@ app.post(
     const result = await orchestrate({
       userMessage: parsed.data.message,
       context: {
-        recent_messages: parsed.data.context?.recent_messages,
+        recent_messages: normalizedRecentMessages,
         memories: parsed.data.context?.memories,
         file_references: orcFileRefs,
         trustedProfile,
@@ -1545,6 +1601,9 @@ app.post(
     // The streaming path does not support tool execution (charts, images, etc.).
     // If the message is a chart request, redirect to the orchestrator and return
     // the result as a single SSE JSON payload so the frontend can render it.
+    const normalizedRecentMessages = collapseAdjacentDuplicateMessages(
+      parsed.data.context?.recent_messages ?? [],
+    );
     const { sub: userId, isGuest } = getRequestUser(req);
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
@@ -1554,7 +1613,7 @@ app.post(
       const result = await orchestrate({
         userMessage: parsed.data.message,
         context: {
-          recent_messages: parsed.data.context?.recent_messages,
+          recent_messages: normalizedRecentMessages,
           memories: [],
           file_references: parsed.data.context?.file_references,
           web_search_mode: webSearchMode,
@@ -1595,9 +1654,9 @@ app.post(
         try {
           if (isMathReasoningQuery) {
             const result = await orchestrate({
-              userMessage: parsed.data.message,
-              context: {
-                recent_messages: parsed.data.context?.recent_messages,
+            userMessage: parsed.data.message,
+            context: {
+                recent_messages: normalizedRecentMessages,
                 memories: [],
                 file_references: parsed.data.context?.file_references,
                 web_search_mode: webSearchMode,
@@ -1614,7 +1673,7 @@ app.post(
           }
 
           const guestReasoningContext = await buildContext({
-            recent_messages: parsed.data.context?.recent_messages,
+            recent_messages: normalizedRecentMessages,
             memories: [],
             file_references: parsed.data.context?.file_references,
             web_search_mode: webSearchMode,
@@ -1627,6 +1686,8 @@ app.post(
             memories: [],
             fileReferences: guestReasoningContext.fileReferences,
             conversationSummary: guestReasoningContext.conversationSummary,
+            priorConversationEvidence: guestReasoningContext.priorConversationEvidence,
+            isExplicitRecallQuery: guestReasoningContext.isExplicitRecallQuery,
             modelOverride: GUEST_MODEL_OVERRIDE,
             userId,
             reasoningMode: true,
@@ -1654,7 +1715,7 @@ app.post(
 
       const fileRefs = parsed.data.context?.file_references;
       const guestCtx = await buildContextFast({
-        recent_messages: parsed.data.context?.recent_messages,
+        recent_messages: normalizedRecentMessages,
         memories: [],
         file_references: fileRefs,
         web_search_mode: webSearchMode,
@@ -1682,6 +1743,8 @@ app.post(
           memories: [],
           fileReferences: guestCtx.fileReferences,
           conversationSummary: guestCtx.conversationSummary,
+          priorConversationEvidence: guestCtx.priorConversationEvidence,
+          isExplicitRecallQuery: guestCtx.isExplicitRecallQuery,
           modelOverride: GUEST_MODEL_OVERRIDE,
           userId,
           streaming: true,
@@ -1732,6 +1795,7 @@ app.post(
         { conversationId: activeConversationId },
       );
     }
+    const trustedProfile = await ensureNamedWorkspaceProfile(userId, "chat.stream", userDb || undefined);
     if (userDb && activeConversationId) {
       try {
         await getOwnedConversationOrThrow(userDb, userId, activeConversationId, "chat.stream");
@@ -1776,6 +1840,7 @@ app.post(
           "user",
           parsed.data.message,
           "chat.stream",
+          { clientRequestId: parsed.data.clientRequestId },
         );
       } catch (messagePersistError) {
         sync.persisted = false;
@@ -1861,15 +1926,13 @@ app.post(
       }
     };
 
-    const trustedProfile = await resolveTrustedProfileContext(userId, userDb);
-
     if (hasExplicitWebSearchMode) {
       console.log(`[Stream] explicit WebSurf mode=${webSearchMode} - redirecting to orchestrator`);
       try {
         const result = await orchestrate({
           userMessage: parsed.data.message,
           context: {
-            recent_messages: parsed.data.context?.recent_messages,
+            recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
             trustedProfile,
@@ -1909,7 +1972,7 @@ app.post(
         const result = await orchestrate({
           userMessage: parsed.data.message,
           context: {
-            recent_messages: parsed.data.context?.recent_messages,
+            recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
             trustedProfile,
@@ -1949,7 +2012,7 @@ app.post(
         const result = await orchestrate({
           userMessage: parsed.data.message,
           context: {
-            recent_messages: parsed.data.context?.recent_messages,
+            recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
             trustedProfile,
@@ -2008,7 +2071,7 @@ app.post(
           const result = await orchestrate({
             userMessage: parsed.data.message,
             context: {
-              recent_messages: parsed.data.context?.recent_messages,
+              recent_messages: normalizedRecentMessages,
               memories: parsed.data.context?.memories,
               file_references: parsed.data.context?.file_references,
               trustedProfile,
@@ -2032,7 +2095,7 @@ app.post(
         }
 
         const reasoningContext = await buildContext({
-          recent_messages: parsed.data.context?.recent_messages,
+          recent_messages: normalizedRecentMessages,
           memories: parsed.data.context?.memories,
           file_references: parsed.data.context?.file_references,
           trustedProfile,
@@ -2047,6 +2110,8 @@ app.post(
           memories: reasoningContext.memories,
           fileReferences: reasoningContext.fileReferences,
           conversationSummary: reasoningContext.conversationSummary,
+          priorConversationEvidence: reasoningContext.priorConversationEvidence,
+          isExplicitRecallQuery: reasoningContext.isExplicitRecallQuery,
           trustedProfile: reasoningContext.trustedProfile,
           userId,
           reasoningMode: true,
@@ -2085,7 +2150,7 @@ app.post(
         const result = await orchestrate({
           userMessage: parsed.data.message,
           context: {
-            recent_messages: parsed.data.context?.recent_messages,
+            recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
             trustedProfile,
@@ -2126,7 +2191,7 @@ app.post(
     );
     if (hasFile) console.log(`[File] stream: ${fileRefs.length} file(s) in context, hasImage: ${hasImage}`);
 
-    const recentMessageCount = parsed.data.context?.recent_messages?.length ?? 0;
+    const recentMessageCount = normalizedRecentMessages.length;
     const lowComplexity =
       parsed.data.message.length <= 280 &&
       recentMessageCount <= 6 &&
@@ -2160,7 +2225,7 @@ app.post(
     // Use buildContextFast which skips conversation compression for speed.
     // This gets the model started ASAP while still providing recent context.
     const ctx = await buildContextFast({
-      recent_messages: parsed.data.context?.recent_messages,
+      recent_messages: normalizedRecentMessages,
       memories: parsed.data.context?.memories,
       file_references: fileRefs,
       trustedProfile,
@@ -2185,6 +2250,8 @@ app.post(
       memories: ctx.memories,
       fileReferences: ctx.fileReferences,
       conversationSummary: ctx.conversationSummary,
+      priorConversationEvidence: ctx.priorConversationEvidence,
+      isExplicitRecallQuery: ctx.isExplicitRecallQuery,
       trustedProfile: ctx.trustedProfile,
       modelOverride,
       userId,
@@ -2271,6 +2338,10 @@ app.post(
       return;
     }
 
+    const userDb = await resolveUserDatabaseOrThrow(userId, "memory.classify");
+    await initializeUserSessionOrThrow(userDb, userId, "memory.classify");
+    await ensureNamedWorkspaceProfile(userId, "memory.classify", userDb);
+
     const result = await processMessageForMemory({
       message: parsed.data.message,
       recentMessages: parsed.data.recent_messages,
@@ -2299,6 +2370,10 @@ app.post(
       return;
     }
 
+    const userDb = await resolveUserDatabaseOrThrow(userId, "memory.compress");
+    await initializeUserSessionOrThrow(userDb, userId, "memory.compress");
+    await ensureNamedWorkspaceProfile(userId, "memory.compress", userDb);
+
     const result = await compressMemories({
       memories: parsed.data.memories,
       userId,
@@ -2315,11 +2390,12 @@ app.get(
   "/api/files/updates",
   aiRateLimiter,
   asyncHandler(async (req, res) => {
-    const { isGuest } = await getRequestIdentity(req);
+    const { userId, isGuest } = await getRequestIdentity(req);
     if (isGuest) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
+    await ensureNamedWorkspaceProfile(userId, "files.updates");
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -2347,6 +2423,7 @@ app.post(
   upload.single("file"),
   asyncHandler(async (req, res) => {
     const userId = await getVerifiedUserId(req);
+    await ensureNamedWorkspaceProfile(userId, "files.upload");
     const file = req.file;
     if (!file) {
       res.status(400).json({ error: "No file uploaded." });
@@ -2457,7 +2534,8 @@ app.post(
   aiRateLimiter,
   imageQuotaMiddleware,
   asyncHandler(async (req, res) => {
-    await getVerifiedUserId(req);
+    const userId = await getVerifiedUserId(req);
+    await ensureNamedWorkspaceProfile(userId, "images.generate");
     const parsed = ImageGenerateRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
@@ -2537,6 +2615,8 @@ app.post(
       res.status(500).json({ error: "Database not available" });
       return;
     }
+    await initializeUserSessionOrThrow(userDb, userId, "images.store");
+    await ensureNamedWorkspaceProfile(userId, "images.store", userDb);
 
     await getOwnedConversationOrThrow(userDb, userId, chat_id, "images.store");
 
@@ -2595,6 +2675,8 @@ app.get(
       res.status(500).json({ error: "Database not available" });
       return;
     }
+    await initializeUserSessionOrThrow(userDb, userId, "images.list");
+    await ensureNamedWorkspaceProfile(userId, "images.list", userDb);
 
     const images = await getChatImages(userDb, userId, chatId);
     res.json({ images });
@@ -2604,7 +2686,8 @@ app.post(
   "/api/charts/generate",
   aiRateLimiter,
   asyncHandler(async (req, res) => {
-    await getVerifiedUserId(req);
+    const userId = await getVerifiedUserId(req);
+    await ensureNamedWorkspaceProfile(userId, "charts.generate");
     const parsed = ChartGenerateRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
@@ -2682,11 +2765,14 @@ app.post(
     }
 
     const userMessage = parts.join("\n\n");
+    const normalizedRecentMessages = collapseAdjacentDuplicateMessages(
+      parsed.data.context?.recent_messages ?? [],
+    );
 
     if (isGuest) {
       const guestResult = await handleChat({
         userMessage,
-        recentMessages: parsed.data.context?.recent_messages,
+        recentMessages: normalizedRecentMessages,
         memories: [],
         modelOverride: GUEST_MODEL_OVERRIDE,
         userId,
@@ -2706,14 +2792,18 @@ app.post(
       return;
     }
 
-    const trustedProfile = await resolveTrustedProfileContext(userId);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "chat.selection");
+    await initializeUserSessionOrThrow(userDb, userId, "chat.selection");
+    const trustedProfile = await ensureNamedWorkspaceProfile(userId, "chat.selection", userDb);
 
     const result = await orchestrate({
       userMessage,
       context: {
-        recent_messages: parsed.data.context?.recent_messages,
+        recent_messages: normalizedRecentMessages,
         memories: parsed.data.context?.memories,
         trustedProfile,
+        conversationId: parsed.data.conversationId,
+        userDb,
         userId,
       },
     });
@@ -2754,6 +2844,12 @@ app.post(
     ) {
       res.status(400).json({ error: "userMessage and assistantReply are required." });
       return;
+    }
+
+    if (!isGuest) {
+      const userDb = await resolveUserDatabaseOrThrow(userId, "chat.title");
+      await initializeUserSessionOrThrow(userDb, userId, "chat.title");
+      await ensureNamedWorkspaceProfile(userId, "chat.title", userDb);
     }
 
     try {

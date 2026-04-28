@@ -16,12 +16,13 @@
 //   - buildContext() uses full compression for non-streaming requests
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { MemoryReference } from "../memory/memoryTypes";
 import { formatMemoriesForPrompt } from "../memory/memoryStore";
 import { selectMemoriesForQuery } from "./memorySelector";
 import { compressConversation, CONVERSATION_WINDOW } from "./contextCompressor";
 import { semanticMemorySearch } from "../memory/semanticSearch";
 import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
+import { getPriorConversationUserMessages } from "../services/conversationService";
+import { collapseAdjacentDuplicateMessages } from "./messageDeduper";
 
 export interface RawMessageContext {
   readonly recent_messages?: readonly { role: string; content: string }[];
@@ -55,9 +56,20 @@ export interface BuiltContext {
   readonly trustedProfile?: {
     displayName: string;
   };
+  readonly priorConversationEvidence: readonly {
+    conversationId: string;
+    content: string;
+    createdAt: string;
+  }[];
+  readonly isExplicitRecallQuery: boolean;
 }
 
 type ContextMemory = { type: string; summary: string };
+type ContextRecallEvidence = {
+  conversationId: string;
+  content: string;
+  createdAt: string;
+};
 
 type CloudMemoryRow = {
   id?: string;
@@ -114,6 +126,118 @@ function mergeMemories(
   return merged;
 }
 
+const RECALL_QUERY_PATTERNS: readonly RegExp[] = [
+  /\bdo\s+you\s+remember\b/i,
+  /\bdid\s+i\s+(?:ask|mention|say|tell\s+you)\b/i,
+  /\b(?:earlier|before|previous\s+chat|last\s+time\s+i\s+asked)\b/i,
+  /\b(?:from|in)\s+(?:another|a\s+different)\s+chat\b/i,
+];
+
+const RECALL_PREFIX_PATTERNS: readonly RegExp[] = [
+  /^\s*do\s+you\s+remember\s+(?:me\s+)?(?:asking|mentioning|saying|telling\s+you)\s+(?:about\s+)?/i,
+  /^\s*did\s+i\s+(?:ask|mention|say|tell\s+you)\s+(?:about\s+)?/i,
+  /^\s*what\s+did\s+i\s+(?:ask|mention|say)\s+(?:about\s+)?/i,
+  /\b(?:earlier|before|in\s+another\s+chat|in\s+a\s+different\s+chat|previous\s+chat|last\s+time\s+i\s+asked)\b/gi,
+];
+
+const RECALL_STOP_WORDS = new Set([
+  "about", "again", "another", "asked", "asking", "before", "chat", "did", "earlier",
+  "from", "have", "last", "mention", "mentioned", "me", "my", "of", "previous",
+  "question", "remember", "said", "something", "tell", "that", "the", "this", "time",
+  "was", "what", "when", "whether", "you",
+]);
+
+function normalizeRecallText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeRecallText(value: string): string[] {
+  return normalizeRecallText(value)
+    .split(" ")
+    .filter((token) => token.length >= 3 && !RECALL_STOP_WORDS.has(token));
+}
+
+export function isExplicitPriorConversationRecallQuery(query: string): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return false;
+  return RECALL_QUERY_PATTERNS.some((pattern) => pattern.test(trimmed));
+}
+
+function extractRecallSubject(query: string): string {
+  let stripped = query.trim();
+  for (const pattern of RECALL_PREFIX_PATTERNS) {
+    stripped = stripped.replace(pattern, " ");
+  }
+  return normalizeRecallText(stripped);
+}
+
+export async function fetchPriorConversationRecallEvidence(args: {
+  query: string;
+  userDb?: SupabaseClient;
+  userId?: string;
+  currentConversationId?: string;
+}): Promise<readonly ContextRecallEvidence[]> {
+  if (!args.userDb || !args.userId || !isExplicitPriorConversationRecallQuery(args.query)) {
+    return [];
+  }
+
+  const normalizedSubject = extractRecallSubject(args.query);
+  const subjectTokens = tokenizeRecallText(normalizedSubject);
+  if (!normalizedSubject || subjectTokens.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await getPriorConversationUserMessages(
+    args.userDb,
+    args.userId,
+    args.currentConversationId,
+  );
+  if (error) {
+    throw error;
+  }
+
+  const uniqueMessages = new Set<string>();
+  const scored = (data ?? [])
+    .map((message, index, items) => {
+      const normalizedContent = normalizeRecallText(message.content || "");
+      if (!normalizedContent) return null;
+
+      const exactPhraseHit = normalizedSubject.length >= 5 && normalizedContent.includes(normalizedSubject);
+      const contentTokens = new Set(tokenizeRecallText(normalizedContent));
+      const overlapCount = subjectTokens.reduce((count, token) => count + (contentTokens.has(token) ? 1 : 0), 0);
+      if (!exactPhraseHit && overlapCount === 0) {
+        return null;
+      }
+
+      const recencyScore = Math.max(0, (items.length - index) / Math.max(items.length, 1));
+      return {
+        evidence: {
+          conversationId: message.conversation_id,
+          content: message.content,
+          createdAt: message.created_at,
+        } satisfies ContextRecallEvidence,
+        normalizedContent,
+        score: (exactPhraseHit ? 8 : 0) + overlapCount * 2 + recencyScore,
+      };
+    })
+    .filter((item): item is { evidence: ContextRecallEvidence; normalizedContent: string; score: number } => Boolean(item))
+    .sort((left, right) => right.score - left.score);
+
+  const selected: ContextRecallEvidence[] = [];
+  for (const item of scored) {
+    if (uniqueMessages.has(item.normalizedContent)) continue;
+    uniqueMessages.add(item.normalizedContent);
+    selected.push(item.evidence);
+    if (selected.length >= 3) break;
+  }
+
+  return selected;
+}
+
 /**
  * Build the full compressed context for the reasoning model.
  *
@@ -135,8 +259,9 @@ export async function buildContext(
   const ctxStart = Date.now();
 
   // Derive the query early so all pipelines can use it.
-  const allMessages = raw.recent_messages ?? [];
+  const allMessages = collapseAdjacentDuplicateMessages(raw.recent_messages ?? []);
   const query = raw.userMessage || allMessages[allMessages.length - 1]?.content || "";
+  const isExplicitRecallQuery = isExplicitPriorConversationRecallQuery(query);
 
   const rawMemories = (raw.memories ?? []).map((m) => ({
     type: m.type,
@@ -152,11 +277,20 @@ export async function buildContext(
   const cloudMemoryPromise = (userDb && normalizedUserId)
     ? fetchCloudMemories(userDb, normalizedUserId, raw.conversationId)
     : Promise.resolve([] as readonly ContextMemory[]);
+  const recallEvidencePromise = (userDb && normalizedUserId && isExplicitRecallQuery)
+    ? fetchPriorConversationRecallEvidence({
+      query,
+      userDb,
+      userId: normalizedUserId,
+      currentConversationId: raw.conversationId,
+    })
+    : Promise.resolve([] as readonly ContextRecallEvidence[]);
 
-  const [compressionResult, semanticResults, cloudMemories] = await Promise.all([
+  const [compressionResult, semanticResults, cloudMemories, priorConversationEvidence] = await Promise.all([
     compressConversation(allMessages, userId),
     semanticMemorySearch(rawMemories, query, 3),
     cloudMemoryPromise,
+    recallEvidencePromise,
   ]);
 
   const { recentMessages, summary } = compressionResult;
@@ -193,6 +327,7 @@ export async function buildContext(
   console.log(`[CONTEXT] memory selected: ${memories.length}`);
   console.log(`[CONTEXT] messages included: ${recentMessages.length}`);
   console.log(`[CONTEXT] summary used: ${!!summary}`);
+  console.log(`[CONTEXT] recall evidence selected: ${priorConversationEvidence.length}`);
   console.log(`[CONTEXT] buildContext completed in ${Date.now() - ctxStart}ms`);
 
   return {
@@ -205,6 +340,8 @@ export async function buildContext(
     webSearchMode: raw.web_search_mode,
     userId: normalizedUserId,
     trustedProfile: raw.trustedProfile,
+    priorConversationEvidence,
+    isExplicitRecallQuery,
   };
 }
 
@@ -229,9 +366,10 @@ export async function buildContextFast(
   const ctxStart = Date.now();
 
   // Get recent messages directly - no compression, no LLM call
-  const allMessages = raw.recent_messages ?? [];
+  const allMessages = collapseAdjacentDuplicateMessages(raw.recent_messages ?? []);
   const recentMessages = allMessages.slice(-CONVERSATION_WINDOW);
   const query = raw.userMessage || recentMessages[recentMessages.length - 1]?.content || "";
+  const isExplicitRecallQuery = isExplicitPriorConversationRecallQuery(query);
 
   const rawMemories = (raw.memories ?? []).map((m) => ({
     type: m.type,
@@ -246,12 +384,23 @@ export async function buildContextFast(
   const cloudMemoryPromise = (userDb && normalizedUserId)
     ? fetchCloudMemories(userDb, normalizedUserId, raw.conversationId)
     : Promise.resolve([] as readonly ContextMemory[]);
+  const recallEvidencePromise = (userDb && normalizedUserId && isExplicitRecallQuery)
+    ? fetchPriorConversationRecallEvidence({
+      query,
+      userDb,
+      userId: normalizedUserId,
+      currentConversationId: raw.conversationId,
+    })
+    : Promise.resolve([] as readonly ContextRecallEvidence[]);
 
   // Use fast keyword-based memory selection (synchronous)
   let memories: readonly ContextMemory[] = selectMemoriesForQuery(rawMemories, query, 3);
 
   // Await cloud memories (started earlier, likely already resolved)
-  const cloudMemories = await cloudMemoryPromise;
+  const [cloudMemories, priorConversationEvidence] = await Promise.all([
+    cloudMemoryPromise,
+    recallEvidencePromise,
+  ]);
   if (cloudMemories.length > 0) {
     memories = mergeMemories(memories, cloudMemories);
   }
@@ -267,6 +416,7 @@ export async function buildContextFast(
 
   console.log(`[CONTEXT-FAST] memory selected: ${memories.length} (keyword)`);
   console.log(`[CONTEXT-FAST] messages included: ${recentMessages.length}`);
+  console.log(`[CONTEXT-FAST] recall evidence selected: ${priorConversationEvidence.length}`);
   console.log(`[CONTEXT-FAST] buildContextFast completed in ${Date.now() - ctxStart}ms`);
 
   return {
@@ -279,5 +429,7 @@ export async function buildContextFast(
     webSearchMode: raw.web_search_mode,
     userId: normalizedUserId,
     trustedProfile: raw.trustedProfile,
+    priorConversationEvidence,
+    isExplicitRecallQuery,
   };
 }
