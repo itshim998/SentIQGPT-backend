@@ -38,9 +38,12 @@ import {
 } from "./ai/PromptBuilders";
 import { buildContext, buildContextFast } from "./context/contextBuilder";
 import {
+  getControlDatabase,
   getImageStorageDatabase,
   getImageStorageDatabaseId,
+  getUserDatabase,
   getOrAssignUserDatabase,
+  initializeControlUserSession,
   ShardCapacityError,
   verifyShardMigrations,
 } from "./dbRouter";
@@ -67,6 +70,11 @@ import {
   type MemoryRow,
   type MemoryScope,
 } from "./services/memoryService";
+import {
+  getMirroredUserProfile,
+  saveMirroredUserProfile,
+  validateDisplayName,
+} from "./services/profileService";
 
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
@@ -90,6 +98,7 @@ import {
   MemoryCompressRequestSchema,
   ImageGenerateRequestSchema,
   ChartGenerateRequestSchema,
+  ProfileUpdateRequestSchema,
   SelectionContextSchema,
   detectPromptInjection,
 } from "./validation/schemas";
@@ -354,6 +363,46 @@ async function getVerifiedUserId(req: Request): Promise<string> {
 async function getRequestIdentity(req: Request): Promise<{ userId: string; isGuest: boolean }> {
   const user = await resolveRequestUser(req, { allowGuest: true });
   return { userId: user.sub, isGuest: user.isGuest };
+}
+
+function logProfileEvent(
+  event: string,
+  details: Record<string, string | boolean | null | undefined>,
+): void {
+  const suffix = Object.entries(details)
+    .filter(([, value]) => value !== null && typeof value !== "undefined" && value !== "")
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(" ");
+  console.log(`[SentIQGPT][profile] ${event}${suffix ? ` ${suffix}` : ""}`);
+}
+
+async function resolveTrustedProfileContext(
+  userId?: string,
+  userDb?: any,
+): Promise<{ displayName: string } | undefined> {
+  const normalizedUserId = userId?.trim();
+  if (!normalizedUserId || normalizedUserId === "guest") {
+    return undefined;
+  }
+
+  try {
+    const profile = await getMirroredUserProfile({
+      userId: normalizedUserId,
+      controlDb: getControlDatabase(),
+      userDb,
+      logger: logProfileEvent,
+    });
+
+    return profile.displayName
+      ? { displayName: profile.displayName }
+      : undefined;
+  } catch (error) {
+    logProfileEvent("resolve.failed", {
+      userId: normalizedUserId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
 }
 
 type DbErrorLike = {
@@ -821,6 +870,87 @@ app.get("/api/health", (_req, res) => {
 });
 
 // ===============================
+// GET /api/profile
+// ===============================
+app.get(
+  "/api/profile",
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+
+    await initializeControlUserSession(userId);
+
+    let assignedUserDb: any = null;
+    try {
+      assignedUserDb = await getUserDatabase(userId);
+      if (assignedUserDb) {
+        await initializeUserSessionOrThrow(assignedUserDb, userId, "profile.get");
+      }
+    } catch (error) {
+      logProfileEvent("read.shard_unavailable", {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      assignedUserDb = null;
+    }
+
+    const profile = await getMirroredUserProfile({
+      userId,
+      controlDb: getControlDatabase(),
+      userDb: assignedUserDb,
+      logger: logProfileEvent,
+    });
+
+    res.json({
+      profile: {
+        display_name: profile.displayName,
+      },
+      requires_name: profile.requiresName,
+    });
+  }),
+);
+
+// ===============================
+// PATCH /api/profile
+// ===============================
+app.patch(
+  "/api/profile",
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const parsed = ProfileUpdateRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: formatZodError(parsed.error) });
+      return;
+    }
+
+    let displayName: string;
+    try {
+      displayName = validateDisplayName(parsed.data.display_name);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Invalid display name." });
+      return;
+    }
+
+    await initializeControlUserSession(userId);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "profile.update");
+    await initializeUserSessionOrThrow(userDb, userId, "profile.update");
+
+    const savedProfile = await saveMirroredUserProfile({
+      userId,
+      displayName,
+      controlDb: getControlDatabase(),
+      userDb,
+    });
+
+    res.json({
+      profile: {
+        display_name: savedProfile.displayName,
+      },
+      requires_name: false,
+    });
+  }),
+);
+
+// ===============================
 // GET /api/conversations
 // ===============================
 app.get(
@@ -1179,11 +1309,14 @@ app.post(
       }
     }
 
+    const trustedProfile = await resolveTrustedProfileContext(userId, userDb);
+
     if (isLogicReasoningQuery && !hasExplicitWebSearchMode) {
       const reasoningContext = await buildContext({
         recent_messages: parsed.data.context?.recent_messages,
         memories: parsed.data.context?.memories,
         file_references: orcFileRefs,
+        trustedProfile,
         web_search_mode: webSearchMode,
         userMessage: parsed.data.message,
         conversationId: activeConversationId || undefined,
@@ -1195,6 +1328,7 @@ app.post(
         memories: reasoningContext.memories,
         fileReferences: reasoningContext.fileReferences,
         conversationSummary: reasoningContext.conversationSummary,
+        trustedProfile: reasoningContext.trustedProfile,
         userId,
         reasoningMode: true,
       });
@@ -1242,6 +1376,7 @@ app.post(
         recent_messages: parsed.data.context?.recent_messages,
         memories: parsed.data.context?.memories,
         file_references: orcFileRefs,
+        trustedProfile,
         web_search_mode: webSearchMode,
         userDb,
         userId,
@@ -1726,6 +1861,8 @@ app.post(
       }
     };
 
+    const trustedProfile = await resolveTrustedProfileContext(userId, userDb);
+
     if (hasExplicitWebSearchMode) {
       console.log(`[Stream] explicit WebSurf mode=${webSearchMode} - redirecting to orchestrator`);
       try {
@@ -1735,6 +1872,7 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            trustedProfile,
             web_search_mode: webSearchMode,
             conversationId: activeConversationId || undefined,
             userDb,
@@ -1774,6 +1912,7 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            trustedProfile,
             web_search_mode: webSearchMode,
             conversationId: activeConversationId || undefined,
             userDb,
@@ -1813,6 +1952,7 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            trustedProfile,
             web_search_mode: webSearchMode,
             conversationId: activeConversationId || undefined,
             userDb,
@@ -1871,6 +2011,7 @@ app.post(
               recent_messages: parsed.data.context?.recent_messages,
               memories: parsed.data.context?.memories,
               file_references: parsed.data.context?.file_references,
+              trustedProfile,
               web_search_mode: webSearchMode,
               conversationId: activeConversationId || undefined,
               userDb,
@@ -1894,6 +2035,7 @@ app.post(
           recent_messages: parsed.data.context?.recent_messages,
           memories: parsed.data.context?.memories,
           file_references: parsed.data.context?.file_references,
+          trustedProfile,
           web_search_mode: webSearchMode,
           userMessage: parsed.data.message,
           conversationId: activeConversationId || undefined,
@@ -1905,6 +2047,7 @@ app.post(
           memories: reasoningContext.memories,
           fileReferences: reasoningContext.fileReferences,
           conversationSummary: reasoningContext.conversationSummary,
+          trustedProfile: reasoningContext.trustedProfile,
           userId,
           reasoningMode: true,
         });
@@ -1945,6 +2088,7 @@ app.post(
             recent_messages: parsed.data.context?.recent_messages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            trustedProfile,
             web_search_mode: webSearchMode,
             conversationId: activeConversationId || undefined,
             userDb,
@@ -2019,6 +2163,7 @@ app.post(
       recent_messages: parsed.data.context?.recent_messages,
       memories: parsed.data.context?.memories,
       file_references: fileRefs,
+      trustedProfile,
       web_search_mode: webSearchMode,
       userMessage: parsed.data.message,
       conversationId: activeConversationId || undefined,
@@ -2040,6 +2185,7 @@ app.post(
       memories: ctx.memories,
       fileReferences: ctx.fileReferences,
       conversationSummary: ctx.conversationSummary,
+      trustedProfile: ctx.trustedProfile,
       modelOverride,
       userId,
       streaming: true,
@@ -2560,11 +2706,14 @@ app.post(
       return;
     }
 
+    const trustedProfile = await resolveTrustedProfileContext(userId);
+
     const result = await orchestrate({
       userMessage,
       context: {
         recent_messages: parsed.data.context?.recent_messages,
         memories: parsed.data.context?.memories,
+        trustedProfile,
         userId,
       },
     });

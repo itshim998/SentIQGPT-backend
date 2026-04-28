@@ -431,6 +431,9 @@ export interface ChatContext {
   readonly memories?: readonly { type: string; summary: string }[];
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
   readonly conversationSummary?: string;
+  readonly trustedProfile?: {
+    displayName: string;
+  };
   readonly modelOverride?: string;
   readonly userId?: string;
   readonly streaming?: boolean;
@@ -453,6 +456,16 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   } else {
     // Default prompt for file analysis, coding, math, and other specialized routes.
     SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT;
+  }
+
+  if (ctx.trustedProfile?.displayName && !ctx.reasoningMode) {
+    const safeDisplayName = ctx.trustedProfile.displayName.replace(/\s+/g, " ").trim();
+    if (safeDisplayName) {
+      SYSTEM_PROMPT +=
+        "\nTRUSTED USER PROFILE:\n" +
+        `- The user's saved display name is ${safeDisplayName}.\n` +
+        "- Use their name naturally when it helps, but do not overuse it.\n";
+    }
   }
 
   // When files are present, add explicit file-analysis instructions

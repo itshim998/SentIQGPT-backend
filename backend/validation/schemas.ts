@@ -101,6 +101,13 @@ export const SelectionContextSchema = z.object({
 
 export type SelectionContextPayload = z.infer<typeof SelectionContextSchema>;
 
+export const ProfileUpdateRequestSchema = z.object({
+  display_name: z.string({
+    required_error: "display_name is required",
+    invalid_type_error: "display_name must be a string",
+  }),
+});
+
 const INJECTION_PATTERNS = [
   /ignore\s+(all\s+)?previous\s+instructions/i,
   /you\s+are\s+now\s+(a\s+)?different/i,

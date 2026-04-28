@@ -30,6 +30,9 @@ export interface RawMessageContext {
     filename: string;
     extractedText: string;
   }[];
+  readonly trustedProfile?: {
+    displayName: string;
+  };
   readonly web_search_mode?: WebSearchMode;
   readonly userMessage?: string;
   readonly userDb?: SupabaseClient;
@@ -49,6 +52,9 @@ export interface BuiltContext {
   readonly hasFileContext: boolean;
   readonly webSearchMode?: WebSearchMode;
   readonly userId?: string;
+  readonly trustedProfile?: {
+    displayName: string;
+  };
 }
 
 type ContextMemory = { type: string; summary: string };
@@ -198,6 +204,7 @@ export async function buildContext(
     hasFileContext: fileReferences.length > 0,
     webSearchMode: raw.web_search_mode,
     userId: normalizedUserId,
+    trustedProfile: raw.trustedProfile,
   };
 }
 
@@ -271,5 +278,6 @@ export async function buildContextFast(
     hasFileContext: fileReferences.length > 0,
     webSearchMode: raw.web_search_mode,
     userId: normalizedUserId,
+    trustedProfile: raw.trustedProfile,
   };
 }

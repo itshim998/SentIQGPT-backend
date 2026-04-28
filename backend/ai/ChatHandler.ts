@@ -57,6 +57,7 @@ export async function handleChat(args: {
   readonly memories?: readonly { type: string; summary: string }[];
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
   readonly conversationSummary?: string;
+  readonly trustedProfile?: { displayName: string };
   readonly modelOverride?: string;
   readonly userId?: string;
   readonly reasoningMode?: boolean;
@@ -71,6 +72,7 @@ export async function handleChat(args: {
     memories: args.memories,
     fileReferences: args.fileReferences,
     conversationSummary: args.conversationSummary,
+    trustedProfile: args.trustedProfile,
     modelOverride: args.modelOverride,
     userId: args.userId,
     reasoningMode: args.reasoningMode,

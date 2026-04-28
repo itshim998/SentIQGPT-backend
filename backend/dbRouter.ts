@@ -334,6 +334,14 @@ export async function getUserDatabase(userId: string): Promise<SupabaseClient | 
   return assignedDb === null ? null : getClientForDatabase(assignedDb);
 }
 
+export function getControlDatabase(): SupabaseClient {
+  return controlDbClient;
+}
+
+export async function initializeControlUserSession(userId: string): Promise<void> {
+  await ensureControlUserSession(userId);
+}
+
 export function getImageStorageDatabaseId(): DatabaseId {
   return readDatabaseIdEnv("SENTIQ_IMAGE_STORAGE_DB", CONTROL_DATABASE_ID);
 }

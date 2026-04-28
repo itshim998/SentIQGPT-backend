@@ -157,6 +157,7 @@ async function execConversation(
     memories: ctx.memories,
     fileReferences: ctx.fileReferences,
     conversationSummary: ctx.conversationSummary,
+    trustedProfile: ctx.trustedProfile,
     modelOverride,
     userId: ctx.userId,
   });
@@ -216,6 +217,7 @@ async function execFileAnalysis(
     memories: ctx.memories,
     fileReferences: ctx.fileReferences,
     conversationSummary: ctx.conversationSummary,
+    trustedProfile: ctx.trustedProfile,
     modelOverride,
     userId: ctx.userId,
   });
@@ -500,4 +502,3 @@ export async function executePlan(
   console.log(`[EXECUTOR] plan complete: ${results.length} steps executed`);
   return { steps: results };
 }
-
