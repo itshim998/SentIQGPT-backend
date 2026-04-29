@@ -109,6 +109,9 @@ const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const JSON_BODY_LIMIT = process.env.SENTIQ_JSON_BODY_LIMIT?.trim() || "6mb";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TITLE_MAX_CHARS = 120;
+const TITLE_FALLBACK_MAX_CHARS = 50;
+const TITLE_GENERATION_TIMEOUT_MS = parseInt(process.env.SENTIQ_TITLE_TIMEOUT_MS || "12000", 10);
 
 function getExplicitWebSearchMode(value: unknown): "basic" | undefined {
   if (!isWebSearchMode(value)) return undefined;
@@ -478,6 +481,240 @@ function logDbFailure(
   console.error(`[SentIQGPT][db] ${scope}.failed userId=${userId}${suffix} error=${normalizedError}`);
 }
 
+function logMessagePersistenceGap(
+  scope: string,
+  userId: string,
+  details: {
+    conversationId?: string | null;
+    userMessagePersisted: boolean;
+    assistantMessagePersisted: boolean;
+    assistantExpected: boolean;
+    deferred?: boolean;
+    created?: boolean;
+    route?: string;
+    clientDisconnected?: boolean;
+    error?: string | null;
+  },
+): void {
+  if (
+    details.userMessagePersisted &&
+    (!details.assistantExpected || details.assistantMessagePersisted)
+  ) {
+    return;
+  }
+
+  logDbEvent(`${scope}.message-gap`, userId, {
+    conversationId: details.conversationId || undefined,
+    user_persisted: details.userMessagePersisted ? "true" : "false",
+    assistant_persisted: details.assistantMessagePersisted ? "true" : "false",
+    assistant_expected: details.assistantExpected ? "true" : "false",
+    deferred: details.deferred ? "true" : "false",
+    created: details.created ? "true" : "false",
+    route: details.route,
+    client_disconnected: details.clientDisconnected ? "true" : "false",
+    error: details.error ? details.error.slice(0, 160) : undefined,
+  });
+}
+
+function normalizeTitleCandidate(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX_CHARS);
+}
+
+function fallbackTitleFromMessage(message: string): string {
+  return normalizeTitleCandidate(message.slice(0, TITLE_FALLBACK_MAX_CHARS));
+}
+
+function extractTitleFromRaw(raw: string): string {
+  const trimmed = (raw || "").trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = strictParseJsonObject(trimmed);
+    if (typeof parsed.title === "string") {
+      return normalizeTitleCandidate(parsed.title);
+    }
+  } catch {
+    // Fallback to regex or plain text.
+  }
+
+  const match = trimmed.match(/"title"\s*:\s*"([^\"]+)"/i);
+  if (match && match[1]) {
+    return normalizeTitleCandidate(match[1]);
+  }
+
+  return normalizeTitleCandidate(trimmed);
+}
+
+type TitleGenerationResult = {
+  title: string;
+  source: "llm" | "fallback";
+  modelUsed?: string;
+  fallbackReason?: string | null;
+  error?: string | null;
+};
+
+async function generateTitleWithFallback(options: {
+  userMessage: string;
+  assistantReply: string;
+  conversationId: string;
+  userId: string;
+  scope: string;
+  prefer?: "gemini" | "groq";
+  modelOverride?: string;
+}): Promise<TitleGenerationResult> {
+  const fallbackTitle = fallbackTitleFromMessage(options.userMessage);
+  const baseCall = buildTitleGeneratePrompt({
+    userMessage: options.userMessage.slice(0, 500),
+    assistantReply: options.assistantReply.slice(0, 500),
+    conversationId: options.conversationId,
+  });
+  const call = {
+    ...baseCall,
+    user_id: options.userId,
+    timeout_ms: TITLE_GENERATION_TIMEOUT_MS,
+  };
+  if (typeof options.prefer !== "undefined") {
+    call.prefer = options.prefer;
+  }
+  if (options.modelOverride) {
+    call.model_override = options.modelOverride;
+  }
+
+  logDbEvent(`${options.scope}.title-generate.start`, options.userId, {
+    conversationId: options.conversationId,
+  });
+
+  try {
+    const result = await callLLMAdapterDetailed(call);
+    const candidate = extractTitleFromRaw(result.text || "");
+    const title = candidate || fallbackTitle;
+    const source = candidate ? "llm" : "fallback";
+    logDbEvent(`${options.scope}.title-generate.ok`, options.userId, {
+      conversationId: options.conversationId,
+      source,
+      model_used: result.model_used || undefined,
+      fallback: result.fallback ? "true" : "false",
+    });
+    return {
+      title,
+      source,
+      modelUsed: result.model_used,
+      fallbackReason: result.fallback_reason ?? null,
+      error: result.error ?? null,
+    };
+  } catch (error) {
+    logDbFailure(
+      `${options.scope}.title-generate`,
+      options.userId,
+      error instanceof Error ? error : new Error(String(error)),
+      { conversationId: options.conversationId },
+    );
+    return {
+      title: fallbackTitle,
+      source: "fallback",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function readConversationTitleIfOwned(
+  userDb: any,
+  userId: string,
+  conversationId: string,
+  scope: string,
+): Promise<string | null> {
+  const { data, error } = await getConversationById(userDb, conversationId);
+  if (error) {
+    logDbFailure(`${scope}.title-read`, userId, error, { conversationId });
+    return null;
+  }
+  if (!data) {
+    logDbEvent(`${scope}.title-read.not-found`, userId, { conversationId });
+    return null;
+  }
+  if (data.user_id !== userId) {
+    logDbFailure(
+      `${scope}.title-read`,
+      userId,
+      new Error("Unauthorized conversation access"),
+      { conversationId },
+    );
+    return null;
+  }
+  return typeof data.title === "string" ? data.title : null;
+}
+
+async function persistConversationTitleIfEligible(options: {
+  userDb: any;
+  userId: string;
+  conversationId: string;
+  title: string;
+  scope: string;
+  currentTitle?: string | null;
+}): Promise<boolean> {
+  const normalizedTitle = normalizeTitleCandidate(options.title);
+  if (!normalizedTitle) return false;
+
+  const currentTitle = typeof options.currentTitle === "string"
+    ? options.currentTitle
+    : await readConversationTitleIfOwned(options.userDb, options.userId, options.conversationId, options.scope);
+  const normalizedCurrent = normalizeTitleCandidate(currentTitle || "");
+  if (normalizedCurrent && normalizedCurrent !== "New Chat") {
+    logDbEvent(`${options.scope}.title-persist.skip`, options.userId, {
+      conversationId: options.conversationId,
+    });
+    return false;
+  }
+
+  const { error } = await updateConversationTitle(
+    options.userDb,
+    options.conversationId,
+    options.userId,
+    normalizedTitle,
+  );
+  if (error) {
+    logDbFailure(`${options.scope}.title-persist`, options.userId, error, {
+      conversationId: options.conversationId,
+    });
+    return false;
+  }
+
+  logDbEvent(`${options.scope}.title-persist.ok`, options.userId, {
+    conversationId: options.conversationId,
+  });
+  return true;
+}
+
+async function maybeAutoTitleConversation(options: {
+  userDb: any;
+  userId: string;
+  conversationId: string;
+  userMessage: string;
+  assistantReply: string;
+  scope: string;
+  currentTitle?: string | null;
+}): Promise<void> {
+  if (!options.userDb || !options.conversationId) return;
+  const normalizedCurrent = normalizeTitleCandidate(options.currentTitle || "");
+  if (normalizedCurrent && normalizedCurrent !== "New Chat") return;
+
+  const generation = await generateTitleWithFallback({
+    userMessage: options.userMessage,
+    assistantReply: options.assistantReply,
+    conversationId: options.conversationId,
+    userId: options.userId,
+    scope: options.scope,
+  });
+
+  await persistConversationTitleIfEligible({
+    userDb: options.userDb,
+    userId: options.userId,
+    conversationId: options.conversationId,
+    title: generation.title,
+    scope: options.scope,
+    currentTitle: options.currentTitle ?? null,
+  });
+}
+
 async function resolveUserDatabaseOrThrow(userId: string, scope: string) {
   logDbEvent(`${scope}.resolve-db.start`, userId);
   try {
@@ -756,9 +993,13 @@ async function listConversationsOrThrow(userDb: any, userId: string, scope: stri
     logDbFailure(`${scope}.conversation-list`, userId, error);
     throw new Error(error.message);
   }
-
+  const missingTitleCount = (data || []).filter((row) => {
+    const normalized = normalizeTitleCandidate(row?.title || "");
+    return !normalized || normalized === "New Chat";
+  }).length;
   logDbEvent(`${scope}.conversation-list.ok`, userId, {
     count: data?.length || 0,
+    missing_titles: missingTitleCount,
     duration_ms: Date.now() - startedAt,
   });
   return (data || []) as ConversationListRow[];
@@ -779,15 +1020,13 @@ async function listConversationMessagesOrThrow(
     logDbFailure(`${scope}.message-list`, userId, error, { conversationId });
     throw new Error(error.message);
   }
-
-  const collapsedMessages = collapseAdjacentDuplicateMessages(data || []);
-
+  const messages = (data || []) as ConversationMessageRow[];
   logDbEvent(`${scope}.message-list.ok`, userId, {
     conversationId,
-    count: collapsedMessages.length,
+    count: messages.length,
     duration_ms: Date.now() - startedAt,
   });
-  return collapsedMessages as ConversationMessageRow[];
+  return messages;
 }
 
 async function updateConversationTitleIfOwned(
@@ -1114,6 +1353,7 @@ app.get(
         title: conversation.title || "New Chat",
         created_at: conversation.created_at,
       },
+      message_count: messages.length,
       messages,
     });
   }),
@@ -1287,6 +1527,11 @@ app.post(
       conversationId: undefined as string | undefined,
     };
 
+    let createdConversation = false;
+    let activeConversationTitle: string | null = null;
+    let userMessagePersisted = false;
+    let assistantMessagePersisted = false;
+
     let userDb: any = null;
     let activeConversationId = parsed.data.conversationId || null;
     try {
@@ -1307,8 +1552,14 @@ app.post(
 
     if (userDb && activeConversationId) {
       try {
-        await getOwnedConversationOrThrow(userDb, userId, activeConversationId, "chat");
+        const conversationRow = await getOwnedConversationOrThrow(
+          userDb,
+          userId,
+          activeConversationId,
+          "chat",
+        );
         sync.conversationId = activeConversationId;
+        activeConversationTitle = typeof conversationRow.title === "string" ? conversationRow.title : null;
       } catch (conversationLookupError) {
         sync.deferred = true;
         const normalizedLookupError =
@@ -1331,6 +1582,8 @@ app.post(
         const conversationRow = await createConversationOrThrow(userDb, userId, "chat");
         activeConversationId = conversationRow.id;
         sync.conversationId = activeConversationId;
+        activeConversationTitle = conversationRow.title || null;
+        createdConversation = true;
       } catch (conversationCreateError) {
         sync.persisted = false;
         sync.deferred = true;
@@ -1353,6 +1606,7 @@ app.post(
           "chat",
           { clientRequestId: parsed.data.clientRequestId },
         );
+        userMessagePersisted = true;
       } catch (userMessagePersistError) {
         sync.persisted = false;
         sync.deferred = true;
@@ -1399,6 +1653,7 @@ app.post(
             result.reply ?? "",
             "chat",
           );
+          assistantMessagePersisted = true;
         } catch (assistantPersistError) {
           sync.persisted = false;
           sync.deferred = true;
@@ -1409,6 +1664,35 @@ app.post(
             { conversationId: activeConversationId },
           );
         }
+      }
+
+      if (
+        userDb &&
+        activeConversationId &&
+        userMessagePersisted &&
+        (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat")
+      ) {
+        await maybeAutoTitleConversation({
+          userDb,
+          userId,
+          conversationId: activeConversationId,
+          userMessage: parsed.data.message,
+          assistantReply: result.reply ?? "",
+          scope: "chat.title.auto",
+          currentTitle: activeConversationTitle,
+        });
+      }
+
+      if (activeConversationId) {
+        logMessagePersistenceGap("chat", userId, {
+          conversationId: activeConversationId,
+          userMessagePersisted,
+          assistantMessagePersisted,
+          assistantExpected: Boolean(result.reply),
+          deferred: sync.deferred,
+          created: createdConversation,
+          route: "reasoning",
+        });
       }
 
       res.json({
@@ -1450,6 +1734,7 @@ app.post(
           result.reply ?? "",
           "chat",
         );
+        assistantMessagePersisted = true;
       } catch (assistantPersistError) {
         sync.persisted = false;
         sync.deferred = true;
@@ -1491,6 +1776,35 @@ app.post(
           { conversationId: activeConversationId },
         );
       }
+    }
+
+    if (
+      userDb &&
+      activeConversationId &&
+      userMessagePersisted &&
+      (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat")
+    ) {
+      await maybeAutoTitleConversation({
+        userDb,
+        userId,
+        conversationId: activeConversationId,
+        userMessage: parsed.data.message,
+        assistantReply: result.reply ?? "",
+        scope: "chat.title.auto",
+        currentTitle: activeConversationTitle,
+      });
+    }
+
+    if (activeConversationId) {
+      logMessagePersistenceGap("chat", userId, {
+        conversationId: activeConversationId,
+        userMessagePersisted,
+        assistantMessagePersisted,
+        assistantExpected: Boolean(result.reply),
+        deferred: sync.deferred,
+        created: createdConversation,
+        route: result.route,
+      });
     }
 
     res.json({
@@ -1570,6 +1884,7 @@ app.post(
           console.error(`[Stream] failed to emit error event: ${writeErr instanceof Error ? writeErr.message : writeErr}`);
         }
       }
+      reportStreamMessageGap(true, "stream.error", message);
       if (metrics) {
         logStreamMetrics(metrics, "error");
       }
@@ -1781,6 +2096,10 @@ app.post(
       deferred: false,
       conversationId: activeConversationId,
     };
+    let createdConversation = false;
+    let activeConversationTitle: string | null = null;
+    let userMessagePersisted = false;
+    let assistantMessagePersisted = false;
     let userDb: any = null;
     try {
       userDb = await resolveUserDatabaseOrThrow(userId, "chat.stream");
@@ -1798,7 +2117,13 @@ app.post(
     const trustedProfile = await ensureNamedWorkspaceProfile(userId, "chat.stream", userDb || undefined);
     if (userDb && activeConversationId) {
       try {
-        await getOwnedConversationOrThrow(userDb, userId, activeConversationId, "chat.stream");
+        const conversationRow = await getOwnedConversationOrThrow(
+          userDb,
+          userId,
+          activeConversationId,
+          "chat.stream",
+        );
+        activeConversationTitle = typeof conversationRow.title === "string" ? conversationRow.title : null;
       } catch (conversationOwnershipError) {
         sync.deferred = true;
         const normalizedOwnershipError =
@@ -1820,6 +2145,8 @@ app.post(
       try {
         const conversationRow = await createConversationOrThrow(userDb, userId, "chat.stream");
         activeConversationId = conversationRow.id;
+        activeConversationTitle = conversationRow.title || null;
+        createdConversation = true;
       } catch (conversationCreateError) {
         sync.persisted = false;
         sync.deferred = true;
@@ -1842,6 +2169,7 @@ app.post(
           "chat.stream",
           { clientRequestId: parsed.data.clientRequestId },
         );
+        userMessagePersisted = true;
       } catch (messagePersistError) {
         sync.persisted = false;
         sync.deferred = true;
@@ -1869,6 +2197,21 @@ app.post(
           content,
           "chat.stream",
         );
+        assistantMessagePersisted = true;
+        if (
+          userMessagePersisted &&
+          (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat")
+        ) {
+          await maybeAutoTitleConversation({
+            userDb,
+            userId,
+            conversationId: activeConversationId,
+            userMessage: parsed.data.message,
+            assistantReply: content,
+            scope: "chat.stream.title.auto",
+            currentTitle: activeConversationTitle,
+          });
+        }
       } catch (assistantPersistError) {
         sync.persisted = false;
         sync.deferred = true;
@@ -1926,6 +2269,21 @@ app.post(
       }
     };
 
+    const reportStreamMessageGap = (assistantExpected: boolean, route: string, error?: string) => {
+      if (!activeConversationId) return;
+      logMessagePersistenceGap("chat.stream", userId, {
+        conversationId: activeConversationId,
+        userMessagePersisted,
+        assistantMessagePersisted,
+        assistantExpected,
+        deferred: sync.deferred,
+        created: createdConversation,
+        route,
+        clientDisconnected,
+        error: error || null,
+      });
+    };
+
     if (hasExplicitWebSearchMode) {
       console.log(`[Stream] explicit WebSurf mode=${webSearchMode} - redirecting to orchestrator`);
       try {
@@ -1946,6 +2304,7 @@ app.post(
           await persistAssistantMessage(result.reply);
         }
         await persistStoredMemory(result.memory);
+        reportStreamMessageGap(Boolean(result.reply), "orchestrator.web_search");
         res.json({
           route: result.route,
           answer: result.answer ?? result.reply,
@@ -1986,6 +2345,7 @@ app.post(
           await persistAssistantMessage(result.reply);
         }
         await persistStoredMemory(result.memory);
+        reportStreamMessageGap(Boolean(result.reply), "orchestrator.memory");
         res.json({
           route: result.route,
           answer: result.answer ?? result.reply,
@@ -2026,6 +2386,7 @@ app.post(
           await persistAssistantMessage(result.reply);
         }
         await persistStoredMemory(result.memory);
+        reportStreamMessageGap(Boolean(result.reply), "orchestrator.chart");
         // Return the full orchestrator result as JSON (not SSE) so the frontend
         // can use deliverAssistantResponse to render the chart.
         res.json({
@@ -2085,6 +2446,7 @@ app.post(
             await persistAssistantMessage(result.reply);
           }
           await persistStoredMemory(result.memory);
+          reportStreamMessageGap(Boolean(result.reply), "reasoning.math");
           if (!clientDisconnected) {
             const thinking = gateThinking(result.thinking, { route: result.route, isReasoning: true });
             await streamBufferedAnswer(result.reply ?? "", thinking, true, streamMetrics);
@@ -2119,6 +2481,7 @@ app.post(
         if (result.reply) {
           await persistAssistantMessage(result.reply);
         }
+        reportStreamMessageGap(Boolean(result.reply), "reasoning");
         if (!clientDisconnected) {
           const thinking = gateThinking(result.thinking, { isReasoning: true });
           await streamBufferedAnswer(result.reply, thinking, true, streamMetrics);
@@ -2164,6 +2527,7 @@ app.post(
           await persistAssistantMessage(result.reply);
         }
         await persistStoredMemory(result.memory);
+        reportStreamMessageGap(Boolean(result.reply), "orchestrator.web_search_auto");
         res.json(result);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -2285,6 +2649,7 @@ app.post(
         if (fullReply) {
           await persistAssistantMessage(fullReply);
         }
+        reportStreamMessageGap(Boolean(fullReply), "stream");
         await writeSseEvent("[DONE]");
         logStreamMetrics(streamMetrics, "complete");
         console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
@@ -2301,6 +2666,7 @@ app.post(
           if (fallbackText) {
             await persistAssistantMessage(fallbackText);
           }
+          reportStreamMessageGap(Boolean(fallbackText), "stream.fallback");
           await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
           await writeSseEvent("[DONE]");
           logStreamMetrics(streamMetrics, "fallback");
@@ -2846,35 +3212,37 @@ app.post(
       return;
     }
 
+    let userDb: any = null;
     if (!isGuest) {
-      const userDb = await resolveUserDatabaseOrThrow(userId, "chat.title");
+      userDb = await resolveUserDatabaseOrThrow(userId, "chat.title");
       await initializeUserSessionOrThrow(userDb, userId, "chat.title");
       await ensureNamedWorkspaceProfile(userId, "chat.title", userDb);
     }
 
-    try {
-      const cacheScopedConversationId = rawConversationId
-        ? rawConversationId
-        : `title-${randomUUID()}`;
-      const baseCall = buildTitleGeneratePrompt({
-        userMessage: userMessage.slice(0, 500),
-        assistantReply: assistantReply.slice(0, 500),
-        conversationId: cacheScopedConversationId,
-      });
-      const call = isGuest
-        ? { ...baseCall, user_id: userId, prefer: undefined, model_override: GUEST_MODEL_OVERRIDE }
-        : { ...baseCall, user_id: userId };
-      const raw = await callLLMAdapter(call);
-      const parsed = strictParseJsonObject(raw);
-      const title = typeof parsed.title === "string" && parsed.title.trim()
-        ? parsed.title.trim().slice(0, 60)
-        : userMessage.slice(0, 50);
+    const cacheScopedConversationId = rawConversationId
+      ? rawConversationId
+      : `title-${randomUUID()}`;
 
-      res.json({ title });
-    } catch {
-      // Fallback to truncated user message
-      res.json({ title: userMessage.slice(0, 50) });
+    const generation = await generateTitleWithFallback({
+      userMessage,
+      assistantReply,
+      conversationId: cacheScopedConversationId,
+      userId,
+      scope: "chat.title",
+      modelOverride: isGuest ? GUEST_MODEL_OVERRIDE : undefined,
+    });
+
+    if (!isGuest && userDb && rawConversationId) {
+      await persistConversationTitleIfEligible({
+        userDb,
+        userId,
+        conversationId: rawConversationId,
+        title: generation.title,
+        scope: "chat.title",
+      });
     }
+
+    res.json({ title: generation.title });
   }),
 );
 

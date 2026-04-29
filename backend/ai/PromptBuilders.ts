@@ -642,6 +642,8 @@ export function buildTitleGeneratePrompt(args: {
     prompt,
     prefer: "groq",
     user_id: args.conversationId,
+    max_output_tokens: 80,
+    skip_wrappers: true,
   };
 }
 
