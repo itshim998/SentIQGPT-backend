@@ -39,7 +39,7 @@ const bucketReadyPromises = new WeakMap<SupabaseClient, Promise<void>>();
 export interface ImageUploadParams {
   readonly userId: string;
   readonly chatId: string;
-  readonly imageData: string; // base64 or data URL
+  readonly imageData: string; // base64, data URL, or remote image URL
   readonly prompt?: string;
   readonly provider?: string;
 }
@@ -77,6 +77,21 @@ type PreparedImage = {
   readonly extension: "webp" | "jpg";
 };
 
+type FetchLike = (
+  input: string,
+  init?: {
+    signal?: AbortSignal;
+    redirect?: "follow";
+  },
+) => Promise<{
+  ok: boolean;
+  status: number;
+  headers: { get(name: string): string | null };
+  arrayBuffer(): Promise<ArrayBuffer>;
+}>;
+
+const REMOTE_IMAGE_URL_PATTERN = /^https?:\/\//i;
+
 function getStorageBucketName(): string {
   return process.env.SENTIQ_IMAGE_STORAGE_BUCKET?.trim() || DEFAULT_STORAGE_BUCKET;
 }
@@ -109,6 +124,74 @@ function extractBase64Data(input: string): Buffer {
   }
 
   return buffer;
+}
+
+function getDefaultFetch(): FetchLike {
+  if (typeof globalThis.fetch !== "function") {
+    throw new Error("Remote image URLs are not supported because fetch is unavailable");
+  }
+  return globalThis.fetch.bind(globalThis) as FetchLike;
+}
+
+async function fetchRemoteImageBuffer(
+  input: string,
+  fetchImpl: FetchLike,
+): Promise<Buffer> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+
+  try {
+    const response = await fetchImpl(input, {
+      redirect: "follow",
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Remote image fetch failed with HTTP ${response.status}`);
+    }
+
+    const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+    if (contentType && !contentType.startsWith("image/")) {
+      throw new Error(`Remote URL did not return an image (content-type: ${contentType})`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length === 0) {
+      throw new Error("Remote image response was empty");
+    }
+    if (buffer.length > MAX_INPUT_IMAGE_BYTES) {
+      throw new Error(`Image is too large to store. Maximum decoded size is ${MAX_INPUT_IMAGE_BYTES} bytes.`);
+    }
+
+    return buffer;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Remote image fetch timed out");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function resolveImageInputBuffer(
+  input: string,
+  fetchImpl: FetchLike = getDefaultFetch(),
+): Promise<Buffer> {
+  const trimmedInput = input.trim();
+  if (!trimmedInput) {
+    throw new Error("image_data is required");
+  }
+
+  if (trimmedInput.startsWith("data:") || /^[A-Za-z0-9+/]+={0,2}$/.test(trimmedInput.replace(/\s/g, ""))) {
+    return extractBase64Data(trimmedInput);
+  }
+
+  if (REMOTE_IMAGE_URL_PATTERN.test(trimmedInput)) {
+    return fetchRemoteImageBuffer(trimmedInput, fetchImpl);
+  }
+
+  throw new Error("image_data must be base64 image data, a data URL, or an http(s) image URL");
 }
 
 async function assertValidImage(imageBuffer: Buffer): Promise<void> {
@@ -388,7 +471,7 @@ export async function uploadChatImage(
   try {
     // 1. Extract and validate image data
     console.log(`[ImageStorage] process.start userId=${userId} chatId=${chatId}`);
-    const rawBuffer = extractBase64Data(imageData);
+    const rawBuffer = await resolveImageInputBuffer(imageData);
 
     // 2. Compress image to target size
     const preparedImage = await compressImage(rawBuffer);

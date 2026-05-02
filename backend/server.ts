@@ -75,6 +75,11 @@ import {
   saveMirroredUserProfile,
   validateDisplayName,
 } from "./services/profileService";
+import {
+  buildImagePromptMessageContent,
+  findExistingAssistantImageMessage,
+  persistGeneratedImageResult,
+} from "./services/generatedImagePersistenceService";
 
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
@@ -2901,7 +2906,6 @@ app.post(
   imageQuotaMiddleware,
   asyncHandler(async (req, res) => {
     const userId = await getVerifiedUserId(req);
-    await ensureNamedWorkspaceProfile(userId, "images.generate");
     const parsed = ImageGenerateRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
@@ -2912,6 +2916,55 @@ app.post(
     if (detectPromptInjection(parsed.data.prompt)) {
       res.status(400).json({ error: "Image prompt rejected by safety filter." });
       return;
+    }
+
+    const conversationId = parsed.data.conversationId?.trim() || "";
+    const clientRequestId = parsed.data.clientRequestId?.trim() || "";
+    let userDb: any = null;
+    if (conversationId) {
+      userDb = await resolveUserDatabaseOrThrow(userId, "images.generate");
+      await initializeUserSessionOrThrow(userDb, userId, "images.generate");
+      await ensureNamedWorkspaceProfile(userId, "images.generate", userDb);
+      await getOwnedConversationOrThrow(userDb, userId, conversationId, "images.generate");
+
+      const existingAssistantImage = await findExistingAssistantImageMessage(
+        userDb,
+        conversationId,
+        clientRequestId,
+      );
+      if (existingAssistantImage?.image_url) {
+        const ip = req.ip || req.socket.remoteAddress || "unknown";
+        const quota = getQuotaInfo(ip);
+        res.json({
+          type: "image",
+          url: existingAssistantImage.image_url,
+          prompt: existingAssistantImage.prompt || parsed.data.prompt,
+          provider_used: existingAssistantImage.provider || undefined,
+          success: true,
+          remaining: quota.remaining,
+          limit: quota.limit,
+          image_url: existingAssistantImage.image_url,
+          image_base64: undefined,
+          storage_path: existingAssistantImage.storage_path || undefined,
+          file_size_bytes: existingAssistantImage.file_size_bytes || undefined,
+          conversation_id: conversationId,
+          persisted: true,
+          deduplicated: true,
+        });
+        return;
+      }
+
+      await insertConversationMessageOrThrow(
+        userDb,
+        userId,
+        conversationId,
+        "user",
+        buildImagePromptMessageContent(parsed.data.prompt),
+        "images.generate",
+        { clientRequestId },
+      );
+    } else {
+      await ensureNamedWorkspaceProfile(userId, "images.generate");
     }
 
     const result = await routeImageGeneration({
@@ -2925,9 +2978,50 @@ app.post(
       return;
     }
 
-    // Structured output with type field
-    const imageUrl = result.image_url
+    let imageUrl = result.image_url
       || (result.image_base64 ? `data:image/png;base64,${result.image_base64}` : undefined);
+    let imageBase64 = result.image_base64;
+    let storagePath: string | undefined;
+    let fileSizeBytes: number | undefined;
+
+    if (userDb && conversationId) {
+      const imageDataForPersistence = result.image_base64 || result.image_url || "";
+      if (!imageDataForPersistence) {
+        res.status(500).json({
+          error: "Image generated, but no image payload was available to save.",
+          code: "image_persistence_failed",
+        });
+        return;
+      }
+
+      try {
+        const persisted = await persistGeneratedImageResult({
+          userDb,
+          userId,
+          conversationId,
+          prompt: parsed.data.prompt,
+          generatedImageData: imageDataForPersistence,
+          provider: result.provider_used,
+          clientRequestId,
+          storageDb: getImageStorageDatabase(),
+        });
+
+        imageUrl = persisted.assistantMessage.image_url || persisted.storedImage.imageUrl;
+        imageBase64 = undefined;
+        storagePath = persisted.assistantMessage.storage_path || persisted.storedImage.storagePath;
+        fileSizeBytes = persisted.assistantMessage.file_size_bytes || persisted.storedImage.fileSizeBytes;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(
+          `[IMAGE] persistence failed conversationId=${conversationId} clientRequestId=${clientRequestId || "none"} error="${message}"`,
+        );
+        res.status(500).json({
+          error: "Image was generated, but couldn't be saved to your conversation. Please try again.",
+          code: "image_persistence_failed",
+        });
+        return;
+      }
+    }
 
     const ip = req.ip || req.socket.remoteAddress || "unknown";
     const quota = getQuotaInfo(ip);
@@ -2943,8 +3037,12 @@ app.post(
       remaining: quota.remaining,
       limit: quota.limit,
       // Keep legacy fields for frontend compatibility
-      image_url: result.image_url,
-      image_base64: result.image_base64,
+      image_url: imageUrl,
+      image_base64: imageBase64,
+      storage_path: storagePath,
+      file_size_bytes: fileSizeBytes,
+      conversation_id: conversationId || undefined,
+      persisted: Boolean(userDb && conversationId && imageUrl),
     });
   }),
 );

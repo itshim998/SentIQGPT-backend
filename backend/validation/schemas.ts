@@ -67,7 +67,15 @@ export const ImageGenerateRequestSchema = z.object({
   prompt: z.string().min(1, "Prompt is required").max(2000, "Prompt too long"),
   style: z.string().max(100).optional(),
   size: z.enum(["256x256", "512x512", "1024x1024"]).optional(),
-});
+  conversationId: z.string().min(1).optional(),
+  conversation_id: z.string().min(1).optional(),
+  clientRequestId: z.string().min(1).max(120).optional(),
+  client_request_id: z.string().min(1).max(120).optional(),
+}).transform(({ conversation_id, client_request_id, ...rest }) => ({
+  ...rest,
+  conversationId: rest.conversationId ?? conversation_id,
+  clientRequestId: rest.clientRequestId ?? client_request_id,
+}));
 
 // --- Chart Generation ---
 

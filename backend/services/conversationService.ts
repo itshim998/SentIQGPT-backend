@@ -3,12 +3,14 @@ export type ConversationRow = {
   user_id: string;
   title?: string | null;
   created_at?: string;
+  last_activity_at?: string | null;
 };
 
 export type ConversationListRow = {
   id: string;
   title: string | null;
   created_at: string;
+  last_activity_at?: string | null;
 };
 
 export type ConversationLimitRow = {
@@ -22,6 +24,12 @@ export type ConversationMessageRow = {
   content: string;
   created_at: string;
   client_request_id?: string | null;
+  message_type?: string | null;
+  image_url?: string | null;
+  storage_path?: string | null;
+  prompt?: string | null;
+  provider?: string | null;
+  file_size_bytes?: number | null;
 };
 
 export type PriorConversationUserMessageRow = {
@@ -42,15 +50,67 @@ export type InsertConversationMessageInput = {
   role: "user" | "assistant";
   content: string;
   clientRequestId?: string;
+  messageType?: string;
+  imageUrl?: string;
+  storagePath?: string;
+  prompt?: string;
+  provider?: string;
+  fileSizeBytes?: number;
 };
 
-const MESSAGE_SELECT_COLUMNS = "id, role, content, created_at, client_request_id";
+export type ConversationMessageClientRequestLookup = {
+  conversationId: string;
+  clientRequestId: string;
+  role: "user" | "assistant";
+  messageType?: string;
+};
+
+const MESSAGE_SELECT_COLUMNS =
+  "id, role, content, created_at, client_request_id, message_type, image_url, storage_path, prompt, provider, file_size_bytes";
+
+function buildClientRequestMessageQuery(userDb: any, data: ConversationMessageClientRequestLookup) {
+  let query = userDb
+    .from("messages")
+    .select(MESSAGE_SELECT_COLUMNS)
+    .eq("conversation_id", data.conversationId)
+    .eq("client_request_id", data.clientRequestId)
+    .eq("role", data.role);
+
+  if (data.messageType) {
+    query = query.eq("message_type", data.messageType);
+  }
+
+  return query;
+}
+
+export async function getConversationMessageByClientRequestId(
+  userDb: any,
+  data: ConversationMessageClientRequestLookup,
+) {
+  const trimmedClientRequestId = typeof data.clientRequestId === "string" ? data.clientRequestId.trim() : "";
+  if (!trimmedClientRequestId) {
+    return {
+      data: null as ConversationMessageRow | null,
+      error: null,
+    };
+  }
+
+  const result = await buildClientRequestMessageQuery(userDb, {
+    ...data,
+    clientRequestId: trimmedClientRequestId,
+  }).maybeSingle();
+
+  return {
+    data: (result.data ?? null) as ConversationMessageRow | null,
+    error: result.error,
+  };
+}
 
 export async function createConversation(userDb: any, data: CreateConversationInput) {
   const result = await userDb
     .from("conversations")
     .insert({ user_id: data.userId, title: data.title })
-    .select("id, title, created_at")
+    .select("id, title, created_at, last_activity_at")
     .single();
 
   return {
@@ -86,8 +146,9 @@ export async function deleteConversations(userDb: any, ids: string[], userId?: s
 export async function getUserConversations(userDb: any, userId: string) {
   const result = await userDb
     .from("conversations")
-    .select("id, title, created_at")
+    .select("id, title, created_at, last_activity_at")
     .eq("user_id", userId)
+    .order("last_activity_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
 
   return {
@@ -112,7 +173,7 @@ export async function getUserConversationsOldestFirst(userDb: any, userId: strin
 export async function getConversationById(userDb: any, conversationId: string) {
   const result = await userDb
     .from("conversations")
-    .select("id, user_id, title, created_at")
+    .select("id, user_id, title, created_at, last_activity_at")
     .eq("id", conversationId)
     .maybeSingle();
 
@@ -126,14 +187,23 @@ export async function insertConversationMessage(userDb: any, data: InsertConvers
   const trimmedClientRequestId = typeof data.clientRequestId === "string" && data.clientRequestId.trim()
     ? data.clientRequestId.trim()
     : "";
+  const normalizedMessageType = data.messageType || "text";
+  const canDeduplicateByClientRequestId = Boolean(
+    trimmedClientRequestId && (
+      data.role === "user"
+      || (data.role === "assistant" && normalizedMessageType === "image")
+    ),
+  );
 
-  if (trimmedClientRequestId && data.role === "user") {
-    const existingResult = await userDb
-      .from("messages")
-      .select(MESSAGE_SELECT_COLUMNS)
-      .eq("conversation_id", data.conversationId)
-      .eq("client_request_id", trimmedClientRequestId)
-      .maybeSingle();
+  if (canDeduplicateByClientRequestId) {
+    const existingResult = await getConversationMessageByClientRequestId(userDb, {
+      conversationId: data.conversationId,
+      clientRequestId: trimmedClientRequestId,
+      role: data.role,
+      ...(data.role === "assistant" && normalizedMessageType === "image"
+        ? { messageType: normalizedMessageType }
+        : {}),
+    });
 
     if (existingResult.data) {
       return {
@@ -158,17 +228,25 @@ export async function insertConversationMessage(userDb: any, data: InsertConvers
       role: data.role,
       content: data.content,
       client_request_id: trimmedClientRequestId || null,
+      message_type: normalizedMessageType,
+      image_url: data.imageUrl || null,
+      storage_path: data.storagePath || null,
+      prompt: data.prompt || null,
+      provider: data.provider || null,
+      file_size_bytes: typeof data.fileSizeBytes === "number" ? data.fileSizeBytes : null,
     })
     .select(MESSAGE_SELECT_COLUMNS)
     .maybeSingle();
 
-  if (result.error && trimmedClientRequestId && data.role === "user" && result.error.code === "23505") {
-    const duplicateResult = await userDb
-      .from("messages")
-      .select(MESSAGE_SELECT_COLUMNS)
-      .eq("conversation_id", data.conversationId)
-      .eq("client_request_id", trimmedClientRequestId)
-      .maybeSingle();
+  if (result.error && canDeduplicateByClientRequestId && result.error.code === "23505") {
+    const duplicateResult = await getConversationMessageByClientRequestId(userDb, {
+      conversationId: data.conversationId,
+      clientRequestId: trimmedClientRequestId,
+      role: data.role,
+      ...(data.role === "assistant" && normalizedMessageType === "image"
+        ? { messageType: normalizedMessageType }
+        : {}),
+    });
     return {
       data: duplicateResult.data as ConversationMessageRow | null,
       error: duplicateResult.error,
