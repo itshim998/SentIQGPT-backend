@@ -45,8 +45,8 @@ const DEFAULT_VALUES: ReadonlyArray<number> = [25, 42, 18, 56, 30];
  */
 export function selectRenderer(message: string): RendererType {
   if (/\b(?:interactive|plotly)\b/i.test(message)) return "plotly";
-  if (/\b(?:chart\.?js|frontend|javascript|browser|web\s*ui)\b/i.test(message)) return "chartjs";
-  return "matplotlib";
+  if (/\b(?:matplotlib|python)\b/i.test(message)) return "matplotlib";
+  return "chartjs";
 }
 
 // ==============================

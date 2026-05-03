@@ -92,7 +92,7 @@ import { isWebSearchMode, normalizeWebSearchMode } from "./tools/webSearch/webSe
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
 import { auditMiddleware, getRecentAuditEntries } from "./middleware/audit";
-import { imageQuotaMiddleware, getQuotaInfo, isImageRequest } from "./middleware/imageQuota";
+import { imageQuotaMiddleware, getImageQuotaKey, getQuotaInfo, isImageRequest } from "./middleware/imageQuota";
 import { AuthError, getRequestUser, resolveRequestUser, verifyJWT } from "./middleware/auth";
 import { HttpError, buildHttpErrorResponse } from "./httpErrors";
 
@@ -117,6 +117,8 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const TITLE_MAX_CHARS = 120;
 const TITLE_FALLBACK_MAX_CHARS = 50;
 const TITLE_GENERATION_TIMEOUT_MS = parseInt(process.env.SENTIQ_TITLE_TIMEOUT_MS || "12000", 10);
+
+app.set("trust proxy", process.env.TRUST_PROXY ?? "loopback, linklocal, uniquelocal");
 
 function getExplicitWebSearchMode(value: unknown): "basic" | undefined {
   if (!isWebSearchMode(value)) return undefined;
@@ -571,6 +573,7 @@ async function generateTitleWithFallback(options: {
     userMessage: options.userMessage.slice(0, 500),
     assistantReply: options.assistantReply.slice(0, 500),
     conversationId: options.conversationId,
+    userId: options.userId,
   });
   const call = {
     ...baseCall,
@@ -717,6 +720,17 @@ async function maybeAutoTitleConversation(options: {
     title: generation.title,
     scope: options.scope,
     currentTitle: options.currentTitle ?? null,
+  });
+}
+
+function scheduleAutoTitleConversation(options: Parameters<typeof maybeAutoTitleConversation>[0]): void {
+  void maybeAutoTitleConversation(options).catch((error) => {
+    logDbFailure(
+      `${options.scope}.background`,
+      options.userId,
+      error instanceof Error ? error : new Error(String(error)),
+      { conversationId: options.conversationId },
+    );
   });
 }
 
@@ -1686,7 +1700,7 @@ app.post(
         userMessagePersisted &&
         (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat")
       ) {
-        await maybeAutoTitleConversation({
+        scheduleAutoTitleConversation({
           userDb,
           userId,
           conversationId: activeConversationId,
@@ -1799,7 +1813,7 @@ app.post(
       userMessagePersisted &&
       (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat")
     ) {
-      await maybeAutoTitleConversation({
+      scheduleAutoTitleConversation({
         userDb,
         userId,
         conversationId: activeConversationId,
@@ -2223,7 +2237,7 @@ app.post(
           userMessagePersisted &&
           (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat")
         ) {
-          await maybeAutoTitleConversation({
+          scheduleAutoTitleConversation({
             userDb,
             userId,
             conversationId: activeConversationId,
@@ -2918,17 +2932,21 @@ app.post(
 // ===============================
 // GET /api/images/quota — Check remaining image quota
 // ===============================
-app.get("/api/images/quota", (req, res) => {
-  const ip = req.ip || req.socket.remoteAddress || "unknown";
-  const info = getQuotaInfo(ip);
-  res.json(info);
-});
+app.get(
+  "/api/images/quota",
+  verifyJWT({ allowGuest: true }),
+  (req, res) => {
+    const info = getQuotaInfo(getImageQuotaKey(req));
+    res.json(info);
+  },
+);
 
 // ===============================
 // POST /api/images/generate — Generate image from prompt
 // ===============================
 app.post(
   "/api/images/generate",
+  verifyJWT({ allowGuest: false }),
   aiRateLimiter,
   imageQuotaMiddleware,
   asyncHandler(async (req, res) => {
@@ -2960,8 +2978,7 @@ app.post(
         clientRequestId,
       );
       if (existingAssistantImage?.image_url) {
-        const ip = req.ip || req.socket.remoteAddress || "unknown";
-        const quota = getQuotaInfo(ip);
+          const quota = getQuotaInfo(getImageQuotaKey(req));
         res.json({
           type: "image",
           url: existingAssistantImage.image_url,
@@ -3050,8 +3067,7 @@ app.post(
       }
     }
 
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
-    const quota = getQuotaInfo(ip);
+    const quota = getQuotaInfo(getImageQuotaKey(req));
 
     console.log(`[IMAGE] provider=${result.provider_used} success prompt="${parsed.data.prompt.slice(0, 40)}..." remaining=${quota.remaining}`);
 
@@ -3080,6 +3096,7 @@ app.post(
 // ===============================
 app.post(
   "/api/images/store",
+  verifyJWT({ allowGuest: false }),
   aiRateLimiter,
   asyncHandler(async (req, res) => {
     const userId = await getVerifiedUserId(req);
@@ -3318,6 +3335,7 @@ app.post(
 // ===============================
 app.post(
   "/api/chat/title",
+  verifyJWT({ allowGuest: false }),
   aiRateLimiter,
   asyncHandler(async (req, res) => {
     const { userId, isGuest } = await getRequestIdentity(req);
@@ -3386,6 +3404,7 @@ import {
  */
 app.post(
   "/api/search",
+  verifyJWT({ allowGuest: false }),
   aiRateLimiter,
   asyncHandler(async (req, res) => {
     const { query, maxResults, skipLLMSynthesis } = req.body;
@@ -3427,6 +3446,7 @@ app.post(
  */
 app.post(
   "/api/search/simple",
+  verifyJWT({ allowGuest: false }),
   aiRateLimiter,
   asyncHandler(async (req, res) => {
     const { query, maxResults } = req.body;
@@ -3501,12 +3521,20 @@ app.get("/api/config", (_req, res) => {
 // ===============================
 // GET /api/audit — Recent audit entries (redacted for safety)
 // ===============================
-app.get("/api/audit", (_req, res) => {
-  const entries = getRecentAuditEntries();
-  // Redact IP addresses to prevent information disclosure
-  const redacted = entries.map(({ ip, ...rest }) => rest);
-  res.json(redacted);
-});
+app.get(
+  "/api/audit",
+  verifyJWT({ allowGuest: false }),
+  asyncHandler(async (_req, res) => {
+    if (process.env.SENTIQ_ENABLE_AUDIT_API !== "true") {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    const entries = getRecentAuditEntries();
+    // Redact IP addresses to prevent information disclosure.
+    const redacted = entries.map(({ ip, ...rest }) => rest);
+    res.json(redacted);
+  }),
+);
 
 // ===============================
 // Global error handler

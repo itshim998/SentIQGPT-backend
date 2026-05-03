@@ -8,6 +8,7 @@
 //   • isImageRequest(text) — keyword-based auto-detection
 
 import type { Request, Response, NextFunction } from "express";
+import type { AuthenticatedRequest } from "./auth";
 
 // ==============================
 // Configuration
@@ -46,7 +47,11 @@ function getTracker(ip: string): ImageTracker {
   return tracker;
 }
 
-function extractIp(req: Request): string {
+export function getImageQuotaKey(req: Request): string {
+  const user = (req as AuthenticatedRequest).user;
+  if (user && !user.isGuest && user.sub) {
+    return `user:${user.sub}`;
+  }
   return req.ip || req.socket.remoteAddress || "unknown";
 }
 
@@ -88,7 +93,7 @@ export function imageQuotaMiddleware(
   res: Response,
   next: NextFunction,
 ): void {
-  const ip = extractIp(req);
+  const ip = getImageQuotaKey(req);
   const tracker = getTracker(ip);
   const now = Date.now();
 

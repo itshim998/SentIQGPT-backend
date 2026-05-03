@@ -1,0 +1,96 @@
+{
+  "name": "SentIQGPT Student Builder Golden Prompts",
+  "version": 1,
+  "cases": [
+    {
+      "id": "math-linear-programming",
+      "category": "math",
+      "prompt": "A factory makes chairs and desks. Each chair needs 2 hours and gives $30 profit. Each desk needs 5 hours and gives $80 profit. The factory has 40 hours. How many of each should it make to maximize profit?",
+      "expected_route": "math_reasoning",
+      "success_criteria": [
+        "Sets up variables and objective",
+        "Shows constraints clearly",
+        "Gives a final numeric recommendation"
+      ]
+    },
+    {
+      "id": "coding-debug-python-loop",
+      "category": "coding",
+      "prompt": "Debug this Python code and explain the fix:\n\nfor i in range(5):\nprint(i)",
+      "expected_route": "normal_chat",
+      "success_criteria": [
+        "Identifies indentation error",
+        "Provides corrected code",
+        "Explains why indentation matters"
+      ]
+    },
+    {
+      "id": "file-analysis-summary",
+      "category": "file_analysis",
+      "prompt": "Summarize the uploaded PDF and list the action items.",
+      "expected_route": "file_analysis",
+      "requires_context": ["file_references"],
+      "success_criteria": [
+        "Answers from uploaded file context",
+        "Separates summary from action items",
+        "Does not hallucinate missing sections"
+      ]
+    },
+    {
+      "id": "image-ocr-question",
+      "category": "vision",
+      "prompt": "Read the text in this screenshot and explain what I should do next.",
+      "expected_route": "normal_chat",
+      "requires_context": ["image_attachments"],
+      "success_criteria": [
+        "Uses image attachment context",
+        "Extracts visible text when possible",
+        "Gives concise next steps"
+      ]
+    },
+    {
+      "id": "web-current-ai-models",
+      "category": "web_search",
+      "prompt": "What are the best AI coding models in 2026?",
+      "expected_route": "web_search",
+      "success_criteria": [
+        "Uses web search",
+        "Cites current sources",
+        "Compares models for coding use"
+      ]
+    },
+    {
+      "id": "memory-explicit-store",
+      "category": "memory",
+      "prompt": "Remember that my portfolio project is a Supabase-backed AI study assistant.",
+      "expected_route": "memory_update",
+      "success_criteria": [
+        "Stores a project memory",
+        "Confirms briefly",
+        "Does not store generic knowledge"
+      ]
+    },
+    {
+      "id": "chart-frontend-native",
+      "category": "chart_generation",
+      "prompt": "Create a bar chart comparing React, Vue, Angular, and Svelte usage.",
+      "expected_route": "chart_generation",
+      "success_criteria": [
+        "Uses a frontend-native chart payload by default",
+        "Does not call Python chart execution unless explicitly requested",
+        "Returns renderable chart metadata"
+      ]
+    },
+    {
+      "id": "image-generation",
+      "category": "image_generation",
+      "prompt": "Generate an image of a clean futuristic study desk with a laptop and notebook.",
+      "expected_route": "image_generation",
+      "success_criteria": [
+        "Routes to image generation",
+        "Returns an image URL or base64 payload",
+        "Persists result when conversation ID is available"
+      ]
+    }
+  ]
+}

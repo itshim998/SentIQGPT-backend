@@ -14,7 +14,8 @@
     "test:profile": "ts-node --project tsconfig.backend.json backend/testProfileFlow.ts",
     "test:workspace": "ts-node --project tsconfig.backend.json backend/testWorkspaceContinuity.ts",
     "test:pipeline": "ts-node --project tsconfig.backend.json backend/testPipeline.ts",
-    "test:web-search": "ts-node --project tsconfig.backend.json backend/testWebSearch.ts"
+    "test:web-search": "ts-node --project tsconfig.backend.json backend/testWebSearch.ts",
+    "test:improvements": "ts-node --project tsconfig.backend.json backend/testImprovementPlan.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0",

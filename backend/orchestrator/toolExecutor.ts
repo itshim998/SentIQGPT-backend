@@ -457,53 +457,46 @@ export async function executePlan(
   ctx: BuiltContext,
 ): Promise<ExecutionResult> {
   const stepsToExecute = steps.slice(0, MAX_EXEC_STEPS);
-  
-  // Group steps: parallel-capable vs context-dependent
-  // Strategy: Run all parallelizable steps concurrently, then run sequential ones
-  const parallelSteps: PlanStep[] = [];
-  const sequentialSteps: PlanStep[] = [];
-
-  for (const step of stepsToExecute) {
-    if (canRunInParallel(step.tool)) {
-      parallelSteps.push(step);
-    } else {
-      sequentialSteps.push(step);
-    }
-  }
 
   const results: StepResult[] = [];
   let priorContext = "";
 
-  // Execute parallel steps concurrently (they don't need prior context)
-  if (parallelSteps.length > 0) {
-    console.log(`[EXECUTOR] running ${parallelSteps.length} parallel step(s): ${parallelSteps.map(s => s.tool).join(", ")}`);
-    const startTime = Date.now();
+  for (let index = 0; index < stepsToExecute.length;) {
+    const planStep = stepsToExecute[index];
 
-    const parallelPromises = parallelSteps.map(step => executeStep(step, ctx, ""));
-    const parallelResults = await Promise.all(parallelPromises);
-
-    console.log(`[EXECUTOR] parallel execution completed in ${Date.now() - startTime}ms`);
-
-    // Collect results and build context
-    for (let i = 0; i < parallelResults.length; i++) {
-      const result = parallelResults[i];
-      results.push(result);
-      const contextPart = buildContextFromResult(result, parallelSteps[i].input);
-      if (contextPart) {
-        priorContext += (priorContext ? "\n" : "") + contextPart;
+    if (canRunInParallel(planStep.tool)) {
+      const group: PlanStep[] = [];
+      while (
+        index < stepsToExecute.length &&
+        canRunInParallel(stepsToExecute[index].tool)
+      ) {
+        group.push(stepsToExecute[index]);
+        index += 1;
       }
-    }
-  }
 
-  // Execute sequential steps in order (they may need prior context)
-  for (const planStep of sequentialSteps) {
+      console.log(`[EXECUTOR] running ${group.length} ordered parallel step(s): ${group.map(s => s.tool).join(", ")}`);
+      const startTime = Date.now();
+      const groupResults = await Promise.all(group.map(step => executeStep(step, ctx, "")));
+      console.log(`[EXECUTOR] ordered parallel group completed in ${Date.now() - startTime}ms`);
+
+      for (let i = 0; i < groupResults.length; i++) {
+        const result = groupResults[i];
+        results.push(result);
+        const contextPart = buildContextFromResult(result, group[i].input);
+        if (contextPart) {
+          priorContext += (priorContext ? "\n" : "") + contextPart;
+        }
+      }
+      continue;
+    }
+
     const result = await executeStep(planStep, ctx, priorContext);
     results.push(result);
-
     const contextPart = buildContextFromResult(result, planStep.input);
     if (contextPart) {
       priorContext += (priorContext ? "\n" : "") + contextPart;
     }
+    index += 1;
   }
 
   // Sort results by step number to maintain original order

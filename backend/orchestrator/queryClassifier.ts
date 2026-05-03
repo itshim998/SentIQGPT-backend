@@ -80,6 +80,11 @@ const REALTIME_PATTERNS: readonly RegExp[] = [
 
 /** Year pattern: years >= 2026 paired with an entity or keyword */
 const YEAR_WITH_ENTITY_RE = /\b(?:\w+\s+){0,5}(20(?:2[6-9]|[3-9]\d))\b/i;
+const YEAR_SEARCH_INTENT_PATTERNS: readonly RegExp[] = [
+  /\b(?:latest|recent|current|new|upcoming|announced|released|launched)\b/i,
+  /\b(?:best|top|ranking|ranked|benchmark|compare|comparison|trends?|popular)\b/i,
+  /\b(?:price|cost|release|launch|update|roadmap|version|models?|apps?|tools?)\b/i,
+];
 
 /** Factual lookup — medicines, specific products, statistics */
 const FACTUAL_PATTERNS: readonly RegExp[] = [
@@ -190,14 +195,15 @@ export function classifyQueryType(query: string): QueryClassification {
     }
   }
 
-  // 3b. Year >= 2026 paired with at least one non-stopword entity
+  // 3b. Year >= 2026 paired with a strong entity or time-sensitive intent.
+  // Avoid forcing web search on weak phrases like "linear algebra 2026 homework".
   if (YEAR_WITH_ENTITY_RE.test(trimmed)) {
-    // Ensure there's a meaningful entity word besides the year
     const withoutYear = trimmed.replace(/\b20\d{2}\b/g, "").trim();
     const entityWords = withoutYear
       .split(/\s+/)
       .filter(w => w.length > 2 && !STOPWORDS.has(w.toLowerCase()));
-    if (entityWords.length >= 1) {
+    const hasYearSearchIntent = YEAR_SEARCH_INTENT_PATTERNS.some((pat) => pat.test(trimmed));
+    if (entityWords.length >= 1 && hasYearSearchIntent) {
       return { category: "real_time_information", needsWebSearch: true, matchedRule: "year_with_entity" };
     }
   }
@@ -261,7 +267,8 @@ export function shouldForceWebSearch(query: string): boolean {
   const entityWords = withoutYear
     .split(/\s+/)
     .filter(w => w.length > 2 && !STOPWORDS.has(w.toLowerCase()));
-  return entityWords.length >= 1;
+  const hasYearSearchIntent = YEAR_SEARCH_INTENT_PATTERNS.some((pat) => pat.test(query));
+  return entityWords.length >= 1 && hasYearSearchIntent;
 }
 
 // ==============================

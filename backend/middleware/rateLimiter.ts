@@ -1,5 +1,6 @@
 import rateLimit from "express-rate-limit";
 import type { Request } from "express";
+import type { AuthenticatedRequest } from "./auth";
 
 // SentIQGPT v1 — Rate Limiting Middleware
 //
@@ -9,6 +10,10 @@ import type { Request } from "express";
 // 3. File uploads: 20 req/hour per client
 
 function extractKey(req: Request): string {
+  const user = (req as AuthenticatedRequest).user;
+  if (user && !user.isGuest && user.sub) {
+    return `user:${user.sub}`;
+  }
   return req.ip || req.socket.remoteAddress || "unknown";
 }
 

@@ -22,6 +22,8 @@ import { buildChartJsConfig, buildPlotlyFigure } from "./frontendPayloadBuilder"
 const LLM_SERVICE_URL =
   process.env.LLM_SERVICE_URL ??
   `http://localhost:${process.env.LLM_SERVICE_PORT ?? "3002"}`;
+const PYTHON_CHART_RENDER_ENABLED = process.env.SENTIQ_ENABLE_PYTHON_CHART_RENDER === "true";
+const INTERNAL_SERVICE_TOKEN = process.env.SENTIQ_INTERNAL_SERVICE_TOKEN?.trim() || "";
 
 /**
  * Ask the Python service to execute matplotlib code and return a PNG
@@ -29,13 +31,19 @@ const LLM_SERVICE_URL =
  * chart result is still usable without a preview.
  */
 async function fetchMatplotlibPreview(code: string): Promise<string | undefined> {
+  if (!PYTHON_CHART_RENDER_ENABLED) {
+    return undefined;
+  }
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
 
     const resp = await fetch(`${LLM_SERVICE_URL}/chart/render`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(INTERNAL_SERVICE_TOKEN ? { "X-SentIQ-Internal-Token": INTERNAL_SERVICE_TOKEN } : {}),
+      },
       body: JSON.stringify({ code }),
       signal: controller.signal,
     });

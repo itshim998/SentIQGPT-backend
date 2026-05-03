@@ -646,6 +646,7 @@ export function buildTitleGeneratePrompt(args: {
   readonly userMessage: string;
   readonly assistantReply: string;
   readonly conversationId: string;
+  readonly userId?: string;
 }): LLMAdapterCall {
   const prompt =
     "TASK: Generate Chat Title\n" +
@@ -664,7 +665,7 @@ export function buildTitleGeneratePrompt(args: {
     task: "general",
     prompt,
     prefer: "groq",
-    user_id: args.conversationId,
+    user_id: args.userId || args.conversationId,
     max_output_tokens: 80,
     skip_wrappers: true,
   };
