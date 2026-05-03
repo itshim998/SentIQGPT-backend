@@ -124,7 +124,7 @@ async function execConversation(
   // instead of the standard single-model chat handler.
   if (!detectCodeQuery(input) && isMathQuery(input)) {
     console.log(`[MathPipeline] math query detected — routing to direct openai-large solver`);
-    const mathResult = await solveMathDirect(augmentedInput);
+    const mathResult = await solveMathDirect(augmentedInput, ctx.userId, ctx.imageAttachments);
     console.log(
       `[MathPipeline] solved using openai-large`,
     );
@@ -142,10 +142,12 @@ async function execConversation(
   // ── Standard conversation path ──
   // Pass file context to router for coding PDF detection
   const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
+  const hasImages = ctx.imageAttachments && ctx.imageAttachments.length > 0;
   const fileNames = hasFiles ? ctx.fileReferences.map((f) => f.filename) : undefined;
   const fileContent = hasFiles ? ctx.fileReferences.map((f) => f.extractedText).join("\n") : undefined;
   
   const modelOverride = selectModelForPrompt(input, undefined, {
+    hasImage: hasImages,
     hasFile: hasFiles,
     fileNames,
     fileContent,
@@ -156,6 +158,7 @@ async function execConversation(
     recentMessages: ctx.recentMessages,
     memories: ctx.memories,
     fileReferences: ctx.fileReferences,
+    imageAttachments: ctx.imageAttachments,
     conversationSummary: ctx.conversationSummary,
     priorConversationEvidence: ctx.priorConversationEvidence,
     isExplicitRecallQuery: ctx.isExplicitRecallQuery,
@@ -200,10 +203,12 @@ async function execFileAnalysis(
 ): Promise<StepResult> {
   // Pass file context to router for coding PDF detection
   const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
+  const hasImages = ctx.imageAttachments && ctx.imageAttachments.length > 0;
   const fileNames = hasFiles ? ctx.fileReferences.map((f) => f.filename) : undefined;
   const fileContent = hasFiles ? ctx.fileReferences.map((f) => f.extractedText).join("\n") : undefined;
   
   const modelOverride = selectModelForPrompt(input, undefined, {
+    hasImage: hasImages,
     hasFile: hasFiles,
     fileNames,
     fileContent,
@@ -218,6 +223,7 @@ async function execFileAnalysis(
     recentMessages: ctx.recentMessages,
     memories: ctx.memories,
     fileReferences: ctx.fileReferences,
+    imageAttachments: ctx.imageAttachments,
     conversationSummary: ctx.conversationSummary,
     priorConversationEvidence: ctx.priorConversationEvidence,
     isExplicitRecallQuery: ctx.isExplicitRecallQuery,

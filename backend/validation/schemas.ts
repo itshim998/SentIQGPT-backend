@@ -25,6 +25,12 @@ export const ChatRequestSchema = z.object({
       filename: z.string(),
       extractedText: z.string(),
     })).max(10).optional(),
+    image_attachments: z.array(z.object({
+      filename: z.string().min(1).max(255),
+      mime_type: z.enum(["image/png", "image/jpeg", "image/webp"]),
+      base64: z.string().min(1).max(14_000_000),
+      size_bytes: z.number().int().min(1).max(10 * 1024 * 1024),
+    })).max(3).optional(),
     web_search_mode: z.enum(["basic", "advanced"]).optional(),
   }).optional(),
 }).transform(({ conversation_id, client_request_id, ...rest }) => ({

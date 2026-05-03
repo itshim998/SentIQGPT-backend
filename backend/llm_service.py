@@ -188,6 +188,7 @@ class LLMInvokeRequest(BaseModel):
     user_id: Optional[str] = None
     max_output_tokens: Optional[int] = None
     skip_wrappers: Optional[bool] = None
+    image_attachments: Optional[list[dict[str, Any]]] = None
 
 
 class LLMInvokeResponse(BaseModel):
@@ -607,6 +608,7 @@ async def invoke_llm(request: LLMInvokeRequest):
             user_id=user_id,
             max_output_tokens=request.max_output_tokens,
             skip_wrappers=bool(request.skip_wrappers),
+            image_attachments=request.image_attachments or None,
         )
         # Resolve the actual provider (not just the prefer hint)
         from llm_adapter import resolve_model_override, get_provider_for_task
@@ -722,6 +724,7 @@ async def stream_llm(request: LLMInvokeRequest):
                 task=request.task,
                 model_override=effective_model_override,
                 user_id=user_id,
+                image_attachments=request.image_attachments or None,
             ):
                 # Check output safety (if monitor active)
                 if safety_monitor:

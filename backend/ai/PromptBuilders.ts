@@ -73,6 +73,14 @@ export interface LLMAdapterCall {
   readonly timeout_ms?: number;
   readonly max_output_tokens?: number;
   readonly skip_wrappers?: boolean;
+  readonly image_attachments?: readonly ImageAttachment[];
+}
+
+export interface ImageAttachment {
+  readonly filename: string;
+  readonly mime_type: "image/png" | "image/jpeg" | "image/webp";
+  readonly base64: string;
+  readonly size_bytes: number;
 }
 
 export interface LLMAdapterResult {
@@ -107,6 +115,7 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
       user_id: call.user_id,
       max_output_tokens: call.max_output_tokens,
       skip_wrappers: call.skip_wrappers,
+      image_attachments: call.image_attachments,
     }),
     signal: AbortSignal.timeout(call.timeout_ms ?? 90_000), // 90s default; override for long-running direct math
   });
@@ -192,6 +201,7 @@ export async function callLLMAdapterStream(
       user_id: call.user_id,
       max_output_tokens: call.max_output_tokens,
       skip_wrappers: call.skip_wrappers,
+      image_attachments: call.image_attachments,
     }),
     signal: AbortSignal.timeout(call.timeout_ms ?? 120_000), // 120s default; override when needed
   });
@@ -357,6 +367,7 @@ export function callLLMAdapterSync(call: LLMAdapterCall): Promise<string> {
         prefer: call.prefer,
         model_override: call.model_override,
         user_id: call.user_id,
+        image_attachments: call.image_attachments,
       })
     );
     child.stdin.end();
@@ -430,6 +441,7 @@ export interface ChatContext {
   readonly recentMessages?: readonly { role: string; content: string }[];
   readonly memories?: readonly { type: string; summary: string }[];
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
+  readonly imageAttachments?: readonly ImageAttachment[];
   readonly conversationSummary?: string;
   readonly priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
   readonly isExplicitRecallQuery?: boolean;
@@ -444,6 +456,7 @@ export interface ChatContext {
 
 export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
+  const hasImages = ctx.imageAttachments && ctx.imageAttachments.length > 0;
 
   // Select system prompt based on model.
   // Use the conversational prompt for pure text chat on general chat models.
@@ -494,6 +507,15 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
       "- Prioritize answering about the uploaded file over any other context.\n";
   }
 
+  if (hasImages && !ctx.reasoningMode) {
+    const filenames = ctx.imageAttachments!.map((image) => image.filename).join(", ");
+    SYSTEM_PROMPT +=
+      "\nIMAGE INPUT MODE:\n" +
+      `- The user attached image(s): ${filenames}\n` +
+      "- Use the attached image pixels directly when answering.\n" +
+      "- If the user asks to solve, read, debug, or analyze the image, use the image content as the problem statement.\n";
+  }
+
   // Delegate prompt assembly + budget enforcement to the Context Composer.
   const finalPrompt = composeContext({
     systemPrompt: SYSTEM_PROMPT,
@@ -526,6 +548,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     model_override: ctx.modelOverride,
     user_id: ctx.userId,
     skip_wrappers: ctx.reasoningMode ?? false,
+    image_attachments: ctx.imageAttachments,
   };
 }
 

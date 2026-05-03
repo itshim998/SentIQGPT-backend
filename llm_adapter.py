@@ -279,9 +279,32 @@ def _cache_key(
     user_id: str = "",
     max_output_tokens: Optional[int] = None,
     skip_wrappers: bool = False,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
 ) -> str:
     h = hashlib.sha256()
-    h.update(f"{provider}|{task}|{model}|{user_id}|{max_output_tokens or ''}|{int(skip_wrappers)}|{prompt}".encode())
+    image_fingerprint = _image_attachment_fingerprint(image_attachments)
+    h.update(
+        f"{provider}|{task}|{model}|{user_id}|{max_output_tokens or ''}|"
+        f"{int(skip_wrappers)}|{image_fingerprint}|{prompt}".encode()
+    )
+    return h.hexdigest()
+
+
+def _image_attachment_fingerprint(image_attachments: Optional[list[dict[str, Any]]]) -> str:
+    if not image_attachments:
+        return ""
+    h = hashlib.sha256()
+    for image in image_attachments:
+        if not isinstance(image, dict):
+            continue
+        h.update(str(image.get("filename") or "").encode())
+        h.update(b"|")
+        h.update(str(image.get("mime_type") or "").encode())
+        h.update(b"|")
+        h.update(str(image.get("size_bytes") or "").encode())
+        h.update(b"|")
+        h.update(str(image.get("base64") or "").encode())
+        h.update(b"\n")
     return h.hexdigest()
 
 def _cache_get(key: str) -> Optional[str]:
@@ -715,10 +738,26 @@ def _build_pollinations_payload(
     model: str,
     temperature: float,
     max_output_tokens: Optional[int] = None,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
 ) -> dict:
+    content: Any = prompt
+    if image_attachments:
+        content_parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for image in image_attachments:
+            if not isinstance(image, dict):
+                continue
+            mime_type = str(image.get("mime_type") or "image/jpeg")
+            base64_data = str(image.get("base64") or "").strip()
+            if not base64_data:
+                continue
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime_type};base64,{base64_data}"},
+            })
+        content = content_parts
     payload = {
         "model": _normalize_pollinations_model(model),
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": content}],
         "temperature": temperature,
     }
     if max_output_tokens is not None:
@@ -857,6 +896,57 @@ def _is_openai_large_model(model: Optional[str]) -> bool:
     return (model or "").strip().lower() == "openai-large"
 
 
+def _is_qwen_coder_model(model: Optional[str]) -> bool:
+    logical = (model or "").strip().lower()
+    normalized = _normalize_pollinations_model(logical).strip().lower()
+    return logical in {"qwen-coder", "qwen3-coder", "qwen3-coder-30b"} or "coder" in normalized
+
+
+def _prepare_image_prompt_for_text_only_model(
+    prompt: str,
+    image_attachments: Optional[list[dict[str, Any]]],
+    model: Optional[str],
+) -> tuple[str, Optional[list[dict[str, Any]]]]:
+    if not image_attachments or not _is_qwen_coder_model(model):
+        return prompt, image_attachments
+
+    analysis_blocks: list[str] = []
+    for index, image in enumerate(image_attachments[:3], start=1):
+        if not isinstance(image, dict):
+            continue
+        filename = str(image.get("filename") or f"image-{index}")
+        mime_type = str(image.get("mime_type") or "image/jpeg")
+        base64_data = str(image.get("base64") or "").strip()
+        if not base64_data:
+            continue
+        vision_prompt = (
+            "Extract all visible text, code, error messages, UI state, and technical details from this image. "
+            "Be concise but preserve exact code/error text when readable. "
+            f"Filename: {filename}"
+        )
+        try:
+            analysis = _invoke_gemini_vision(
+                prompt=vision_prompt,
+                image_base64=base64_data,
+                mime_type=mime_type,
+            )
+        except Exception as exc:
+            logger.warning("[VisionPreprocess] failed for %s: %s", filename, exc)
+            analysis = f"[Vision preprocessing failed for {filename}: {exc}]"
+        analysis_blocks.append(f"[Image {index}: {filename}]\n{analysis}")
+
+    if not analysis_blocks:
+        return prompt, None
+
+    augmented_prompt = (
+        prompt +
+        "\n\nIMAGE CONTEXT PREPROCESSED FOR TEXT-ONLY CODING MODEL:\n" +
+        "\n\n".join(analysis_blocks)
+    )
+    logger.info("[VisionPreprocess] converted %d image(s) to text for model=%s", len(analysis_blocks), model)
+    return augmented_prompt, None
+
+
 def _pollinations_request_timeout(model: Optional[str]) -> int:
     if _is_openai_large_model(model):
         return POLLINATIONS_TIMEOUT_OPENAI_LARGE
@@ -931,6 +1021,7 @@ def _call_pollinations(
     model: str,
     temperature: float = 0.7,
     max_output_tokens: Optional[int] = None,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
 ) -> tuple[str, Optional[str], bool]:
     """Call Pollinations via its OpenAI-compatible chat completions endpoint."""
     if not pollinations_bucket.consume():
@@ -940,7 +1031,18 @@ def _call_pollinations(
     if POLLINATIONS_API_KEY:
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
-    payload = _build_pollinations_payload(prompt, model, temperature, max_output_tokens)
+    effective_prompt, effective_images = _prepare_image_prompt_for_text_only_model(
+        prompt,
+        image_attachments,
+        model,
+    )
+    payload = _build_pollinations_payload(
+        effective_prompt,
+        model,
+        temperature,
+        max_output_tokens,
+        effective_images,
+    )
 
     endpoint_used, resp = _post_pollinations(
         payload,
@@ -972,6 +1074,7 @@ def _call_pollinations_stream(
     prompt: str, 
     model: str, 
     temperature: float = 0.7,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
 ):
     """
     True provider SSE stream for Pollinations.
@@ -983,7 +1086,12 @@ def _call_pollinations_stream(
     if POLLINATIONS_API_KEY:
         headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
 
-    payload = _build_pollinations_payload(prompt, model, temperature, None)
+    effective_prompt, effective_images = _prepare_image_prompt_for_text_only_model(
+        prompt,
+        image_attachments,
+        model,
+    )
+    payload = _build_pollinations_payload(effective_prompt, model, temperature, None, effective_images)
     payload["stream"] = True
 
     logger.info("[Pollinations] provider_sse stream mode enabled")
@@ -1068,6 +1176,7 @@ def call_llm_router(
     user_id: Optional[str] = None,
     max_output_tokens: Optional[int] = None,
     skip_wrappers: bool = False,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """
     Route an LLM call to the correct provider based on task.
@@ -1125,7 +1234,16 @@ def call_llm_router(
     logger.info("[LLM Request] model=%s  provider=%s  task=%s  override=%s", model, provider, task, model_override)
 
     # Check cache
-    key = _cache_key(prompt, task, model, provider, user_id or "", max_output_tokens, skip_wrappers)
+    key = _cache_key(
+        prompt,
+        task,
+        model,
+        provider,
+        user_id or "",
+        max_output_tokens,
+        skip_wrappers,
+        image_attachments,
+    )
     cached = _cache_get(key)
     if cached is not None:
         logger.info("Cache hit for task=%s provider=%s", task, provider)
@@ -1166,6 +1284,7 @@ def call_llm_router(
                 effective_prompt,
                 resolved_override or model,
                 max_output_tokens=max_output_tokens,
+                image_attachments=image_attachments,
             )
         elif provider == "groq":
             result = _invoke_groq(effective_prompt, resolved_override)
@@ -1206,6 +1325,7 @@ def call_llm_router(
                     effective_prompt,
                     alt_pollinations_model,
                     max_output_tokens=max_output_tokens,
+                    image_attachments=image_attachments,
                 )
                 payload = _build_response_payload(fallback_result)
                 _cache_set(key, payload)
@@ -1292,6 +1412,7 @@ def stream_llm_router(
     task: str = "chat",
     model_override: Optional[str] = None,
     user_id: Optional[str] = None,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
 ):
     """
     Streaming variant — yields text chunks.
@@ -1316,7 +1437,7 @@ def stream_llm_router(
     if provider == "pollinations":
         emitted_primary_text = False
         try:
-            for chunk in _call_pollinations_stream(prompt, resolved_override or model):
+            for chunk in _call_pollinations_stream(prompt, resolved_override or model, image_attachments=image_attachments):
                 if chunk:
                     emitted_primary_text = True
                 yield chunk
@@ -1343,7 +1464,7 @@ def stream_llm_router(
             emitted_alt_text = False
             try:
                 logger.info("[Fallback] Trying alternate Pollinations model: %s", alt_pollinations_model)
-                for chunk in _call_pollinations_stream(prompt, alt_pollinations_model):
+                for chunk in _call_pollinations_stream(prompt, alt_pollinations_model, image_attachments=image_attachments):
                     if chunk:
                         emitted_alt_text = True
                     yield chunk

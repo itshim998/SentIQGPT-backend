@@ -4,7 +4,7 @@
 // Uses openai-large directly via the shared LLM adapter.
 
 import { callLLMAdapterDetailed } from "./PromptBuilders";
-import type { LLMAdapterCall } from "./PromptBuilders";
+import type { ImageAttachment, LLMAdapterCall } from "./PromptBuilders";
 import { formatMathResponse } from "./mathFormatter";
 
 // ==============================
@@ -244,6 +244,7 @@ export function normalizeMathResponse(text: string): string {
 export async function solveMathDirect(
   userMessage: string,
   userId?: string,
+  imageAttachments?: readonly ImageAttachment[],
 ): Promise<{ answer: string; thinking?: string; model_used?: string; fallback?: boolean }> {
   const intent = classifyMathIntent(userMessage);
   console.log(`[MathPipeline] intent=${intent}`);
@@ -261,6 +262,7 @@ export async function solveMathDirect(
           ? EXAMPLE_MAX_OUTPUT_TOKENS
           : SOLVER_MAX_OUTPUT_TOKENS,
     skip_wrappers: true,
+    image_attachments: imageAttachments,
   };
 
   const result = await callLLMAdapterDetailed(call);

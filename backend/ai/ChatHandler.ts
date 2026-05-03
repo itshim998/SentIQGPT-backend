@@ -3,7 +3,7 @@ import {
   callLLMAdapterDetailed,
   getDemoFallbackResponse,
 } from "./PromptBuilders";
-import type { ChatContext } from "./PromptBuilders";
+import type { ChatContext, ImageAttachment } from "./PromptBuilders";
 import { extractUserFacingAnswer, finalizeStructuredReply } from "./replyGuard";
 
 const REASONING_MAX_OUTPUT_TOKENS = 2600;
@@ -56,6 +56,7 @@ export async function handleChat(args: {
   readonly recentMessages?: readonly { role: string; content: string }[];
   readonly memories?: readonly { type: string; summary: string }[];
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
+  readonly imageAttachments?: readonly ImageAttachment[];
   readonly conversationSummary?: string;
   readonly priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
   readonly isExplicitRecallQuery?: boolean;
@@ -73,6 +74,7 @@ export async function handleChat(args: {
     recentMessages: args.recentMessages,
     memories: args.memories,
     fileReferences: args.fileReferences,
+    imageAttachments: args.imageAttachments,
     conversationSummary: args.conversationSummary,
     priorConversationEvidence: args.priorConversationEvidence,
     isExplicitRecallQuery: args.isExplicitRecallQuery,
@@ -157,6 +159,7 @@ export async function handleChat(args: {
         recentMessages: [],
         memories: [],
         fileReferences: undefined,
+        imageAttachments: undefined,
         conversationSummary: undefined,
         modelOverride: args.modelOverride,
         userId: args.userId,

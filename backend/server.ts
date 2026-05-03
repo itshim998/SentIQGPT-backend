@@ -1460,8 +1460,12 @@ app.post(
     // Always include file_references when present — the frontend only sends
     // the current session file (scoped correctly), so no backend gating needed.
     const orcFileRefs = parsed.data.context?.file_references;
+    const orcImageAttachments = parsed.data.context?.image_attachments;
     if (Array.isArray(orcFileRefs) && orcFileRefs.length > 0) {
       console.log(`[File] orchestrator: ${orcFileRefs.length} file(s) included in context`);
+    }
+    if (Array.isArray(orcImageAttachments) && orcImageAttachments.length > 0) {
+      console.log(`[Image] orchestrator: ${orcImageAttachments.length} image attachment(s) included in context`);
     }
 
     if (isGuest && hasExplicitWebSearchMode) {
@@ -1471,6 +1475,7 @@ app.post(
           recent_messages: normalizedRecentMessages,
           memories: [],
           file_references: orcFileRefs,
+          image_attachments: orcImageAttachments,
           web_search_mode: webSearchMode,
           userId,
         },
@@ -1495,6 +1500,7 @@ app.post(
         recent_messages: normalizedRecentMessages,
         memories: [],
         file_references: orcFileRefs,
+        image_attachments: orcImageAttachments,
         web_search_mode: webSearchMode,
         userMessage: parsed.data.message,
       }, undefined, userId);
@@ -1504,6 +1510,7 @@ app.post(
         recentMessages: guestContext.recentMessages,
         memories: [],
         fileReferences: guestContext.fileReferences,
+        imageAttachments: guestContext.imageAttachments,
         conversationSummary: guestContext.conversationSummary,
         priorConversationEvidence: guestContext.priorConversationEvidence,
         isExplicitRecallQuery: guestContext.isExplicitRecallQuery,
@@ -1629,6 +1636,7 @@ app.post(
         recent_messages: normalizedRecentMessages,
         memories: parsed.data.context?.memories,
         file_references: orcFileRefs,
+        image_attachments: orcImageAttachments,
         trustedProfile,
         web_search_mode: webSearchMode,
         userMessage: parsed.data.message,
@@ -1640,6 +1648,7 @@ app.post(
         recentMessages: reasoningContext.recentMessages,
         memories: reasoningContext.memories,
         fileReferences: reasoningContext.fileReferences,
+        imageAttachments: reasoningContext.imageAttachments,
         conversationSummary: reasoningContext.conversationSummary,
         priorConversationEvidence: reasoningContext.priorConversationEvidence,
         isExplicitRecallQuery: reasoningContext.isExplicitRecallQuery,
@@ -1721,6 +1730,7 @@ app.post(
         recent_messages: normalizedRecentMessages,
         memories: parsed.data.context?.memories,
         file_references: orcFileRefs,
+        image_attachments: orcImageAttachments,
         trustedProfile,
         web_search_mode: webSearchMode,
         userDb,
@@ -1936,6 +1946,7 @@ app.post(
           recent_messages: normalizedRecentMessages,
           memories: [],
           file_references: parsed.data.context?.file_references,
+          image_attachments: parsed.data.context?.image_attachments,
           web_search_mode: webSearchMode,
           userId,
         },
@@ -1979,6 +1990,7 @@ app.post(
                 recent_messages: normalizedRecentMessages,
                 memories: [],
                 file_references: parsed.data.context?.file_references,
+                image_attachments: parsed.data.context?.image_attachments,
                 web_search_mode: webSearchMode,
                 userId,
               },
@@ -1996,6 +2008,7 @@ app.post(
             recent_messages: normalizedRecentMessages,
             memories: [],
             file_references: parsed.data.context?.file_references,
+            image_attachments: parsed.data.context?.image_attachments,
             web_search_mode: webSearchMode,
             userMessage: parsed.data.message,
           }, undefined, userId);
@@ -2005,6 +2018,7 @@ app.post(
             recentMessages: guestReasoningContext.recentMessages,
             memories: [],
             fileReferences: guestReasoningContext.fileReferences,
+            imageAttachments: guestReasoningContext.imageAttachments,
             conversationSummary: guestReasoningContext.conversationSummary,
             priorConversationEvidence: guestReasoningContext.priorConversationEvidence,
             isExplicitRecallQuery: guestReasoningContext.isExplicitRecallQuery,
@@ -2038,6 +2052,7 @@ app.post(
         recent_messages: normalizedRecentMessages,
         memories: [],
         file_references: fileRefs,
+        image_attachments: parsed.data.context?.image_attachments,
         web_search_mode: webSearchMode,
         userMessage: parsed.data.message,
       }, undefined, userId);
@@ -2062,6 +2077,7 @@ app.post(
           recentMessages: guestCtx.recentMessages,
           memories: [],
           fileReferences: guestCtx.fileReferences,
+          imageAttachments: guestCtx.imageAttachments,
           conversationSummary: guestCtx.conversationSummary,
           priorConversationEvidence: guestCtx.priorConversationEvidence,
           isExplicitRecallQuery: guestCtx.isExplicitRecallQuery,
@@ -2298,6 +2314,7 @@ app.post(
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            image_attachments: parsed.data.context?.image_attachments,
             trustedProfile,
             web_search_mode: webSearchMode,
             conversationId: activeConversationId || undefined,
@@ -2339,6 +2356,7 @@ app.post(
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            image_attachments: parsed.data.context?.image_attachments,
             trustedProfile,
             web_search_mode: webSearchMode,
             conversationId: activeConversationId || undefined,
@@ -2380,6 +2398,7 @@ app.post(
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            image_attachments: parsed.data.context?.image_attachments,
             trustedProfile,
             web_search_mode: webSearchMode,
             conversationId: activeConversationId || undefined,
@@ -2440,6 +2459,7 @@ app.post(
               recent_messages: normalizedRecentMessages,
               memories: parsed.data.context?.memories,
               file_references: parsed.data.context?.file_references,
+              image_attachments: parsed.data.context?.image_attachments,
               trustedProfile,
               web_search_mode: webSearchMode,
               conversationId: activeConversationId || undefined,
@@ -2465,6 +2485,7 @@ app.post(
           recent_messages: normalizedRecentMessages,
           memories: parsed.data.context?.memories,
           file_references: parsed.data.context?.file_references,
+          image_attachments: parsed.data.context?.image_attachments,
           trustedProfile,
           web_search_mode: webSearchMode,
           userMessage: parsed.data.message,
@@ -2476,6 +2497,7 @@ app.post(
           recentMessages: reasoningContext.recentMessages,
           memories: reasoningContext.memories,
           fileReferences: reasoningContext.fileReferences,
+          imageAttachments: reasoningContext.imageAttachments,
           conversationSummary: reasoningContext.conversationSummary,
           priorConversationEvidence: reasoningContext.priorConversationEvidence,
           isExplicitRecallQuery: reasoningContext.isExplicitRecallQuery,
@@ -2521,6 +2543,7 @@ app.post(
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
             file_references: parsed.data.context?.file_references,
+            image_attachments: parsed.data.context?.image_attachments,
             trustedProfile,
             web_search_mode: webSearchMode,
             conversationId: activeConversationId || undefined,
@@ -2554,11 +2577,12 @@ app.post(
     // Always include file_references when present — the frontend only sends
     // the current session file (scoped correctly), so no backend gating needed.
     const fileRefs = parsed.data.context?.file_references;
+    const imageAttachments = parsed.data.context?.image_attachments;
     const hasFile = Array.isArray(fileRefs) && fileRefs.length > 0;
-    const hasImage = hasFile && fileRefs.some((f: { filename?: string }) =>
-      /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(f.filename || "")
-    );
-    if (hasFile) console.log(`[File] stream: ${fileRefs.length} file(s) in context, hasImage: ${hasImage}`);
+    const hasImage = Array.isArray(imageAttachments) && imageAttachments.length > 0;
+    if (hasFile || hasImage) {
+      console.log(`[File] stream: files=${fileRefs?.length ?? 0} images=${imageAttachments?.length ?? 0}`);
+    }
 
     const recentMessageCount = normalizedRecentMessages.length;
     const lowComplexity =
@@ -2580,6 +2604,7 @@ app.post(
 
     const fastPathEligible =
       !hasFile &&
+      !hasImage &&
       lowComplexity &&
       !isBufferedReasoning &&
       !queryClassification.needsWebSearch &&
@@ -2597,6 +2622,7 @@ app.post(
       recent_messages: normalizedRecentMessages,
       memories: parsed.data.context?.memories,
       file_references: fileRefs,
+      image_attachments: parsed.data.context?.image_attachments,
       trustedProfile,
       web_search_mode: webSearchMode,
       userMessage: parsed.data.message,
@@ -2618,6 +2644,7 @@ app.post(
       recentMessages: ctx.recentMessages,
       memories: ctx.memories,
       fileReferences: ctx.fileReferences,
+      imageAttachments: ctx.imageAttachments,
       conversationSummary: ctx.conversationSummary,
       priorConversationEvidence: ctx.priorConversationEvidence,
       isExplicitRecallQuery: ctx.isExplicitRecallQuery,

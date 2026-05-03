@@ -15,6 +15,12 @@ type InvokeRequest = {
   model_override?: string;
   max_output_tokens?: number;
   skip_wrappers?: boolean;
+  image_attachments?: readonly {
+    filename: string;
+    mime_type: string;
+    base64: string;
+    size_bytes: number;
+  }[];
 };
 
 type QueuedResponse = {
@@ -50,6 +56,12 @@ async function main(): Promise<void> {
       model_used: "openai-large",
       truncated: true,
       finish_reason: "length",
+    },
+    {
+      text: "The image shows a math problem. The answer is 42.",
+      model_used: "openai-large",
+      truncated: false,
+      finish_reason: "stop",
     },
   ];
 
@@ -121,6 +133,20 @@ async function main(): Promise<void> {
       "math solver preserves the full explanation",
     );
     assert(mathReply.thinking === undefined, "math solver no longer extracts thinking");
+
+    const imageAttachment = {
+      filename: "problem.png",
+      mime_type: "image/png" as const,
+      base64: "iVBORw0KGgo=",
+      size_bytes: 8,
+    };
+    const imageMathReply = await solveMathDirect("Solve it.", "test-user", [imageAttachment]);
+
+    assert(capturedRequests.length === 3, "image math solver makes a single native image LLM call");
+    assert(capturedRequests[2].prompt === "Solve it.", "image math solver keeps the original prompt");
+    assert(capturedRequests[2].model_override === "openai-large", "image math solver still uses openai-large");
+    assert(capturedRequests[2].image_attachments?.[0]?.filename === "problem.png", "image math solver forwards image attachments");
+    assert(imageMathReply.answer === "The image shows a math problem. The answer is 42.", "image math solver preserves image answer");
 
     assert(selectModelForPrompt("Tell me a joke.") === "gemini-search", "normal chat routing stays on gemini-search");
     assert(selectModelForPrompt("Why is this Python loop failing?") === "qwen-coder", "coding routing stays on qwen-coder");

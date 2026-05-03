@@ -4,12 +4,14 @@
 // detected capabilities. Regex-only - no LLM calls.
 //
 // Detection priority (first match wins):
-//   1. vision              -> gemini-search (Pollinations) - native vision support
-//   2. file (coding PDF)   -> qwen-coder (Pollinations) - coding PDFs get code model
-//   3. file (non-coding)   -> gemini-search (Pollinations) - preserve file pipeline
-//   4. coding              -> qwen-coder (Pollinations)
-//   5. math_reasoning      -> openai-large (Pollinations)
-//   6. general_chat        -> gemini-search (Pollinations) - human-like conversations
+//   1. image + coding      -> qwen-coder (vision/OCR preprocessed)
+//   2. image + math        -> openai-large (native image input)
+//   3. vision              -> gemini-search (native image input)
+//   4. file (coding PDF)   -> qwen-coder (Pollinations) - coding PDFs get code model
+//   5. file (non-coding)   -> gemini-search (Pollinations) - preserve file pipeline
+//   6. coding              -> qwen-coder (Pollinations)
+//   7. math_reasoning      -> openai-large (Pollinations)
+//   8. general_chat        -> gemini-search (Pollinations) - human-like conversations
 //
 // Gemini direct API is NEVER selected by the router.
 // It is a last-resort fallback handled by the Python gateway.
@@ -484,8 +486,15 @@ function detectPromptCategory(
 ): PromptModelCategory {
   void classification;
 
-  // Priority 1: Vision (images)
+  // Image attachments are native inputs for general/math models. Coding models
+  // still get a preprocessed text description later in the adapter.
   if (options?.hasImage) {
+    if (detectCodeQuery(query)) {
+      return "coding";
+    }
+    if (isMathQuery(query)) {
+      return "math_reasoning";
+    }
     return "vision";
   }
 

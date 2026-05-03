@@ -349,7 +349,7 @@ async function _orchestrateInner(
     console.log(`[MathPipeline] math query detected on raw input — bypassing planner`);
     console.log(`[MathPipeline] solving with openai-large`);
 
-    const mathResult = await solveMathDirect(userMessage, rawContext?.userId);
+    const mathResult = await solveMathDirect(userMessage, rawContext?.userId, rawContext?.image_attachments);
 
     console.log(
       `[MathPipeline] solved using openai-large`,

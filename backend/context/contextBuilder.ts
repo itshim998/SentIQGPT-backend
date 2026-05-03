@@ -31,6 +31,7 @@ export interface RawMessageContext {
     filename: string;
     extractedText: string;
   }[];
+  readonly image_attachments?: readonly ImageAttachmentContext[];
   readonly trustedProfile?: {
     displayName: string;
   };
@@ -41,6 +42,13 @@ export interface RawMessageContext {
   readonly conversationId?: string;
 }
 
+export interface ImageAttachmentContext {
+  readonly filename: string;
+  readonly mime_type: "image/png" | "image/jpeg" | "image/webp";
+  readonly base64: string;
+  readonly size_bytes: number;
+}
+
 export interface BuiltContext {
   readonly recentMessages: readonly { role: string; content: string }[];
   readonly memories: readonly { type: string; summary: string }[];
@@ -48,6 +56,7 @@ export interface BuiltContext {
     filename: string;
     extractedText: string;
   }[];
+  readonly imageAttachments: readonly ImageAttachmentContext[];
   readonly memoryPromptBlock: string;
   readonly conversationSummary?: string;
   readonly hasFileContext: boolean;
@@ -319,6 +328,15 @@ export async function buildContext(
     const totalChars = fileReferences.reduce((s, f) => s + f.extractedText.length, 0);
     console.log(`[CONTEXT] file pass-through: ${fileReferences.length} file(s), ${totalChars} total chars`);
   }
+  const imageAttachments = (raw.image_attachments ?? []).map((image) => ({
+    filename: image.filename,
+    mime_type: image.mime_type,
+    base64: image.base64,
+    size_bytes: image.size_bytes,
+  }));
+  if (imageAttachments.length > 0) {
+    console.log(`[CONTEXT] image attachments: ${imageAttachments.length}`);
+  }
 
   // 4. Pre-build the memory prompt block
   const memoryPromptBlock = formatMemoriesForPrompt(memories);
@@ -334,9 +352,10 @@ export async function buildContext(
     recentMessages,
     memories,
     fileReferences,
+    imageAttachments,
     memoryPromptBlock,
     conversationSummary: summary,
-    hasFileContext: fileReferences.length > 0,
+    hasFileContext: fileReferences.length > 0 || imageAttachments.length > 0,
     webSearchMode: raw.web_search_mode,
     userId: normalizedUserId,
     trustedProfile: raw.trustedProfile,
@@ -410,6 +429,12 @@ export async function buildContextFast(
     filename: f.filename,
     extractedText: f.extractedText,
   }));
+  const imageAttachments = (raw.image_attachments ?? []).map((image) => ({
+    filename: image.filename,
+    mime_type: image.mime_type,
+    base64: image.base64,
+    size_bytes: image.size_bytes,
+  }));
 
   // Pre-build the memory prompt block
   const memoryPromptBlock = formatMemoriesForPrompt(memories);
@@ -423,9 +448,10 @@ export async function buildContextFast(
     recentMessages,
     memories,
     fileReferences,
+    imageAttachments,
     memoryPromptBlock,
     conversationSummary: undefined, // No compression = no summary
-    hasFileContext: fileReferences.length > 0,
+    hasFileContext: fileReferences.length > 0 || imageAttachments.length > 0,
     webSearchMode: raw.web_search_mode,
     userId: normalizedUserId,
     trustedProfile: raw.trustedProfile,
