@@ -266,7 +266,7 @@ export async function solveMathDirect(
   };
 
   const result = await callLLMAdapterDetailed(call);
-  const answer = result.text.trim() || INCOMPLETE_RESPONSE_FALLBACK;
+  const answer = normalizeMathResponse(result.text.trim() || INCOMPLETE_RESPONSE_FALLBACK);
 
   return {
     answer,

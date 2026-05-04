@@ -36,6 +36,7 @@ import {
   buildTitleGeneratePrompt,
   strictParseJsonObject,
 } from "./ai/PromptBuilders";
+import type { ImageAttachment } from "./ai/PromptBuilders";
 import { buildContext, buildContextFast } from "./context/contextBuilder";
 import {
   getControlDatabase,
@@ -114,6 +115,7 @@ import {
 } from "./validation/schemas";
 import { ZodError } from "zod";
 import { collapseAdjacentDuplicateMessages } from "./context/messageDeduper";
+import { normalizeMathResponse } from "./ai/mathVerifier";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -360,6 +362,8 @@ function logStreamMetrics(metrics: StreamMetrics, reason: string): void {
 }
 
 const GUEST_MODEL_OVERRIDE = "gemini-search";
+const GUEST_MATH_MAX_OUTPUT_TOKENS = 2600;
+const GUEST_MATH_EMPTY_FALLBACK = "Sorry, I couldn't complete the math response. Please try again.";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CAPACITY LIMITS (enforced per user to keep DBs under 95% usage)
@@ -1549,6 +1553,42 @@ app.post(
         userMessage: parsed.data.message,
       }, undefined, userId);
 
+      if (isMathReasoningQuery) {
+        const call = buildChatPrompt({
+          userMessage: parsed.data.message,
+          recentMessages: guestContext.recentMessages,
+          memories: [],
+          fileReferences: guestContext.fileReferences,
+          imageAttachments: guestContext.imageAttachments,
+          conversationSummary: guestContext.conversationSummary,
+          priorConversationEvidence: guestContext.priorConversationEvidence,
+          isExplicitRecallQuery: guestContext.isExplicitRecallQuery,
+          modelOverride: GUEST_MODEL_OVERRIDE,
+          userId,
+          reasoningMode: true,
+        });
+        const mathResult = await callLLMAdapterDetailed({
+          ...call,
+          max_output_tokens: GUEST_MATH_MAX_OUTPUT_TOKENS,
+          skip_wrappers: true,
+        });
+        const mathReply = normalizeMathResponse(mathResult.text.trim() || GUEST_MATH_EMPTY_FALLBACK);
+        res.json({
+          route: "math_reasoning",
+          answer: mathReply,
+          reply: mathReply,
+          thinking: undefined,
+          disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+          image: undefined,
+          chart: undefined,
+          memory: undefined,
+          confidence: undefined,
+          model_used: mathResult.model_used,
+          searched: false,
+        });
+        return;
+      }
+
       const guestResult = await handleChat({
         userMessage: parsed.data.message,
         recentMessages: guestContext.recentMessages,
@@ -1968,6 +2008,41 @@ app.post(
       }
     };
 
+    const solveGuestMathWithGemini = async (args: {
+      userMessage: string;
+      userId: string;
+      recentMessages?: readonly { role: string; content: string }[];
+      fileReferences?: readonly { filename: string; extractedText: string }[];
+      imageAttachments?: readonly ImageAttachment[];
+      conversationSummary?: string;
+      priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
+      isExplicitRecallQuery?: boolean;
+    }) => {
+      const call = buildChatPrompt({
+        userMessage: args.userMessage,
+        recentMessages: args.recentMessages,
+        memories: [],
+        fileReferences: args.fileReferences,
+        imageAttachments: args.imageAttachments,
+        conversationSummary: args.conversationSummary,
+        priorConversationEvidence: args.priorConversationEvidence,
+        isExplicitRecallQuery: args.isExplicitRecallQuery,
+        modelOverride: GUEST_MODEL_OVERRIDE,
+        userId: args.userId,
+        reasoningMode: true,
+      });
+      const result = await callLLMAdapterDetailed({
+        ...call,
+        max_output_tokens: GUEST_MATH_MAX_OUTPUT_TOKENS,
+        skip_wrappers: true,
+      });
+      return {
+        reply: normalizeMathResponse(result.text.trim() || GUEST_MATH_EMPTY_FALLBACK),
+        model_used: result.model_used,
+        fallback: result.fallback ?? false,
+      };
+    };
+
     const sendStreamError = async (err: unknown, metrics?: StreamMetrics) => {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[Stream] error: ${message}`);
@@ -2068,25 +2143,32 @@ app.post(
         const streamMetrics = createStreamMetrics(
           "chat.stream.guest.reasoning",
           requestStart,
-          { model: isMathReasoningQuery ? "orchestrator" : GUEST_MODEL_OVERRIDE },
+          { model: GUEST_MODEL_OVERRIDE },
         );
 
         try {
           if (isMathReasoningQuery) {
-            const result = await orchestrate({
-            userMessage: parsed.data.message,
-            context: {
-                recent_messages: normalizedRecentMessages,
-                memories: [],
-                file_references: parsed.data.context?.file_references,
-                image_attachments: parsed.data.context?.image_attachments,
-                web_search_mode: webSearchMode,
-                userId,
-              },
+            await writeSseJson({ type: "route", route: "math_reasoning" });
+            const guestMathContext = await buildContext({
+              recent_messages: normalizedRecentMessages,
+              memories: [],
+              file_references: parsed.data.context?.file_references,
+              image_attachments: parsed.data.context?.image_attachments,
+              web_search_mode: webSearchMode,
+              userMessage: parsed.data.message,
+            }, undefined, userId);
+            const result = await solveGuestMathWithGemini({
+              userMessage: parsed.data.message,
+              userId,
+              recentMessages: guestMathContext.recentMessages,
+              fileReferences: guestMathContext.fileReferences,
+              imageAttachments: guestMathContext.imageAttachments,
+              conversationSummary: guestMathContext.conversationSummary,
+              priorConversationEvidence: guestMathContext.priorConversationEvidence,
+              isExplicitRecallQuery: guestMathContext.isExplicitRecallQuery,
             });
             if (!clientDisconnected) {
-              const thinking = gateThinking(result.thinking, { route: result.route, isReasoning: true });
-              await streamBufferedAnswer(result.reply ?? "", thinking, true, streamMetrics);
+              await streamBufferedAnswer(result.reply, undefined, false, streamMetrics);
               await writeSseEvent("[DONE]");
               logStreamMetrics(streamMetrics, "complete");
             }
@@ -2161,6 +2243,27 @@ app.post(
 
       try {
         const streamStart = Date.now();
+        if (isMathReasoningQuery) {
+          await writeSseJson({ type: "route", route: "math_reasoning" });
+          const result = await solveGuestMathWithGemini({
+            userMessage: parsed.data.message,
+            userId,
+            recentMessages: guestCtx.recentMessages,
+            fileReferences: guestCtx.fileReferences,
+            imageAttachments: guestCtx.imageAttachments,
+            conversationSummary: guestCtx.conversationSummary,
+            priorConversationEvidence: guestCtx.priorConversationEvidence,
+            isExplicitRecallQuery: guestCtx.isExplicitRecallQuery,
+          });
+          if (!clientDisconnected) {
+            await streamBufferedAnswer(result.reply, undefined, false, streamMetrics);
+            await writeSseEvent("[DONE]");
+            logStreamMetrics(streamMetrics, "complete");
+          }
+          console.log(`[Stream] guest math buffered response completed in ${Date.now() - streamStart}ms`);
+          return;
+        }
+
         const call = buildChatPrompt({
           userMessage: parsed.data.message,
           recentMessages: guestCtx.recentMessages,

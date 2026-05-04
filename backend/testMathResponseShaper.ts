@@ -1,7 +1,11 @@
 import { formatMathResponse } from "./ai/mathFormatter";
 import { classifyMathIntent, normalizeMathResponse } from "./ai/mathVerifier";
-import { shouldRewriteMathResponse } from "./ai/responseShaper";
+import { shapeMathResponse, shouldRewriteMathResponse } from "./ai/responseShaper";
 import { selectModelForPrompt } from "./orchestrator/modelRouter";
+
+function shapeFormattedMath(text: string): string {
+  return shapeMathResponse(formatMathResponse(text));
+}
 
 const leakedTrainAnswer = `
 Let me solve this 2. Let: 3. - Distance between A and B = D 4. - Speed of train from A = v1 5. - Speed of train from B = v2 6. - They meet at the halfway point, so each travels D/2 7. Time to meet for train from A: t = (D/2)/v1 = D/(2v1) 8. Time to meet for train from B: t = (D/2)/v2 = D/(2v2) 9. Since they leave at the same time and meet simultaneously: 10. D/(2v1) = D/(2v1) = D/(2v2) 11. So v1 = v2? Wait, that doesn't make sense with the different times after meeting 12. Let me reconsider 13. They meet at the halfway point, so both travel D/2 to the meeting point 14. After meeting: 15. - Train from A travels the remaining D/2 to B in 2 hours 16. - Train from B travels the remaining D/2 to A in 8 hours 17. So: 18. v1 = (D/2)/2 = D/4 19. v2 = (D/2)/8 = D/16 20. So v1/v2 = (D/4)/(D/16) = 16/4 = 4 21. The train from A is 4 times faster than the train from B 22. Let me verify: 23. - Both travel D/2 to meet 24. - Time for train A to travel D/2: (D/2)/(D/4) = 2 hours 25. - Time for train B to travel D/2: (D/2)/(D/16) = 8 hours 26. Yes! They meet after 2 hours (train A) and 8 hours (train B)? No wait, that's not right 27. If they meet at the halfway point, the time to reach the meeting point must be the same for both 28. Let t be the time until they meet 29. For train A: D/2 = v1t 30. For train B: D/2 = v2t 31. So v1 = D/(2t) and v2 = D/(2t) 32. After meeting, the remaining distances are both D/2, and the travel times are 2 and 8 hours respectively 33. This gives me v1 = D/4 and v2 = D/16, which means v1/v2 = 4 34. The train from A is four times faster than the train from B 35. But wait-if train A is faster, it should reach the meeting point sooner than train B 36. Yet they meet at the same time, so something's off 37. Let me verify this works: if v1 = D/4 and v2 = D/16, train A takes (D/2)/(D/4) = 2 hours to reach the midpoint, and train B takes (D/2)/(D/16) = 8 hours 38. These aren't equal, so they can't actually meet at the same time with these speeds
@@ -108,6 +112,18 @@ Final Answer:
 x = 3, y = 0, z = 1
 `;
 
+const falsePositionAnswer = `
+We need to solve x^3 - 4x - 9 = 0 using the False Position Method.
+
+f(2) = 2^3 - 4(2) - 9 = -9
+f(3) = 3^3 - 4(3) - 9 = 6
+
+x = (2 f(3) - 3 f(2)) / (f(3) - f(2)) = (2(6) - 3(-9)) / (6 - (-9)) = 39/15 = 2.6
+f(2.6) = 2.6^3 - 4(2.6) - 9 = -1.824
+
+The root is approximately x = 2.707 to three decimal places.
+`;
+
 function assert(condition: boolean, label: string): void {
   if (!condition) {
     console.error(`FAIL | ${label}`);
@@ -120,7 +136,15 @@ function includesNone(text: string, patterns: readonly RegExp[]): boolean {
   return patterns.every((pattern) => !pattern.test(text));
 }
 
-const normalizedLeaked = normalizeMathResponse(leakedTrainAnswer);
+function hasBalancedLatexDelimiters(text: string): boolean {
+  const inlineOpen = (text.match(/\\\(/g) || []).length;
+  const inlineClose = (text.match(/\\\)/g) || []).length;
+  const displayOpen = (text.match(/\\\[/g) || []).length;
+  const displayClose = (text.match(/\\\]/g) || []).length;
+  return inlineOpen === inlineClose && displayOpen === displayClose;
+}
+
+const normalizedLeaked = shapeFormattedMath(leakedTrainAnswer);
 console.log("\nNormalized leaked sample:\n");
 console.log(normalizedLeaked);
 console.log("\n----\n");
@@ -136,7 +160,7 @@ assert(includesNone(normalizedLeaked, [
 ]), "leaked sample removes self-talk and contradiction phrases");
 assert(/4 times faster|four times faster/i.test(normalizedLeaked), "leaked sample preserves the correct train-speed conclusion");
 
-const normalizedStructured = normalizeMathResponse(structuredAnswer);
+const normalizedStructured = shapeFormattedMath(structuredAnswer);
 assert(/^### Key Insight/m.test(normalizedStructured), "well-structured answer keeps the key insight heading");
 assert(/Train A is 4 times as fast as Train B\./i.test(normalizedStructured), "well-structured answer preserves the final answer");
 
@@ -152,7 +176,7 @@ assert(
   "LaTeX answer stays readable even without forced section headings",
 );
 
-const normalizedPromptEcho = normalizeMathResponse(promptEchoAnswer);
+const normalizedPromptEcho = shapeFormattedMath(promptEchoAnswer);
 assert(includesNone(normalizedPromptEcho, [
   /\bone direct line\b/i,
   /\bwe should output\b/i,
@@ -164,7 +188,7 @@ assert(
   "prompt-echo sample preserves the actual math state",
 );
 
-const normalizedNarrative = normalizeMathResponse(narrativeTrainAnswer);
+const normalizedNarrative = shapeFormattedMath(narrativeTrainAnswer);
 assert(includesNone(normalizedNarrative, [
   /\bwe need to\b/i,
   /\blet'?s\b/i,
@@ -177,7 +201,7 @@ assert(/4 times faster/i.test(normalizedNarrative), "narrative sample preserves 
 assert(shouldRewriteMathResponse(rewriteTriggerAnswer), "noisy narrative answer is marked for one rewrite fallback");
 assert(!shouldRewriteMathResponse(cleanShortAnswer), "clean short answer does not trigger rewrite fallback");
 
-const normalizedGauss = normalizeMathResponse(gaussEliminationAnswer);
+const normalizedGauss = shapeFormattedMath(gaussEliminationAnswer);
 const formattedGauss = formatMathResponse(gaussEliminationAnswer);
 assert(/Step 1: Write the augmented matrix\./i.test(normalizedGauss), "gauss elimination sample preserves method step headings");
 assert(
@@ -207,6 +231,12 @@ assert(
 
 const plainSentence = "This explanation is already readable.";
 assert(formatMathResponse(plainSentence) === plainSentence, "plain non-math text remains unchanged");
+
+const formattedFalsePosition = normalizeMathResponse(falsePositionAnswer);
+assert(!/\bMATH\d+\b/.test(formattedFalsePosition), "false-position formatting does not leak MATH placeholders");
+assert(hasBalancedLatexDelimiters(formattedFalsePosition), "false-position formatting has balanced LaTeX delimiters");
+assert(/\\\[\s*f\(2\)\s*=/.test(formattedFalsePosition), "false-position standalone function values become display math");
+assert(/x\s*=\s*2\.707/i.test(formattedFalsePosition), "false-position final approximation is preserved");
 
 assert(classifyMathIntent("Solve a quantum computing math as an example.") === "example", "example-style solve prompt routes to example math intent");
 assert(classifyMathIntent("Give me a quantum computing math example and solve it.") === "example", "explicit example-and-solve prompt routes to example math intent");
