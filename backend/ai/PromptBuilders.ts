@@ -485,11 +485,15 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   if (!ctx.reasoningMode) {
     SYSTEM_PROMPT +=
       "\nCONTEXT PROVENANCE RULES:\n" +
+      "- SAVED MEMORY CONTEXT contains durable user facts the user explicitly asked you to remember across chats.\n" +
+      "- If a saved memory matches the user's question, answer from it confidently using wording like \"I have it saved that...\" or \"I remember that...\".\n" +
       "- Only say the user mentioned something earlier if it appears in the current conversation history or in a PRIOR CONVERSATION EVIDENCE block.\n" +
+      "- Saved memory is not transcript evidence: do not claim exact previous wording, dates, or that \"we discussed\" something unless PRIOR CONVERSATION EVIDENCE supports it.\n" +
       "- Do not claim earlier mentions based on guesswork.\n";
     if (ctx.isExplicitRecallQuery) {
       SYSTEM_PROMPT +=
-        "- If the user asks whether they mentioned something before and there is no matching earlier evidence, say you cannot confirm it from the available history.\n";
+        "- If the user asks whether you remember something and SAVED MEMORY CONTEXT matches it, answer from saved memory instead of saying you do not remember.\n" +
+        "- If there is no matching saved memory or earlier evidence, say you cannot confirm it from the available history.\n";
     }
   }
 

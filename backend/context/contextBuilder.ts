@@ -27,7 +27,14 @@ import { collapseAdjacentDuplicateMessages } from "./messageDeduper";
 
 export interface RawMessageContext {
   readonly recent_messages?: readonly { role: string; content: string }[];
-  readonly memories?: readonly { type: string; summary: string; importance?: number; embedding?: readonly number[] }[];
+  readonly memories?: readonly {
+    type: string;
+    summary: string;
+    importance?: number;
+    embedding?: readonly number[];
+    scope?: "global" | "chat";
+    chat_id?: string | null;
+  }[];
   readonly file_references?: readonly {
     filename: string;
     extractedText: string;
@@ -74,7 +81,14 @@ export interface BuiltContext {
   readonly isExplicitRecallQuery: boolean;
 }
 
-type ContextMemory = { type: string; summary: string; importance?: number; embedding?: readonly number[] };
+type ContextMemory = {
+  type: string;
+  summary: string;
+  importance?: number;
+  embedding?: readonly number[];
+  scope?: "global" | "chat";
+  chat_id?: string | null;
+};
 type ContextRecallEvidence = {
   conversationId: string;
   content: string;
@@ -173,6 +187,8 @@ async function fetchCloudMemories(
       summary: memory.summary,
       importance: memory.importance,
       embedding: normalizeEmbedding(memory.embedding),
+      scope: memory.scope === "chat" ? "chat" : "global",
+      chat_id: memory.chat_id ?? null,
     }));
 }
 
@@ -191,6 +207,26 @@ function mergeMemoryCandidates(
   }
 
   return merged;
+}
+
+function selectMemoriesForPrompt(
+  candidates: readonly ContextMemory[],
+  query: string,
+  limit: number,
+  isExplicitRecallQuery: boolean,
+): readonly ContextMemory[] {
+  const selected = selectMemoriesForQuery(candidates, query, limit) as ContextMemory[];
+  if (!isExplicitRecallQuery) return selected;
+
+  const recallAnchors = candidates
+    .filter((memory) => {
+      if (!["identity", "preference", "project"].includes(memory.type)) return false;
+      return (memory.importance ?? 5) >= 7;
+    })
+    .sort((a, b) => (b.importance ?? 5) - (a.importance ?? 5))
+    .slice(0, limit);
+
+  return mergeMemoryCandidates(selected, recallAnchors).slice(0, limit);
 }
 
 const RECALL_QUERY_PATTERNS: readonly RegExp[] = [
@@ -330,11 +366,13 @@ export async function buildContext(
   const query = raw.userMessage || allMessages[allMessages.length - 1]?.content || "";
   const isExplicitRecallQuery = isExplicitPriorConversationRecallQuery(query);
 
-  const rawMemories = (raw.memories ?? []).map((m) => ({
+  const rawMemories: ContextMemory[] = (raw.memories ?? []).map((m) => ({
     type: m.type,
     summary: m.summary,
     importance: m.importance,
     embedding: m.embedding,
+    scope: m.scope === "chat" ? "chat" : "global",
+    chat_id: m.chat_id ?? null,
   }));
 
   const normalizedUserId = userId?.trim();
@@ -365,10 +403,13 @@ export async function buildContext(
   const semanticResults = await semanticMemorySearch(memoryCandidates, query, 3);
   let memories: readonly ContextMemory[];
   if (semanticResults) {
-    memories = semanticResults.map((r) => r.memory);
+    const semanticMemories = semanticResults.map((r) => r.memory);
+    memories = isExplicitRecallQuery
+      ? selectMemoriesForPrompt(mergeMemoryCandidates(semanticMemories, memoryCandidates), query, 6, true)
+      : semanticMemories;
     console.log(`[CONTEXT] memory retrieval: semantic (${memories.length} selected)`);
   } else {
-    memories = selectMemoriesForQuery(memoryCandidates, query, 3);
+    memories = selectMemoriesForPrompt(memoryCandidates, query, 3, isExplicitRecallQuery);
     console.log(`[CONTEXT] memory retrieval: keyword fallback (${memories.length} selected)`);
   }
 
@@ -444,11 +485,13 @@ export async function buildContextFast(
   const query = raw.userMessage || recentMessages[recentMessages.length - 1]?.content || "";
   const isExplicitRecallQuery = isExplicitPriorConversationRecallQuery(query);
 
-  const rawMemories = (raw.memories ?? []).map((m) => ({
+  const rawMemories: ContextMemory[] = (raw.memories ?? []).map((m) => ({
     type: m.type,
     summary: m.summary,
     importance: m.importance,
     embedding: m.embedding,
+    scope: m.scope === "chat" ? "chat" : "global",
+    chat_id: m.chat_id ?? null,
   }));
 
   const normalizedUserId = userId?.trim();
@@ -467,7 +510,7 @@ export async function buildContextFast(
     : Promise.resolve([] as readonly ContextRecallEvidence[]);
 
   // Use fast keyword-based memory selection (synchronous)
-  let memories: readonly ContextMemory[] = selectMemoriesForQuery(rawMemories, query, 3);
+  let memories: readonly ContextMemory[] = selectMemoriesForPrompt(rawMemories, query, 3, isExplicitRecallQuery);
 
   // Await cloud memories (started earlier, likely already resolved)
   const [cloudMemories, priorConversationEvidence] = await Promise.all([
@@ -475,7 +518,7 @@ export async function buildContextFast(
     recallEvidencePromise,
   ]);
   if (cloudMemories.length > 0) {
-    memories = selectMemoriesForQuery(mergeMemoryCandidates(memories, cloudMemories), query, 6);
+    memories = selectMemoriesForPrompt(mergeMemoryCandidates(memories, cloudMemories), query, 6, isExplicitRecallQuery);
   }
 
   // File references - just text extracted content

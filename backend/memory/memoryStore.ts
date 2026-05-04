@@ -86,7 +86,7 @@ export function formatMemoriesForPrompt(
   if (memories.length === 0) return "";
 
   const groups = groupMemoriesByType(memories);
-  const lines: string[] = ["MEMORY CONTEXT (things you know about this user):"];
+  const lines: string[] = ["SAVED MEMORY CONTEXT (durable facts the user asked you to remember):"];
 
   for (const [type, items] of Object.entries(groups)) {
     lines.push(`  [${type.toUpperCase()}]`);

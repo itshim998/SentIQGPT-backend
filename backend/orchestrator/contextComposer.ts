@@ -106,7 +106,7 @@ function buildMemoryBlock(
       : m.summary;
     return `  [${m.type}] ${text}`;
   });
-  return "MEMORY CONTEXT (things you remember about this user):\n" + lines.join("\n") + "\n";
+  return "SAVED MEMORY CONTEXT (durable facts the user asked you to remember):\n" + lines.join("\n") + "\n";
 }
 
 function buildRecallEvidenceBlock(

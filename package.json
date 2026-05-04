@@ -17,6 +17,7 @@
     "test:web-search": "ts-node --project tsconfig.backend.json backend/testWebSearch.ts",
     "test:improvements": "ts-node --project tsconfig.backend.json backend/testImprovementPlan.ts",
     "test:pass2-reliability": "ts-node --project tsconfig.backend.json backend/testPass2Reliability.ts",
+    "test:pass3-memory": "ts-node --project tsconfig.backend.json backend/testPass3MemoryReliability.ts",
     "eval:golden": "ts-node --project tsconfig.backend.json backend/evalGoldenPrompts.ts"
   },
   "dependencies": {

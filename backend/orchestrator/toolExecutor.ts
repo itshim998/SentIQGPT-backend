@@ -77,6 +77,8 @@ export interface StepResult {
     importance?: number;
     scope?: "global" | "chat";
     chat_id?: string | null;
+    persisted?: boolean;
+    source_conversation_id?: string | null;
   };
   /** Web search payload (web_search) */
   readonly web_search?: {

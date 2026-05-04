@@ -68,8 +68,13 @@ import {
   incrementUserMemoryUsage,
   insertMemory,
   type MemoryRow,
-  type MemoryScope,
 } from "./services/memoryService";
+import {
+  getMemoryConfirmationText,
+  MEMORY_PERSISTENCE_FAILURE_TEXT,
+  resolveMemoryScopeForRequest,
+  type MemoryScope,
+} from "./memory/memoryScope";
 import {
   getMirroredUserProfile,
   saveMirroredUserProfile,
@@ -1782,6 +1787,72 @@ app.post(
       },
     });
 
+    let responseReply = result.reply;
+    let responseAnswer = result.answer ?? result.reply;
+    let responseMemory = result.memory;
+    if (userDb && result.memory && result.memory.stored === true) {
+      const memoryScope = resolveMemoryScopeForRequest(result.memory, parsed.data.message);
+      try {
+        const insertedMemory = await insertMemoryOrThrow(
+          userDb,
+          userId,
+          {
+            ...result.memory,
+            scope: memoryScope,
+            chat_id: memoryScope === "chat" ? activeConversationId : null,
+          },
+          "chat",
+        );
+        responseMemory = {
+          ...result.memory,
+          id: insertedMemory.id,
+          persisted: true,
+          scope: insertedMemory.scope === "chat" ? "chat" : "global",
+          chat_id: insertedMemory.chat_id ?? null,
+          source_conversation_id: activeConversationId ?? null,
+        };
+        if (result.route === "memory_update") {
+          responseReply = getMemoryConfirmationText(responseMemory.scope === "chat" ? "chat" : "global");
+          responseAnswer = responseReply;
+        }
+      } catch (memoryPersistError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        responseMemory = {
+          ...result.memory,
+          persisted: false,
+          scope: memoryScope,
+          chat_id: memoryScope === "chat" ? activeConversationId : null,
+          source_conversation_id: activeConversationId ?? null,
+        };
+        if (result.route === "memory_update") {
+          responseReply = MEMORY_PERSISTENCE_FAILURE_TEXT;
+          responseAnswer = responseReply;
+        }
+        logDbFailure(
+          "chat.memory.persist",
+          userId,
+          memoryPersistError instanceof Error ? memoryPersistError : new Error(String(memoryPersistError)),
+          { conversationId: activeConversationId },
+        );
+      }
+    } else if (result.memory && result.memory.stored === true) {
+      sync.persisted = false;
+      sync.deferred = true;
+      const memoryScope = resolveMemoryScopeForRequest(result.memory, parsed.data.message);
+      responseMemory = {
+        ...result.memory,
+        persisted: false,
+        scope: memoryScope,
+        chat_id: memoryScope === "chat" ? activeConversationId : null,
+        source_conversation_id: activeConversationId ?? null,
+      };
+      if (result.route === "memory_update") {
+        responseReply = MEMORY_PERSISTENCE_FAILURE_TEXT;
+        responseAnswer = responseReply;
+      }
+    }
+
     if (userDb && activeConversationId) {
       try {
         await insertConversationMessageOrThrow(
@@ -1789,7 +1860,7 @@ app.post(
           userId,
           activeConversationId,
           "assistant",
-          result.reply ?? "",
+          responseReply ?? "",
           "chat",
         );
         assistantMessagePersisted = true;
@@ -1800,37 +1871,6 @@ app.post(
           "chat.assistant-message.persist",
           userId,
           assistantPersistError instanceof Error ? assistantPersistError : new Error(String(assistantPersistError)),
-          { conversationId: activeConversationId },
-        );
-      }
-    }
-
-    let responseMemory = result.memory;
-    if (userDb && result.memory && result.memory.stored === true) {
-      try {
-        const insertedMemory = await insertMemoryOrThrow(
-          userDb,
-          userId,
-          {
-            ...result.memory,
-            scope: result.memory.type === "project" ? "chat" : "global",
-            chat_id: result.memory.type === "project" ? activeConversationId : null,
-          },
-          "chat",
-        );
-        responseMemory = {
-          ...result.memory,
-          id: insertedMemory.id,
-          scope: insertedMemory.scope === "chat" ? "chat" : "global",
-          chat_id: insertedMemory.chat_id ?? null,
-        };
-      } catch (memoryPersistError) {
-        sync.persisted = false;
-        sync.deferred = true;
-        logDbFailure(
-          "chat.memory.persist",
-          userId,
-          memoryPersistError instanceof Error ? memoryPersistError : new Error(String(memoryPersistError)),
           { conversationId: activeConversationId },
         );
       }
@@ -1847,7 +1887,7 @@ app.post(
         userId,
         conversationId: activeConversationId,
         userMessage: parsed.data.message,
-        assistantReply: result.reply ?? "",
+        assistantReply: responseReply ?? "",
         scope: "chat.title.auto",
         currentTitle: activeConversationTitle,
       });
@@ -1867,8 +1907,8 @@ app.post(
 
     res.json({
       route: result.route,
-      answer: result.answer ?? result.reply,
-      reply: result.reply,
+      answer: responseAnswer,
+      reply: responseReply,
       thinking: gateThinking(result.thinking, { route: result.route, isReasoning: isReasoningQuery }),
       disclaimer: result.disclaimer,
       image: result.image,
@@ -2302,16 +2342,20 @@ app.post(
       importance?: number;
       scope?: MemoryScope;
       chat_id?: string | null;
-    }) => {
-      if (!memory || memory.stored !== true) return;
+      persisted?: boolean;
+      source_conversation_id?: string | null;
+    }): Promise<boolean> => {
+      if (!memory || memory.stored !== true) return true;
+      const normalizedScope = resolveMemoryScopeForRequest(memory, parsed.data.message);
       if (!userDb) {
         sync.persisted = false;
         sync.deferred = true;
-        return;
+        memory.persisted = false;
+        memory.scope = normalizedScope;
+        memory.chat_id = normalizedScope === "chat" ? activeConversationId ?? memory.chat_id ?? null : null;
+        memory.source_conversation_id = activeConversationId ?? null;
+        return false;
       }
-      const normalizedScope: MemoryScope = memory.scope === "chat" || memory.type === "project"
-        ? "chat"
-        : "global";
       const memoryChatId = normalizedScope === "chat" ? activeConversationId ?? memory.chat_id ?? null : null;
       try {
         const insertedMemory = await insertMemoryOrThrow(
@@ -2327,16 +2371,35 @@ app.post(
         memory.id = insertedMemory.id;
         memory.scope = (insertedMemory.scope === "chat" ? "chat" : "global");
         memory.chat_id = insertedMemory.chat_id ?? null;
+        memory.persisted = true;
+        memory.source_conversation_id = activeConversationId ?? null;
+        return true;
       } catch (memoryPersistError) {
         sync.persisted = false;
         sync.deferred = true;
+        memory.persisted = false;
+        memory.scope = normalizedScope;
+        memory.chat_id = memoryChatId;
+        memory.source_conversation_id = activeConversationId ?? null;
         logDbFailure(
           "chat.stream.memory",
           userId,
           memoryPersistError instanceof Error ? memoryPersistError : new Error(String(memoryPersistError)),
           { conversationId: activeConversationId },
         );
+        return false;
       }
+    };
+
+    const finalizeMemoryUpdateCopy = (
+      result: { route?: string; reply?: string; answer?: string; memory?: { stored?: boolean; persisted?: boolean; scope?: MemoryScope } },
+    ) => {
+      if (result.route !== "memory_update" || result.memory?.stored !== true) return;
+      const reply = result.memory.persisted === true
+        ? getMemoryConfirmationText(result.memory.scope === "chat" ? "chat" : "global")
+        : MEMORY_PERSISTENCE_FAILURE_TEXT;
+      result.reply = reply;
+      result.answer = reply;
     };
 
     const reportStreamMessageGap = (assistantExpected: boolean, route: string, error?: string) => {
@@ -2371,10 +2434,11 @@ app.post(
             userId,
           },
         });
+        await persistStoredMemory(result.memory);
+        finalizeMemoryUpdateCopy(result);
         if (result.reply) {
           await persistAssistantMessage(result.reply);
         }
-        await persistStoredMemory(result.memory);
         reportStreamMessageGap(Boolean(result.reply), "orchestrator.web_search");
         res.json({
           route: result.route,
@@ -2416,10 +2480,11 @@ app.post(
             userId,
           },
         });
+        await persistStoredMemory(result.memory);
+        finalizeMemoryUpdateCopy(result);
         if (result.reply) {
           await persistAssistantMessage(result.reply);
         }
-        await persistStoredMemory(result.memory);
         reportStreamMessageGap(Boolean(result.reply), "orchestrator.memory");
         res.json({
           route: result.route,
@@ -2529,6 +2594,8 @@ app.post(
             await persistAssistantMessage(result.reply);
           }
           await persistStoredMemory(result.memory);
+          finalizeMemoryUpdateCopy(result);
+          finalizeMemoryUpdateCopy(result);
           reportStreamMessageGap(Boolean(result.reply), "reasoning.math");
           if (!clientDisconnected) {
             const thinking = gateThinking(result.thinking, { route: result.route, isReasoning: true });
@@ -2613,6 +2680,7 @@ app.post(
           await persistAssistantMessage(result.reply);
         }
         await persistStoredMemory(result.memory);
+        finalizeMemoryUpdateCopy(result);
         reportStreamMessageGap(Boolean(result.reply), "orchestrator.web_search_auto");
         res.json({
           ...result,

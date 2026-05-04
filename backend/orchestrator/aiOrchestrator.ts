@@ -90,6 +90,8 @@ export interface OrchestratorResponse {
     importance?: number;
     scope?: "global" | "chat";
     chat_id?: string | null;
+    persisted?: boolean;
+    source_conversation_id?: string | null;
   };
   /** Web search payload (for structured rendering) */
   readonly web_search?: {

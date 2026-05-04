@@ -55,24 +55,35 @@ const EXPLICIT_TYPE_PATTERNS: Record<string, readonly RegExp[]> = {
   ],
   project: [
     /\bmy\s+project\b/i,
+    /\bmy\s+(?:app|assistant|chatbot)\b/i,
     /\bworking\s+on\b/i,
     /\bbuilding\b/i,
+    /\bdo\s+you\s+remember\b/i,
   ],
 };
 
+function expandMemorySearchText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\bchatbot(s)?\b/g, "chatbot chat bot assistant")
+    .replace(/\bchat[\s-]?assistant(s)?\b/g, "chat assistant chatbot bot")
+    .replace(/\bai\s+assistant(s)?\b/g, "ai assistant chatbot")
+    .replace(/\bproject(s)?\b/g, "project app build work");
+}
+
 function tokenize(text: string): Set<string> {
   return new Set(
-    text
-      .toLowerCase()
-      .split(/\s+/)
+    expandMemorySearchText(text)
+      .split(/[^a-z0-9]+/)
       .filter((w) => w.length > 2 && !STOP_WORDS.has(w)),
   );
 }
 
 function countKeywordHits(summaryLower: string, queryTokens: Set<string>): number {
   let hits = 0;
+  const expandedSummary = expandMemorySearchText(summaryLower);
   for (const word of queryTokens) {
-    if (summaryLower.includes(word)) hits++;
+    if (expandedSummary.includes(word)) hits++;
   }
   return hits;
 }
@@ -109,6 +120,10 @@ function scoreMemory(
   };
 }
 
+function isExplicitMemoryRecallQuery(query: string): boolean {
+  return /\b(?:do\s+you\s+remember|what\s+do\s+you\s+remember|remember\s+(?:my|that|the)|what\s+do\s+you\s+know\s+about\s+me|about\s+my)\b/i.test(query);
+}
+
 // ==============================
 // Public API
 // ==============================
@@ -122,13 +137,22 @@ export function selectMemoriesForQuery(
   limit: number = 3,
 ): ScoredMemory[] {
   const queryTokens = tokenize(query);
+  const explicitRecall = isExplicitMemoryRecallQuery(query);
 
   const scored = memories
     .map((memory) => ({
       memory,
       ...scoreMemory(memory, queryTokens, query),
     }))
-    .filter((item) => item.keywordHits > 0 || item.explicitTypeMatch);
+    .filter((item) => (
+      item.keywordHits > 0
+      || item.explicitTypeMatch
+      || (
+        explicitRecall
+        && (item.memory.importance ?? 5) >= 7
+        && ["identity", "preference", "project"].includes(item.memory.type)
+      )
+    ));
 
   if (scored.length === 0) return [];
 
