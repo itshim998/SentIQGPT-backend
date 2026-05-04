@@ -117,9 +117,11 @@ We need to solve x^3 - 4x - 9 = 0 using the False Position Method.
 
 f(2) = 2^3 - 4(2) - 9 = -9
 f(3) = 3^3 - 4(3) - 9 = 6
+The interval is \\(\\left[2,3\\right]\\).
 
 x = (2 f(3) - 3 f(2)) / (f(3) - f(2)) = (2(6) - 3(-9)) / (6 - (-9)) = 39/15 = 2.6
 f(2.6) = 2.6^3 - 4(2.6) - 9 = -1.824
+The new interval is \\(\\left[2.6,3\\right]\\).
 
 The root is approximately x = 2.707 to three decimal places.
 `;
@@ -234,8 +236,11 @@ assert(formatMathResponse(plainSentence) === plainSentence, "plain non-math text
 
 const formattedFalsePosition = normalizeMathResponse(falsePositionAnswer);
 assert(!/\bMATH\d+\b/.test(formattedFalsePosition), "false-position formatting does not leak MATH placeholders");
+assert(!/\bSENTIQ\b|@@/.test(formattedFalsePosition), "false-position formatting does not leak renderer sentinels");
 assert(hasBalancedLatexDelimiters(formattedFalsePosition), "false-position formatting has balanced LaTeX delimiters");
 assert(/\\\[\s*f\(2\)\s*=/.test(formattedFalsePosition), "false-position standalone function values become display math");
+assert(/\\left\[2,3\\right\]/.test(formattedFalsePosition), "false-position interval notation stays valid LaTeX");
+assert(/\\left\[2\.6,3\\right\]/.test(formattedFalsePosition), "false-position updated interval notation stays valid LaTeX");
 assert(/x\s*=\s*2\.707/i.test(formattedFalsePosition), "false-position final approximation is preserved");
 
 assert(classifyMathIntent("Solve a quantum computing math as an example.") === "example", "example-style solve prompt routes to example math intent");

@@ -75,6 +75,32 @@ function normalizeMathExpression(expression: string): string {
   return normalized;
 }
 
+function protectExplicitMathText(text: string, blocks: string[]): string {
+  const stash = (value: string) => {
+    blocks.push(value);
+    return `\x00EXPLICITMATH${blocks.length - 1}\x00`;
+  };
+
+  return String(text || "")
+    .replace(/\$\$([\s\S]+?)\$\$/g, (match) => stash(match))
+    .replace(/\\+\[[\s\S]+?\\+\]/g, (match) => stash(match))
+    .replace(/\\+\(\s*\\+begin\{.*?\}[\s\S]*?\\+end\{.*?\}\s*\\+\)/g, (match) => stash(match))
+    .replace(/\\+begin\{.*?\}[\s\S]*?\\+end\{.*?\}/g, (match) => stash(match))
+    .replace(/\\+\([\s\S]+?\\+\)/g, (match) => stash(match))
+    .replace(/\\+left(?:\\[A-Za-z]+|[()[\]{}|.])[\s\S]+?\\+right(?:\\[A-Za-z]+|[()[\]{}|.])/g, (match) =>
+      stash(`\\(${normalizeMathExpression(match)}\\)`),
+    )
+    .replace(/(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g, (match, tex) => {
+      const trimmed = String(tex || "").trim();
+      if (!trimmed || /^\d/.test(trimmed)) return match;
+      return stash(match);
+    });
+}
+
+function restoreExplicitMathText(text: string, blocks: string[]): string {
+  return text.replace(/\x00EXPLICITMATH(\d+)\x00/g, (_, idx) => blocks[parseInt(idx, 10)] ?? "");
+}
+
 function parseMatrixRow(line: string): ParsedMatrixRow | null {
   const trimmed = String(line || "").trim();
   if (!trimmed || trimmed === "[" || trimmed === "]") return null;
@@ -305,7 +331,10 @@ export function formatMathResponse(text: string): string {
   const displayBlocks: string[] = [];
   const envBlocks: string[] = [];
 
+  const explicitBlocks: string[] = [];
+  formatted = protectExplicitMathText(formatted, explicitBlocks);
   formatted = enhancePlainMathText(formatted);
+  formatted = restoreExplicitMathText(formatted, explicitBlocks);
 
   // Preserve existing display-math blocks so environments inside them are not rewrapped.
   formatted = formatted.replace(
