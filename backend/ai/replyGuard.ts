@@ -31,7 +31,7 @@ export interface FinalizeReplyOptions extends ExtractReplyOptions {
   readonly emptyFallback?: string;
   readonly preferExplanation?: boolean;
   readonly truncated?: boolean;
-  readonly sanitizeMode?: "strict" | "minimal";
+  readonly sanitizeMode?: "strict" | "minimal" | "none";
 }
 
 export interface FinalizedReply {
@@ -372,6 +372,23 @@ export function finalizeStructuredReply(
   options: FinalizeReplyOptions = {},
 ): FinalizedReply {
   const fallback = options.emptyFallback ?? DEFAULT_SAFE_REPLY_FALLBACK;
+  const sanitizeMode = options.sanitizeMode ?? "strict";
+
+  if (sanitizeMode === "none") {
+    const rawText = (raw ?? "").replace(/\r\n?/g, "\n").trim();
+    if (!rawText || options.adapterError || isProviderFailurePayload(rawText)) {
+      return {
+        answer: fallback,
+        thinking: undefined,
+      };
+    }
+
+    return {
+      answer: rawText,
+      thinking: undefined,
+    };
+  }
+
   const extracted = extractUserFacingAnswer(raw, { adapterError: options.adapterError });
   const composed = composeUserFacingReply(extracted, {
     preferExplanation: options.preferExplanation ?? false,
@@ -384,7 +401,6 @@ export function finalizeStructuredReply(
     };
   }
 
-  const sanitizeMode = options.sanitizeMode ?? "strict";
   const sanitized = sanitizeMode === "minimal"
     ? sanitizeResponseMinimal(composed, {
         preserveFormatting: options.preserveFormatting ?? false,

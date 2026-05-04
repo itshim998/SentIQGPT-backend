@@ -121,6 +121,7 @@ type InternalMergedResponse = Omit<OrchestratorResponse, "confidence"> & {
   _isMathResult?: boolean;
   _model_used?: string;
   _fallback?: boolean;
+  _sanitize_bypass?: boolean;
 };
 
 // ==============================
@@ -181,15 +182,19 @@ function computeConfidence(
   return confidence;
 }
 
-function finalizeReply(
+export function finalizeReply(
   reply?: string,
   emptyFallback = "Sorry, something went wrong. Please try again.",
+  sanitizeBypass = false,
 ): string {
-  return finalizeUserFacingReply(reply, { emptyFallback });
+  return finalizeUserFacingReply(reply, {
+    emptyFallback,
+    sanitizeMode: sanitizeBypass ? "none" : "strict",
+  });
 }
 
 /** Merge multi-step results into a single OrchestratorResponse. */
-function mergeResults(
+export function mergeResults(
   steps: readonly StepResult[],
   memoryPayload: OrchestratorResponse["memory"],
 ): InternalMergedResponse {
@@ -203,6 +208,7 @@ function mergeResults(
   let _isMathResult = false;
   let _model_used: string | undefined;
   let _fallback = false;
+  let _sanitize_bypass = false;
 
   const replyParts: string[] = [];
   const thinkingParts: string[] = [];
@@ -223,6 +229,10 @@ function mergeResults(
       replyParts.push(step.reply);
       _model_used = step.model_used ?? _model_used;
       _fallback = step.fallback ?? _fallback;
+    }
+
+    if (step.sanitize_bypass) {
+      _sanitize_bypass = true;
     }
 
     if (step.thinking && step.thinking.trim()) {
@@ -281,6 +291,7 @@ function mergeResults(
     _isMathResult,
     _model_used,
     _fallback,
+    _sanitize_bypass,
   };
 }
 
@@ -430,7 +441,7 @@ async function _orchestrateInner(
     reflected.merged._isMathResult
       ? (reflected.merged.reply?.trim() || "Sorry, something went wrong. Please try again.")
       : reflected.merged.reply !== undefined
-      ? finalizeReply(reflected.merged.reply)
+      ? finalizeReply(reflected.merged.reply, undefined, reflected.merged._sanitize_bypass === true)
       : reflected.merged.route === "memory_update" && reflected.merged.memory.stored
         ? finalizeReply(undefined, "Got it. I've remembered that.")
         : reflected.merged.route === "memory_update"
@@ -491,6 +502,7 @@ async function reflectOnAnswer(
   if (
     !merged.reply ||
     merged.reply.length < MIN_REFLECTION_LENGTH ||
+    merged._sanitize_bypass === true ||
     merged.route === "image_generation" ||
     merged.route === "chart_generation" ||
     merged.route === "web_search" // Skip reflection for web search (already synthesized)

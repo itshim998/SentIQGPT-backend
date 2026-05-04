@@ -170,6 +170,17 @@ const relaxedThinkReply = "<think>hidden reasoning</think>\nHere is the answer."
 const relaxedFinalized = finalizeStructuredReply(relaxedThinkReply, { sanitizeMode: "minimal" });
 assert(relaxedFinalized.answer === "Here is the answer.", "minimal sanitizer strips think blocks");
 
+const unsanitizedOpenAiLargeReply = [
+  "That means we can iterate through each case.",
+  "Final Answer: Keep every line exactly as returned.",
+].join("\n");
+const unsanitizedFinalized = finalizeStructuredReply(unsanitizedOpenAiLargeReply, { sanitizeMode: "none" });
+assert(unsanitizedFinalized.answer === unsanitizedOpenAiLargeReply, "no-sanitize mode preserves raw reply text");
+assert(unsanitizedFinalized.thinking === undefined, "no-sanitize mode does not split thinking");
+
+const unsanitizedProviderFailure = finalizeStructuredReply(providerFailureBlob, { sanitizeMode: "none" });
+assert(unsanitizedProviderFailure.answer === DEFAULT_SAFE_REPLY_FALLBACK, "no-sanitize mode still blocks provider failure payloads");
+
 const latexNormalizedMath = formatMathResponse(latexMathReply);
 assert(/\\\[/.test(latexNormalizedMath), "math normalizer emits display LaTeX delimiters");
 assert(/x = \\pm 3/.test(latexNormalizedMath), "math normalizer preserves readable LaTeX symbols");

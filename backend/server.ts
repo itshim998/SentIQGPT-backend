@@ -3551,7 +3551,6 @@ app.post(
         ...result,
         route: "web_search",
         searched: true,
-        model_used: result.provider || "tavily",
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -3595,7 +3594,6 @@ app.post(
       ...result,
       route: "web_search",
       searched: true,
-      model_used: "tavily",
     });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

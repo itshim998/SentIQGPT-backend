@@ -39,6 +39,8 @@ export interface StepResult {
   readonly tool: PlanTool;
   /** True when this step was handled by the math pipeline */
   readonly isMathResult?: boolean;
+  /** True when the reply must bypass user-facing sanitization */
+  readonly sanitize_bypass?: boolean;
   /** Text output (conversation / file_analysis replies) */
   readonly reply?: string;
   /** Optional internal reasoning extracted from think blocks */
@@ -134,6 +136,7 @@ async function execConversation(
       step: 0,
       tool: "conversation",
       isMathResult: true,
+      sanitize_bypass: true,
       reply: mathResult.answer,
       thinking: mathResult.thinking,
       model_used: mathResult.model_used,
@@ -176,6 +179,7 @@ async function execConversation(
     thinking: result.thinking,
     model_used: result.model_used,
     fallback: result.fallback,
+    sanitize_bypass: result.sanitize_bypass,
   };
 }
 
@@ -241,6 +245,7 @@ async function execFileAnalysis(
     thinking: result.thinking,
     model_used: result.model_used,
     fallback: result.fallback,
+    sanitize_bypass: result.sanitize_bypass,
   };
 }
 
@@ -316,7 +321,6 @@ async function execWebSearch(
         step: 0,
         tool: "web_search",
         reply: result.error ?? "Web search failed. Please try again.",
-        model_used: "tavily",
         fallback: true,
       };
     }
@@ -327,7 +331,6 @@ async function execWebSearch(
       step: 0,
       tool: "web_search",
       reply: result.answer,
-      model_used: "tavily",
       fallback: !result.answer,
       web_search: {
         query: result.query,
@@ -346,7 +349,6 @@ async function execWebSearch(
       step: 0,
       tool: "web_search",
       reply: "Web search is temporarily unavailable. Please try again later.",
-      model_used: "tavily",
       fallback: true,
     };
   }

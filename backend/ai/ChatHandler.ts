@@ -49,6 +49,7 @@ export interface ChatResponse {
   readonly disclaimer: string;
   readonly model_used?: string;
   readonly fallback?: boolean;
+  readonly sanitize_bypass?: boolean;
 }
 
 export async function handleChat(args: {
@@ -92,6 +93,7 @@ export async function handleChat(args: {
   console.log(
     `[ChatHandler] invoke model=${call.model_override ?? "default"} reasoning=${args.reasoningMode ? "true" : "false"} max_output_tokens=${call.max_output_tokens ?? "none"}`,
   );
+  const bypassSanitization = args.modelOverride === "openai-large";
 
   let raw: string;
   let model_used: string | undefined;
@@ -127,19 +129,22 @@ export async function handleChat(args: {
       disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
       model_used,
       fallback,
+      sanitize_bypass: bypassSanitization,
     };
   }
 
   let disclaimer = "SentIQGPT is an AI assistant. Verify important information independently.";
-  const extracted = extractUserFacingAnswer(raw, { adapterError });
-  if (typeof extracted.disclaimer === "string" && extracted.disclaimer.trim()) {
-    disclaimer = extracted.disclaimer;
+  if (!bypassSanitization) {
+    const extracted = extractUserFacingAnswer(raw, { adapterError });
+    if (typeof extracted.disclaimer === "string" && extracted.disclaimer.trim()) {
+      disclaimer = extracted.disclaimer;
+    }
   }
 
   const finalized = finalizeStructuredReply(raw, {
     adapterError,
     truncated: args.reasoningMode ? false : truncated,
-    sanitizeMode: args.reasoningMode ? "minimal" : "strict",
+    sanitizeMode: bypassSanitization ? "none" : args.reasoningMode ? "minimal" : "strict",
   });
 
   let finalAnswer = finalized.answer;
@@ -177,7 +182,7 @@ export async function handleChat(args: {
       const continuationFinal = finalizeStructuredReply(continuationResult.text, {
         adapterError: continuationResult.error,
         truncated: continuationResult.truncated ?? false,
-        sanitizeMode: args.reasoningMode ? "minimal" : "strict",
+        sanitizeMode: bypassSanitization ? "none" : args.reasoningMode ? "minimal" : "strict",
       });
       const merged = mergeContinuation(finalAnswer, continuationFinal.answer);
       if (merged && merged !== finalAnswer) {
@@ -197,5 +202,6 @@ export async function handleChat(args: {
     disclaimer,
     model_used,
     fallback,
+    sanitize_bypass: bypassSanitization,
   };
 }

@@ -63,6 +63,18 @@ async function main(): Promise<void> {
       truncated: false,
       finish_reason: "stop",
     },
+    {
+      text: "That means we can iterate through the candidate cases.\nFinal Answer: Keep this wording untouched.",
+      model_used: "gemini-2.5-flash-lite",
+      truncated: true,
+      finish_reason: "length",
+    },
+    {
+      text: "Alternatively, preserve this continuation too.",
+      model_used: "gemini-2.5-flash-lite",
+      truncated: false,
+      finish_reason: "stop",
+    },
   ];
 
   const server = http.createServer(async (req, res) => {
@@ -147,6 +159,21 @@ async function main(): Promise<void> {
     assert(capturedRequests[2].model_override === "openai-large", "image math solver still uses openai-large");
     assert(capturedRequests[2].image_attachments?.[0]?.filename === "problem.png", "image math solver forwards image attachments");
     assert(imageMathReply.answer === "The image shows a math problem. The answer is 42.", "image math solver preserves image answer");
+
+    const unsanitizedOpenAiLargeReply = await handleChat({
+      userMessage: "Solve the puzzle exactly as you would naturally answer.",
+      modelOverride: "openai-large",
+    });
+
+    assert(capturedRequests.length === 5, "openai-large chat with continuation makes two raw LLM calls");
+    assert(capturedRequests[3].model_override === "openai-large", "openai-large bypass is keyed off the requested route");
+    assert(capturedRequests[4].model_override === "openai-large", "openai-large continuation keeps the requested route");
+    assert(
+      unsanitizedOpenAiLargeReply.reply === "That means we can iterate through the candidate cases.\nFinal Answer: Keep this wording untouched.\nAlternatively, preserve this continuation too.",
+      "openai-large chat bypass preserves raw reply and continuation text",
+    );
+    assert(unsanitizedOpenAiLargeReply.sanitize_bypass === true, "openai-large chat marks sanitize bypass");
+    assert(unsanitizedOpenAiLargeReply.thinking === undefined, "openai-large bypass does not split thinking");
 
     assert(selectModelForPrompt("Tell me a joke.") === "gemini-search", "normal chat routing stays on gemini-search");
     assert(selectModelForPrompt("Why is this Python loop failing?") === "qwen-coder", "coding routing stays on qwen-coder");
