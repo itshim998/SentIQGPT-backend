@@ -26,6 +26,15 @@ function toDisplayMath(tex: string): string {
   return `\\[\n${tex.trim()}\n\\]`;
 }
 
+function cleanupLeakedRendererSentinels(text: string): string {
+  return String(text || "")
+    .replace(/\[?\s*SENTIQMATHBLOCKTOKEN\d+END\s*\]?/g, "")
+    .replace(/\[?\s*@@SENTIQ_MATH_\d+@@\s*\]?/g, "")
+    .replace(/@@\s*SENTIQ(?:\s|<[^>]+>)*ATH(?:\s|<[^>]+>|[A-Za-z0-9])*?@@/g, "")
+    .replace(/\bMATH\d+\b/g, "")
+    .replace(/[ \t]{2,}/g, " ");
+}
+
 function stripBullet(line: string): string {
   return line.replace(/^\s*[-*]\s+/, "").trim();
 }
@@ -69,6 +78,7 @@ function normalizeMathExpression(expression: string): string {
   normalized = normalized.replace(/\bv(\d+)\b/g, "v_{$1}");
   normalized = normalized.replace(/\b([A-Za-z])_(\d+)\b/g, "$1_{$2}");
   normalized = normalized.replace(/\bsqrt\(([^()]+)\)/g, "\\sqrt{$1}");
+  normalized = normalized.replace(/(?<=\w|\))\*(?=\w|\()/g, "\\cdot ");
   normalized = normalized.replace(/(?<![A-Za-z\\])([A-Za-z0-9]+)\s*\/\s*([A-Za-z0-9]+)(?![A-Za-z])/g, "\\frac{$1}{$2}");
   normalized = normalized.replace(/\s{2,}/g, " ").trim();
 
@@ -191,15 +201,20 @@ function isLikelyDisplayEquation(line: string): boolean {
   const trimmed = stripBullet(convertInlineMatrixRows(line));
   if (!trimmed || isExistingMathLine(trimmed)) return false;
   if (/^#{1,6}\s/.test(trimmed) || /^>\s/.test(trimmed) || /^Final Answer:?$/i.test(trimmed)) return false;
-  if (/https?:\/\//i.test(trimmed) || /[`]/.test(trimmed)) return false;
+  if (/https?:\/\//i.test(trimmed) || /[`]|(?:\*\*|__)|SENTIQ|@@|\bMATH\d+\b/.test(trimmed)) return false;
+  if (/[.!?]["']?$/.test(trimmed)) return false;
+  if (!/(?:=|<|>|\\le|\\ge|\\approx|\\Rightarrow|\\to)/.test(trimmed)) return false;
   if (/^[\[(].*[\])]\s*$/.test(trimmed) && parseMatrixRow(trimmed)) return true;
   if (isLikelyAssignmentLine(trimmed)) return true;
 
   const mathSignals = (trimmed.match(/=>|->|<-|=|\||\+|-|\*|\/|\bR\d+\b|\bx\b|\by\b|\bz\b|\bv\d+\b/g) || []).length;
   const hasVariable = /\b(?:[A-Za-z](?:_\{?\d+\}?|\d+)?|R\d+)\b/.test(trimmed);
   const proseWords = countProseWords(trimmed);
+  const strictEquationOnly = /^[A-Za-z0-9_{}\\^+\-*/=<>()[\].,\s|]+$/.test(trimmed);
 
-  return hasVariable && mathSignals >= 2 && proseWords <= 4;
+  if (hasVariable && proseWords === 0 && strictEquationOnly) return true;
+
+  return hasVariable && mathSignals >= 3 && proseWords <= 2;
 }
 
 function splitTrailingMath(line: string): { prefix: string; math: string } | null {
@@ -215,6 +230,23 @@ function splitTrailingMath(line: string): { prefix: string; math: string } | nul
     }
   }
   return null;
+}
+
+function rowOperationDisplayMath(line: string): string | null {
+  const raw = stripBullet(line);
+  if (!raw) return null;
+  if (!/^(?:\d+\s*)?R\d+\b/i.test(raw)) return null;
+  if (!/(?:->|=>|<-|\bgives?\b|\bbecomes\b|\byields?\b)/i.test(raw)) return null;
+
+  const withoutMatrices = raw.replace(/\[[^\]\n]+\]/g, "");
+  const withoutMathWords = withoutMatrices
+    .replace(/\b(?:gives?|becomes|yields?)\b/gi, "")
+    .replace(/\b\d*R\d+\b/gi, "")
+    .replace(/\d+/g, "")
+    .replace(/[+\-*/=<>|(),.\s]/g, "");
+
+  if (withoutMathWords.trim()) return null;
+  return toDisplayMath(normalizeMathExpression(convertInlineMatrixRows(raw)));
 }
 
 function enhancePlainMathText(text: string): string {
@@ -263,6 +295,12 @@ function enhancePlainMathText(text: string): string {
       if (!trimmed.endsWith("\\)")) {
         activeMathFence = "\\)";
       }
+      continue;
+    }
+
+    const rowOperation = rowOperationDisplayMath(line);
+    if (rowOperation) {
+      output.push(rowOperation);
       continue;
     }
 
@@ -327,7 +365,7 @@ function enhancePlainMathText(text: string): string {
 export function formatMathResponse(text: string): string {
   if (!text) return text;
 
-  let formatted = text;
+  let formatted = cleanupLeakedRendererSentinels(text);
   const displayBlocks: string[] = [];
   const envBlocks: string[] = [];
 
@@ -339,6 +377,13 @@ export function formatMathResponse(text: string): string {
   // Preserve existing display-math blocks so environments inside them are not rewrapped.
   formatted = formatted.replace(
     /\$\$([\s\S]+?)\$\$/g,
+    (match) => {
+      displayBlocks.push(match);
+      return `\x00DISPLAY${displayBlocks.length - 1}\x00`;
+    },
+  );
+  formatted = formatted.replace(
+    /\\+\[[\s\S]+?\\+\]/g,
     (match) => {
       displayBlocks.push(match);
       return `\x00DISPLAY${displayBlocks.length - 1}\x00`;
@@ -398,9 +443,11 @@ export function formatMathResponse(text: string): string {
     /\x00DISPLAY(\d+)\x00/g,
     (_, idx) => {
       const block = displayBlocks[parseInt(idx, 10)];
-      const match = block.match(/^\$\$([\s\S]+?)\$\$$/);
-      if (!match) return block;
-      return toDisplayMath(normalizeMathExpression(match[1]));
+      const dollarMatch = block.match(/^\$\$([\s\S]+?)\$\$$/);
+      if (dollarMatch) return toDisplayMath(normalizeMathExpression(dollarMatch[1]));
+      const bracketMatch = block.match(/^\\+\[\s*([\s\S]+?)\s*\\+\]$/);
+      if (bracketMatch) return toDisplayMath(normalizeMathExpression(bracketMatch[1]));
+      return block;
     },
   );
 

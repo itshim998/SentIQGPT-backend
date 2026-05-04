@@ -243,6 +243,14 @@ assert(/\\left\[2,3\\right\]/.test(formattedFalsePosition), "false-position inte
 assert(/\\left\[2\.6,3\\right\]/.test(formattedFalsePosition), "false-position updated interval notation stays valid LaTeX");
 assert(/x\s*=\s*2\.707/i.test(formattedFalsePosition), "false-position final approximation is preserved");
 
+const markdownMathSentence = normalizeMathResponse("there is a root between **2 and 3**.");
+assert(/\*\*2 and 3\*\*/.test(markdownMathSentence), "markdown emphasis prose is not converted into display math");
+assert(!/\\\[\s*there is a root/i.test(markdownMathSentence), "markdown prose sentence is not wrapped as LaTeX");
+
+const sentinelLeakAnswer = normalizeMathResponse("SENTIQMATHBLOCKTOKEN2END Use f(2). @@SENTIQ_MATH_3@@ MATH4");
+assert(!/\bSENTIQ\b|@@|\bMATH\d+\b/.test(sentinelLeakAnswer), "backend egress strips leaked frontend math sentinels");
+assert(/Use f\(2\)\./.test(sentinelLeakAnswer), "backend sentinel cleanup preserves recoverable prose");
+
 assert(classifyMathIntent("Solve a quantum computing math as an example.") === "example", "example-style solve prompt routes to example math intent");
 assert(classifyMathIntent("Give me a quantum computing math example and solve it.") === "example", "explicit example-and-solve prompt routes to example math intent");
 assert(classifyMathIntent("Solve 3x + 7 = 19") === "solve", "concrete math solve prompt stays on solve intent");
