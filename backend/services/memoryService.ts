@@ -6,6 +6,9 @@ export type MemoryRow = {
   type: string;
   summary: string;
   importance: number;
+  embedding?: number[] | null;
+  embedding_model?: string | null;
+  embedding_created_at?: string | null;
   scope?: MemoryScope | null;
   chat_id?: string | null;
   created_at: string;
@@ -22,9 +25,20 @@ export type InsertMemoryInput = {
   type?: string;
   summary?: string;
   importance?: number;
+  embedding?: readonly number[] | null;
+  embedding_model?: string | null;
+  embedding_created_at?: string | null;
   scope?: MemoryScope;
   chat_id?: string | null;
 };
+
+function normalizeEmbedding(value: unknown): number[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const vector = value
+    .map((item) => typeof item === "number" ? item : Number(item))
+    .filter((item) => Number.isFinite(item));
+  return vector.length === value.length ? vector : null;
+}
 
 function normalizeByteCount(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -50,10 +64,13 @@ export async function insertMemory(userDb: any, data: InsertMemoryInput) {
       type: data.type,
       summary: data.summary,
       importance: data.importance,
+      embedding: normalizeEmbedding(data.embedding),
+      embedding_model: data.embedding_model || null,
+      embedding_created_at: data.embedding_created_at || null,
       scope: normalizedScope,
       chat_id: normalizedScope === "chat" ? data.chat_id ?? null : null,
     })
-    .select("id, user_id, type, summary, importance, scope, chat_id, created_at")
+    .select("id, user_id, type, summary, importance, embedding, embedding_model, embedding_created_at, scope, chat_id, created_at")
     .single();
 
   return {
@@ -65,12 +82,45 @@ export async function insertMemory(userDb: any, data: InsertMemoryInput) {
 export async function getUserMemories(userDb: any, userId: string) {
   const result = await userDb
     .from("memories")
-    .select("id, user_id, type, summary, importance, scope, chat_id, created_at")
+    .select("id, user_id, type, summary, importance, embedding, embedding_model, embedding_created_at, scope, chat_id, created_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
   return {
     data: (result.data ?? []) as MemoryRow[],
+    error: result.error,
+  };
+}
+
+export async function updateMemoryEmbedding(
+  userDb: any,
+  memoryId: string,
+  userId: string,
+  embedding: readonly number[],
+  embeddingModel: string,
+) {
+  const normalizedEmbedding = normalizeEmbedding(embedding);
+  if (!normalizedEmbedding) {
+    return {
+      data: null,
+      error: new Error("Invalid memory embedding"),
+    };
+  }
+
+  const result = await userDb
+    .from("memories")
+    .update({
+      embedding: normalizedEmbedding,
+      embedding_model: embeddingModel,
+      embedding_created_at: new Date().toISOString(),
+    })
+    .eq("id", memoryId)
+    .eq("user_id", userId)
+    .select("id")
+    .maybeSingle();
+
+  return {
+    data: result.data ?? null,
     error: result.error,
   };
 }

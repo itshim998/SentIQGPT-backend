@@ -109,6 +109,10 @@ export interface OrchestratorResponse {
   };
   /** Tool detection confidence */
   readonly confidence: number;
+  /** Primary model/provider used for the response when known */
+  readonly model_used?: string;
+  /** True when the response used live web search */
+  readonly searched?: boolean;
 }
 
 type InternalMergedResponse = Omit<OrchestratorResponse, "confidence"> & {
@@ -440,7 +444,6 @@ async function _orchestrateInner(
   );
   const { _isMathResult, _model_used, _fallback, ...publicMerged } = reflected.merged;
   void _isMathResult;
-  void _model_used;
   void _fallback;
 
   const finalResponse: OrchestratorResponse = {
@@ -450,6 +453,8 @@ async function _orchestrateInner(
     thinking: reflected.merged.thinking,
     reflection: reflected.reflection,
     confidence: computedConfidence,
+    model_used: _model_used,
+    searched: reflected.merged.route === "web_search" || Boolean(reflected.merged.web_search),
   };
 
   return finalResponse;

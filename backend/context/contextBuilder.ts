@@ -20,6 +20,7 @@ import { formatMemoriesForPrompt } from "../memory/memoryStore";
 import { selectMemoriesForQuery } from "./memorySelector";
 import { compressConversation, CONVERSATION_WINDOW } from "./contextCompressor";
 import { semanticMemorySearch } from "../memory/semanticSearch";
+import { generateEmbedding } from "../memory/memoryEmbedding";
 import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 import { getPriorConversationUserMessages } from "../services/conversationService";
 import { collapseAdjacentDuplicateMessages } from "./messageDeduper";
@@ -73,7 +74,7 @@ export interface BuiltContext {
   readonly isExplicitRecallQuery: boolean;
 }
 
-type ContextMemory = { type: string; summary: string };
+type ContextMemory = { type: string; summary: string; importance?: number; embedding?: readonly number[] };
 type ContextRecallEvidence = {
   conversationId: string;
   content: string;
@@ -85,9 +86,62 @@ type CloudMemoryRow = {
   summary: string;
   type: string;
   importance?: number;
+  embedding?: unknown;
+  embedding_model?: string | null;
+  embedding_created_at?: string | null;
   scope?: "global" | "chat";
   chat_id?: string | null;
 };
+
+const MEMORY_EMBEDDING_MODEL = process.env.GEMINI_EMBEDDING_MODEL?.trim() || "gemini-embedding-001";
+
+function normalizeEmbedding(value: unknown): readonly number[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const vector = value
+    .map((item) => typeof item === "number" ? item : Number(item))
+    .filter((item) => Number.isFinite(item));
+  return vector.length === value.length ? vector : undefined;
+}
+
+function scheduleCloudMemoryEmbeddingBackfill(
+  userDb: SupabaseClient,
+  userId: string,
+  memories: readonly CloudMemoryRow[],
+): void {
+  const candidates = memories
+    .filter((memory) => {
+      if (!memory.id || !memory.summary) return false;
+      if (normalizeEmbedding(memory.embedding)) return false;
+      return (memory.importance ?? 5) >= 7;
+    })
+    .slice(0, 3);
+
+  if (candidates.length === 0) return;
+
+  void (async () => {
+    for (const memory of candidates) {
+      try {
+        const embedding = await generateEmbedding(memory.summary);
+        if (!embedding) continue;
+        const { error } = await userDb
+          .from("memories")
+          .update({
+            embedding,
+            embedding_model: MEMORY_EMBEDDING_MODEL,
+            embedding_created_at: new Date().toISOString(),
+          })
+          .eq("id", memory.id)
+          .eq("user_id", userId);
+        if (error) {
+          console.warn(`[CONTEXT] memory embedding backfill failed id=${memory.id} error=${error.message}`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[CONTEXT] memory embedding backfill failed id=${memory.id} error=${message}`);
+      }
+    }
+  })();
+}
 
 async function fetchCloudMemories(
   userDb: SupabaseClient,
@@ -96,7 +150,7 @@ async function fetchCloudMemories(
 ): Promise<readonly ContextMemory[]> {
   const { data: cloudMemories, error } = await userDb
     .from("memories")
-    .select("id, summary, type, importance, scope, chat_id")
+    .select("id, summary, type, importance, embedding, embedding_model, embedding_created_at, scope, chat_id")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(20);
@@ -105,7 +159,10 @@ async function fetchCloudMemories(
     throw error;
   }
 
-  return ((cloudMemories ?? []) as CloudMemoryRow[])
+  const rows = (cloudMemories ?? []) as CloudMemoryRow[];
+  scheduleCloudMemoryEmbeddingBackfill(userDb, userId, rows);
+
+  return rows
     .filter((memory) => {
       const scope = memory.scope === "chat" ? "chat" : "global";
       if (scope === "global") return true;
@@ -114,10 +171,12 @@ async function fetchCloudMemories(
     .map((memory) => ({
       type: memory.type,
       summary: memory.summary,
+      importance: memory.importance,
+      embedding: normalizeEmbedding(memory.embedding),
     }));
 }
 
-function mergeMemories(
+function mergeMemoryCandidates(
   localMemories: readonly ContextMemory[],
   cloudMemories: readonly ContextMemory[],
 ): readonly ContextMemory[] {
@@ -129,7 +188,6 @@ function mergeMemories(
     if (!summary || seenSummaries.has(summary)) continue;
     seenSummaries.add(summary);
     merged.push(memory);
-    if (merged.length >= 10) break;
   }
 
   return merged;
@@ -295,27 +353,23 @@ export async function buildContext(
     })
     : Promise.resolve([] as readonly ContextRecallEvidence[]);
 
-  const [compressionResult, semanticResults, cloudMemories, priorConversationEvidence] = await Promise.all([
+  const [compressionResult, cloudMemories, priorConversationEvidence] = await Promise.all([
     compressConversation(allMessages, userId),
-    semanticMemorySearch(rawMemories, query, 3),
     cloudMemoryPromise,
     recallEvidencePromise,
   ]);
 
   const { recentMessages, summary } = compressionResult;
 
+  const memoryCandidates = mergeMemoryCandidates(rawMemories, cloudMemories);
+  const semanticResults = await semanticMemorySearch(memoryCandidates, query, 3);
   let memories: readonly ContextMemory[];
   if (semanticResults) {
     memories = semanticResults.map((r) => r.memory);
     console.log(`[CONTEXT] memory retrieval: semantic (${memories.length} selected)`);
   } else {
-    memories = selectMemoriesForQuery(rawMemories, query, 3);
+    memories = selectMemoriesForQuery(memoryCandidates, query, 3);
     console.log(`[CONTEXT] memory retrieval: keyword fallback (${memories.length} selected)`);
-  }
-
-  // Merge cloud memories (already fetched in parallel)
-  if (cloudMemories.length > 0) {
-    memories = mergeMemories(memories, cloudMemories);
   }
 
   // 3. File references — pass through full content for prompt-level handling
@@ -421,7 +475,7 @@ export async function buildContextFast(
     recallEvidencePromise,
   ]);
   if (cloudMemories.length > 0) {
-    memories = mergeMemories(memories, cloudMemories);
+    memories = selectMemoriesForQuery(mergeMemoryCandidates(memories, cloudMemories), query, 6);
   }
 
   // File references - just text extracted content

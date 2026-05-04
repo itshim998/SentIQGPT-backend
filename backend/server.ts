@@ -365,6 +365,7 @@ const GUEST_MODEL_OVERRIDE = "gemini-search";
  * Memories exceeding this are rejected.
  */
 const MAX_MEMORY_BYTES_PER_USER = 25 * 1024; // 25 KB
+const MEMORY_EMBEDDING_MODEL = process.env.GEMINI_EMBEDDING_MODEL?.trim() || "gemini-embedding-001";
 
 async function getVerifiedUserId(req: Request): Promise<string> {
   const user = await resolveRequestUser(req, { allowGuest: false });
@@ -912,7 +913,14 @@ async function enforceMemoryLimit(
 async function insertMemoryOrThrow(
   userDb: any,
   userId: string,
-  memory: { type?: string; summary?: string; importance?: number; scope?: MemoryScope; chat_id?: string | null },
+  memory: {
+    type?: string;
+    summary?: string;
+    importance?: number;
+    embedding?: readonly number[] | null;
+    scope?: MemoryScope;
+    chat_id?: string | null;
+  },
   scope: string,
 ): Promise<MemoryRow> {
   const newMemoryBytes = new TextEncoder().encode(memory.summary ?? "").length;
@@ -926,6 +934,9 @@ async function insertMemoryOrThrow(
     type: memory.type,
     summary: memory.summary,
     importance: memory.importance,
+    embedding: memory.embedding,
+    embedding_model: Array.isArray(memory.embedding) && memory.embedding.length > 0 ? MEMORY_EMBEDDING_MODEL : null,
+    embedding_created_at: Array.isArray(memory.embedding) && memory.embedding.length > 0 ? new Date().toISOString() : null,
     scope: memory.scope,
     chat_id: memory.chat_id ?? null,
   });
@@ -982,22 +993,21 @@ async function deleteMemoryIfOwned(
   }
 
   const memoryBytes = new TextEncoder().encode(memoryRow?.summary ?? "").length;
-  if (memoryBytes > 0) {
-    const { error: usageError } = await decrementUserMemoryUsage(userDb, userId, memoryBytes);
-    if (usageError) {
-      logDbFailure(`${scope}.memory-delete.usage`, userId, usageError, { memoryId });
-      throw new Error(usageError.message);
-    }
-  }
-
   const { error } = await deleteMemory(userDb, memoryId, userId);
 
   if (error) {
-    if (memoryBytes > 0) {
-      await incrementUserMemoryUsage(userDb, userId, memoryBytes).catch(() => undefined);
-    }
     logDbFailure(`${scope}.memory-delete`, userId, error, { memoryId });
     throw new Error(error.message);
+  }
+
+  if (memoryBytes > 0) {
+    const { error: usageError } = await decrementUserMemoryUsage(userDb, userId, memoryBytes);
+    if (usageError) {
+      logDbFailure(`${scope}.memory-delete.usage-repair-needed`, userId, usageError, {
+        memoryId,
+        memoryBytes,
+      });
+    }
   }
 
   logDbEvent(`${scope}.memory-delete.ok`, userId, { memoryId });
@@ -1029,8 +1039,11 @@ async function listConversationMessagesOrThrow(
   userId: string,
   conversationId: string,
   scope: string,
+  options: { skipOwnershipCheck?: boolean } = {},
 ): Promise<ConversationMessageRow[]> {
-  await getOwnedConversationOrThrow(userDb, userId, conversationId, scope);
+  if (!options.skipOwnershipCheck) {
+    await getOwnedConversationOrThrow(userDb, userId, conversationId, scope);
+  }
   logDbEvent(`${scope}.message-list.start`, userId, { conversationId });
   const startedAt = Date.now();
   const { data, error } = await getConversationMessages(userDb, conversationId);
@@ -1124,11 +1137,19 @@ interface FileSession {
 }
 const fileSessionMap: Map<string, FileSession> = new Map();
 
+function getFileSessionKey(req: Request, userId?: string, isGuest = false): string {
+  if (userId && !isGuest && userId !== "guest") {
+    return `user:${userId}`;
+  }
+  const clientIp = req.ip || req.socket.remoteAddress || "unknown";
+  return `guest:${clientIp}`;
+}
+
 // Clean up sessions older than 1 hour
 setInterval(() => {
   const cutoff = Date.now() - 60 * 60 * 1000;
-  for (const [ip, session] of fileSessionMap) {
-    if (session.uploadTime < cutoff) fileSessionMap.delete(ip);
+  for (const [sessionKey, session] of fileSessionMap) {
+    if (session.uploadTime < cutoff) fileSessionMap.delete(sessionKey);
   }
 }, 10 * 60 * 1000);
 
@@ -1358,6 +1379,7 @@ app.get(
       userId,
       conversationId,
       "conversations.messages",
+      { skipOwnershipCheck: true },
     );
     logDbEvent("conversations.messages.request.ok", userId, {
       duration_ms: Date.now() - requestStartedAt,
@@ -1446,8 +1468,8 @@ app.delete(
 // ===============================
 app.post(
   "/api/chat",
-  aiRateLimiter,
   verifyJWT({ allowGuest: true }),
+  aiRateLimiter,
   asyncHandler(async (req, res) => {
     const parsed = ChatRequestSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1504,7 +1526,10 @@ app.post(
         image: result.image,
         chart: result.chart,
         memory: result.memory,
+        web_search: result.web_search,
         confidence: result.confidence,
+        model_used: result.model_used,
+        searched: result.searched === true,
       });
       return;
     }
@@ -1543,6 +1568,8 @@ app.post(
         chart: undefined,
         memory: undefined,
         confidence: undefined,
+        model_used: guestResult.model_used,
+        searched: false,
       });
       return;
     }
@@ -1733,6 +1760,8 @@ app.post(
         chart: undefined,
         memory: undefined,
         confidence: undefined,
+        model_used: result.model_used,
+        searched: false,
         sync,
       });
       return;
@@ -1845,7 +1874,10 @@ app.post(
       image: result.image,
       chart: result.chart,
       memory: responseMemory,
+      web_search: result.web_search,
       confidence: result.confidence,
+      model_used: result.model_used,
+      searched: result.searched === true,
       sync,
     });
   }),
@@ -1856,8 +1888,8 @@ app.post(
 // ===============================
 app.post(
   "/api/chat/stream",
-  aiRateLimiter,
   verifyJWT({ allowGuest: true }),
+  aiRateLimiter,
   asyncHandler(async (req, res) => {
     let clientDisconnected = false;
     req.on("close", () => { clientDisconnected = true; });
@@ -1974,7 +2006,10 @@ app.post(
         image: result.image,
         chart: result.chart,
         memory: result.memory,
+        web_search: result.web_search,
         confidence: result.confidence,
+        model_used: result.model_used,
+        searched: result.searched === true,
       });
       return;
     }
@@ -2350,7 +2385,10 @@ app.post(
           image: result.image,
           chart: result.chart,
           memory: result.memory,
+          web_search: result.web_search,
           confidence: result.confidence,
+          model_used: result.model_used,
+          searched: result.searched === true,
           sync,
         });
       } catch (err) {
@@ -2392,7 +2430,10 @@ app.post(
           image: result.image,
           chart: result.chart,
           memory: result.memory,
+          web_search: result.web_search,
           confidence: result.confidence,
+          model_used: result.model_used,
+          searched: result.searched === true,
           sync,
         });
       } catch (err) {
@@ -2436,7 +2477,10 @@ app.post(
           image: result.image,
           chart: result.chart,
           memory: result.memory,
+          web_search: result.web_search,
           confidence: result.confidence,
+          model_used: result.model_used,
+          searched: result.searched === true,
           sync,
         });
       } catch (err) {
@@ -2570,7 +2614,11 @@ app.post(
         }
         await persistStoredMemory(result.memory);
         reportStreamMessageGap(Boolean(result.reply), "orchestrator.web_search_auto");
-        res.json(result);
+        res.json({
+          ...result,
+          searched: result.searched === true,
+          sync,
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         res.status(500).json({ error: message });
@@ -2737,6 +2785,7 @@ app.post(
 // ===============================
 app.post(
   "/api/memory/classify",
+  verifyJWT({ allowGuest: false }),
   aiRateLimiter,
   asyncHandler(async (req, res) => {
     const { userId, isGuest } = await getRequestIdentity(req);
@@ -2769,6 +2818,7 @@ app.post(
 // ===============================
 app.post(
   "/api/memory/compress",
+  verifyJWT({ allowGuest: false }),
   aiRateLimiter,
   asyncHandler(async (req, res) => {
     const { userId, isGuest } = await getRequestIdentity(req);
@@ -2800,6 +2850,7 @@ app.post(
 // ===============================
 app.get(
   "/api/files/updates",
+  verifyJWT({ allowGuest: false }),
   aiRateLimiter,
   asyncHandler(async (req, res) => {
     const { userId, isGuest } = await getRequestIdentity(req);
@@ -2831,6 +2882,7 @@ app.get(
 // ===============================
 app.post(
   "/api/files/upload",
+  verifyJWT({ allowGuest: false }),
   uploadRateLimiter,
   upload.single("file"),
   asyncHandler(async (req, res) => {
@@ -2905,16 +2957,16 @@ app.post(
       console.log(`[PDF] chunks created: 1, context length sent to LLM: ${result.extracted_text.length}`);
     }
 
-    // Update file session for this client
-    const clientIp = req.ip || req.socket.remoteAddress || "unknown";
-    fileSessionMap.set(clientIp, {
+    // Update file session for this authenticated user.
+    const fileSessionKey = getFileSessionKey(req, userId, false);
+    fileSessionMap.set(fileSessionKey, {
       filename: result.filename,
       type: result.type,
       extractedText: result.extracted_text,
       uploadTime: Date.now(),
       analysisId,
     });
-    console.log(`[FileSession] stored for ${clientIp}: ${result.filename}`);
+    console.log(`[FileSession] stored for ${fileSessionKey}: ${result.filename}`);
 
     res.json({
       filename: result.filename,
@@ -3147,7 +3199,7 @@ app.post(
 
     if (!result.success) {
       console.error(`[IMAGE_STORE] failed userId=${userId} chatId=${chat_id} error=${result.error}`);
-      res.status(500).json({ error: result.error || "Failed to store image" });
+      res.status(500).json({ error: "Failed to store image." });
       return;
     }
 
@@ -3192,6 +3244,7 @@ app.get(
 );
 app.post(
   "/api/charts/generate",
+  verifyJWT({ allowGuest: false }),
   aiRateLimiter,
   asyncHandler(async (req, res) => {
     const userId = await getVerifiedUserId(req);
@@ -3242,6 +3295,7 @@ app.post(
 // ===============================
 app.post(
   "/api/chat/selection",
+  verifyJWT({ allowGuest: false }),
   aiRateLimiter,
   asyncHandler(async (req, res) => {
     const { userId, isGuest } = await getRequestIdentity(req);
@@ -3425,7 +3479,12 @@ app.post(
         webSearchMode,
       });
 
-      res.json(result);
+      res.json({
+        ...result,
+        route: "web_search",
+        searched: true,
+        model_used: result.provider || "tavily",
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[API] /api/search error: ${message}`);
@@ -3464,7 +3523,12 @@ app.post(
         webSearchMode,
       );
 
-      res.json(result);
+    res.json({
+      ...result,
+      route: "web_search",
+      searched: true,
+      model_used: "tavily",
+    });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ success: false, results: [], error: message });

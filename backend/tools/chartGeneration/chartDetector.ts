@@ -77,9 +77,9 @@ function looksLikeCodingBuildRequest(message: string): boolean {
  */
 export function isChartRequest(message: string): boolean {
   if (!message.trim()) return false;
+  if (CONCRETE_CHART_REQUEST_PATTERNS.some((pat) => pat.test(message))) return true;
   if (looksLikeCodingBuildRequest(message)) return false;
   return (
-    CONCRETE_CHART_REQUEST_PATTERNS.some((pat) => pat.test(message)) ||
     EXPLICIT_CHART_ACTION_PATTERNS.some((pat) => pat.test(message)) ||
     DATA_VISUALIZATION_PATTERNS.some((pat) => pat.test(message))
   );
