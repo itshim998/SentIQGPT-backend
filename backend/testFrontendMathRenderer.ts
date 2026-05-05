@@ -1,6 +1,7 @@
 import { createRequire } from "module";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { createContext, runInContext } from "vm";
 
 type RendererUtils = {
   renderRichText: (text: string, options?: Record<string, unknown>, deps?: Record<string, unknown>) => string;
@@ -31,13 +32,34 @@ function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function extractFunction(source: string, name: string): string {
+  const start = source.indexOf(`function ${name}`);
+  assert(start >= 0, `index.html defines ${name}`);
+  const openBrace = source.indexOf("{", start);
+  let depth = 0;
+  for (let index = openBrace; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+  }
+  assert(false, `index.html has a complete ${name} body`);
+  return "";
+}
+
 function assertCleanMathHtml(html: string, label: string): void {
   assert(!/\b(?:SENTIQ|MATH\d+)\b|@@/.test(stripHtml(html)), `${label} has no visible math sentinels`);
 }
 
 assert(/marked@15\.0\.7/.test(frontendHtml), "frontend uses the expected marked CDN version");
 assert(/katex@0\.16\.11/.test(frontendHtml), "frontend uses the expected KaTeX CDN version");
-assert(/renderer-utils\.js\?v=math-render-v4/.test(frontendHtml), "frontend renderer script is cache-busted");
+assert(!/<script\s+src=["']scripts\/renderer-utils\.js/i.test(frontendHtml), "frontend no longer depends on external renderer-utils.js");
+const inlineRendererIndex = frontendHtml.indexOf("root.SentIQRenderer = factory(root)");
+const chatControllerIndex = frontendHtml.indexOf("// 3. Chat UI Controller");
+assert(inlineRendererIndex >= 0, "index.html includes the inline SentIQRenderer");
+assert(chatControllerIndex > inlineRendererIndex, "inline renderer loads before the chat controller");
 assert(typeof renderer.renderRichText === "function", "renderer utility exports renderRichText");
 assert(typeof renderer.segmentText === "function", "renderer utility exports segmentText");
 assert(!/mathBlocks|restoreMath|protectExplicitMath/.test(rendererSource), "renderer no longer stashes math placeholders through Markdown");
@@ -77,6 +99,28 @@ assertCleanMathHtml(falsePositionHtml, "false-position formulas");
 const leakedHtml = renderMath("SENTIQMATHBLOCKTOKEN2END @@SENTIQ_MATH_3@@ MATH4 readable text");
 assert(!/SENTIQ|MATH4|@@/.test(stripHtml(leakedHtml)), "legacy leaked sentinel artifacts are stripped");
 assert(/readable text/.test(stripHtml(leakedHtml)), "sentinel cleanup preserves recoverable prose");
+
+const fallbackFunction = extractFunction(frontendHtml, "renderMarkdownOnlyFallback");
+const fallbackSandbox = {
+  window: { marked },
+  MAX_RENDER_CHARS: 100000,
+  console: { warn: () => undefined },
+  escapeHtml: (value: unknown) => String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;"),
+  sanitizeRenderedHtml: (html: string) => html,
+  fallbackResult: "",
+};
+createContext(fallbackSandbox);
+runInContext(
+  `${fallbackFunction}; fallbackResult = renderMarkdownOnlyFallback("**bold** text SENTIQMATHBLOCKTOKEN2END");`,
+  fallbackSandbox,
+);
+assert(/<strong>bold<\/strong>/.test(fallbackSandbox.fallbackResult), "Markdown fallback renders bold text");
+assert(!/SENTIQ|MATH\d+|@@/.test(stripHtml(fallbackSandbox.fallbackResult)), "Markdown fallback strips leaked sentinels");
 
 const streamingBranchIndex = frontendHtml.indexOf('if (renderMode === "math")');
 const chunkRenderIndex = frontendHtml.indexOf("renderRichText(chunk");
