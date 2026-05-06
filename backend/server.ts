@@ -113,6 +113,7 @@ import {
   SelectionContextSchema,
   detectPromptInjection,
 } from "./validation/schemas";
+import { getOptionalUuid, getRequiredUuid } from "./validation/uuid";
 import { ZodError } from "zod";
 import { collapseAdjacentDuplicateMessages } from "./context/messageDeduper";
 import { normalizeMathResponse } from "./ai/mathVerifier";
@@ -120,7 +121,6 @@ import { normalizeMathResponse } from "./ai/mathVerifier";
 const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const JSON_BODY_LIMIT = process.env.SENTIQ_JSON_BODY_LIMIT?.trim() || "6mb";
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TITLE_MAX_CHARS = 120;
 const TITLE_FALLBACK_MAX_CHARS = 50;
 const TITLE_GENERATION_TIMEOUT_MS = parseInt(process.env.SENTIQ_TITLE_TIMEOUT_MS || "12000", 10);
@@ -130,10 +130,6 @@ app.set("trust proxy", process.env.TRUST_PROXY ?? "loopback, linklocal, uniquelo
 function getExplicitWebSearchMode(value: unknown): "basic" | undefined {
   if (!isWebSearchMode(value)) return undefined;
   return normalizeWebSearchMode(value) === "basic" ? "basic" : undefined;
-}
-
-function isUuid(value: string): boolean {
-  return UUID_PATTERN.test(value.trim());
 }
 
 // ---- CORS ----
@@ -1331,16 +1327,12 @@ app.patch(
   asyncHandler(async (req, res) => {
     const requestStartedAt = Date.now();
     const userId = await getVerifiedUserId(req);
-    const conversationId = req.params.id?.trim();
+    const conversationId = getRequiredUuid(req.params.id, "Conversation id");
     const title =
       typeof req.body?.title === "string" && req.body.title.trim()
         ? req.body.title.trim().slice(0, 120)
         : "";
 
-    if (!conversationId) {
-      res.status(400).json({ error: "Conversation id is required." });
-      return;
-    }
     if (!title) {
       res.status(400).json({ error: "Title is required." });
       return;
@@ -1366,11 +1358,7 @@ app.get(
   asyncHandler(async (req, res) => {
     const requestStartedAt = Date.now();
     const userId = await getVerifiedUserId(req);
-    const conversationId = req.params.id?.trim();
-    if (!conversationId) {
-      res.status(400).json({ error: "Conversation id is required." });
-      return;
-    }
+    const conversationId = getRequiredUuid(req.params.id, "Conversation id");
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.messages");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.messages");
     await ensureNamedWorkspaceProfile(userId, "conversations.messages", userDb);
@@ -1416,11 +1404,7 @@ app.delete(
   "/api/conversations/:id",
   asyncHandler(async (req, res) => {
     const userId = await getVerifiedUserId(req);
-    const conversationId = req.params.id?.trim();
-    if (!conversationId) {
-      res.status(400).json({ error: "Conversation id is required." });
-      return;
-    }
+    const conversationId = getRequiredUuid(req.params.id, "Conversation id");
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.delete");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.delete");
     await ensureNamedWorkspaceProfile(userId, "conversations.delete", userDb);
@@ -1459,11 +1443,7 @@ app.delete(
   "/api/memories/:id",
   asyncHandler(async (req, res) => {
     const userId = await getVerifiedUserId(req);
-    const memoryId = req.params.id?.trim();
-    if (!memoryId) {
-      res.status(400).json({ error: "Memory id is required." });
-      return;
-    }
+    const memoryId = getRequiredUuid(req.params.id, "Memory id");
     const userDb = await resolveUserDatabaseOrThrow(userId, "memories.delete");
     await initializeUserSessionOrThrow(userDb, userId, "memories.delete");
     await ensureNamedWorkspaceProfile(userId, "memories.delete", userDb);
@@ -1489,6 +1469,9 @@ app.post(
       parsed.data.context?.recent_messages ?? [],
     );
     const { sub: userId, isGuest } = getRequestUser(req);
+    const requestedConversationId = getOptionalUuid(parsed.data.conversationId, "conversationId", {
+      ignoreInvalid: isGuest,
+    });
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
     const isReasoningQuery = isBufferedReasoningQuery(parsed.data.message);
@@ -1631,7 +1614,7 @@ app.post(
     let assistantMessagePersisted = false;
 
     let userDb: any = null;
-    let activeConversationId = parsed.data.conversationId || null;
+    let activeConversationId = requestedConversationId || null;
     try {
       userDb = await resolveUserDatabaseOrThrow(userId, "chat");
       await initializeUserSessionOrThrow(userDb, userId, "chat");
@@ -2096,6 +2079,9 @@ app.post(
       parsed.data.context?.recent_messages ?? [],
     );
     const { sub: userId, isGuest } = getRequestUser(req);
+    const requestedConversationId = getOptionalUuid(parsed.data.conversationId, "conversationId", {
+      ignoreInvalid: isGuest,
+    });
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
     const isBufferedReasoning = isBufferedReasoningQuery(parsed.data.message);
@@ -2302,7 +2288,7 @@ app.post(
       return;
     }
 
-    const conversationId = parsed.data.conversationId || null;
+    const conversationId = requestedConversationId || null;
     let activeConversationId = conversationId;
     const sync = {
       persisted: true,
@@ -3186,7 +3172,7 @@ app.post(
       return;
     }
 
-    const conversationId = parsed.data.conversationId?.trim() || "";
+    const conversationId = getOptionalUuid(parsed.data.conversationId, "conversationId") || "";
     const clientRequestId = parsed.data.clientRequestId?.trim() || "";
     let userDb: any = null;
     if (conversationId) {
@@ -3330,10 +3316,7 @@ app.post(
       res.status(400).json({ error: "chat_id is required" });
       return;
     }
-    if (!isUuid(chat_id)) {
-      res.status(400).json({ error: "chat_id must be a valid conversation id" });
-      return;
-    }
+    const chatId = getRequiredUuid(chat_id, "chat_id");
     if (!image_data || typeof image_data !== "string") {
       res.status(400).json({ error: "image_data (base64 or data URL) is required" });
       return;
@@ -3349,18 +3332,18 @@ app.post(
     await initializeUserSessionOrThrow(userDb, userId, "images.store");
     await ensureNamedWorkspaceProfile(userId, "images.store", userDb);
 
-    await getOwnedConversationOrThrow(userDb, userId, chat_id, "images.store");
+    await getOwnedConversationOrThrow(userDb, userId, chatId, "images.store");
 
     const imageStorageDb = getImageStorageDatabase();
     const imageStorageDbId = getImageStorageDatabaseId();
-    console.log(`[IMAGE_STORE] storage-db userId=${userId} chatId=${chat_id} db=${imageStorageDbId}`);
+    console.log(`[IMAGE_STORE] storage-db userId=${userId} chatId=${chatId} db=${imageStorageDbId}`);
 
     // Upload binary to the central image bucket and save metadata on the user's shard.
     const result = await uploadChatImage(
       userDb,
       {
         userId,
-        chatId: chat_id,
+        chatId,
         imageData: image_data,
         prompt: typeof prompt === "string" ? prompt : undefined,
         provider: typeof provider === "string" ? provider : undefined,
@@ -3369,12 +3352,12 @@ app.post(
     );
 
     if (!result.success) {
-      console.error(`[IMAGE_STORE] failed userId=${userId} chatId=${chat_id} error=${result.error}`);
+      console.error(`[IMAGE_STORE] failed userId=${userId} chatId=${chatId} error=${result.error}`);
       res.status(500).json({ error: "Failed to store image." });
       return;
     }
 
-    console.log(`[IMAGE_STORE] ok userId=${userId} chatId=${chat_id} imageId=${result.imageId}`);
+    console.log(`[IMAGE_STORE] ok userId=${userId} chatId=${chatId} imageId=${result.imageId}`);
     res.json({
       success: true,
       image_url: result.imageUrl,
@@ -3393,12 +3376,7 @@ app.get(
   "/api/images/chat/:chatId",
   asyncHandler(async (req, res) => {
     const userId = await getVerifiedUserId(req);
-    const chatId = req.params.chatId;
-
-    if (!chatId) {
-      res.status(400).json({ error: "chatId is required" });
-      return;
-    }
+    const chatId = getRequiredUuid(req.params.chatId, "chatId");
 
     // Get user's database client
     const userDb = await resolveUserDatabaseOrThrow(userId, "images.list");
@@ -3477,6 +3455,7 @@ app.post(
     }
 
     const { selected_text, context_before, context_after } = parsed.data;
+    const selectionConversationId = getOptionalUuid(parsed.data.conversationId, "conversationId");
 
     // Truncate selected text to 3 lines maximum (server-enforced safety limit)
     const selectedLines = selected_text.split("\n");
@@ -3535,7 +3514,7 @@ app.post(
         recent_messages: normalizedRecentMessages,
         memories: parsed.data.context?.memories,
         trustedProfile,
-        conversationId: parsed.data.conversationId,
+        conversationId: selectionConversationId,
         userDb,
         userId,
       },
@@ -3565,12 +3544,13 @@ app.post(
   asyncHandler(async (req, res) => {
     const { userId, isGuest } = await getRequestIdentity(req);
     const { userMessage, assistantReply } = req.body;
-    const rawConversationId =
+    const rawConversationIdCandidate =
       typeof req.body?.conversationId === "string" && req.body.conversationId.trim()
         ? req.body.conversationId.trim()
         : typeof req.body?.conversation_id === "string" && req.body.conversation_id.trim()
           ? req.body.conversation_id.trim()
           : "";
+    const rawConversationId = getOptionalUuid(rawConversationIdCandidate, "conversationId") || "";
 
     if (
       typeof userMessage !== "string" || !userMessage.trim() ||

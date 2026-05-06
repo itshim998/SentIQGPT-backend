@@ -20,9 +20,26 @@ const requireFromTest = createRequire(__filename);
 const markedModule = requireFromTest("marked");
 const katex = requireFromTest("katex");
 const marked = markedModule.marked || markedModule;
-const renderer = requireFromTest(join(process.cwd(), "frontend", "scripts", "renderer-utils.js")) as RendererUtils;
 const frontendHtml = readFileSync(join(process.cwd(), "frontend", "index.html"), "utf8");
-const rendererSource = readFileSync(join(process.cwd(), "frontend", "scripts", "renderer-utils.js"), "utf8");
+const rendererSource = Array.from(frontendHtml.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi))
+  .map((match) => match[1] || "")
+  .find((source) => source.includes("root.SentIQRenderer = factory(root)")) || "";
+assert(Boolean(rendererSource), "index.html exposes inline renderer source");
+
+const rendererSandbox = {
+  module: { exports: {} as Partial<RendererUtils> },
+  exports: {},
+  window: {} as { SentIQRenderer?: Partial<RendererUtils> },
+  globalThis: {},
+  console: { warn: () => undefined },
+};
+createContext(rendererSandbox);
+runInContext(rendererSource, rendererSandbox);
+const renderer = (
+  rendererSandbox.module.exports.renderRichText
+    ? rendererSandbox.module.exports
+    : rendererSandbox.window.SentIQRenderer
+) as RendererUtils;
 
 function renderMath(text: string): string {
   return renderer.renderRichText(text, { mode: "math" }, { marked, katex });

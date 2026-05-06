@@ -7,9 +7,19 @@
 // Character limit: ~1500 per page to stay within LLM context budgets.
 
 import type { SearchResult } from "./types";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
 
 const MAX_BODY_CHARS = 1500;
 const FETCH_TIMEOUT_MS = 8000;
+const MAX_REDIRECTS = 5;
+
+type DnsResolver = (hostname: string) => Promise<readonly { address: string }[]>;
+
+const DEFAULT_DNS_RESOLVER: DnsResolver = async (hostname) => {
+  const addresses = await dnsLookup(hostname, { all: true, verbatim: true });
+  return addresses.map(({ address }) => ({ address }));
+};
 
 /**
  * Fetch and extract clean body text for each search result.
@@ -40,35 +50,105 @@ export async function extractContent(
   return enriched;
 }
 
-async function fetchAndExtract(url: string, maxChars: number): Promise<string> {
-  // SSRF protection: only allow http(s) and block private/internal hosts
+function normalizeHostname(hostname: string): string {
+  return hostname.trim().replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+}
+
+function parseIpv4(address: string): number[] | null {
+  const match = address.match(/^(\d{1,3})(?:\.(\d{1,3})){3}$/);
+  if (!match) return null;
+  const parts = address.split(".").map((part) => Number.parseInt(part, 10));
+  return parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+    ? parts
+    : null;
+}
+
+export function isPrivateOrInternalAddress(address: string): boolean {
+  const normalized = normalizeHostname(address);
+  const ipv4Mapped = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  const ipv4 = parseIpv4(ipv4Mapped?.[1] ?? normalized);
+  if (ipv4) {
+    const [a, b] = ipv4;
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127)
+    );
+  }
+
+  if (isIP(normalized) !== 6) return false;
+  return (
+    normalized === "::" ||
+    normalized === "::1" ||
+    normalized.startsWith("fe80:") ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd")
+  );
+}
+
+export function isPrivateOrInternalHost(hostname: string): boolean {
+  const host = normalizeHostname(hostname);
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host === "metadata.google.internal" ||
+    isPrivateOrInternalAddress(host)
+  );
+}
+
+async function assertPublicHttpUrl(url: string, resolver: DnsResolver = DEFAULT_DNS_RESOLVER): Promise<URL> {
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Only HTTP(S) URLs are allowed");
   }
-  const host = parsed.hostname.toLowerCase();
-  if (
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "0.0.0.0" ||
-    host.startsWith("10.") ||
-    host.startsWith("192.168.") ||
-    host.startsWith("172.") ||
-    host.endsWith(".local") ||
-    host === "[::1]" ||
-    host === "metadata.google.internal"
-  ) {
+
+  const host = normalizeHostname(parsed.hostname);
+  if (isPrivateOrInternalHost(host)) {
     throw new Error("Private/internal URLs are blocked");
   }
 
-  const res = await fetch(url, {
+  if (isIP(host) === 0) {
+    const addresses = await resolver(host);
+    if (addresses.length === 0 || addresses.some(({ address }) => isPrivateOrInternalAddress(address))) {
+      throw new Error("Private/internal URLs are blocked");
+    }
+  }
+
+  return parsed;
+}
+
+async function fetchValidated(url: string, redirectCount = 0): Promise<Response> {
+  const parsed = await assertPublicHttpUrl(url);
+  const res = await fetch(parsed.toString(), {
     headers: {
       "User-Agent": "SentIQGPT/2.0 (content extractor)",
       "Accept": "text/html",
     },
-    redirect: "follow",
+    redirect: "manual",
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
+
+  if ([301, 302, 303, 307, 308].includes(res.status)) {
+    if (redirectCount >= MAX_REDIRECTS) {
+      throw new Error("Too many redirects");
+    }
+    const location = res.headers.get("location");
+    if (!location) throw new Error("Redirect missing location");
+    const redirectedUrl = new URL(location, parsed).toString();
+    await assertPublicHttpUrl(redirectedUrl);
+    return fetchValidated(redirectedUrl, redirectCount + 1);
+  }
+
+  return res;
+}
+
+async function fetchAndExtract(url: string, maxChars: number): Promise<string> {
+  const res = await fetchValidated(url);
 
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
