@@ -12,6 +12,13 @@ export const ChatRequestSchema = z.object({
   conversation_id: z.string().min(1).optional(),
   clientRequestId: z.string().min(1).max(120).optional(),
   client_request_id: z.string().min(1).max(120).optional(),
+  clarification_response: z.object({
+    clarification_id: z.string().min(1).max(120).optional(),
+    original_message: z.string().min(1).max(10000).optional(),
+    answers: z.array(z.string().min(1).max(1000)).max(2).optional(),
+    source: z.enum(["option", "custom"]).optional(),
+    selected_option_id: z.string().min(1).max(120).optional(),
+  }).optional(),
   context: z.object({
     recent_messages: z.array(z.object({
       role: z.enum(["user", "assistant"]),

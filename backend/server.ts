@@ -89,6 +89,13 @@ import {
 
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
+import {
+  DEFAULT_MAX_CLARIFICATION_TURNS,
+  formatClarificationText,
+  maybeCreateClarification,
+  resolveClarificationInput,
+  type ClarificationPayload,
+} from "./orchestrator/intentClarifier";
 
 import { detectCodeQuery, isBufferedReasoningQuery, isMathQuery, selectModelForPrompt } from "./orchestrator/modelRouter";
 import { detectExplicitMemoryWriteIntent, classifyQueryType, shouldForceWebSearch } from "./orchestrator/queryClassifier";
@@ -360,6 +367,54 @@ function logStreamMetrics(metrics: StreamMetrics, reason: string): void {
 const GUEST_MODEL_OVERRIDE = "gemini-search";
 const GUEST_MATH_MAX_OUTPUT_TOKENS = 2600;
 const GUEST_MATH_EMPTY_FALLBACK = "Sorry, I couldn't complete the math response. Please try again.";
+
+function buildClarificationApiResponse(payload: ClarificationPayload) {
+  const reply = formatClarificationText(payload);
+  return {
+    route: "clarification",
+    answer: reply,
+    reply,
+    thinking: undefined,
+    disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+    image: undefined,
+    chart: undefined,
+    memory: { stored: false },
+    web_search: undefined,
+    clarification: payload,
+    confidence: 0.9,
+    model_used: payload.model_used,
+    searched: false,
+  };
+}
+
+async function maybeCreateChatClarification(args: {
+  readonly userMessage: string;
+  readonly context?: {
+    readonly file_references?: readonly { filename: string; extractedText: string }[];
+    readonly image_attachments?: readonly ImageAttachment[];
+  };
+  readonly userId: string;
+  readonly isGuest: boolean;
+  readonly currentTurn: number;
+  readonly webSearch?: boolean;
+}): Promise<ReturnType<typeof buildClarificationApiResponse> | null> {
+  const fileReferences = args.context?.file_references ?? [];
+  const imageAttachments = args.context?.image_attachments ?? [];
+  const payload = await maybeCreateClarification({
+    userMessage: args.userMessage,
+    userId: args.userId,
+    isGuest: args.isGuest,
+    hasFile: fileReferences.length > 0,
+    hasImage: imageAttachments.length > 0,
+    fileNames: fileReferences.map((file) => file.filename),
+    fileContent: fileReferences.map((file) => file.extractedText).join("\n"),
+    webSearch: args.webSearch === true,
+    currentTurn: args.currentTurn,
+    maxTurns: DEFAULT_MAX_CLARIFICATION_TURNS,
+    forceModelOverride: args.isGuest ? GUEST_MODEL_OVERRIDE : undefined,
+  });
+  return payload ? buildClarificationApiResponse(payload) : null;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CAPACITY LIMITS (enforced per user to keep DBs under 95% usage)
@@ -1469,17 +1524,22 @@ app.post(
       parsed.data.context?.recent_messages ?? [],
     );
     const { sub: userId, isGuest } = getRequestUser(req);
+    const resolvedClarification = resolveClarificationInput(
+      parsed.data.message,
+      parsed.data.clarification_response,
+    );
+    const effectiveUserMessage = resolvedClarification.effectiveMessage;
     const requestedConversationId = getOptionalUuid(parsed.data.conversationId, "conversationId", {
       ignoreInvalid: isGuest,
     });
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
-    const isReasoningQuery = isBufferedReasoningQuery(parsed.data.message);
-    const isMathReasoningQuery = !detectCodeQuery(parsed.data.message) && isMathQuery(parsed.data.message);
+    const isReasoningQuery = isBufferedReasoningQuery(effectiveUserMessage);
+    const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && isMathQuery(effectiveUserMessage);
     const isLogicReasoningQuery = isReasoningQuery && !isMathReasoningQuery;
 
     // Prompt injection detection
-    if (detectPromptInjection(parsed.data.message)) {
+    if (detectPromptInjection(parsed.data.message) || detectPromptInjection(effectiveUserMessage)) {
       res.status(400).json({ error: "Message rejected by safety filter." });
       return;
     }
@@ -1499,6 +1559,7 @@ app.post(
     if (isGuest && hasExplicitWebSearchMode) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
+        clarificationResponse: parsed.data.clarification_response,
         context: {
           recent_messages: normalizedRecentMessages,
           memories: [],
@@ -1519,6 +1580,7 @@ app.post(
         chart: result.chart,
         memory: result.memory,
         web_search: result.web_search,
+        clarification: result.clarification,
         confidence: result.confidence,
         model_used: result.model_used,
         searched: result.searched === true,
@@ -1533,12 +1595,28 @@ app.post(
         file_references: orcFileRefs,
         image_attachments: orcImageAttachments,
         web_search_mode: webSearchMode,
-        userMessage: parsed.data.message,
+        userMessage: effectiveUserMessage,
       }, undefined, userId);
+
+      const guestClarification = await maybeCreateChatClarification({
+        userMessage: effectiveUserMessage,
+        context: {
+          file_references: orcFileRefs,
+          image_attachments: orcImageAttachments,
+        },
+        userId,
+        isGuest,
+        currentTurn: resolvedClarification.turn,
+        webSearch: false,
+      });
+      if (guestClarification) {
+        res.json(guestClarification);
+        return;
+      }
 
       if (isMathReasoningQuery) {
         const call = buildChatPrompt({
-          userMessage: parsed.data.message,
+          userMessage: effectiveUserMessage,
           recentMessages: guestContext.recentMessages,
           memories: [],
           fileReferences: guestContext.fileReferences,
@@ -1573,7 +1651,7 @@ app.post(
       }
 
       const guestResult = await handleChat({
-        userMessage: parsed.data.message,
+        userMessage: effectiveUserMessage,
         recentMessages: guestContext.recentMessages,
         memories: [],
         fileReferences: guestContext.fileReferences,
@@ -1701,6 +1779,43 @@ app.post(
     }
 
     if (isLogicReasoningQuery && !hasExplicitWebSearchMode) {
+      const logicClarification = await maybeCreateChatClarification({
+        userMessage: effectiveUserMessage,
+        context: {
+          file_references: orcFileRefs,
+          image_attachments: orcImageAttachments,
+        },
+        userId,
+        isGuest,
+        currentTurn: resolvedClarification.turn,
+      });
+      if (logicClarification) {
+        if (userDb && activeConversationId) {
+          try {
+            await insertConversationMessageOrThrow(
+              userDb,
+              userId,
+              activeConversationId,
+              "assistant",
+              logicClarification.reply ?? "",
+              "chat",
+            );
+            assistantMessagePersisted = true;
+          } catch (assistantPersistError) {
+            sync.persisted = false;
+            sync.deferred = true;
+            logDbFailure(
+              "chat.assistant-message.persist",
+              userId,
+              assistantPersistError instanceof Error ? assistantPersistError : new Error(String(assistantPersistError)),
+              { conversationId: activeConversationId },
+            );
+          }
+        }
+        res.json({ ...logicClarification, sync });
+        return;
+      }
+
       const reasoningContext = await buildContext({
         recent_messages: normalizedRecentMessages,
         memories: parsed.data.context?.memories,
@@ -1708,12 +1823,12 @@ app.post(
         image_attachments: orcImageAttachments,
         trustedProfile,
         web_search_mode: webSearchMode,
-        userMessage: parsed.data.message,
+        userMessage: effectiveUserMessage,
         conversationId: activeConversationId || undefined,
       }, userDb, userId);
 
       const result = await handleChat({
-        userMessage: parsed.data.message,
+        userMessage: effectiveUserMessage,
         recentMessages: reasoningContext.recentMessages,
         memories: reasoningContext.memories,
         fileReferences: reasoningContext.fileReferences,
@@ -1797,6 +1912,7 @@ app.post(
 
     const result = await orchestrate({
       userMessage: parsed.data.message,
+      clarificationResponse: parsed.data.clarification_response,
       context: {
         recent_messages: normalizedRecentMessages,
         memories: parsed.data.context?.memories,
@@ -1938,6 +2054,7 @@ app.post(
       chart: result.chart,
       memory: responseMemory,
       web_search: result.web_search,
+      clarification: result.clarification,
       confidence: result.confidence,
       model_used: result.model_used,
       searched: result.searched === true,
@@ -2079,16 +2196,26 @@ app.post(
       parsed.data.context?.recent_messages ?? [],
     );
     const { sub: userId, isGuest } = getRequestUser(req);
+    const resolvedClarification = resolveClarificationInput(
+      parsed.data.message,
+      parsed.data.clarification_response,
+    );
+    const effectiveUserMessage = resolvedClarification.effectiveMessage;
+    if (detectPromptInjection(effectiveUserMessage)) {
+      res.status(400).json({ error: "Message rejected by safety filter." });
+      return;
+    }
     const requestedConversationId = getOptionalUuid(parsed.data.conversationId, "conversationId", {
       ignoreInvalid: isGuest,
     });
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
-    const isBufferedReasoning = isBufferedReasoningQuery(parsed.data.message);
-    const isMathReasoningQuery = !detectCodeQuery(parsed.data.message) && isMathQuery(parsed.data.message);
+    const isBufferedReasoning = isBufferedReasoningQuery(effectiveUserMessage);
+    const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && isMathQuery(effectiveUserMessage);
     if (isGuest && hasExplicitWebSearchMode) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
+        clarificationResponse: parsed.data.clarification_response,
         context: {
           recent_messages: normalizedRecentMessages,
           memories: [],
@@ -2108,11 +2235,29 @@ app.post(
         chart: result.chart,
         memory: result.memory,
         web_search: result.web_search,
+        clarification: result.clarification,
         confidence: result.confidence,
         model_used: result.model_used,
         searched: result.searched === true,
       });
       return;
+    }
+
+    if (isGuest) {
+      const guestClarification = await maybeCreateChatClarification({
+        userMessage: effectiveUserMessage,
+        context: {
+          file_references: parsed.data.context?.file_references,
+          image_attachments: parsed.data.context?.image_attachments,
+        },
+        userId,
+        isGuest,
+        currentTurn: resolvedClarification.turn,
+      });
+      if (guestClarification) {
+        res.json(guestClarification);
+        return;
+      }
     }
 
     if (isGuest) {
@@ -2141,10 +2286,10 @@ app.post(
               file_references: parsed.data.context?.file_references,
               image_attachments: parsed.data.context?.image_attachments,
               web_search_mode: webSearchMode,
-              userMessage: parsed.data.message,
+              userMessage: effectiveUserMessage,
             }, undefined, userId);
             const result = await solveGuestMathWithGemini({
-              userMessage: parsed.data.message,
+              userMessage: effectiveUserMessage,
               userId,
               recentMessages: guestMathContext.recentMessages,
               fileReferences: guestMathContext.fileReferences,
@@ -2167,11 +2312,11 @@ app.post(
             file_references: parsed.data.context?.file_references,
             image_attachments: parsed.data.context?.image_attachments,
             web_search_mode: webSearchMode,
-            userMessage: parsed.data.message,
+            userMessage: effectiveUserMessage,
           }, undefined, userId);
 
           const result = await handleChat({
-            userMessage: parsed.data.message,
+            userMessage: effectiveUserMessage,
             recentMessages: guestReasoningContext.recentMessages,
             memories: [],
             fileReferences: guestReasoningContext.fileReferences,
@@ -2211,13 +2356,13 @@ app.post(
         file_references: fileRefs,
         image_attachments: parsed.data.context?.image_attachments,
         web_search_mode: webSearchMode,
-        userMessage: parsed.data.message,
+        userMessage: effectiveUserMessage,
       }, undefined, userId);
 
       const guestFastPath = !guestCtx.hasFileContext
-        && parsed.data.message.length <= 280
-        && !detectCodeQuery(parsed.data.message)
-        && !isMathQuery(parsed.data.message);
+        && effectiveUserMessage.length <= 280
+        && !detectCodeQuery(effectiveUserMessage)
+        && !isMathQuery(effectiveUserMessage);
       const streamMetrics = createStreamMetrics(
         "chat.stream.guest.general",
         requestStart,
@@ -2232,7 +2377,7 @@ app.post(
         if (isMathReasoningQuery) {
           await writeSseJson({ type: "route", route: "math_reasoning" });
           const result = await solveGuestMathWithGemini({
-            userMessage: parsed.data.message,
+            userMessage: effectiveUserMessage,
             userId,
             recentMessages: guestCtx.recentMessages,
             fileReferences: guestCtx.fileReferences,
@@ -2251,7 +2396,7 @@ app.post(
         }
 
         const call = buildChatPrompt({
-          userMessage: parsed.data.message,
+          userMessage: effectiveUserMessage,
           recentMessages: guestCtx.recentMessages,
           memories: [],
           fileReferences: guestCtx.fileReferences,
@@ -2511,6 +2656,7 @@ app.post(
       try {
         const result = await orchestrate({
           userMessage: parsed.data.message,
+          clarificationResponse: parsed.data.clarification_response,
           context: {
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
@@ -2539,6 +2685,7 @@ app.post(
           chart: result.chart,
           memory: result.memory,
           web_search: result.web_search,
+          clarification: result.clarification,
           confidence: result.confidence,
           model_used: result.model_used,
           searched: result.searched === true,
@@ -2552,11 +2699,12 @@ app.post(
       return;
     }
 
-    if (detectExplicitMemoryWriteIntent(parsed.data.message)) {
+    if (detectExplicitMemoryWriteIntent(effectiveUserMessage)) {
       console.log(`[Stream] explicit memory write detected — redirecting to orchestrator`);
       try {
         const result = await orchestrate({
           userMessage: parsed.data.message,
+          clarificationResponse: parsed.data.clarification_response,
           context: {
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
@@ -2585,6 +2733,7 @@ app.post(
           chart: result.chart,
           memory: result.memory,
           web_search: result.web_search,
+          clarification: result.clarification,
           confidence: result.confidence,
           model_used: result.model_used,
           searched: result.searched === true,
@@ -2598,11 +2747,12 @@ app.post(
       return;
     }
 
-    if (isChartRequest(parsed.data.message)) {
+    if (isChartRequest(effectiveUserMessage)) {
       console.log(`[Stream] chart request detected — redirecting to orchestrator`);
       try {
         const result = await orchestrate({
           userMessage: parsed.data.message,
+          clarificationResponse: parsed.data.clarification_response,
           context: {
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
@@ -2632,6 +2782,7 @@ app.post(
           chart: result.chart,
           memory: result.memory,
           web_search: result.web_search,
+          clarification: result.clarification,
           confidence: result.confidence,
           model_used: result.model_used,
           searched: result.searched === true,
@@ -2648,6 +2799,31 @@ app.post(
     // ── Safety gate: math queries use the direct math pipeline via orchestrator ──
     // Math queries need the direct openai-large pipeline, which
     // is only available through the orchestrator.  Redirect like chart requests.
+    const reasoningClarification = isBufferedReasoning
+      ? await maybeCreateChatClarification({
+        userMessage: effectiveUserMessage,
+        context: {
+          file_references: parsed.data.context?.file_references,
+          image_attachments: parsed.data.context?.image_attachments,
+        },
+        userId,
+        isGuest,
+        currentTurn: resolvedClarification.turn,
+        webSearch: false,
+      })
+      : null;
+    if (reasoningClarification) {
+      if (reasoningClarification.reply) {
+        await persistAssistantMessage(reasoningClarification.reply);
+      }
+      reportStreamMessageGap(Boolean(reasoningClarification.reply), "clarification.reasoning");
+      res.json({
+        ...reasoningClarification,
+        sync,
+      });
+      return;
+    }
+
     if (isBufferedReasoning) {
       console.log(`[Stream] buffered reasoning query detected - streaming SSE response`);
       res.setHeader("Content-Type", "text/event-stream");
@@ -2667,6 +2843,7 @@ app.post(
         if (isMathReasoningQuery) {
           const result = await orchestrate({
             userMessage: parsed.data.message,
+            clarificationResponse: parsed.data.clarification_response,
             context: {
               recent_messages: normalizedRecentMessages,
               memories: parsed.data.context?.memories,
@@ -2683,7 +2860,6 @@ app.post(
             await persistAssistantMessage(result.reply);
           }
           await persistStoredMemory(result.memory);
-          finalizeMemoryUpdateCopy(result);
           finalizeMemoryUpdateCopy(result);
           reportStreamMessageGap(Boolean(result.reply), "reasoning.math");
           if (!clientDisconnected) {
@@ -2702,12 +2878,12 @@ app.post(
           image_attachments: parsed.data.context?.image_attachments,
           trustedProfile,
           web_search_mode: webSearchMode,
-          userMessage: parsed.data.message,
+          userMessage: effectiveUserMessage,
           conversationId: activeConversationId || undefined,
         }, userDb, userId);
 
         const result = await handleChat({
-          userMessage: parsed.data.message,
+          userMessage: effectiveUserMessage,
           recentMessages: reasoningContext.recentMessages,
           memories: reasoningContext.memories,
           fileReferences: reasoningContext.fileReferences,
@@ -2741,18 +2917,19 @@ app.post(
     // ── Safety gate: web search queries require real-time information ──
     // If the query requires web search (e.g., "2026 NVIDIA news", "latest stock price"),
     // redirect to orchestrator which handles the Tavily pipeline.
-    const queryClassification = classifyQueryType(parsed.data.message);
-    const forceWebSearch = shouldForceWebSearch(parsed.data.message);
+    const queryClassification = classifyQueryType(effectiveUserMessage);
+    const forceWebSearch = shouldForceWebSearch(effectiveUserMessage);
     const tavilyAvailable = isTavilyAvailable();
     
     // Diagnostic logging for web search routing
-    console.log(`[WebSearchCheck] query="${parsed.data.message.slice(0, 50)}..." needsWebSearch=${queryClassification.needsWebSearch} forceWebSearch=${forceWebSearch} tavilyAvailable=${tavilyAvailable} rule=${queryClassification.matchedRule} category=${queryClassification.category}`);
+    console.log(`[WebSearchCheck] query="${effectiveUserMessage.slice(0, 50)}..." needsWebSearch=${queryClassification.needsWebSearch} forceWebSearch=${forceWebSearch} tavilyAvailable=${tavilyAvailable} rule=${queryClassification.matchedRule} category=${queryClassification.category}`);
     
     if ((queryClassification.needsWebSearch || forceWebSearch) && tavilyAvailable) {
       console.log(`[Stream] web search detected — redirecting to orchestrator (rule: ${queryClassification.matchedRule}, category: ${queryClassification.category})`);
       try {
         const result = await orchestrate({
           userMessage: parsed.data.message,
+          clarificationResponse: parsed.data.clarification_response,
           context: {
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
@@ -2783,6 +2960,29 @@ app.post(
       return;
     }
 
+    const directClarification = await maybeCreateChatClarification({
+      userMessage: effectiveUserMessage,
+      context: {
+        file_references: parsed.data.context?.file_references,
+        image_attachments: parsed.data.context?.image_attachments,
+      },
+      userId,
+      isGuest,
+      currentTurn: resolvedClarification.turn,
+      webSearch: false,
+    });
+    if (directClarification) {
+      if (directClarification.reply) {
+        await persistAssistantMessage(directClarification.reply);
+      }
+      reportStreamMessageGap(Boolean(directClarification.reply), "clarification");
+      res.json({
+        ...directClarification,
+        sync,
+      });
+      return;
+    }
+
     const requestStart = Date.now();
     console.log(`[Latency] user query received`);
 
@@ -2805,16 +3005,16 @@ app.post(
 
     const recentMessageCount = normalizedRecentMessages.length;
     const lowComplexity =
-      parsed.data.message.length <= 280 &&
+      effectiveUserMessage.length <= 280 &&
       recentMessageCount <= 6 &&
-      !detectCodeQuery(parsed.data.message) &&
-      !isMathQuery(parsed.data.message);
+      !detectCodeQuery(effectiveUserMessage) &&
+      !isMathQuery(effectiveUserMessage);
 
     // Extract file names and content for coding PDF detection
     const fileNames = hasFile ? fileRefs.map((f: { filename?: string }) => f.filename || "") : undefined;
     const fileContent = hasFile ? fileRefs.map((f: { extractedText?: string }) => f.extractedText || "").join("\n") : undefined;
 
-    const modelOverride = selectModelForPrompt(parsed.data.message, undefined, { 
+    const modelOverride = selectModelForPrompt(effectiveUserMessage, undefined, {
       hasImage, 
       hasFile,
       fileNames,
@@ -2844,7 +3044,7 @@ app.post(
       image_attachments: parsed.data.context?.image_attachments,
       trustedProfile,
       web_search_mode: webSearchMode,
-      userMessage: parsed.data.message,
+      userMessage: effectiveUserMessage,
       conversationId: activeConversationId || undefined,
     }, userDb, userId);
 
@@ -2859,7 +3059,7 @@ app.post(
     );
     let stopHeartbeat = () => {};
     const call = buildChatPrompt({
-      userMessage: parsed.data.message,
+      userMessage: effectiveUserMessage,
       recentMessages: ctx.recentMessages,
       memories: ctx.memories,
       fileReferences: ctx.fileReferences,
@@ -3529,6 +3729,7 @@ app.post(
       image: result.image,
       chart: result.chart,
       memory: result.memory,
+      clarification: result.clarification,
       confidence: result.confidence,
     });
   }),

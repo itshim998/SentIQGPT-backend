@@ -27,7 +27,15 @@ import { buildContext } from "../context/contextBuilder";
 import { planTask } from "./planner";
 import { executePlan } from "./toolExecutor";
 import { detectCodeQuery, isMathQuery } from "./modelRouter";
-import { detectExplicitMemoryWriteIntent } from "./queryClassifier";
+import { classifyQueryType, detectExplicitMemoryWriteIntent, shouldForceWebSearch } from "./queryClassifier";
+import {
+  DEFAULT_MAX_CLARIFICATION_TURNS,
+  formatClarificationText,
+  maybeCreateClarification,
+  resolveClarificationInput,
+  type ClarificationPayload,
+  type ClarificationResponsePayload,
+} from "./intentClarifier";
 import { evaluateAnswer } from "../reflection/answerCritic";
 import { improveAnswer } from "../reflection/answerImprover";
 import type { RawMessageContext } from "../context/contextBuilder";
@@ -43,6 +51,7 @@ import type { SearchResult } from "../tools/webSearch/types";
 export interface OrchestratorRequest {
   readonly userMessage: string;
   readonly context?: RawMessageContext;
+  readonly clarificationResponse?: ClarificationResponsePayload;
   /** Skip reflection loop for faster response (default: false) */
   readonly skipReflection?: boolean;
 }
@@ -103,6 +112,8 @@ export interface OrchestratorResponse {
     queriesUsed: number;
     provider?: string;
   };
+  /** Intent clarification payload for interactive follow-up UI */
+  readonly clarification?: ClarificationPayload;
   /** Self-reflection evaluation (if run) */
   readonly reflection?: {
     score: number;
@@ -180,6 +191,44 @@ function computeConfidence(
   });
 
   return confidence;
+}
+
+function buildClarificationResponse(payload: ClarificationPayload): OrchestratorResponse {
+  const reply = formatClarificationText(payload);
+  return {
+    route: "clarification" as DetectedTool,
+    answer: reply,
+    reply,
+    disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+    memory: { stored: false },
+    clarification: payload,
+    confidence: 0.9,
+    model_used: payload.model_used,
+    searched: false,
+  };
+}
+
+async function maybeClarify(
+  userMessage: string,
+  rawContext: RawMessageContext | undefined,
+  currentTurn: number,
+  options: { webSearch?: boolean } = {},
+): Promise<OrchestratorResponse | null> {
+  const fileReferences = rawContext?.file_references ?? [];
+  const imageAttachments = rawContext?.image_attachments ?? [];
+  const clarification = await maybeCreateClarification({
+    userMessage,
+    userId: rawContext?.userId,
+    isGuest: rawContext?.userId === "guest",
+    hasFile: fileReferences.length > 0,
+    hasImage: imageAttachments.length > 0,
+    fileNames: fileReferences.map((file) => file.filename),
+    fileContent: fileReferences.map((file) => file.extractedText).join("\n"),
+    webSearch: options.webSearch === true,
+    currentTurn,
+    maxTurns: DEFAULT_MAX_CLARIFICATION_TURNS,
+  });
+  return clarification ? buildClarificationResponse(clarification) : null;
 }
 
 export function finalizeReply(
@@ -322,7 +371,12 @@ export async function orchestrate(
 async function _orchestrateInner(
   request: OrchestratorRequest,
 ): Promise<OrchestratorResponse> {
-  const { userMessage, context: rawContext, skipReflection = false } = request;
+  const { context: rawContext, skipReflection = false } = request;
+  const resolvedClarification = resolveClarificationInput(
+    request.userMessage,
+    request.clarificationResponse,
+  );
+  const userMessage = resolvedClarification.effectiveMessage;
 
   console.log(`[ORCHESTRATOR] Processing: "${userMessage.slice(0, 80)}..." (skipReflection=${skipReflection})`);
 
@@ -358,6 +412,22 @@ async function _orchestrateInner(
       memory: merged.memory,
       confidence,
     };
+  }
+
+  const queryClassification = classifyQueryType(userMessage);
+  const maybeWebSearchRequest = Boolean(rawContext?.web_search_mode)
+    || queryClassification.needsWebSearch
+    || shouldForceWebSearch(userMessage);
+
+  if (!maybeWebSearchRequest) {
+    const clarificationResponse = await maybeClarify(
+      userMessage,
+      rawContext,
+      resolvedClarification.turn,
+    );
+    if (clarificationResponse) {
+      return clarificationResponse;
+    }
   }
 
   const isCodingQuery = detectCodeQuery(userMessage);
@@ -411,7 +481,27 @@ async function _orchestrateInner(
 
   // 2. Execute the plan
   let finalPlan = plan;
-  const execution = await executePlan(finalPlan.steps, ctx);
+  const firstStep = finalPlan.steps[0];
+  const isWebSearchPlan = firstStep?.tool === "web_search";
+  let execution: Awaited<ReturnType<typeof executePlan>>;
+  if (isWebSearchPlan) {
+    const executionPromise = executePlan(finalPlan.steps, ctx);
+    const clarificationResponse = await maybeClarify(
+      userMessage,
+      rawContext,
+      resolvedClarification.turn,
+      { webSearch: true },
+    );
+    if (clarificationResponse) {
+      void executionPromise.catch((error) => {
+        console.warn(`[ORCHESTRATOR] discarded WebSurf result failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+      return clarificationResponse;
+    }
+    execution = await executionPromise;
+  } else {
+    execution = await executePlan(finalPlan.steps, ctx);
+  }
 
   // 3. Merge step results into a single response
   const merged = mergeResults(execution.steps, { stored: false });

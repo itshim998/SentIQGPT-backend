@@ -29,7 +29,8 @@ export type DetectedTool =
   | "memory_update"
   | "chart_generation"
   | "math_reasoning"
-  | "web_search";
+  | "web_search"
+  | "clarification";
 
 const VALID_TOOLS: ReadonlySet<string> = new Set<DetectedTool>([
   "normal_chat",

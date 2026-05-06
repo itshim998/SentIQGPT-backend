@@ -15,6 +15,7 @@
     "test:workspace": "ts-node --project tsconfig.backend.json backend/testWorkspaceContinuity.ts",
     "test:pipeline": "ts-node --project tsconfig.backend.json backend/testPipeline.ts",
     "test:web-search": "ts-node --project tsconfig.backend.json backend/testWebSearch.ts",
+    "test:clarification": "ts-node --project tsconfig.backend.json backend/testIntentClarification.ts",
     "test:improvements": "ts-node --project tsconfig.backend.json backend/testImprovementPlan.ts",
     "test:pass2-reliability": "ts-node --project tsconfig.backend.json backend/testPass2Reliability.ts",
     "test:pass3-memory": "ts-node --project tsconfig.backend.json backend/testPass3MemoryReliability.ts",
