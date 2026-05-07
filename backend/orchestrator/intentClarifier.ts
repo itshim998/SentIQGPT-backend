@@ -185,6 +185,31 @@ function hasLikelyPortfolioName(message: string, trustedProfileName?: string): b
     || (hasTrustedProfile && /\bportfolio\s+(?:for|of)\s+(?:me|myself)\b/i.test(message));
 }
 
+function looksLikeHumanName(answer: string): boolean {
+  const normalized = normalizeAnswer(answer);
+  if (!normalized || normalized.length > 80) return false;
+  if (!/^[A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3}$/.test(normalized)) return false;
+  if (/\b(?:portfolio|website|page|blog|business|store|e-?commerce|app|tool|script|code|html|css|javascript|typescript|python)\b/i.test(normalized)) {
+    return false;
+  }
+  return true;
+}
+
+function hasPreviousPortfolioName(args: ClarificationContext): boolean {
+  return normalizeAnswerList(args.previousAnswers ?? [], DEFAULT_MAX_CLARIFICATION_TURNS)
+    .some((answer) => looksLikeHumanName(answer));
+}
+
+function hasPortfolioIntent(message: string, args: ClarificationContext): boolean {
+  if (/\bportfolio\b/i.test(message)) return true;
+  return normalizeAnswerList(args.previousAnswers ?? [], DEFAULT_MAX_CLARIFICATION_TURNS)
+    .some((answer) => /\bportfolio\b/i.test(answer));
+}
+
+function hasWebsiteIntent(message: string): boolean {
+  return /\b(?:website|web\s*site|webpage|web\s+page|landing\s+page|html\s+page)\b/i.test(message);
+}
+
 function isLatestNewsWithoutScope(message: string): boolean {
   if (!/\b(?:latest|recent|current)\b[\s\S]{0,40}\b(?:news|updates?)\b/i.test(message)) return false;
   if (CLEAR_WEB_SCOPE_PATTERNS.some((pattern) => pattern.test(message))) return false;
@@ -200,14 +225,17 @@ function isClearMathRequest(message: string): boolean {
 }
 
 function isCodingClarificationRequest(message: string): boolean {
+  if (/^\s*(?:code|coding)\s*\.?\s*$/i.test(message)) return true;
   if (detectCodeQuery(message)) return true;
-  return /\b(?:code|build|create|make|write|develop|debug|fix)\b[\s\S]{0,80}\b(?:html|css|javascript|typescript|python|java|c\+\+|react|api|component|program|app|website|page)\b/i.test(message)
+  return /\b(?:code|build|create|make|design|write|develop|debug|fix)\b[\s\S]{0,80}\b(?:html|css|javascript|typescript|python|java|c\+\+|react|api|component|program|app|website|page)\b/i.test(message)
     || /\b(?:html|css|javascript|typescript|python|java|c\+\+|react)\b[\s\S]{0,80}\b(?:code|app|website|page|component|program)\b/i.test(message);
 }
 
 export function getRuleBasedClarification(args: ClarificationContext): ClarificationDecision | null {
   const message = getEvaluationMessage(args).trim();
   if (!message) return null;
+  const previousAnswers = normalizeAnswerList(args.previousAnswers ?? [], DEFAULT_MAX_CLARIFICATION_TURNS);
+  const wordCount = message.split(/\s+/).filter(Boolean).length;
 
   const queryClassification = classifyQueryType(message);
   if (queryClassification.category === "image_generation") return null;
@@ -220,11 +248,26 @@ export function getRuleBasedClarification(args: ClarificationContext): Clarifica
     return null;
   }
 
-  if (detectCodeQuery(message) && /\bportfolio\b/i.test(message) && !hasLikelyPortfolioName(message, args.trustedProfileName)) {
+  if (hasPortfolioIntent(message, args)
+    && !hasLikelyPortfolioName(message, args.trustedProfileName)
+    && !hasPreviousPortfolioName(args)) {
     return makeDecision(
       "Whose name should be in the portfolio?",
       [],
       "portfolio_name_missing",
+    );
+  }
+
+  if (/^\s*(?:code|coding)\s*\.?\s*$/i.test(args.userMessage)) {
+    return makeDecision(
+      "What kind of code do you want to create?",
+      [
+        option("website_page", "Website or page", "Best for HTML/CSS, landing pages, or portfolio-style work."),
+        option("app_tool", "App or tool", "Best for something interactive or useful."),
+        option("script_automation", "Script or automation", "Best for a small program that performs a task."),
+        option("fix_debug", "Fix or improve code", "Best when you already have code or an error."),
+      ],
+      "bare_coding_request",
     );
   }
 
@@ -236,6 +279,22 @@ export function getRuleBasedClarification(args: ClarificationContext): Clarifica
         option("portfolio", "Simple portfolio page", "Good when you want a usable starter website."),
       ],
       "short_html_request",
+    );
+  }
+
+  if (hasWebsiteIntent(message)
+    && previousAnswers.length === 0
+    && /\b(?:make|create|build|design|write|develop|code)\b/i.test(message)
+    && wordCount <= 8) {
+    return makeDecision(
+      "What kind of website would you like to design?",
+      [
+        option("personal_portfolio", "Personal portfolio", "Showcase work, skills, and contact details."),
+        option("business_website", "Business website", "Promote a company, service, or brand."),
+        option("blog", "Blog", "Publish articles, updates, or ideas."),
+        option("ecommerce_store", "E-commerce store", "Present products and shopping sections."),
+      ],
+      "website_type_missing",
     );
   }
 
@@ -264,7 +323,11 @@ export function getRuleBasedClarification(args: ClarificationContext): Clarifica
     );
   }
 
-  if (detectCodeQuery(message) && /\b(?:code|build|create|make|write)\b/i.test(message) && message.split(/\s+/).length <= 5) {
+  if (previousAnswers.length === 0
+    && !hasPortfolioIntent(message, args)
+    && detectCodeQuery(message)
+    && /\b(?:code|build|create|make|write)\b/i.test(message)
+    && wordCount <= 5) {
     return makeDecision(
       "What kind of code should I create?",
       [
@@ -276,7 +339,13 @@ export function getRuleBasedClarification(args: ClarificationContext): Clarifica
     );
   }
 
-  if (!DIRECT_ANSWER_PATTERNS.some((pattern) => pattern.test(message)) && VAGUE_ACTION_PATTERNS.some((pattern) => pattern.test(message))) {
+  const isCodingOrWebsiteFlow = isCodingClarificationRequest(message)
+    || hasWebsiteIntent(message)
+    || hasPortfolioIntent(message, args)
+    || previousAnswers.some((answer) => /\b(?:portfolio|website|page|app|tool|script|automation|debug|fix)\b/i.test(answer));
+  if (!isCodingOrWebsiteFlow
+    && !DIRECT_ANSWER_PATTERNS.some((pattern) => pattern.test(message))
+    && VAGUE_ACTION_PATTERNS.some((pattern) => pattern.test(message))) {
     return makeDecision(
       "What outcome would help you most?",
       [
@@ -299,6 +368,34 @@ export function getRuleBasedClarification(args: ClarificationContext): Clarifica
   }
 
   return null;
+}
+
+function isGenericOutcomeDecision(decision: ClarificationDecision | null): boolean {
+  if (!decision?.needsClarification) return false;
+  const question = normalizeAnswer(decision.question).toLowerCase();
+  const labels = (decision.options ?? []).map((item) => normalizeAnswer(item.label).toLowerCase()).join(" ");
+  return /what outcome would help you most/.test(question)
+    || /\bconcise answer\b/.test(labels)
+    || /\bdetailed explanation\b/.test(labels);
+}
+
+function shouldPreferFallbackDecision(
+  args: ClarificationContext,
+  fallbackDecision: ClarificationDecision | null,
+  modelDecision: ClarificationDecision | null,
+): boolean {
+  if (!fallbackDecision?.needsClarification) return false;
+  if (fallbackDecision.reason === "portfolio_name_missing" && hasPreviousPortfolioName(args)) return false;
+  const highConfidenceReasons = new Set([
+    "portfolio_name_missing",
+    "bare_coding_request",
+    "short_html_request",
+    "website_type_missing",
+  ]);
+  if (highConfidenceReasons.has(fallbackDecision.reason || "") && isGenericOutcomeDecision(modelDecision)) {
+    return true;
+  }
+  return fallbackDecision.reason === "portfolio_name_missing" && modelDecision?.options?.length !== 0;
 }
 
 function shouldAskModel(args: ClarificationContext): boolean {
@@ -377,6 +474,9 @@ function buildIntentClarifyPrompt(
     "- Always allow the user to enter a custom answer in the message bar.",
     "- If a deterministic gate says ask, write a better user-facing version of that clarification.",
     "- Return zero options only when SentIQGPT cannot safely guess the answer, such as a missing name.",
+    "- Never ask generic answer-style questions such as concise vs detailed unless the user's request is specifically about response style.",
+    "- For coding, website, and portfolio flows, ask about the project/task details instead of answer length or explanation depth.",
+    "- If the user selected a portfolio and the name is missing, ask only whose name should be in the portfolio with zero options.",
     `- Current clarification turn: ${currentTurn}. Maximum turns: ${maxTurns}. If current turn is at the max, do not ask.`,
     "",
     "CONTEXT FLAGS:",
@@ -393,7 +493,9 @@ function buildIntentClarifyPrompt(
     '- "Fix this Python error." -> no clarification',
     "",
     "GOOD CLARIFICATION EXAMPLES:",
+    '- "Code." -> ask what kind of code/project; options should be coding-specific.',
     '- "Code in HTML." -> ask which HTML code type; options can include Hello World and Portfolio.',
+    '- Original "design a website", previous answer "Personal Portfolio" -> ask whose name should be in the portfolio; zero options.',
     '- "Latest news about cricket." -> ask area; one option can be Around the world.',
     '- "Make a portfolio." without a name -> ask whose name; zero options.',
     "",
@@ -489,8 +591,8 @@ export function formatClarificationText(payload: ClarificationPayload): string {
       const suffix = opt.description ? ` - ${opt.description}` : "";
       lines.push(`${index + 1}. ${opt.label}${suffix}`);
     });
+    lines.push("", payload.custom_answer_prompt);
   }
-  lines.push("", payload.custom_answer_prompt);
   return lines.join("\n");
 }
 
@@ -501,6 +603,7 @@ function createPayload(
   source: "model" | "fallback" = "model",
 ): ClarificationPayload | null {
   if (!decision.needsClarification || !decision.question) return null;
+  if (decision.reason === "portfolio_name_missing" && hasPreviousPortfolioName(args)) return null;
   const currentTurn = args.currentTurn ?? 0;
   const maxTurns = args.maxTurns ?? DEFAULT_MAX_CLARIFICATION_TURNS;
   if (currentTurn >= maxTurns) return null;
@@ -544,6 +647,9 @@ export async function maybeCreateClarification(
     });
     const modelDecision = parseModelDecision(result.text);
     if (modelDecision?.needsClarification) {
+      if (shouldPreferFallbackDecision(args, fallbackDecision, modelDecision)) {
+        return createPayload(args, fallbackDecision as ClarificationDecision, result.model_used ?? modelOverride, "fallback");
+      }
       return createPayload(args, modelDecision, result.model_used ?? modelOverride, "model");
     }
     if (fallbackDecision?.needsClarification) {

@@ -1,5 +1,6 @@
 import assert from "assert";
 import {
+  formatClarificationText,
   getRuleBasedClarification,
   maybeCreateClarification,
   resolveClarificationInput,
@@ -17,11 +18,68 @@ async function main(): Promise<void> {
   assert.equal(htmlClarification?.needsClarification, true, "short HTML coding request should clarify");
   assert.equal(htmlClarification?.options?.length, 2, "HTML clarification should offer two useful options");
 
+  const bareCodeClarification = getRuleBasedClarification({ userMessage: "Code" });
+  assert.equal(bareCodeClarification?.needsClarification, true, "bare coding request should clarify");
+  assert.match(bareCodeClarification?.question || "", /kind of code/i, "bare coding asks a coding-specific question");
+  assert.doesNotMatch(
+    (bareCodeClarification?.options || []).map((item) => item.label).join(" "),
+    /Concise answer|Detailed explanation/i,
+    "bare coding should not use generic answer-style MCQs",
+  );
+
   const portfolioClarification = getRuleBasedClarification({
     userMessage: "Code an HTML portfolio page.",
   });
   assert.equal(portfolioClarification?.needsClarification, true, "portfolio without name should clarify");
   assert.equal(portfolioClarification?.options?.length, 0, "portfolio name question should not invent MCQs");
+  assert.doesNotMatch(
+    formatClarificationText({
+      id: "portfolio-name",
+      original_message: "Code an HTML portfolio page.",
+      previous_answers: [],
+      question: portfolioClarification?.question || "Whose name should be in the portfolio?",
+      options: [],
+      allow_custom_answer: true,
+      custom_answer_prompt: "Or enter a custom answer in the message bar.",
+      turn: 1,
+      max_turns: 2,
+      source: "fallback",
+    }),
+    /custom answer/i,
+    "zero-option clarification fallback text should not include custom-answer helper",
+  );
+
+  const portfolioNameAnswered = getRuleBasedClarification({
+    userMessage: "Sounak Poddar",
+    originalMessage: "Create a portfolio",
+    previousAnswers: ["Sounak Poddar"],
+    currentTurn: 1,
+  });
+  assert.equal(portfolioNameAnswered, null, "direct portfolio-name answer should not trigger the same question again");
+
+  const websiteClarification = getRuleBasedClarification({ userMessage: "design a website" });
+  assert.equal(websiteClarification?.needsClarification, true, "vague website request should clarify website type");
+  assert.match(
+    (websiteClarification?.options || []).map((item) => item.label).join(" "),
+    /portfolio|business|blog/i,
+    "website clarification should offer website-specific options",
+  );
+  assert.doesNotMatch(
+    (websiteClarification?.options || []).map((item) => item.label).join(" "),
+    /Concise answer|Detailed explanation/i,
+    "website clarification should not use generic answer-style MCQs",
+  );
+
+  const portfolioWebsiteFollowup = getRuleBasedClarification({
+    userMessage: "Personal Portfolio",
+    originalMessage: "design a website",
+    previousAnswers: ["Personal Portfolio"],
+    currentTurn: 1,
+  });
+  assert.equal(portfolioWebsiteFollowup?.needsClarification, true, "portfolio website selection should ask the missing name");
+  assert.equal(portfolioWebsiteFollowup?.options?.length, 0, "portfolio follow-up should be a direct typed answer");
+  assert.match(portfolioWebsiteFollowup?.question || "", /whose name/i, "portfolio follow-up should ask for the name");
+
 
   const newsClarification = getRuleBasedClarification({
     userMessage: "Latest news about cricket.",
@@ -77,6 +135,16 @@ async function main(): Promise<void> {
     selectClarificationModel({ userMessage: "Why is this Python code failing?" }),
     "qwen-coder",
     "coding clarification uses qwen-coder",
+  );
+  assert.equal(
+    selectClarificationModel({ userMessage: "Code" }),
+    "qwen-coder",
+    "bare coding clarification uses qwen-coder",
+  );
+  assert.equal(
+    selectClarificationModel({ userMessage: "design a website" }),
+    "qwen-coder",
+    "website/code clarification uses qwen-coder",
   );
   assert.equal(
     selectClarificationModel({ userMessage: "Solve the probability puzzle." }),
@@ -153,6 +221,50 @@ async function main(): Promise<void> {
   try {
     const fallbackClarification = await maybeCreateClarification({ userMessage: "Code in HTML.", userId: "user-1" });
     assert.equal(fallbackClarification?.source, "fallback", "malformed model JSON falls back for high-confidence clarifications");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}")) as { model_override?: string };
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({
+        result: {
+          text: JSON.stringify({
+            needs_clarification: true,
+            question: "What outcome would help you most?",
+            options: [
+              { id: "concise", label: "Concise answer", description: "Best when you want the result quickly." },
+              { id: "detailed", label: "Detailed explanation", description: "Best when you want to understand the reasoning." },
+            ],
+          }),
+          model_used: body.model_override,
+        },
+      }),
+    } as Response;
+  }) as typeof fetch;
+  try {
+    const genericModelCode = await maybeCreateClarification({ userMessage: "Code", userId: "user-1" });
+    assert.equal(genericModelCode?.source, "fallback", "generic model code clarification should use coding fallback");
+    assert.match(genericModelCode?.question || "", /kind of code/i, "coding fallback should ask for code type");
+    assert.doesNotMatch(
+      (genericModelCode?.options || []).map((item) => item.label).join(" "),
+      /Concise answer|Detailed explanation/i,
+      "generic model options should not reach coding clarification UI",
+    );
+    const genericModelPortfolio = await maybeCreateClarification({
+      userMessage: "Personal Portfolio",
+      originalMessage: "design a website",
+      previousAnswers: ["Personal Portfolio"],
+      currentTurn: 1,
+      userId: "user-1",
+    });
+    assert.equal(genericModelPortfolio?.source, "fallback", "generic model portfolio follow-up should use name fallback");
+    assert.match(genericModelPortfolio?.question || "", /whose name/i, "portfolio fallback should ask for the name");
+    assert.equal(genericModelPortfolio?.options.length, 0, "portfolio name fallback remains zero-option");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -284,7 +396,18 @@ async function main(): Promise<void> {
   assert.doesNotMatch(frontend, /pendingClarificationState\.answers\s*=\s*\[/, "frontend should not mutate pending answers before backend success");
   assert.match(frontend, /capturedClarificationResponse/, "retry preserves clarification response payload");
   assert.match(frontend, /current === state\) current\.inFlight = false/, "option clicks reset in-flight state when request fails");
+  assert.match(frontend, /clarificationStateLockedForRequest/, "custom clarification answers lock pending state while in flight");
   assert.match(frontend, /persistChatMessage\(targetChatId, "assistant", assistantText\)/, "clarification persistence stays plain text live-only");
+  const clarificationRenderSnippet = frontend.slice(
+    frontend.indexOf('if (response?.route === "clarification" && clarificationPayload)'),
+    frontend.indexOf("clearPendingClarification(targetChatId);"),
+  );
+  assert.doesNotMatch(clarificationRenderSnippet, /responseTrust/, "clarification bubbles should not render route/model trust pills");
+  const footerSnippet = frontend.slice(
+    frontend.indexOf("const footer = document.createElement(\"div\");"),
+    frontend.indexOf("panel.appendChild(footer);"),
+  );
+  assert.match(footerSnippet, /if \(options\.length > 0\)/, "custom-answer helper only renders when MCQs exist");
 
   console.log("Intent clarification validation passed.");
   process.exit(0);
