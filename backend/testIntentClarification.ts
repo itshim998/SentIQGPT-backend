@@ -38,6 +38,16 @@ async function main(): Promise<void> {
 
   const casualDirect = await maybeCreateClarification({ userMessage: "Tell me a joke." });
   assert.equal(casualDirect, null, "short but clear casual prompts should not over-clarify");
+  assert.equal(
+    await maybeCreateClarification({ userMessage: "Summarize this PDF." }),
+    null,
+    "clear summary prompts should not clarify",
+  );
+  assert.equal(
+    await maybeCreateClarification({ userMessage: "Fix this Python error." }),
+    null,
+    "clear coding fix prompts should not clarify",
+  );
 
   const imageAnalysisClarification = getRuleBasedClarification({
     userMessage: "Analyze this image.",
@@ -79,8 +89,75 @@ async function main(): Promise<void> {
     "WebSurf clarification uses gemini-search",
   );
 
-  process.env.TAVILY_KEYS = "clarification-test-key";
   const originalFetch = globalThis.fetch;
+  const llmCalls: Array<{ model_override?: string; prompt?: string }> = [];
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}")) as { model_override?: string; prompt?: string };
+    llmCalls.push(body);
+    const prompt = String(body.prompt || "");
+    const response = prompt.includes('PREVIOUS CLARIFICATION ANSWERS:\n["Simple portfolio page"]')
+      ? {
+        needs_clarification: true,
+        question: "Whose name should be in the portfolio?",
+        options: [],
+        custom_answer_prompt: "Or enter a custom answer in the message bar.",
+        reason: "missing_portfolio_name",
+      }
+      : {
+        needs_clarification: true,
+        question: "Which type of HTML code serves you best?",
+        options: [
+          { id: "hello_world", label: "Simple Hello World program", description: "Good for beginner-level understanding." },
+          { id: "portfolio", label: "Simple portfolio page", description: "Good when you want a usable starter website." },
+        ],
+        custom_answer_prompt: "Or enter a custom answer in the message bar.",
+        reason: "short_html_request",
+      };
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ result: { text: JSON.stringify(response), model_used: body.model_override } }),
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    const modelHtmlClarification = await maybeCreateClarification({ userMessage: "Code in HTML.", userId: "user-1" });
+    assert.equal(modelHtmlClarification?.source, "model", "visible clarification should be model-authored when model succeeds");
+    assert.equal(modelHtmlClarification?.model_used, "qwen-coder", "HTML clarification should be authored by qwen-coder");
+    assert.equal(modelHtmlClarification?.previous_answers.length, 0, "first clarification has no previous answers");
+    assert.equal(modelHtmlClarification?.options.length, 2, "model-authored HTML clarification keeps options");
+
+    const portfolioFollowup = await maybeCreateClarification({
+      userMessage: resolved.effectiveMessage,
+      originalMessage: resolved.originalMessage,
+      previousAnswers: resolved.answers,
+      currentTurn: resolved.turn,
+      userId: "user-1",
+    });
+    assert.equal(portfolioFollowup?.source, "model", "portfolio follow-up should be model-authored");
+    assert.equal(portfolioFollowup?.options.length, 0, "portfolio name follow-up should have zero options");
+    assert.deepEqual(portfolioFollowup?.previous_answers, ["Simple portfolio page"], "follow-up carries previous answers");
+    assert.equal(portfolioFollowup?.original_message, "Code in HTML.", "follow-up keeps original message");
+    assert.equal(llmCalls.some((call) => call.model_override === "qwen-coder"), true, "model call uses qwen-coder");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => ({ result: { text: "not json", model_used: "qwen-coder" } }),
+  }) as Response) as typeof fetch;
+  try {
+    const fallbackClarification = await maybeCreateClarification({ userMessage: "Code in HTML.", userId: "user-1" });
+    assert.equal(fallbackClarification?.source, "fallback", "malformed model JSON falls back for high-confidence clarifications");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  process.env.TAVILY_KEYS = "clarification-test-key";
   const tavilyQueries: string[] = [];
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
@@ -101,6 +178,25 @@ async function main(): Promise<void> {
             content: "Mock current cricket update.",
             score: 0.9,
           }],
+        }),
+      } as Response;
+    }
+    if (href.includes("/llm/invoke")) {
+      const body = JSON.parse(String(init?.body || "{}")) as { model_override?: string };
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({
+          result: {
+            text: JSON.stringify({
+              needs_clarification: true,
+              question: "Which area should I cover for cricket?",
+              options: [{ id: "around_world", label: "Around the world", description: "Covers the biggest global updates." }],
+              custom_answer_prompt: "Or enter a custom answer in the message bar.",
+            }),
+            model_used: body.model_override,
+          },
         }),
       } as Response;
     }
@@ -133,6 +229,47 @@ async function main(): Promise<void> {
     assert.doesNotMatch(unclearWebSurf.reply ?? "", /Mock Tavily answer/, "unclear WebSurf discards Tavily output");
     assert.ok(tavilyQueries.length > 0, "unclear WebSurf starts Tavily while clarification is classified");
     await new Promise((resolve) => setTimeout(resolve, 50));
+
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url);
+      if (href.includes("api.tavily.com")) {
+        tavilyQueries.push("failed-tavily-query");
+        throw new Error("Mock Tavily failure");
+      }
+      if (href.includes("/llm/invoke")) {
+        const body = JSON.parse(String(init?.body || "{}")) as { model_override?: string };
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: async () => ({
+            result: {
+              text: JSON.stringify({
+                needs_clarification: true,
+                question: "Which area should I cover for cricket?",
+                options: [{ id: "around_world", label: "Around the world", description: "Covers the biggest global updates." }],
+                custom_answer_prompt: "Or enter a custom answer in the message bar.",
+              }),
+              model_used: body.model_override,
+            },
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        text: async () => "",
+        json: async () => ({}),
+      } as Response;
+    }) as typeof fetch;
+    const failedTavilyClarification = await orchestrate({
+      userMessage: "Latest news about cricket.",
+      context: { web_search_mode: "basic", userId: "test-user" },
+      skipReflection: true,
+    });
+    assert.equal(failedTavilyClarification.route, "clarification", "discarded Tavily failure should still return clarification");
+    assert.doesNotMatch(failedTavilyClarification.reply ?? "", /Tavily|temporarily unavailable/i, "discarded Tavily failure should not leak to UI");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -142,6 +279,12 @@ async function main(): Promise<void> {
   assert.match(frontend, /clarification-option-btn/, "frontend renders MCQ option buttons");
   assert.match(frontend, /pendingClarifications/, "frontend tracks pending clarification state");
   assert.match(frontend, /clarification-cancel-btn/, "frontend renders cancel control");
+  assert.match(frontend, /clarification-panel-host/, "frontend preserves message-content and nests clarification panel");
+  assert.doesNotMatch(frontend, /container\.className\s*=\s*"clarification-panel"/, "clarification rendering must not replace message-content class");
+  assert.doesNotMatch(frontend, /pendingClarificationState\.answers\s*=\s*\[/, "frontend should not mutate pending answers before backend success");
+  assert.match(frontend, /capturedClarificationResponse/, "retry preserves clarification response payload");
+  assert.match(frontend, /current === state\) current\.inFlight = false/, "option clicks reset in-flight state when request fails");
+  assert.match(frontend, /persistChatMessage\(targetChatId, "assistant", assistantText\)/, "clarification persistence stays plain text live-only");
 
   console.log("Intent clarification validation passed.");
   process.exit(0);

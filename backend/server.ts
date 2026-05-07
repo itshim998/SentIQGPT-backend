@@ -389,9 +389,12 @@ function buildClarificationApiResponse(payload: ClarificationPayload) {
 
 async function maybeCreateChatClarification(args: {
   readonly userMessage: string;
+  readonly originalMessage?: string;
+  readonly previousAnswers?: readonly string[];
   readonly context?: {
     readonly file_references?: readonly { filename: string; extractedText: string }[];
     readonly image_attachments?: readonly ImageAttachment[];
+    readonly trustedProfile?: { displayName: string };
   };
   readonly userId: string;
   readonly isGuest: boolean;
@@ -402,12 +405,15 @@ async function maybeCreateChatClarification(args: {
   const imageAttachments = args.context?.image_attachments ?? [];
   const payload = await maybeCreateClarification({
     userMessage: args.userMessage,
+    originalMessage: args.originalMessage,
+    previousAnswers: args.previousAnswers,
     userId: args.userId,
     isGuest: args.isGuest,
     hasFile: fileReferences.length > 0,
     hasImage: imageAttachments.length > 0,
     fileNames: fileReferences.map((file) => file.filename),
     fileContent: fileReferences.map((file) => file.extractedText).join("\n"),
+    trustedProfileName: args.context?.trustedProfile?.displayName,
     webSearch: args.webSearch === true,
     currentTurn: args.currentTurn,
     maxTurns: DEFAULT_MAX_CLARIFICATION_TURNS,
@@ -1600,6 +1606,8 @@ app.post(
 
       const guestClarification = await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
+        originalMessage: resolvedClarification.originalMessage,
+        previousAnswers: resolvedClarification.answers,
         context: {
           file_references: orcFileRefs,
           image_attachments: orcImageAttachments,
@@ -1781,9 +1789,12 @@ app.post(
     if (isLogicReasoningQuery && !hasExplicitWebSearchMode) {
       const logicClarification = await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
+        originalMessage: resolvedClarification.originalMessage,
+        previousAnswers: resolvedClarification.answers,
         context: {
           file_references: orcFileRefs,
           image_attachments: orcImageAttachments,
+          trustedProfile,
         },
         userId,
         isGuest,
@@ -2246,6 +2257,8 @@ app.post(
     if (isGuest) {
       const guestClarification = await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
+        originalMessage: resolvedClarification.originalMessage,
+        previousAnswers: resolvedClarification.answers,
         context: {
           file_references: parsed.data.context?.file_references,
           image_attachments: parsed.data.context?.image_attachments,
@@ -2802,9 +2815,12 @@ app.post(
     const reasoningClarification = isBufferedReasoning
       ? await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
+        originalMessage: resolvedClarification.originalMessage,
+        previousAnswers: resolvedClarification.answers,
         context: {
           file_references: parsed.data.context?.file_references,
           image_attachments: parsed.data.context?.image_attachments,
+          trustedProfile,
         },
         userId,
         isGuest,
@@ -2962,9 +2978,12 @@ app.post(
 
     const directClarification = await maybeCreateChatClarification({
       userMessage: effectiveUserMessage,
+      originalMessage: resolvedClarification.originalMessage,
+      previousAnswers: resolvedClarification.answers,
       context: {
         file_references: parsed.data.context?.file_references,
         image_attachments: parsed.data.context?.image_attachments,
+        trustedProfile,
       },
       userId,
       isGuest,

@@ -16,12 +16,14 @@ export interface ClarificationOption {
 export interface ClarificationPayload {
   readonly id: string;
   readonly original_message: string;
+  readonly previous_answers: readonly string[];
   readonly question: string;
   readonly options: readonly ClarificationOption[];
   readonly allow_custom_answer: true;
   readonly custom_answer_prompt: string;
   readonly turn: number;
   readonly max_turns: number;
+  readonly source: "model" | "fallback";
   readonly model_used?: string;
 }
 
@@ -43,12 +45,15 @@ interface ClarificationDecision {
 
 export interface ClarificationContext {
   readonly userMessage: string;
+  readonly originalMessage?: string;
+  readonly previousAnswers?: readonly string[];
   readonly userId?: string;
   readonly isGuest?: boolean;
   readonly hasFile?: boolean;
   readonly hasImage?: boolean;
   readonly fileNames?: readonly string[];
   readonly fileContent?: string;
+  readonly trustedProfileName?: string;
   readonly webSearch?: boolean;
   readonly maxTurns?: number;
   readonly currentTurn?: number;
@@ -74,6 +79,8 @@ const DIRECT_ANSWER_PATTERNS: readonly RegExp[] = [
   /\bexplain\s+(?:why|how|the|this)\b/i,
   /\bsummarize\s+(?:this|the|my)\b/i,
   /\btranslate\s+(?:this|the|to|into)\b/i,
+  /\bfix\s+(?:this|the|my)\b[\s\S]{0,80}\b(?:error|bug|issue|code|python|javascript|typescript|html|css)\b/i,
+  /\bdebug\s+(?:this|the|my)\b[\s\S]{0,80}\b(?:error|bug|issue|code|python|javascript|typescript|html|css)\b/i,
 ];
 
 const VAGUE_ACTION_PATTERNS: readonly RegExp[] = [
@@ -94,6 +101,21 @@ function normalizeAnswer(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 }
 
+function normalizeAnswerList(values: readonly unknown[], maxCount = DEFAULT_MAX_CLARIFICATION_TURNS): string[] {
+  const seen = new Set<string>();
+  const answers: string[] = [];
+  for (const value of values) {
+    const answer = normalizeAnswer(value);
+    if (!answer) continue;
+    const key = answer.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    answers.push(answer.slice(0, 1000));
+    if (answers.length >= maxCount) break;
+  }
+  return answers;
+}
+
 export function resolveClarificationInput(
   userMessage: string,
   clarification?: ClarificationResponsePayload,
@@ -101,9 +123,11 @@ export function resolveClarificationInput(
   const visibleAnswer = normalizeAnswer(userMessage);
   const originalMessage = normalizeAnswer(clarification?.original_message) || visibleAnswer;
   const priorAnswers = Array.isArray(clarification?.answers)
-    ? clarification.answers.map(normalizeAnswer).filter(Boolean)
+    ? normalizeAnswerList(clarification.answers, Math.max(0, DEFAULT_MAX_CLARIFICATION_TURNS - 1))
     : [];
-  const answers = clarification ? [...priorAnswers, visibleAnswer].filter(Boolean) : [];
+  const answers = clarification
+    ? normalizeAnswerList([...priorAnswers, visibleAnswer], DEFAULT_MAX_CLARIFICATION_TURNS)
+    : [];
   if (!clarification || answers.length === 0) {
     return {
       effectiveMessage: visibleAnswer,
@@ -147,10 +171,18 @@ function makeDecision(
   };
 }
 
-function hasLikelyPortfolioName(message: string): boolean {
+function getEvaluationMessage(args: ClarificationContext): string {
+  return [
+    normalizeAnswer(args.originalMessage) || normalizeAnswer(args.userMessage),
+    ...normalizeAnswerList(args.previousAnswers ?? [], DEFAULT_MAX_CLARIFICATION_TURNS),
+  ].filter(Boolean).join(" ");
+}
+
+function hasLikelyPortfolioName(message: string, trustedProfileName?: string): boolean {
+  const hasTrustedProfile = Boolean(normalizeAnswer(trustedProfileName));
   return /\b(?:for|name(?:d)?|called)\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?\b/.test(message)
     || /\bmy\s+name\s+is\s+[A-Za-z]/i.test(message)
-    || /\bportfolio\s+(?:for|of)\s+(?:me|myself)\b/i.test(message);
+    || (hasTrustedProfile && /\bportfolio\s+(?:for|of)\s+(?:me|myself)\b/i.test(message));
 }
 
 function isLatestNewsWithoutScope(message: string): boolean {
@@ -167,8 +199,14 @@ function isClearMathRequest(message: string): boolean {
   return /\bsolve\s+(?:this\s+)?math\s+step\s*by\s*step\b/i.test(message);
 }
 
+function isCodingClarificationRequest(message: string): boolean {
+  if (detectCodeQuery(message)) return true;
+  return /\b(?:code|build|create|make|write|develop|debug|fix)\b[\s\S]{0,80}\b(?:html|css|javascript|typescript|python|java|c\+\+|react|api|component|program|app|website|page)\b/i.test(message)
+    || /\b(?:html|css|javascript|typescript|python|java|c\+\+|react)\b[\s\S]{0,80}\b(?:code|app|website|page|component|program)\b/i.test(message);
+}
+
 export function getRuleBasedClarification(args: ClarificationContext): ClarificationDecision | null {
-  const message = args.userMessage.trim();
+  const message = getEvaluationMessage(args).trim();
   if (!message) return null;
 
   const queryClassification = classifyQueryType(message);
@@ -182,7 +220,7 @@ export function getRuleBasedClarification(args: ClarificationContext): Clarifica
     return null;
   }
 
-  if (detectCodeQuery(message) && /\bportfolio\b/i.test(message) && !hasLikelyPortfolioName(message)) {
+  if (detectCodeQuery(message) && /\bportfolio\b/i.test(message) && !hasLikelyPortfolioName(message, args.trustedProfileName)) {
     return makeDecision(
       "Whose name should be in the portfolio?",
       [],
@@ -264,7 +302,7 @@ export function getRuleBasedClarification(args: ClarificationContext): Clarifica
 }
 
 function shouldAskModel(args: ClarificationContext): boolean {
-  const message = args.userMessage.trim();
+  const message = getEvaluationMessage(args).trim();
   if (!message) return false;
   if (args.currentTurn && args.currentTurn >= (args.maxTurns ?? DEFAULT_MAX_CLARIFICATION_TURNS)) return false;
   if (classifyQueryType(message).category === "image_generation") return false;
@@ -291,10 +329,14 @@ export function selectClarificationModel(args: ClarificationContext): string {
   if (args.forceModelOverride) return args.forceModelOverride;
   if (args.isGuest) return "gemini-search";
   if (args.webSearch) return "gemini-search";
-  if (!detectCodeQuery(args.userMessage) && isBufferedReasoningQuery(args.userMessage)) {
+  const message = getEvaluationMessage(args) || args.userMessage;
+  if (isCodingClarificationRequest(message)) {
+    return "qwen-coder";
+  }
+  if (!detectCodeQuery(message) && isBufferedReasoningQuery(message)) {
     return "openai-large";
   }
-  return selectModelForPrompt(args.userMessage, undefined, {
+  return selectModelForPrompt(message, undefined, {
     hasFile: args.hasFile,
     hasImage: args.hasImage,
     fileNames: args.fileNames ? [...args.fileNames] : undefined,
@@ -302,12 +344,25 @@ export function selectClarificationModel(args: ClarificationContext): string {
   });
 }
 
-function buildIntentClarifyPrompt(args: ClarificationContext): string {
+function buildIntentClarifyPrompt(
+  args: ClarificationContext,
+  fallbackDecision: ClarificationDecision | null,
+): string {
   const hasFiles = args.hasFile ? "yes" : "no";
   const hasImages = args.hasImage ? "yes" : "no";
   const webSearch = args.webSearch ? "yes" : "no";
   const currentTurn = args.currentTurn ?? 0;
   const maxTurns = args.maxTurns ?? DEFAULT_MAX_CLARIFICATION_TURNS;
+  const previousAnswers = normalizeAnswerList(args.previousAnswers ?? [], DEFAULT_MAX_CLARIFICATION_TURNS);
+  const originalMessage = normalizeAnswer(args.originalMessage) || normalizeAnswer(args.userMessage);
+  const triggerHint = fallbackDecision?.needsClarification
+    ? [
+      `- deterministic_gate: ask`,
+      `- reason: ${fallbackDecision.reason || "ambiguous_intent"}`,
+      `- suggested_question: ${fallbackDecision.question || ""}`,
+      `- suggested_options: ${JSON.stringify(fallbackDecision.options ?? [])}`,
+    ].join("\n")
+    : "- deterministic_gate: uncertain; decide from the policy.";
   return [
     "TASK: Intent Clarification",
     "ROLE: Decide whether SentIQGPT should ask a follow-up question before answering.",
@@ -320,12 +375,17 @@ function buildIntentClarifyPrompt(args: ClarificationContext): string {
     "- If one useful default exists, one option is allowed.",
     "- Otherwise provide 2 to 4 meaningful options.",
     "- Always allow the user to enter a custom answer in the message bar.",
+    "- If a deterministic gate says ask, write a better user-facing version of that clarification.",
+    "- Return zero options only when SentIQGPT cannot safely guess the answer, such as a missing name.",
     `- Current clarification turn: ${currentTurn}. Maximum turns: ${maxTurns}. If current turn is at the max, do not ask.`,
     "",
     "CONTEXT FLAGS:",
     `- file_context: ${hasFiles}`,
     `- image_context: ${hasImages}`,
     `- web_search_request: ${webSearch}`,
+    "",
+    "DETERMINISTIC TRIGGER HINT:",
+    triggerHint,
     "",
     "GOOD DIRECT ANSWER EXAMPLES:",
     '- "Solve this math step by step." -> no clarification',
@@ -337,8 +397,14 @@ function buildIntentClarifyPrompt(args: ClarificationContext): string {
     '- "Latest news about cricket." -> ask area; one option can be Around the world.',
     '- "Make a portfolio." without a name -> ask whose name; zero options.',
     "",
-    "USER MESSAGE:",
-    args.userMessage,
+    "ORIGINAL USER MESSAGE:",
+    originalMessage,
+    "",
+    "PREVIOUS CLARIFICATION ANSWERS:",
+    previousAnswers.length ? JSON.stringify(previousAnswers) : "[]",
+    "",
+    "EVALUATION MESSAGE:",
+    getEvaluationMessage(args) || args.userMessage,
     "",
     "RETURN JSON:",
     "{",
@@ -359,21 +425,28 @@ function parseModelDecision(raw: string): ClarificationDecision | null {
   }
 
   const question = normalizeAnswer(parsed.question);
-  if (!question) return null;
+  if (!isUsefulQuestion(question)) return null;
 
   const rawOptions = Array.isArray(parsed.options) ? parsed.options : [];
+  const seenLabels = new Set<string>();
+  const seenIds = new Set<string>();
   const options = rawOptions
     .map((item, index) => {
       if (!item || typeof item !== "object") return null;
       const record = item as Record<string, unknown>;
       const label = normalizeAnswer(record.label);
       if (!label) return null;
-      const id = normalizeAnswer(record.id) || `option_${index + 1}`;
+      const labelKey = label.toLowerCase();
+      if (seenLabels.has(labelKey)) return null;
+      seenLabels.add(labelKey);
+      const id = sanitizeOptionId(record.id, label, index);
+      if (seenIds.has(id)) return null;
+      seenIds.add(id);
       const description = normalizeAnswer(record.description);
       return {
-        id: id.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || `option_${index + 1}`,
+        id,
         label: label.slice(0, 80),
-        ...(description ? { description: description.slice(0, 140) } : {}),
+        ...(description && description.toLowerCase() !== labelKey ? { description: description.slice(0, 140) } : {}),
       };
     })
     .filter(Boolean)
@@ -383,9 +456,29 @@ function parseModelDecision(raw: string): ClarificationDecision | null {
     needsClarification: true,
     question: question.slice(0, 180),
     options,
-    customAnswerPrompt: normalizeAnswer(parsed.custom_answer_prompt) || CUSTOM_ANSWER_PROMPT,
+    customAnswerPrompt: CUSTOM_ANSWER_PROMPT,
     reason: normalizeAnswer(parsed.reason),
   };
+}
+
+function isUsefulQuestion(question: string): boolean {
+  if (question.length < 8 || question.length > 180) return false;
+  if (/^(?:question|clarification|options?|yes|no|ok)[?.!]?$/i.test(question)) return false;
+  if (/[{}[\]]/.test(question)) return false;
+  return true;
+}
+
+function sanitizeOptionId(rawId: unknown, label: string, index: number): string {
+  const source = normalizeAnswer(rawId) || label || `option_${index + 1}`;
+  const sanitized = source
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+  if (!sanitized || !/^[a-z][a-z0-9_]*$/.test(sanitized)) {
+    return `option_${index + 1}`;
+  }
+  return sanitized;
 }
 
 export function formatClarificationText(payload: ClarificationPayload): string {
@@ -405,20 +498,24 @@ function createPayload(
   args: ClarificationContext,
   decision: ClarificationDecision,
   modelUsed?: string,
+  source: "model" | "fallback" = "model",
 ): ClarificationPayload | null {
   if (!decision.needsClarification || !decision.question) return null;
   const currentTurn = args.currentTurn ?? 0;
   const maxTurns = args.maxTurns ?? DEFAULT_MAX_CLARIFICATION_TURNS;
   if (currentTurn >= maxTurns) return null;
+  const previousAnswers = normalizeAnswerList(args.previousAnswers ?? [], maxTurns);
   return {
     id: randomUUID(),
-    original_message: args.userMessage,
+    original_message: normalizeAnswer(args.originalMessage) || normalizeAnswer(args.userMessage),
+    previous_answers: previousAnswers,
     question: decision.question,
     options: decision.options ?? [],
     allow_custom_answer: true,
-    custom_answer_prompt: decision.customAnswerPrompt || CUSTOM_ANSWER_PROMPT,
+    custom_answer_prompt: CUSTOM_ANSWER_PROMPT,
     turn: currentTurn + 1,
     max_turns: maxTurns,
+    source,
     model_used: modelUsed,
   };
 }
@@ -430,12 +527,9 @@ export async function maybeCreateClarification(
   const currentTurn = args.currentTurn ?? 0;
   if (currentTurn >= maxTurns) return null;
 
-  const ruleDecision = getRuleBasedClarification(args);
-  if (ruleDecision?.needsClarification) {
-    return createPayload(args, ruleDecision, "deterministic");
-  }
-
-  if (!shouldAskModel(args)) {
+  const fallbackDecision = getRuleBasedClarification(args);
+  const shouldAsk = fallbackDecision?.needsClarification || shouldAskModel(args);
+  if (!shouldAsk) {
     return null;
   }
 
@@ -443,16 +537,23 @@ export async function maybeCreateClarification(
   try {
     const result = await callLLMAdapterDetailed({
       task: "intent_clarify",
-      prompt: buildIntentClarifyPrompt(args),
+      prompt: buildIntentClarifyPrompt(args, fallbackDecision),
       model_override: modelOverride,
       user_id: args.userId,
       max_output_tokens: 600,
     });
     const modelDecision = parseModelDecision(result.text);
-    if (!modelDecision?.needsClarification) return null;
-    return createPayload(args, modelDecision, result.model_used ?? modelOverride);
+    if (modelDecision?.needsClarification) {
+      return createPayload(args, modelDecision, result.model_used ?? modelOverride, "model");
+    }
+    if (fallbackDecision?.needsClarification) {
+      return createPayload(args, fallbackDecision, result.model_used ?? modelOverride, "fallback");
+    }
+    return null;
   } catch (error) {
     console.warn(`[IntentClarifier] model check failed: ${error instanceof Error ? error.message : String(error)}`);
-    return null;
+    return fallbackDecision?.needsClarification
+      ? createPayload(args, fallbackDecision, modelOverride, "fallback")
+      : null;
   }
 }

@@ -212,18 +212,25 @@ async function maybeClarify(
   userMessage: string,
   rawContext: RawMessageContext | undefined,
   currentTurn: number,
-  options: { webSearch?: boolean } = {},
+  options: {
+    webSearch?: boolean;
+    originalMessage?: string;
+    previousAnswers?: readonly string[];
+  } = {},
 ): Promise<OrchestratorResponse | null> {
   const fileReferences = rawContext?.file_references ?? [];
   const imageAttachments = rawContext?.image_attachments ?? [];
   const clarification = await maybeCreateClarification({
     userMessage,
+    originalMessage: options.originalMessage,
+    previousAnswers: options.previousAnswers,
     userId: rawContext?.userId,
     isGuest: rawContext?.userId === "guest",
     hasFile: fileReferences.length > 0,
     hasImage: imageAttachments.length > 0,
     fileNames: fileReferences.map((file) => file.filename),
     fileContent: fileReferences.map((file) => file.extractedText).join("\n"),
+    trustedProfileName: rawContext?.trustedProfile?.displayName,
     webSearch: options.webSearch === true,
     currentTurn,
     maxTurns: DEFAULT_MAX_CLARIFICATION_TURNS,
@@ -424,6 +431,10 @@ async function _orchestrateInner(
       userMessage,
       rawContext,
       resolvedClarification.turn,
+      {
+        originalMessage: resolvedClarification.originalMessage,
+        previousAnswers: resolvedClarification.answers,
+      },
     );
     if (clarificationResponse) {
       return clarificationResponse;
@@ -490,7 +501,11 @@ async function _orchestrateInner(
       userMessage,
       rawContext,
       resolvedClarification.turn,
-      { webSearch: true },
+      {
+        webSearch: true,
+        originalMessage: resolvedClarification.originalMessage,
+        previousAnswers: resolvedClarification.answers,
+      },
     );
     if (clarificationResponse) {
       void executionPromise.catch((error) => {
