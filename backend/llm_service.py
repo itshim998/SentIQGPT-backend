@@ -66,6 +66,7 @@ if not logger.handlers:
     logger.addHandler(h)
 logger.setLevel(logging.INFO)
 
+LLM_SERVICE_HOST = os.getenv("LLM_SERVICE_HOST", "0.0.0.0")
 LLM_SERVICE_PORT = int(os.getenv("LLM_SERVICE_PORT", "3002"))
 REQUESTS_PER_DAY = 50
 SUPABASE_REST_TIMEOUT_SECONDS = 15
@@ -986,4 +987,4 @@ async def safety_health():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=LLM_SERVICE_PORT, log_level="info")
+    uvicorn.run(app, host=LLM_SERVICE_HOST, port=LLM_SERVICE_PORT, log_level="info")
