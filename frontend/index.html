@@ -3580,6 +3580,480 @@ button, .tool-btn, .btn-send, .chat-list-item, .btn-settings, .sidebar-toggle {
   contain-intrinsic-size: 0 80px;
 }
 
+/* ==============================
+   Calm SentIQ Modernization Layer
+   ============================== */
+:root {
+  --bg-primary: #080a0f;
+  --bg-secondary: #0e1118;
+  --bg-tertiary: #151925;
+  --bg-hover: rgba(255,255,255,0.055);
+  --bg-input: #111620;
+  --bg-glass: #10141d;
+  --bg-glass-hover: #171c29;
+  --text-primary: #f4f5f7;
+  --text-secondary: #a8afbf;
+  --text-muted: #747d8f;
+  --text-heading: #fbfbfd;
+  --accent: #8b5cf6;
+  --accent-hover: #9b75ff;
+  --accent-glow: rgba(139,92,246,0.11);
+  --accent-glow-strong: rgba(139,92,246,0.18);
+  --accent-cool: #38bdf8;
+  --accent-cool-glow: rgba(56,189,248,0.13);
+  --danger: #f87171;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --border: rgba(255,255,255,0.09);
+  --border-light: rgba(255,255,255,0.14);
+  --glass-blur: blur(0);
+  --glass-bg: #10141d;
+  --glass-border: rgba(255,255,255,0.09);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.28);
+  --shadow-md: 0 12px 28px rgba(0,0,0,0.28);
+  --shadow-lg: 0 24px 60px rgba(0,0,0,0.40);
+  --shadow-glow: 0 0 0 1px rgba(139,92,246,0.16);
+  --content-max-width: 900px;
+}
+
+*,
+*::before,
+*::after {
+  letter-spacing: 0 !important;
+}
+
+body {
+  background:
+    linear-gradient(180deg, #080a0f 0%, #0a0d13 48%, #080a0f 100%);
+}
+
+body::before,
+body::after,
+.main-content-glow,
+.composer-drop-orb {
+  display: none !important;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148,163,184,0.22);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(168,175,191,0.34);
+}
+
+.sidebar {
+  background: #0b0e15;
+  border-right-color: rgba(255,255,255,0.08);
+  box-shadow: inset -1px 0 0 rgba(255,255,255,0.02);
+}
+
+.sidebar-header,
+.sidebar-footer {
+  background: rgba(255,255,255,0.012);
+}
+
+.logo {
+  font-size: 1.22rem;
+}
+
+.logo-accent {
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  color: #c4b5fd;
+}
+
+.btn-new-chat,
+.btn-send,
+.auth-btn.auth-btn-primary,
+.btn-primary {
+  background: linear-gradient(180deg, #8f62f4 0%, #7048d9 100%);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.12) inset, 0 10px 24px rgba(86,55,171,0.22);
+}
+
+.btn-new-chat:hover,
+.btn-send:hover,
+.auth-btn.auth-btn-primary:hover,
+.btn-primary:hover {
+  box-shadow: 0 1px 0 rgba(255,255,255,0.16) inset, 0 14px 28px rgba(86,55,171,0.26);
+}
+
+.chat-search-input,
+.chat-rename-input,
+.auth-field input,
+.setting-row input {
+  background: #0f141e;
+  border-color: rgba(255,255,255,0.10);
+}
+
+.chat-list {
+  gap: 4px;
+}
+
+.chat-list-item {
+  min-height: 38px;
+  border: 1px solid transparent;
+  color: #a8afbf;
+}
+
+.chat-list-item:hover {
+  background: #121722;
+  border-color: rgba(255,255,255,0.06);
+  transform: none;
+}
+
+.chat-list-item.active {
+  background: #171d2b;
+  border: 1px solid rgba(139,92,246,0.32);
+  border-left: 3px solid #8b5cf6;
+  box-shadow: none;
+  transform: none;
+}
+
+.chat-delete-btn,
+.chat-rename-btn {
+  border: 1px solid transparent;
+}
+
+.main-content {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.018), transparent 28%),
+    #090c12;
+}
+
+.welcome-screen {
+  justify-content: center;
+  gap: 12px;
+  padding-bottom: 96px;
+}
+
+.welcome-eyebrow {
+  color: #a78bfa;
+  font-size: 0.78rem;
+}
+
+.welcome-screen h2 {
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 650;
+}
+
+.welcome-subtitle {
+  color: #a8afbf;
+  max-width: 620px;
+}
+
+.starter-action-btn {
+  min-height: 52px;
+  background: #10151f;
+  border-color: rgba(255,255,255,0.10);
+  color: #d3d8e3;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset;
+}
+
+.starter-action-btn:hover {
+  background: #151b28;
+  border-color: rgba(139,92,246,0.35);
+  transform: translateY(-1px);
+}
+
+.chat-messages {
+  gap: 0;
+  padding: 20px 0 28px;
+}
+
+.message {
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+
+.message.assistant {
+  background: rgba(255,255,255,0.018);
+  border-top: 1px solid rgba(255,255,255,0.055);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.message-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  box-shadow: none !important;
+}
+
+.message.user .message-avatar {
+  background: #1e2533;
+  color: #dbe3ef;
+}
+
+.message.assistant .message-avatar {
+  background: #221a38;
+  color: #ddd6fe;
+}
+
+.message-sender {
+  color: #c3c8d4;
+}
+
+.message-content {
+  line-height: 1.72;
+}
+
+.message-action-bar {
+  border-top-color: rgba(255,255,255,0.06);
+}
+
+.message-action-btn,
+.code-copy-btn,
+.image-download-btn,
+.error-retry-btn {
+  border-radius: 8px;
+}
+
+.thinking-panel,
+.web-search-panel,
+.message-chart-container,
+.clarification-panel,
+.memory-item,
+.setting-group,
+.storage-stats,
+.auth-menu-panel,
+.composer-action-menu {
+  background: #10151f;
+  border-color: rgba(255,255,255,0.09);
+  box-shadow: var(--shadow-sm);
+}
+
+.web-search-card,
+.web-search-source-link,
+.message-chart-frame,
+.message-file-chip,
+.file-chip {
+  background: #0f141e;
+  border-color: rgba(255,255,255,0.09);
+}
+
+.file-chip {
+  max-width: min(100%, 320px);
+  min-height: 44px;
+  border-radius: 10px;
+  padding: 7px 10px;
+}
+
+.file-chip-icon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(139,92,246,0.12);
+  color: #ddd6fe;
+  font-size: 0.68rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.file-chip-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.file-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.file-chip-meta {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.web-search-summary {
+  background: #121824;
+  border-color: rgba(255,255,255,0.08);
+}
+
+.image-mode-bar {
+  background: #111827;
+  border-color: rgba(139,92,246,0.32);
+  color: #ddd6fe;
+}
+
+.chat-input-wrapper {
+  padding-top: 12px;
+}
+
+.chat-input-area {
+  background: #0f141e;
+  border-color: rgba(255,255,255,0.12);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 18px 40px rgba(0,0,0,0.24);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.chat-input-area:focus-within {
+  border-color: rgba(139,92,246,0.46);
+  box-shadow: 0 0 0 3px rgba(139,92,246,0.13), 0 20px 44px rgba(0,0,0,0.30);
+}
+
+.chat-input-area .composer-drop-overlay {
+  background: rgba(17,24,39,0.92);
+  border-color: rgba(56,189,248,0.42);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.chat-input-area .composer-drop-overlay::before {
+  display: none;
+}
+
+.composer-drop-text::before {
+  content: "+";
+  display: block;
+  width: 32px;
+  height: 32px;
+  margin: 0 auto 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(56,189,248,0.34);
+  color: #7dd3fc;
+  line-height: 30px;
+  font-size: 1.25rem;
+}
+
+.composer-action-menu {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 12px;
+}
+
+.composer-action-option {
+  border-radius: 8px;
+}
+
+.composer-action-option:hover {
+  transform: none;
+}
+
+.tool-btn,
+.composer-plus-btn {
+  border-radius: 8px;
+}
+
+.modal-overlay {
+  background: rgba(5,7,12,0.72);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.modal-container {
+  background: #0f141e;
+  border-color: rgba(255,255,255,0.11);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.app-container.auth-blurred {
+  filter: none;
+}
+
+.auth-btn,
+.auth-user-chip,
+.auth-menu-toggle,
+.toast {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.typing-indicator {
+  background: rgba(15,20,30,0.94);
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: var(--shadow-md);
+}
+
+.typing-text-shimmer {
+  color: #a8afbf;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+
+.scroll-anchor-pill {
+  background: #171d2b;
+  border: 1px solid rgba(139,92,246,0.28);
+  box-shadow: var(--shadow-md);
+  color: #f4f5f7;
+}
+
+button:focus-visible,
+.tool-btn:focus-visible,
+.composer-action-option:focus-visible,
+.message-action-btn:focus-visible,
+.chat-list-item:focus-visible,
+.btn-settings:focus-visible,
+.sidebar-toggle:focus-visible,
+.settings-tab:focus-visible,
+.code-copy-btn:focus-visible,
+.image-download-btn:focus-visible,
+.scroll-anchor-pill:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(139,92,246,0.72);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(139,92,246,0.14);
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    background: #0b0e15;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .welcome-screen {
+    justify-content: flex-start;
+    padding-top: 104px;
+    padding-bottom: 32px;
+  }
+
+  .welcome-screen h2 {
+    font-size: 2rem;
+  }
+
+  .starter-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-input-area {
+    border-radius: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .message-header {
+    margin-bottom: 10px;
+  }
+
+  .message-content,
+  .message-action-bar {
+    padding-left: 0;
+  }
+
+  .composer-hint-prefix {
+    display: none;
+  }
+}
+
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -3936,7 +4410,11 @@ button, .tool-btn, .btn-send, .chat-list-item, .btn-settings, .sidebar-toggle {
 });
 
 if (!window.SentIQRenderer?.renderRichText) {
-  console.warn("[SentIQRenderer] Inline renderer failed to initialize; Markdown-only fallback will be used.");
+  try {
+    if (window.SENTIQ_DEBUG || localStorage.getItem("sentiq_debug") === "1") {
+      console.warn("[SentIQRenderer] Inline renderer failed to initialize; Markdown-only fallback will be used.");
+    }
+  } catch (_) {}
 }
   </script>
   <script>
@@ -3951,7 +4429,7 @@ if (!window.SentIQRenderer?.renderRichText) {
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <h1 class="logo">SentIQ<span class="logo-accent">GPT</span></h1>
-        <button id="new-chat-btn" class="btn-new-chat" title="New Chat">
+        <button id="new-chat-btn" class="btn-new-chat" title="New Chat" aria-label="Start a new chat">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           New Chat
         </button>
@@ -3964,7 +4442,7 @@ if (!window.SentIQRenderer?.renderRichText) {
       </div>
 
       <div class="sidebar-footer">
-        <button id="settings-btn" class="btn-settings" title="Settings">
+        <button id="settings-btn" class="btn-settings" title="Settings" aria-label="Open settings">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           Settings
         </button>
@@ -3972,7 +4450,7 @@ if (!window.SentIQRenderer?.renderRichText) {
     </aside>
 
     <!-- Sidebar toggle for mobile -->
-    <button id="sidebar-toggle" class="sidebar-toggle" title="Toggle sidebar">
+    <button id="sidebar-toggle" class="sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded="false">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
     </button>
 
@@ -4022,12 +4500,12 @@ if (!window.SentIQRenderer?.renderRichText) {
 
       <!-- Chat messages -->
       <div style="position:relative;flex:1;display:flex;flex-direction:column;min-height:0;">
-        <div id="chat-messages" class="chat-messages"></div>
-        <div id="scroll-anchor-pill" class="scroll-anchor-pill">↓</div>
+        <div id="chat-messages" class="chat-messages" aria-live="polite" aria-relevant="additions text"></div>
+        <button id="scroll-anchor-pill" class="scroll-anchor-pill" type="button" aria-label="Jump to latest message">↓</button>
       </div>
 
       <!-- Typing indicator -->
-      <div id="typing-indicator" class="typing-indicator" style="display: none;">
+      <div id="typing-indicator" class="typing-indicator" style="display: none;" role="status" aria-live="polite">
         <div class="typing-dots">
           <span></span><span></span><span></span>
         </div>
@@ -4039,22 +4517,22 @@ if (!window.SentIQRenderer?.renderRichText) {
         <div id="file-preview-area" class="file-preview-area" style="display: none;"></div>
         <div id="image-mode-bar" class="image-mode-bar" style="display: none;">
           <span>Visualize</span>
-          <button id="cancel-image-mode" class="image-mode-cancel" title="Cancel">✕</button>
+          <button id="cancel-image-mode" class="image-mode-cancel" title="Cancel image mode" aria-label="Cancel image mode">✕</button>
         </div>
         <div id="web-search-mode-bar" class="image-mode-bar" style="display: none;">
           <span id="web-search-mode-label">WebSurf</span>
-          <button id="cancel-web-search-mode" class="image-mode-cancel" title="Cancel">✕</button>
+          <button id="cancel-web-search-mode" class="image-mode-cancel" title="Cancel WebSurf mode" aria-label="Cancel WebSurf mode">✕</button>
         </div>
-        <div id="auth-gate-message" class="auth-gate-message">Log in to start chatting.</div>
+        <div id="auth-gate-message" class="auth-gate-message" role="status" aria-live="polite">Log in to start chatting.</div>
 
         <div class="chat-input-area">
-          <input type="file" id="file-input" accept=".pdf,.txt,.png,.jpg,.jpeg,.webp,.html,.css,.js,.ts,.json,.xml,.md,.py,.java,.cpp,.c,.rs,.go" hidden>
+          <input type="file" id="file-input" accept=".pdf,.txt,.png,.jpg,.jpeg,.webp,.html,.css,.js,.ts,.json,.xml,.md,.py,.java,.cpp,.c,.rs,.go" multiple hidden>
           <div class="composer-drop-overlay" aria-hidden="true">
             <span class="composer-drop-orb"></span>
             <span class="composer-drop-text">Drop files to attach</span>
           </div>
           <div id="composer-action-menu" class="composer-action-menu" aria-hidden="true">
-            <button id="file-attach-btn" class="composer-action-option" title="Attach file" type="button">
+            <button id="file-attach-btn" class="composer-action-option" title="Attach file" aria-label="Attach file" type="button">
               <span class="composer-action-icon" aria-hidden="true">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
               </span>
@@ -4063,7 +4541,7 @@ if (!window.SentIQRenderer?.renderRichText) {
                 <span class="composer-action-subtitle">Upload a document or image</span>
               </span>
             </button>
-            <button id="image-gen-btn" class="composer-action-option" title="Generate image" type="button">
+            <button id="image-gen-btn" class="composer-action-option" title="Generate image" aria-label="Generate image" type="button">
               <span class="composer-action-icon" aria-hidden="true">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
               </span>
@@ -4072,7 +4550,7 @@ if (!window.SentIQRenderer?.renderRichText) {
                 <span class="composer-action-subtitle">Generate images</span>
               </span>
             </button>
-            <button id="websurf-basic-btn" class="composer-action-option" title="WebSurf" type="button" aria-pressed="false">
+            <button id="websurf-basic-btn" class="composer-action-option" title="WebSurf" aria-label="Use WebSurf web search" type="button" aria-pressed="false">
               <span class="composer-action-icon" aria-hidden="true">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20a15 15 0 0 1 0-20"/></svg>
               </span>
@@ -4089,14 +4567,14 @@ if (!window.SentIQRenderer?.renderRichText) {
           </div>
 
           <div class="input-field-wrapper">
-            <textarea id="chat-input" rows="1"></textarea>
+            <textarea id="chat-input" rows="1" aria-label="Message SentIQGPT" autocomplete="off" spellcheck="true"></textarea>
             <div id="composer-hint-overlay" class="composer-hint-overlay" aria-hidden="true">
               <span class="composer-hint-prefix">Try asking about</span>
               <span id="composer-hint-text" class="composer-hint-text"></span>
             </div>
           </div>
 
-          <button id="send-btn" class="btn-send" title="Send message">
+          <button id="send-btn" class="btn-send" title="Send message" aria-label="Send message">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>
         </div>
@@ -4105,14 +4583,14 @@ if (!window.SentIQRenderer?.renderRichText) {
   </div>
 
   <!-- Toast container -->
-  <div id="toast-container" class="toast-container"></div>
+  <div id="toast-container" class="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Auth Modal -->
-  <div id="auth-modal" class="modal-overlay" style="display: none;">
+  <div id="auth-modal" class="modal-overlay" style="display: none;" aria-hidden="true">
     <div class="modal-container auth-modal-container" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
       <div class="modal-header">
         <h2 id="auth-modal-title">Log in to SentIQGPT</h2>
-        <button id="auth-close-btn" class="modal-close" title="Close">✕</button>
+        <button id="auth-close-btn" class="modal-close" title="Close" aria-label="Close authentication dialog">✕</button>
       </div>
       <div class="modal-body auth-modal-body">
         <div class="auth-modal-copy">
@@ -4150,7 +4628,7 @@ if (!window.SentIQRenderer?.renderRichText) {
     </div>
   </div>
 
-  <div id="name-modal" class="modal-overlay" style="display: none;">
+  <div id="name-modal" class="modal-overlay" style="display: none;" aria-hidden="true">
     <div class="modal-container name-modal-container" role="dialog" aria-modal="true" aria-labelledby="name-modal-title">
       <div class="modal-header">
         <h2 id="name-modal-title">What should SentIQGPT call you?</h2>
@@ -4176,11 +4654,11 @@ if (!window.SentIQRenderer?.renderRichText) {
   </div>
 
   <!-- Settings Modal -->
-  <div id="settings-modal" class="modal-overlay" style="display: none;">
+  <div id="settings-modal" class="modal-overlay" style="display: none;" aria-hidden="true">
     <div class="modal-container">
       <div class="modal-header">
         <h2>Settings</h2>
-        <button id="close-settings-btn" class="modal-close" title="Close">✕</button>
+        <button id="close-settings-btn" class="modal-close" title="Close" aria-label="Close settings">✕</button>
       </div>
 
       <div class="modal-body">
@@ -4252,8 +4730,14 @@ const DEFAULT_LIMITS = {
   message_window: 20,
 };
 
+let dbInstance = null;
+let dbOpenPromise = null;
+
 function openDB() {
-  return new Promise((resolve, reject) => {
+  if (dbInstance) return Promise.resolve(dbInstance);
+  if (dbOpenPromise) return dbOpenPromise;
+
+  dbOpenPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = (event) => {
       const db = event.target.result;
@@ -4281,9 +4765,25 @@ function openDB() {
         syncStore.createIndex("next_retry_at", "next_retry_at", { unique: false });
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      dbInstance = request.result;
+      dbInstance.onversionchange = () => {
+        dbInstance.close();
+        dbInstance = null;
+        dbOpenPromise = null;
+      };
+      resolve(dbInstance);
+    };
+    request.onerror = () => {
+      dbOpenPromise = null;
+      reject(request.error);
+    };
+    request.onblocked = () => {
+      dbOpenPromise = null;
+      reject(new Error("SentIQGPT storage is blocked by another open tab. Close other tabs and retry."));
+    };
   });
+  return dbOpenPromise;
 }
 
 async function dbPut(storeName, item) {
@@ -4699,7 +5199,7 @@ window.SentIQStorage = {
   const AUTH_RETURN_RECOVERY_MODE = "recovery";
 
   if (configError) {
-    console.error(configError);
+    console.error("[Auth] Supabase auth configuration is missing.");
   }
 
   function buildEmailRedirectUrl() {
@@ -5406,8 +5906,32 @@ window.SentIQAPI = {
     "turning rough notes into a brief",
     "spotting edge cases in a feature",
   ];
+  const SENTIQ_DEBUG = (() => {
+    try {
+      return Boolean(window.SENTIQ_DEBUG || localStorage.getItem("sentiq_debug") === "1");
+    } catch {
+      return Boolean(window.SENTIQ_DEBUG);
+    }
+  })();
+
+  function debugLog(...args) {
+    if (SENTIQ_DEBUG) console.log(...args);
+  }
+
+  function debugWarn(...args) {
+    if (SENTIQ_DEBUG) console.warn(...args);
+  }
+
+  function getSafeErrorMessage(error) {
+    if (!error) return "Unknown error";
+    if (error instanceof Error) return error.message || error.name || "Error";
+    if (typeof error === "string") return error;
+    if (typeof error?.message === "string") return error.message;
+    return "Unexpected error";
+  }
 
   function markPerf(label, extra = {}) {
+    if (!SENTIQ_DEBUG) return;
     const details = Object.entries(extra)
       .filter(([, value]) => value !== null && typeof value !== "undefined" && value !== "")
       .map(([key, value]) => `${key}=${String(value)}`)
@@ -5447,6 +5971,44 @@ window.SentIQAPI = {
 
   function isModalVisible(modal) {
     return Boolean(modal && modal.style.display !== "none");
+  }
+
+  const MODAL_FOCUSABLE_SELECTOR = [
+    "a[href]",
+    "button:not([disabled])",
+    "textarea:not([disabled])",
+    "input:not([disabled])",
+    "select:not([disabled])",
+    "[tabindex]:not([tabindex='-1'])",
+  ].join(",");
+
+  function getActiveModal() {
+    if (isModalVisible(nameModal)) return nameModal;
+    if (isModalVisible(authModal)) return authModal;
+    if (isModalVisible(settingsModal)) return settingsModal;
+    return null;
+  }
+
+  function trapFocusInModal(event) {
+    if (event.key !== "Tab") return false;
+    const activeModal = getActiveModal();
+    if (!activeModal) return false;
+    const focusable = Array.from(activeModal.querySelectorAll(MODAL_FOCUSABLE_SELECTOR))
+      .filter((el) => el.offsetParent !== null || el === document.activeElement);
+    if (focusable.length === 0) return false;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+      return true;
+    }
+    if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+      return true;
+    }
+    return false;
   }
 
   function ensureSidebarBackdrop() {
@@ -5532,12 +6094,14 @@ window.SentIQAPI = {
     if (!sidebar || !isMobileSidebarViewport()) return;
     closeAuthMenu();
     sidebar.classList.add("open");
+    sidebarToggle?.setAttribute("aria-expanded", "true");
     updateOverlayLocks();
   }
 
   function closeSidebar() {
     if (!sidebar) return;
     sidebar.classList.remove("open");
+    sidebarToggle?.setAttribute("aria-expanded", "false");
     updateOverlayLocks();
   }
 
@@ -5748,13 +6312,17 @@ window.SentIQAPI = {
     closeSidebar();
     closeComposerMenu();
     nameModal.style.display = "flex";
+    nameModal.setAttribute("aria-hidden", "false");
     syncAuthBlurState();
     updateOverlayLocks();
     requestAnimationFrame(() => nameInput?.focus());
   }
 
   function closeRequiredNameModal() {
-    if (nameModal) nameModal.style.display = "none";
+    if (nameModal) {
+      nameModal.style.display = "none";
+      nameModal.setAttribute("aria-hidden", "true");
+    }
     if (nameForm) nameForm.reset();
     setNameStatus("");
     syncAuthBlurState();
@@ -5809,7 +6377,7 @@ window.SentIQAPI = {
       try {
         await refreshProfileState({ force: true, silent: true });
       } catch (error) {
-        console.warn(`[UI] profile refresh after ${source} gate failed:`, error);
+      debugWarn(`[UI] profile refresh after ${source} gate failed:`, getSafeErrorMessage(error));
         authProfileState = {
           ...authProfileState,
           requiresName: true,
@@ -6092,7 +6660,7 @@ window.SentIQAPI = {
       },
     }, controller.signal).catch((err) => {
       if (err?.name !== "AbortError" && !isProfileNameRequiredError(err)) {
-        console.warn("[UI] File update stream closed:", err);
+        debugWarn("[UI] File update stream closed:", getSafeErrorMessage(err));
       }
     }).finally(() => {
       fileUpdatesPromise = null;
@@ -6177,7 +6745,8 @@ window.SentIQAPI = {
   }
 
   function logAuthenticatedConversationError(scope, error) {
-    console.error(`[UI] ${scope} failed:`, error);
+    const message = getSafeErrorMessage(error);
+    debugWarn(`[UI] ${scope} failed: ${message}`);
   }
 
   async function cacheServerConversation(chat, messages) {
@@ -6718,7 +7287,10 @@ window.SentIQAPI = {
 
   function openAuthModal(mode = authView) {
     setAuthView(mode);
-    if (authModal) authModal.style.display = "flex";
+    if (authModal) {
+      authModal.style.display = "flex";
+      authModal.setAttribute("aria-hidden", "false");
+    }
     setPasswordVisibility(false);
     closeSidebar();
     syncAuthBlurState();
@@ -6727,7 +7299,10 @@ window.SentIQAPI = {
   }
 
   function closeAuthModal() {
-    if (authModal) authModal.style.display = "none";
+    if (authModal) {
+      authModal.style.display = "none";
+      authModal.setAttribute("aria-hidden", "true");
+    }
     setAuthStatus("");
     if (authForm) authForm.reset();
     setPasswordVisibility(false);
@@ -6942,7 +7517,7 @@ window.SentIQAPI = {
       try {
         await window.SentIQAuth?.signOut?.();
       } catch (error) {
-        console.warn("[UI] Unable to clear post-verification session:", error);
+        debugWarn("[UI] Unable to clear post-verification session:", getSafeErrorMessage(error));
       }
       await refreshAuthUI(null);
     }
@@ -7122,6 +7697,7 @@ window.SentIQAPI = {
     sendBtn.classList.remove("is-stop");
     sendBtn.innerHTML = SEND_SVG;
     sendBtn.title = "Send message";
+    sendBtn.setAttribute("aria-label", "Send message");
   }
 
   function setStopMode() {
@@ -7129,13 +7705,14 @@ window.SentIQAPI = {
     sendBtn.classList.add("is-stop");
     sendBtn.innerHTML = "";  // CSS ::before draws square stop icon
     sendBtn.title = "Stop generating";
+    sendBtn.setAttribute("aria-label", "Stop generating");
   }
 
   function abortCurrentGeneration() {
     if (!currentChatId) return;
     const state = getChatState(currentChatId);
     if (!state || !state.isThinking) return;
-    console.log("[UI] abortCurrentGeneration for chat:", currentChatId);
+    debugLog("[UI] abortCurrentGeneration", { hasChat: Boolean(currentChatId) });
     if (state.abortController) {
       state.abortController.abort();
       state.abortController = null;
@@ -7360,14 +7937,8 @@ window.SentIQAPI = {
 
   function extractChartJsConfigFromCode(code) {
     if (!code || typeof code !== "string") return null;
-    const match = code.match(/const\s+(?:chartConfig|config)\s*=\s*(\{[\s\S]+?\});\s*(?:\/\/|$)/m);
-    if (!match) return null;
-    try {
-      return new Function(`"use strict"; return (${match[1]});`)();
-    } catch (error) {
-      console.warn("[Chart] Chart.js config parse failed:", error);
-      return null;
-    }
+    debugWarn("[Chart] Ignoring executable Chart.js code fallback; backend should provide chartjs_config.");
+    return null;
   }
 
   function normalizeChartMeta(chartPayload) {
@@ -7434,7 +8005,7 @@ window.SentIQAPI = {
     }
   }
 
-  function normalizeWebSearchPayload(response) {
+  function normalizeWebSearchPayloadLegacyUnused(response) {
     const payload = response?.web_search || response?.webSearch || response?.search;
     if (!payload || typeof payload !== "object") return null;
 
@@ -7466,7 +8037,7 @@ window.SentIQAPI = {
     };
   }
 
-  function renderWebSearchPanel(payload, answerText, thinkingText, renderOptions = {}) {
+  function renderWebSearchPanelLegacyUnused(payload, answerText, thinkingText, renderOptions = {}) {
     const safePayload = {
       query: String(payload?.query || "").trim(),
       answer: String(payload?.answer || answerText || "").trim(),
@@ -7486,6 +8057,7 @@ window.SentIQAPI = {
       { ...renderOptions, mode: "web_search" }
     );
     wireThinkingPanels(answerBlock);
+    wireCodeCopyButtons(answerBlock);
 
     panel.appendChild(answerBlock);
 
@@ -7716,6 +8288,7 @@ window.SentIQAPI = {
       { ...renderOptions, mode: "web_search" }
     );
     wireThinkingPanels(answerBlock);
+    wireCodeCopyButtons(answerBlock);
     panel.appendChild(answerBlock);
 
     const hasDetails = sourceCount > 0 || imageCount > 0;
@@ -7893,7 +8466,7 @@ window.SentIQAPI = {
       await window.Plotly.newPlot(mount, spec.data || [], layout, config);
       scrollToBottom(true);
     } catch (error) {
-      console.error("[Chart] Plotly render failed:", error);
+      debugWarn(`[Chart] Plotly render failed: ${getSafeErrorMessage(error)}`);
       frame.replaceWith(buildChartError("Plotly chart failed to render."));
     }
   }
@@ -7951,7 +8524,7 @@ window.SentIQAPI = {
       new window.Chart(ctx, config);
       scrollToBottom(true);
     } catch (error) {
-      console.error("[Chart] Chart.js render failed:", error);
+      debugWarn(`[Chart] Chart.js render failed: ${getSafeErrorMessage(error)}`);
       frame.replaceWith(buildChartError("Chart.js chart failed to render."));
     }
   }
@@ -8584,18 +9157,18 @@ window.SentIQAPI = {
   }
 
   async function init() {
-    console.log("[UI] init: SentIQGPT Chat UI starting");
+    debugLog("[UI] init: SentIQGPT Chat UI starting");
     const stopInitMeasure = startPerf("ui.init");
     setAuthView("login");
     setPasswordVisibility(false);
     window.addEventListener(PROFILE_NAME_REQUIRED_EVENT, () => {
       handleProfileNameRequired("api-event").catch((error) => {
-        console.error("[UI] Name gate handling failed:", error);
+        debugWarn(`[UI] Name gate handling failed: ${getSafeErrorMessage(error)}`);
       });
     });
     window.SentIQAuth?.subscribeAuthChanges?.((session) => {
       refreshAuthUI(session).catch((error) => {
-        console.error("[UI] Auth refresh failed:", error);
+        debugWarn(`[UI] Auth refresh failed: ${getSafeErrorMessage(error)}`);
       });
     });
 
@@ -8859,6 +9432,7 @@ window.SentIQAPI = {
 
     sidebarToggle?.addEventListener("click", toggleSidebar);
     document.addEventListener("keydown", (e) => {
+      if (trapFocusInModal(e)) return;
       if (e.key !== "Escape") return;
       if (composerActionMenu?.classList.contains("open")) {
         closeComposerMenu();
@@ -9237,7 +9811,7 @@ window.SentIQAPI = {
 
   async function loadChat(chatId, options = {}) {
     const { skipRemoteHydration = false, silent = true } = options;
-    console.log("[UI] loadChat:", chatId);
+    debugLog("[UI] loadChat", { hasChat: Boolean(chatId) });
     const stopMeasure = startPerf("ui.chat.load", { chat_id: chatId });
     if (isGuestSession()) {
       const cachedChat = getGuestChat(chatId);
@@ -9321,7 +9895,7 @@ window.SentIQAPI = {
   function renderMessages(messages) {
     if (!chatMessages) return;
     const visibleMessages = collapseAdjacentDuplicateChatMessages(messages);
-    console.log("[UI] renderMessages:", visibleMessages.length, "total");
+    debugLog("[UI] renderMessages", { count: visibleMessages.length });
     chatMessages.style.scrollBehavior = 'auto';
     chatMessages.innerHTML = "";
     const total = visibleMessages.length;
@@ -9608,7 +10182,7 @@ window.SentIQAPI = {
             fallbackToNewTab: true,
           });
         } catch (error) {
-          console.error("[UI] Image download failed:", error);
+          debugWarn(`[UI] Image download failed: ${getSafeErrorMessage(error)}`);
           showToast("Couldn't download that image.", "error");
         }
       });
@@ -9631,6 +10205,7 @@ window.SentIQAPI = {
         if (role === "assistant") {
           wireThinkingPanels(textWrap);
         }
+        wireCodeCopyButtons(textWrap);
         contentDiv.appendChild(textWrap);
       }
       const chartContainer = document.createElement("div");
@@ -9696,6 +10271,7 @@ window.SentIQAPI = {
         wireThinkingPanels(contentDiv);
       }
     }
+    wireCodeCopyButtons(contentDiv);
 
     if (role === "assistant" && ephemeral?.responseTrust) {
       appendResponseTrustRow(contentDiv, ephemeral.responseTrust);
@@ -9747,6 +10323,7 @@ window.SentIQAPI = {
         contentDiv.classList.remove("typing-active");
         contentDiv.innerHTML = fullHtml;
         wireThinkingPanels(contentDiv);
+        wireCodeCopyButtons(contentDiv);
         if (bubble) setAssistantBubbleCopyText(bubble, text);
         revealContent();
         scrollToBottom();
@@ -9757,6 +10334,7 @@ window.SentIQAPI = {
         contentDiv.classList.remove("typing-active");
         contentDiv.innerHTML = fullHtml;
         wireThinkingPanels(contentDiv);
+        wireCodeCopyButtons(contentDiv);
         if (bubble) setAssistantBubbleCopyText(bubble, text);
         revealContent();
         scrollToBottom();
@@ -9777,6 +10355,7 @@ window.SentIQAPI = {
           contentDiv.classList.remove("typing-active");
           contentDiv.innerHTML = fullHtml;
           wireThinkingPanels(contentDiv);
+          wireCodeCopyButtons(contentDiv);
           if (bubble) setAssistantBubbleCopyText(bubble, text);
           revealContent();
           scrollToBottom();
@@ -9990,7 +10569,7 @@ window.SentIQAPI = {
 
   // Configure marked.js with GFM + custom code renderer
   (function initMarked() {
-    if (typeof marked === 'undefined') { console.warn('[SentIQ] marked.js not loaded'); return; }
+    if (typeof marked === 'undefined') { debugWarn('[SentIQ] marked.js not loaded'); return; }
     marked.setOptions({ gfm: true, breaks: true });
     const renderer = new marked.Renderer();
     renderer.code = function({ text, lang }) {
@@ -9999,7 +10578,7 @@ window.SentIQAPI = {
       const highlighted = highlightCode(text, language);
       return '<div class="code-block-wrap"><div class="code-block-header"><span class="code-block-lang">'
         + langLabel
-        + '</span><button class="code-copy-btn" onclick="window.SentIQChat.copyCode(this)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button></div><pre><code>'
+        + '</span><button class="code-copy-btn" type="button" data-code-copy="true" aria-label="Copy code"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button></div><pre><code>'
         + highlighted
         + '</code></pre></div>';
     };
@@ -10081,7 +10660,7 @@ window.SentIQAPI = {
 
   function renderMarkdownOnlyFallback(text) {
     if (!window.__sentiqRendererMissingWarned) {
-      console.warn("[SentIQRenderer] Rich renderer unavailable; using sanitized Markdown-only fallback.");
+      debugWarn("[SentIQRenderer] Rich renderer unavailable; using sanitized Markdown-only fallback.");
       window.__sentiqRendererMissingWarned = "1";
     }
 
@@ -10493,7 +11072,7 @@ window.SentIQAPI = {
       return sanitizeRenderedHtml(html);
     } catch (renderErr) {
       // ERROR BOUNDARY: if anything in the pipeline fails, fall back to plain text
-      console.error('[SentIQ] renderRichText failed, falling back to plain text:', renderErr);
+        debugWarn(`[SentIQ] renderRichText failed, falling back to plain text: ${getSafeErrorMessage(renderErr)}`);
       return '<div class="render-error-fallback">' + escapeHtml(String(text)) + '</div>';
     }
   }
@@ -10708,7 +11287,7 @@ window.SentIQAPI = {
           setMessageCopyLabel(copyBtn, baseCopyLabel);
         }, 1800);
       } catch (err) {
-        console.error("[UI] Failed to copy message:", err);
+        debugWarn(`[UI] Failed to copy message: ${getSafeErrorMessage(err)}`);
         showToast("Couldn't copy that message.", "error");
       }
     });
@@ -10752,19 +11331,33 @@ window.SentIQAPI = {
     const pre = wrap?.querySelector("pre");
     if (pre) {
       const code = pre.textContent;
-      navigator.clipboard.writeText(code).then(() => {
+      writeClipboardText(code).then(() => {
         btn.classList.add("copied");
+        btn.setAttribute("aria-label", "Code copied");
         btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Copied!';
         setTimeout(() => {
           btn.classList.remove("copied");
+          btn.setAttribute("aria-label", "Copy code");
           btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy';
         }, 2000);
+      }).catch((error) => {
+        debugWarn(`[UI] Code copy failed: ${getSafeErrorMessage(error)}`);
+        showToast("Couldn't copy that code block.", "error");
       });
     }
   }
 
+  function wireCodeCopyButtons(container) {
+    if (!container) return;
+    container.querySelectorAll("[data-code-copy='true']").forEach((button) => {
+      if (button.dataset.bound === "1") return;
+      button.dataset.bound = "1";
+      button.addEventListener("click", () => copyCode(button));
+    });
+  }
+
   function createStreamingBubble(options = {}) {
-    console.log("[UI] createStreamingBubble");
+    debugLog("[UI] createStreamingBubble");
     if (!chatMessages) return null;
     const bubble = document.createElement("div");
     bubble.className = "message assistant";
@@ -11040,6 +11633,7 @@ window.SentIQAPI = {
       const renderedChunk = renderRichText(chunk, { mode: renderMode });
       if (renderedChunk) {
         renderedDiv.insertAdjacentHTML("beforeend", renderedChunk);
+        wireCodeCopyButtons(renderedDiv);
         streamRenderState.renderedIndex = safeIndex;
         streamRenderState.lastRenderAt = now;
         tailTextNode.nodeValue = visibleText.slice(streamRenderState.renderedIndex);
@@ -11067,11 +11661,13 @@ window.SentIQAPI = {
         idleCb(function() {
           contentDiv.innerHTML = renderAssistantMessageHtml(fullText, thinkingText, { mode: renderMode }) + statusNoticeHtml;
           wireThinkingPanels(contentDiv);
+          wireCodeCopyButtons(contentDiv);
           scrollToBottom(true);
         });
       } else {
         contentDiv.innerHTML = renderAssistantMessageHtml(fullText, thinkingText, { mode: renderMode }) + statusNoticeHtml;
         wireThinkingPanels(contentDiv);
+        wireCodeCopyButtons(contentDiv);
         scrollToBottom(true);
       }
       rafId = 0;
@@ -11209,7 +11805,7 @@ window.SentIQAPI = {
     hideWelcome();
     if (chatMessages) chatMessages.classList.add("has-messages");
     if (!retryMessage) { chatInput.value = ""; chatInput.style.height = "auto"; }
-    console.log("[UI] handleSend:", message.slice(0, 60));
+    debugLog("[UI] handleSend", { length: message.length, retry: Boolean(retryMessage) });
 
     if (!isClarificationAnswer && pendingFiles.length > 0 && !options.skipPendingFileProcessing) {
       await processPendingFiles(message);
@@ -11305,9 +11901,9 @@ window.SentIQAPI = {
         ? clarificationContextSnapshot.webSearchMode
         : getEffectiveWebSearchMode();
       if (fileReferences.length > 0) {
-        console.log(`[Frontend] using session file: ${fileReferences[0].filename} (${fileReferences[0].extractedText.length} chars)`);
+        debugLog("[Frontend] using session file", { extracted_chars: fileReferences[0].extractedText.length });
       }
-      console.log(`[API Request] file_references count=${fileReferences.length} image_attachments count=${imageAttachmentsForRequest.length}`);
+      debugLog("[API Request] context counts", { file_references: fileReferences.length, image_attachments: imageAttachmentsForRequest.length });
 
       const contextPayload = {
         recentMessages: contextData.recentMessages,
@@ -11337,7 +11933,7 @@ window.SentIQAPI = {
         let streamResult = null;
         let streamBubble = null;
         try {
-          console.log("[UI] Attempting streaming...");
+          debugLog("[UI] Attempting streaming");
           streamBubble = (targetChatId === currentChatId)
             ? createStreamingBubble({ loaderKind: requestLoaderKind, chatId: targetChatId, requestId })
             : null;
@@ -11387,7 +11983,7 @@ window.SentIQAPI = {
               onMemory(memory) { memoryResult = memory; },
               onError(err, meta) {
                 const phase = meta?.tokensReceived ? "after partial output" : "before first token";
-                console.warn(`[UI] Stream error (${phase}):`, err);
+                debugWarn(`[UI] Stream error (${phase}):`, getSafeErrorMessage(err));
               },
               onStructuredResponse(response) {
                 // Backend redirected a chart/tool request through orchestrator.
@@ -11401,7 +11997,7 @@ window.SentIQAPI = {
                 const targetBubble = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"]`);
                 targetBubble?.remove();
               }
-              console.log("[UI] Received structured response from stream redirect");
+              debugLog("[UI] Received structured response from stream redirect");
               consumeWebSearchOneShot(structuredResponse?.route);
               const renderInView = !isRequestStale(targetChatId, requestId) && targetChatId === currentChatId;
               fullReply = await deliverAssistantResponse(
@@ -11426,15 +12022,15 @@ window.SentIQAPI = {
                 consumeWebSearchOneShot("web_search");
               }
               if (streamResult?.interrupted) {
-                console.warn("[UI] Streaming interrupted after partial output; keeping partial response");
+                debugWarn("[UI] Streaming interrupted after partial output; keeping partial response");
                 showToast("Response interrupted — showing partial output.", "info", 3500);
               }
-              console.log("[UI] Streaming complete, length:", fullReply.length);
+              debugLog("[UI] Streaming complete", { length: fullReply.length });
             }
           }
         } catch (streamErr) {
           if (streamErr.name === "AbortError") {
-            console.log("[UI] Stream aborted by user");
+            debugLog("[UI] Stream aborted by user");
             const orphanContent = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .typing-active`);
             if (orphanContent) {
               orphanContent.classList.remove("typing-active");
@@ -11446,6 +12042,7 @@ window.SentIQAPI = {
                   responseRenderMode ? { mode: responseRenderMode } : {},
                 );
                 wireThinkingPanels(orphanContent);
+                wireCodeCopyButtons(orphanContent);
                 fullReply = partial;
               } else {
                 orphanContent.closest(".message")?.remove();
@@ -11453,7 +12050,7 @@ window.SentIQAPI = {
             }
             usedStreaming = true;
           } else {
-            console.warn("[UI] Streaming failed, falling back to non-streaming:", streamErr.message);
+            debugWarn("[UI] Streaming failed, falling back to non-streaming:", getSafeErrorMessage(streamErr));
             usedStreaming = false;
             const orphan = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .typing-active`);
             if (orphan) orphan.closest(".message")?.remove();
@@ -11467,7 +12064,7 @@ window.SentIQAPI = {
       }
 
       if (!usedStreaming) {
-        console.log(
+        debugLog(
           bufferedReasoningRequired
             ? "[UI] Using non-streaming reasoning request"
             : structuredResponseRequired
@@ -11511,7 +12108,7 @@ window.SentIQAPI = {
         return;
       }
       else if (!isRequestStale(targetChatId, requestId)) {
-        console.error("[UI] Chat error:", err);
+        debugWarn(`[UI] Chat error: ${getSafeErrorMessage(err)}`);
         const { contentDiv: errDiv } = appendMessageBubble("assistant", "");
         errDiv.innerHTML = "";
         const wrap = document.createElement("div");
@@ -11632,7 +12229,7 @@ window.SentIQAPI = {
         return;
       }
       else if (!isRequestStale(targetChatId, requestId)) {
-        console.error("[UI] Selection chat error:", err);
+        debugWarn(`[UI] Selection chat error: ${getSafeErrorMessage(err)}`);
         const { contentDiv: errDiv } = appendMessageBubble("assistant", "");
         errDiv.innerHTML = "";
         const wrap = document.createElement("div");
@@ -11747,7 +12344,7 @@ window.SentIQAPI = {
       await persistChatMessage(chatId, role, content, meta);
       return true;
     } catch (error) {
-      console.warn(`[UI] Failed to persist ${label || "image message"} locally:`, error?.message || error);
+      debugWarn(`[UI] Failed to persist ${label || "image message"} locally:`, getSafeErrorMessage(error));
       return false;
     }
   }
@@ -11897,7 +12494,7 @@ window.SentIQAPI = {
           : "Sorry, something went wrong generating that image. Please try again.";
         const { contentDiv: genErrDiv } = appendMessageBubble("assistant", "");
         typeMessage(userFacingError, genErrDiv);
-        console.error("[UI] Image generation error:", err);
+        debugWarn(`[UI] Image generation error: ${getSafeErrorMessage(err)}`);
       }
     } finally {
       if (slowHintTimer) clearTimeout(slowHintTimer);
@@ -11917,6 +12514,60 @@ window.SentIQAPI = {
     return Array.from(types).includes("Files");
   }
 
+  const MAX_CLIENT_UPLOAD_BYTES = 10 * 1024 * 1024;
+  const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
+    ".pdf", ".txt", ".png", ".jpg", ".jpeg", ".webp", ".html", ".css", ".js", ".ts",
+    ".json", ".xml", ".md", ".py", ".java", ".cpp", ".c", ".rs", ".go",
+  ]);
+  const SUPPORTED_UPLOAD_MIME_PREFIXES = ["text/"];
+  const SUPPORTED_UPLOAD_MIME_TYPES = new Set([
+    "application/pdf",
+    "application/json",
+    "application/javascript",
+    "application/typescript",
+    "application/xml",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+  ]);
+
+  function getFileExtension(file) {
+    const name = String(file?.name || "");
+    const dotIndex = name.lastIndexOf(".");
+    return dotIndex >= 0 ? name.slice(dotIndex).toLowerCase() : "";
+  }
+
+  function validateQueuedFile(file) {
+    if (!file) return { ok: false, reason: "Invalid file." };
+    if (file.size > MAX_CLIENT_UPLOAD_BYTES) {
+      return { ok: false, reason: `${file.name || "File"} is larger than 10MB.` };
+    }
+    const type = String(file.type || "").toLowerCase();
+    const ext = getFileExtension(file);
+    const supportedMime = SUPPORTED_UPLOAD_MIME_TYPES.has(type)
+      || SUPPORTED_UPLOAD_MIME_PREFIXES.some((prefix) => type.startsWith(prefix));
+    if (!supportedMime && !SUPPORTED_UPLOAD_EXTENSIONS.has(ext)) {
+      return { ok: false, reason: `${file.name || "File"} is not a supported file type.` };
+    }
+    return { ok: true };
+  }
+
+  function addPendingFiles(files) {
+    const incoming = Array.from(files || []);
+    const accepted = [];
+    const rejected = [];
+    for (const file of incoming) {
+      const validation = validateQueuedFile(file);
+      if (validation.ok) accepted.push(file);
+      else rejected.push(validation.reason);
+    }
+    pendingFiles.push(...accepted);
+    if (rejected.length > 0) {
+      showToast(rejected[0] + (rejected.length > 1 ? ` (${rejected.length} files skipped.)` : ""), "error", 4200);
+    }
+    return { accepted, rejected };
+  }
+
   function queueDroppedFiles(files, options = {}) {
     if (!files || files.length === 0) return;
     if (ensureNameCapture()) return;
@@ -11925,12 +12576,12 @@ window.SentIQAPI = {
     webSearchModeOverride = null;
     if (imageModeBar) imageModeBar.style.display = "none";
     if (webSearchModeBar) webSearchModeBar.style.display = "none";
-    for (const file of files) pendingFiles.push(file);
+    const { accepted } = addPendingFiles(files);
     renderFilePreview();
     syncComposerHint();
     chatInput?.focus();
-    if (showToastMessage) {
-      showToast(`${files.length} file(s) ready to upload. Type a message and send.`, "info");
+    if (showToastMessage && accepted.length > 0) {
+      showToast(`${accepted.length} file(s) ready to upload. Type a message and send.`, "info");
     }
   }
 
@@ -11946,7 +12597,7 @@ window.SentIQAPI = {
     webSearchModeOverride = null;
     if (imageModeBar) imageModeBar.style.display = "none";
     if (webSearchModeBar) webSearchModeBar.style.display = "none";
-    for (const file of files) pendingFiles.push(file);
+    addPendingFiles(files);
     renderFilePreview();
     if (fileInput) fileInput.value = "";
     syncComposerHint();
@@ -11983,10 +12634,17 @@ window.SentIQAPI = {
     webSearchModeOverride = null;
     if (imageModeBar) imageModeBar.style.display = "none";
     if (webSearchModeBar) webSearchModeBar.style.display = "none";
-    pendingFiles.push(...pastedFiles);
+    addPendingFiles(pastedFiles);
     renderFilePreview();
     syncComposerHint();
     chatInput?.focus();
+  }
+
+  function formatFileSize(bytes) {
+    const value = Number(bytes) || 0;
+    if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+    if (value >= 1024) return `${Math.ceil(value / 1024)} KB`;
+    return `${value} B`;
   }
 
   function renderFilePreview() {
@@ -12001,16 +12659,28 @@ window.SentIQAPI = {
     pendingFiles.forEach((file, index) => {
       const chip = document.createElement("div");
       chip.className = "file-chip";
+      chip.title = `${file.name} - ${formatFileSize(file.size)}`;
       const icon = document.createElement("span");
+      icon.className = "file-chip-icon";
+      icon.textContent = isNativeChatImageFile(file) ? "IMG" : "FILE";
       icon.textContent = "📄";
+      icon.textContent = isNativeChatImageFile(file) ? "IMG" : "FILE";
       const name = document.createElement("span");
+      name.className = "file-chip-name";
       name.textContent = file.name.length > 25 ? file.name.slice(0, 22) + "..." : file.name;
+      const meta = document.createElement("span");
+      meta.className = "file-chip-meta";
+      meta.textContent = formatFileSize(file.size);
       const removeBtn = document.createElement("button");
       removeBtn.className = "file-chip-remove";
+      removeBtn.type = "button";
       removeBtn.textContent = "✕";
+      removeBtn.textContent = "x";
+      removeBtn.setAttribute("aria-label", `Remove ${file.name}`);
       removeBtn.addEventListener("click", () => { pendingFiles.splice(index, 1); renderFilePreview(); });
       chip.appendChild(icon);
       chip.appendChild(name);
+      chip.appendChild(meta);
       chip.appendChild(removeBtn);
       filePreviewArea.appendChild(chip);
     });
@@ -12088,7 +12758,7 @@ window.SentIQAPI = {
       const file = imageFiles[index];
       const { contentDiv: upErrDiv } = appendMessageBubble("assistant", "");
       typeMessage(`Sorry, I couldn't read ${file.name}. Please try again.`, upErrDiv);
-      console.error("[UI] Image read error:", result.reason);
+      debugWarn(`[UI] Image read error: ${getSafeErrorMessage(result.reason)}`);
     });
 
     const uploadResults = await runWithConcurrencyLimit(regularFiles, 2, async (file) => {
@@ -12142,7 +12812,7 @@ window.SentIQAPI = {
         if (!(await maybeHandleProfileNameRequiredError(err, "file.upload"))) {
           const { contentDiv: upErrDiv } = appendMessageBubble("assistant", "");
           typeMessage(`Sorry, I couldn\u2019t process that file. Please try again.`, upErrDiv);
-          console.error("[UI] Upload error:", err);
+          debugWarn(`[UI] Upload error: ${getSafeErrorMessage(err)}`);
         }
         return null;
       } finally {
@@ -12188,13 +12858,19 @@ window.SentIQAPI = {
   }
 
   function openSettings() {
-    if (settingsModal) settingsModal.style.display = "flex";
+    if (settingsModal) {
+      settingsModal.style.display = "flex";
+      settingsModal.setAttribute("aria-hidden", "false");
+    }
     closeSidebar();
     updateOverlayLocks();
     window.SentIQMemoryPanel?.renderMemories({ refreshCloud: true });
   }
   function closeSettings() {
-    if (settingsModal) settingsModal.style.display = "none";
+    if (settingsModal) {
+      settingsModal.style.display = "none";
+      settingsModal.setAttribute("aria-hidden", "true");
+    }
     updateOverlayLocks();
   }
 
@@ -12227,7 +12903,7 @@ window.SentIQAPI = {
   }
 
   async function startNewChat() {
-    console.log("[UI] startNewChat");
+    debugLog("[UI] startNewChat");
     const stopMeasure = startPerf("ui.new_chat");
     if (ensureNameCapture()) {
       stopMeasure("blocked", { reason: "name_required" });
@@ -12346,6 +13022,8 @@ window.SentIQAPI = {
     } catch { /* non-critical */ }
   }
 
+  let scrollToBottomRaf = 0;
+  let pendingInstantScroll = false;
   function scrollToBottom(instant) {
     if (!chatMessages) return;
     if (_userScrolledUp) {
@@ -12353,12 +13031,20 @@ window.SentIQAPI = {
       if (scrollAnchorPill) scrollAnchorPill.classList.add("visible");
       return;
     }
-    chatMessages.scrollTo({ top: chatMessages.scrollHeight, behavior: instant ? 'auto' : 'smooth' });
+    pendingInstantScroll = pendingInstantScroll || Boolean(instant);
+    if (scrollToBottomRaf) return;
+    scrollToBottomRaf = requestAnimationFrame(() => {
+      scrollToBottomRaf = 0;
+      const behavior = pendingInstantScroll ? "auto" : "smooth";
+      pendingInstantScroll = false;
+      chatMessages.scrollTo({ top: chatMessages.scrollHeight, behavior });
+    });
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 
+  window.SentIQGetSafeErrorMessage = getSafeErrorMessage;
   window.SentIQChat = {
     copyCode,
     appendMessageBubble,
@@ -12383,6 +13069,9 @@ window.SentIQAPI = {
   const memoryList = document.getElementById("memory-list");
   const memoryCount = document.getElementById("memory-count");
   const compressBtn = document.getElementById("compress-memories-btn");
+  const getSafeErrorMessage = window.SentIQGetSafeErrorMessage || ((error) => (
+    error instanceof Error ? error.message : String(error || "Unknown error")
+  ));
 
   async function renderMemories() {
     if (!memoryList) return;
@@ -12431,7 +13120,7 @@ window.SentIQAPI = {
     if (refreshCloud && window.SentIQChat?.syncCloudMemoriesFromServer) {
       window.SentIQChat.syncCloudMemoriesFromServer({ force: true, silent: true })
         .then(() => renderMemories({ refreshCloud: false }))
-        .catch((error) => console.error("[UI] Memory refresh failed:", error));
+        .catch((error) => debugWarn(`[UI] Memory refresh failed: ${getSafeErrorMessage(error)}`));
     }
 
     if (!memoryList) return;
@@ -12476,7 +13165,7 @@ window.SentIQAPI = {
             try {
               await API.deleteMemory(mem.id);
             } catch (error) {
-              console.error("[UI] Memory delete sync failed:", error);
+              debugWarn(`[UI] Memory delete sync failed: ${getSafeErrorMessage(error)}`);
               showToast("Couldn't delete that memory from the cloud. Please try again.", "error", 3200);
               return;
             }
@@ -12525,7 +13214,7 @@ window.SentIQAPI = {
             chat_id,
           });
         }
-      } catch (err) { console.error(`[UI] Compression failed for type ${type} (${scope}):`, err); }
+      } catch (err) { debugWarn(`[UI] Compression failed for type ${type} (${scope}): ${getSafeErrorMessage(err)}`); }
     }
     compressBtn.disabled = false;
     compressBtn.textContent = "Compress Memories";

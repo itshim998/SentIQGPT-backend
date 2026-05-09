@@ -5,6 +5,7 @@ on:
     branches:
       - master
     paths-ignore:
+      - "frontend/**"
       - "docs/**"
       - "*.md"
       - "AZURE_DEPLOYMENT_GUIDE.md"
