@@ -119,9 +119,18 @@ async function main(): Promise<void> {
     answers: [],
     source: "option",
     selected_option_id: "portfolio",
+    question: "Which type of HTML code serves you best?",
+    options: [
+      { id: "hello_world", label: "Simple Hello World program", description: "Good for beginner-level understanding." },
+      { id: "portfolio", label: "Simple portfolio page", description: "Good when you want a usable starter website." },
+    ],
   });
   assert.match(resolved.effectiveMessage, /Code in HTML\./, "effective prompt keeps original request");
   assert.match(resolved.effectiveMessage, /Simple portfolio page/, "effective prompt includes selected clarification");
+  assert.match(resolved.effectiveMessage, /Latest clarification question:/, "effective prompt includes answered question context");
+  assert.equal(resolved.answeredQuestion, "Which type of HTML code serves you best?", "resolved input keeps answered question");
+  assert.equal(resolved.answeredOptions.length, 2, "resolved input keeps answered options");
+  assert.equal(resolved.selectedOptionId, "portfolio", "resolved input keeps selected option id");
   assert.equal(resolved.turn, 1, "resolved clarification turn increments");
 
   const maxTurnClarification = await maybeCreateClarification({
@@ -201,6 +210,9 @@ async function main(): Promise<void> {
       originalMessage: resolved.originalMessage,
       previousAnswers: resolved.answers,
       currentTurn: resolved.turn,
+      answeredQuestion: resolved.answeredQuestion,
+      answeredOptions: resolved.answeredOptions,
+      selectedOptionId: resolved.selectedOptionId,
       userId: "user-1",
     });
     assert.equal(portfolioFollowup?.source, "model", "portfolio follow-up should be model-authored");
@@ -265,6 +277,111 @@ async function main(): Promise<void> {
     assert.equal(genericModelPortfolio?.source, "fallback", "generic model portfolio follow-up should use name fallback");
     assert.match(genericModelPortfolio?.question || "", /whose name/i, "portfolio fallback should ask for the name");
     assert.equal(genericModelPortfolio?.options.length, 0, "portfolio name fallback remains zero-option");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const birdOptions = [
+    { id: "wild", label: "Wild bird species", description: "Focus on species found in nature." },
+    { id: "domestic", label: "Domestic bird breeds", description: "Focus on breeds kept by humans." },
+  ];
+  const birdOptionAnswer = resolveClarificationInput("Wild bird species", {
+    clarification_id: "bird-clarify",
+    original_message: "Best bird breeds information",
+    question: "Are you interested in wild bird species or domestic bird breeds?",
+    options: birdOptions,
+    answers: [],
+    source: "option",
+    selected_option_id: "wild",
+  });
+  const repeatedBirdDecision = {
+    needs_clarification: true,
+    question: "Are you interested in wild bird species or domestic bird breeds?",
+    options: birdOptions,
+    custom_answer_prompt: "Or enter a custom answer in the message bar.",
+    reason: "bird_scope",
+  };
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}")) as { model_override?: string };
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ result: { text: JSON.stringify(repeatedBirdDecision), model_used: body.model_override } }),
+    } as Response;
+  }) as typeof fetch;
+  try {
+    const repeatedBirdClarification = await maybeCreateClarification({
+      userMessage: birdOptionAnswer.effectiveMessage,
+      originalMessage: birdOptionAnswer.originalMessage,
+      previousAnswers: birdOptionAnswer.answers,
+      currentTurn: birdOptionAnswer.turn,
+      answeredQuestion: birdOptionAnswer.answeredQuestion,
+      answeredOptions: birdOptionAnswer.answeredOptions,
+      selectedOptionId: birdOptionAnswer.selectedOptionId,
+      userId: "user-1",
+    });
+    assert.equal(repeatedBirdClarification, null, "answered option should suppress repeated bird clarification");
+
+    const birdCustomAnswer = resolveClarificationInput("wild bird species", {
+      clarification_id: "bird-clarify",
+      original_message: "Best bird breeds information",
+      question: "Are you interested in wild bird species or domestic bird breeds?",
+      options: birdOptions,
+      answers: [],
+      source: "custom",
+    });
+    const repeatedBirdCustomClarification = await maybeCreateClarification({
+      userMessage: birdCustomAnswer.effectiveMessage,
+      originalMessage: birdCustomAnswer.originalMessage,
+      previousAnswers: birdCustomAnswer.answers,
+      currentTurn: birdCustomAnswer.turn,
+      answeredQuestion: birdCustomAnswer.answeredQuestion,
+      answeredOptions: birdCustomAnswer.answeredOptions,
+      selectedOptionId: birdCustomAnswer.selectedOptionId,
+      userId: "user-1",
+    });
+    assert.equal(repeatedBirdCustomClarification, null, "custom answer matching an option should suppress repeated clarification");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}")) as { model_override?: string };
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({
+        result: {
+          text: JSON.stringify({
+            needs_clarification: true,
+            question: "Which region should I focus on?",
+            options: [
+              { id: "north_america", label: "North America", description: "Focus on species found in North America." },
+              { id: "europe", label: "Europe", description: "Focus on species found in Europe." },
+            ],
+            custom_answer_prompt: "Or enter a custom answer in the message bar.",
+            reason: "region_scope",
+          }),
+          model_used: body.model_override,
+        },
+      }),
+    } as Response;
+  }) as typeof fetch;
+  try {
+    const differentBirdFollowup = await maybeCreateClarification({
+      userMessage: birdOptionAnswer.effectiveMessage,
+      originalMessage: birdOptionAnswer.originalMessage,
+      previousAnswers: birdOptionAnswer.answers,
+      currentTurn: birdOptionAnswer.turn,
+      answeredQuestion: birdOptionAnswer.answeredQuestion,
+      answeredOptions: birdOptionAnswer.answeredOptions,
+      selectedOptionId: birdOptionAnswer.selectedOptionId,
+      userId: "user-1",
+    });
+    assert.equal(differentBirdFollowup?.question, "Which region should I focus on?", "different follow-up can still pass");
+    assert.equal(differentBirdFollowup?.options.length, 2, "different follow-up keeps its options");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -397,6 +514,10 @@ async function main(): Promise<void> {
   assert.match(frontend, /capturedClarificationResponse/, "retry preserves clarification response payload");
   assert.match(frontend, /current === state\) current\.inFlight = false/, "option clicks reset in-flight state when request fails");
   assert.match(frontend, /clarificationStateLockedForRequest/, "custom clarification answers lock pending state while in flight");
+  assert.match(frontend, /question:\s*clarification\.question/, "frontend sends answered clarification question");
+  assert.match(frontend, /const options = Array\.isArray\(clarification\.options\)/, "frontend sends answered clarification options");
+  assert.match(frontend, /submitClarificationOption\(chatId,\s*payload\.id,\s*option\)/, "option clicks pass clarification id");
+  assert.match(frontend, /state\.clarification\?\.id !== clarificationId/, "stale clarification option clicks are ignored");
   assert.match(frontend, /persistChatMessage\(targetChatId, "assistant", assistantText\)/, "clarification persistence stays plain text live-only");
   const clarificationRenderSnippet = frontend.slice(
     frontend.indexOf('if (response?.route === "clarification" && clarificationPayload)'),

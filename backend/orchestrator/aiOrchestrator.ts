@@ -34,6 +34,7 @@ import {
   maybeCreateClarification,
   resolveClarificationInput,
   type ClarificationPayload,
+  type ClarificationOption,
   type ClarificationResponsePayload,
 } from "./intentClarifier";
 import { evaluateAnswer } from "../reflection/answerCritic";
@@ -216,6 +217,9 @@ async function maybeClarify(
     webSearch?: boolean;
     originalMessage?: string;
     previousAnswers?: readonly string[];
+    answeredQuestion?: string;
+    answeredOptions?: readonly ClarificationOption[];
+    selectedOptionId?: string;
   } = {},
 ): Promise<OrchestratorResponse | null> {
   const fileReferences = rawContext?.file_references ?? [];
@@ -234,6 +238,9 @@ async function maybeClarify(
     webSearch: options.webSearch === true,
     currentTurn,
     maxTurns: DEFAULT_MAX_CLARIFICATION_TURNS,
+    answeredQuestion: options.answeredQuestion,
+    answeredOptions: options.answeredOptions,
+    selectedOptionId: options.selectedOptionId,
   });
   return clarification ? buildClarificationResponse(clarification) : null;
 }
@@ -434,6 +441,9 @@ async function _orchestrateInner(
       {
         originalMessage: resolvedClarification.originalMessage,
         previousAnswers: resolvedClarification.answers,
+        answeredQuestion: resolvedClarification.answeredQuestion,
+        answeredOptions: resolvedClarification.answeredOptions,
+        selectedOptionId: resolvedClarification.selectedOptionId,
       },
     );
     if (clarificationResponse) {
@@ -505,6 +515,9 @@ async function _orchestrateInner(
         webSearch: true,
         originalMessage: resolvedClarification.originalMessage,
         previousAnswers: resolvedClarification.answers,
+        answeredQuestion: resolvedClarification.answeredQuestion,
+        answeredOptions: resolvedClarification.answeredOptions,
+        selectedOptionId: resolvedClarification.selectedOptionId,
       },
     );
     if (clarificationResponse) {

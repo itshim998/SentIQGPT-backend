@@ -30,6 +30,8 @@ export interface ClarificationPayload {
 export interface ClarificationResponsePayload {
   readonly clarification_id?: string;
   readonly original_message?: string;
+  readonly question?: string;
+  readonly options?: readonly ClarificationOption[];
   readonly answers?: readonly string[];
   readonly source?: "option" | "custom";
   readonly selected_option_id?: string;
@@ -58,6 +60,9 @@ export interface ClarificationContext {
   readonly maxTurns?: number;
   readonly currentTurn?: number;
   readonly forceModelOverride?: string;
+  readonly answeredQuestion?: string;
+  readonly answeredOptions?: readonly ClarificationOption[];
+  readonly selectedOptionId?: string;
 }
 
 export interface ResolvedClarificationInput {
@@ -65,6 +70,9 @@ export interface ResolvedClarificationInput {
   readonly originalMessage: string;
   readonly answers: readonly string[];
   readonly turn: number;
+  readonly answeredQuestion?: string;
+  readonly answeredOptions: readonly ClarificationOption[];
+  readonly selectedOptionId?: string;
 }
 
 const MAX_OPTIONS = 4;
@@ -101,6 +109,13 @@ function normalizeAnswer(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 }
 
+function comparableText(value: unknown): string {
+  return normalizeAnswer(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function normalizeAnswerList(values: readonly unknown[], maxCount = DEFAULT_MAX_CLARIFICATION_TURNS): string[] {
   const seen = new Set<string>();
   const answers: string[] = [];
@@ -116,12 +131,38 @@ function normalizeAnswerList(values: readonly unknown[], maxCount = DEFAULT_MAX_
   return answers;
 }
 
+function normalizeClarificationOptions(values: readonly unknown[] | undefined): ClarificationOption[] {
+  if (!Array.isArray(values)) return [];
+  const seenLabels = new Set<string>();
+  const options: ClarificationOption[] = [];
+  values.forEach((item, index) => {
+    if (!item || typeof item !== "object") return;
+    const record = item as Record<string, unknown>;
+    const label = normalizeAnswer(record.label);
+    if (!label) return;
+    const labelKey = comparableText(label);
+    if (!labelKey || seenLabels.has(labelKey)) return;
+    seenLabels.add(labelKey);
+    const id = sanitizeOptionId(record.id, label, index);
+    const description = normalizeAnswer(record.description);
+    options.push({
+      id,
+      label: label.slice(0, 80),
+      ...(description && comparableText(description) !== labelKey ? { description: description.slice(0, 140) } : {}),
+    });
+  });
+  return options.slice(0, MAX_OPTIONS);
+}
+
 export function resolveClarificationInput(
   userMessage: string,
   clarification?: ClarificationResponsePayload,
 ): ResolvedClarificationInput {
   const visibleAnswer = normalizeAnswer(userMessage);
   const originalMessage = normalizeAnswer(clarification?.original_message) || visibleAnswer;
+  const answeredQuestion = normalizeAnswer(clarification?.question);
+  const answeredOptions = normalizeClarificationOptions(clarification?.options);
+  const selectedOptionId = normalizeAnswer(clarification?.selected_option_id);
   const priorAnswers = Array.isArray(clarification?.answers)
     ? normalizeAnswerList(clarification.answers, Math.max(0, DEFAULT_MAX_CLARIFICATION_TURNS - 1))
     : [];
@@ -134,19 +175,37 @@ export function resolveClarificationInput(
       originalMessage: visibleAnswer,
       answers: [],
       turn: 0,
+      answeredOptions: [],
     };
   }
 
   const clarificationLines = answers.map((answer, index) => `${index + 1}. ${answer}`).join("\n");
+  const latestClarificationLines = answeredQuestion
+    ? [
+      "",
+      "Latest clarification question:",
+      answeredQuestion,
+      "Latest clarification answer:",
+      visibleAnswer,
+      ...(selectedOptionId ? ["Selected option id:", selectedOptionId] : []),
+      ...(answeredOptions.length > 0
+        ? ["Available options:", answeredOptions.map((opt) => `${opt.id}: ${opt.label}`).join("; ")]
+        : []),
+    ]
+    : [];
   return {
     originalMessage,
     answers,
     turn: answers.length,
+    answeredQuestion: answeredQuestion || undefined,
+    answeredOptions,
+    selectedOptionId: selectedOptionId || undefined,
     effectiveMessage: [
       originalMessage,
       "",
       "User clarification(s):",
       clarificationLines,
+      ...latestClarificationLines,
       "",
       "Answer the original request using these clarification(s).",
     ].join("\n"),
@@ -398,6 +457,72 @@ function shouldPreferFallbackDecision(
   return fallbackDecision.reason === "portfolio_name_missing" && modelDecision?.options?.length !== 0;
 }
 
+function collectOptionKeys(options: readonly ClarificationOption[] | undefined): Set<string> {
+  const keys = new Set<string>();
+  for (const option of options ?? []) {
+    const idKey = comparableText(option.id);
+    const labelKey = comparableText(option.label);
+    if (idKey) keys.add(idKey);
+    if (labelKey) keys.add(labelKey);
+  }
+  return keys;
+}
+
+function collectOptionLabelKeys(options: readonly ClarificationOption[] | undefined): Set<string> {
+  const keys = new Set<string>();
+  for (const option of options ?? []) {
+    const labelKey = comparableText(option.label);
+    if (labelKey) keys.add(labelKey);
+  }
+  return keys;
+}
+
+function countSetOverlap(left: ReadonlySet<string>, right: ReadonlySet<string>): number {
+  let overlap = 0;
+  for (const key of left) {
+    if (right.has(key)) overlap += 1;
+  }
+  return overlap;
+}
+
+function shouldSuppressAnsweredClarificationRepeat(
+  args: ClarificationContext,
+  decision: ClarificationDecision,
+): boolean {
+  if (!decision.needsClarification || !decision.question) return false;
+  const answers = normalizeAnswerList(args.previousAnswers ?? [], args.maxTurns ?? DEFAULT_MAX_CLARIFICATION_TURNS);
+  if (answers.length === 0) return false;
+
+  const decisionOptionKeys = collectOptionKeys(decision.options);
+  const latestAnswerKey = comparableText(answers[answers.length - 1]);
+  if (latestAnswerKey && decisionOptionKeys.has(latestAnswerKey)) {
+    return true;
+  }
+
+  const selectedOptionKey = comparableText(args.selectedOptionId);
+  if (selectedOptionKey && decisionOptionKeys.has(selectedOptionKey)) {
+    return true;
+  }
+
+  const answeredQuestionKey = comparableText(args.answeredQuestion);
+  const decisionQuestionKey = comparableText(decision.question);
+  if (answeredQuestionKey && decisionQuestionKey && answeredQuestionKey === decisionQuestionKey) {
+    return true;
+  }
+
+  const answeredOptionLabels = collectOptionLabelKeys(args.answeredOptions);
+  const decisionOptionLabels = collectOptionLabelKeys(decision.options);
+  if (answeredOptionLabels.size > 0 && decisionOptionLabels.size > 0) {
+    const overlap = countSetOverlap(answeredOptionLabels, decisionOptionLabels);
+    const smallerSetSize = Math.min(answeredOptionLabels.size, decisionOptionLabels.size);
+    if (overlap >= 2 && overlap >= smallerSetSize) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function shouldAskModel(args: ClarificationContext): boolean {
   const message = getEvaluationMessage(args).trim();
   if (!message) return false;
@@ -452,6 +577,10 @@ function buildIntentClarifyPrompt(
   const maxTurns = args.maxTurns ?? DEFAULT_MAX_CLARIFICATION_TURNS;
   const previousAnswers = normalizeAnswerList(args.previousAnswers ?? [], DEFAULT_MAX_CLARIFICATION_TURNS);
   const originalMessage = normalizeAnswer(args.originalMessage) || normalizeAnswer(args.userMessage);
+  const answeredQuestion = normalizeAnswer(args.answeredQuestion);
+  const answeredOptions = normalizeClarificationOptions(args.answeredOptions);
+  const latestAnswer = previousAnswers[previousAnswers.length - 1] || "";
+  const selectedOptionId = normalizeAnswer(args.selectedOptionId);
   const triggerHint = fallbackDecision?.needsClarification
     ? [
       `- deterministic_gate: ask`,
@@ -477,6 +606,8 @@ function buildIntentClarifyPrompt(
     "- Never ask generic answer-style questions such as concise vs detailed unless the user's request is specifically about response style.",
     "- For coding, website, and portfolio flows, ask about the project/task details instead of answer length or explanation depth.",
     "- If the user selected a portfolio and the name is missing, ask only whose name should be in the portfolio with zero options.",
+    "- If the user already answered a clarification, do not ask the same question again or reuse the same option set.",
+    "- Ask a second clarification only when a different required detail is still missing.",
     `- Current clarification turn: ${currentTurn}. Maximum turns: ${maxTurns}. If current turn is at the max, do not ask.`,
     "",
     "CONTEXT FLAGS:",
@@ -504,6 +635,16 @@ function buildIntentClarifyPrompt(
     "",
     "PREVIOUS CLARIFICATION ANSWERS:",
     previousAnswers.length ? JSON.stringify(previousAnswers) : "[]",
+    "",
+    "ANSWERED CLARIFICATION:",
+    answeredQuestion
+      ? [
+        `question: ${answeredQuestion}`,
+        `latest_answer: ${latestAnswer}`,
+        selectedOptionId ? `selected_option_id: ${selectedOptionId}` : "",
+        answeredOptions.length ? `options: ${JSON.stringify(answeredOptions)}` : "",
+      ].filter(Boolean).join("\n")
+      : "none",
     "",
     "EVALUATION MESSAGE:",
     getEvaluationMessage(args) || args.userMessage,
@@ -604,6 +745,7 @@ function createPayload(
 ): ClarificationPayload | null {
   if (!decision.needsClarification || !decision.question) return null;
   if (decision.reason === "portfolio_name_missing" && hasPreviousPortfolioName(args)) return null;
+  if (shouldSuppressAnsweredClarificationRepeat(args, decision)) return null;
   const currentTurn = args.currentTurn ?? 0;
   const maxTurns = args.maxTurns ?? DEFAULT_MAX_CLARIFICATION_TURNS;
   if (currentTurn >= maxTurns) return null;

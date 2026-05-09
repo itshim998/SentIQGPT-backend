@@ -8598,8 +8598,9 @@ window.SentIQAPI = {
           btn.appendChild(desc);
         }
         btn.addEventListener("click", () => {
-          optionList.querySelectorAll("button").forEach((item) => { item.disabled = true; });
-          submitClarificationOption(chatId, option);
+          if (submitClarificationOption(chatId, payload.id, option)) {
+            optionList.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+          }
         });
         optionList.appendChild(btn);
       });
@@ -8772,19 +8773,32 @@ window.SentIQAPI = {
   function buildClarificationResponsePayload(state, answer, source, selectedOptionId = "") {
     const clarification = state?.clarification || {};
     const priorAnswers = Array.isArray(state?.answers) ? state.answers : [];
+    const options = Array.isArray(clarification.options)
+      ? clarification.options
+        .map((option) => ({
+          id: String(option?.id || "").trim(),
+          label: String(option?.label || "").trim(),
+          ...(option?.description ? { description: String(option.description).trim() } : {}),
+        }))
+        .filter((option) => option.id && option.label)
+        .slice(0, 4)
+      : [];
     return {
       clarification_id: clarification.id,
       original_message: clarification.original_message,
+      question: clarification.question,
+      options,
       answers: priorAnswers,
       source,
       ...(selectedOptionId ? { selected_option_id: selectedOptionId } : {}),
     };
   }
 
-  function submitClarificationOption(chatId, option) {
+  function submitClarificationOption(chatId, clarificationId, option) {
     const state = getPendingClarification(chatId);
-    if (!state || !option?.label) return;
-    if (state.inFlight) return;
+    if (!state || !option?.label) return false;
+    if (clarificationId && state.clarification?.id !== clarificationId) return false;
+    if (state.inFlight) return false;
     state.inFlight = true;
     handleSend(null, {
       message: option.label,
@@ -8795,6 +8809,7 @@ window.SentIQAPI = {
       const current = getPendingClarification(chatId);
       if (current === state) current.inFlight = false;
     });
+    return true;
   }
 
   function getResponseTrustMeta(response = {}) {
@@ -13279,7 +13294,7 @@ window.SentIQAPI = {
     if (memoryLimit > 0) await Storage.setConfig("memory_limit", memoryLimit);
     if (fileLimit > 0) await Storage.setConfig("file_storage_mb", fileLimit);
     await renderStats();
-    saveSettingsBtn.textContent = "Saved ✓";
+    saveSettingsBtn.textContent = "Saved.";
     setTimeout(() => (saveSettingsBtn.textContent = "Save Settings"), 1500);
   });
 

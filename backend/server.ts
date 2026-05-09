@@ -94,6 +94,7 @@ import {
   formatClarificationText,
   maybeCreateClarification,
   resolveClarificationInput,
+  type ClarificationOption,
   type ClarificationPayload,
 } from "./orchestrator/intentClarifier";
 
@@ -400,6 +401,9 @@ async function maybeCreateChatClarification(args: {
   readonly isGuest: boolean;
   readonly currentTurn: number;
   readonly webSearch?: boolean;
+  readonly answeredQuestion?: string;
+  readonly answeredOptions?: readonly ClarificationOption[];
+  readonly selectedOptionId?: string;
 }): Promise<ReturnType<typeof buildClarificationApiResponse> | null> {
   const fileReferences = args.context?.file_references ?? [];
   const imageAttachments = args.context?.image_attachments ?? [];
@@ -418,6 +422,9 @@ async function maybeCreateChatClarification(args: {
     currentTurn: args.currentTurn,
     maxTurns: DEFAULT_MAX_CLARIFICATION_TURNS,
     forceModelOverride: args.isGuest ? GUEST_MODEL_OVERRIDE : undefined,
+    answeredQuestion: args.answeredQuestion,
+    answeredOptions: args.answeredOptions,
+    selectedOptionId: args.selectedOptionId,
   });
   return payload ? buildClarificationApiResponse(payload) : null;
 }
@@ -1615,6 +1622,9 @@ app.post(
         userId,
         isGuest,
         currentTurn: resolvedClarification.turn,
+        answeredQuestion: resolvedClarification.answeredQuestion,
+        answeredOptions: resolvedClarification.answeredOptions,
+        selectedOptionId: resolvedClarification.selectedOptionId,
         webSearch: false,
       });
       if (guestClarification) {
@@ -1799,6 +1809,9 @@ app.post(
         userId,
         isGuest,
         currentTurn: resolvedClarification.turn,
+        answeredQuestion: resolvedClarification.answeredQuestion,
+        answeredOptions: resolvedClarification.answeredOptions,
+        selectedOptionId: resolvedClarification.selectedOptionId,
       });
       if (logicClarification) {
         if (userDb && activeConversationId) {
@@ -2266,6 +2279,9 @@ app.post(
         userId,
         isGuest,
         currentTurn: resolvedClarification.turn,
+        answeredQuestion: resolvedClarification.answeredQuestion,
+        answeredOptions: resolvedClarification.answeredOptions,
+        selectedOptionId: resolvedClarification.selectedOptionId,
       });
       if (guestClarification) {
         res.json(guestClarification);
@@ -2825,6 +2841,9 @@ app.post(
         userId,
         isGuest,
         currentTurn: resolvedClarification.turn,
+        answeredQuestion: resolvedClarification.answeredQuestion,
+        answeredOptions: resolvedClarification.answeredOptions,
+        selectedOptionId: resolvedClarification.selectedOptionId,
         webSearch: false,
       })
       : null;
@@ -2988,6 +3007,9 @@ app.post(
       userId,
       isGuest,
       currentTurn: resolvedClarification.turn,
+      answeredQuestion: resolvedClarification.answeredQuestion,
+      answeredOptions: resolvedClarification.answeredOptions,
+      selectedOptionId: resolvedClarification.selectedOptionId,
       webSearch: false,
     });
     if (directClarification) {
