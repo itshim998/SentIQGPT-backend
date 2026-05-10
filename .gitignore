@@ -48,3 +48,7 @@ npm-debug.log*
 #.txt file to ignore
 Issues_in_SentIQGPT.txt
 SentIQGPT_Problems.txt
+
+AZURE_DEPLOYMENT_GUIDE.md
+DOCKER_GUIDE.md
+ENVIRONMENT_VARIABLES.md

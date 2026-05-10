@@ -98,7 +98,7 @@ import {
   type ClarificationPayload,
 } from "./orchestrator/intentClarifier";
 
-import { detectCodeQuery, isBufferedReasoningQuery, isMathQuery, selectModelForPrompt } from "./orchestrator/modelRouter";
+import { detectCodeQuery, detectImageMathPrompt, isBufferedReasoningQuery, isMathQuery, selectModelForPrompt } from "./orchestrator/modelRouter";
 import { detectExplicitMemoryWriteIntent, classifyQueryType, shouldForceWebSearch } from "./orchestrator/queryClassifier";
 import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 import { isWebSearchMode, normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
@@ -124,7 +124,7 @@ import {
 import { getOptionalUuid, getRequiredUuid } from "./validation/uuid";
 import { ZodError } from "zod";
 import { collapseAdjacentDuplicateMessages } from "./context/messageDeduper";
-import { normalizeMathResponse } from "./ai/mathVerifier";
+import { callMathModelRaw } from "./ai/mathVerifier";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -366,7 +366,7 @@ function logStreamMetrics(metrics: StreamMetrics, reason: string): void {
 }
 
 const GUEST_MODEL_OVERRIDE = "gemini-search";
-const GUEST_MATH_MAX_OUTPUT_TOKENS = 2600;
+const GUEST_MATH_MAX_OUTPUT_TOKENS = 6000;
 const GUEST_MATH_EMPTY_FALLBACK = "Sorry, I couldn't complete the math response. Please try again.";
 
 function buildClarificationApiResponse(payload: ClarificationPayload) {
@@ -1547,8 +1547,11 @@ app.post(
     });
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
-    const isReasoningQuery = isBufferedReasoningQuery(effectiveUserMessage);
-    const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && isMathQuery(effectiveUserMessage);
+    const hasImageMathPrompt =
+      (parsed.data.context?.image_attachments?.length ?? 0) > 0 &&
+      detectImageMathPrompt(effectiveUserMessage);
+    const isReasoningQuery = isBufferedReasoningQuery(effectiveUserMessage) || hasImageMathPrompt;
+    const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && (isMathQuery(effectiveUserMessage) || hasImageMathPrompt);
     const isLogicReasoningQuery = isReasoningQuery && !isMathReasoningQuery;
 
     // Prompt injection detection
@@ -1633,8 +1636,9 @@ app.post(
       }
 
       if (isMathReasoningQuery) {
-        const call = buildChatPrompt({
+        const mathResult = await callMathModelRaw({
           userMessage: effectiveUserMessage,
+          modelOverride: GUEST_MODEL_OVERRIDE,
           recentMessages: guestContext.recentMessages,
           memories: [],
           fileReferences: guestContext.fileReferences,
@@ -1642,20 +1646,14 @@ app.post(
           conversationSummary: guestContext.conversationSummary,
           priorConversationEvidence: guestContext.priorConversationEvidence,
           isExplicitRecallQuery: guestContext.isExplicitRecallQuery,
-          modelOverride: GUEST_MODEL_OVERRIDE,
           userId,
-          reasoningMode: true,
+          maxOutputTokens: GUEST_MATH_MAX_OUTPUT_TOKENS,
+          emptyFallback: GUEST_MATH_EMPTY_FALLBACK,
         });
-        const mathResult = await callLLMAdapterDetailed({
-          ...call,
-          max_output_tokens: GUEST_MATH_MAX_OUTPUT_TOKENS,
-          skip_wrappers: true,
-        });
-        const mathReply = normalizeMathResponse(mathResult.text.trim() || GUEST_MATH_EMPTY_FALLBACK);
         res.json({
           route: "math_reasoning",
-          answer: mathReply,
-          reply: mathReply,
+          answer: mathResult.answer,
+          reply: mathResult.answer,
           thinking: undefined,
           disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
           image: undefined,
@@ -2142,8 +2140,9 @@ app.post(
       priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
       isExplicitRecallQuery?: boolean;
     }) => {
-      const call = buildChatPrompt({
+      const result = await callMathModelRaw({
         userMessage: args.userMessage,
+        modelOverride: GUEST_MODEL_OVERRIDE,
         recentMessages: args.recentMessages,
         memories: [],
         fileReferences: args.fileReferences,
@@ -2151,17 +2150,12 @@ app.post(
         conversationSummary: args.conversationSummary,
         priorConversationEvidence: args.priorConversationEvidence,
         isExplicitRecallQuery: args.isExplicitRecallQuery,
-        modelOverride: GUEST_MODEL_OVERRIDE,
         userId: args.userId,
-        reasoningMode: true,
-      });
-      const result = await callLLMAdapterDetailed({
-        ...call,
-        max_output_tokens: GUEST_MATH_MAX_OUTPUT_TOKENS,
-        skip_wrappers: true,
+        maxOutputTokens: GUEST_MATH_MAX_OUTPUT_TOKENS,
+        emptyFallback: GUEST_MATH_EMPTY_FALLBACK,
       });
       return {
-        reply: normalizeMathResponse(result.text.trim() || GUEST_MATH_EMPTY_FALLBACK),
+        reply: result.answer,
         model_used: result.model_used,
         fallback: result.fallback ?? false,
       };
@@ -2234,8 +2228,11 @@ app.post(
     });
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
-    const isBufferedReasoning = isBufferedReasoningQuery(effectiveUserMessage);
-    const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && isMathQuery(effectiveUserMessage);
+    const hasImageMathPrompt =
+      (parsed.data.context?.image_attachments?.length ?? 0) > 0 &&
+      detectImageMathPrompt(effectiveUserMessage);
+    const isBufferedReasoning = isBufferedReasoningQuery(effectiveUserMessage) || hasImageMathPrompt;
+    const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && (isMathQuery(effectiveUserMessage) || hasImageMathPrompt);
     if (isGuest && hasExplicitWebSearchMode) {
       const result = await orchestrate({
         userMessage: parsed.data.message,

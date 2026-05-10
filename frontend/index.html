@@ -1024,7 +1024,7 @@ body::after {
     rgba(7, 9, 18, 0.42);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: visible;
   max-width: 100%;
   text-wrap: nowrap;
   overflow-wrap: normal;
@@ -1034,6 +1034,7 @@ body::after {
 .message-content .math-display-shell .katex-display {
   margin: 0;
   overflow: visible;
+  padding: 6px 0;
 }
 
 .message-content.math-enhanced .math-display-shell + .math-display-shell {
@@ -1086,8 +1087,8 @@ body::after {
 .message-content .katex-display {
   margin: 18px 0;
   overflow-x: auto;
-  overflow-y: hidden;
-  padding: 4px 0;
+  overflow-y: visible;
+  padding: 8px 0;
   max-width: 100%;
   text-wrap: nowrap;
   overflow-wrap: normal;
@@ -1096,10 +1097,10 @@ body::after {
 .message-content .katex-display > .katex {
   padding: 2px 4px 4px;
   min-width: max-content;
+  display: inline-block;
 }
 
-.message-content .katex *,
-.message-content .math-display-shell * {
+.message-content .katex * {
   overflow-wrap: normal;
   word-break: normal;
   text-wrap: nowrap;
@@ -4231,26 +4232,15 @@ textarea:focus-visible {
   }
 
   function strictEquationLine(line) {
-    var trimmed = String(line || "").replace(/^\s*[-*]\s+/, "").trim();
-    if (!trimmed || trimmed.length < 5 || trimmed.length > 220) return false;
-    if (/^#{1,6}\s/.test(trimmed) || /^>/.test(trimmed)) return false;
-    if (/https?:\/\//i.test(trimmed) || /[`{}"]|\*\*|__/.test(trimmed)) return false;
-    if (/[.!?]["']?$/.test(trimmed)) return false;
-    if (!/(?:=|<|>|\\le|\\ge|\\approx|\\Rightarrow|\\to)/.test(trimmed)) return false;
-    var mathSignals = (trimmed.match(/=|<|>|\\le|\\ge|\\approx|\\frac|\\sqrt|\^|_|\+|-|\*|\/|\(|\)|\b[A-Za-z]\b|\d/g) || []).length;
-    var hasMathVariable = /(?:\\?[A-Za-z]+\s*\(|\b[A-Za-z](?:_\{?[A-Za-z0-9]+\}?|\d+)?\b)/.test(trimmed);
-    return hasMathVariable && mathSignals >= 5 && countProseWords(trimmed) <= 2;
+    void line;
+    return false;
   }
 
   function findExplicitMath(source, startIndex) {
     var rest = source.slice(startIndex);
     var candidates = [
-      { display: true, regex: /\$\$[\s\S]+?\$\$/ },
       { display: true, regex: /\\\[[\s\S]+?\\\]/ },
-      { display: true, regex: /\\begin\{[A-Za-z*]+\}[\s\S]+?\\end\{[A-Za-z*]+\}/ },
-      { display: false, regex: /\\\([\s\S]+?\\\)/ },
-      { display: false, regex: /\\left(?:\\[A-Za-z]+|[()[\]{}|.])[\s\S]+?\\right(?:\\[A-Za-z]+|[()[\]{}|.])/ },
-      { display: false, regex: /(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/ }
+      { display: false, regex: /\\\([\s\S]+?\\\)/ }
     ];
     var best = null;
     candidates.forEach(function (candidate) {
@@ -4284,18 +4274,7 @@ textarea:focus-visible {
   }
 
   function segmentPlainText(value, segments) {
-    var lines = String(value || "").split(/(\n)/);
-    lines.forEach(function (part) {
-      if (part === "\n") {
-        pushProseSegment(segments, part);
-        return;
-      }
-      if (strictEquationLine(part)) {
-        segments.push({ type: "math", display: true, value: part.replace(/^\s*[-*]\s+/, "").trim() });
-      } else {
-        pushProseSegment(segments, part);
-      }
-    });
+    pushProseSegment(segments, value);
   }
 
   function segmentText(source) {

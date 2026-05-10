@@ -1,5 +1,3 @@
-import { finalizeMathReply } from "./ai/mathAnswerFinalizer";
-import { formatMathResponse } from "./ai/mathFormatter";
 import {
   composeUserFacingReply,
   extractUserFacingAnswer,
@@ -7,7 +5,7 @@ import {
   finalizeUserFacingReply,
   DEFAULT_SAFE_REPLY_FALLBACK,
 } from "./ai/replyGuard";
-import { normalizeMathResponse, salvageTruncatedResponse } from "./ai/mathVerifier";
+import { salvageTruncatedResponse } from "./ai/mathVerifier";
 
 function assert(condition: boolean, label: string, detail?: string): void {
   if (!condition) {
@@ -127,8 +125,8 @@ assert(
   "structured explanation composes into explanation plus final answer",
 );
 assert(
-  finalizeMathReply(explanationJson).includes("x = 3, y = 0, z = 1"),
-  "math finalizer returns final answer without forcing explanation",
+  finalizeStructuredReply(explanationJson, { sanitizeMode: "minimal" }).answer.includes("x = 3, y = 0, z = 1"),
+  "minimal finalizer returns final answer without forcing explanation",
 );
 
 assert(
@@ -161,11 +159,6 @@ assert(!/that means/i.test(cleanedLeakPhrases), "final answer leakage phrase 'th
 assert(!/alternatively/i.test(cleanedLeakPhrases), "final answer leakage phrase 'alternatively' removed");
 assert(/hash map/i.test(cleanedLeakPhrases), "final answer content preserved after leakage cleanup");
 
-const finalizedMath = finalizeMathReply(normalizeMathResponse(noisyMathReply));
-assert(/we need to solve/i.test(finalizedMath), "math narrative preserved in relaxed mode");
-assert(/let me check/i.test(finalizedMath), "math self-talk preserved in relaxed mode");
-assert(/x = 3, y = 0/.test(finalizedMath), "math final answer preserved");
-
 const relaxedThinkReply = "<think>hidden reasoning</think>\nHere is the answer.";
 const relaxedFinalized = finalizeStructuredReply(relaxedThinkReply, { sanitizeMode: "minimal" });
 assert(relaxedFinalized.answer === "Here is the answer.", "minimal sanitizer strips think blocks");
@@ -180,10 +173,6 @@ assert(unsanitizedFinalized.thinking === undefined, "no-sanitize mode does not s
 
 const unsanitizedProviderFailure = finalizeStructuredReply(providerFailureBlob, { sanitizeMode: "none" });
 assert(unsanitizedProviderFailure.answer === DEFAULT_SAFE_REPLY_FALLBACK, "no-sanitize mode still blocks provider failure payloads");
-
-const latexNormalizedMath = formatMathResponse(latexMathReply);
-assert(/\\\[/.test(latexNormalizedMath), "math normalizer emits display LaTeX delimiters");
-assert(/x = \\pm 3/.test(latexNormalizedMath), "math normalizer preserves readable LaTeX symbols");
 
 const salvagedMath = salvageTruncatedResponse(truncatedMathReply);
 assert(/z = 1/.test(salvagedMath) && /y = 0/.test(salvagedMath), "truncated math keeps valid solved prefix");

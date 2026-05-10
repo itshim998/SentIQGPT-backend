@@ -109,9 +109,13 @@ const FRONTEND_STACK_PATTERNS: readonly RegExp[] = [
 // Checked after coding so programming prompts never leak into openai-large.
 const MATH_PATTERNS: readonly RegExp[] = [
   /\d+\s*[+\-*/^]\s*\d+/,
+  /\b\d*[A-Za-z]\s*(?:[+\-*/^]\s*[-+]?\d+(?:\.\d+)?)?\s*=\s*[-+]?\d+(?:\.\d+)?\b/,
   /\balgebra(?:ic)?\b/i,
   /\bequation(?:s)?\b/i,
-  /\bsolve\b/i,
+  /\bsolve\s+for\s+[A-Za-z]\b/i,
+  /\bsolve\b[\s\S]{0,80}\b(?:equation|system|matrix|integral|derivative|polynomial|quadratic|linear|root|inequality|algebra|calculus)\b/i,
+  /\b(?:gauss|gaussian)\s+elimination\b/i,
+  /\bfalse\s+position\s+method\b/i,
   /\bfactor(?:ize|ise)?\b/i,
   /\bsimplif(?:y|ied|ication)\b/i,
   /\bpolynomial\b/i,
@@ -164,6 +168,9 @@ const MATH_PATTERNS: readonly RegExp[] = [
 
 const LOGIC_REASONING_PATTERNS: readonly RegExp[] = [
   /\blogic(?:al)?\s+(?:puzzle|problem|question|reasoning)\b/i,
+  /\briver[-\s]?crossing\s+puzzle\b/i,
+  /\bmissionar(?:y|ies)\b[\s\S]{0,120}\bcannibals?\b/i,
+  /\bcannibals?\b[\s\S]{0,120}\bmissionar(?:y|ies)\b/i,
   /\briddle\b/i,
   /\bsyllogism\b/i,
   /\btruth\s+table\b/i,
@@ -389,6 +396,15 @@ const VISION_PATTERNS: readonly RegExp[] = [
   /\bextract\s+(?:text|data)\s+from\s+(?:this\s+)?(?:image|photo|screenshot)\b/i,
 ];
 
+const IMAGE_MATH_PROMPTS: readonly RegExp[] = [
+  /^\s*(?:solve|calculate|compute)\s+(?:it|this|the\s+problem)\s*\.?\s*$/i,
+  /\bsolve\s+(?:this\s+)?(?:math\s+)?(?:problem|equation)\b/i,
+];
+
+export function detectImageMathPrompt(query: string): boolean {
+  return IMAGE_MATH_PROMPTS.some((pattern) => pattern.test(query));
+}
+
 interface RouterOptions {
   hasImage?: boolean;
   hasFile?: boolean;
@@ -492,7 +508,7 @@ function detectPromptCategory(
     if (detectCodeQuery(query)) {
       return "coding";
     }
-    if (isMathQuery(query)) {
+    if (isMathQuery(query) || detectImageMathPrompt(query)) {
       return "math_reasoning";
     }
     return "vision";

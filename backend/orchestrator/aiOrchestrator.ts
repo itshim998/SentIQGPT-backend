@@ -26,7 +26,7 @@ import { finalizeUserFacingReply } from "../ai/replyGuard";
 import { buildContext } from "../context/contextBuilder";
 import { planTask } from "./planner";
 import { executePlan } from "./toolExecutor";
-import { detectCodeQuery, isMathQuery } from "./modelRouter";
+import { detectCodeQuery, detectImageMathPrompt, isMathQuery } from "./modelRouter";
 import { classifyQueryType, detectExplicitMemoryWriteIntent, shouldForceWebSearch } from "./queryClassifier";
 import {
   DEFAULT_MAX_CLARIFICATION_TURNS,
@@ -453,7 +453,11 @@ async function _orchestrateInner(
 
   const isCodingQuery = detectCodeQuery(userMessage);
 
-  if (!isCodingQuery && isMathQuery(userMessage)) {
+  const hasImageMathPrompt =
+    (rawContext?.image_attachments?.length ?? 0) > 0 &&
+    detectImageMathPrompt(userMessage);
+
+  if (!isCodingQuery && (isMathQuery(userMessage) || hasImageMathPrompt)) {
     console.log(`[MathPipeline] math query detected on raw input — bypassing planner`);
     console.log(`[MathPipeline] solving with openai-large`);
 

@@ -52,10 +52,16 @@ async function main(): Promise<void> {
       finish_reason: "length",
     },
     {
-      text: "Step 1: Subtract 2 from both sides to get 2x = 4.\nStep 2: Divide by 2 to get x = 2.\nFinal answer: x = 2.",
+      text: "## Solution\n\n\\[\n2x + 2 = 6\n\\]\n\nSubtract \\(2\\) from both sides.",
       model_used: "openai-large",
       truncated: true,
       finish_reason: "length",
+    },
+    {
+      text: "\\[\n2x = 4\n\\]\n\n\\[\n\\boxed{x = 2}\n\\]",
+      model_used: "openai-large",
+      truncated: false,
+      finish_reason: "stop",
     },
     {
       text: "The image shows a math problem. The answer is 42.",
@@ -108,6 +114,7 @@ async function main(): Promise<void> {
     const { buildChatPrompt } = await import("./ai/PromptBuilders");
     const { handleChat } = await import("./ai/ChatHandler");
     const { solveMathDirect } = await import("./ai/mathVerifier");
+    const { MATH_RESPONSE_SYSTEM_PROMPT } = await import("./ai/mathPrompt");
     const { selectModelForPrompt } = await import("./orchestrator/modelRouter");
 
     const reasoningPrompt = buildChatPrompt({
@@ -137,12 +144,16 @@ async function main(): Promise<void> {
 
     const mathReply = await solveMathDirect("Solve 2x + 2 = 6 and explain the steps.");
 
-    assert(capturedRequests.length === 2, "math solver makes a single raw LLM call");
-    assert(capturedRequests[1].prompt === "Solve 2x + 2 = 6 and explain the steps.", "math solver sends only the original user prompt");
+    assert(capturedRequests.length === 3, "math solver makes one raw continuation call when truncated");
+    assert(capturedRequests[1].prompt?.includes(MATH_RESPONSE_SYSTEM_PROMPT.slice(0, 80)) ?? false, "math solver sends the math system prompt");
+    assert(/USER:\s*Solve 2x \+ 2 = 6 and explain the steps\./.test(capturedRequests[1].prompt ?? ""), "math solver keeps the original user prompt");
     assert(capturedRequests[1].skip_wrappers === true, "math solver disables adapter wrappers");
+    assert(capturedRequests[1].max_output_tokens === 6000, "math solver uses expanded first-pass token budget");
+    assert(capturedRequests[2].prompt?.includes("Continue the math answer only.") ?? false, "math continuation prompt asks only for continuation");
+    assert(capturedRequests[2].max_output_tokens === 3000, "math continuation uses a bounded continuation budget");
     assert(
-      mathReply.answer === "Step 1: Subtract 2 from both sides to get 2x = 4.\nStep 2: Divide by 2 to get x = 2.\nFinal answer: x = 2.",
-      "math solver preserves the full explanation",
+      mathReply.answer === "## Solution\n\n\\[\n2x + 2 = 6\n\\]\n\nSubtract \\(2\\) from both sides.\n\\[\n2x = 4\n\\]\n\n\\[\n\\boxed{x = 2}\n\\]",
+      "math solver preserves and merges raw prompt-shaped output",
     );
     assert(mathReply.thinking === undefined, "math solver no longer extracts thinking");
 
@@ -154,10 +165,10 @@ async function main(): Promise<void> {
     };
     const imageMathReply = await solveMathDirect("Solve it.", "test-user", [imageAttachment]);
 
-    assert(capturedRequests.length === 3, "image math solver makes a single native image LLM call");
-    assert(capturedRequests[2].prompt === "Solve it.", "image math solver keeps the original prompt");
-    assert(capturedRequests[2].model_override === "openai-large", "image math solver still uses openai-large");
-    assert(capturedRequests[2].image_attachments?.[0]?.filename === "problem.png", "image math solver forwards image attachments");
+    assert(capturedRequests.length === 4, "image math solver makes a single native image LLM call");
+    assert(/USER:\s*Solve it\./.test(capturedRequests[3].prompt ?? ""), "image math solver keeps the original prompt");
+    assert(capturedRequests[3].model_override === "openai-large", "image math solver still uses openai-large");
+    assert(capturedRequests[3].image_attachments?.[0]?.filename === "problem.png", "image math solver forwards image attachments");
     assert(imageMathReply.answer === "The image shows a math problem. The answer is 42.", "image math solver preserves image answer");
 
     const unsanitizedOpenAiLargeReply = await handleChat({
@@ -165,9 +176,9 @@ async function main(): Promise<void> {
       modelOverride: "openai-large",
     });
 
-    assert(capturedRequests.length === 5, "openai-large chat with continuation makes two raw LLM calls");
-    assert(capturedRequests[3].model_override === "openai-large", "openai-large bypass is keyed off the requested route");
-    assert(capturedRequests[4].model_override === "openai-large", "openai-large continuation keeps the requested route");
+    assert(capturedRequests.length === 6, "openai-large chat with continuation makes two raw LLM calls");
+    assert(capturedRequests[4].model_override === "openai-large", "openai-large bypass is keyed off the requested route");
+    assert(capturedRequests[5].model_override === "openai-large", "openai-large continuation keeps the requested route");
     assert(
       unsanitizedOpenAiLargeReply.reply === "That means we can iterate through the candidate cases.\nFinal Answer: Keep this wording untouched.\nAlternatively, preserve this continuation too.",
       "openai-large chat bypass preserves raw reply and continuation text",

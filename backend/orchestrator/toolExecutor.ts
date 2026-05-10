@@ -27,7 +27,7 @@ import { processMessageForMemory } from "../ai/MemoryProcessor";
 import { solveMathDirect } from "../ai/mathVerifier";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
-import { detectCodeQuery, selectModelForPrompt, isMathQuery } from "./modelRouter";
+import { detectCodeQuery, detectImageMathPrompt, selectModelForPrompt, isMathQuery } from "./modelRouter";
 import type { SearchResult } from "../tools/webSearch/types";
 
 // ==============================
@@ -126,7 +126,10 @@ async function execConversation(
   // Math path
   // If the query is mathematical, route through the direct openai-large math solver
   // instead of the standard single-model chat handler.
-  if (!detectCodeQuery(input) && isMathQuery(input)) {
+  const hasImageMathPrompt =
+    (ctx.imageAttachments?.length ?? 0) > 0 &&
+    detectImageMathPrompt(input);
+  if (!detectCodeQuery(input) && (isMathQuery(input) || hasImageMathPrompt)) {
     console.log(`[MathPipeline] math query detected — routing to direct openai-large solver`);
     const mathResult = await solveMathDirect(augmentedInput, ctx.userId, ctx.imageAttachments);
     console.log(

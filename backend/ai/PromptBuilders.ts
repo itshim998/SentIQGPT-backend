@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { resolve as pathResolve } from "path";
 import { composeContext } from "../orchestrator/contextComposer";
+import { MATH_RESPONSE_SYSTEM_PROMPT } from "./mathPrompt";
 
 // SentIQGPT v1 — Prompt Builders & LLM Adapter Bridge
 //
@@ -453,6 +454,7 @@ export interface ChatContext {
   readonly userId?: string;
   readonly streaming?: boolean;
   readonly reasoningMode?: boolean;
+  readonly mathMode?: boolean;
 }
 
 export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
@@ -464,7 +466,9 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   // Use the default prompt for file analysis and other specialized models.
   let SYSTEM_PROMPT: string;
   
-  if (ctx.reasoningMode) {
+  if (ctx.mathMode) {
+    SYSTEM_PROMPT = MATH_RESPONSE_SYSTEM_PROMPT;
+  } else if (ctx.reasoningMode) {
     SYSTEM_PROMPT = "";
   } else if ((ctx.modelOverride === "mistral" || ctx.modelOverride === "gemini-search") && !hasFiles) {
     // General text chat stays warm and conversational after the default model switch.
@@ -474,7 +478,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT;
   }
 
-  if (ctx.trustedProfile?.displayName && !ctx.reasoningMode) {
+  if (ctx.trustedProfile?.displayName && !ctx.reasoningMode && !ctx.mathMode) {
     const safeDisplayName = ctx.trustedProfile.displayName.replace(/\s+/g, " ").trim();
     if (safeDisplayName) {
       SYSTEM_PROMPT +=
@@ -483,7 +487,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
         "- Use their name naturally when it helps, but do not overuse it.\n";
     }
   }
-  if (!ctx.reasoningMode) {
+  if (!ctx.reasoningMode && !ctx.mathMode) {
     SYSTEM_PROMPT +=
       "\nCONTEXT PROVENANCE RULES:\n" +
       "- SAVED MEMORY CONTEXT contains durable user facts the user explicitly asked you to remember across chats.\n" +

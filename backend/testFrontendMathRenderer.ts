@@ -95,6 +95,14 @@ const markdownProseHtml = renderMath("there is a root between **2 and 3**.");
 assert(/<strong>2 and 3<\/strong>/.test(markdownProseHtml), "Markdown emphasis in prose remains Markdown");
 assert(!/math-display-shell|katex/.test(markdownProseHtml), "Markdown prose is not promoted to math");
 
+const rawEquationHtml = renderMath("x = 4 and y = 7");
+assert(/x = 4 and y = 7/.test(stripHtml(rawEquationHtml)), "raw undelimited equation text remains readable text");
+assert(!/math-display-shell|katex/.test(rawEquationHtml), "raw undelimited equations are not auto-rendered as math");
+
+const dollarMathHtml = renderMath("$x + 1$ stays literal unless the model uses renderer-safe delimiters.");
+assert(/\$x \+ 1\$/.test(stripHtml(dollarMathHtml)), "single-dollar math remains literal text");
+assert(!/math-display-shell|katex/.test(dollarMathHtml), "single-dollar math is not rendered by the active renderer");
+
 const falsePositionHtml = renderMath(String.raw`
 Using the False Position formula:
 
@@ -110,6 +118,7 @@ Now check \(f(2.6)\) and keep the interval \(\left[2.6,3\right]\).
 `);
 assert(/math-display-shell/.test(falsePositionHtml), "false-position display formulas render as display math");
 assert(/\.math-display-shell[\s\S]*overflow-x:\s*auto/.test(frontendHtml), "display math shell remains horizontally scrollable by CSS");
+assert(/\.math-display-shell[\s\S]*overflow-y:\s*visible/.test(frontendHtml), "display math shell does not vertically clip fractions");
 assert(/Now check/.test(stripHtml(falsePositionHtml)), "false-position prose remains readable");
 assertCleanMathHtml(falsePositionHtml, "false-position formulas");
 
@@ -122,6 +131,7 @@ const fallbackSandbox = {
   window: { marked },
   MAX_RENDER_CHARS: 100000,
   console: { warn: () => undefined },
+  debugWarn: () => undefined,
   escapeHtml: (value: unknown) => String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

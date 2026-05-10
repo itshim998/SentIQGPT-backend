@@ -3,18 +3,19 @@
 // Single-model math pipeline for mathematical/numerical queries.
 // Uses openai-large directly via the shared LLM adapter.
 
-import { callLLMAdapterDetailed } from "./PromptBuilders";
-import type { ImageAttachment, LLMAdapterCall } from "./PromptBuilders";
-import { formatMathResponse } from "./mathFormatter";
+import { buildChatPrompt, callLLMAdapterDetailed } from "./PromptBuilders";
+import type { ImageAttachment } from "./PromptBuilders";
+import { isProviderFailurePayload } from "./replyGuard";
 
 // ==============================
 // Constants
 // ==============================
 
 const PRIMARY_MODEL = "openai-large";
-const SOLVER_MAX_OUTPUT_TOKENS = 2600;
-const GENERATION_MAX_OUTPUT_TOKENS = 2600;
-const EXAMPLE_MAX_OUTPUT_TOKENS = 2200;
+const SOLVER_MAX_OUTPUT_TOKENS = 6000;
+const GENERATION_MAX_OUTPUT_TOKENS = 6000;
+const EXAMPLE_MAX_OUTPUT_TOKENS = 6000;
+const CONTINUATION_MAX_OUTPUT_TOKENS = 3000;
 const INCOMPLETE_RESPONSE_FALLBACK =
   "Sorry, I couldn't complete the response. Please try again.";
 
@@ -227,19 +228,144 @@ export function salvageTruncatedResponse(text: string): string {
   return INCOMPLETE_RESPONSE_FALLBACK;
 }
 
-export function normalizeMathResponse(text: string): string {
-  return formatMathResponse(text)
-    .replace(/<think[^>]*>[\s\S]*?<\/think>/gi, "")
-    .replace(/<\/?think[^>]*>/gi, "")
-    .replace(/(?:^|\n)\s*(?:#{1,6}\s*)?final answer\s*:?\s*/gi, "\n")
-    .trim();
+function normalizeRawMathAnswer(text: string, fallback = INCOMPLETE_RESPONSE_FALLBACK): string {
+  const raw = (text ?? "").replace(/\r\n?/g, "\n").trim();
+  if (!raw || isProviderFailurePayload(raw)) {
+    return fallback;
+  }
+  return raw;
+}
+
+function shouldRequestContinuation(result: {
+  readonly finish_reason?: string | null;
+  readonly truncated?: boolean;
+}): boolean {
+  const reason = (result.finish_reason ?? "").trim().toLowerCase();
+  return Boolean(result.truncated) || reason === "length" || reason === "max_tokens";
+}
+
+function mergeRawContinuation(base: string, continuation: string): string {
+  const left = base.trimEnd();
+  const right = continuation.trim();
+  if (!right) return left;
+
+  const maxOverlap = Math.min(300, left.length, right.length);
+  let overlap = 0;
+  for (let size = maxOverlap; size >= 20; size -= 1) {
+    if (left.endsWith(right.slice(0, size))) {
+      overlap = size;
+      break;
+    }
+  }
+
+  const glue = left.endsWith("\n") || right.startsWith("\n") ? "" : "\n";
+  return `${left}${glue}${right.slice(overlap)}`.trim();
+}
+
+function buildMathContinuationMessage(userMessage: string, answerSoFar: string): string {
+  return [
+    "Continue the math answer only.",
+    "Do not repeat any earlier text. Do not include hidden chain-of-thought or a <think> block.",
+    "Keep using clean Markdown with renderer-safe LaTeX delimiters: \\( ... \\) and \\[ ... \\].",
+    "",
+    "Original question:",
+    userMessage,
+    "",
+    "Answer so far:",
+    answerSoFar,
+  ].join("\n");
+}
+
+function getMaxOutputTokensForIntent(intent: ReturnType<typeof classifyMathIntent>): number {
+  if (intent === "generation") return GENERATION_MAX_OUTPUT_TOKENS;
+  if (intent === "example") return EXAMPLE_MAX_OUTPUT_TOKENS;
+  return SOLVER_MAX_OUTPUT_TOKENS;
+}
+
+export async function callMathModelRaw(args: {
+  readonly userMessage: string;
+  readonly modelOverride: string;
+  readonly userId?: string;
+  readonly recentMessages?: readonly { role: string; content: string }[];
+  readonly memories?: readonly { type: string; summary: string }[];
+  readonly fileReferences?: readonly { filename: string; extractedText: string }[];
+  readonly imageAttachments?: readonly ImageAttachment[];
+  readonly conversationSummary?: string;
+  readonly priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
+  readonly isExplicitRecallQuery?: boolean;
+  readonly maxOutputTokens?: number;
+  readonly timeoutMs?: number;
+  readonly emptyFallback?: string;
+}): Promise<{ answer: string; thinking?: string; model_used?: string; fallback?: boolean }> {
+  const call = buildChatPrompt({
+    userMessage: args.userMessage,
+    recentMessages: args.recentMessages,
+    memories: args.memories,
+    fileReferences: args.fileReferences,
+    imageAttachments: args.imageAttachments,
+    conversationSummary: args.conversationSummary,
+    priorConversationEvidence: args.priorConversationEvidence,
+    isExplicitRecallQuery: args.isExplicitRecallQuery,
+    modelOverride: args.modelOverride,
+    userId: args.userId,
+    mathMode: true,
+  });
+
+  const result = await callLLMAdapterDetailed({
+    ...call,
+    max_output_tokens: args.maxOutputTokens ?? SOLVER_MAX_OUTPUT_TOKENS,
+    timeout_ms: args.timeoutMs ?? 180_000,
+    skip_wrappers: true,
+  });
+
+  const fallbackText = args.emptyFallback ?? INCOMPLETE_RESPONSE_FALLBACK;
+  let answer = normalizeRawMathAnswer(result.text, fallbackText);
+  let fallback = result.fallback ?? false;
+
+  if (answer !== fallbackText && shouldRequestContinuation(result)) {
+    try {
+      const continuationCall = buildChatPrompt({
+        userMessage: buildMathContinuationMessage(args.userMessage, answer),
+        recentMessages: [],
+        memories: [],
+        fileReferences: args.fileReferences,
+        imageAttachments: args.imageAttachments,
+        conversationSummary: args.conversationSummary,
+        priorConversationEvidence: args.priorConversationEvidence,
+        isExplicitRecallQuery: args.isExplicitRecallQuery,
+        modelOverride: args.modelOverride,
+        userId: args.userId,
+        mathMode: true,
+      });
+      const continuationResult = await callLLMAdapterDetailed({
+        ...continuationCall,
+        max_output_tokens: CONTINUATION_MAX_OUTPUT_TOKENS,
+        timeout_ms: args.timeoutMs ?? 180_000,
+        skip_wrappers: true,
+      });
+      const continuation = normalizeRawMathAnswer(continuationResult.text, "");
+      if (continuation) {
+        answer = mergeRawContinuation(answer, continuation);
+      }
+      fallback = fallback || (continuationResult.fallback ?? false);
+    } catch {
+      // Keep the raw first pass if continuation fails.
+    }
+  }
+
+  return {
+    answer,
+    thinking: undefined,
+    model_used: result.model_used,
+    fallback,
+  };
 }
 
 /**
  * Run the single-model math solving pipeline.
  *
- * Sends only the user's original prompt to openai-large with no app-added
- * system prompt or follow-up rewrite/continuation prompt.
+ * Sends the user prompt through the math system prompt and returns the raw
+ * provider text. Formatting is prompt-governed only.
  */
 export async function solveMathDirect(
   userMessage: string,
@@ -249,29 +375,11 @@ export async function solveMathDirect(
   const intent = classifyMathIntent(userMessage);
   console.log(`[MathPipeline] intent=${intent}`);
 
-  const call: LLMAdapterCall = {
-    task: "chat",
-    prompt: userMessage,
-    model_override: PRIMARY_MODEL,
-    user_id: userId,
-    timeout_ms: 180_000,
-    max_output_tokens:
-      intent === "generation"
-        ? GENERATION_MAX_OUTPUT_TOKENS
-        : intent === "example"
-          ? EXAMPLE_MAX_OUTPUT_TOKENS
-          : SOLVER_MAX_OUTPUT_TOKENS,
-    skip_wrappers: true,
-    image_attachments: imageAttachments,
-  };
-
-  const result = await callLLMAdapterDetailed(call);
-  const answer = normalizeMathResponse(result.text.trim() || INCOMPLETE_RESPONSE_FALLBACK);
-
-  return {
-    answer,
-    thinking: undefined,
-    model_used: result.model_used,
-    fallback: result.fallback ?? false,
-  };
+  return callMathModelRaw({
+    userMessage,
+    modelOverride: PRIMARY_MODEL,
+    userId,
+    imageAttachments,
+    maxOutputTokens: getMaxOutputTokensForIntent(intent),
+  });
 }
