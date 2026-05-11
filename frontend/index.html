@@ -1010,8 +1010,7 @@ body::after {
   color: var(--purple-300);
   overflow-wrap: normal;
   word-break: normal;
-  white-space: normal;
-  text-wrap: nowrap;
+  white-space: pre-wrap;
 }
 
 .message-content .math-display-shell {
@@ -1026,15 +1025,16 @@ body::after {
   overflow-x: auto;
   overflow-y: visible;
   max-width: 100%;
-  text-wrap: nowrap;
   overflow-wrap: normal;
   word-break: normal;
+  line-height: normal;
 }
 
 .message-content .math-display-shell .katex-display {
   margin: 0;
-  overflow: visible;
-  padding: 6px 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding: 0.35rem 0;
 }
 
 .message-content.math-enhanced .math-display-shell + .math-display-shell {
@@ -1078,32 +1078,18 @@ body::after {
 .message-content .katex {
   color: var(--text-primary);
   font-size: 1.06em;
-  line-height: 1.45;
-  text-wrap: nowrap;
-  overflow-wrap: normal;
-  word-break: normal;
-  white-space: normal;
+  line-height: normal;
 }
 .message-content .katex-display {
-  margin: 18px 0;
+  margin: 0;
   overflow-x: auto;
   overflow-y: visible;
-  padding: 8px 0;
+  padding: 0.35rem 0;
   max-width: 100%;
-  text-wrap: nowrap;
-  overflow-wrap: normal;
-  word-break: normal;
 }
 .message-content .katex-display > .katex {
-  padding: 2px 4px 4px;
   min-width: max-content;
   display: inline-block;
-}
-
-.message-content .katex * {
-  overflow-wrap: normal;
-  word-break: normal;
-  text-wrap: nowrap;
 }
 
 /* Truncation notice */
@@ -4236,31 +4222,116 @@ textarea:focus-visible {
     return false;
   }
 
+  function isEscapedAt(source, index) {
+    var slashCount = 0;
+    for (var cursor = index - 1; cursor >= 0 && source.charAt(cursor) === "\\"; cursor -= 1) {
+      slashCount += 1;
+    }
+    return slashCount % 2 === 1;
+  }
+
+  function isMarkdownTableLine(source, index) {
+    var lineStart = source.lastIndexOf("\n", index - 1) + 1;
+    var lineEnd = source.indexOf("\n", index);
+    if (lineEnd < 0) lineEnd = source.length;
+    var line = source.slice(lineStart, lineEnd).trim();
+    if (line.indexOf("|") < 0) return false;
+    if (/^:?-{3,}:?(?:\s*\|\s*:?-{3,}:?)+$/.test(line.replace(/^\||\|$/g, "").trim())) return true;
+    return /^\|?.+\|.+\|?$/.test(line);
+  }
+
+  function makeMathCandidate(source, index, end, display) {
+    return {
+      index: index,
+      end: end,
+      raw: source.slice(index, end),
+      display: Boolean(display)
+    };
+  }
+
+  function findDelimitedMath(source, startIndex, open, close, display) {
+    var searchIndex = startIndex;
+    while (searchIndex < source.length) {
+      var index = source.indexOf(open, searchIndex);
+      if (index < 0) return null;
+      if ((open === "$$" || open === "$") && isEscapedAt(source, index)) {
+        searchIndex = index + open.length;
+        continue;
+      }
+      var closeIndex = source.indexOf(close, index + open.length);
+      if (closeIndex < 0) return null;
+      var end = closeIndex + close.length;
+      var inner = source.slice(index + open.length, closeIndex).trim();
+      if (!inner || (display && isMarkdownTableLine(source, index))) {
+        searchIndex = end;
+        continue;
+      }
+      return makeMathCandidate(source, index, end, display);
+    }
+    return null;
+  }
+
+  function findClosingInlineDollar(source, openIndex) {
+    var searchIndex = openIndex + 1;
+    while (searchIndex < source.length) {
+      var closeIndex = source.indexOf("$", searchIndex);
+      if (closeIndex < 0) return -1;
+      if (source.charAt(closeIndex + 1) === "$" || isEscapedAt(source, closeIndex)) {
+        searchIndex = closeIndex + 1;
+        continue;
+      }
+      return closeIndex;
+    }
+    return -1;
+  }
+
+  function isSafeInlineDollarMath(source, openIndex, closeIndex) {
+    var inner = source.slice(openIndex + 1, closeIndex);
+    var trimmed = inner.trim();
+    var before = openIndex > 0 ? source.charAt(openIndex - 1) : "";
+    var afterOpen = source.charAt(openIndex + 1);
+    var afterClose = source.charAt(closeIndex + 1);
+    var hasMathSyntax = /[\\=+\-*/^_{}<>]/.test(trimmed);
+
+    if (!trimmed || trimmed.length > 180 || inner.indexOf("\n") >= 0) return false;
+    if (/\s/.test(afterOpen) || /^\d/.test(trimmed)) return false;
+    if (/[A-Za-z0-9]/.test(before) || /[A-Za-z0-9]/.test(afterClose)) return false;
+    if (!hasMathSyntax && !/^[A-Za-z]$/.test(trimmed)) return false;
+    if (!hasMathSyntax && countProseWords(trimmed) > 0) return false;
+    return /[A-Za-z\\=+\-*/^_{}<>]/.test(trimmed);
+  }
+
+  function findInlineDollarMath(source, startIndex) {
+    var searchIndex = startIndex;
+    while (searchIndex < source.length) {
+      var openIndex = source.indexOf("$", searchIndex);
+      if (openIndex < 0) return null;
+      if (source.charAt(openIndex + 1) === "$" || isEscapedAt(source, openIndex)) {
+        searchIndex = openIndex + 1;
+        continue;
+      }
+      var closeIndex = findClosingInlineDollar(source, openIndex);
+      if (closeIndex < 0) return null;
+      if (isSafeInlineDollarMath(source, openIndex, closeIndex)) {
+        return makeMathCandidate(source, openIndex, closeIndex + 1, false);
+      }
+      searchIndex = openIndex + 1;
+    }
+    return null;
+  }
+
   function findExplicitMath(source, startIndex) {
-    var rest = source.slice(startIndex);
     var candidates = [
-      { display: true, regex: /\\\[[\s\S]+?\\\]/ },
-      { display: false, regex: /\\\([\s\S]+?\\\)/ }
-    ];
-    var best = null;
-    candidates.forEach(function (candidate) {
-      var match = candidate.regex.exec(rest);
-      if (!match) return;
-      if (!candidate.display && match[0].charAt(0) === "$") {
-        var inner = String(match[1] || "").trim();
-        if (!inner || /^\d/.test(inner) || !/[A-Za-z\\=+\-*/^_<>]/.test(inner)) return;
-      }
-      var index = startIndex + match.index;
-      if (!best || index < best.index || (index === best.index && match[0].length > best.raw.length)) {
-        best = {
-          index: index,
-          end: index + match[0].length,
-          raw: match[0],
-          display: candidate.display
-        };
-      }
+      findDelimitedMath(source, startIndex, "\\[", "\\]", true),
+      findDelimitedMath(source, startIndex, "$$", "$$", true),
+      findDelimitedMath(source, startIndex, "\\(", "\\)", false),
+      findInlineDollarMath(source, startIndex)
+    ].filter(Boolean);
+    if (!candidates.length) return null;
+    candidates.sort(function (left, right) {
+      return left.index - right.index || right.raw.length - left.raw.length;
     });
-    return best;
+    return candidates[0];
   }
 
   function pushProseSegment(segments, value) {
@@ -4284,7 +4355,7 @@ textarea:focus-visible {
     var cursor = 0;
     var match;
 
-    function segmentNonCode(value) {
+    function segmentMathInText(value) {
       var local = String(value || "");
       var offset = 0;
       while (offset < local.length) {
@@ -4298,6 +4369,23 @@ textarea:focus-visible {
         }
         segments.push({ type: "math", display: found.display, value: found.raw });
         offset = found.end;
+      }
+    }
+
+    function segmentNonCode(value) {
+      var local = String(value || "");
+      var inlineCode = /`[^`\n]*`/g;
+      var cursor = 0;
+      var match;
+      while ((match = inlineCode.exec(local)) !== null) {
+        if (match.index > cursor) {
+          segmentMathInText(local.slice(cursor, match.index));
+        }
+        pushProseSegment(segments, match[0]);
+        cursor = match.index + match[0].length;
+      }
+      if (cursor < local.length) {
+        segmentMathInText(local.slice(cursor));
       }
     }
 
@@ -4343,8 +4431,23 @@ textarea:focus-visible {
 
     var segments = segmentText(source);
     var hasMath = segments.some(function (segment) { return segment.type === "math"; });
+    var mathPlaceholders = [];
     var html = "";
     var markdownBuffer = "";
+
+    function stashRenderedMath(renderedMath) {
+      var token = "SENTIQKATEXPLACEHOLDER" + mathPlaceholders.length + "END";
+      mathPlaceholders.push(renderedMath);
+      return token;
+    }
+
+    function restoreRenderedMath(value) {
+      return String(value || "")
+        .replace(/SENTIQKATEXPLACEHOLDER(\d+)END/g, function (match, index) {
+          return mathPlaceholders[Number(index)] || "";
+        })
+        .replace(/SENTIQKATEXPLACEHOLDER\d+END/g, "");
+    }
 
     function flushMarkdownBuffer() {
       if (!markdownBuffer) return;
@@ -4360,11 +4463,11 @@ textarea:focus-visible {
 
       if (segment.display) {
         flushMarkdownBuffer();
-        html += renderMathSegment(segment.value, true, deps);
+        html += stashRenderedMath(renderMathSegment(segment.value, true, deps));
         return;
       }
 
-      markdownBuffer += renderMathSegment(segment.value, false, deps);
+      markdownBuffer += stashRenderedMath(renderMathSegment(segment.value, false, deps));
     });
     flushMarkdownBuffer();
 
@@ -4374,15 +4477,81 @@ textarea:focus-visible {
     if (hasMath || /\bmath-display-shell\b|\bkatex-display\b|\bkatex\b/.test(html)) {
       html = '<div class="math-enhanced">' + html + "</div>";
     }
-    return sanitizeRenderedHtml(html);
+    return restoreRenderedMath(sanitizeRenderedHtml(html));
+  }
+
+  function runMathRenderSmokeTests() {
+    var tests = [
+      {
+        name: "inline \\( ... \\)",
+        input: "\\(x_0 + y_1\\)",
+        expect: function (html) { return /\bkatex\b/.test(html) && !/math-inline-fallback/.test(html); }
+      },
+      {
+        name: "display \\[ ... \\]",
+        input: "\\[ \\frac{3h}{8}(y_0 + 3y_1 + 3y_2 + y_3) \\]",
+        expect: function (html) { return /math-display-shell/.test(html) && /\bkatex-display\b/.test(html) && /mfrac/.test(html); }
+      },
+      {
+        name: "display $$ ... $$",
+        input: "$$x_0 + y_1$$",
+        expect: function (html) { return /math-display-shell/.test(html) && /\bkatex-display\b/.test(html); }
+      },
+      {
+        name: "currency stays prose",
+        input: "The price is $20 and not math.",
+        expect: function (html) { return html.indexOf("$20") >= 0 && !/\bkatex\b/.test(html); }
+      },
+      {
+        name: "code block preserves dollars",
+        input: "```txt\n$x$\n```",
+        expect: function (html) { return /code-block-wrap/.test(html) && html.indexOf("$x$") >= 0 && !/\bkatex\b/.test(html); }
+      },
+      {
+        name: "Markdown list with inline math",
+        input: "- value \\(x_0\\)\n- next item",
+        expect: function (html) { return /<li>/.test(html) && /\bkatex\b/.test(html); }
+      },
+      {
+        name: "malformed LaTeX fallback",
+        input: "\\(\\frac{1}{\\)",
+        expect: function (html) { return /math-inline-fallback/.test(html) && !/katex-error/.test(html); }
+      }
+    ];
+    var results = tests.map(function (test) {
+      var html = renderRichText(test.input, { mode: "math" });
+      var pass = false;
+      try {
+        pass = Boolean(test.expect(html));
+      } catch (_err) {
+        pass = false;
+      }
+      return {
+        name: test.name,
+        pass: pass,
+        html: html
+      };
+    });
+    if (root && root.console && typeof root.console.table === "function") {
+      root.console.table(results.map(function (result) {
+        return { name: result.name, pass: result.pass };
+      }));
+      if (results.some(function (result) { return !result.pass; }) && typeof root.console.warn === "function") {
+        root.console.warn("[SentIQRenderer] Math smoke test failures:", results.filter(function (result) { return !result.pass; }));
+      }
+    }
+    return results;
   }
 
   return {
     escapeHtml: escapeHtml,
     sanitizeRenderedHtml: sanitizeRenderedHtml,
     cleanupLeakedMathSentinels: cleanupLeakedMathSentinels,
+    findExplicitMath: findExplicitMath,
     segmentText: segmentText,
+    renderMathSegment: renderMathSegment,
     renderRichText: renderRichText,
+    runMathRenderSmokeTests: runMathRenderSmokeTests,
     strictEquationLine: strictEquationLine,
     normalizeMathTex: normalizeMathTex
   };
@@ -8713,7 +8882,6 @@ window.SentIQAPI = {
       turn: Number.isFinite(Number(payload.turn)) ? Number(payload.turn) : 1,
       max_turns: Number.isFinite(Number(payload.max_turns)) ? Number(payload.max_turns) : 2,
       source: payload.source === "fallback" ? "fallback" : "model",
-      model_used: String(payload.model_used || "").trim(),
     };
   }
 
@@ -8791,80 +8959,12 @@ window.SentIQAPI = {
     return true;
   }
 
-  function getResponseTrustMeta(response = {}) {
-    const syncMeta = response?.sync || {};
-    const memory = response?.memory || null;
-    const memoryScope = memory?.scope === "chat" ? "chat" : "global";
-    const memoryPersisted = memory?.stored === true
-      ? memory?.persisted === true
-      : null;
-    return {
-      searched: response?.searched === true || response?.route === "web_search" || Boolean(response?.web_search || response?.webSearch || response?.search),
-      route: typeof response?.route === "string" ? response.route : "",
-      modelUsed: typeof response?.model_used === "string" ? response.model_used : "",
-      memoryPersisted,
-      memoryScope,
-      persisted: syncMeta && Object.prototype.hasOwnProperty.call(syncMeta, "persisted")
-        ? syncMeta.persisted !== false
-        : true,
-    };
+  function getResponseTrustMeta() {
+    return null;
   }
 
-  const EXTERNAL_PROVIDER_BRAND_LABELS = new Set([
-    "tavily",
-    "duckduckgo_api",
-    "duckduckgo_html",
-    "wikipedia",
-  ]);
-
-  function shouldSuppressResponseBrandPill(label, trustMeta = {}) {
-    const normalized = String(label || "").trim().toLowerCase();
-    if (!normalized) return true;
-    if (EXTERNAL_PROVIDER_BRAND_LABELS.has(normalized)) return true;
-    return Boolean(trustMeta?.searched && normalized === "tavily");
-  }
-
-  function formatRouteLabel(route) {
-    const normalized = String(route || "").replace(/_/g, " ").trim();
-    if (!normalized || normalized === "chat") return "";
-    return normalized.replace(/\b\w/g, (char) => char.toUpperCase());
-  }
-
-  function appendResponseTrustRow(contentDiv, trustMeta) {
-    if (!contentDiv || !trustMeta) return;
-    const items = [];
-    if (trustMeta.searched) {
-      items.push({ label: "WebSurf used", className: "web" });
-    }
-    const routeLabel = formatRouteLabel(trustMeta.route);
-    if (routeLabel && !trustMeta.searched) {
-      items.push({ label: routeLabel, className: "" });
-    }
-    if (trustMeta.modelUsed && !shouldSuppressResponseBrandPill(trustMeta.modelUsed, trustMeta)) {
-      items.push({ label: trustMeta.modelUsed, className: "" });
-    }
-    if (trustMeta.memoryPersisted === true) {
-      items.push({
-        label: trustMeta.memoryScope === "chat" ? "Remembered for this chat" : "Remembered across chats",
-        className: "memory",
-      });
-    } else if (trustMeta.memoryPersisted === false) {
-      items.push({ label: "Memory not saved", className: "warning" });
-    }
-    if (trustMeta.persisted === false) {
-      items.push({ label: "Not saved yet", className: "warning" });
-    }
-    if (items.length === 0) return;
-
-    const row = document.createElement("div");
-    row.className = "response-trust-row";
-    for (const item of items.slice(0, 4)) {
-      const pill = document.createElement("span");
-      pill.className = `response-trust-pill ${item.className}`.trim();
-      pill.textContent = item.label;
-      row.appendChild(pill);
-    }
-    contentDiv.appendChild(row);
+  function appendResponseTrustRow() {
+    // Trust, route, provider, and model metadata are intentionally not rendered in chat.
   }
 
   async function deliverAssistantResponse(response, targetChatId, renderInView, renderOptions = {}) {
@@ -10335,10 +10435,18 @@ window.SentIQAPI = {
         return resolve();
       }
       contentDiv.classList.add("typing-active");
-      // Plain text reveal via textNode — zero layout thrash
-      const textNode = document.createTextNode('');
       contentDiv.innerHTML = '';
-      contentDiv.appendChild(textNode);
+      const renderedDiv = document.createElement("div");
+      renderedDiv.className = "streaming-rendered";
+      const tailDiv = document.createElement("div");
+      tailDiv.className = "streaming-tail";
+      const tailTextNode = document.createTextNode("");
+      tailDiv.appendChild(tailTextNode);
+      contentDiv.appendChild(renderedDiv);
+      contentDiv.appendChild(tailDiv);
+      const progressiveRenderer = createProgressiveRichRenderer(renderedDiv, tailTextNode, {
+        renderMode: renderOptions?.mode || null,
+      });
       const len = text.length;
       let charIdx = 0;
       let frameCount = 0;
@@ -10356,7 +10464,7 @@ window.SentIQAPI = {
           return resolve();
         }
         charIdx = Math.min(charIdx + charsPerFrame, len);
-        textNode.nodeValue = text.substring(0, charIdx);
+        progressiveRenderer.render(text.substring(0, charIdx), false);
         if (charIdx > 0) revealContent();
         frameCount++;
         if (frameCount % scrollEvery === 0) scrollToBottom(true);
@@ -10633,25 +10741,6 @@ window.SentIQAPI = {
     return restoreProtected(normalized);
   }
 
-  function sanitizeMathForKatex(tex, displayMode) {
-    let sanitized = String(tex || "").trim();
-    if (!sanitized) return sanitized;
-    if (displayMode) {
-      sanitized = sanitized
-        .replace(/\\\(|\\\)/g, "")
-        .replace(/\\\[|\\\]/g, "")
-        .replace(/\$\$/g, "");
-    }
-    return sanitized;
-  }
-
-  function renderMathFallback(tex, displayMode) {
-    const escaped = escapeHtml(tex || "");
-    return displayMode
-      ? `<div class="math-display-shell"><code class="math-inline-fallback">${escaped}</code></div>`
-      : `<code class="math-inline-fallback">${escaped}</code>`;
-  }
-
   function renderMarkdownOnlyFallback(text) {
     if (!window.__sentiqRendererMissingWarned) {
       debugWarn("[SentIQRenderer] Rich renderer unavailable; using sanitized Markdown-only fallback.");
@@ -10698,372 +10787,7 @@ window.SentIQAPI = {
 
       return renderMarkdownOnlyFallback(text);
 
-      // 1. Truncate oversized messages
-      let truncated = false;
-      if (text.length > MAX_RENDER_CHARS) {
-        text = text.substring(0, MAX_RENDER_CHARS);
-        truncated = true;
-      }
 
-      const mathMode = options.mode === "math";
-
-      // 2. Extract LaTeX before marked processes it (marked would mangle backslashes)
-      const mathBlocks = [];
-      function stashMath(display, tex) {
-        mathBlocks.push({ display: display, tex: tex });
-        return 'SENTIQMATHBLOCKTOKEN' + (mathBlocks.length - 1) + 'END';
-      }
-      function normalizeMathTex(tex) {
-        return String(tex || "")
-          .replace(/<->/g, "\\leftrightarrow ")
-          .replace(/=>/g, "\\Rightarrow ")
-          .replace(/->/g, "\\to ")
-          .replace(/<-/g, "\\leftarrow ")
-          .replace(/>=/g, "\\ge ")
-          .replace(/<=/g, "\\le ")
-          .replace(/\b(?:gives|give|becomes|yields?)\b/gi, "\\Rightarrow ")
-          .replace(/\bR(\d+)\b/g, "R_{$1}")
-          .replace(/(\d)R(\d+)/g, "$1R_{$2}")
-          .replace(/\bv_([A-Za-z0-9])/g, "v_{$1}")
-          .replace(/\b([A-Za-z])_([A-Za-z0-9])/g, "$1_{$2}")
-          .replace(/\s{2,}/g, " ")
-          .trim();
-      }
-      function protectExplicitMath(source) {
-        return String(source || "")
-          .replace(/\$\$([\s\S]+?)\$\$/g, function(_, tex) {
-            return stashMath(true, normalizeMathTex(tex));
-          })
-          .replace(/\\+\[([\s\S]+?)\\+\]/g, function(_, tex) {
-            return stashMath(true, normalizeMathTex(tex));
-          })
-          .replace(/\\+\(\s*(\\+begin\{.*?\}[\s\S]*?\\+end\{.*?\})\s*\\+\)/g, function(_, tex) {
-            return stashMath(true, normalizeMathTex(tex));
-          })
-          .replace(/\\+begin\{.*?\}[\s\S]*?\\+end\{.*?\}/g, function(match) {
-            return stashMath(true, normalizeMathTex(match));
-          })
-          .replace(/\\+\(([\s\S]+?)\\+\)/g, function(_, tex) {
-            return stashMath(false, normalizeMathTex(tex));
-          })
-          .replace(/\\+left(?:\\[A-Za-z]+|[()[\]{}|.])[\s\S]+?\\+right(?:\\[A-Za-z]+|[()[\]{}|.])/g, function(match) {
-            return stashMath(false, normalizeMathTex(match));
-          })
-          .replace(/(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g, function(match, tex) {
-            if (/^\d/.test(tex.trim())) return match;
-            return stashMath(false, normalizeMathTex(tex));
-          });
-      }
-      function splitNonCodeSegments(source) {
-        const segments = [];
-        const fenceRegex = /```[\s\S]*?```/g;
-        let lastIndex = 0;
-        let match;
-        while ((match = fenceRegex.exec(source)) !== null) {
-          if (match.index > lastIndex) {
-            segments.push({ type: "text", value: source.slice(lastIndex, match.index) });
-          }
-          segments.push({ type: "code", value: match[0] });
-          lastIndex = match.index + match[0].length;
-        }
-        if (lastIndex < source.length) {
-          segments.push({ type: "text", value: source.slice(lastIndex) });
-        }
-        return segments;
-      }
-      function countMathSignals(value) {
-        return (value.match(/=>|->|<-|=|\/|\+|-|\*|\(|\)|\||\bR\d+\b|\b[A-Za-z](?:_[A-Za-z0-9]+)?\b/g) || []).length;
-      }
-      function stripListMarker(value) {
-        return String(value || "").replace(/^\s*[-*]\s+/, "").trim();
-      }
-      function countNaturalLanguageWords(value) {
-        const words = String(value || "").replace(/\\[A-Za-z]+/g, " ").match(/\b[A-Za-z]{3,}\b/g) || [];
-        return words.filter((word) => !/^(sin|cos|tan|cot|sec|csc|log|ln|exp|max|min|lim|sum|prod|det|mod)$/i.test(word)).length;
-      }
-      function countMathVariables(value) {
-        return (String(value || "").match(/\b(?:R\d+|[A-Za-z](?:_[A-Za-z0-9]+)?)\b/g) || []).length;
-      }
-      function countWordLikeTokens(value) {
-        return (String(value || "").match(/\b[A-Za-z]{2,}\b/g) || []).length;
-      }
-      function countEquationOperators(value) {
-        return (String(value || "").match(/=>|->|<-|=|\\Rightarrow|\\leftarrow|\\to|\\ge|\\le/g) || []).length;
-      }
-      function parseMatrixRowText(value) {
-        const trimmed = String(value || "").trim();
-        if (!trimmed || trimmed === "[" || trimmed === "]" || trimmed.includes(":")) return null;
-        let inner = trimmed;
-        if (inner.startsWith("[") && inner.endsWith("]")) {
-          inner = inner.slice(1, -1).trim();
-        }
-        inner = inner.replace(/,/g, " ");
-        if (!inner || !/[0-9A-Za-z]/.test(inner) || /;/.test(inner)) return null;
-        const segments = inner.split("|").map((segment) => segment.trim());
-        if (segments.some((segment) => !segment)) return null;
-        const parsed = segments.map((segment) => segment.split(/\s+/).filter(Boolean));
-        if (parsed[0].length < 2 || parsed.some((section) => section.length === 0)) return null;
-        if (parsed.flat().some((token) => /^(?:=|\+|->|<-|=>)$/.test(token))) return null;
-        return {
-          left: parsed[0],
-          right: parsed.slice(1).flat(),
-        };
-      }
-      function buildMatrixLatex(rows) {
-        if (!rows?.length) return null;
-        const leftCount = rows[0].left.length;
-        const rightCount = rows[0].right.length;
-        if (!leftCount) return null;
-        if (rows.some((row) => row.left.length !== leftCount || row.right.length !== rightCount)) return null;
-        const rowLatex = rows
-          .map((row) => {
-            const left = row.left.map((token) => normalizeMathTex(token)).join(" & ");
-            if (!rightCount) return left;
-            const right = row.right.map((token) => normalizeMathTex(token)).join(" & ");
-            return `${left} & ${right}`;
-          })
-          .join(" \\\\ ");
-        if (rightCount > 0) {
-          return `\\left[\\begin{array}{${"c".repeat(leftCount)}|${"c".repeat(rightCount)}}${rowLatex}\\end{array}\\right]`;
-        }
-        if (rows.length === 1) {
-          return `\\left[\\begin{array}{${"c".repeat(leftCount)}}${rowLatex}\\end{array}\\right]`;
-        }
-        return `\\begin{bmatrix}${rowLatex}\\end{bmatrix}`;
-      }
-      function convertInlineMatrixVectors(value) {
-        return String(value || "").replace(/\[([^\]\n]+)\]/g, (match, inner) => {
-          const parsed = parseMatrixRowText(inner);
-          if (!parsed) return match;
-          return buildMatrixLatex([parsed]) || match;
-        });
-      }
-      function convertPlainMatrixBlocks(textBlock) {
-        const lines = String(textBlock || "").split("\n");
-        const output = [];
-        for (let i = 0; i < lines.length; i++) {
-          const trimmed = lines[i].trim();
-          if (trimmed === "[") {
-            const rows = [];
-            let end = i + 1;
-            while (end < lines.length && lines[end].trim() !== "]") {
-              const parsed = parseMatrixRowText(lines[end]);
-              if (!parsed) break;
-              rows.push(parsed);
-              end += 1;
-            }
-            if (rows.length > 0 && end < lines.length && lines[end].trim() === "]") {
-              const latex = buildMatrixLatex(rows);
-              if (latex) {
-                output.push(`$$${latex}$$`);
-                i = end;
-                continue;
-              }
-            }
-          }
-          output.push(lines[i]);
-        }
-        return output.join("\n");
-      }
-      function getMathLineProfile(value) {
-        const trimmed = stripListMarker(value);
-        const proseWords = countNaturalLanguageWords(trimmed);
-        const wordLikeTokens = countWordLikeTokens(trimmed);
-        return {
-          trimmed,
-          proseWords,
-          proseDensity: wordLikeTokens ? proseWords / wordLikeTokens : 0,
-          proseBeforeEquality: countNaturalLanguageWords(trimmed.split(/=>|=|\\Rightarrow|\\ge|\\le/, 1)[0]),
-          mathSignals: countMathSignals(trimmed),
-          mathVariables: countMathVariables(trimmed),
-          equationOperators: countEquationOperators(trimmed),
-        };
-      }
-      function isLikelyEquationFragment(value) {
-        const profile = getMathLineProfile(value);
-        const trimmed = profile.trimmed;
-        if (!trimmed || trimmed.length < 6 || trimmed.length > 220) return false;
-        if (/^[$\\]/.test(trimmed) || /[`{}[\]"]/.test(trimmed) || /https?:\/\//i.test(trimmed)) return false;
-        return profile.equationOperators >= 1
-          && profile.mathSignals >= 5
-          && profile.mathVariables >= 2
-          && profile.proseWords <= 3
-          && profile.proseDensity <= 0.45
-          && !/[.!?]["']?$/.test(trimmed);
-      }
-      function shouldDisplayMathFragment(value) {
-        const profile = getMathLineProfile(value);
-        const hasArrow = /=>|\\Rightarrow/.test(profile.trimmed);
-        return profile.equationOperators >= 2
-          && profile.mathSignals >= 7
-          && profile.mathVariables >= 2
-          && profile.proseDensity <= 0.25
-          && (hasArrow || profile.trimmed.length >= 34);
-      }
-      function isEquationOnlyLine(line) {
-        const profile = getMathLineProfile(line);
-        const trimmed = profile.trimmed;
-        if (!trimmed || trimmed.length < 8 || trimmed.length > 180) return false;
-        if (/^#{1,6}\s/.test(trimmed) || /^```/.test(trimmed) || /^>\s/.test(trimmed)) return false;
-        if (/https?:\/\//i.test(trimmed) || /[`{}[\]"]/.test(trimmed)) return false;
-        if (/\b(?:json|html|css|javascript|typescript)\b/i.test(trimmed) && /[:{};]/.test(trimmed)) return false;
-        return profile.equationOperators >= 1
-          && profile.mathSignals >= 7
-          && profile.mathVariables >= 2
-          && profile.proseWords <= 5
-          && profile.proseDensity <= 0.45
-          && profile.proseBeforeEquality <= 2
-          && !/[.!?]["']?$/.test(trimmed);
-      }
-      function isRowOperationLine(line) {
-        const trimmed = stripListMarker(convertInlineMatrixVectors(line));
-        return /\bR\d+\b/.test(trimmed)
-          && /(?:=>|->|<-|\\Rightarrow|\\leftarrow|\\to)/.test(normalizeMathTex(trimmed))
-          && countNaturalLanguageWords(trimmed) <= (mathMode ? 6 : 3);
-      }
-      function isSolutionAssignmentLine(line) {
-        const trimmed = stripListMarker(line);
-        return /^(?:[A-Za-z]\s*=\s*[^,\n]+,\s*)+[A-Za-z]\s*=\s*[^,\n]+$/.test(trimmed);
-      }
-      function extractMixedMathLine(line) {
-        const lineMatch = String(line || "").match(/^(\s*[-*]\s+)?(.*)$/);
-        const bullet = lineMatch?.[1] || "";
-        const body = lineMatch?.[2] || "";
-        const trimmed = body.trim();
-        if (!trimmed || trimmed.length > 240) return null;
-        if (/^#{1,6}\s/.test(trimmed) || /^```/.test(trimmed) || /^>\s/.test(trimmed)) return null;
-        if (/https?:\/\//i.test(trimmed) || /[`{}[\]"]/.test(trimmed)) return null;
-        if (trimmed.startsWith("$") || trimmed.startsWith("\\(") || trimmed.startsWith("\\[")) return null;
-        if (isEquationOnlyLine(trimmed)) return null;
-
-        const colonIndex = trimmed.indexOf(": ");
-        if (colonIndex >= 0) {
-          const lead = trimmed.slice(0, colonIndex + 1);
-          const tail = trimmed.slice(colonIndex + 1).trim();
-          if (isLikelyEquationFragment(tail)) {
-            return {
-              prefix: `${bullet}${lead}`,
-              math: tail,
-              display: shouldDisplayMathFragment(tail),
-            };
-          }
-        }
-
-        const eqMatch = trimmed.match(/(?:=>|=|\\Rightarrow|\\ge|\\le)/);
-        if (!eqMatch || typeof eqMatch.index !== "number" || eqMatch.index <= 0) return null;
-        const prefix = trimmed.slice(0, eqMatch.index + eqMatch[0].length).trimEnd();
-        const tail = trimmed.slice(eqMatch.index + eqMatch[0].length).trim();
-        if (!tail || !isLikelyEquationFragment(tail)) return null;
-        if (countNaturalLanguageWords(prefix) < 2) return null;
-        return {
-          prefix: `${bullet}${prefix}`,
-          math: tail,
-          display: shouldDisplayMathFragment(tail),
-        };
-      }
-      function enhancePlainMath(textBlock) {
-        if (!textBlock || textBlock.length > 20000) return textBlock;
-        return convertPlainMatrixBlocks(textBlock)
-          .split("\n")
-          .map((line) => {
-            const preparedLine = convertInlineMatrixVectors(line);
-            const mixedLine = extractMixedMathLine(preparedLine);
-            if (mixedLine) {
-              const math = normalizeMathTex(mixedLine.math);
-              return mixedLine.display
-                ? `${mixedLine.prefix}\n$$${math}$$`
-                : `${mixedLine.prefix} $${math}$`;
-            }
-            if (mathMode && isSolutionAssignmentLine(preparedLine)) {
-              return `$$${normalizeMathTex(stripListMarker(preparedLine))}$$`;
-            }
-            if (mathMode && isRowOperationLine(preparedLine)) {
-              return `$$${normalizeMathTex(stripListMarker(preparedLine))}$$`;
-            }
-            if (!isEquationOnlyLine(preparedLine)) return preparedLine;
-            return `$$${normalizeMathTex(stripListMarker(preparedLine))}$$`;
-          })
-          .join("\n");
-      }
-      text = splitNonCodeSegments(text)
-        .map((segment) => segment.type === "text" ? enhancePlainMath(protectExplicitMath(segment.value)) : segment.value)
-        .join("");
-      // Display math: $$...$$
-      text = text.replace(/\$\$([\s\S]+?)\$\$/g, function(_, tex) {
-        return stashMath(true, normalizeMathTex(tex));
-      });
-      // Display math: \[...\]
-      text = text.replace(/\\+\[([\s\S]+?)\\+\]/g, function(_, tex) {
-        return stashMath(true, normalizeMathTex(tex));
-      });
-      // Display math: \(\begin{...}...\end{...}\)
-      text = text.replace(/\\+\(\s*(\\+begin\{.*?\}[\s\S]*?\\+end\{.*?\})\s*\\+\)/g, function(_, tex) {
-        return stashMath(true, normalizeMathTex(tex));
-      });
-      // Display math: raw \begin{...}...\end{...}
-      text = text.replace(/\\+begin\{.*?\}[\s\S]*?\\+end\{.*?\}/g, function(match) {
-        return stashMath(true, normalizeMathTex(match));
-      });
-      // Inline math: \(...\)
-      text = text.replace(/\\+\(([\s\S]+?)\\+\)/g, function(_, tex) {
-        return stashMath(false, normalizeMathTex(tex));
-      });
-      // Inline math: $...$ (skip currency like $100)
-      text = text.replace(/(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g, function(_, tex) {
-        if (/^\d/.test(tex.trim())) return '$' + tex + '$';
-        return stashMath(false, normalizeMathTex(tex));
-      });
-
-      // 3. Render markdown (tables, lists, links, bold, italic, code blocks, headings)
-      var html;
-      if (typeof marked !== 'undefined') {
-        html = marked.parse(text);
-      } else {
-        // Fallback: basic regex if marked didn't load
-        html = escapeHtml(text);
-        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-        html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
-        html = html.split('\n\n').map(function(p) { return '<p>' + p.trim() + '</p>'; }).join('');
-        html = html.replace(/(?<!\n)\n(?!\n)/g, '<br>');
-      }
-
-      // 4. Restore math blocks → render with KaTeX
-      if (mathBlocks.length > 0) {
-        html = html.replace(/SENTIQMATHBLOCKTOKEN(\d+)END|@@SENTIQ_MATH_(\d+)@@|\bMATH(\d+)\b/g, function(match, tokenIdx, safeIdx, bareIdx) {
-          var blockIndex = parseInt(tokenIdx || safeIdx || bareIdx, 10);
-          var block = mathBlocks[blockIndex];
-          if (!block) return match;
-          if (typeof katex !== 'undefined') {
-            try {
-              const sanitizedTex = sanitizeMathForKatex(block.tex, block.display);
-              const rendered = katex.renderToString(sanitizedTex.trim(), {
-                displayMode: block.display,
-                throwOnError: false
-              });
-              if (rendered.includes("katex-error")) {
-                return renderMathFallback(sanitizedTex, block.display);
-              }
-              return block.display ? `<div class="math-display-shell">${rendered}</div>` : rendered;
-            } catch(e) {
-              return renderMathFallback(block.tex, block.display);
-            }
-          }
-          return renderMathFallback(block.tex, block.display);
-        });
-        html = html.replace(/@@\s*SENTIQ(?:\s|<[^>]+>)*ATH(?:\s|<[^>]+>|[A-Za-z0-9])*?@@/g, "");
-      }
-
-      // 5. Append truncation notice if needed
-      if (truncated) {
-        html += '<div class="truncation-notice">[Message truncated — original exceeded 100k characters]</div>';
-      }
-
-      if (/\bmath-display-shell\b|\bkatex-display\b|\bkatex\b/.test(html)) {
-        html = `<div class="math-enhanced">${html}</div>`;
-      }
-
-      return sanitizeRenderedHtml(html);
     } catch (renderErr) {
       // ERROR BOUNDARY: if anything in the pipeline fails, fall back to plain text
         debugWarn(`[SentIQ] renderRichText failed, falling back to plain text: ${getSafeErrorMessage(renderErr)}`);
@@ -11350,6 +11074,160 @@ window.SentIQAPI = {
     });
   }
 
+  function isProgressiveEscaped(text, index) {
+    let count = 0;
+    for (let i = index - 1; i >= 0 && text[i] === "\\"; i -= 1) count += 1;
+    return count % 2 === 1;
+  }
+
+  function getProgressiveSafeIndex(text, force = false) {
+    const source = String(text || "");
+    let safeIndex = 0;
+    let inFence = false;
+    let fenceMarker = "";
+    let inInlineCode = false;
+    let inDisplayMath = false;
+    let displayMathMarker = "";
+    let inInlineMath = false;
+
+    for (let i = 0; i < source.length; i += 1) {
+      const ch = source[i];
+      const next = source[i + 1];
+      const next2 = source[i + 2];
+      const escaped = isProgressiveEscaped(source, i);
+
+      if (inFence) {
+        if (!escaped && fenceMarker === "```" && ch === "`" && next === "`" && next2 === "`") {
+          inFence = false;
+          fenceMarker = "";
+          i += 2;
+          safeIndex = i + 1;
+        } else if (!escaped && fenceMarker === "~~~" && ch === "~" && next === "~" && next2 === "~") {
+          inFence = false;
+          fenceMarker = "";
+          i += 2;
+          safeIndex = i + 1;
+        }
+        continue;
+      }
+
+      if (inDisplayMath) {
+        if (!escaped && displayMathMarker === "$$" && ch === "$" && next === "$") {
+          inDisplayMath = false;
+          displayMathMarker = "";
+          i += 1;
+          safeIndex = i + 1;
+        } else if (!escaped && displayMathMarker === "\\[" && ch === "\\" && next === "]") {
+          inDisplayMath = false;
+          displayMathMarker = "";
+          i += 1;
+          safeIndex = i + 1;
+        }
+        continue;
+      }
+
+      if (inInlineMath) {
+        if (!escaped && ch === "\\" && next === ")") {
+          inInlineMath = false;
+          i += 1;
+          safeIndex = i + 1;
+        }
+        continue;
+      }
+
+      if (inInlineCode) {
+        if (!escaped && ch === "`") inInlineCode = false;
+        continue;
+      }
+
+      if (!escaped && ch === "`" && next === "`" && next2 === "`") {
+        inFence = true;
+        fenceMarker = "```";
+        i += 2;
+        continue;
+      }
+      if (!escaped && ch === "~" && next === "~" && next2 === "~") {
+        inFence = true;
+        fenceMarker = "~~~";
+        i += 2;
+        continue;
+      }
+      if (!escaped && ch === "`") {
+        inInlineCode = true;
+        continue;
+      }
+      if (!escaped && ch === "$" && next === "$") {
+        inDisplayMath = true;
+        displayMathMarker = "$$";
+        i += 1;
+        continue;
+      }
+      if (!escaped && ch === "\\" && next === "[") {
+        inDisplayMath = true;
+        displayMathMarker = "\\[";
+        i += 1;
+        continue;
+      }
+      if (!escaped && ch === "\\" && next === "(") {
+        inInlineMath = true;
+        i += 1;
+        continue;
+      }
+      if (ch === "\n") {
+        safeIndex = i + 1;
+      }
+    }
+
+    if (force && !inFence && !inInlineCode && !inDisplayMath && !inInlineMath) {
+      safeIndex = source.length;
+    }
+    return safeIndex;
+  }
+
+  function createProgressiveRichRenderer(renderedDiv, tailTextNode, options = {}) {
+    const getRenderMode = typeof options.getRenderMode === "function"
+      ? options.getRenderMode
+      : () => options.renderMode || null;
+    const minInterval = Number.isFinite(options.minInterval) ? options.minInterval : 80;
+    let lastSafeIndex = -1;
+    let lastRenderAt = 0;
+
+    function reset() {
+      lastSafeIndex = -1;
+      lastRenderAt = 0;
+      if (renderedDiv) renderedDiv.innerHTML = "";
+      if (tailTextNode) tailTextNode.nodeValue = "";
+    }
+
+    function render(visibleText, force = false) {
+      const source = String(visibleText || "");
+      const safeIndex = getProgressiveSafeIndex(source, force);
+      if (!renderedDiv || safeIndex < 0) return;
+      const renderedSafeIndex = Math.max(lastSafeIndex, 0);
+      if (safeIndex === lastSafeIndex && !force) {
+        if (tailTextNode) tailTextNode.nodeValue = source.slice(renderedSafeIndex);
+        return;
+      }
+
+      const now = Date.now();
+      if (!force && lastSafeIndex >= 0 && (now - lastRenderAt) < minInterval) {
+        if (tailTextNode) tailTextNode.nodeValue = source.slice(renderedSafeIndex);
+        return;
+      }
+
+      const safeText = source.slice(0, safeIndex);
+      renderedDiv.innerHTML = safeText.trim()
+        ? renderRichText(safeText, { mode: getRenderMode() })
+        : "";
+      wireCodeCopyButtons(renderedDiv);
+      lastSafeIndex = safeIndex;
+      lastRenderAt = now;
+      if (tailTextNode) tailTextNode.nodeValue = source.slice(safeIndex);
+    }
+
+    return { render, reset };
+  }
+
   function createStreamingBubble(options = {}) {
     debugLog("[UI] createStreamingBubble");
     if (!chatMessages) return null;
@@ -11396,202 +11274,18 @@ window.SentIQAPI = {
     let renderMode = options.renderMode || null;
     let thinkingText = "";
     let revealed = false;
-    const STREAM_RENDER_MIN_CHARS = 120;
     const STREAM_RENDER_MIN_INTERVAL = 120;
+    const progressiveRenderer = createProgressiveRichRenderer(renderedDiv, tailTextNode, {
+      getRenderMode: () => renderMode,
+      minInterval: STREAM_RENDER_MIN_INTERVAL,
+    });
     let lastVisibleChars = 0;
     let pendingRenderReset = false;
-    const streamRenderState = {
-      renderedIndex: 0,
-      lastSafeIndex: 0,
-      lastScanIndex: 0,
-      lineStart: 0,
-      inFence: false,
-      fenceMarker: "",
-      inInlineCode: false,
-      inDisplayMath: false,
-      displayMathMarker: "",
-      inInlineMath: false,
-      inlineMathMarker: "",
-      inListBlock: false,
-      inTableBlock: false,
-      lastRenderAt: 0,
-    };
     revealContent();
 
-    function isEscaped(text, index) {
-      let count = 0;
-      for (let i = index - 1; i >= 0 && text[i] === "\\"; i -= 1) count += 1;
-      return count % 2 === 1;
-    }
-
-    function looksLikeListItem(line) {
-      return /^\s*(?:[-*+]|\d+\.)\s+/.test(line);
-    }
-
-    function looksLikeTableRow(line) {
-      const trimmed = String(line || "").trim();
-      if (!trimmed) return false;
-      if (!trimmed.includes("|")) return false;
-      if (/^\|?\s*-{3,}\s*(\|\s*-{3,}\s*)+\|?$/.test(trimmed)) return true;
-      return /\|/.test(trimmed);
-    }
-
-    function looksLikeHeading(line) {
-      return /^\s*#{1,6}\s+/.test(line);
-    }
-
     function resetStreamingRender() {
-      renderedDiv.innerHTML = "";
-      tailTextNode.nodeValue = "";
-      streamRenderState.renderedIndex = 0;
-      streamRenderState.lastSafeIndex = 0;
-      streamRenderState.lastScanIndex = 0;
-      streamRenderState.lineStart = 0;
-      streamRenderState.inFence = false;
-      streamRenderState.fenceMarker = "";
-      streamRenderState.inInlineCode = false;
-      streamRenderState.inDisplayMath = false;
-      streamRenderState.displayMathMarker = "";
-      streamRenderState.inInlineMath = false;
-      streamRenderState.inlineMathMarker = "";
-      streamRenderState.inListBlock = false;
-      streamRenderState.inTableBlock = false;
-      streamRenderState.lastRenderAt = 0;
+      progressiveRenderer.reset();
       lastVisibleChars = 0;
-    }
-
-    function scanSafeBoundary(visibleText, force) {
-      if (visibleText.length < streamRenderState.lastScanIndex) {
-        resetStreamingRender();
-      }
-
-      for (let i = streamRenderState.lastScanIndex; i < visibleText.length; i += 1) {
-        const ch = visibleText[i];
-        const next = visibleText[i + 1];
-        const next2 = visibleText[i + 2];
-        const escaped = isEscaped(visibleText, i);
-
-        if (!streamRenderState.inFence && !streamRenderState.inInlineCode && !streamRenderState.inDisplayMath && !streamRenderState.inInlineMath) {
-          if (!escaped && ch === "`" && next === "`" && next2 === "`") {
-            streamRenderState.inFence = true;
-            streamRenderState.fenceMarker = "```";
-            i += 2;
-            continue;
-          }
-          if (!escaped && ch === "~" && next === "~" && next2 === "~") {
-            streamRenderState.inFence = true;
-            streamRenderState.fenceMarker = "~~~";
-            i += 2;
-            continue;
-          }
-        }
-
-        if (streamRenderState.inFence) {
-          if (!escaped && streamRenderState.fenceMarker === "```" && ch === "`" && next === "`" && next2 === "`") {
-            streamRenderState.inFence = false;
-            streamRenderState.fenceMarker = "";
-            i += 2;
-            continue;
-          }
-          if (!escaped && streamRenderState.fenceMarker === "~~~" && ch === "~" && next === "~" && next2 === "~") {
-            streamRenderState.inFence = false;
-            streamRenderState.fenceMarker = "";
-            i += 2;
-            continue;
-          }
-        } else {
-          if (!escaped && !streamRenderState.inDisplayMath && !streamRenderState.inInlineMath && ch === "`" && next !== "`" && !streamRenderState.inInlineCode) {
-            streamRenderState.inInlineCode = true;
-          } else if (!escaped && ch === "`" && streamRenderState.inInlineCode) {
-            streamRenderState.inInlineCode = false;
-          }
-
-          if (!escaped && !streamRenderState.inInlineCode) {
-            if (!streamRenderState.inDisplayMath && ch === "$" && next === "$") {
-              streamRenderState.inDisplayMath = true;
-              streamRenderState.displayMathMarker = "$$";
-              i += 1;
-              continue;
-            }
-            if (streamRenderState.inDisplayMath && streamRenderState.displayMathMarker === "$$" && ch === "$" && next === "$") {
-              streamRenderState.inDisplayMath = false;
-              streamRenderState.displayMathMarker = "";
-              i += 1;
-              continue;
-            }
-            if (!streamRenderState.inDisplayMath && ch === "\\" && next === "[") {
-              streamRenderState.inDisplayMath = true;
-              streamRenderState.displayMathMarker = "\\[";
-              i += 1;
-              continue;
-            }
-            if (streamRenderState.inDisplayMath && streamRenderState.displayMathMarker === "\\[" && ch === "\\" && next === "]") {
-              streamRenderState.inDisplayMath = false;
-              streamRenderState.displayMathMarker = "";
-              i += 1;
-              continue;
-            }
-            if (!streamRenderState.inInlineMath && !streamRenderState.inDisplayMath && ch === "\\" && next === "(") {
-              streamRenderState.inInlineMath = true;
-              streamRenderState.inlineMathMarker = "\\(";
-              i += 1;
-              continue;
-            }
-            if (streamRenderState.inInlineMath && streamRenderState.inlineMathMarker === "\\(" && ch === "\\" && next === ")") {
-              streamRenderState.inInlineMath = false;
-              streamRenderState.inlineMathMarker = "";
-              i += 1;
-              continue;
-            }
-          }
-        }
-
-        if (ch === "\n") {
-          const line = visibleText.slice(streamRenderState.lineStart, i);
-          const trimmed = line.trim();
-          const lineIsBlank = trimmed.length === 0;
-          if (!streamRenderState.inFence && !streamRenderState.inDisplayMath && !streamRenderState.inInlineCode && !streamRenderState.inInlineMath) {
-            if (streamRenderState.inListBlock) {
-              if (lineIsBlank || (!looksLikeListItem(line) && !/^\s+/.test(line))) {
-                streamRenderState.inListBlock = false;
-              }
-            } else if (looksLikeListItem(line)) {
-              streamRenderState.inListBlock = true;
-            }
-            if (streamRenderState.inTableBlock) {
-              if (lineIsBlank || !looksLikeTableRow(line)) {
-                streamRenderState.inTableBlock = false;
-              }
-            } else if (looksLikeTableRow(line)) {
-              streamRenderState.inTableBlock = true;
-            }
-          }
-          if (!streamRenderState.inFence
-            && !streamRenderState.inInlineCode
-            && !streamRenderState.inDisplayMath
-            && !streamRenderState.inInlineMath
-            && !streamRenderState.inListBlock
-            && !streamRenderState.inTableBlock
-            && (lineIsBlank || looksLikeHeading(line) || /^\s*[-*_]{3,}\s*$/.test(line))
-          ) {
-            streamRenderState.lastSafeIndex = i + 1;
-          }
-          streamRenderState.lineStart = i + 1;
-        }
-      }
-
-      streamRenderState.lastScanIndex = visibleText.length;
-      if (force
-        && !streamRenderState.inFence
-        && !streamRenderState.inInlineCode
-        && !streamRenderState.inDisplayMath
-        && !streamRenderState.inInlineMath
-        && !streamRenderState.inListBlock
-        && !streamRenderState.inTableBlock
-      ) {
-        streamRenderState.lastSafeIndex = visibleText.length;
-      }
-      return streamRenderState.lastSafeIndex;
     }
 
     function updateStreamingRender(visibleText, force) {
@@ -11599,39 +11293,7 @@ window.SentIQAPI = {
         resetStreamingRender();
         pendingRenderReset = false;
       }
-
-      if (renderMode === "math") {
-        tailTextNode.nodeValue = visibleText;
-        return;
-      }
-
-      const safeIndex = scanSafeBoundary(visibleText, force);
-      const pendingTail = visibleText.slice(streamRenderState.renderedIndex);
-      tailTextNode.nodeValue = pendingTail || "";
-
-      if (safeIndex <= streamRenderState.renderedIndex) return;
-      const now = Date.now();
-      const chunkSize = safeIndex - streamRenderState.renderedIndex;
-      const shouldRender = force
-        || chunkSize >= STREAM_RENDER_MIN_CHARS
-        || (now - streamRenderState.lastRenderAt) >= STREAM_RENDER_MIN_INTERVAL;
-
-      if (!shouldRender) return;
-      const chunk = visibleText.slice(streamRenderState.renderedIndex, safeIndex);
-      if (!chunk.trim()) {
-        streamRenderState.renderedIndex = safeIndex;
-        streamRenderState.lastRenderAt = now;
-        tailTextNode.nodeValue = visibleText.slice(streamRenderState.renderedIndex);
-        return;
-      }
-      const renderedChunk = renderRichText(chunk, { mode: renderMode });
-      if (renderedChunk) {
-        renderedDiv.insertAdjacentHTML("beforeend", renderedChunk);
-        wireCodeCopyButtons(renderedDiv);
-        streamRenderState.renderedIndex = safeIndex;
-        streamRenderState.lastRenderAt = now;
-        tailTextNode.nodeValue = visibleText.slice(streamRenderState.renderedIndex);
-      }
+      progressiveRenderer.render(visibleText, force);
     }
 
     function revealContent() {
@@ -11692,7 +11354,7 @@ window.SentIQAPI = {
         lastVisibleChars = displayedChars;
         updateStreamingRender(visibleText, false);
       } else {
-        tailTextNode.nodeValue = visibleText.slice(streamRenderState.renderedIndex);
+        progressiveRenderer.render(visibleText, false);
       }
       frameCount++;
       if (frameCount % 8 === 0) scrollToBottom(true);
@@ -11731,6 +11393,8 @@ window.SentIQAPI = {
         if (nextMode !== renderMode) {
           renderMode = nextMode;
           pendingRenderReset = true;
+          const visibleText = fullText.substring(0, displayedChars);
+          if (visibleText) updateStreamingRender(visibleText, true);
         }
       },
       setThinking(thinking) { thinkingText = typeof thinking === "string" ? thinking : ""; },
