@@ -12346,7 +12346,18 @@ window.SentIQAPI = {
   }
 
   function isNativeChatImageFile(file) {
-    return Boolean(file && ["image/png", "image/jpeg", "image/webp"].includes(file.type));
+    return Boolean(file && resolveChatImageMimeType(file));
+  }
+
+  function resolveChatImageMimeType(file) {
+    if (!file) return "";
+    const explicitType = String(file.type || "").toLowerCase();
+    if (["image/png", "image/jpeg", "image/webp"].includes(explicitType)) return explicitType;
+    const name = String(file.name || "").toLowerCase();
+    if (name.endsWith(".png")) return "image/png";
+    if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+    if (name.endsWith(".webp")) return "image/webp";
+    return "";
   }
 
   function readFileAsBase64(file) {
@@ -12364,9 +12375,10 @@ window.SentIQAPI = {
 
   async function buildImageAttachment(file) {
     const base64 = await readFileAsBase64(file);
+    const mimeType = resolveChatImageMimeType(file) || "image/png";
     return {
       filename: file.name,
-      mime_type: file.type,
+      mime_type: mimeType,
       base64,
       size_bytes: file.size,
     };

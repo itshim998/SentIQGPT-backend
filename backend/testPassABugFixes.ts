@@ -7,6 +7,7 @@ import {
   isPrivateOrInternalAddress,
   isPrivateOrInternalHost,
 } from "./tools/webSearch/contentExtractor";
+import { validateFileUpload } from "./ai/FileIngestionHandler";
 
 const root = path.resolve(__dirname, "..");
 const validUuid = "123e4567-e89b-12d3-a456-426614174000";
@@ -71,6 +72,10 @@ const validUuid = "123e4567-e89b-12d3-a456-426614174000";
   assert(maybeGenerateTitleBlock.includes("pendingTitleSync: false"));
   assert(!maybeGenerateTitleBlock.includes("queueSyncJob("), "auto-title should not enqueue redundant title patch");
   assert(!maybeGenerateTitleBlock.includes("SYNC_JOB_TYPES.chatTitle"), "auto-title should trust server persistence");
+  assert(indexHtml.includes("function resolveChatImageMimeType(file)"), "frontend should normalize chat image MIME types");
+  assert(indexHtml.includes('name.endsWith(".png")'), "PNG attachments should work when MIME is generic");
+  assert(indexHtml.includes('name.endsWith(".jpg") || name.endsWith(".jpeg")'), "JPEG attachments should work when MIME is generic");
+  assert(indexHtml.includes('name.endsWith(".webp")'), "WEBP attachments should work when MIME is generic");
 }
 
 {
@@ -79,6 +84,21 @@ const validUuid = "123e4567-e89b-12d3-a456-426614174000";
   assert(server.includes("const conversationId = getOptionalUuid(parsed.data.conversationId, \"conversationId\") || \"\""));
   assert(server.includes("const chatId = getRequiredUuid(req.params.chatId, \"chatId\")"));
   assert(server.includes("const selectionConversationId = getOptionalUuid(parsed.data.conversationId, \"conversationId\")"));
+  const uploadRouteStart = server.indexOf('"/api/files/upload"');
+  const uploadRouteBlock = server.slice(uploadRouteStart, server.indexOf("// ===============================", uploadRouteStart + 1));
+  assert(uploadRouteBlock.includes("verifyJWT({ allowGuest: true })"), "file upload route should allow guest auth resolution");
+  assert(uploadRouteBlock.includes("const { userId, isGuest } = await getRequestIdentity(req);"), "file upload should resolve guest identity");
+  assert(uploadRouteBlock.includes("userId: isGuest ? undefined : userId"), "guest file uploads should not call signed-in vision as guest");
+  assert(uploadRouteBlock.includes("getFileSessionKey(req, userId, isGuest)"), "guest file sessions should be IP-scoped");
+}
+
+{
+  assert.deepEqual(validateFileUpload("application/pdf", 128, "report.pdf"), { valid: true, type: "pdf" });
+  assert.deepEqual(validateFileUpload("application/octet-stream", 128, "report.pdf"), { valid: true, type: "pdf" });
+  assert.deepEqual(validateFileUpload("", 128, "diagram.PNG"), { valid: true, type: "image" });
+  assert.deepEqual(validateFileUpload("binary/octet-stream", 128, "photo.jpeg"), { valid: true, type: "image" });
+  assert.deepEqual(validateFileUpload("application/octet-stream", 128, "notes.py"), { valid: true, type: "txt" });
+  assert.equal(validateFileUpload("application/octet-stream", 128, "archive.zip").valid, false);
 }
 
 console.log("PASS | Pass A bug-fix regression tests passed.");

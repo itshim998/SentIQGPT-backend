@@ -38,6 +38,19 @@ const ALLOWED_TYPES: Record<string, "pdf" | "txt" | "image"> = {
   "image/webp": "image",
 };
 
+const GENERIC_MIME_TYPES = new Set(["", "application/octet-stream", "binary/octet-stream"]);
+const EXTENSION_TYPES: Record<string, "pdf" | "image"> = {
+  ".pdf": "pdf",
+  ".png": "image",
+  ".jpg": "image",
+  ".jpeg": "image",
+  ".webp": "image",
+};
+
+function normalizeMimeType(mimetype: string): string {
+  return String(mimetype || "").trim().toLowerCase();
+}
+
 // Extension-based fallback for code files that browsers send as octet-stream
 const TEXT_EXTENSIONS = new Set([
   ".html", ".css", ".js", ".ts", ".json", ".xml", ".md",
@@ -86,13 +99,16 @@ export function validateFileUpload(
     return { valid: false, error: `File too large. Maximum ${MAX_FILE_SIZE / 1024 / 1024}MB.` };
   }
 
-  let fileType = ALLOWED_TYPES[mimetype];
+  const normalizedMimeType = normalizeMimeType(mimetype);
+  let fileType = ALLOWED_TYPES[normalizedMimeType];
+  const ext = getFileExtension(filename);
 
-  // Fallback: check extension for code files sent as octet-stream
+  // Fallback: browsers often send dropped files as octet-stream or with no MIME.
   if (!fileType) {
-    const ext = filename.lastIndexOf(".") >= 0 ? filename.slice(filename.lastIndexOf(".")).toLowerCase() : "";
     if (TEXT_EXTENSIONS.has(ext)) {
       fileType = "txt";
+    } else if (GENERIC_MIME_TYPES.has(normalizedMimeType)) {
+      fileType = EXTENSION_TYPES[ext];
     }
   }
 
@@ -260,8 +276,8 @@ async function analyzeImageWithVision(
   if (buffer.length > MAX_IMAGE_SIZE) {
     return `[Image ${filename} is too large for vision analysis (${(buffer.length / 1024 / 1024).toFixed(1)}MB). Max: 10MB.]`;
   }
-  if (!userId?.trim()) {
-    throw new Error("User ID required for vision analysis");
+  if (!userId?.trim() || userId === "guest") {
+    return `[Image: ${filename}, ${(buffer.length / 1024).toFixed(1)}KB. Attach this image to a chat message for direct analysis.]`;
   }
 
   const base64 = buffer.toString("base64");

@@ -3277,12 +3277,14 @@ app.get(
 // ===============================
 app.post(
   "/api/files/upload",
-  verifyJWT({ allowGuest: false }),
+  verifyJWT({ allowGuest: true }),
   uploadRateLimiter,
   upload.single("file"),
   asyncHandler(async (req, res) => {
-    const userId = await getVerifiedUserId(req);
-    await ensureNamedWorkspaceProfile(userId, "files.upload");
+    const { userId, isGuest } = await getRequestIdentity(req);
+    if (!isGuest) {
+      await ensureNamedWorkspaceProfile(userId, "files.upload");
+    }
     const file = req.file;
     if (!file) {
       res.status(400).json({ error: "No file uploaded." });
@@ -3318,7 +3320,7 @@ app.post(
         buffer: file.buffer,
         filename: file.originalname,
         mimetype: file.mimetype,
-        userId,
+        userId: isGuest ? undefined : userId,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -3352,8 +3354,8 @@ app.post(
       console.log(`[PDF] chunks created: 1, context length sent to LLM: ${result.extracted_text.length}`);
     }
 
-    // Update file session for this authenticated user.
-    const fileSessionKey = getFileSessionKey(req, userId, false);
+    // Update file session for this user or IP-scoped guest.
+    const fileSessionKey = getFileSessionKey(req, userId, isGuest);
     fileSessionMap.set(fileSessionKey, {
       filename: result.filename,
       type: result.type,
