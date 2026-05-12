@@ -91,6 +91,25 @@ export interface OrchestratorResponse {
     chartjs_config?: Record<string, unknown>;
     error?: string;
   };
+  /** Generated downloadable file result */
+  readonly file?: {
+    type?: "file";
+    success: boolean;
+    format: string;
+    file_name: string;
+    mime_type: string;
+    file_url?: string;
+    storage_path?: string;
+    file_size_bytes?: number;
+    file_id?: string;
+    preview?: Record<string, unknown>;
+    html?: string;
+    text?: string;
+    model_used?: string;
+    fallback?: boolean;
+    fallback_reason?: string | null;
+    error?: string;
+  };
   /** Memory pipeline result */
   readonly memory: {
     stored: boolean;
@@ -147,6 +166,7 @@ function planToolToRoute(tool: PlanTool): DetectedTool {
     case "file_analysis":    return "file_analysis";
     case "memory_update":    return "memory_update";
     case "chart_generation": return "chart_generation";
+    case "file_generation":  return "file_generation";
     case "web_search":       return "web_search";
     case "conversation":
     default:                 return "normal_chat";
@@ -265,6 +285,7 @@ export function mergeResults(
   let thinking: string | undefined;
   let image: OrchestratorResponse["image"] | undefined;
   let chart: OrchestratorResponse["chart"] | undefined;
+  let file: OrchestratorResponse["file"] | undefined;
   let memory = memoryPayload;
   let web_search: OrchestratorResponse["web_search"] | undefined;
   let route: DetectedTool = "normal_chat";
@@ -317,6 +338,15 @@ export function mergeResults(
       }
     }
 
+    if (step.file) {
+      file = step.file;
+      _model_used = step.file.model_used ?? step.model_used ?? _model_used;
+      _fallback = step.file.fallback ?? step.fallback ?? _fallback;
+      if (!file.error && file.success) {
+        route = "file_generation";
+      }
+    }
+
     if (step.memory?.stored) {
       memory = {
         stored: true,
@@ -349,6 +379,7 @@ export function mergeResults(
       : undefined,
     image,
     chart,
+    file,
     memory,
     web_search,
     _isMathResult,
@@ -627,6 +658,7 @@ async function reflectOnAnswer(
     merged._sanitize_bypass === true ||
     merged.route === "image_generation" ||
     merged.route === "chart_generation" ||
+    merged.route === "file_generation" ||
     merged.route === "web_search" // Skip reflection for web search (already synthesized)
   ) {
     return { merged };

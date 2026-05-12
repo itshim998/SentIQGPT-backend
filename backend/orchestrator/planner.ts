@@ -21,6 +21,7 @@ import {
 } from "../ai/PromptBuilders";
 import type { LLMAdapterCall } from "../ai/PromptBuilders";
 import { isChartRequest } from "../tools/chartGeneration/chartDetector";
+import { isFileGenerationRequest } from "../tools/fileGeneration/fileDetector";
 import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 import { isTavilyAvailable } from "../tools/webSearch/providers/tavilyProvider";
 import { classifyQueryType, shouldForceWebSearch } from "./queryClassifier";
@@ -35,6 +36,7 @@ export type PlanTool =
   | "file_analysis"
   | "memory_update"
   | "chart_generation"
+  | "file_generation"
   | "web_search";
 
 const VALID_PLAN_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
@@ -43,6 +45,7 @@ const VALID_PLAN_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
   "file_analysis",
   "memory_update",
   "chart_generation",
+  "file_generation",
   "web_search",
 ]);
 
@@ -89,6 +92,7 @@ function buildPlannerPrompt(
     "\n" +
     '- "memory_update": Store a personal fact the user wants remembered\n' +
     '- "chart_generation": Generate a chart or data visualization (scatter, bar, histogram, heatmap, etc.)\n' +
+    '- "file_generation": Generate a downloadable .pdf, .docx, .pptx, .xlsx, .html, or .txt file\n' +
     webSearchTool +
     "\nRULES:\n" +
     "- Return 1 to 3 steps maximum.\n" +
@@ -99,6 +103,7 @@ function buildPlannerPrompt(
     "- Each step must have a clear, self-contained input string.\n" +
     "- Only choose image_generation if the user EXPLICITLY asks to create/generate an image.\n" +
     "- Only choose chart_generation for an explicit chart or data-visualization request, not for frontend/design prompts that merely mention visualization.\n" +
+    "- Only choose file_generation when the user explicitly asks to create/export a downloadable file in a supported format.\n" +
     "- Only choose file_analysis if uploaded files exist in context.\n" +
     "- Only choose memory_update when the user explicitly asks you to remember, save, store, or keep something in mind.\n" +
     (hasWebSearch
@@ -110,7 +115,7 @@ function buildPlannerPrompt(
     userMessage +
     "\n\nRETURN JSON (array of steps):\n" +
     '{ "plan": [\n' +
-    '  { "step": 1, "tool": "conversation"|"image_generation"|"file_analysis"|"memory_update"|"chart_generation"' +
+    '  { "step": 1, "tool": "conversation"|"image_generation"|"file_analysis"|"memory_update"|"chart_generation"|"file_generation"' +
     (hasWebSearch ? '|"web_search"' : "") +
     ', "input": "..." }\n' +
     "] }";
@@ -168,6 +173,11 @@ export function resolveHardRoutedPlan(args: {
   readonly hasWebSearch: boolean;
   readonly explicitWebSearchMode?: WebSearchMode;
 }): ExecutionPlan | null {
+  if (isFileGenerationRequest(args.userMessage)) {
+    console.log("[PLANNER] file generation detected - hard-routing to file_generation");
+    return createSingleStepPlan("file_generation", args.userMessage);
+  }
+
   if (args.hasWebSearch && args.explicitWebSearchMode) {
     console.log(`[PLANNER] explicit WebSurf mode=${args.explicitWebSearchMode} - hard-routing to web_search`);
     return createSingleStepPlan("web_search", args.userMessage);

@@ -375,6 +375,7 @@ GROQ_TASKS = {
 }
 
 CHATLIKE_TASKS = {"chat", "general", "math_reasoning"}
+FILE_GENERATE_TASKS = {"file_generate"}
 
 # Everything else goes to Gemini
 GEMINI_TASKS = {
@@ -425,6 +426,9 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
 
     if logical == "openai-large":
         return "pollinations", "openai-large"
+
+    if logical == "minimax":
+        return "pollinations", "minimax"
 
     if logical == "gemini-search":
         return "pollinations", SEARCH_MODEL
@@ -1301,6 +1305,43 @@ def call_llm_router(
 
     except Exception as e:
         logger.error("Provider=%s failed for task=%s: %s", provider, task, e)
+
+        # File generation has a strict provider policy:
+        # minimax primary, openai-large fallback, and no qwen/Gemini/Groq escape hatch.
+        if task in FILE_GENERATE_TASKS and provider == "pollinations":
+            primary_model = (resolved_override or model or "").lower()
+            if primary_model != "openai-large":
+                try:
+                    logger.info(
+                        "[Fallback] File generation model %s failed - retrying openai-large",
+                        primary_model or "pollinations_primary",
+                    )
+                    fallback_triggered = True
+                    fallback_reason = f"{primary_model or 'pollinations_primary'}_failed"
+                    actual_model_used = "openai-large"
+                    finish_reason = None
+                    truncated = False
+                    fallback_result, finish_reason, truncated = _call_pollinations(
+                        effective_prompt,
+                        "openai-large",
+                        max_output_tokens=max_output_tokens,
+                        image_attachments=image_attachments,
+                    )
+                    payload = _build_response_payload(fallback_result)
+                    _cache_set(key, payload)
+                    return payload
+                except Exception as fallback_error:
+                    logger.error(
+                        "File generation fallback openai-large failed for task=%s: %s",
+                        task,
+                        fallback_error,
+                    )
+
+            return _build_response_payload(
+                "",
+                error="provider_failed",
+                error_detail=f"{provider}: {e}",
+            )
 
         # Tiered fallback:
         # 1. If the primary Pollinations model failed, try the secondary Pollinations model.

@@ -350,6 +350,18 @@ export function getImageStorageDatabase(): SupabaseClient {
   return getClientForDatabase(getImageStorageDatabaseId());
 }
 
+export function getGeneratedFileStorageDatabaseId(): DatabaseId {
+  const explicit = process.env.SENTIQ_GENERATED_FILE_STORAGE_DB?.trim();
+  if (explicit) {
+    return readDatabaseIdEnv("SENTIQ_GENERATED_FILE_STORAGE_DB", CONTROL_DATABASE_ID);
+  }
+  return getImageStorageDatabaseId();
+}
+
+export function getGeneratedFileStorageDatabase(): SupabaseClient {
+  return getClientForDatabase(getGeneratedFileStorageDatabaseId());
+}
+
 export async function assignDatabaseToUser(userId: string): Promise<SupabaseClient> {
   const normalizedUserId = assertValidUserId(userId);
   await ensureControlUserSession(normalizedUserId);
@@ -451,6 +463,30 @@ export async function verifyShardMigrations(): Promise<void> {
         markFailure(
           id,
           `is missing chat_images schema objects (migration 20260407030000). code=${chatImagesTableError.code ?? "unknown"} message=${chatImagesTableError.message}`,
+        );
+      }
+
+      // Check: 20260512120000_add_generated_files.sql
+      const { error: generatedFilesTableError } = await client
+        .from("generated_files")
+        .select("id", { head: true, count: "exact" })
+        .limit(1);
+      if (generatedFilesTableError) {
+        markFailure(
+          id,
+          `is missing generated_files schema objects (migration 20260512120000). code=${generatedFilesTableError.code ?? "unknown"} message=${generatedFilesTableError.message}`,
+        );
+      }
+
+      const { error: messageFileColumnsError } = await client
+        .from("messages")
+        .select("file_url,file_name,file_format,mime_type,preview_json")
+        .eq("id", dummyId)
+        .maybeSingle();
+      if (messageFileColumnsError) {
+        markFailure(
+          id,
+          `is missing generated-file message metadata columns (migration 20260512120000). code=${messageFileColumnsError.code ?? "unknown"} message=${messageFileColumnsError.message}`,
         );
       }
 

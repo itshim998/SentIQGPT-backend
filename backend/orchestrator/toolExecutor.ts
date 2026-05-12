@@ -21,6 +21,7 @@
 import { handleChat } from "../ai/ChatHandler";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
+import { routeFileGeneration } from "../tools/fileGeneration/fileGenerator";
 import { executeTavilySearchPipeline } from "../tools/webSearch/tavilySearchPipeline";
 import { normalizeWebSearchMode } from "../tools/webSearch/webSearchMode";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
@@ -70,6 +71,25 @@ export interface StepResult {
     chartjs_config?: Record<string, unknown>;
     error?: string;
   };
+  /** Generated downloadable file output */
+  readonly file?: {
+    type?: "file";
+    success: boolean;
+    format: string;
+    file_name: string;
+    mime_type: string;
+    file_url?: string;
+    storage_path?: string;
+    file_size_bytes?: number;
+    file_id?: string;
+    preview?: Record<string, unknown>;
+    html?: string;
+    text?: string;
+    model_used?: string;
+    fallback?: boolean;
+    fallback_reason?: string | null;
+    error?: string;
+  };
   /** Memory output (memory_update) */
   readonly memory?: {
     stored: boolean;
@@ -105,6 +125,7 @@ const VALID_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
   "file_analysis",
   "memory_update",
   "chart_generation",
+  "file_generation",
   "web_search",
 ]);
 
@@ -303,6 +324,46 @@ async function execChartGeneration(
   };
 }
 
+async function execFileGeneration(
+  input: string,
+  ctx: BuiltContext,
+): Promise<StepResult> {
+  const result = await routeFileGeneration({
+    userMessage: input,
+    userId: ctx.userId || "",
+    conversationId: ctx.conversationId || "",
+    userDb: ctx.userDb,
+  });
+
+  return {
+    step: 0,
+    tool: "file_generation",
+    reply: result.success
+      ? `Generated ${result.file_name}.`
+      : (result.error || "Sorry, I couldn't generate that file. Please try again."),
+    model_used: result.model_used,
+    fallback: result.fallback,
+    file: {
+      type: result.type,
+      success: result.success,
+      format: result.format,
+      file_name: result.file_name,
+      mime_type: result.mime_type,
+      file_url: result.file_url,
+      storage_path: result.storage_path,
+      file_size_bytes: result.file_size_bytes,
+      file_id: result.file_id,
+      preview: result.preview as Record<string, unknown> | undefined,
+      html: result.html,
+      text: result.text,
+      model_used: result.model_used,
+      fallback: result.fallback,
+      fallback_reason: result.fallback_reason,
+      error: result.error,
+    },
+  };
+}
+
 async function execWebSearch(
   input: string,
   ctx: BuiltContext,
@@ -365,6 +426,7 @@ async function execWebSearch(
 const PARALLELIZABLE_TOOLS: ReadonlySet<PlanTool> = new Set([
   "image_generation",
   "chart_generation",
+  "file_generation",
   "memory_update",
   "web_search",
 ]);
@@ -406,6 +468,9 @@ async function executeStep(
       case "chart_generation":
         result = await execChartGeneration(planStep.input);
         break;
+      case "file_generation":
+        result = await execFileGeneration(planStep.input, ctx);
+        break;
       case "web_search":
         result = await execWebSearch(planStep.input, ctx);
         break;
@@ -437,6 +502,9 @@ function buildContextFromResult(result: StepResult, input: string): string {
   }
   if (result.chart?.success) {
     return `[Chart generated: ${result.chart.chart_type} (${result.chart.renderer}) — "${input.slice(0, 80)}"]`;
+  }
+  if (result.file?.success) {
+    return `[File generated: ${result.file.file_name} (${result.file.format}) - "${input.slice(0, 80)}"]`;
   }
   if (result.memory?.stored) {
     return `[Memory stored: ${result.memory.summary ?? input.slice(0, 80)}]`;

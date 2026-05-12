@@ -30,6 +30,11 @@ export type ConversationMessageRow = {
   prompt?: string | null;
   provider?: string | null;
   file_size_bytes?: number | null;
+  file_url?: string | null;
+  file_name?: string | null;
+  file_format?: string | null;
+  mime_type?: string | null;
+  preview_json?: any;
 };
 
 export type PriorConversationUserMessageRow = {
@@ -56,6 +61,11 @@ export type InsertConversationMessageInput = {
   prompt?: string;
   provider?: string;
   fileSizeBytes?: number;
+  fileUrl?: string;
+  fileName?: string;
+  fileFormat?: string;
+  mimeType?: string;
+  previewJson?: any;
 };
 
 export type ConversationMessageClientRequestLookup = {
@@ -66,7 +76,7 @@ export type ConversationMessageClientRequestLookup = {
 };
 
 const MESSAGE_SELECT_COLUMNS =
-  "id, role, content, created_at, client_request_id, message_type, image_url, storage_path, prompt, provider, file_size_bytes";
+  "id, role, content, created_at, client_request_id, message_type, image_url, storage_path, prompt, provider, file_size_bytes, file_url, file_name, file_format, mime_type, preview_json";
 
 function buildClientRequestMessageQuery(userDb: any, data: ConversationMessageClientRequestLookup) {
   let query = userDb
@@ -191,7 +201,7 @@ export async function insertConversationMessage(userDb: any, data: InsertConvers
   const canDeduplicateByClientRequestId = Boolean(
     trimmedClientRequestId && (
       data.role === "user"
-      || (data.role === "assistant" && normalizedMessageType === "image")
+      || (data.role === "assistant" && (normalizedMessageType === "image" || normalizedMessageType === "file"))
     ),
   );
 
@@ -200,7 +210,7 @@ export async function insertConversationMessage(userDb: any, data: InsertConvers
       conversationId: data.conversationId,
       clientRequestId: trimmedClientRequestId,
       role: data.role,
-      ...(data.role === "assistant" && normalizedMessageType === "image"
+      ...(data.role === "assistant" && (normalizedMessageType === "image" || normalizedMessageType === "file")
         ? { messageType: normalizedMessageType }
         : {}),
     });
@@ -234,6 +244,11 @@ export async function insertConversationMessage(userDb: any, data: InsertConvers
       prompt: data.prompt || null,
       provider: data.provider || null,
       file_size_bytes: typeof data.fileSizeBytes === "number" ? data.fileSizeBytes : null,
+      file_url: data.fileUrl || null,
+      file_name: data.fileName || null,
+      file_format: data.fileFormat || null,
+      mime_type: data.mimeType || null,
+      preview_json: data.previewJson || null,
     })
     .select(MESSAGE_SELECT_COLUMNS)
     .maybeSingle();
@@ -243,7 +258,7 @@ export async function insertConversationMessage(userDb: any, data: InsertConvers
       conversationId: data.conversationId,
       clientRequestId: trimmedClientRequestId,
       role: data.role,
-      ...(data.role === "assistant" && normalizedMessageType === "image"
+      ...(data.role === "assistant" && (normalizedMessageType === "image" || normalizedMessageType === "file")
         ? { messageType: normalizedMessageType }
         : {}),
     });

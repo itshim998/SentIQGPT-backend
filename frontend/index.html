@@ -1648,6 +1648,259 @@ body::after {
   flex-shrink: 0;
 }
 
+.generated-file-panel {
+  width: min(760px, 100%);
+  margin: 10px 0 4px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: rgba(8,10,18,0.88);
+  box-shadow: var(--shadow-md);
+}
+
+.generated-file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.generated-file-title-wrap {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.generated-file-icon {
+  width: 34px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(125,211,252,0.14);
+  color: #7dd3fc;
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.generated-file-title {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.generated-file-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.generated-file-action {
+  border: 1px solid transparent;
+  background: rgba(255,255,255,0.08);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  min-height: 32px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background-color var(--transition), border-color var(--transition), opacity var(--transition);
+}
+
+.generated-file-action:hover {
+  background: rgba(255,255,255,0.14);
+  border-color: rgba(255,255,255,0.12);
+}
+
+.generated-file-action.is-disabled,
+.generated-file-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.generated-file-body {
+  background: #0b1020;
+}
+
+.generated-html-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 320px;
+}
+
+.generated-file-panel.show-preview .generated-html-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.92fr);
+}
+
+.generated-html-code-pane,
+.generated-html-preview-pane {
+  min-width: 0;
+  min-height: 320px;
+}
+
+.generated-html-preview-pane {
+  display: none;
+  border-left: 1px solid rgba(255,255,255,0.08);
+  background: #ffffff;
+}
+
+.generated-file-panel.show-preview .generated-html-preview-pane {
+  display: block;
+}
+
+.generated-html-code-pane pre {
+  height: 100%;
+  min-height: 320px;
+  max-height: 560px;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  color: #c9d1d9;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.generated-html-code-pane code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.generated-html-editor {
+  width: 100%;
+  min-height: 420px;
+  height: 100%;
+  resize: vertical;
+  border: 0;
+  outline: none;
+  padding: 16px;
+  background: #0b1020;
+  color: #d6deeb;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.generated-html-preview-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  border: 0;
+  background: #ffffff;
+}
+
+.generated-sheet-preview {
+  max-height: 420px;
+  overflow: auto;
+  background: #ffffff;
+}
+
+.generated-sheet-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  color: #111827;
+  font-size: 0.84rem;
+}
+
+.generated-sheet-preview th,
+.generated-sheet-preview td {
+  border: 1px solid #e5e7eb;
+  padding: 7px 9px;
+  min-width: 96px;
+  text-align: left;
+}
+
+.generated-sheet-preview th {
+  background: #f3f4f6;
+  font-weight: 700;
+}
+
+.generated-slide-preview {
+  width: min(560px, 100%);
+  aspect-ratio: 16 / 9;
+  margin: 18px auto;
+  padding: 30px 42px;
+  background: #ffffff;
+  color: #111827;
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-shadow: 0 14px 36px rgba(0,0,0,0.24);
+}
+
+.generated-slide-preview h4 {
+  margin: 0 0 18px;
+  font-size: 1.12rem;
+  line-height: 1.25;
+}
+
+.generated-slide-preview ul {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.generated-slide-preview li {
+  margin: 7px 0;
+  line-height: 1.35;
+}
+
+.generated-pdf-preview {
+  width: 100%;
+  min-height: 520px;
+  border: 0;
+  background: #ffffff;
+}
+
+.generated-text-preview {
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: 16px;
+  white-space: pre-wrap;
+  color: #d6deeb;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+
+.generated-file-empty {
+  padding: 18px;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+@media (max-width: 760px) {
+  .generated-file-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .generated-file-actions {
+    justify-content: flex-start;
+  }
+  .generated-file-panel.show-preview .generated-html-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .generated-html-preview-pane {
+    border-left: 0;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .generated-slide-preview {
+    padding: 20px 24px;
+  }
+}
+
 .file-analysis-status {
   display: inline-flex;
   align-items: center;
@@ -4861,12 +5114,13 @@ if (!window.SentIQRenderer?.renderRichText) {
 // 1. Storage Manager — IndexedDB
 // ================================================================
 const DB_NAME = "SentIQGPT";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 const STORES = {
   chats: "chats",
   memories: "memories",
   files: "files",
+  generatedFiles: "generated_files",
   config: "config",
   syncQueue: "sync_queue",
 };
@@ -4902,6 +5156,12 @@ function openDB() {
       if (!db.objectStoreNames.contains(STORES.files)) {
         const fileStore = db.createObjectStore(STORES.files, { keyPath: "id" });
         fileStore.createIndex("timestamp", "timestamp", { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORES.generatedFiles)) {
+        const generatedFileStore = db.createObjectStore(STORES.generatedFiles, { keyPath: "id" });
+        generatedFileStore.createIndex("chat_id", "chat_id", { unique: false });
+        generatedFileStore.createIndex("storage_path", "storage_path", { unique: false });
+        generatedFileStore.createIndex("created_at", "created_at", { unique: false });
       }
       if (!db.objectStoreNames.contains(STORES.config)) {
         db.createObjectStore(STORES.config, { keyPath: "key" });
@@ -5267,6 +5527,39 @@ async function getAllFiles() { return dbGetAll(STORES.files); }
 async function getFile(id) { return dbGet(STORES.files, id); }
 async function deleteFile(id) { return dbDelete(STORES.files, id); }
 
+function normalizeGeneratedFileCacheId(fileData) {
+  return String(
+    fileData?.id ||
+    fileData?.file_id ||
+    fileData?.storage_path ||
+    fileData?.storagePath ||
+    fileData?.file_url ||
+    fileData?.fileUrl ||
+    generateId()
+  );
+}
+
+async function storeGeneratedFile(fileData) {
+  const id = normalizeGeneratedFileCacheId(fileData);
+  const item = {
+    ...(fileData || {}),
+    id,
+    file_id: fileData?.file_id || fileData?.fileId || id,
+    file_name: fileData?.file_name || fileData?.fileName || `doc.${fileData?.format || "txt"}`,
+    mime_type: fileData?.mime_type || fileData?.mimeType || "application/octet-stream",
+    storage_path: fileData?.storage_path || fileData?.storagePath || "",
+    file_url: fileData?.file_url || fileData?.fileUrl || "",
+    chat_id: fileData?.chat_id || fileData?.chatId || null,
+    preview: fileData?.preview || null,
+    created_at: fileData?.created_at || fileData?.createdAt || new Date().toISOString(),
+  };
+  await dbPut(STORES.generatedFiles, item);
+  return item;
+}
+
+async function getGeneratedFile(id) { return dbGet(STORES.generatedFiles, id); }
+async function deleteGeneratedFile(id) { return dbDelete(STORES.generatedFiles, id); }
+
 async function getConfig(key) {
   const item = await dbGet(STORES.config, key);
   return item ? item.value : DEFAULT_LIMITS[key] ?? null;
@@ -5312,6 +5605,7 @@ window.SentIQStorage = {
   getLocalChats, upsertServerChat, replaceChatMessages,
   storeMemory, getMemory, getAllMemories, getMemoriesByType, deleteMemory, getTopMemories,
   storeFile, getAllFiles, getFile, deleteFile,
+  storeGeneratedFile, getGeneratedFile, deleteGeneratedFile,
   putSyncJob, getAllSyncJobs, deleteSyncJob,
   getConfig, setConfig, getAllConfig,
   getStorageStats, generateId,
@@ -5582,6 +5876,14 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
         if (parsed.type === "token" && parsed.text) {
           tokensReceived = true;
           if (callbacks.onToken) callbacks.onToken(parsed.text);
+        }
+        else if (parsed.type === "file_token" && parsed.text) {
+          tokensReceived = true;
+          if (callbacks.onFileToken) callbacks.onFileToken(parsed.text, parsed);
+        }
+        else if (parsed.type === "file_artifact") {
+          tokensReceived = true;
+          if (callbacks.onFileArtifact) callbacks.onFileArtifact(parsed);
         }
         else if (parsed.type === "thinking" && parsed.text) {
           if (callbacks.onThinking) callbacks.onThinking(parsed.text);
@@ -6262,7 +6564,7 @@ window.SentIQAPI = {
   function shouldIgnoreSidebarGestureStart(target) {
     return Boolean(
       target?.closest?.(
-        "input, textarea, select, button, a, [contenteditable='true'], .modal-container, .code-block-wrap, .message-image-container"
+        "input, textarea, select, button, a, [contenteditable='true'], .modal-container, .code-block-wrap, .message-image-container, .generated-file-panel"
       )
     );
   }
@@ -6854,6 +7156,19 @@ window.SentIQAPI = {
         storagePath: storagePath || "",
         fileSizeBytes: message.file_size_bytes || message.fileSizeBytes || null,
       };
+    }
+    if (!meta && messageType === "file") {
+      meta = normalizeGeneratedFileMeta({
+        id: message.file_id || message.fileId || message.id,
+        format: message.file_format || message.fileFormat,
+        file_name: message.file_name || message.fileName,
+        mime_type: message.mime_type || message.mimeType,
+        file_url: message.file_url || message.fileUrl,
+        storage_path: storagePath,
+        file_size_bytes: message.file_size_bytes || message.fileSizeBytes,
+        preview: message.preview_json || message.previewJson,
+        model_used: message.provider || "",
+      }, { chatId: message.conversation_id || message.conversationId || null });
     }
     return {
       id: message.id,
@@ -7687,14 +8002,16 @@ window.SentIQAPI = {
     web_search: "Surfing the web",
     reasoning: "Thinking a bit longer...",
     image_generation: "Generating image...",
+    file_generation: "Analysing...",
   };
   const ACTIVITY_LOADER_KIND = {
     thinking: "loader-text",
     web_search: "loader-generic",
     reasoning: "loader-generic",
     image_generation: "loader-image",
+    file_generation: "loader-generic",
   };
-  const ACTIVITY_TIMER_MODES = new Set(["thinking", "web_search", "image_generation"]);
+  const ACTIVITY_TIMER_MODES = new Set(["thinking", "web_search", "image_generation", "file_generation"]);
 
   function getActivityBaseText(mode = "thinking") {
     return ACTIVITY_BASE_TEXT[mode] || ACTIVITY_BASE_TEXT.thinking;
@@ -7718,7 +8035,7 @@ window.SentIQAPI = {
   function applyActivityIndicatorMode(mode = "thinking", loaderKind = ACTIVITY_LOADER_KIND.thinking) {
     if (!typingIndicator) return;
     ensureTypingDotMatrix();
-    typingIndicator.classList.remove("mode-thinking", "mode-web-search", "mode-reasoning");
+    typingIndicator.classList.remove("mode-thinking", "mode-web-search", "mode-reasoning", "mode-file-generation");
     typingIndicator.classList.add(`mode-${mode}`);
     typingIndicator.classList.remove("loader-text", "loader-image", "loader-chart", "loader-generic");
     typingIndicator.classList.add(loaderKind || ACTIVITY_LOADER_KIND[mode] || ACTIVITY_LOADER_KIND.thinking);
@@ -7776,6 +8093,8 @@ window.SentIQAPI = {
       ? "web_search"
       : normalized === "image_generation" || normalized === "image"
         ? "image_generation"
+      : normalized === "file_generation"
+        ? "file_generation"
       : normalized === "math_reasoning" || normalized === "reasoning"
         ? "reasoning"
         : "thinking";
@@ -7783,7 +8102,7 @@ window.SentIQAPI = {
       ? "loader-image"
       : normalized === "chart_generation"
         ? "loader-chart"
-        : normalized === "math_reasoning" || normalized === "reasoning" || normalized === "web_search"
+        : normalized === "math_reasoning" || normalized === "reasoning" || normalized === "web_search" || normalized === "file_generation"
           ? "loader-generic"
           : normalized === "image_generation" || normalized === "image"
             ? "loader-image"
@@ -7971,6 +8290,7 @@ window.SentIQAPI = {
   /** Keyword-based detection of image generation requests. */
   function isImageRequest(text) {
     if (isChartRequest(text)) return false;
+    if (isLikelyFileGenerationRequest(text)) return false;
     const patterns = [
       /\b(generate|create|make|draw|paint|render|design|sketch|produce)\b.*\b(image|picture|photo|art|illustration|artwork|portrait|landscape|wallpaper|icon|logo|poster|banner)\b/i,
       /\b(image|picture|photo|art|illustration|artwork)\b.*\b(of|for|with|showing|depicting|featuring)\b/i,
@@ -7995,10 +8315,44 @@ window.SentIQAPI = {
   function isChartRequest(text) {
     const normalized = text || "";
     if (!normalized.trim()) return false;
+    if (isLikelyFileGenerationRequest(normalized)) return false;
     if (looksLikeCodingBuildRequest(normalized)) return false;
     return CHART_REQUEST_PATTERNS.some((pattern) => pattern.test(normalized))
       || CHART_ACTION_PATTERNS.some((pattern) => pattern.test(normalized))
       || CHART_DATA_CONTEXT_PATTERNS.some((pattern) => pattern.test(normalized));
+  }
+
+  function detectRequestedFileFormat(text) {
+    const normalized = String(text || "");
+    const checks = [
+      ["xlsx", /\b(?:\.xlsx|xlsx|excel\s+(?:file|sheet|workbook|spreadsheet)|spreadsheet)\b/i],
+      ["pptx", /\b(?:\.pptx|pptx|powerpoint|presentation|slide\s*deck|slides?)\b/i],
+      ["docx", /\b(?:\.docx|docx|word\s+(?:file|document)|ms\s*word)\b/i],
+      ["pdf", /\b(?:\.pdf|pdf)\b/i],
+      ["html", /\b(?:\.html|html\s+(?:file|page|document)|web\s*page|webpage)\b/i],
+      ["txt", /\b(?:\.txt|txt|plain\s+text\s+file|text\s+file)\b/i],
+    ];
+    const match = checks.find(([, pattern]) => pattern.test(normalized));
+    return match ? match[0] : null;
+  }
+
+  function isLikelyFileGenerationRequest(text) {
+    const normalized = String(text || "").trim();
+    if (!normalized) return false;
+    const format = detectRequestedFileFormat(normalized);
+    if (!format) return false;
+    const hasVerb = /\b(?:generate|create|make|build|write|prepare|draft|produce|export|turn\s+.*\s+into|convert\s+.*\s+to)\b/i.test(normalized);
+    const hasFileHint = /\b(?:downloadable|file|document|workbook|spreadsheet|presentation|slides?|deck|pdf|docx|pptx|xlsx|html|txt)\b/i.test(normalized);
+    return (hasVerb && hasFileHint)
+      || /\b(?:as|in|to)\s+(?:a\s+)?(?:pdf|docx|pptx|xlsx|html|txt|spreadsheet|presentation|word\s+document)\b/i.test(normalized);
+  }
+
+  function buildGuestFileGenerationInstruction(message, format) {
+    if (/Guest mode cannot create/i.test(String(message || ""))) return message;
+    const suffix = format === "xlsx"
+      ? "Guest mode cannot create downloadable files. Provide the spreadsheet content as a clear Markdown table in chat only."
+      : "Guest mode cannot create, store, preview, or download native files. Provide the requested content directly in chat only.";
+    return `${message}\n\n${suffix}`;
   }
 
   function isLikelyMathReasoningPrompt(text) {
@@ -8024,6 +8378,7 @@ window.SentIQAPI = {
 
   function detectLoaderKindForPrompt(text, options = {}) {
     if (options.forceImage) return "loader-image";
+    if (options.file || isLikelyFileGenerationRequest(text)) return "loader-generic";
     if (options.structured || isChartRequest(text)) return "loader-chart";
     if (isImageRequest(text)) return "loader-image";
     if (options.reasoning || isLikelyBufferedReasoningPrompt(text)) return "loader-generic";
@@ -8993,6 +9348,20 @@ window.SentIQAPI = {
     }
 
     clearPendingClarification(targetChatId);
+
+    const fileMeta = normalizeGeneratedFileMeta(response?.file || (response?.type === "file" ? response : null), { chatId: targetChatId });
+    if (response?.route === "file_generation" && hasRenderableGeneratedFile(fileMeta)) {
+      if (renderInView) {
+        appendMessageBubble("assistant", assistantText, fileMeta, effectiveRenderOptions, {
+          thinking: assistantThinking,
+          animateReveal: true,
+          responseTrust,
+        });
+      }
+      cacheGeneratedFileFromMeta(fileMeta).catch(() => null);
+      await persistChatMessage(targetChatId, "assistant", assistantText || `Generated ${fileMeta.file_name}.`, fileMeta);
+      return assistantText || `Generated ${fileMeta.file_name}.`;
+    }
 
     if (webSearchPayload) {
       const webSearchMeta = { type: "web_search", payload: webSearchPayload };
@@ -10290,6 +10659,8 @@ window.SentIQAPI = {
         caption.textContent = content;
         contentDiv.appendChild(caption);
       }
+    } else if (meta?.type === "generated-file") {
+      renderGeneratedFileContent(contentDiv, meta);
     } else if (meta?.type === "chart") {
       if (content) {
         const textWrap = document.createElement("div");
@@ -10384,7 +10755,7 @@ window.SentIQAPI = {
             }
           },
         });
-      } else {
+      } else if (meta?.type !== "generated-file") {
         actionBar = attachAssistantActionBar(bubble, content || "");
       }
     }
@@ -10916,6 +11287,365 @@ window.SentIQAPI = {
     }
   }
 
+  function getGeneratedFileDownloadName(format) {
+    return `doc.${format || "txt"}`;
+  }
+
+  function getGeneratedFileMimeType(format) {
+    switch (format) {
+      case "html": return "text/html";
+      case "txt": return "text/plain";
+      case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      case "pptx": return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+      case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      case "pdf": return "application/pdf";
+      default: return "application/octet-stream";
+    }
+  }
+
+  function normalizeGeneratedFileMeta(payload, extra = {}) {
+    if (!payload || typeof payload !== "object") return null;
+    if (payload.success === false) return null;
+    if (payload.type === "generated-file" && payload.format) return payload;
+    const rawFormat = String(payload.format || payload.file_format || payload.fileFormat || "").toLowerCase();
+    const format = ["html", "txt", "xlsx", "pptx", "docx", "pdf"].includes(rawFormat) ? rawFormat : null;
+    if (!format) return null;
+    const preview = payload.preview || payload.preview_json || payload.previewJson || {};
+    const fileName = getGeneratedFileDownloadName(format);
+    const fileUrl = payload.file_url || payload.fileUrl || "";
+    const storagePath = payload.storage_path || payload.storagePath || "";
+    const id = String(payload.file_id || payload.fileId || payload.id || storagePath || fileUrl || `${format}-${Date.now()}`);
+    return {
+      type: "generated-file",
+      id,
+      file_id: payload.file_id || payload.fileId || id,
+      format,
+      file_name: fileName,
+      mime_type: payload.mime_type || payload.mimeType || getGeneratedFileMimeType(format),
+      file_url: fileUrl,
+      storage_path: storagePath,
+      file_size_bytes: payload.file_size_bytes || payload.fileSizeBytes || null,
+      preview,
+      html: payload.html || preview.html || "",
+      text: payload.text || preview.text || "",
+      model_used: payload.model_used || payload.modelUsed || payload.provider || "",
+      fallback: Boolean(payload.fallback),
+      fallback_reason: payload.fallback_reason || payload.fallbackReason || "",
+      chat_id: extra.chatId || payload.chat_id || payload.chatId || null,
+      created_at: payload.created_at || payload.createdAt || new Date().toISOString(),
+    };
+  }
+
+  function hasRenderableGeneratedFile(meta) {
+    return Boolean(meta?.type === "generated-file" && meta.format && (meta.file_url || meta.html || meta.text || meta.preview));
+  }
+
+  function createGeneratedFileBlob(meta) {
+    if (!meta) return null;
+    if (meta.blob instanceof Blob) return meta.blob;
+    if (meta.format === "html" && meta.html) {
+      return new Blob([meta.html], { type: meta.mime_type || getGeneratedFileMimeType("html") });
+    }
+    if (meta.format === "txt" && meta.text) {
+      return new Blob([meta.text], { type: meta.mime_type || getGeneratedFileMimeType("txt") });
+    }
+    return null;
+  }
+
+  async function fetchGeneratedFileBlob(meta) {
+    if (!meta?.file_url) return null;
+    const response = await fetch(meta.file_url, { mode: "cors" });
+    if (!response.ok) throw new Error(`File fetch failed (${response.status}).`);
+    return response.blob();
+  }
+
+  async function cacheGeneratedFileFromMeta(meta, blobOverride = null) {
+    const normalized = normalizeGeneratedFileMeta(meta);
+    if (!normalized?.id) return null;
+    let blob = blobOverride instanceof Blob ? blobOverride : createGeneratedFileBlob(normalized);
+    if (!blob && normalized.file_url) {
+      try {
+        blob = await fetchGeneratedFileBlob(normalized);
+      } catch (error) {
+        debugWarn(`[UI] Generated file cache fetch failed: ${getSafeErrorMessage(error)}`);
+      }
+    }
+    if (!blob) return null;
+    return Storage.storeGeneratedFile({
+      id: normalized.id,
+      file_id: normalized.file_id,
+      format: normalized.format,
+      file_name: getGeneratedFileDownloadName(normalized.format),
+      mime_type: normalized.mime_type,
+      file_url: normalized.file_url,
+      storage_path: normalized.storage_path,
+      file_size_bytes: normalized.file_size_bytes || blob.size,
+      preview: normalized.preview,
+      chat_id: normalized.chat_id || currentChatId || null,
+      created_at: normalized.created_at,
+      blob,
+    });
+  }
+
+  async function resolveGeneratedFileBlob(meta) {
+    const normalized = normalizeGeneratedFileMeta(meta);
+    if (!normalized?.id) return null;
+    const cached = await Storage.getGeneratedFile(normalized.id).catch(() => null);
+    if (cached?.blob instanceof Blob) return cached.blob;
+    const localBlob = createGeneratedFileBlob(normalized);
+    if (localBlob) {
+      await cacheGeneratedFileFromMeta(normalized, localBlob).catch(() => null);
+      return localBlob;
+    }
+    if (normalized.file_url) {
+      const remoteBlob = await fetchGeneratedFileBlob(normalized);
+      await cacheGeneratedFileFromMeta(normalized, remoteBlob).catch(() => null);
+      return remoteBlob;
+    }
+    return null;
+  }
+
+  function triggerBlobDownload(blob, filename) {
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = filename;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  }
+
+  async function downloadGeneratedFile(meta) {
+    const normalized = normalizeGeneratedFileMeta(meta);
+    if (!normalized) throw new Error("Missing generated file metadata.");
+    const filename = getGeneratedFileDownloadName(normalized.format);
+    try {
+      const blob = await resolveGeneratedFileBlob(normalized);
+      if (blob) {
+        triggerBlobDownload(blob, filename);
+        return;
+      }
+    } catch (error) {
+      debugWarn(`[UI] Generated file blob download failed: ${getSafeErrorMessage(error)}`);
+    }
+    if (normalized.file_url) {
+      const link = document.createElement("a");
+      link.href = normalized.file_url;
+      link.download = filename;
+      link.rel = "noopener";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      return;
+    }
+    throw new Error("Generated file is not available for download.");
+  }
+
+  function setArtifactButtonState(button, enabled) {
+    if (!button) return;
+    button.disabled = !enabled;
+    button.classList.toggle("is-disabled", !enabled);
+  }
+
+  function createArtifactButton(label) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "generated-file-action";
+    button.textContent = label;
+    return button;
+  }
+
+  function renderGeneratedFileContent(container, metaInput, options = {}) {
+    const meta = normalizeGeneratedFileMeta(metaInput, options);
+    if (!container || !meta) return null;
+    container.innerHTML = "";
+
+    const panel = document.createElement("div");
+    panel.className = `generated-file-panel format-${meta.format}`;
+    const header = document.createElement("div");
+    header.className = "generated-file-header";
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "generated-file-title-wrap";
+    const icon = document.createElement("span");
+    icon.className = "generated-file-icon";
+    icon.textContent = meta.format === "xlsx" ? "XLS" : meta.format.toUpperCase();
+    const title = document.createElement("div");
+    title.className = "generated-file-title";
+    title.textContent = meta.file_name || getGeneratedFileDownloadName(meta.format);
+    titleWrap.appendChild(icon);
+    titleWrap.appendChild(title);
+    const actions = document.createElement("div");
+    actions.className = "generated-file-actions";
+    header.appendChild(titleWrap);
+    header.appendChild(actions);
+    panel.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "generated-file-body";
+    panel.appendChild(body);
+    container.appendChild(panel);
+
+    const current = { meta, html: meta.html || "", finalized: !options.streaming };
+
+    const downloadBtn = createArtifactButton("Download");
+    downloadBtn.addEventListener("click", async () => {
+      try {
+        await downloadGeneratedFile(current.meta);
+      } catch (error) {
+        debugWarn(`[UI] Generated file download failed: ${getSafeErrorMessage(error)}`);
+        showToast("Couldn't download that file.", "error");
+      }
+    });
+
+    function finalizeControls() {
+      current.finalized = true;
+      actions.querySelectorAll("button").forEach((button) => setArtifactButtonState(button, true));
+    }
+
+    if (meta.format === "html") {
+      const copyBtn = createArtifactButton("Copy");
+      const editBtn = createArtifactButton("Edit");
+      const previewBtn = createArtifactButton("Preview");
+      actions.append(copyBtn, editBtn, downloadBtn, previewBtn);
+
+      const layout = document.createElement("div");
+      layout.className = "generated-html-layout";
+      const codePane = document.createElement("div");
+      codePane.className = "generated-html-code-pane";
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      code.className = "language-html";
+      pre.appendChild(code);
+      const editor = document.createElement("textarea");
+      editor.className = "generated-html-editor";
+      editor.spellcheck = false;
+      editor.style.display = "none";
+      codePane.appendChild(pre);
+      codePane.appendChild(editor);
+      const previewPane = document.createElement("div");
+      previewPane.className = "generated-html-preview-pane";
+      const iframe = document.createElement("iframe");
+      iframe.className = "generated-html-preview-frame";
+      iframe.setAttribute("sandbox", "allow-forms allow-modals allow-pointer-lock allow-popups allow-scripts");
+      iframe.title = "HTML preview";
+      previewPane.appendChild(iframe);
+      layout.appendChild(codePane);
+      layout.appendChild(previewPane);
+      body.appendChild(layout);
+
+      function updateHtml(nextHtml) {
+        current.html = String(nextHtml || "");
+        current.meta.html = current.html;
+        current.meta.preview = { ...(current.meta.preview || {}), html: current.html, text: current.html.slice(0, 2400) };
+        code.innerHTML = highlightCode(current.html, "html");
+        editor.value = current.html;
+        if (panel.classList.contains("show-preview")) iframe.srcdoc = current.html;
+        if (current.finalized) {
+          const blob = createGeneratedFileBlob(current.meta);
+          cacheGeneratedFileFromMeta(current.meta, blob).catch(() => null);
+        }
+      }
+
+      copyBtn.addEventListener("click", async () => {
+        try {
+          await writeClipboardText(current.html || "");
+          copyBtn.textContent = "Copied";
+          setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
+        } catch {
+          showToast("Couldn't copy that HTML.", "error");
+        }
+      });
+      editBtn.addEventListener("click", () => {
+        const editing = editor.style.display === "none";
+        editor.style.display = editing ? "block" : "none";
+        pre.style.display = editing ? "none" : "block";
+        editBtn.textContent = editing ? "Done" : "Edit";
+        if (editing) editor.focus();
+      });
+      editor.addEventListener("input", () => updateHtml(editor.value));
+      previewBtn.addEventListener("click", () => {
+        const showing = !panel.classList.contains("show-preview");
+        panel.classList.toggle("show-preview", showing);
+        if (showing) iframe.srcdoc = current.html || "";
+      });
+      if (options.streaming) {
+        [copyBtn, editBtn, downloadBtn, previewBtn].forEach((button) => setArtifactButtonState(button, false));
+      }
+      updateHtml(current.html);
+      return {
+        setHtml: updateHtml,
+        setMeta(nextMeta) {
+          const normalized = normalizeGeneratedFileMeta(nextMeta, options);
+          if (!normalized) return;
+          Object.assign(current.meta, normalized);
+          updateHtml(normalized.html || current.html);
+          title.textContent = current.meta.file_name || getGeneratedFileDownloadName(current.meta.format);
+        },
+        finalize: finalizeControls,
+        getMeta: () => current.meta,
+      };
+    }
+
+    actions.appendChild(downloadBtn);
+    const preview = meta.preview || {};
+    if (meta.format === "xlsx" && preview.sheet?.rows?.length) {
+      const sheet = document.createElement("div");
+      sheet.className = "generated-sheet-preview";
+      const table = document.createElement("table");
+      preview.sheet.rows.slice(0, 16).forEach((row, rowIndex) => {
+        const tr = document.createElement("tr");
+        (Array.isArray(row) ? row : []).slice(0, 10).forEach((cell) => {
+          const el = document.createElement(rowIndex === 0 ? "th" : "td");
+          el.textContent = String(cell ?? "");
+          tr.appendChild(el);
+        });
+        table.appendChild(tr);
+      });
+      sheet.appendChild(table);
+      body.appendChild(sheet);
+    } else if (meta.format === "pptx" && preview.slide) {
+      const slide = document.createElement("div");
+      slide.className = "generated-slide-preview";
+      const slideTitle = document.createElement("h4");
+      slideTitle.textContent = preview.slide.title || "Slide 1";
+      slide.appendChild(slideTitle);
+      const list = document.createElement("ul");
+      (preview.slide.bullets || []).slice(0, 8).forEach((bullet) => {
+        const li = document.createElement("li");
+        li.textContent = String(bullet || "");
+        list.appendChild(li);
+      });
+      slide.appendChild(list);
+      body.appendChild(slide);
+    } else if (meta.format === "pdf" && meta.file_url) {
+      const frame = document.createElement("iframe");
+      frame.className = "generated-pdf-preview";
+      frame.title = "PDF preview";
+      frame.src = meta.file_url;
+      body.appendChild(frame);
+    }
+
+    const textPreview = meta.text || preview.text || "";
+    if ((meta.format === "docx" || meta.format === "txt" || (meta.format === "pdf" && !meta.file_url)) && textPreview) {
+      const textBlock = document.createElement("pre");
+      textBlock.className = "generated-text-preview";
+      textBlock.textContent = textPreview;
+      body.appendChild(textBlock);
+    }
+    if (!body.children.length) {
+      const empty = document.createElement("div");
+      empty.className = "generated-file-empty";
+      empty.textContent = "Preview unavailable.";
+      body.appendChild(empty);
+    }
+    return {
+      finalize: finalizeControls,
+      getMeta: () => current.meta,
+    };
+  }
+
   async function copyImageToClipboard(imageUrl, options = {}) {
     const { allowUrlFallback = true } = options || {};
     if (!imageUrl) throw new Error("Missing image URL.");
@@ -11403,6 +12133,70 @@ window.SentIQAPI = {
     };
   }
 
+  function createFileGenerationStreamingBubble(options = {}) {
+    debugLog("[UI] createFileGenerationStreamingBubble");
+    if (!chatMessages) return null;
+    const bubble = document.createElement("div");
+    bubble.className = "message assistant";
+    if (options.chatId) bubble.dataset.chatId = options.chatId;
+    if (options.requestId) bubble.dataset.requestId = options.requestId;
+    const header = document.createElement("div");
+    header.className = "message-header";
+    const avatar = document.createElement("div");
+    avatar.className = "message-avatar";
+    avatar.textContent = "S";
+    const sender = document.createElement("div");
+    sender.className = "message-sender";
+    sender.textContent = "SentIQGPT";
+    header.appendChild(avatar);
+    header.appendChild(sender);
+    bubble.appendChild(header);
+    const contentDiv = document.createElement("div");
+    contentDiv.className = "message-content sentiq-reveal-target is-visible";
+    bubble.appendChild(contentDiv);
+
+    const initialMeta = normalizeGeneratedFileMeta({
+      format: "html",
+      file_name: "doc.html",
+      mime_type: getGeneratedFileMimeType("html"),
+      preview: { html: "", text: "" },
+      html: "",
+    }, { chatId: options.chatId || currentChatId });
+    const controller = renderGeneratedFileContent(contentDiv, initialMeta, { streaming: true, chatId: options.chatId || currentChatId });
+    chatMessages.appendChild(bubble);
+    scrollToBottom(true);
+
+    let fullHtml = "";
+    let thinkingText = "";
+    return {
+      appendToken(token) {
+        fullHtml += String(token || "");
+        controller?.setHtml?.(fullHtml);
+        scrollToBottom(true);
+      },
+      setArtifact(filePayload) {
+        const meta = normalizeGeneratedFileMeta(filePayload, { chatId: options.chatId || currentChatId });
+        if (meta) {
+          if (!meta.html && fullHtml) meta.html = fullHtml;
+          controller?.setMeta?.(meta);
+          controller?.finalize?.();
+          const blob = createGeneratedFileBlob(meta);
+          cacheGeneratedFileFromMeta(meta, blob).catch(() => null);
+        }
+      },
+      finish() {
+        controller?.finalize?.();
+        return Promise.resolve();
+      },
+      setRenderMode() {},
+      setThinking(thinking) { thinkingText = typeof thinking === "string" ? thinking : ""; },
+      getRequestId() { return bubble.dataset.requestId || ""; },
+      getFullText() { return fullHtml; },
+      getThinking() { return thinkingText; },
+      getMeta() { return controller?.getMeta?.() || initialMeta; },
+    };
+  }
+
   async function handleSend(retryMessage, options = {}) {
     const stopMeasure = startPerf("ui.chat.send", {
       retry: Boolean(retryMessage),
@@ -11471,7 +12265,7 @@ window.SentIQAPI = {
     }
     if (!isClarificationAnswer && imageMode && message) { setImageMode(false); await handleImageGeneration(message); return; }
 
-    const apiMessage = message || (suppliedImageAttachments.length > 0 ? DEFAULT_IMAGE_ANALYSIS_PROMPT : "");
+    let apiMessage = message || (suppliedImageAttachments.length > 0 ? DEFAULT_IMAGE_ANALYSIS_PROMPT : "");
     const visibleUserMessage = message || (
       suppliedImageAttachments.length > 0
         ? `Uploaded image: ${suppliedImageAttachments.map((image) => image.filename).join(", ")}`
@@ -11489,15 +12283,24 @@ window.SentIQAPI = {
       currentSessionImageAttachments = suppliedImageAttachments;
     }
 
-    const chartResponseRequired = isChartRequest(apiMessage);
-    const bufferedReasoningRequired = isLikelyBufferedReasoningPrompt(apiMessage);
-    const structuredResponseRequired = chartResponseRequired || bufferedReasoningRequired;
+    const originalApiMessage = apiMessage;
+    const requestedFileFormat = detectRequestedFileFormat(originalApiMessage);
+    const fileGenerationPrompt = !isClarificationAnswer && isLikelyFileGenerationRequest(originalApiMessage);
+    const authenticatedFileGenerationRequired = fileGenerationPrompt && isAuthenticatedSession();
+    const htmlFileGenerationRequired = authenticatedFileGenerationRequired && requestedFileFormat === "html";
+    if (fileGenerationPrompt && !isAuthenticatedSession()) {
+      apiMessage = buildGuestFileGenerationInstruction(originalApiMessage, requestedFileFormat);
+    }
+    const chartResponseRequired = !authenticatedFileGenerationRequired && isChartRequest(apiMessage);
+    const bufferedReasoningRequired = !authenticatedFileGenerationRequired && isLikelyBufferedReasoningPrompt(apiMessage);
+    const structuredResponseRequired = chartResponseRequired || bufferedReasoningRequired || (authenticatedFileGenerationRequired && !htmlFileGenerationRequired);
     const requestLoaderKind = SentIQLoaderEngine.resolveKind(apiMessage, {
       structured: chartResponseRequired,
       reasoning: bufferedReasoningRequired,
+      file: authenticatedFileGenerationRequired,
     });
 
-    if (!isClarificationAnswer && !webSearchModeOverride && imageAttachmentsForRequest.length === 0 && !chartResponseRequired && !bufferedReasoningRequired && apiMessage && isImageRequest(apiMessage)) {
+    if (!isClarificationAnswer && !webSearchModeOverride && imageAttachmentsForRequest.length === 0 && !chartResponseRequired && !bufferedReasoningRequired && !authenticatedFileGenerationRequired && apiMessage && isImageRequest(apiMessage)) {
       await handleImageGeneration(apiMessage);
       return;
     }
@@ -11522,7 +12325,7 @@ window.SentIQAPI = {
     const requestId = newRequestId(targetChatId);
     const state = getChatState(targetChatId);
     state.isThinking = true;
-    state.activityMode = "thinking";
+    state.activityMode = authenticatedFileGenerationRequired ? "file_generation" : "thinking";
     const ac = new AbortController();
     state.abortController = ac;
     setStopMode();
@@ -11533,9 +12336,11 @@ window.SentIQAPI = {
       await persistChatMessage(targetChatId, "user", visibleUserMessage, userMessageMeta);
     }
     if (targetChatId === currentChatId && typingIndicator) {
-      const shouldPreferWebSurfIndicator = Boolean(webSearchModeOverride);
+      const shouldPreferWebSurfIndicator = Boolean(webSearchModeOverride) && !authenticatedFileGenerationRequired;
       if (shouldPreferWebSurfIndicator) {
         SentIQLoaderEngine.showForRoute("web_search", { chatId: targetChatId, withTimer: true });
+      } else if (authenticatedFileGenerationRequired) {
+        SentIQLoaderEngine.showForRoute("file_generation", { chatId: targetChatId, withTimer: true });
       } else if (bufferedReasoningRequired) {
         SentIQLoaderEngine.showForRoute("reasoning", { chatId: targetChatId, withTimer: true });
       } else {
@@ -11583,6 +12388,7 @@ window.SentIQAPI = {
       let assistantPersisted = false;
       let responseSync = null;
       let responseRenderMode = null;
+      let fileArtifactResponse = null;
 
       if (isRequestStale(targetChatId, requestId)) return;
 
@@ -11593,7 +12399,9 @@ window.SentIQAPI = {
         try {
           debugLog("[UI] Attempting streaming");
           streamBubble = (targetChatId === currentChatId)
-            ? createStreamingBubble({ loaderKind: requestLoaderKind, chatId: targetChatId, requestId })
+            ? (htmlFileGenerationRequired
+              ? createFileGenerationStreamingBubble({ chatId: targetChatId, requestId })
+              : createStreamingBubble({ loaderKind: requestLoaderKind, chatId: targetChatId, requestId }))
             : null;
           if (streamBubble && typeof API.sendMessageStream === "function") {
             usedStreaming = true;
@@ -11609,6 +12417,23 @@ window.SentIQAPI = {
                   streamBubble.appendToken(token);
                 }
               },
+              onFileToken(token) {
+                if (!isRequestStale(targetChatId, requestId)) {
+                  hideActivityIndicator(targetChatId);
+                  if (!firstVisibleTokenLogged) {
+                    firstVisibleTokenLogged = true;
+                    stopMeasure("first_visible_token", { conversation_id: targetChatId });
+                  }
+                  streamBubble?.appendToken?.(token);
+                }
+              },
+              onFileArtifact(response) {
+                if (!isRequestStale(targetChatId, requestId)) {
+                  fileArtifactResponse = response;
+                  streamBubble?.setArtifact?.(response.file);
+                  responseSync = response.sync || null;
+                }
+              },
               onThinking(thinking) {
                 if (!isRequestStale(targetChatId, requestId)) {
                   streamThinking = typeof thinking === "string" ? thinking : "";
@@ -11618,6 +12443,8 @@ window.SentIQAPI = {
               onRoute(route) {
                 state.activityMode = route === "web_search"
                   ? "web_search"
+                  : route === "file_generation"
+                    ? "file_generation"
                   : route === "math_reasoning"
                     ? "reasoning"
                     : "thinking";
@@ -11631,6 +12458,9 @@ window.SentIQAPI = {
                 if (route === "math_reasoning") {
                   responseRenderMode = "math";
                   streamBubble.setRenderMode("math");
+                }
+                if (route === "file_generation") {
+                  responseRenderMode = null;
                 }
                 consumeWebSearchOneShot(route);
                 // Math pipeline: switch indicator to "Reasoning..." while openai-large solves
@@ -11649,7 +12479,22 @@ window.SentIQAPI = {
                 structuredResponse = response;
               },
             }, ac.signal);
-            if (structuredResponse) {
+            if (fileArtifactResponse) {
+              const fileMeta = normalizeGeneratedFileMeta(fileArtifactResponse.file, { chatId: targetChatId });
+              fullReply = fileArtifactResponse.reply || fileArtifactResponse.answer || (fileMeta ? `Generated ${fileMeta.file_name}.` : "Sorry, I couldn't generate that file. Please try again.");
+              if (fileMeta) {
+                await streamBubble.finish();
+                await persistChatMessage(targetChatId, "assistant", fullReply, fileMeta);
+                cacheGeneratedFileFromMeta(fileMeta).catch(() => null);
+              } else {
+                chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"]`)?.remove();
+                if (!isRequestStale(targetChatId, requestId) && targetChatId === currentChatId) {
+                  appendMessageBubble("assistant", fullReply, null, {}, { animateReveal: true });
+                }
+                await persistChatMessage(targetChatId, "assistant", fullReply);
+              }
+              assistantPersisted = true;
+            } else if (structuredResponse) {
               // Remove streaming bubble — we'll render via deliverAssistantResponse
               if (streamBubble) {
                 const targetBubble = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"]`);

@@ -28,6 +28,7 @@ export type DetectedTool =
   | "knowledge_query"
   | "memory_update"
   | "chart_generation"
+  | "file_generation"
   | "math_reasoning"
   | "web_search"
   | "clarification";
@@ -39,6 +40,7 @@ const VALID_TOOLS: ReadonlySet<string> = new Set<DetectedTool>([
   "knowledge_query",
   "memory_update",
   "chart_generation",
+  "file_generation",
   "web_search",
 ]);
 

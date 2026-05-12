@@ -70,6 +70,8 @@ export interface BuiltContext {
   readonly hasFileContext: boolean;
   readonly webSearchMode?: WebSearchMode;
   readonly userId?: string;
+  readonly userDb?: SupabaseClient;
+  readonly conversationId?: string;
   readonly trustedProfile?: {
     displayName: string;
   };
@@ -453,6 +455,8 @@ export async function buildContext(
     hasFileContext: fileReferences.length > 0 || imageAttachments.length > 0,
     webSearchMode: raw.web_search_mode,
     userId: normalizedUserId,
+    userDb: raw.userDb,
+    conversationId: raw.conversationId,
     trustedProfile: raw.trustedProfile,
     priorConversationEvidence,
     isExplicitRecallQuery,
@@ -551,6 +555,8 @@ export async function buildContextFast(
     hasFileContext: fileReferences.length > 0 || imageAttachments.length > 0,
     webSearchMode: raw.web_search_mode,
     userId: normalizedUserId,
+    userDb: raw.userDb,
+    conversationId: raw.conversationId,
     trustedProfile: raw.trustedProfile,
     priorConversationEvidence,
     isExplicitRecallQuery,

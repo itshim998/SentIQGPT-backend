@@ -7,6 +7,7 @@
     "route_classify",
     "intent_clarify",
     "file_extract",
+    "file_generate",
     "image_generate"
   ]
 }

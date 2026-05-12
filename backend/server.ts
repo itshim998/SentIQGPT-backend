@@ -27,6 +27,8 @@ import { extractTextFromFile, validateFileUpload } from "./ai/FileIngestionHandl
 import { routeImageGeneration } from "./tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "./tools/chartGeneration/chartRouter";
 import { isChartRequest } from "./tools/chartGeneration/chartDetector";
+import { routeFileGeneration } from "./tools/fileGeneration/fileGenerator";
+import { detectGeneratedFileFormat, getFileGenerationGuestInstruction, isFileGenerationRequest } from "./tools/fileGeneration/fileDetector";
 import { uploadChatImage, getChatImages } from "./tools/imageGeneration/imageStorageService";
 import {
   buildChatPrompt,
@@ -40,6 +42,7 @@ import type { ImageAttachment } from "./ai/PromptBuilders";
 import { buildContext, buildContextFast } from "./context/contextBuilder";
 import {
   getControlDatabase,
+  getGeneratedFileStorageDatabase,
   getImageStorageDatabase,
   getImageStorageDatabaseId,
   getUserDatabase,
@@ -909,7 +912,20 @@ async function insertConversationMessageOrThrow(
   role: "user" | "assistant",
   content: string,
   scope: string,
-  options: { clientRequestId?: string } = {},
+  options: {
+    clientRequestId?: string;
+    messageType?: string;
+    imageUrl?: string;
+    storagePath?: string;
+    prompt?: string;
+    provider?: string;
+    fileSizeBytes?: number;
+    fileUrl?: string;
+    fileName?: string;
+    fileFormat?: string;
+    mimeType?: string;
+    previewJson?: unknown;
+  } = {},
 ): Promise<void> {
   logDbEvent(`${scope}.message-insert.start`, userId, {
     conversationId,
@@ -921,6 +937,17 @@ async function insertConversationMessageOrThrow(
     role,
     content,
     clientRequestId: options.clientRequestId,
+    messageType: options.messageType,
+    imageUrl: options.imageUrl,
+    storagePath: options.storagePath,
+    prompt: options.prompt,
+    provider: options.provider,
+    fileSizeBytes: options.fileSizeBytes,
+    fileUrl: options.fileUrl,
+    fileName: options.fileName,
+    fileFormat: options.fileFormat,
+    mimeType: options.mimeType,
+    previewJson: options.previewJson,
   });
   if (error) {
     logDbFailure(`${scope}.message-insert`, userId, error, { conversationId, role });
@@ -1553,6 +1580,9 @@ app.post(
     const isReasoningQuery = isBufferedReasoningQuery(effectiveUserMessage) || hasImageMathPrompt;
     const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && (isMathQuery(effectiveUserMessage) || hasImageMathPrompt);
     const isLogicReasoningQuery = isReasoningQuery && !isMathReasoningQuery;
+    const guestUserMessage = isGuest && isFileGenerationRequest(effectiveUserMessage)
+      ? getFileGenerationGuestInstruction(effectiveUserMessage)
+      : effectiveUserMessage;
 
     // Prompt injection detection
     if (detectPromptInjection(parsed.data.message) || detectPromptInjection(effectiveUserMessage)) {
@@ -1572,7 +1602,7 @@ app.post(
       console.log(`[Image] orchestrator: ${orcImageAttachments.length} image attachment(s) included in context`);
     }
 
-    if (isGuest && hasExplicitWebSearchMode) {
+    if (isGuest && hasExplicitWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
         clarificationResponse: parsed.data.clarification_response,
@@ -1594,6 +1624,7 @@ app.post(
         disclaimer: result.disclaimer,
         image: result.image,
         chart: result.chart,
+        file: result.file,
         memory: result.memory,
         web_search: result.web_search,
         clarification: result.clarification,
@@ -1611,7 +1642,7 @@ app.post(
         file_references: orcFileRefs,
         image_attachments: orcImageAttachments,
         web_search_mode: webSearchMode,
-        userMessage: effectiveUserMessage,
+        userMessage: guestUserMessage,
       }, undefined, userId);
 
       const guestClarification = await maybeCreateChatClarification({
@@ -1637,7 +1668,7 @@ app.post(
 
       if (isMathReasoningQuery) {
         const mathResult = await callMathModelRaw({
-          userMessage: effectiveUserMessage,
+          userMessage: guestUserMessage,
           modelOverride: GUEST_MODEL_OVERRIDE,
           recentMessages: guestContext.recentMessages,
           memories: [],
@@ -1667,7 +1698,7 @@ app.post(
       }
 
       const guestResult = await handleChat({
-        userMessage: effectiveUserMessage,
+        userMessage: guestUserMessage,
         recentMessages: guestContext.recentMessages,
         memories: [],
         fileReferences: guestContext.fileReferences,
@@ -2016,6 +2047,21 @@ app.post(
 
     if (userDb && activeConversationId) {
       try {
+        const assistantMessageOptions = result.file?.success
+          ? {
+              clientRequestId: parsed.data.clientRequestId,
+              messageType: "file",
+              fileUrl: result.file.file_url,
+              storagePath: result.file.storage_path,
+              prompt: parsed.data.message,
+              provider: result.file.model_used,
+              fileSizeBytes: result.file.file_size_bytes,
+              fileName: result.file.file_name,
+              fileFormat: result.file.format,
+              mimeType: result.file.mime_type,
+              previewJson: result.file.preview,
+            }
+          : {};
         await insertConversationMessageOrThrow(
           userDb,
           userId,
@@ -2023,6 +2069,7 @@ app.post(
           "assistant",
           responseReply ?? "",
           "chat",
+          assistantMessageOptions,
         );
         assistantMessagePersisted = true;
       } catch (assistantPersistError) {
@@ -2074,6 +2121,7 @@ app.post(
       disclaimer: result.disclaimer,
       image: result.image,
       chart: result.chart,
+      file: result.file,
       memory: responseMemory,
       web_search: result.web_search,
       clarification: result.clarification,
@@ -2233,7 +2281,10 @@ app.post(
       detectImageMathPrompt(effectiveUserMessage);
     const isBufferedReasoning = isBufferedReasoningQuery(effectiveUserMessage) || hasImageMathPrompt;
     const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && (isMathQuery(effectiveUserMessage) || hasImageMathPrompt);
-    if (isGuest && hasExplicitWebSearchMode) {
+    const guestUserMessage = isGuest && isFileGenerationRequest(effectiveUserMessage)
+      ? getFileGenerationGuestInstruction(effectiveUserMessage)
+      : effectiveUserMessage;
+    if (isGuest && hasExplicitWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
         clarificationResponse: parsed.data.clarification_response,
@@ -2254,6 +2305,7 @@ app.post(
         disclaimer: result.disclaimer,
         image: result.image,
         chart: result.chart,
+        file: result.file,
         memory: result.memory,
         web_search: result.web_search,
         clarification: result.clarification,
@@ -2312,10 +2364,10 @@ app.post(
               file_references: parsed.data.context?.file_references,
               image_attachments: parsed.data.context?.image_attachments,
               web_search_mode: webSearchMode,
-              userMessage: effectiveUserMessage,
+              userMessage: guestUserMessage,
             }, undefined, userId);
             const result = await solveGuestMathWithGemini({
-              userMessage: effectiveUserMessage,
+              userMessage: guestUserMessage,
               userId,
               recentMessages: guestMathContext.recentMessages,
               fileReferences: guestMathContext.fileReferences,
@@ -2338,11 +2390,11 @@ app.post(
             file_references: parsed.data.context?.file_references,
             image_attachments: parsed.data.context?.image_attachments,
             web_search_mode: webSearchMode,
-            userMessage: effectiveUserMessage,
+            userMessage: guestUserMessage,
           }, undefined, userId);
 
           const result = await handleChat({
-            userMessage: effectiveUserMessage,
+            userMessage: guestUserMessage,
             recentMessages: guestReasoningContext.recentMessages,
             memories: [],
             fileReferences: guestReasoningContext.fileReferences,
@@ -2382,7 +2434,7 @@ app.post(
         file_references: fileRefs,
         image_attachments: parsed.data.context?.image_attachments,
         web_search_mode: webSearchMode,
-        userMessage: effectiveUserMessage,
+        userMessage: guestUserMessage,
       }, undefined, userId);
 
       const guestFastPath = !guestCtx.hasFileContext
@@ -2403,7 +2455,7 @@ app.post(
         if (isMathReasoningQuery) {
           await writeSseJson({ type: "route", route: "math_reasoning" });
           const result = await solveGuestMathWithGemini({
-            userMessage: effectiveUserMessage,
+            userMessage: guestUserMessage,
             userId,
             recentMessages: guestCtx.recentMessages,
             fileReferences: guestCtx.fileReferences,
@@ -2422,7 +2474,7 @@ app.post(
         }
 
         const call = buildChatPrompt({
-          userMessage: effectiveUserMessage,
+          userMessage: guestUserMessage,
           recentMessages: guestCtx.recentMessages,
           memories: [],
           fileReferences: guestCtx.fileReferences,
@@ -2662,6 +2714,64 @@ app.post(
       result.answer = reply;
     };
 
+    const persistAssistantFileMessage = async (
+      content: string,
+      file: NonNullable<Awaited<ReturnType<typeof routeFileGeneration>>>,
+    ) => {
+      if (!userDb || !activeConversationId || !file.success) {
+        sync.persisted = false;
+        sync.deferred = true;
+        return;
+      }
+      try {
+        await insertConversationMessageOrThrow(
+          userDb,
+          userId,
+          activeConversationId,
+          "assistant",
+          content,
+          "chat.stream",
+          {
+            clientRequestId: parsed.data.clientRequestId,
+            messageType: "file",
+            fileUrl: file.file_url,
+            storagePath: file.storage_path,
+            prompt: parsed.data.message,
+            provider: file.model_used,
+            fileSizeBytes: file.file_size_bytes,
+            fileName: file.file_name,
+            fileFormat: file.format,
+            mimeType: file.mime_type,
+            previewJson: file.preview,
+          },
+        );
+        assistantMessagePersisted = true;
+        if (
+          userMessagePersisted &&
+          (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat")
+        ) {
+          scheduleAutoTitleConversation({
+            userDb,
+            userId,
+            conversationId: activeConversationId,
+            userMessage: parsed.data.message,
+            assistantReply: content,
+            scope: "chat.stream.title.auto",
+            currentTitle: activeConversationTitle,
+          });
+        }
+      } catch (assistantPersistError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        logDbFailure(
+          "chat.stream.assistant-file-message",
+          userId,
+          assistantPersistError instanceof Error ? assistantPersistError : new Error(String(assistantPersistError)),
+          { conversationId: activeConversationId },
+        );
+      }
+    };
+
     const reportStreamMessageGap = (assistantExpected: boolean, route: string, error?: string) => {
       if (!activeConversationId) return;
       logMessagePersistenceGap("chat.stream", userId, {
@@ -2677,7 +2787,7 @@ app.post(
       });
     };
 
-    if (hasExplicitWebSearchMode) {
+    if (hasExplicitWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
       console.log(`[Stream] explicit WebSurf mode=${webSearchMode} - redirecting to orchestrator`);
       try {
         const result = await orchestrate({
@@ -2768,6 +2878,108 @@ app.post(
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[Stream] memory orchestration failed: ${message}`);
+        res.status(500).json({ error: message });
+      }
+      return;
+    }
+
+    if (isFileGenerationRequest(effectiveUserMessage)) {
+      const requestedFormat = detectGeneratedFileFormat(effectiveUserMessage);
+      if (requestedFormat === "html") {
+        console.log(`[Stream] HTML file generation detected - streaming file artifact`);
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        res.flushHeaders();
+
+        try {
+          await writeSseJson({ type: "route", route: "file_generation", format: "html" });
+          const result = await routeFileGeneration(
+            {
+              userMessage: effectiveUserMessage,
+              userId,
+              conversationId: activeConversationId || "",
+              userDb,
+              storageDb: getGeneratedFileStorageDatabase(),
+            },
+            {
+              onHtmlToken: async (token) => {
+                await writeSseJson({ type: "file_token", format: "html", text: token });
+              },
+            },
+          );
+          const reply = result.success
+            ? `Generated ${result.file_name}.`
+            : (result.error || "Sorry, I couldn't generate that file. Please try again.");
+          if (result.success) {
+            await persistAssistantFileMessage(reply, result);
+          } else if (reply) {
+            await persistAssistantMessage(reply);
+          }
+          reportStreamMessageGap(Boolean(reply), "orchestrator.file_generation", result.error);
+          await writeSseJson({
+            type: "file_artifact",
+            route: "file_generation",
+            reply,
+            answer: reply,
+            file: result,
+            sync,
+          });
+          await writeSseEvent("[DONE]");
+        } catch (err) {
+          await sendStreamError(err);
+        } finally {
+          finishSse();
+        }
+        return;
+      }
+
+      console.log(`[Stream] file generation detected - redirecting to orchestrator`);
+      try {
+        const result = await orchestrate({
+          userMessage: parsed.data.message,
+          clarificationResponse: parsed.data.clarification_response,
+          context: {
+            recent_messages: normalizedRecentMessages,
+            memories: parsed.data.context?.memories,
+            file_references: parsed.data.context?.file_references,
+            image_attachments: parsed.data.context?.image_attachments,
+            trustedProfile,
+            web_search_mode: webSearchMode,
+            conversationId: activeConversationId || undefined,
+            userDb,
+            userId,
+          },
+        });
+        await persistStoredMemory(result.memory);
+        finalizeMemoryUpdateCopy(result);
+        if (result.file?.success) {
+          await persistAssistantFileMessage(result.reply ?? `Generated ${result.file.file_name}.`, result.file as any);
+        } else if (result.reply) {
+          await persistAssistantMessage(result.reply);
+        }
+        reportStreamMessageGap(Boolean(result.reply), "orchestrator.file_generation");
+        res.json({
+          route: result.route,
+          answer: result.answer ?? result.reply,
+          reply: result.reply,
+          thinking: gateThinking(result.thinking, { route: result.route }),
+          disclaimer: result.disclaimer,
+          image: result.image,
+          chart: result.chart,
+          file: result.file,
+          memory: result.memory,
+          web_search: result.web_search,
+          clarification: result.clarification,
+          confidence: result.confidence,
+          model_used: result.model_used,
+          searched: result.searched === true,
+          sync,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Stream] file generation orchestration failed: ${message}`);
         res.status(500).json({ error: message });
       }
       return;

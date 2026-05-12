@@ -62,6 +62,7 @@ export type TaskName =
   | "route_classify"
   | "intent_clarify"
   | "file_extract"
+  | "file_generate"
   | "image_generate"
   | "general";
 
@@ -548,6 +549,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     ctx.modelOverride === "qwen3-coder-30b" ||
     ctx.modelOverride === "gemini-search" ||
     ctx.modelOverride === "openai-large" ||
+    ctx.modelOverride === "minimax" ||
     ctx.modelOverride === "mistral";
 
   return {
