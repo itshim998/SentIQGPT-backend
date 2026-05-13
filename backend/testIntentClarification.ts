@@ -7,6 +7,13 @@ import {
   selectClarificationModel,
 } from "./orchestrator/intentClarifier";
 
+function installSupabaseEnvForDynamicImports(): void {
+  for (const id of [1, 2, 3, 4]) {
+    process.env[`SUPABASE_URL_${id}`] ||= "https://example.supabase.co";
+    process.env[`SUPABASE_SERVICE_ROLE_KEY_${id}`] ||= "test-service-role-key";
+  }
+}
+
 async function main(): Promise<void> {
   assert.equal(
     getRuleBasedClarification({ userMessage: "Solve this math step by step." }),
@@ -94,6 +101,30 @@ async function main(): Promise<void> {
     "image generation requests must skip clarification",
   );
 
+  const impliedPresentationClarification = getRuleBasedClarification({
+    userMessage: "Create a 5-slide presentation about AI.",
+  });
+  assert.equal(impliedPresentationClarification?.needsClarification, true, "implied presentation file intent should clarify");
+  assert.match(
+    (impliedPresentationClarification?.options || []).map((item) => item.label).join(" "),
+    /\.pptx|Text outline/i,
+    "file clarification should offer downloadable and chat-only choices",
+  );
+  assert.equal(
+    getRuleBasedClarification({ userMessage: "Create a .pptx presentation about AI." }),
+    null,
+    "exact file extensions should bypass clarification",
+  );
+  const impliedHtmlClarification = getRuleBasedClarification({
+    userMessage: "Make an HTML document printing hello world with typing animation.",
+  });
+  assert.equal(impliedHtmlClarification?.needsClarification, true, "implied HTML file intent should clarify");
+  assert.match(
+    (impliedHtmlClarification?.options || []).map((item) => item.label).join(" "),
+    /\.html|HTML code/i,
+    "HTML file clarification should offer downloadable and chat-only choices",
+  );
+
   const casualDirect = await maybeCreateClarification({ userMessage: "Tell me a joke." });
   assert.equal(casualDirect, null, "short but clear casual prompts should not over-clarify");
   assert.equal(
@@ -164,6 +195,11 @@ async function main(): Promise<void> {
     selectClarificationModel({ userMessage: "Latest news about cricket.", webSearch: true }),
     "gemini-search",
     "WebSurf clarification uses gemini-search",
+  );
+  assert.equal(
+    selectClarificationModel({ userMessage: "Make an HTML document printing hello world." }),
+    "minimax",
+    "implied file clarification uses minimax",
   );
 
   const originalFetch = globalThis.fetch;
@@ -439,6 +475,7 @@ async function main(): Promise<void> {
   }) as typeof fetch;
 
   try {
+    installSupabaseEnvForDynamicImports();
     const { orchestrate } = await import("./orchestrator/aiOrchestrator");
     const clearWebSurf = await orchestrate({
       userMessage: "Latest news about cricket in India.",

@@ -1,8 +1,8 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GeneratedFileFormat, GeneratedFilePreview } from "./types";
 
-const DEFAULT_STORAGE_BUCKET = "sentiq-generated-files";
+const DEFAULT_STORAGE_BUCKET = "sentiq-generated-files-private";
 const STORAGE_BUCKET_LIMIT_BYTES = Number.parseInt(
   process.env.SENTIQ_GENERATED_FILE_STORAGE_LIMIT_BYTES || String(25 * 1024 * 1024),
   10,
@@ -25,7 +25,10 @@ export interface UploadGeneratedFileResult {
   readonly fileId?: string;
   readonly fileUrl?: string;
   readonly storagePath?: string;
+  readonly storageBucket?: string;
   readonly fileSizeBytes?: number;
+  readonly contentSha256?: string;
+  readonly version?: number;
   readonly error?: string;
 }
 
@@ -38,13 +41,31 @@ export interface GeneratedFileMetadataParams {
   readonly mimeType: string;
   readonly fileUrl: string;
   readonly storagePath: string;
+  readonly storageBucket?: string;
   readonly fileSizeBytes: number;
+  readonly contentSha256?: string;
+  readonly version?: number;
   readonly prompt: string;
   readonly provider?: string;
   readonly preview?: GeneratedFilePreview;
 }
 
-function getStorageBucketName(): string {
+export interface GeneratedFileMetadataUpdateParams {
+  readonly fileId: string;
+  readonly userId: string;
+  readonly format: GeneratedFileFormat;
+  readonly fileName: string;
+  readonly mimeType: string;
+  readonly fileUrl: string;
+  readonly storagePath: string;
+  readonly storageBucket: string;
+  readonly fileSizeBytes: number;
+  readonly contentSha256: string;
+  readonly version: number;
+  readonly preview?: GeneratedFilePreview;
+}
+
+export function getStorageBucketName(): string {
   return process.env.SENTIQ_GENERATED_FILE_STORAGE_BUCKET?.trim() || DEFAULT_STORAGE_BUCKET;
 }
 
@@ -71,6 +92,16 @@ function looksLikeExistingBucket(error: unknown): boolean {
   return message.includes("already exists") || message.includes("duplicate");
 }
 
+export function buildGeneratedFileApiUrl(fileId: string, mode: "download" | "preview" = "download"): string {
+  return mode === "preview"
+    ? `/api/generated-files/${fileId}/preview-url`
+    : `/api/generated-files/${fileId}/download`;
+}
+
+export function hashGeneratedFile(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
 async function ensureStorageBucket(supabaseClient: SupabaseClient): Promise<void> {
   const existingPromise = bucketReadyPromises.get(supabaseClient);
   if (existingPromise) return existingPromise;
@@ -81,9 +112,9 @@ async function ensureStorageBucket(supabaseClient: SupabaseClient): Promise<void
 
     if (!error && data) {
       const isPublic = Boolean((data as { public?: boolean }).public);
-      if (!isPublic) {
+      if (isPublic) {
         const { error: updateError } = await supabaseClient.storage.updateBucket(bucketName, {
-          public: true,
+          public: false,
           fileSizeLimit: STORAGE_BUCKET_LIMIT_BYTES,
           allowedMimeTypes: [
             "text/html",
@@ -106,7 +137,7 @@ async function ensureStorageBucket(supabaseClient: SupabaseClient): Promise<void
     }
 
     const { error: createError } = await supabaseClient.storage.createBucket(bucketName, {
-      public: true,
+      public: false,
       fileSizeLimit: STORAGE_BUCKET_LIMIT_BYTES,
       allowedMimeTypes: [
         "text/html",
@@ -133,8 +164,14 @@ async function ensureStorageBucket(supabaseClient: SupabaseClient): Promise<void
   }
 }
 
-function generateStoragePath(userId: string, chatId: string, fileId: string, format: GeneratedFileFormat): string {
-  return `${userId}/${chatId}/${fileId}/doc.${format}`;
+function generateStoragePath(
+  userId: string,
+  chatId: string,
+  fileId: string,
+  format: GeneratedFileFormat,
+  version = 1,
+): string {
+  return `${userId}/${chatId}/${fileId}/v${version}/doc.${format}`;
 }
 
 export async function uploadGeneratedFile(
@@ -142,8 +179,10 @@ export async function uploadGeneratedFile(
   params: UploadGeneratedFileParams,
 ): Promise<UploadGeneratedFileResult> {
   const fileId = randomUUID();
-  const storagePath = generateStoragePath(params.userId, params.chatId, fileId, params.format);
+  const version = 1;
+  const storagePath = generateStoragePath(params.userId, params.chatId, fileId, params.format, version);
   const bucketName = getStorageBucketName();
+  const contentSha256 = hashGeneratedFile(params.buffer);
   let lastError: Error | null = null;
 
   if (params.buffer.length > STORAGE_BUCKET_LIMIT_BYTES) {
@@ -185,9 +224,76 @@ export async function uploadGeneratedFile(
       return {
         success: true,
         fileId,
-        fileUrl: urlData.publicUrl,
+        fileUrl: buildGeneratedFileApiUrl(fileId),
         storagePath,
+        storageBucket: bucketName,
         fileSizeBytes: params.buffer.length,
+        contentSha256,
+        version,
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < MAX_UPLOAD_RETRIES) {
+        await sleep(UPLOAD_RETRY_DELAY_MS);
+      }
+    }
+  }
+
+  return {
+    success: false,
+    error: lastError?.message || "Generated file upload failed",
+  };
+}
+
+export async function uploadGeneratedFileReplacement(
+  supabaseClient: SupabaseClient,
+  params: UploadGeneratedFileParams & {
+    readonly fileId: string;
+    readonly version: number;
+  },
+): Promise<UploadGeneratedFileResult> {
+  const storagePath = generateStoragePath(params.userId, params.chatId, params.fileId, params.format, params.version);
+  const bucketName = getStorageBucketName();
+  const contentSha256 = hashGeneratedFile(params.buffer);
+  let lastError: Error | null = null;
+
+  if (params.buffer.length > STORAGE_BUCKET_LIMIT_BYTES) {
+    return {
+      success: false,
+      error: `Generated file exceeds storage limit (${STORAGE_BUCKET_LIMIT_BYTES} bytes).`,
+    };
+  }
+
+  try {
+    await ensureStorageBucket(supabaseClient);
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  for (let attempt = 1; attempt <= MAX_UPLOAD_RETRIES; attempt += 1) {
+    try {
+      const { error: uploadError } = await supabaseClient.storage
+        .from(bucketName)
+        .upload(storagePath, params.buffer, {
+          contentType: params.mimeType,
+          cacheControl: "31536000",
+          upsert: false,
+        });
+
+      if (uploadError) throw new Error(uploadError.message);
+
+      return {
+        success: true,
+        fileId: params.fileId,
+        fileUrl: buildGeneratedFileApiUrl(params.fileId),
+        storagePath,
+        storageBucket: bucketName,
+        fileSizeBytes: params.buffer.length,
+        contentSha256,
+        version: params.version,
       };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
@@ -218,7 +324,10 @@ export async function saveGeneratedFileMetadata(
       mime_type: params.mimeType,
       file_url: params.fileUrl,
       storage_path: params.storagePath,
+      storage_bucket: params.storageBucket || getStorageBucketName(),
       file_size_bytes: params.fileSizeBytes,
+      content_sha256: params.contentSha256 || null,
+      version: params.version || 1,
       prompt: params.prompt,
       provider: params.provider || null,
       preview_json: params.preview || null,
@@ -226,5 +335,31 @@ export async function saveGeneratedFileMetadata(
 
   if (error) {
     throw new Error(`Failed to save generated file metadata: ${error.message}`);
+  }
+}
+
+export async function updateGeneratedFileMetadata(
+  supabaseClient: SupabaseClient,
+  params: GeneratedFileMetadataUpdateParams,
+): Promise<void> {
+  const { error } = await supabaseClient
+    .from("generated_files")
+    .update({
+      file_name: params.fileName,
+      mime_type: params.mimeType,
+      file_url: params.fileUrl,
+      storage_path: params.storagePath,
+      storage_bucket: params.storageBucket,
+      file_size_bytes: params.fileSizeBytes,
+      content_sha256: params.contentSha256,
+      version: params.version,
+      preview_json: params.preview || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", params.fileId)
+    .eq("user_id", params.userId);
+
+  if (error) {
+    throw new Error(`Failed to update generated file metadata: ${error.message}`);
   }
 }

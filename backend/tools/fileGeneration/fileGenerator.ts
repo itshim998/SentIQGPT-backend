@@ -46,7 +46,7 @@ type GeneratedSlide = {
 type GeneratedSheet = {
   readonly name?: string;
   readonly columns?: readonly string[];
-  readonly rows?: readonly (readonly unknown[])[];
+  readonly rows?: readonly (readonly unknown[] | Record<string, unknown>)[];
 };
 
 type GeneratedFileSpec = {
@@ -57,6 +57,8 @@ type GeneratedFileSpec = {
   readonly sections?: readonly GeneratedSection[];
   readonly slides?: readonly GeneratedSlide[];
   readonly sheets?: readonly GeneratedSheet[];
+  readonly columns?: readonly string[];
+  readonly rows?: readonly (readonly unknown[] | Record<string, unknown>)[];
 };
 
 type RenderedFile = {
@@ -73,7 +75,7 @@ type FileGeneratorDependencies = {
   readonly storageDb?: any;
 };
 
-function getMimeType(format: GeneratedFileFormat): string {
+export function getGeneratedFileMimeType(format: GeneratedFileFormat): string {
   switch (format) {
     case "html": return "text/html";
     case "txt": return "text/plain";
@@ -110,6 +112,17 @@ function stripJsonFence(raw: string): string {
   return cleaned;
 }
 
+function extractJsonObject(raw: string): string {
+  const cleaned = stripJsonFence(raw);
+  if (cleaned.startsWith("{") && cleaned.endsWith("}")) return cleaned;
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return cleaned.slice(firstBrace, lastBrace + 1);
+  }
+  return cleaned;
+}
+
 function parseModelSpec(raw: string, format: GeneratedFileFormat): GeneratedFileSpec {
   const cleaned = stripJsonFence(raw);
 
@@ -117,7 +130,12 @@ function parseModelSpec(raw: string, format: GeneratedFileFormat): GeneratedFile
     return { format, html: cleaned };
   }
 
-  const parsed = strictParseJsonObject(cleaned) as GeneratedFileSpec;
+  let parsed: GeneratedFileSpec;
+  try {
+    parsed = strictParseJsonObject(cleaned) as GeneratedFileSpec;
+  } catch {
+    parsed = strictParseJsonObject(extractJsonObject(cleaned)) as GeneratedFileSpec;
+  }
   return parsed;
 }
 
@@ -199,7 +217,7 @@ async function invokeFileModel(
   };
 }
 
-function ensureHtmlDocument(html: string): string {
+export function ensureHtmlDocument(html: string): string {
   const trimmed = html.trim();
   if (!trimmed) throw new Error("HTML content is empty");
   if (/^<!doctype html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) {
@@ -209,6 +227,64 @@ function ensureHtmlDocument(html: string): string {
     return `<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Document</title></head>\n${trimmed}\n</html>`;
   }
   return `<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Document</title></head>\n<body>\n${trimmed}\n</body>\n</html>`;
+}
+
+function repairDocumentSectionsFromSlides(spec: GeneratedFileSpec): GeneratedFileSpec {
+  if (getArray(spec.sections).length > 0) return spec;
+  const slides = getArray(spec.slides) as readonly GeneratedSlide[];
+  if (slides.length === 0) return spec;
+  return {
+    ...spec,
+    sections: slides.map((slide) => ({
+      heading: normalizeString(slide.title, "Section"),
+      body: normalizeString(slide.notes) ? [normalizeString(slide.notes)] : [],
+      bullets: getArray(slide.bullets).map(normalizeLine).filter(Boolean),
+    })),
+  };
+}
+
+function repairSlidesFromDocumentSections(spec: GeneratedFileSpec): GeneratedFileSpec {
+  if (getArray(spec.slides).length > 0) return spec;
+  const sections = getArray(spec.sections) as readonly GeneratedSection[];
+  if (sections.length === 0) return spec;
+  return {
+    ...spec,
+    slides: sections.map((section) => ({
+      title: normalizeString(section.heading, "Slide"),
+      bullets: [
+        ...getArray(section.bullets).map(normalizeLine),
+        ...getArray(section.body).map(normalizeLine),
+      ].filter(Boolean).slice(0, 8),
+    })),
+  };
+}
+
+function repairXlsxSheets(spec: GeneratedFileSpec): GeneratedFileSpec {
+  if (getArray(spec.sheets).length > 0) return spec;
+  if (getArray(spec.columns).length === 0 && getArray(spec.rows).length === 0) return spec;
+  return {
+    ...spec,
+    sheets: [{
+      name: normalizeString(spec.title, "Sheet 1"),
+      columns: getArray(spec.columns).map(normalizeLine).filter(Boolean),
+      rows: getArray(spec.rows) as readonly (readonly unknown[] | Record<string, unknown>)[],
+    }],
+  };
+}
+
+function repairSpecForFormat(spec: GeneratedFileSpec, format: GeneratedFileFormat): GeneratedFileSpec {
+  const normalized: GeneratedFileSpec = { ...spec, format };
+  switch (format) {
+    case "docx":
+    case "pdf":
+      return repairDocumentSectionsFromSlides(normalized);
+    case "pptx":
+      return repairSlidesFromDocumentSections(normalized);
+    case "xlsx":
+      return repairXlsxSheets(normalized);
+    default:
+      return normalized;
+  }
 }
 
 function collectDocumentLines(spec: GeneratedFileSpec): string[] {
@@ -330,10 +406,35 @@ async function renderPdf(spec: GeneratedFileSpec): Promise<RenderedFile> {
   };
 }
 
+function collectObjectColumns(rows: readonly unknown[]): string[] {
+  const columns: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    for (const key of Object.keys(row)) {
+      const normalized = normalizeLine(key);
+      const lookup = normalized.toLowerCase();
+      if (!normalized || seen.has(lookup)) continue;
+      seen.add(lookup);
+      columns.push(normalized);
+    }
+  }
+  return columns;
+}
+
 function normalizeSheetRows(sheet: GeneratedSheet): string[][] {
-  const columns = getArray(sheet.columns).map(normalizeLine).filter(Boolean);
+  const rawRows = getArray(sheet.rows);
+  const explicitColumns = getArray(sheet.columns).map(normalizeLine).filter(Boolean);
+  const objectColumns = explicitColumns.length > 0 ? explicitColumns : collectObjectColumns(rawRows);
+  const columns = objectColumns;
   const rows = getArray(sheet.rows)
-    .map((row) => getArray(row).map((cell) => normalizeLine(cell)))
+    .map((row) => {
+      if (row && typeof row === "object" && !Array.isArray(row)) {
+        const record = row as Record<string, unknown>;
+        return columns.map((column) => normalizeLine(record[column] ?? record[column.toLowerCase()] ?? ""));
+      }
+      return getArray(row).map((cell) => normalizeLine(cell));
+    })
     .filter((row) => row.some(Boolean));
 
   if (columns.length > 0) {
@@ -389,6 +490,58 @@ async function renderXlsx(spec: GeneratedFileSpec): Promise<RenderedFile> {
       },
     },
   };
+}
+
+async function validateRenderedXlsx(rendered: RenderedFile): Promise<void> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(rendered.buffer as unknown as ArrayBuffer);
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet || worksheet.actualRowCount < 1) {
+    throw new Error("XLSX validation failed: generated workbook is empty");
+  }
+  const previewRows = rendered.preview.sheet?.rows ?? [];
+  if (previewRows.length > 0) {
+    const firstPreviewRow = previewRows[0].map((cell) => String(cell ?? ""));
+    const firstWorkbookRow = (worksheet.getRow(1).values as unknown[])
+      .slice(1, firstPreviewRow.length + 1)
+      .map((cell) => String(cell ?? ""));
+    if (firstPreviewRow.join("\u0001") !== firstWorkbookRow.join("\u0001")) {
+      throw new Error("XLSX validation failed: workbook rows do not match preview");
+    }
+  }
+}
+
+async function validateRenderedFile(rendered: RenderedFile, format: GeneratedFileFormat): Promise<void> {
+  if (!Buffer.isBuffer(rendered.buffer) || rendered.buffer.length === 0) {
+    throw new Error(`${format.toUpperCase()} validation failed: empty file buffer`);
+  }
+
+  switch (format) {
+    case "html":
+      if (!rendered.html || !/^<!doctype html|^<html[\s>]/i.test(rendered.html.trim())) {
+        throw new Error("HTML validation failed: missing document shell");
+      }
+      break;
+    case "txt":
+      if (!rendered.text?.trim()) throw new Error("TXT validation failed: empty text");
+      break;
+    case "pdf":
+      if (rendered.buffer.subarray(0, 4).toString("utf8") !== "%PDF") {
+        throw new Error("PDF validation failed: invalid PDF header");
+      }
+      break;
+    case "docx":
+    case "pptx":
+      if (rendered.buffer[0] !== 0x50 || rendered.buffer[1] !== 0x4b || rendered.buffer.length < 1000) {
+        throw new Error(`${format.toUpperCase()} validation failed: invalid Office document`);
+      }
+      break;
+    case "xlsx":
+      await validateRenderedXlsx(rendered);
+      break;
+    default:
+      break;
+  }
 }
 
 async function renderPptx(spec: GeneratedFileSpec): Promise<RenderedFile> {
@@ -483,8 +636,10 @@ async function attemptGenerate(
     args.userId,
   );
 
-  const rendered = await renderSpec(spec, format);
-  return { rendered, llm: result, spec };
+  const repairedSpec = repairSpecForFormat(spec, format);
+  const rendered = await renderSpec(repairedSpec, format);
+  await validateRenderedFile(rendered, format);
+  return { rendered, llm: result, spec: repairedSpec };
 }
 
 function chunkText(value: string, chunkSize = 320): string[] {
@@ -508,7 +663,7 @@ export async function routeFileGeneration(
       success: false,
       format: "txt",
       file_name: "doc.txt",
-      mime_type: getMimeType("txt"),
+      mime_type: getGeneratedFileMimeType("txt"),
       error: "No supported output file format was requested.",
     };
   }
@@ -517,7 +672,7 @@ export async function routeFileGeneration(
       success: false,
       format,
       file_name: `doc.${format}`,
-      mime_type: getMimeType(format),
+      mime_type: getGeneratedFileMimeType(format),
       error: "File generation requires an authenticated conversation.",
     };
   }
@@ -556,7 +711,7 @@ export async function routeFileGeneration(
     }
   }
 
-  const mimeType = getMimeType(format);
+  const mimeType = getGeneratedFileMimeType(format);
   const fileName = `doc.${format}`;
   const uploaded = await uploadFile(storageDb, {
     userId: args.userId,
@@ -592,6 +747,9 @@ export async function routeFileGeneration(
     fileUrl: uploaded.fileUrl,
     storagePath: uploaded.storagePath,
     fileSizeBytes: uploaded.fileSizeBytes ?? rendered.buffer.length,
+    storageBucket: uploaded.storageBucket,
+    contentSha256: uploaded.contentSha256,
+    version: uploaded.version,
     prompt: args.userMessage,
     provider: llmResult.model_used,
     preview: rendered.preview,
@@ -605,7 +763,10 @@ export async function routeFileGeneration(
     mime_type: mimeType,
     file_url: uploaded.fileUrl,
     storage_path: uploaded.storagePath,
+    storage_bucket: uploaded.storageBucket,
     file_size_bytes: uploaded.fileSizeBytes ?? rendered.buffer.length,
+    content_sha256: uploaded.contentSha256,
+    version: uploaded.version,
     file_id: uploaded.fileId,
     preview: rendered.preview,
     html: rendered.html,

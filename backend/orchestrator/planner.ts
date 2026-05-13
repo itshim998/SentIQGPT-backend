@@ -21,7 +21,7 @@ import {
 } from "../ai/PromptBuilders";
 import type { LLMAdapterCall } from "../ai/PromptBuilders";
 import { isChartRequest } from "../tools/chartGeneration/chartDetector";
-import { isFileGenerationRequest } from "../tools/fileGeneration/fileDetector";
+import { isFileGenerationRequest, isImpliedFileGenerationRequest } from "../tools/fileGeneration/fileDetector";
 import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 import { isTavilyAvailable } from "../tools/webSearch/providers/tavilyProvider";
 import { classifyQueryType, shouldForceWebSearch } from "./queryClassifier";
@@ -176,6 +176,11 @@ export function resolveHardRoutedPlan(args: {
   if (isFileGenerationRequest(args.userMessage)) {
     console.log("[PLANNER] file generation detected - hard-routing to file_generation");
     return createSingleStepPlan("file_generation", args.userMessage);
+  }
+
+  if (isImpliedFileGenerationRequest(args.userMessage)) {
+    console.log("[PLANNER] implied file intent without explicit format - keeping as conversation");
+    return createSingleStepPlan("conversation", args.userMessage);
   }
 
   if (args.hasWebSearch && args.explicitWebSearchMode) {

@@ -27,8 +27,16 @@ import { extractTextFromFile, validateFileUpload } from "./ai/FileIngestionHandl
 import { routeImageGeneration } from "./tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "./tools/chartGeneration/chartRouter";
 import { isChartRequest } from "./tools/chartGeneration/chartDetector";
-import { routeFileGeneration } from "./tools/fileGeneration/fileGenerator";
+import { ensureHtmlDocument, getGeneratedFileMimeType, routeFileGeneration } from "./tools/fileGeneration/fileGenerator";
 import { detectGeneratedFileFormat, getFileGenerationGuestInstruction, isFileGenerationRequest } from "./tools/fileGeneration/fileDetector";
+import {
+  buildGeneratedFileApiUrl,
+  getStorageBucketName,
+  hashGeneratedFile,
+  updateGeneratedFileMetadata,
+  uploadGeneratedFileReplacement,
+} from "./tools/fileGeneration/fileStorageService";
+import type { GeneratedFileFormat, GeneratedFilePreview } from "./tools/fileGeneration/types";
 import { uploadChatImage, getChatImages } from "./tools/imageGeneration/imageStorageService";
 import {
   buildChatPrompt,
@@ -120,6 +128,7 @@ import {
   MemoryCompressRequestSchema,
   ImageGenerateRequestSchema,
   ChartGenerateRequestSchema,
+  GeneratedFileUpdateRequestSchema,
   ProfileUpdateRequestSchema,
   SelectionContextSchema,
   detectPromptInjection,
@@ -924,6 +933,7 @@ async function insertConversationMessageOrThrow(
     fileName?: string;
     fileFormat?: string;
     mimeType?: string;
+    generatedFileId?: string;
     previewJson?: unknown;
   } = {},
 ): Promise<void> {
@@ -947,6 +957,7 @@ async function insertConversationMessageOrThrow(
     fileName: options.fileName,
     fileFormat: options.fileFormat,
     mimeType: options.mimeType,
+    generatedFileId: options.generatedFileId,
     previewJson: options.previewJson,
   });
   if (error) {
@@ -2059,6 +2070,7 @@ app.post(
               fileName: result.file.file_name,
               fileFormat: result.file.format,
               mimeType: result.file.mime_type,
+              generatedFileId: result.file.file_id,
               previewJson: result.file.preview,
             }
           : {};
@@ -2742,6 +2754,7 @@ app.post(
             fileName: file.file_name,
             fileFormat: file.format,
             mimeType: file.mime_type,
+            generatedFileId: file.file_id,
             previewJson: file.preview,
           },
         );
@@ -3593,6 +3606,241 @@ app.post(
 // ===============================
 // GET /api/images/quota — Check remaining image quota
 // ===============================
+type GeneratedFileRow = {
+  id: string;
+  user_id: string;
+  chat_id: string;
+  format: GeneratedFileFormat;
+  file_name: string;
+  mime_type: string;
+  file_url: string | null;
+  storage_path: string | null;
+  storage_bucket?: string | null;
+  file_size_bytes?: number | null;
+  preview_json?: GeneratedFilePreview | null;
+  version?: number | null;
+  content_sha256?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+function clampGeneratedPreviewText(text: string, maxChars = 2400): string {
+  const normalized = text.replace(/\r\n?/g, "\n").trim();
+  return normalized.length > maxChars ? `${normalized.slice(0, maxChars).trimEnd()}...` : normalized;
+}
+
+function serializeGeneratedFileRow(row: GeneratedFileRow) {
+  return {
+    type: "file" as const,
+    success: true,
+    file_id: row.id,
+    id: row.id,
+    format: row.format,
+    file_name: row.file_name,
+    mime_type: row.mime_type,
+    file_url: row.file_url || buildGeneratedFileApiUrl(row.id),
+    storage_path: row.storage_path || undefined,
+    storage_bucket: row.storage_bucket || undefined,
+    file_size_bytes: row.file_size_bytes ?? undefined,
+    preview: row.preview_json || undefined,
+    html: row.format === "html" ? row.preview_json?.html : undefined,
+    text: row.preview_json?.text,
+    content_sha256: row.content_sha256 || undefined,
+    version: row.version || 1,
+    created_at: row.created_at || undefined,
+    updated_at: row.updated_at || undefined,
+  };
+}
+
+async function getGeneratedFileRowOrThrow(
+  userDb: any,
+  userId: string,
+  fileId: string,
+  scope: string,
+): Promise<GeneratedFileRow> {
+  const { data, error } = await userDb
+    .from("generated_files")
+    .select("id,user_id,chat_id,format,file_name,mime_type,file_url,storage_path,storage_bucket,file_size_bytes,preview_json,version,content_sha256,created_at,updated_at")
+    .eq("id", fileId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    logDbFailure(`${scope}.generated-file.lookup`, userId, error, { fileId });
+    throw new Error(error.message);
+  }
+  if (!data) {
+    throw new HttpError(404, "Generated file not found.", { code: "generated_file_not_found" });
+  }
+  return data as GeneratedFileRow;
+}
+
+async function createGeneratedFileSignedUrl(row: GeneratedFileRow, mode: "download" | "preview") {
+  const storageBucket = row.storage_bucket || getStorageBucketName();
+  if (row.storage_path) {
+    const options = mode === "download" ? { download: row.file_name } : undefined;
+    const { data, error } = await getGeneratedFileStorageDatabase().storage
+      .from(storageBucket)
+      .createSignedUrl(row.storage_path, 120, options as any);
+
+    if (!error && data?.signedUrl) {
+      return {
+        url: data.signedUrl,
+        expires_in: 120,
+        legacy: false,
+      };
+    }
+    console.warn(`[GeneratedFiles] signed URL failed fileId=${row.id}: ${error?.message || "unknown error"}`);
+  }
+
+  if (row.file_url && /^https?:\/\//i.test(row.file_url)) {
+    return {
+      url: row.file_url,
+      expires_in: null,
+      legacy: true,
+    };
+  }
+
+  throw new HttpError(404, "Generated file content is unavailable.", { code: "generated_file_unavailable" });
+}
+
+app.get(
+  "/api/generated-files/:id/download",
+  verifyJWT({ allowGuest: false }),
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const fileId = getRequiredUuid(req.params.id, "Generated file id");
+    const userDb = await resolveUserDatabaseOrThrow(userId, "generated-files.download");
+    await initializeUserSessionOrThrow(userDb, userId, "generated-files.download");
+    const row = await getGeneratedFileRowOrThrow(userDb, userId, fileId, "generated-files.download");
+    const signed = await createGeneratedFileSignedUrl(row, "download");
+    res.json({
+      success: true,
+      file_id: row.id,
+      file_name: row.file_name,
+      mime_type: row.mime_type,
+      ...signed,
+    });
+  }),
+);
+
+app.get(
+  "/api/generated-files/:id/preview-url",
+  verifyJWT({ allowGuest: false }),
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const fileId = getRequiredUuid(req.params.id, "Generated file id");
+    const userDb = await resolveUserDatabaseOrThrow(userId, "generated-files.preview");
+    await initializeUserSessionOrThrow(userDb, userId, "generated-files.preview");
+    const row = await getGeneratedFileRowOrThrow(userDb, userId, fileId, "generated-files.preview");
+    const signed = await createGeneratedFileSignedUrl(row, "preview");
+    res.json({
+      success: true,
+      file_id: row.id,
+      file_name: row.file_name,
+      mime_type: row.mime_type,
+      ...signed,
+    });
+  }),
+);
+
+app.patch(
+  "/api/generated-files/:id",
+  verifyJWT({ allowGuest: false }),
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const fileId = getRequiredUuid(req.params.id, "Generated file id");
+    const parsed = GeneratedFileUpdateRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: formatZodError(parsed.error) });
+      return;
+    }
+
+    const userDb = await resolveUserDatabaseOrThrow(userId, "generated-files.update");
+    await initializeUserSessionOrThrow(userDb, userId, "generated-files.update");
+    const row = await getGeneratedFileRowOrThrow(userDb, userId, fileId, "generated-files.update");
+    if (row.format !== "html") {
+      throw new HttpError(400, "Only generated HTML files can be edited.", { code: "unsupported_generated_file_edit" });
+    }
+    if (parsed.data.version && row.version && parsed.data.version !== row.version) {
+      throw new HttpError(409, "This generated file changed in another session. Reload and try again.", {
+        code: "generated_file_version_conflict",
+      });
+    }
+
+    const html = ensureHtmlDocument(parsed.data.html);
+    const buffer = Buffer.from(html, "utf8");
+    const version = (row.version || 1) + 1;
+    const mimeType = getGeneratedFileMimeType("html");
+    const fileName = row.file_name || "doc.html";
+    const preview: GeneratedFilePreview = {
+      html,
+      text: clampGeneratedPreviewText(html),
+    };
+    const uploaded = await uploadGeneratedFileReplacement(getGeneratedFileStorageDatabase(), {
+      userId,
+      chatId: row.chat_id,
+      fileId,
+      format: "html",
+      buffer,
+      mimeType,
+      version,
+    });
+
+    if (!uploaded.success || !uploaded.storagePath || !uploaded.storageBucket || !uploaded.contentSha256) {
+      res.status(500).json({ error: uploaded.error || "Failed to save edited generated file." });
+      return;
+    }
+
+    const fileUrl = buildGeneratedFileApiUrl(fileId);
+    await updateGeneratedFileMetadata(userDb, {
+      fileId,
+      userId,
+      format: "html",
+      fileName,
+      mimeType,
+      fileUrl,
+      storagePath: uploaded.storagePath,
+      storageBucket: uploaded.storageBucket,
+      fileSizeBytes: uploaded.fileSizeBytes ?? buffer.length,
+      contentSha256: uploaded.contentSha256 || hashGeneratedFile(buffer),
+      version,
+      preview,
+    });
+
+    await userDb
+      .from("messages")
+      .update({
+        file_url: fileUrl,
+        storage_path: uploaded.storagePath,
+        file_size_bytes: uploaded.fileSizeBytes ?? buffer.length,
+        file_name: fileName,
+        file_format: "html",
+        mime_type: mimeType,
+        preview_json: preview,
+      })
+      .eq("generated_file_id", fileId);
+
+    const updatedRow: GeneratedFileRow = {
+      ...row,
+      file_url: fileUrl,
+      storage_path: uploaded.storagePath,
+      storage_bucket: uploaded.storageBucket,
+      file_size_bytes: uploaded.fileSizeBytes ?? buffer.length,
+      preview_json: preview,
+      version,
+      content_sha256: uploaded.contentSha256 || hashGeneratedFile(buffer),
+      updated_at: new Date().toISOString(),
+    };
+
+    res.json({
+      success: true,
+      file: serializeGeneratedFileRow(updatedRow),
+    });
+  }),
+);
+
 app.get(
   "/api/images/quota",
   verifyJWT({ allowGuest: true }),

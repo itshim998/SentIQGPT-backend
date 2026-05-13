@@ -4,6 +4,11 @@ import {
   strictParseJsonObject,
 } from "../ai/PromptBuilders";
 import { isChartRequest } from "../tools/chartGeneration/chartDetector";
+import {
+  isFileGenerationRequest,
+  isImpliedFileGenerationRequest,
+  resolveFileGenerationIntent,
+} from "../tools/fileGeneration/fileDetector";
 import { detectCodeQuery, isBufferedReasoningQuery, isMathQuery, selectModelForPrompt } from "./modelRouter";
 import { classifyQueryType } from "./queryClassifier";
 
@@ -283,6 +288,73 @@ function isClearMathRequest(message: string): boolean {
   return /\bsolve\s+(?:this\s+)?math\s+step\s*by\s*step\b/i.test(message);
 }
 
+function buildFileClarificationDecision(message: string): ClarificationDecision | null {
+  if (isFileGenerationRequest(message)) return null;
+  if (!isImpliedFileGenerationRequest(message)) return null;
+
+  const intent = resolveFileGenerationIntent(message);
+  if (!intent.format) return null;
+
+  switch (intent.format) {
+    case "pptx":
+      return makeDecision(
+        "Should I create this as a downloadable presentation file?",
+        [
+          option("download_pptx", "Downloadable .pptx file", "Creates and saves a PowerPoint deck you can download."),
+          option("text_outline", "Text outline in chat", "Keeps the result as readable slide content in the conversation."),
+        ],
+        "implied_file_pptx",
+      );
+    case "docx":
+      return makeDecision(
+        "Should I create this as a downloadable Word document?",
+        [
+          option("download_docx", "Downloadable .docx file", "Creates and saves a Word document you can download."),
+          option("text_document", "Text document in chat", "Keeps the content directly in the conversation."),
+        ],
+        "implied_file_docx",
+      );
+    case "xlsx":
+      return makeDecision(
+        "Should I create this as a downloadable Excel workbook?",
+        [
+          option("download_xlsx", "Downloadable .xlsx file", "Creates and saves an Excel workbook you can download."),
+          option("markdown_table", "Table in chat", "Keeps the data as a Markdown table in the conversation."),
+        ],
+        "implied_file_xlsx",
+      );
+    case "pdf":
+      return makeDecision(
+        "Should I create this as a downloadable PDF file?",
+        [
+          option("download_pdf", "Downloadable .pdf file", "Creates and saves a PDF you can download."),
+          option("text_answer", "Text answer in chat", "Keeps the content directly in the conversation."),
+        ],
+        "implied_file_pdf",
+      );
+    case "html":
+      return makeDecision(
+        "Should I create this as a downloadable HTML file?",
+        [
+          option("download_html", "Downloadable .html file", "Creates and saves an editable HTML document you can download."),
+          option("code_in_chat", "HTML code in chat", "Keeps the HTML source directly in the conversation."),
+        ],
+        "implied_file_html",
+      );
+    case "txt":
+      return makeDecision(
+        "Should I create this as a downloadable text file?",
+        [
+          option("download_txt", "Downloadable .txt file", "Creates and saves a plain text file you can download."),
+          option("text_answer", "Text answer in chat", "Keeps the content directly in the conversation."),
+        ],
+        "implied_file_txt",
+      );
+    default:
+      return null;
+  }
+}
+
 function isCodingClarificationRequest(message: string): boolean {
   if (/^\s*(?:code|coding)\s*\.?\s*$/i.test(message)) return true;
   if (detectCodeQuery(message)) return true;
@@ -298,6 +370,10 @@ export function getRuleBasedClarification(args: ClarificationContext): Clarifica
 
   const queryClassification = classifyQueryType(message);
   if (queryClassification.category === "image_generation") return null;
+  if (isFileGenerationRequest(message)) return null;
+
+  const fileDecision = buildFileClarificationDecision(message);
+  if (fileDecision) return fileDecision;
 
   if (isChartRequest(message) && !/\b(?:chart|graph|plot)\b\s*$/i.test(message)) {
     return null;
@@ -450,6 +526,12 @@ function shouldPreferFallbackDecision(
     "bare_coding_request",
     "short_html_request",
     "website_type_missing",
+    "implied_file_pptx",
+    "implied_file_docx",
+    "implied_file_xlsx",
+    "implied_file_pdf",
+    "implied_file_html",
+    "implied_file_txt",
   ]);
   if (highConfidenceReasons.has(fallbackDecision.reason || "") && isGenericOutcomeDecision(modelDecision)) {
     return true;
@@ -528,6 +610,8 @@ function shouldAskModel(args: ClarificationContext): boolean {
   if (!message) return false;
   if (args.currentTurn && args.currentTurn >= (args.maxTurns ?? DEFAULT_MAX_CLARIFICATION_TURNS)) return false;
   if (classifyQueryType(message).category === "image_generation") return false;
+  if (isFileGenerationRequest(message)) return false;
+  if (isImpliedFileGenerationRequest(message)) return true;
   if (isClearMathRequest(message)) return false;
   if (DIRECT_ANSWER_PATTERNS.some((pattern) => pattern.test(message)) && message.length <= 220) return false;
 
@@ -552,6 +636,9 @@ export function selectClarificationModel(args: ClarificationContext): string {
   if (args.isGuest) return "gemini-search";
   if (args.webSearch) return "gemini-search";
   const message = getEvaluationMessage(args) || args.userMessage;
+  if (isImpliedFileGenerationRequest(message)) {
+    return "minimax";
+  }
   if (isCodingClarificationRequest(message)) {
     return "qwen-coder";
   }

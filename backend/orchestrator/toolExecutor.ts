@@ -80,7 +80,10 @@ export interface StepResult {
     mime_type: string;
     file_url?: string;
     storage_path?: string;
+    storage_bucket?: string;
     file_size_bytes?: number;
+    content_sha256?: string;
+    version?: number;
     file_id?: string;
     preview?: Record<string, unknown>;
     html?: string;
@@ -351,7 +354,10 @@ async function execFileGeneration(
       mime_type: result.mime_type,
       file_url: result.file_url,
       storage_path: result.storage_path,
+      storage_bucket: result.storage_bucket,
       file_size_bytes: result.file_size_bytes,
+      content_sha256: result.content_sha256,
+      version: result.version,
       file_id: result.file_id,
       preview: result.preview as Record<string, unknown> | undefined,
       html: result.html,

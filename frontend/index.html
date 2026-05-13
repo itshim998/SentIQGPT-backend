@@ -5548,10 +5548,14 @@ async function storeGeneratedFile(fileData) {
     file_name: fileData?.file_name || fileData?.fileName || `doc.${fileData?.format || "txt"}`,
     mime_type: fileData?.mime_type || fileData?.mimeType || "application/octet-stream",
     storage_path: fileData?.storage_path || fileData?.storagePath || "",
+    storage_bucket: fileData?.storage_bucket || fileData?.storageBucket || "",
     file_url: fileData?.file_url || fileData?.fileUrl || "",
     chat_id: fileData?.chat_id || fileData?.chatId || null,
     preview: fileData?.preview || null,
+    version: fileData?.version || 1,
+    content_sha256: fileData?.content_sha256 || fileData?.contentSha256 || "",
     created_at: fileData?.created_at || fileData?.createdAt || new Date().toISOString(),
+    updated_at: fileData?.updated_at || fileData?.updatedAt || null,
   };
   await dbPut(STORES.generatedFiles, item);
   return item;
@@ -6109,6 +6113,21 @@ async function getImageQuota() {
   return apiRequest("/api/images/quota");
 }
 
+async function getGeneratedFileAccessUrl(fileId, mode = "download") {
+  const endpoint = mode === "preview" ? "preview-url" : "download";
+  return apiRequest(`/api/generated-files/${encodeURIComponent(fileId)}/${endpoint}`, { method: "GET" });
+}
+
+async function updateGeneratedHtmlFile(fileId, html, version) {
+  return apiRequest(`/api/generated-files/${encodeURIComponent(fileId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      html,
+      ...(version ? { version } : {}),
+    }),
+  });
+}
+
 async function getProfile() {
   return apiRequest("/api/profile", { method: "GET" });
 }
@@ -6133,6 +6152,7 @@ async function getConfigAPI() { return apiRequest("/api/config"); }
 window.SentIQAPI = {
   sendMessage, sendMessageStream, classifyMemory, compressMemories,
   sendSelectionMessage, uploadFile, subscribeFileUpdates, generateImage, storeImage, getChatImages, getImageQuota, generateTitle,
+  getGeneratedFileAccessUrl, updateGeneratedHtmlFile,
   getConversations, createConversation, getConversationMessages, deleteConversation, updateConversationTitle,
   getMemories, deleteMemory: deleteMemoryAPI, getProfile, updateProfile,
   getHealth, getConfig: getConfigAPI,
@@ -7160,6 +7180,7 @@ window.SentIQAPI = {
     if (!meta && messageType === "file") {
       meta = normalizeGeneratedFileMeta({
         id: message.file_id || message.fileId || message.id,
+        file_id: message.generated_file_id || message.generatedFileId || message.file_id || message.fileId,
         format: message.file_format || message.fileFormat,
         file_name: message.file_name || message.fileName,
         mime_type: message.mime_type || message.mimeType,
@@ -8325,12 +8346,12 @@ window.SentIQAPI = {
   function detectRequestedFileFormat(text) {
     const normalized = String(text || "");
     const checks = [
-      ["xlsx", /\b(?:\.xlsx|xlsx|excel\s+(?:file|sheet|workbook|spreadsheet)|spreadsheet)\b/i],
-      ["pptx", /\b(?:\.pptx|pptx|powerpoint|presentation|slide\s*deck|slides?)\b/i],
-      ["docx", /\b(?:\.docx|docx|word\s+(?:file|document)|ms\s*word)\b/i],
-      ["pdf", /\b(?:\.pdf|pdf)\b/i],
-      ["html", /\b(?:\.html|html\s+(?:file|page|document)|web\s*page|webpage)\b/i],
-      ["txt", /\b(?:\.txt|txt|plain\s+text\s+file|text\s+file)\b/i],
+      ["xlsx", /(?:^|[\s(["'])\.?xlsx\b/i],
+      ["pptx", /(?:^|[\s(["'])\.?pptx\b/i],
+      ["docx", /(?:^|[\s(["'])\.?docx\b/i],
+      ["pdf", /(?:^|[\s(["'])\.?pdf\b/i],
+      ["html", /(?:^|[\s(["'])\.html\b/i],
+      ["txt", /(?:^|[\s(["'])\.txt\b/i],
     ];
     const match = checks.find(([, pattern]) => pattern.test(normalized));
     return match ? match[0] : null;
@@ -8344,7 +8365,7 @@ window.SentIQAPI = {
     const hasVerb = /\b(?:generate|create|make|build|write|prepare|draft|produce|export|turn\s+.*\s+into|convert\s+.*\s+to)\b/i.test(normalized);
     const hasFileHint = /\b(?:downloadable|file|document|workbook|spreadsheet|presentation|slides?|deck|pdf|docx|pptx|xlsx|html|txt)\b/i.test(normalized);
     return (hasVerb && hasFileHint)
-      || /\b(?:as|in|to)\s+(?:a\s+)?(?:pdf|docx|pptx|xlsx|html|txt|spreadsheet|presentation|word\s+document)\b/i.test(normalized);
+      || /\b(?:as|to)\s+(?:a\s+)?(?:pdf|docx|pptx|xlsx|html|txt|spreadsheet|presentation|word\s+document)\b/i.test(normalized);
   }
 
   function buildGuestFileGenerationInstruction(message, format) {
@@ -11311,20 +11332,23 @@ window.SentIQAPI = {
     const format = ["html", "txt", "xlsx", "pptx", "docx", "pdf"].includes(rawFormat) ? rawFormat : null;
     if (!format) return null;
     const preview = payload.preview || payload.preview_json || payload.previewJson || {};
-    const fileName = getGeneratedFileDownloadName(format);
+    const fileName = payload.file_name || payload.fileName || getGeneratedFileDownloadName(format);
     const fileUrl = payload.file_url || payload.fileUrl || "";
     const storagePath = payload.storage_path || payload.storagePath || "";
-    const id = String(payload.file_id || payload.fileId || payload.id || storagePath || fileUrl || `${format}-${Date.now()}`);
+    const id = String(payload.file_id || payload.fileId || payload.generated_file_id || payload.generatedFileId || payload.id || storagePath || fileUrl || `${format}-${Date.now()}`);
     return {
       type: "generated-file",
       id,
-      file_id: payload.file_id || payload.fileId || id,
+      file_id: payload.file_id || payload.fileId || payload.generated_file_id || payload.generatedFileId || id,
       format,
       file_name: fileName,
       mime_type: payload.mime_type || payload.mimeType || getGeneratedFileMimeType(format),
       file_url: fileUrl,
       storage_path: storagePath,
+      storage_bucket: payload.storage_bucket || payload.storageBucket || "",
       file_size_bytes: payload.file_size_bytes || payload.fileSizeBytes || null,
+      content_sha256: payload.content_sha256 || payload.contentSha256 || "",
+      version: payload.version || 1,
       preview,
       html: payload.html || preview.html || "",
       text: payload.text || preview.text || "",
@@ -11333,6 +11357,7 @@ window.SentIQAPI = {
       fallback_reason: payload.fallback_reason || payload.fallbackReason || "",
       chat_id: extra.chatId || payload.chat_id || payload.chatId || null,
       created_at: payload.created_at || payload.createdAt || new Date().toISOString(),
+      updated_at: payload.updated_at || payload.updatedAt || null,
     };
   }
 
@@ -11353,10 +11378,33 @@ window.SentIQAPI = {
   }
 
   async function fetchGeneratedFileBlob(meta) {
-    if (!meta?.file_url) return null;
-    const response = await fetch(meta.file_url, { mode: "cors" });
+    const accessUrl = await resolveGeneratedFileAccessUrl(meta, "download");
+    if (!accessUrl) return null;
+    const response = await fetch(accessUrl, { mode: "cors" });
     if (!response.ok) throw new Error(`File fetch failed (${response.status}).`);
     return response.blob();
+  }
+
+  function isLegacyGeneratedFileUrl(url) {
+    return /^https?:\/\//i.test(String(url || ""));
+  }
+
+  async function resolveGeneratedFileAccessUrl(meta, mode = "download") {
+    const normalized = normalizeGeneratedFileMeta(meta);
+    const fileId = normalized?.file_id || normalized?.id;
+    if (fileId && API.getGeneratedFileAccessUrl && !isLegacyGeneratedFileUrl(normalized.file_url)) {
+      const response = await API.getGeneratedFileAccessUrl(fileId, mode);
+      if (response?.url) return response.url;
+    }
+    if (fileId && API.getGeneratedFileAccessUrl && normalized.storage_path) {
+      try {
+        const response = await API.getGeneratedFileAccessUrl(fileId, mode);
+        if (response?.url) return response.url;
+      } catch (error) {
+        debugWarn(`[UI] Signed generated file URL failed: ${getSafeErrorMessage(error)}`);
+      }
+    }
+    return normalized?.file_url || "";
   }
 
   async function cacheGeneratedFileFromMeta(meta, blobOverride = null) {
@@ -11431,8 +11479,10 @@ window.SentIQAPI = {
       debugWarn(`[UI] Generated file blob download failed: ${getSafeErrorMessage(error)}`);
     }
     if (normalized.file_url) {
+      const href = await resolveGeneratedFileAccessUrl(normalized, "download");
+      if (!href) throw new Error("Generated file is not available for download.");
       const link = document.createElement("a");
-      link.href = normalized.file_url;
+      link.href = href;
       link.download = filename;
       link.rel = "noopener";
       document.body.appendChild(link);
@@ -11487,7 +11537,7 @@ window.SentIQAPI = {
     panel.appendChild(body);
     container.appendChild(panel);
 
-    const current = { meta, html: meta.html || "", finalized: !options.streaming };
+    const current = { meta, html: meta.html || "", savedHtml: meta.html || "", finalized: !options.streaming, editing: false };
 
     const downloadBtn = createArtifactButton("Download");
     downloadBtn.addEventListener("click", async () => {
@@ -11507,8 +11557,12 @@ window.SentIQAPI = {
     if (meta.format === "html") {
       const copyBtn = createArtifactButton("Copy");
       const editBtn = createArtifactButton("Edit");
+      const saveBtn = createArtifactButton("Save");
+      const cancelBtn = createArtifactButton("Cancel");
       const previewBtn = createArtifactButton("Preview");
-      actions.append(copyBtn, editBtn, downloadBtn, previewBtn);
+      saveBtn.style.display = "none";
+      cancelBtn.style.display = "none";
+      actions.append(copyBtn, editBtn, saveBtn, cancelBtn, downloadBtn, previewBtn);
 
       const layout = document.createElement("div");
       layout.className = "generated-html-layout";
@@ -11535,17 +11589,27 @@ window.SentIQAPI = {
       layout.appendChild(previewPane);
       body.appendChild(layout);
 
-      function updateHtml(nextHtml) {
+      function updateHtml(nextHtml, updateOptions = {}) {
         current.html = String(nextHtml || "");
         current.meta.html = current.html;
         current.meta.preview = { ...(current.meta.preview || {}), html: current.html, text: current.html.slice(0, 2400) };
         code.innerHTML = highlightCode(current.html, "html");
         editor.value = current.html;
         if (panel.classList.contains("show-preview")) iframe.srcdoc = current.html;
-        if (current.finalized) {
+        if (current.finalized && updateOptions.cache === true) {
           const blob = createGeneratedFileBlob(current.meta);
           cacheGeneratedFileFromMeta(current.meta, blob).catch(() => null);
         }
+      }
+
+      function setHtmlEditing(editing) {
+        current.editing = Boolean(editing);
+        editor.style.display = current.editing ? "block" : "none";
+        pre.style.display = current.editing ? "none" : "block";
+        editBtn.style.display = current.editing ? "none" : "";
+        saveBtn.style.display = current.editing ? "" : "none";
+        cancelBtn.style.display = current.editing ? "" : "none";
+        if (current.editing) editor.focus();
       }
 
       copyBtn.addEventListener("click", async () => {
@@ -11557,12 +11621,37 @@ window.SentIQAPI = {
           showToast("Couldn't copy that HTML.", "error");
         }
       });
-      editBtn.addEventListener("click", () => {
-        const editing = editor.style.display === "none";
-        editor.style.display = editing ? "block" : "none";
-        pre.style.display = editing ? "none" : "block";
-        editBtn.textContent = editing ? "Done" : "Edit";
-        if (editing) editor.focus();
+      editBtn.addEventListener("click", () => setHtmlEditing(true));
+      saveBtn.addEventListener("click", async () => {
+        if (!current.meta.file_id || !API.updateGeneratedHtmlFile) {
+          showToast("This HTML file cannot be saved to your account.", "error");
+          return;
+        }
+        const previousText = saveBtn.textContent;
+        saveBtn.disabled = true;
+        cancelBtn.disabled = true;
+        saveBtn.textContent = "Saving";
+        try {
+          const response = await API.updateGeneratedHtmlFile(current.meta.file_id, editor.value, current.meta.version);
+          const normalized = normalizeGeneratedFileMeta(response?.file, { chatId: current.meta.chat_id || currentChatId });
+          if (!normalized) throw new Error("Save response did not include generated file metadata.");
+          Object.assign(current.meta, normalized);
+          updateHtml(normalized.html || editor.value, { cache: true });
+          current.savedHtml = current.html;
+          setHtmlEditing(false);
+          showToast("Saved HTML changes.", "success");
+        } catch (error) {
+          debugWarn(`[UI] Generated HTML save failed: ${getSafeErrorMessage(error)}`);
+          showToast("Couldn't save those HTML edits.", "error");
+        } finally {
+          saveBtn.disabled = false;
+          cancelBtn.disabled = false;
+          saveBtn.textContent = previousText || "Save";
+        }
+      });
+      cancelBtn.addEventListener("click", () => {
+        updateHtml(current.savedHtml || "", { cache: false });
+        setHtmlEditing(false);
       });
       editor.addEventListener("input", () => updateHtml(editor.value));
       previewBtn.addEventListener("click", () => {
@@ -11571,7 +11660,7 @@ window.SentIQAPI = {
         if (showing) iframe.srcdoc = current.html || "";
       });
       if (options.streaming) {
-        [copyBtn, editBtn, downloadBtn, previewBtn].forEach((button) => setArtifactButtonState(button, false));
+        [copyBtn, editBtn, saveBtn, cancelBtn, downloadBtn, previewBtn].forEach((button) => setArtifactButtonState(button, false));
       }
       updateHtml(current.html);
       return {
@@ -11580,7 +11669,8 @@ window.SentIQAPI = {
           const normalized = normalizeGeneratedFileMeta(nextMeta, options);
           if (!normalized) return;
           Object.assign(current.meta, normalized);
-          updateHtml(normalized.html || current.html);
+          updateHtml(normalized.html || current.html, { cache: true });
+          current.savedHtml = current.html;
           title.textContent = current.meta.file_name || getGeneratedFileDownloadName(current.meta.format);
         },
         finalize: finalizeControls,
@@ -11623,7 +11713,12 @@ window.SentIQAPI = {
       const frame = document.createElement("iframe");
       frame.className = "generated-pdf-preview";
       frame.title = "PDF preview";
-      frame.src = meta.file_url;
+      resolveGeneratedFileAccessUrl(meta, "preview")
+        .then((url) => { if (url) frame.src = url; })
+        .catch((error) => {
+          debugWarn(`[UI] PDF preview URL failed: ${getSafeErrorMessage(error)}`);
+          if (isLegacyGeneratedFileUrl(meta.file_url)) frame.src = meta.file_url;
+        });
       body.appendChild(frame);
     }
 

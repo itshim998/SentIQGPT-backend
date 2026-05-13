@@ -103,6 +103,11 @@ export const ChartGenerateRequestSchema = z.object({
   fetch_preview: z.boolean().optional(),
 });
 
+export const GeneratedFileUpdateRequestSchema = z.object({
+  html: z.string().min(1, "HTML is required").max(1_000_000, "HTML too large"),
+  version: z.number().int().min(1).optional(),
+});
+
 // --- Chat Selection (Ask SentIQGPT text selection tool) ---
 
 export const SelectionContextSchema = z.object({

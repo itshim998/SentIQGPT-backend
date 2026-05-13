@@ -100,7 +100,10 @@ export interface OrchestratorResponse {
     mime_type: string;
     file_url?: string;
     storage_path?: string;
+    storage_bucket?: string;
     file_size_bytes?: number;
+    content_sha256?: string;
+    version?: number;
     file_id?: string;
     preview?: Record<string, unknown>;
     html?: string;

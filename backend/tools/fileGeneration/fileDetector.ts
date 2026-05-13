@@ -1,12 +1,29 @@
 import type { GeneratedFileFormat } from "./types";
 
-const FORMAT_PATTERNS: ReadonlyArray<[GeneratedFileFormat, RegExp]> = [
-  ["xlsx", /\b(?:\.xlsx|xlsx|excel\s+(?:file|sheet|workbook|spreadsheet)|spreadsheet)\b/i],
-  ["pptx", /\b(?:\.pptx|pptx|powerpoint|presentation|slide\s*deck|slides?)\b/i],
-  ["docx", /\b(?:\.docx|docx|word\s+(?:file|document)|ms\s*word)\b/i],
-  ["pdf", /\b(?:\.pdf|pdf)\b/i],
-  ["html", /\b(?:\.html|html\s+(?:file|page|document)|web\s*page|webpage)\b/i],
-  ["txt", /\b(?:\.txt|txt|plain\s+text\s+file|text\s+file)\b/i],
+export type FileGenerationIntentStrength = "none" | "exact" | "implied";
+
+export interface FileGenerationIntent {
+  readonly strength: FileGenerationIntentStrength;
+  readonly format: GeneratedFileFormat | null;
+  readonly reason?: string;
+}
+
+const EXACT_FORMAT_PATTERNS: ReadonlyArray<[GeneratedFileFormat, RegExp]> = [
+  ["xlsx", /(?:^|[\s(["'])\.?xlsx\b/i],
+  ["pptx", /(?:^|[\s(["'])\.?pptx\b/i],
+  ["docx", /(?:^|[\s(["'])\.?docx\b/i],
+  ["pdf", /(?:^|[\s(["'])\.?pdf\b/i],
+  ["html", /(?:^|[\s(["'])\.html\b/i],
+  ["txt", /(?:^|[\s(["'])\.txt\b/i],
+];
+
+const IMPLIED_FORMAT_PATTERNS: ReadonlyArray<[GeneratedFileFormat, RegExp, string]> = [
+  ["xlsx", /\b(?:excel\s+(?:file|sheet|workbook|spreadsheet)|spreadsheet|workbook)\b/i, "spreadsheet_alias"],
+  ["pptx", /\b(?:ppt|powerpoint|presentation|slide\s*deck|deck|slides?)\b/i, "presentation_alias"],
+  ["docx", /\b(?:word\s+(?:file|document|doc)|ms\s*word)\b/i, "word_alias"],
+  ["pdf", /\b(?:pdf\s+(?:file|document)|printable\s+pdf)\b/i, "pdf_alias"],
+  ["html", /\b(?:html\s+(?:file|page|document)|web\s*page|webpage)\b/i, "html_alias"],
+  ["txt", /\b(?:plain\s+text\s+file|text\s+file)\b/i, "text_alias"],
 ];
 
 const GENERATION_VERBS =
@@ -15,30 +32,60 @@ const GENERATION_VERBS =
 const DOWNLOADABLE_HINTS =
   /\b(?:downloadable|file|document|workbook|spreadsheet|presentation|slides?|deck|pdf|docx|pptx|xlsx|html|txt)\b/i;
 
-export function detectGeneratedFileFormat(message: string): GeneratedFileFormat | null {
-  const normalized = String(message || "").trim();
-  if (!normalized) return null;
+function hasGenerationIntent(message: string): boolean {
+  return GENERATION_VERBS.test(message) && DOWNLOADABLE_HINTS.test(message);
+}
 
-  for (const [format, pattern] of FORMAT_PATTERNS) {
-    if (pattern.test(normalized)) return format;
+function hasAsFormatIntent(message: string): boolean {
+  return /\b(?:as|to)\s+(?:a\s+)?(?:pdf|docx|pptx|xlsx|html|txt|spreadsheet|presentation|word\s+document)\b/i
+    .test(message);
+}
+
+function stripClarificationOptionCatalog(message: string): string {
+  return message.replace(/\nAvailable options:\n[^\n]*(?:\n|$)/i, "\n");
+}
+
+export function resolveFileGenerationIntent(message: string): FileGenerationIntent {
+  const normalized = stripClarificationOptionCatalog(String(message || "")).trim();
+  if (!normalized) return { strength: "none", format: null };
+
+  for (const [format, pattern] of EXACT_FORMAT_PATTERNS) {
+    if (pattern.test(normalized)) {
+      return { strength: "exact", format, reason: "explicit_format" };
+    }
   }
 
-  return null;
+  for (const [format, pattern, reason] of IMPLIED_FORMAT_PATTERNS) {
+    if (pattern.test(normalized)) {
+      return { strength: "implied", format, reason };
+    }
+  }
+
+  return { strength: "none", format: null };
+}
+
+export function detectGeneratedFileFormat(message: string): GeneratedFileFormat | null {
+  return resolveFileGenerationIntent(message).format;
 }
 
 export function isFileGenerationRequest(message: string): boolean {
   const normalized = String(message || "").trim();
   if (!normalized) return false;
 
-  const format = detectGeneratedFileFormat(normalized);
-  if (!format) return false;
+  const intent = resolveFileGenerationIntent(normalized);
+  if (!intent.format) return false;
 
-  if (GENERATION_VERBS.test(normalized) && DOWNLOADABLE_HINTS.test(normalized)) {
+  if (intent.strength === "exact" && (hasGenerationIntent(normalized) || hasAsFormatIntent(normalized))) {
     return true;
   }
 
-  return /\b(?:as|in|to)\s+(?:a\s+)?(?:pdf|docx|pptx|xlsx|html|txt|spreadsheet|presentation|word\s+document)\b/i
-    .test(normalized);
+  return false;
+}
+
+export function isImpliedFileGenerationRequest(message: string): boolean {
+  const normalized = String(message || "").trim();
+  const intent = resolveFileGenerationIntent(normalized);
+  return intent.strength === "implied" && Boolean(intent.format) && (hasGenerationIntent(normalized) || hasAsFormatIntent(normalized));
 }
 
 export function getFileGenerationGuestInstruction(message: string): string {

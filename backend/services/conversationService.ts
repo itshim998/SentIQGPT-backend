@@ -34,6 +34,7 @@ export type ConversationMessageRow = {
   file_name?: string | null;
   file_format?: string | null;
   mime_type?: string | null;
+  generated_file_id?: string | null;
   preview_json?: any;
 };
 
@@ -65,6 +66,7 @@ export type InsertConversationMessageInput = {
   fileName?: string;
   fileFormat?: string;
   mimeType?: string;
+  generatedFileId?: string;
   previewJson?: any;
 };
 
@@ -76,7 +78,7 @@ export type ConversationMessageClientRequestLookup = {
 };
 
 const MESSAGE_SELECT_COLUMNS =
-  "id, role, content, created_at, client_request_id, message_type, image_url, storage_path, prompt, provider, file_size_bytes, file_url, file_name, file_format, mime_type, preview_json";
+  "id, role, content, created_at, client_request_id, message_type, image_url, storage_path, prompt, provider, file_size_bytes, file_url, file_name, file_format, mime_type, generated_file_id, preview_json";
 
 function buildClientRequestMessageQuery(userDb: any, data: ConversationMessageClientRequestLookup) {
   let query = userDb
@@ -248,6 +250,7 @@ export async function insertConversationMessage(userDb: any, data: InsertConvers
       file_name: data.fileName || null,
       file_format: data.fileFormat || null,
       mime_type: data.mimeType || null,
+      generated_file_id: data.generatedFileId || null,
       preview_json: data.previewJson || null,
     })
     .select(MESSAGE_SELECT_COLUMNS)

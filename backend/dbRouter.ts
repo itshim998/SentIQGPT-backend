@@ -480,13 +480,25 @@ export async function verifyShardMigrations(): Promise<void> {
 
       const { error: messageFileColumnsError } = await client
         .from("messages")
-        .select("file_url,file_name,file_format,mime_type,preview_json")
+        .select("file_url,file_name,file_format,mime_type,generated_file_id,preview_json")
         .eq("id", dummyId)
         .maybeSingle();
       if (messageFileColumnsError) {
         markFailure(
           id,
           `is missing generated-file message metadata columns (migration 20260512120000). code=${messageFileColumnsError.code ?? "unknown"} message=${messageFileColumnsError.message}`,
+        );
+      }
+
+      const { error: generatedFilePrivateColumnsError } = await client
+        .from("generated_files")
+        .select("storage_bucket,content_sha256,version,updated_at")
+        .eq("id", dummyId)
+        .maybeSingle();
+      if (generatedFilePrivateColumnsError) {
+        markFailure(
+          id,
+          `is missing private generated-file metadata columns (migration 20260513120000). code=${generatedFilePrivateColumnsError.code ?? "unknown"} message=${generatedFilePrivateColumnsError.message}`,
         );
       }
 

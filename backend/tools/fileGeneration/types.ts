@@ -22,7 +22,10 @@ export interface GeneratedFileResult {
   readonly mime_type: string;
   readonly file_url?: string;
   readonly storage_path?: string;
+  readonly storage_bucket?: string;
   readonly file_size_bytes?: number;
+  readonly content_sha256?: string;
+  readonly version?: number;
   readonly file_id?: string;
   readonly preview?: GeneratedFilePreview;
   readonly html?: string;
