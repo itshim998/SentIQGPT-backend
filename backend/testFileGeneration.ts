@@ -91,11 +91,11 @@ async function testMinimaxFallbackAndMetadata(): Promise<void> {
   assert.deepEqual(calls, ["minimax", "openai-large"]);
   assert.equal(result.success, true);
   assert.equal(result.format, "txt");
-  assert.equal(result.file_name, "doc.txt");
+  assert.equal(result.file_name, "project-summary.txt");
   assert.equal(result.model_used, "openai-large");
   assert.equal(result.fallback, true);
   assert.match(result.fallback_reason || "", /json|parse|Unexpected/i);
-  assert.equal(savedMetadata?.fileName, "doc.txt");
+  assert.equal(savedMetadata?.fileName, "project-summary.txt");
   assert.equal(savedMetadata?.storagePath, "00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000002/file-1/doc.txt");
 }
 
@@ -122,7 +122,7 @@ async function testXlsxRendererValidation(): Promise<void> {
               columns: ["Task", "Owner", "Status"],
               rows: [
                 { Task: "Research", Owner: "Aarav", Status: "Pending" },
-                { Task: "Draft", Owner: "Mira", Status: "Done" },
+                { task: "Draft", owner: "Mira", status: "Done" },
                 { Task: "Review", Owner: "Kunal", Status: "Pending" },
               ],
             },
@@ -152,6 +152,10 @@ async function testXlsxRendererValidation(): Promise<void> {
   assert.ok(uploadedSize > 1000, "xlsx buffer should be non-empty");
   assert.deepEqual(result.preview?.sheet?.rows?.[0], ["Task", "Owner", "Status"]);
   assert.deepEqual(result.preview?.sheet?.rows?.[1], ["Research", "Aarav", "Pending"]);
+  assert.deepEqual(result.preview?.sheet?.rows?.[2], ["Draft", "Mira", "Done"]);
+  assert.equal(result.preview?.sheet?.row_count, 4);
+  assert.equal(result.preview?.sheet?.column_count, 3);
+  assert.equal(result.preview?.sheets?.[0]?.name, "Tasks");
 }
 
 async function testDocxRepairsSlideShape(): Promise<void> {
@@ -199,6 +203,215 @@ async function testDocxRepairsSlideShape(): Promise<void> {
   assert.match(result.preview?.text || "", /Opening/);
 }
 
+async function testHtmlFragmentRepairAndStreaming(): Promise<void> {
+  const streamed: string[] = [];
+  const result = await routeFileGeneration(
+    {
+      userMessage: "Create a .html greeting animation",
+      userId: "00000000-0000-4000-8000-000000000015",
+      conversationId: "00000000-0000-4000-8000-000000000016",
+      userDb: {},
+      storageDb: {},
+    },
+    {
+      onHtmlToken: async (token) => {
+        streamed.push(token);
+      },
+    },
+    {
+      callModel: async () => llmResult(
+        "<main><h1>Hello world</h1><p>This fragment should be wrapped into a complete generated HTML document.</p></main>",
+        "minimax",
+      ),
+      uploadFile: async (_client, params) => ({
+        success: true,
+        fileId: "file-7",
+        fileUrl: "/api/generated-files/file-7/download",
+        storagePath: "u/c/file-7/v1/greeting-animation.html",
+        storageBucket: "sentiq-generated-files-private",
+        fileSizeBytes: params.buffer.length,
+        contentSha256: "html-hash",
+        version: 1,
+      }),
+      saveMetadata: async () => {},
+      storageDb: {},
+    },
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.format, "html");
+  assert.match(result.html || "", /^<!DOCTYPE html>/i);
+  assert.match(result.html || "", /Hello world/);
+  assert.ok(streamed.join("").includes("Hello world"), "HTML streaming should emit repaired HTML content");
+}
+
+async function testPlainTextSlideOutlineRepair(): Promise<void> {
+  const result = await routeFileGeneration(
+    {
+      userMessage: "Create a .pptx presentation about launch planning",
+      userId: "00000000-0000-4000-8000-000000000007",
+      conversationId: "00000000-0000-4000-8000-000000000008",
+      userDb: {},
+      storageDb: {},
+    },
+    {},
+    {
+      callModel: async () => llmResult(
+        [
+          "# Launch Planning",
+          "Slide 1: Goals",
+          "- Align owners",
+          "- Confirm release scope",
+          "Slide 2: Timeline",
+          "- Prepare QA window",
+          "- Publish launch checklist",
+        ].join("\n"),
+        "minimax",
+      ),
+      uploadFile: async (_client, params) => ({
+        success: true,
+        fileId: "file-4",
+        fileUrl: "/api/generated-files/file-4/download",
+        storagePath: "u/c/file-4/v1/launch-planning.pptx",
+        storageBucket: "sentiq-generated-files-private",
+        fileSizeBytes: params.buffer.length,
+        contentSha256: "pptx-hash",
+        version: 1,
+      }),
+      saveMetadata: async () => {},
+      storageDb: {},
+    },
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.format, "pptx");
+  assert.equal(result.file_name, "launch-planning.pptx");
+  assert.ok((result.preview?.slides || []).length >= 2, "plain-text outline should become multiple slide previews");
+  assert.match(result.preview?.slides?.[0]?.title || "", /Goals|Launch/i);
+}
+
+async function testMarkdownTableXlsxRepair(): Promise<void> {
+  const result = await routeFileGeneration(
+    {
+      userMessage: "Create a .xlsx sprint tracker",
+      userId: "00000000-0000-4000-8000-000000000009",
+      conversationId: "00000000-0000-4000-8000-000000000010",
+      userDb: {},
+      storageDb: {},
+    },
+    {},
+    {
+      callModel: async () => llmResult(
+        [
+          "| Task | Owner | Status |",
+          "| --- | --- | --- |",
+          "| API tests | Dev | In progress |",
+          "| UI polish | Design | Ready |",
+        ].join("\n"),
+        "minimax",
+      ),
+      uploadFile: async (_client, params) => ({
+        success: true,
+        fileId: "file-5",
+        fileUrl: "/api/generated-files/file-5/download",
+        storagePath: "u/c/file-5/v1/sprint-tracker.xlsx",
+        storageBucket: "sentiq-generated-files-private",
+        fileSizeBytes: params.buffer.length,
+        contentSha256: "xlsx-hash",
+        version: 1,
+      }),
+      saveMetadata: async () => {},
+      storageDb: {},
+    },
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.format, "xlsx");
+  assert.deepEqual(result.preview?.sheet?.rows?.[0], ["Task", "Owner", "Status"]);
+  assert.deepEqual(result.preview?.sheet?.rows?.[1], ["API tests", "Dev", "In progress"]);
+}
+
+async function testFallbackFailureIsStructured(): Promise<void> {
+  const result = await routeFileGeneration(
+    {
+      userMessage: "Create a .pdf roadmap brief",
+      userId: "00000000-0000-4000-8000-000000000011",
+      conversationId: "00000000-0000-4000-8000-000000000012",
+      userDb: {},
+      storageDb: {},
+    },
+    {},
+    {
+      callModel: async () => llmResult("nope", "minimax"),
+      uploadFile: async () => {
+        throw new Error("upload should not be called after render failure");
+      },
+      saveMetadata: async () => {},
+      storageDb: {},
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.format, "pdf");
+  assert.match(result.error || "", /failed after fallback/i);
+}
+
+async function testMetadataFailureCleansUploadedObject(): Promise<void> {
+  const removed: Array<{ bucket: string; paths: string[] }> = [];
+  const storageDb = {
+    storage: {
+      from: (bucket: string) => ({
+        remove: async (paths: string[]) => {
+          removed.push({ bucket, paths });
+          return { data: null, error: null };
+        },
+      }),
+    },
+  };
+
+  const result = await routeFileGeneration(
+    {
+      userMessage: "Create a .txt release note",
+      userId: "00000000-0000-4000-8000-000000000013",
+      conversationId: "00000000-0000-4000-8000-000000000014",
+      userDb: {},
+      storageDb,
+    },
+    {},
+    {
+      callModel: async () => llmResult(
+        JSON.stringify({
+          title: "Release Note",
+          format: "txt",
+          text: "Release notes with enough content to render into a generated text file.",
+        }),
+        "minimax",
+      ),
+      uploadFile: async (_client, params) => ({
+        success: true,
+        fileId: "file-6",
+        fileUrl: "/api/generated-files/file-6/download",
+        storagePath: "u/c/file-6/v1/release-note.txt",
+        storageBucket: "sentiq-generated-files-private",
+        fileSizeBytes: params.buffer.length,
+        contentSha256: "txt-hash",
+        version: 1,
+      }),
+      saveMetadata: async () => {
+        throw new Error("db unavailable");
+      },
+      storageDb,
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.match(result.error || "", /could not be saved/i);
+  assert.deepEqual(removed, [{
+    bucket: "sentiq-generated-files-private",
+    paths: ["u/c/file-6/v1/release-note.txt"],
+  }]);
+}
+
 function sourceBlock(source: string, needle: string, chars = 1800): string {
   const start = source.indexOf(needle);
   assert.ok(start >= 0, `Expected source to include ${needle}`);
@@ -208,6 +421,7 @@ function sourceBlock(source: string, needle: string, chars = 1800): string {
 function testStorageApiSourceGuards(): void {
   const server = readFileSync(resolve(__dirname, "server.ts"), "utf8");
   const storage = readFileSync(resolve(__dirname, "tools/fileGeneration/fileStorageService.ts"), "utf8");
+  const generator = readFileSync(resolve(__dirname, "tools/fileGeneration/fileGenerator.ts"), "utf8");
 
   const lookupBlock = sourceBlock(server, "async function getGeneratedFileRowOrThrow");
   assert.match(lookupBlock, /\.eq\("id", fileId\)/, "generated file lookup should select by file id");
@@ -217,18 +431,24 @@ function testStorageApiSourceGuards(): void {
   assert.match(signedUrlBlock, /createSignedUrl\(row\.storage_path,\s*120/, "download and preview should issue short-lived signed URLs");
   assert.match(signedUrlBlock, /legacy:\s*true/, "legacy public generated files should remain readable");
 
-  const patchBlock = sourceBlock(server, '"/api/generated-files/:id"', 3200);
+  const patchBlock = sourceBlock(server, '"/api/generated-files/:id"', 7000);
   assert.match(patchBlock, /verifyJWT\(\{ allowGuest: false \}\)/, "HTML replacement endpoint should require auth");
   assert.match(patchBlock, /GeneratedFileUpdateRequestSchema\.safeParse/, "HTML replacement endpoint should validate input");
   assert.match(patchBlock, /row\.format !== "html"/, "HTML replacement endpoint should reject non-HTML formats");
   assert.match(patchBlock, /generated_file_version_conflict/, "HTML replacement endpoint should reject stale versions");
+  assert.match(patchBlock, /serializeGeneratedFileRow\(row\)/, "version conflicts should include current server metadata");
   assert.match(patchBlock, /uploadGeneratedFileReplacement/, "HTML replacement endpoint should store a new private version");
   assert.match(patchBlock, /\.eq\("generated_file_id", fileId\)/, "HTML replacement should update linked assistant file messages");
+  assert.match(patchBlock, /logDbFailure\("generated-files\.update\.messages"/, "message update failures should be logged");
 
   assert.match(storage, /sentiq-generated-files-private/, "new generated files should default to the private bucket");
   assert.match(storage, /public:\s*false/, "generated file bucket should be private");
   assert.match(storage, /v\$\{version\}/, "generated file storage paths should be versioned");
   assert.match(storage, /contentSha256/, "generated file uploads should hash content");
+  assert.match(storage, /bucketName === DEFAULT_GENERATED_FILE_STORAGE_BUCKET/, "legacy public buckets should not be forcibly converted to private");
+  assert.doesNotMatch(storage, /getPublicUrl/, "new uploads should not depend on public URLs");
+  assert.match(generator, /deleteGeneratedFileObject/, "metadata failures should clean uploaded storage objects");
+  assert.match(generator, /validateOfficeZip/, "Office files should be ZIP-structure validated");
 }
 
 async function main(): Promise<void> {
@@ -238,6 +458,11 @@ async function main(): Promise<void> {
   await testMinimaxFallbackAndMetadata();
   await testXlsxRendererValidation();
   await testDocxRepairsSlideShape();
+  await testHtmlFragmentRepairAndStreaming();
+  await testPlainTextSlideOutlineRepair();
+  await testMarkdownTableXlsxRepair();
+  await testFallbackFailureIsStructured();
+  await testMetadataFailureCleansUploadedObject();
   testStorageApiSourceGuards();
   console.log("file generation tests passed");
 }

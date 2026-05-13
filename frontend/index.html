@@ -1729,6 +1729,19 @@ body::after {
   cursor: not-allowed;
 }
 
+.generated-file-panel.is-dirty .generated-file-title::after {
+  content: "Unsaved";
+  display: inline-flex;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border: 1px solid rgba(251,191,36,0.28);
+  border-radius: var(--radius-sm);
+  color: #fbbf24;
+  font-size: 0.68rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
 .generated-file-body {
   background: #0b1020;
 }
@@ -1800,6 +1813,65 @@ body::after {
   background: #ffffff;
 }
 
+.generated-preview-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.generated-preview-meta span {
+  padding: 3px 7px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.05);
+}
+
+.generated-sheet-shell {
+  background: #ffffff;
+}
+
+.generated-sheet-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 9px 10px;
+  overflow-x: auto;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.generated-sheet-tab {
+  border: 1px solid #d1d5db;
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  background: #ffffff;
+  color: #374151;
+  font-size: 0.78rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.generated-sheet-tab.is-active {
+  border-color: #7c3aed;
+  background: #ede9fe;
+  color: #4c1d95;
+  font-weight: 700;
+}
+
+.generated-sheet-summary {
+  background: #ffffff;
+  color: #374151;
+}
+
+.generated-sheet-summary span {
+  border-color: #e5e7eb;
+  background: #f9fafb;
+}
+
 .generated-sheet-preview {
   max-height: 420px;
   overflow: auto;
@@ -1854,6 +1926,24 @@ body::after {
 .generated-slide-preview li {
   margin: 7px 0;
   line-height: 1.35;
+}
+
+.generated-slide-list {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.generated-slide-card {
+  margin: 0 auto;
+}
+
+.generated-slide-kicker {
+  margin-bottom: 8px;
+  color: #7c3aed;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .generated-pdf-preview {
@@ -5892,7 +5982,7 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
         else if (parsed.type === "thinking" && parsed.text) {
           if (callbacks.onThinking) callbacks.onThinking(parsed.text);
         }
-        else if (parsed.type === "route" && parsed.route) { if (callbacks.onRoute) callbacks.onRoute(parsed.route); }
+        else if (parsed.type === "route" && parsed.route) { if (callbacks.onRoute) callbacks.onRoute(parsed.route, parsed); }
         else if (parsed.type === "memory" && parsed.memory) { if (callbacks.onMemory) callbacks.onMemory(parsed.memory); }
         else if (parsed.type === "error") {
           terminalError = new Error(parsed.error);
@@ -8366,6 +8456,20 @@ window.SentIQAPI = {
     const hasFileHint = /\b(?:downloadable|file|document|workbook|spreadsheet|presentation|slides?|deck|pdf|docx|pptx|xlsx|html|txt)\b/i.test(normalized);
     return (hasVerb && hasFileHint)
       || /\b(?:as|to)\s+(?:a\s+)?(?:pdf|docx|pptx|xlsx|html|txt|spreadsheet|presentation|word\s+document)\b/i.test(normalized);
+  }
+
+  function detectClarificationDownloadFormat(clarificationResponse) {
+    if (!clarificationResponse || typeof clarificationResponse !== "object") return null;
+    const selectedOptionId = String(clarificationResponse.selected_option_id || clarificationResponse.selectedOptionId || "").trim().toLowerCase();
+    const optionIdMatch = selectedOptionId.match(/^download_(html|txt|xlsx|pptx|docx|pdf)$/i);
+    if (optionIdMatch) return optionIdMatch[1].toLowerCase();
+
+    const visibleAnswer = String(clarificationResponse.answer || clarificationResponse.label || "").trim();
+    const answers = Array.isArray(clarificationResponse.answers) ? clarificationResponse.answers : [];
+    const latestAnswer = answers.length ? String(answers[answers.length - 1] || "") : "";
+    const haystack = `${visibleAnswer}\n${latestAnswer}`;
+    if (!/\bdownloadable\b/i.test(haystack)) return null;
+    return detectRequestedFileFormat(haystack);
   }
 
   function buildGuestFileGenerationInstruction(message, format) {
@@ -11308,8 +11412,23 @@ window.SentIQAPI = {
     }
   }
 
-  function getGeneratedFileDownloadName(format) {
-    return `doc.${format || "txt"}`;
+  function getGeneratedFileDownloadName(input) {
+    const rawName = typeof input === "object" && input
+      ? String(input.file_name || input.fileName || "").trim()
+      : "";
+    if (rawName) {
+      const safeName = rawName.split(/[\\/]/).pop().replace(/[<>:"|?*\x00-\x1F]/g, "-").trim();
+      if (safeName) return safeName.slice(0, 160);
+    }
+    const rawFormat = typeof input === "string"
+      ? input
+      : typeof input === "object" && input
+        ? (input.format || input.file_format || input.fileFormat)
+        : "";
+    const format = ["html", "txt", "xlsx", "pptx", "docx", "pdf"].includes(String(rawFormat || "").toLowerCase())
+      ? String(rawFormat).toLowerCase()
+      : "txt";
+    return `doc.${format}`;
   }
 
   function getGeneratedFileMimeType(format) {
@@ -11327,12 +11446,11 @@ window.SentIQAPI = {
   function normalizeGeneratedFileMeta(payload, extra = {}) {
     if (!payload || typeof payload !== "object") return null;
     if (payload.success === false) return null;
-    if (payload.type === "generated-file" && payload.format) return payload;
     const rawFormat = String(payload.format || payload.file_format || payload.fileFormat || "").toLowerCase();
     const format = ["html", "txt", "xlsx", "pptx", "docx", "pdf"].includes(rawFormat) ? rawFormat : null;
     if (!format) return null;
     const preview = payload.preview || payload.preview_json || payload.previewJson || {};
-    const fileName = payload.file_name || payload.fileName || getGeneratedFileDownloadName(format);
+    const fileName = getGeneratedFileDownloadName(payload.file_name || payload.fileName ? payload : format);
     const fileUrl = payload.file_url || payload.fileUrl || "";
     const storagePath = payload.storage_path || payload.storagePath || "";
     const id = String(payload.file_id || payload.fileId || payload.generated_file_id || payload.generatedFileId || payload.id || storagePath || fileUrl || `${format}-${Date.now()}`);
@@ -11393,8 +11511,12 @@ window.SentIQAPI = {
     const normalized = normalizeGeneratedFileMeta(meta);
     const fileId = normalized?.file_id || normalized?.id;
     if (fileId && API.getGeneratedFileAccessUrl && !isLegacyGeneratedFileUrl(normalized.file_url)) {
-      const response = await API.getGeneratedFileAccessUrl(fileId, mode);
-      if (response?.url) return response.url;
+      try {
+        const response = await API.getGeneratedFileAccessUrl(fileId, mode);
+        if (response?.url) return response.url;
+      } catch (error) {
+        debugWarn(`[UI] Signed generated file URL failed: ${getSafeErrorMessage(error)}`);
+      }
     }
     if (fileId && API.getGeneratedFileAccessUrl && normalized.storage_path) {
       try {
@@ -11407,11 +11529,24 @@ window.SentIQAPI = {
     return normalized?.file_url || "";
   }
 
+  function isGeneratedFileCacheFresh(cached, normalized) {
+    if (!cached || !normalized) return false;
+    const serverVersion = Number(normalized.version || 0);
+    const cachedVersion = Number(cached.version || 0);
+    if (serverVersion && cachedVersion && serverVersion !== cachedVersion) return false;
+    const serverHash = String(normalized.content_sha256 || "");
+    const cachedHash = String(cached.content_sha256 || cached.contentSha256 || "");
+    if (serverHash && cachedHash && serverHash !== cachedHash) return false;
+    if (serverVersion && !cachedVersion) return false;
+    if (serverHash && !cachedHash) return false;
+    return true;
+  }
+
   async function cacheGeneratedFileFromMeta(meta, blobOverride = null) {
     const normalized = normalizeGeneratedFileMeta(meta);
     if (!normalized?.id) return null;
     let blob = blobOverride instanceof Blob ? blobOverride : createGeneratedFileBlob(normalized);
-    if (!blob && normalized.file_url) {
+    if (!blob && (normalized.file_url || normalized.file_id || normalized.storage_path)) {
       try {
         blob = await fetchGeneratedFileBlob(normalized);
       } catch (error) {
@@ -11423,14 +11558,18 @@ window.SentIQAPI = {
       id: normalized.id,
       file_id: normalized.file_id,
       format: normalized.format,
-      file_name: getGeneratedFileDownloadName(normalized.format),
+      file_name: normalized.file_name || getGeneratedFileDownloadName(normalized.format),
       mime_type: normalized.mime_type,
       file_url: normalized.file_url,
       storage_path: normalized.storage_path,
+      storage_bucket: normalized.storage_bucket,
       file_size_bytes: normalized.file_size_bytes || blob.size,
+      content_sha256: normalized.content_sha256,
+      version: normalized.version,
       preview: normalized.preview,
       chat_id: normalized.chat_id || currentChatId || null,
       created_at: normalized.created_at,
+      updated_at: normalized.updated_at,
       blob,
     });
   }
@@ -11439,13 +11578,16 @@ window.SentIQAPI = {
     const normalized = normalizeGeneratedFileMeta(meta);
     if (!normalized?.id) return null;
     const cached = await Storage.getGeneratedFile(normalized.id).catch(() => null);
-    if (cached?.blob instanceof Blob) return cached.blob;
+    if (cached?.blob instanceof Blob && isGeneratedFileCacheFresh(cached, normalized)) return cached.blob;
+    if (cached?.blob instanceof Blob && !isGeneratedFileCacheFresh(cached, normalized)) {
+      Storage.deleteGeneratedFile(normalized.id).catch(() => null);
+    }
     const localBlob = createGeneratedFileBlob(normalized);
     if (localBlob) {
       await cacheGeneratedFileFromMeta(normalized, localBlob).catch(() => null);
       return localBlob;
     }
-    if (normalized.file_url) {
+    if (normalized.file_url || normalized.file_id || normalized.storage_path) {
       const remoteBlob = await fetchGeneratedFileBlob(normalized);
       await cacheGeneratedFileFromMeta(normalized, remoteBlob).catch(() => null);
       return remoteBlob;
@@ -11468,7 +11610,7 @@ window.SentIQAPI = {
   async function downloadGeneratedFile(meta) {
     const normalized = normalizeGeneratedFileMeta(meta);
     if (!normalized) throw new Error("Missing generated file metadata.");
-    const filename = getGeneratedFileDownloadName(normalized.format);
+    const filename = normalized.file_name || getGeneratedFileDownloadName(normalized.format);
     try {
       const blob = await resolveGeneratedFileBlob(normalized);
       if (blob) {
@@ -11478,7 +11620,7 @@ window.SentIQAPI = {
     } catch (error) {
       debugWarn(`[UI] Generated file blob download failed: ${getSafeErrorMessage(error)}`);
     }
-    if (normalized.file_url) {
+    if (normalized.file_url || normalized.file_id || normalized.storage_path) {
       const href = await resolveGeneratedFileAccessUrl(normalized, "download");
       if (!href) throw new Error("Generated file is not available for download.");
       const link = document.createElement("a");
@@ -11537,7 +11679,15 @@ window.SentIQAPI = {
     panel.appendChild(body);
     container.appendChild(panel);
 
-    const current = { meta, html: meta.html || "", savedHtml: meta.html || "", finalized: !options.streaming, editing: false };
+    const current = {
+      meta,
+      html: meta.html || "",
+      savedHtml: meta.html || "",
+      finalized: !options.streaming,
+      editing: false,
+      dirty: false,
+      saving: false,
+    };
 
     const downloadBtn = createArtifactButton("Download");
     downloadBtn.addEventListener("click", async () => {
@@ -11549,9 +11699,11 @@ window.SentIQAPI = {
       }
     });
 
+    let refreshArtifactControls = null;
     function finalizeControls() {
       current.finalized = true;
       actions.querySelectorAll("button").forEach((button) => setArtifactButtonState(button, true));
+      refreshArtifactControls?.();
     }
 
     if (meta.format === "html") {
@@ -11589,17 +11741,30 @@ window.SentIQAPI = {
       layout.appendChild(previewPane);
       body.appendChild(layout);
 
+      function refreshHtmlEditState() {
+        current.dirty = current.html !== current.savedHtml;
+        panel.classList.toggle("is-dirty", current.dirty);
+        saveBtn.disabled = !current.finalized || !current.dirty || current.saving;
+        cancelBtn.disabled = current.saving;
+        saveBtn.classList.toggle("is-disabled", saveBtn.disabled);
+        cancelBtn.classList.toggle("is-disabled", cancelBtn.disabled);
+      }
+      refreshArtifactControls = refreshHtmlEditState;
+
       function updateHtml(nextHtml, updateOptions = {}) {
         current.html = String(nextHtml || "");
         current.meta.html = current.html;
         current.meta.preview = { ...(current.meta.preview || {}), html: current.html, text: current.html.slice(0, 2400) };
         code.innerHTML = highlightCode(current.html, "html");
-        editor.value = current.html;
+        if (updateOptions.fromEditor !== true || document.activeElement !== editor) {
+          editor.value = current.html;
+        }
         if (panel.classList.contains("show-preview")) iframe.srcdoc = current.html;
         if (current.finalized && updateOptions.cache === true) {
           const blob = createGeneratedFileBlob(current.meta);
           cacheGeneratedFileFromMeta(current.meta, blob).catch(() => null);
         }
+        refreshHtmlEditState();
       }
 
       function setHtmlEditing(editing) {
@@ -11609,7 +11774,11 @@ window.SentIQAPI = {
         editBtn.style.display = current.editing ? "none" : "";
         saveBtn.style.display = current.editing ? "" : "none";
         cancelBtn.style.display = current.editing ? "" : "none";
-        if (current.editing) editor.focus();
+        if (current.editing) {
+          editor.value = current.html;
+          editor.focus();
+        }
+        refreshHtmlEditState();
       }
 
       copyBtn.addEventListener("click", async () => {
@@ -11623,13 +11792,14 @@ window.SentIQAPI = {
       });
       editBtn.addEventListener("click", () => setHtmlEditing(true));
       saveBtn.addEventListener("click", async () => {
+        if (!current.dirty || current.saving) return;
         if (!current.meta.file_id || !API.updateGeneratedHtmlFile) {
           showToast("This HTML file cannot be saved to your account.", "error");
           return;
         }
         const previousText = saveBtn.textContent;
-        saveBtn.disabled = true;
-        cancelBtn.disabled = true;
+        current.saving = true;
+        refreshHtmlEditState();
         saveBtn.textContent = "Saving";
         try {
           const response = await API.updateGeneratedHtmlFile(current.meta.file_id, editor.value, current.meta.version);
@@ -11638,14 +11808,28 @@ window.SentIQAPI = {
           Object.assign(current.meta, normalized);
           updateHtml(normalized.html || editor.value, { cache: true });
           current.savedHtml = current.html;
+          refreshHtmlEditState();
+          title.textContent = current.meta.file_name || getGeneratedFileDownloadName(current.meta.format);
           setHtmlEditing(false);
           showToast("Saved HTML changes.", "success");
         } catch (error) {
           debugWarn(`[UI] Generated HTML save failed: ${getSafeErrorMessage(error)}`);
-          showToast("Couldn't save those HTML edits.", "error");
+          const conflictMeta = normalizeGeneratedFileMeta(error?.details?.file || error?.file, { chatId: current.meta.chat_id || currentChatId });
+          if (error?.status === 409 && conflictMeta) {
+            Object.assign(current.meta, conflictMeta);
+            current.savedHtml = conflictMeta.html || current.savedHtml;
+            current.html = editor.value;
+            current.meta.html = current.html;
+            current.meta.preview = { ...(current.meta.preview || {}), html: current.html, text: current.html.slice(0, 2400) };
+            title.textContent = current.meta.file_name || getGeneratedFileDownloadName(current.meta.format);
+            refreshHtmlEditState();
+            showToast("This file changed elsewhere. Your edits are still visible; save again to replace the latest version.", "error", 6000);
+          } else {
+            showToast("Couldn't save those HTML edits.", "error");
+          }
         } finally {
-          saveBtn.disabled = false;
-          cancelBtn.disabled = false;
+          current.saving = false;
+          refreshHtmlEditState();
           saveBtn.textContent = previousText || "Save";
         }
       });
@@ -11653,7 +11837,7 @@ window.SentIQAPI = {
         updateHtml(current.savedHtml || "", { cache: false });
         setHtmlEditing(false);
       });
-      editor.addEventListener("input", () => updateHtml(editor.value));
+      editor.addEventListener("input", () => updateHtml(editor.value, { fromEditor: true }));
       previewBtn.addEventListener("click", () => {
         const showing = !panel.classList.contains("show-preview");
         panel.classList.toggle("show-preview", showing);
@@ -11671,6 +11855,7 @@ window.SentIQAPI = {
           Object.assign(current.meta, normalized);
           updateHtml(normalized.html || current.html, { cache: true });
           current.savedHtml = current.html;
+          refreshHtmlEditState();
           title.textContent = current.meta.file_name || getGeneratedFileDownloadName(current.meta.format);
         },
         finalize: finalizeControls,
@@ -11680,36 +11865,123 @@ window.SentIQAPI = {
 
     actions.appendChild(downloadBtn);
     const preview = meta.preview || {};
-    if (meta.format === "xlsx" && preview.sheet?.rows?.length) {
-      const sheet = document.createElement("div");
-      sheet.className = "generated-sheet-preview";
-      const table = document.createElement("table");
-      preview.sheet.rows.slice(0, 16).forEach((row, rowIndex) => {
-        const tr = document.createElement("tr");
-        (Array.isArray(row) ? row : []).slice(0, 10).forEach((cell) => {
-          const el = document.createElement(rowIndex === 0 ? "th" : "td");
-          el.textContent = String(cell ?? "");
-          tr.appendChild(el);
+    let previewRendered = false;
+
+    function appendPreviewMeta(items) {
+      const cleanItems = (items || []).map((item) => String(item || "").trim()).filter(Boolean);
+      if (!cleanItems.length) return null;
+      const row = document.createElement("div");
+      row.className = "generated-preview-meta";
+      cleanItems.forEach((item) => {
+        const chip = document.createElement("span");
+        chip.textContent = item;
+        row.appendChild(chip);
+      });
+      body.appendChild(row);
+      return row;
+    }
+
+    function getDocumentPreviewMeta() {
+      const documentMeta = preview.document || {};
+      return [
+        documentMeta.word_count ? `${documentMeta.word_count} words` : "",
+        documentMeta.section_count ? `${documentMeta.section_count} sections` : "",
+        meta.file_size_bytes ? `${Math.round(Number(meta.file_size_bytes) / 1024)} KB` : "",
+        meta.version ? `Version ${meta.version}` : "",
+      ];
+    }
+
+    if (meta.format === "xlsx") {
+      const sheets = Array.isArray(preview.sheets) && preview.sheets.length
+        ? preview.sheets
+        : (preview.sheet?.rows?.length ? [{ ...preview.sheet, name: preview.sheet.name || "Sheet 1" }] : []);
+      if (sheets.length) {
+        const sheetShell = document.createElement("div");
+        sheetShell.className = "generated-sheet-shell";
+        const sheetSummary = document.createElement("div");
+        sheetSummary.className = "generated-preview-meta generated-sheet-summary";
+        const tabs = document.createElement("div");
+        tabs.className = "generated-sheet-tabs";
+        const sheet = document.createElement("div");
+        sheet.className = "generated-sheet-preview";
+        sheetShell.appendChild(sheetSummary);
+        if (sheets.length > 1) sheetShell.appendChild(tabs);
+        sheetShell.appendChild(sheet);
+
+        function renderSheet(index) {
+          const activeSheet = sheets[Math.max(0, Math.min(index, sheets.length - 1))] || sheets[0];
+          const rows = Array.isArray(activeSheet.rows) ? activeSheet.rows : [];
+          sheetSummary.innerHTML = "";
+          [
+            activeSheet.name || `Sheet ${index + 1}`,
+            `${Number(activeSheet.row_count || rows.length || 0)} rows`,
+            `${Number(activeSheet.column_count || rows[0]?.length || 0)} columns`,
+          ].forEach((item) => {
+            const chip = document.createElement("span");
+            chip.textContent = item;
+            sheetSummary.appendChild(chip);
+          });
+          tabs.querySelectorAll("button").forEach((button, tabIndex) => {
+            button.classList.toggle("is-active", tabIndex === index);
+          });
+          sheet.innerHTML = "";
+          const table = document.createElement("table");
+          rows.slice(0, 16).forEach((row, rowIndex) => {
+            const tr = document.createElement("tr");
+            (Array.isArray(row) ? row : []).slice(0, 10).forEach((cell) => {
+              const el = document.createElement(rowIndex === 0 ? "th" : "td");
+              el.textContent = String(cell ?? "");
+              tr.appendChild(el);
+            });
+            table.appendChild(tr);
+          });
+          sheet.appendChild(table);
+        }
+
+        sheets.forEach((sheetInfo, index) => {
+          const tab = document.createElement("button");
+          tab.type = "button";
+          tab.className = "generated-sheet-tab";
+          tab.textContent = sheetInfo.name || `Sheet ${index + 1}`;
+          tab.addEventListener("click", () => renderSheet(index));
+          tabs.appendChild(tab);
         });
-        table.appendChild(tr);
-      });
-      sheet.appendChild(table);
-      body.appendChild(sheet);
-    } else if (meta.format === "pptx" && preview.slide) {
-      const slide = document.createElement("div");
-      slide.className = "generated-slide-preview";
-      const slideTitle = document.createElement("h4");
-      slideTitle.textContent = preview.slide.title || "Slide 1";
-      slide.appendChild(slideTitle);
-      const list = document.createElement("ul");
-      (preview.slide.bullets || []).slice(0, 8).forEach((bullet) => {
-        const li = document.createElement("li");
-        li.textContent = String(bullet || "");
-        list.appendChild(li);
-      });
-      slide.appendChild(list);
-      body.appendChild(slide);
+        body.appendChild(sheetShell);
+        renderSheet(0);
+        previewRendered = true;
+      }
+    } else if (meta.format === "pptx") {
+      const slides = Array.isArray(preview.slides) && preview.slides.length
+        ? preview.slides
+        : (preview.slide ? [preview.slide] : []);
+      if (slides.length) {
+        appendPreviewMeta([`${Number(preview.slide_count || slides.length)} slides`, meta.version ? `Version ${meta.version}` : ""]);
+        const slideList = document.createElement("div");
+        slideList.className = "generated-slide-list";
+        slides.slice(0, 8).forEach((slideInfo, index) => {
+          const slide = document.createElement("div");
+          slide.className = "generated-slide-preview generated-slide-card";
+          const kicker = document.createElement("div");
+          kicker.className = "generated-slide-kicker";
+          kicker.textContent = `Slide ${slideInfo.index || index + 1}`;
+          slide.appendChild(kicker);
+          const slideTitle = document.createElement("h4");
+          slideTitle.textContent = slideInfo.title || `Slide ${index + 1}`;
+          slide.appendChild(slideTitle);
+          const list = document.createElement("ul");
+          (slideInfo.bullets || []).slice(0, 8).forEach((bullet) => {
+            const li = document.createElement("li");
+            li.textContent = String(bullet || "");
+            list.appendChild(li);
+          });
+          slide.appendChild(list);
+          slideList.appendChild(slide);
+        });
+        body.appendChild(slideList);
+        previewRendered = true;
+      }
     } else if (meta.format === "pdf" && meta.file_url) {
+      appendPreviewMeta(getDocumentPreviewMeta());
       const frame = document.createElement("iframe");
       frame.className = "generated-pdf-preview";
       frame.title = "PDF preview";
@@ -11720,16 +11992,19 @@ window.SentIQAPI = {
           if (isLegacyGeneratedFileUrl(meta.file_url)) frame.src = meta.file_url;
         });
       body.appendChild(frame);
+      previewRendered = true;
     }
 
     const textPreview = meta.text || preview.text || "";
     if ((meta.format === "docx" || meta.format === "txt" || (meta.format === "pdf" && !meta.file_url)) && textPreview) {
+      appendPreviewMeta(getDocumentPreviewMeta());
       const textBlock = document.createElement("pre");
       textBlock.className = "generated-text-preview";
       textBlock.textContent = textPreview;
       body.appendChild(textBlock);
+      previewRendered = true;
     }
-    if (!body.children.length) {
+    if (!previewRendered) {
       const empty = document.createElement("div");
       empty.className = "generated-file-empty";
       empty.textContent = "Preview unavailable.";
@@ -12251,9 +12526,9 @@ window.SentIQAPI = {
     bubble.appendChild(contentDiv);
 
     const initialMeta = normalizeGeneratedFileMeta({
-      format: "html",
-      file_name: "doc.html",
-      mime_type: getGeneratedFileMimeType("html"),
+      format: options.format || "html",
+      file_name: getGeneratedFileDownloadName(options.format || "html"),
+      mime_type: getGeneratedFileMimeType(options.format || "html"),
       preview: { html: "", text: "" },
       html: "",
     }, { chatId: options.chatId || currentChatId });
@@ -12379,8 +12654,12 @@ window.SentIQAPI = {
     }
 
     const originalApiMessage = apiMessage;
-    const requestedFileFormat = detectRequestedFileFormat(originalApiMessage);
-    const fileGenerationPrompt = !isClarificationAnswer && isLikelyFileGenerationRequest(originalApiMessage);
+    const clarifiedDownloadFormat = detectClarificationDownloadFormat(clarificationResponseForRequest);
+    const typedClarificationDownloadFormat = isClarificationAnswer && /\bdownloadable\b/i.test(originalApiMessage)
+      ? detectRequestedFileFormat(originalApiMessage)
+      : null;
+    const requestedFileFormat = clarifiedDownloadFormat || typedClarificationDownloadFormat || detectRequestedFileFormat(originalApiMessage);
+    const fileGenerationPrompt = Boolean(clarifiedDownloadFormat || typedClarificationDownloadFormat) || (!isClarificationAnswer && isLikelyFileGenerationRequest(originalApiMessage));
     const authenticatedFileGenerationRequired = fileGenerationPrompt && isAuthenticatedSession();
     const htmlFileGenerationRequired = authenticatedFileGenerationRequired && requestedFileFormat === "html";
     if (fileGenerationPrompt && !isAuthenticatedSession()) {
@@ -12495,9 +12774,18 @@ window.SentIQAPI = {
           debugLog("[UI] Attempting streaming");
           streamBubble = (targetChatId === currentChatId)
             ? (htmlFileGenerationRequired
-              ? createFileGenerationStreamingBubble({ chatId: targetChatId, requestId })
+              ? createFileGenerationStreamingBubble({ chatId: targetChatId, requestId, format: requestedFileFormat || "html" })
               : createStreamingBubble({ loaderKind: requestLoaderKind, chatId: targetChatId, requestId }))
             : null;
+          const ensureFileGenerationStreamBubble = (format = "html") => {
+            if (streamBubble?.setArtifact && streamBubble?.appendToken) return streamBubble;
+            const existing = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"]`);
+            existing?.remove();
+            streamBubble = targetChatId === currentChatId
+              ? createFileGenerationStreamingBubble({ chatId: targetChatId, requestId, format })
+              : null;
+            return streamBubble;
+          };
           if (streamBubble && typeof API.sendMessageStream === "function") {
             usedStreaming = true;
             streamResult = await API.sendMessageStream(apiMessage, contextPayload, {
@@ -12512,20 +12800,21 @@ window.SentIQAPI = {
                   streamBubble.appendToken(token);
                 }
               },
-              onFileToken(token) {
+              onFileToken(token, eventMeta = {}) {
                 if (!isRequestStale(targetChatId, requestId)) {
                   hideActivityIndicator(targetChatId);
                   if (!firstVisibleTokenLogged) {
                     firstVisibleTokenLogged = true;
                     stopMeasure("first_visible_token", { conversation_id: targetChatId });
                   }
-                  streamBubble?.appendToken?.(token);
+                  ensureFileGenerationStreamBubble(eventMeta?.format || requestedFileFormat || "html")?.appendToken?.(token);
                 }
               },
               onFileArtifact(response) {
                 if (!isRequestStale(targetChatId, requestId)) {
                   fileArtifactResponse = response;
-                  streamBubble?.setArtifact?.(response.file);
+                  const artifactFormat = response?.file?.format || response?.format || requestedFileFormat || "html";
+                  ensureFileGenerationStreamBubble(artifactFormat)?.setArtifact?.(response.file);
                   responseSync = response.sync || null;
                 }
               },
@@ -12535,7 +12824,7 @@ window.SentIQAPI = {
                   if (streamBubble) streamBubble.setThinking(streamThinking);
                 }
               },
-              onRoute(route) {
+              onRoute(route, routeMeta = {}) {
                 state.activityMode = route === "web_search"
                   ? "web_search"
                   : route === "file_generation"
@@ -12556,6 +12845,9 @@ window.SentIQAPI = {
                 }
                 if (route === "file_generation") {
                   responseRenderMode = null;
+                  if ((routeMeta?.format || requestedFileFormat) === "html") {
+                    ensureFileGenerationStreamBubble(routeMeta?.format || requestedFileFormat || "html");
+                  }
                 }
                 consumeWebSearchOneShot(route);
                 // Math pipeline: switch indicator to "Reasoning..." while openai-large solves

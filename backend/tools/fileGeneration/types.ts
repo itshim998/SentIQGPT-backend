@@ -6,11 +6,32 @@ export interface GeneratedFilePreview {
   readonly sheet?: {
     readonly name: string;
     readonly rows: readonly (readonly string[])[];
+    readonly row_count?: number;
+    readonly column_count?: number;
   };
+  readonly sheets?: readonly {
+    readonly name: string;
+    readonly rows: readonly (readonly string[])[];
+    readonly row_count: number;
+    readonly column_count: number;
+  }[];
   readonly slide?: {
     readonly title: string;
     readonly bullets: readonly string[];
     readonly notes?: string;
+    readonly index?: number;
+  };
+  readonly slides?: readonly {
+    readonly title: string;
+    readonly bullets: readonly string[];
+    readonly notes?: string;
+    readonly index: number;
+  }[];
+  readonly slide_count?: number;
+  readonly document?: {
+    readonly title: string;
+    readonly section_count?: number;
+    readonly word_count?: number;
   };
 }
 

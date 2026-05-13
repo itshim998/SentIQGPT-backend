@@ -111,6 +111,31 @@ async function main(): Promise<void> {
     "file clarification should offer downloadable and chat-only choices",
   );
   assert.equal(
+    impliedPresentationClarification?.options?.some((option) => option.id === "download_pptx"),
+    true,
+    "presentation clarification should expose a stable downloadable option id",
+  );
+  const resolvedDownloadPresentation = resolveClarificationInput("Downloadable .pptx file", {
+    clarification_id: "file-pptx",
+    original_message: "Create a 5-slide presentation about AI.",
+    answers: [],
+    source: "option",
+    selected_option_id: "download_pptx",
+    question: impliedPresentationClarification?.question,
+    options: impliedPresentationClarification?.options,
+  });
+  assert.match(resolvedDownloadPresentation.effectiveMessage, /Selected option id:\ndownload_pptx/, "download option id should reach routing");
+  assert.match(resolvedDownloadPresentation.effectiveMessage, /Downloadable \.pptx file/, "download option label should reach generation prompt");
+  const resolvedTextOutline = resolveClarificationInput("Text outline in chat", {
+    clarification_id: "file-pptx",
+    original_message: "Create a 5-slide presentation about AI.",
+    answers: [],
+    source: "option",
+    selected_option_id: "text_outline",
+    question: impliedPresentationClarification?.question,
+    options: impliedPresentationClarification?.options,
+  });
+  assert.equal(
     getRuleBasedClarification({ userMessage: "Create a .pptx presentation about AI." }),
     null,
     "exact file extensions should bypass clarification",
@@ -123,6 +148,11 @@ async function main(): Promise<void> {
     (impliedHtmlClarification?.options || []).map((item) => item.label).join(" "),
     /\.html|HTML code/i,
     "HTML file clarification should offer downloadable and chat-only choices",
+  );
+  assert.equal(
+    impliedHtmlClarification?.options?.some((option) => option.id === "download_html"),
+    true,
+    "HTML clarification should expose a stable downloadable option id",
   );
 
   const casualDirect = await maybeCreateClarification({ userMessage: "Tell me a joke." });
@@ -476,6 +506,17 @@ async function main(): Promise<void> {
 
   try {
     installSupabaseEnvForDynamicImports();
+    const { resolveHardRoutedPlan } = await import("./orchestrator/planner");
+    assert.equal(
+      resolveHardRoutedPlan({ userMessage: resolvedDownloadPresentation.effectiveMessage, hasWebSearch: false })?.steps[0]?.tool,
+      "file_generation",
+      "download option should hard-route to file generation",
+    );
+    assert.equal(
+      resolveHardRoutedPlan({ userMessage: resolvedTextOutline.effectiveMessage, hasWebSearch: false })?.steps[0]?.tool,
+      "conversation",
+      "chat-only file clarification choice should stay in conversation",
+    );
     const { orchestrate } = await import("./orchestrator/aiOrchestrator");
     const clearWebSurf = await orchestrate({
       userMessage: "Latest news about cricket in India.",

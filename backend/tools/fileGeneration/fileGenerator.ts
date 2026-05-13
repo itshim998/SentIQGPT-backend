@@ -1,4 +1,5 @@
 ﻿import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import PDFDocument from "pdfkit";
 import pptxgen from "pptxgenjs";
 import {
@@ -15,6 +16,7 @@ import {
 } from "../../ai/PromptBuilders";
 import { getGeneratedFileStorageDatabase } from "../../dbRouter";
 import {
+  deleteGeneratedFileObject,
   saveGeneratedFileMetadata,
   uploadGeneratedFile,
 } from "./fileStorageService";
@@ -30,6 +32,14 @@ const PRIMARY_MODEL = "minimax";
 const FALLBACK_MODEL = "openai-large";
 const FILE_GENERATION_TIMEOUT_MS = 150_000;
 const FILE_GENERATION_MAX_TOKENS = 6500;
+const MIN_RAW_TEXT_REPAIR_CHARS = 24;
+const MAX_SECTIONS = 80;
+const MAX_SLIDES = 40;
+const MAX_BULLETS_PER_SLIDE = 8;
+const MAX_SHEETS = 5;
+const MAX_ROWS_PER_SHEET = 500;
+const MAX_COLUMNS_PER_SHEET = 40;
+const MAX_PREVIEW_ROWS_PER_SHEET = 25;
 
 type GeneratedSection = {
   readonly heading?: string;
@@ -95,6 +105,32 @@ function normalizeLine(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function inferTitleFromText(value: string, fallback = "Generated file"): string {
+  const firstLine = splitNonEmptyLines(value)
+    .map(stripMarkdownPrefix)
+    .find(Boolean);
+  if (!firstLine) return fallback;
+  return firstLine.replace(/[|*_`~]/g, "").slice(0, 90).trim() || fallback;
+}
+
+function slugifyFileBase(value: string, fallback = "generated-file"): string {
+  const cleaned = value
+    .normalize("NFKD")
+    .replace(/[^\w\s.-]/g, " ")
+    .replace(/\.[a-z0-9]{2,5}$/i, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "")
+    .toLowerCase()
+    .slice(0, 70);
+  return cleaned || fallback;
+}
+
+function buildGeneratedFileName(format: GeneratedFileFormat, spec: GeneratedFileSpec, userMessage: string): string {
+  const title = normalizeString(spec.title) || inferTitleFromText(spec.text || spec.html || userMessage);
+  return `${slugifyFileBase(title)}.${format}`;
+}
+
 function getArray(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : [];
 }
@@ -102,6 +138,10 @@ function getArray(value: unknown): readonly unknown[] {
 function clampPreviewText(text: string, maxChars = 2400): string {
   const normalized = text.replace(/\r\n?/g, "\n").trim();
   return normalized.length > maxChars ? `${normalized.slice(0, maxChars).trimEnd()}...` : normalized;
+}
+
+function countWords(text: string): number {
+  return (text.match(/\b[\p{L}\p{N}'-]+\b/gu) || []).length;
 }
 
 function stripJsonFence(raw: string): string {
@@ -123,10 +163,45 @@ function extractJsonObject(raw: string): string {
   return cleaned;
 }
 
+function splitNonEmptyLines(value: string): string[] {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function stripMarkdownPrefix(value: string): string {
+  return value
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^[-*+]\s+/, "")
+    .replace(/^\d+[.)]\s+/, "")
+    .replace(/^>\s+/, "")
+    .trim();
+}
+
+function rawTextLooksRepairable(raw: string, format: GeneratedFileFormat): boolean {
+  const cleaned = stripJsonFence(raw);
+  if (cleaned.length < MIN_RAW_TEXT_REPAIR_CHARS) return false;
+  if (format === "html") return /<\w+[\s>]|<!doctype html/i.test(cleaned);
+  if (format === "xlsx") return /\|.+\||(?:^|\n)[^,\n]+,[^,\n]+/m.test(cleaned);
+  if (format === "pptx") return /\bslide\s*\d+|^#{1,3}\s+|(?:^|\n)[-*]\s+/im.test(cleaned);
+  return splitNonEmptyLines(cleaned).length >= 2 || cleaned.split(/\s+/).length >= 12;
+}
+
+function specFromRawText(raw: string, format: GeneratedFileFormat): GeneratedFileSpec {
+  const cleaned = stripJsonFence(raw).trim();
+  if (!rawTextLooksRepairable(cleaned, format)) {
+    throw new Error("Model returned non-JSON content that is too small to repair");
+  }
+  if (format === "html") return { format, html: cleaned };
+  return { format, text: cleaned, title: inferTitleFromText(cleaned) };
+}
+
 function parseModelSpec(raw: string, format: GeneratedFileFormat): GeneratedFileSpec {
   const cleaned = stripJsonFence(raw);
 
-  if (format === "html" && /^<!doctype html|^<html[\s>]/i.test(cleaned)) {
+  if (format === "html" && /^(?:<!doctype html|<html[\s>]|<[\w-]+[\s>])/i.test(cleaned)) {
     return { format, html: cleaned };
   }
 
@@ -134,7 +209,11 @@ function parseModelSpec(raw: string, format: GeneratedFileFormat): GeneratedFile
   try {
     parsed = strictParseJsonObject(cleaned) as GeneratedFileSpec;
   } catch {
-    parsed = strictParseJsonObject(extractJsonObject(cleaned)) as GeneratedFileSpec;
+    try {
+      parsed = strictParseJsonObject(extractJsonObject(cleaned)) as GeneratedFileSpec;
+    } catch {
+      parsed = specFromRawText(cleaned, format);
+    }
   }
   return parsed;
 }
@@ -272,19 +351,184 @@ function repairXlsxSheets(spec: GeneratedFileSpec): GeneratedFileSpec {
   };
 }
 
+function parseMarkdownTable(text: string): GeneratedSheet | null {
+  const tableLines = splitNonEmptyLines(text).filter((line) => line.includes("|"));
+  if (tableLines.length < 2) return null;
+  const rows = tableLines
+    .filter((line) => !/^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(line))
+    .map((line) => line.replace(/^\|/, "").replace(/\|$/, "").split("|").map(normalizeLine))
+    .filter((row) => row.length >= 2 && row.some(Boolean));
+  if (rows.length < 2) return null;
+  return {
+    name: "Sheet 1",
+    columns: rows[0].slice(0, MAX_COLUMNS_PER_SHEET),
+    rows: rows.slice(1, MAX_ROWS_PER_SHEET + 1).map((row) => row.slice(0, MAX_COLUMNS_PER_SHEET)),
+  };
+}
+
+function parseDelimitedTable(text: string): GeneratedSheet | null {
+  const lines = splitNonEmptyLines(text)
+    .filter((line) => line.includes(",") || line.includes("\t"));
+  if (lines.length < 2) return null;
+  const delimiter = lines.filter((line) => line.includes("\t")).length > lines.length / 2 ? "\t" : ",";
+  const rows = lines
+    .map((line) => line.split(delimiter).map(normalizeLine))
+    .filter((row) => row.length >= 2 && row.some(Boolean));
+  if (rows.length < 2) return null;
+  const width = rows[0].length;
+  if (rows.slice(0, 5).some((row) => Math.abs(row.length - width) > 1)) return null;
+  return {
+    name: "Sheet 1",
+    columns: rows[0].slice(0, MAX_COLUMNS_PER_SHEET),
+    rows: rows.slice(1, MAX_ROWS_PER_SHEET + 1).map((row) => row.slice(0, MAX_COLUMNS_PER_SHEET)),
+  };
+}
+
+function repairXlsxSheetsFromText(spec: GeneratedFileSpec): GeneratedFileSpec {
+  if (getArray(spec.sheets).length > 0 || !spec.text) return spec;
+  const parsed = parseMarkdownTable(spec.text) || parseDelimitedTable(spec.text);
+  return parsed ? { ...spec, sheets: [parsed] } : spec;
+}
+
+function repairSlidesFromText(spec: GeneratedFileSpec): GeneratedFileSpec {
+  if (getArray(spec.slides).length > 0 || !spec.text) return spec;
+  const lines = splitNonEmptyLines(spec.text);
+  const slides: GeneratedSlide[] = [];
+  let current: { title: string; bullets: string[]; notes: string[] } | null = null;
+
+  const pushCurrent = () => {
+    if (!current) return;
+    const bullets = current.bullets.map(normalizeLine).filter(Boolean).slice(0, MAX_BULLETS_PER_SLIDE);
+    const notes = current.notes.map(stripMarkdownPrefix).join(" ").trim();
+    if (current.title || bullets.length > 0 || notes) {
+      slides.push({
+        title: normalizeString(current.title, `Slide ${slides.length + 1}`),
+        bullets: bullets.length > 0 ? bullets : (notes ? [notes] : []),
+        notes: notes || undefined,
+      });
+    }
+  };
+
+  for (const line of lines) {
+    const slideMatch = line.match(/^(?:#{1,3}\s*)?(?:slide\s*)?(\d{1,2})[.:)\-\s]+(.+)$/i);
+    const headingMatch = line.match(/^#{1,3}\s+(.+)$/);
+    if (slideMatch || (headingMatch && slides.length < MAX_SLIDES)) {
+      pushCurrent();
+      current = { title: stripMarkdownPrefix(slideMatch?.[2] || headingMatch?.[1] || ""), bullets: [], notes: [] };
+      continue;
+    }
+    if (!current) current = { title: inferTitleFromText(spec.text, "Slide 1"), bullets: [], notes: [] };
+    if (/^[-*+]\s+|^\d+[.)]\s+/.test(line)) {
+      current.bullets.push(stripMarkdownPrefix(line));
+    } else {
+      current.notes.push(line);
+    }
+  }
+  pushCurrent();
+
+  return slides.length > 0 ? { ...spec, slides: slides.slice(0, MAX_SLIDES) } : spec;
+}
+
+function repairDocumentSectionsFromText(spec: GeneratedFileSpec): GeneratedFileSpec {
+  if (getArray(spec.sections).length > 0 || !spec.text) return spec;
+  const lines = spec.text.replace(/\r\n?/g, "\n").split("\n");
+  const sections: GeneratedSection[] = [];
+  let current: { heading: string; body: string[]; bullets: string[] } | null = null;
+  const flush = () => {
+    if (!current) return;
+    const body = current.body.map(normalizeLine).filter(Boolean);
+    const bullets = current.bullets.map(normalizeLine).filter(Boolean);
+    if (current.heading || body.length > 0 || bullets.length > 0) {
+      sections.push({
+        heading: current.heading || `Section ${sections.length + 1}`,
+        body,
+        bullets,
+      });
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const heading = line.match(/^#{1,4}\s+(.+)$/);
+    if (heading) {
+      flush();
+      current = { heading: stripMarkdownPrefix(heading[1]), body: [], bullets: [] };
+      continue;
+    }
+    if (!current) current = { heading: inferTitleFromText(spec.text, "Document"), body: [], bullets: [] };
+    if (/^[-*+]\s+|^\d+[.)]\s+/.test(line)) {
+      current.bullets.push(stripMarkdownPrefix(line));
+    } else {
+      current.body.push(line);
+    }
+  }
+  flush();
+
+  return sections.length > 0 ? { ...spec, text: undefined, sections: sections.slice(0, MAX_SECTIONS) } : spec;
+}
+
+function limitSpecForFormat(spec: GeneratedFileSpec, format: GeneratedFileFormat): GeneratedFileSpec {
+  if (format === "pptx") {
+    return {
+      ...spec,
+      slides: getArray(spec.slides).slice(0, MAX_SLIDES).map((slide) => {
+        const typed = slide as GeneratedSlide;
+        return {
+          ...typed,
+          bullets: getArray(typed.bullets).slice(0, MAX_BULLETS_PER_SLIDE).map(normalizeLine).filter(Boolean),
+        };
+      }),
+    };
+  }
+  if (format === "docx" || format === "pdf") {
+    return {
+      ...spec,
+      sections: getArray(spec.sections).slice(0, MAX_SECTIONS).map((section) => {
+        const typed = section as GeneratedSection;
+        return {
+          heading: typed.heading,
+          body: getArray(typed.body).slice(0, 30).map(normalizeLine).filter(Boolean),
+          bullets: getArray(typed.bullets).slice(0, 30).map(normalizeLine).filter(Boolean),
+        };
+      }),
+    };
+  }
+  if (format === "xlsx") {
+    return {
+      ...spec,
+      sheets: getArray(spec.sheets).slice(0, MAX_SHEETS).map((sheet) => {
+        const typed = sheet as GeneratedSheet;
+        return {
+          ...typed,
+          columns: getArray(typed.columns).slice(0, MAX_COLUMNS_PER_SHEET).map(normalizeLine).filter(Boolean),
+          rows: getArray(typed.rows).slice(0, MAX_ROWS_PER_SHEET) as readonly (readonly unknown[] | Record<string, unknown>)[],
+        };
+      }),
+    };
+  }
+  return spec;
+}
+
 function repairSpecForFormat(spec: GeneratedFileSpec, format: GeneratedFileFormat): GeneratedFileSpec {
   const normalized: GeneratedFileSpec = { ...spec, format };
+  let repaired: GeneratedFileSpec;
   switch (format) {
     case "docx":
     case "pdf":
-      return repairDocumentSectionsFromSlides(normalized);
+      repaired = repairDocumentSectionsFromText(repairDocumentSectionsFromSlides(normalized));
+      break;
     case "pptx":
-      return repairSlidesFromDocumentSections(normalized);
+      repaired = repairSlidesFromText(repairSlidesFromDocumentSections(normalized));
+      break;
     case "xlsx":
-      return repairXlsxSheets(normalized);
+      repaired = repairXlsxSheetsFromText(repairXlsxSheets(normalized));
+      break;
     default:
-      return normalized;
+      repaired = normalized;
+      break;
   }
+  return limitSpecForFormat(repaired, format);
 }
 
 function collectDocumentLines(spec: GeneratedFileSpec): string[] {
@@ -331,7 +575,13 @@ async function renderTxt(spec: GeneratedFileSpec): Promise<RenderedFile> {
   return {
     buffer: Buffer.from(text.trim(), "utf8"),
     text: text.trim(),
-    preview: { text: clampPreviewText(text) },
+    preview: {
+      text: clampPreviewText(text),
+      document: {
+        title: inferTitleFromText(text),
+        word_count: countWords(text),
+      },
+    },
   };
 }
 
@@ -371,7 +621,14 @@ async function renderDocx(spec: GeneratedFileSpec): Promise<RenderedFile> {
   return {
     buffer,
     text: textPreview,
-    preview: { text: clampPreviewText(textPreview) },
+    preview: {
+      text: clampPreviewText(textPreview),
+      document: {
+        title,
+        section_count: getArray(spec.sections).length || undefined,
+        word_count: countWords(textPreview),
+      },
+    },
   };
 }
 
@@ -402,7 +659,14 @@ async function renderPdf(spec: GeneratedFileSpec): Promise<RenderedFile> {
   return {
     buffer,
     text,
-    preview: { text: clampPreviewText(text) },
+    preview: {
+      text: clampPreviewText(text),
+      document: {
+        title: lines[0] || "Document",
+        section_count: getArray(spec.sections).length || undefined,
+        word_count: countWords(text),
+      },
+    },
   };
 }
 
@@ -431,7 +695,8 @@ function normalizeSheetRows(sheet: GeneratedSheet): string[][] {
     .map((row) => {
       if (row && typeof row === "object" && !Array.isArray(row)) {
         const record = row as Record<string, unknown>;
-        return columns.map((column) => normalizeLine(record[column] ?? record[column.toLowerCase()] ?? ""));
+        const lowerLookup = new Map(Object.entries(record).map(([key, value]) => [key.toLowerCase(), value]));
+        return columns.map((column) => normalizeLine(record[column] ?? lowerLookup.get(column.toLowerCase()) ?? ""));
       }
       return getArray(row).map((cell) => normalizeLine(cell));
     })
@@ -457,11 +722,17 @@ async function renderXlsx(spec: GeneratedFileSpec): Promise<RenderedFile> {
   const firstSheet = sheets[0];
   if (!firstSheet) throw new Error("XLSX requires at least one sheet");
 
-  let previewRows: string[][] = [];
-  let previewName = normalizeString(firstSheet.name, "Sheet 1");
+  const previewSheets: Array<{
+    name: string;
+    rows: string[][];
+    row_count: number;
+    column_count: number;
+  }> = [];
 
   for (const [index, sheet] of sheets.entries()) {
-    const rows = normalizeSheetRows(sheet);
+    const rows = normalizeSheetRows(sheet)
+      .slice(0, MAX_ROWS_PER_SHEET + 1)
+      .map((row) => row.slice(0, MAX_COLUMNS_PER_SHEET));
     if (rows.length === 0) continue;
 
     const worksheet = workbook.addWorksheet(normalizeString(sheet.name, `Sheet ${index + 1}`).slice(0, 31));
@@ -471,10 +742,12 @@ async function renderXlsx(spec: GeneratedFileSpec): Promise<RenderedFile> {
     });
     worksheet.getRow(1).font = { bold: true };
 
-    if (previewRows.length === 0) {
-      previewRows = rows.slice(0, 16);
-      previewName = worksheet.name;
-    }
+    previewSheets.push({
+      name: worksheet.name,
+      rows: rows.slice(0, MAX_PREVIEW_ROWS_PER_SHEET),
+      row_count: rows.length,
+      column_count: Math.max(...rows.map((row) => row.length)),
+    });
   }
 
   if (workbook.worksheets.length === 0) throw new Error("XLSX content is empty");
@@ -484,9 +757,12 @@ async function renderXlsx(spec: GeneratedFileSpec): Promise<RenderedFile> {
   return {
     buffer,
     preview: {
+      sheets: previewSheets,
       sheet: {
-        name: previewName,
-        rows: previewRows,
+        name: previewSheets[0]?.name || "Sheet 1",
+        rows: previewSheets[0]?.rows || [],
+        row_count: previewSheets[0]?.row_count,
+        column_count: previewSheets[0]?.column_count,
       },
     },
   };
@@ -511,6 +787,29 @@ async function validateRenderedXlsx(rendered: RenderedFile): Promise<void> {
   }
 }
 
+async function validateOfficeZip(rendered: RenderedFile, format: "docx" | "pptx"): Promise<void> {
+  if (rendered.buffer[0] !== 0x50 || rendered.buffer[1] !== 0x4b || rendered.buffer.length < 1000) {
+    throw new Error(`${format.toUpperCase()} validation failed: invalid Office ZIP envelope`);
+  }
+  const zip = await JSZip.loadAsync(rendered.buffer);
+  if (!zip.file("[Content_Types].xml")) {
+    throw new Error(`${format.toUpperCase()} validation failed: missing content types`);
+  }
+  if (format === "docx") {
+    if (!zip.file("word/document.xml")) {
+      throw new Error("DOCX validation failed: missing word/document.xml");
+    }
+    return;
+  }
+  if (!zip.file("ppt/presentation.xml")) {
+    throw new Error("PPTX validation failed: missing ppt/presentation.xml");
+  }
+  const slideFiles = Object.keys(zip.files).filter((name) => /^ppt\/slides\/slide\d+\.xml$/i.test(name));
+  if (slideFiles.length === 0) {
+    throw new Error("PPTX validation failed: no slide XML files");
+  }
+}
+
 async function validateRenderedFile(rendered: RenderedFile, format: GeneratedFileFormat): Promise<void> {
   if (!Buffer.isBuffer(rendered.buffer) || rendered.buffer.length === 0) {
     throw new Error(`${format.toUpperCase()} validation failed: empty file buffer`);
@@ -529,12 +828,13 @@ async function validateRenderedFile(rendered: RenderedFile, format: GeneratedFil
       if (rendered.buffer.subarray(0, 4).toString("utf8") !== "%PDF") {
         throw new Error("PDF validation failed: invalid PDF header");
       }
+      if (!rendered.buffer.toString("latin1").includes("%%EOF") || !/\/Page\b/.test(rendered.buffer.toString("latin1"))) {
+        throw new Error("PDF validation failed: missing EOF or page marker");
+      }
       break;
     case "docx":
     case "pptx":
-      if (rendered.buffer[0] !== 0x50 || rendered.buffer[1] !== 0x4b || rendered.buffer.length < 1000) {
-        throw new Error(`${format.toUpperCase()} validation failed: invalid Office document`);
-      }
+      await validateOfficeZip(rendered, format);
       break;
     case "xlsx":
       await validateRenderedXlsx(rendered);
@@ -546,9 +846,10 @@ async function validateRenderedFile(rendered: RenderedFile, format: GeneratedFil
 
 async function renderPptx(spec: GeneratedFileSpec): Promise<RenderedFile> {
   const slides = (getArray(spec.slides) as readonly GeneratedSlide[])
+    .slice(0, MAX_SLIDES)
     .map((slide) => ({
       title: normalizeString(slide.title, "Slide"),
-      bullets: getArray(slide.bullets).map(normalizeLine).filter(Boolean).slice(0, 8),
+      bullets: getArray(slide.bullets).map(normalizeLine).filter(Boolean).slice(0, MAX_BULLETS_PER_SLIDE),
       notes: normalizeString(slide.notes),
     }))
     .filter((slide) => slide.title || slide.bullets.length > 0);
@@ -601,10 +902,18 @@ async function renderPptx(spec: GeneratedFileSpec): Promise<RenderedFile> {
   return {
     buffer,
     preview: {
+      slides: slides.map((slide, index) => ({
+        title: slide.title,
+        bullets: slide.bullets,
+        notes: slide.notes || undefined,
+        index: index + 1,
+      })),
+      slide_count: slides.length,
       slide: {
         title: slides[0].title,
         bullets: slides[0].bullets,
         notes: slides[0].notes || undefined,
+        index: 1,
       },
     },
   };
@@ -684,6 +993,7 @@ export async function routeFileGeneration(
 
   let rendered: RenderedFile;
   let llmResult: LLMAdapterResult;
+  let generatedSpec: GeneratedFileSpec | null = null;
   let fallback = false;
   let fallbackReason: string | null = null;
 
@@ -691,18 +1001,33 @@ export async function routeFileGeneration(
     const primary = await attemptGenerate(args, format, PRIMARY_MODEL, { callModel });
     rendered = primary.rendered;
     llmResult = primary.llm;
+    generatedSpec = primary.spec;
     fallback = primary.llm.fallback === true;
     fallbackReason = primary.llm.fallback_reason ?? null;
   } catch (primaryError) {
     fallback = true;
     fallbackReason = primaryError instanceof Error ? primaryError.message : String(primaryError);
-    const secondary = await attemptGenerate(args, format, FALLBACK_MODEL, { callModel });
-    rendered = secondary.rendered;
-    llmResult = {
-      ...secondary.llm,
-      fallback: true,
-      fallback_reason: fallbackReason,
-    };
+    try {
+      const secondary = await attemptGenerate(args, format, FALLBACK_MODEL, { callModel });
+      rendered = secondary.rendered;
+      generatedSpec = secondary.spec;
+      llmResult = {
+        ...secondary.llm,
+        fallback: true,
+        fallback_reason: fallbackReason,
+      };
+    } catch (secondaryError) {
+      const secondaryMessage = secondaryError instanceof Error ? secondaryError.message : String(secondaryError);
+      return {
+        success: false,
+        format,
+        file_name: `${slugifyFileBase(args.userMessage)}.${format}`,
+        mime_type: getGeneratedFileMimeType(format),
+        fallback: true,
+        fallback_reason: fallbackReason,
+        error: `File generation failed after fallback: ${secondaryMessage}`,
+      };
+    }
   }
 
   if (format === "html" && rendered.html && options.onHtmlToken) {
@@ -712,7 +1037,7 @@ export async function routeFileGeneration(
   }
 
   const mimeType = getGeneratedFileMimeType(format);
-  const fileName = `doc.${format}`;
+  const fileName = buildGeneratedFileName(format, generatedSpec || { format }, args.userMessage);
   const uploaded = await uploadFile(storageDb, {
     userId: args.userId,
     chatId: args.conversationId,
@@ -737,23 +1062,42 @@ export async function routeFileGeneration(
     };
   }
 
-  await saveMetadata(args.userDb, {
-    fileId: uploaded.fileId,
-    userId: args.userId,
-    chatId: args.conversationId,
-    format,
-    fileName,
-    mimeType,
-    fileUrl: uploaded.fileUrl,
-    storagePath: uploaded.storagePath,
-    fileSizeBytes: uploaded.fileSizeBytes ?? rendered.buffer.length,
-    storageBucket: uploaded.storageBucket,
-    contentSha256: uploaded.contentSha256,
-    version: uploaded.version,
-    prompt: args.userMessage,
-    provider: llmResult.model_used,
-    preview: rendered.preview,
-  });
+  try {
+    await saveMetadata(args.userDb, {
+      fileId: uploaded.fileId,
+      userId: args.userId,
+      chatId: args.conversationId,
+      format,
+      fileName,
+      mimeType,
+      fileUrl: uploaded.fileUrl,
+      storagePath: uploaded.storagePath,
+      fileSizeBytes: uploaded.fileSizeBytes ?? rendered.buffer.length,
+      storageBucket: uploaded.storageBucket,
+      contentSha256: uploaded.contentSha256,
+      version: uploaded.version,
+      prompt: args.userMessage,
+      provider: llmResult.model_used,
+      preview: rendered.preview,
+    });
+  } catch (metadataError) {
+    if (uploaded.storageBucket && uploaded.storagePath) {
+      await deleteGeneratedFileObject(storageDb, uploaded.storageBucket, uploaded.storagePath).catch(() => undefined);
+    }
+    return {
+      success: false,
+      format,
+      file_name: fileName,
+      mime_type: mimeType,
+      preview: rendered.preview,
+      html: rendered.html,
+      text: rendered.text,
+      model_used: llmResult.model_used,
+      fallback: true,
+      fallback_reason: metadataError instanceof Error ? metadataError.message : String(metadataError),
+      error: "Generated file could not be saved. Please try again.",
+    };
+  }
 
   return {
     type: "file",

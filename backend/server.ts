@@ -31,6 +31,7 @@ import { ensureHtmlDocument, getGeneratedFileMimeType, routeFileGeneration } fro
 import { detectGeneratedFileFormat, getFileGenerationGuestInstruction, isFileGenerationRequest } from "./tools/fileGeneration/fileDetector";
 import {
   buildGeneratedFileApiUrl,
+  deleteGeneratedFileObject,
   getStorageBucketName,
   hashGeneratedFile,
   updateGeneratedFileMetadata,
@@ -3719,6 +3720,10 @@ app.get(
       file_id: row.id,
       file_name: row.file_name,
       mime_type: row.mime_type,
+      file_size_bytes: row.file_size_bytes ?? null,
+      version: row.version || 1,
+      content_sha256: row.content_sha256 || null,
+      updated_at: row.updated_at || null,
       ...signed,
     });
   }),
@@ -3739,6 +3744,10 @@ app.get(
       file_id: row.id,
       file_name: row.file_name,
       mime_type: row.mime_type,
+      file_size_bytes: row.file_size_bytes ?? null,
+      version: row.version || 1,
+      content_sha256: row.content_sha256 || null,
+      updated_at: row.updated_at || null,
       ...signed,
     });
   }),
@@ -3764,9 +3773,12 @@ app.patch(
       throw new HttpError(400, "Only generated HTML files can be edited.", { code: "unsupported_generated_file_edit" });
     }
     if (parsed.data.version && row.version && parsed.data.version !== row.version) {
-      throw new HttpError(409, "This generated file changed in another session. Reload and try again.", {
+      res.status(409).json({
+        error: "This generated file changed in another session. Reload and try again.",
         code: "generated_file_version_conflict",
+        file: serializeGeneratedFileRow(row),
       });
+      return;
     }
 
     const html = ensureHtmlDocument(parsed.data.html);
@@ -3794,22 +3806,30 @@ app.patch(
     }
 
     const fileUrl = buildGeneratedFileApiUrl(fileId);
-    await updateGeneratedFileMetadata(userDb, {
-      fileId,
-      userId,
-      format: "html",
-      fileName,
-      mimeType,
-      fileUrl,
-      storagePath: uploaded.storagePath,
-      storageBucket: uploaded.storageBucket,
-      fileSizeBytes: uploaded.fileSizeBytes ?? buffer.length,
-      contentSha256: uploaded.contentSha256 || hashGeneratedFile(buffer),
-      version,
-      preview,
-    });
+    try {
+      await updateGeneratedFileMetadata(userDb, {
+        fileId,
+        userId,
+        format: "html",
+        fileName,
+        mimeType,
+        fileUrl,
+        storagePath: uploaded.storagePath,
+        storageBucket: uploaded.storageBucket,
+        fileSizeBytes: uploaded.fileSizeBytes ?? buffer.length,
+        contentSha256: uploaded.contentSha256 || hashGeneratedFile(buffer),
+        version,
+        preview,
+      });
+    } catch (metadataError) {
+      await deleteGeneratedFileObject(getGeneratedFileStorageDatabase(), uploaded.storageBucket, uploaded.storagePath)
+        .catch((cleanupError) => {
+          console.warn(`[GeneratedFiles] cleanup failed after metadata update failure fileId=${fileId}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+        });
+      throw metadataError;
+    }
 
-    await userDb
+    const { error: messageUpdateError } = await userDb
       .from("messages")
       .update({
         file_url: fileUrl,
@@ -3821,6 +3841,9 @@ app.patch(
         preview_json: preview,
       })
       .eq("generated_file_id", fileId);
+    if (messageUpdateError) {
+      logDbFailure("generated-files.update.messages", userId, messageUpdateError, { fileId });
+    }
 
     const updatedRow: GeneratedFileRow = {
       ...row,

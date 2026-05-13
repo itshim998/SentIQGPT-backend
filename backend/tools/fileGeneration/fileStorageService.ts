@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GeneratedFileFormat, GeneratedFilePreview } from "./types";
 
-const DEFAULT_STORAGE_BUCKET = "sentiq-generated-files-private";
+export const DEFAULT_GENERATED_FILE_STORAGE_BUCKET = "sentiq-generated-files-private";
 const STORAGE_BUCKET_LIMIT_BYTES = Number.parseInt(
   process.env.SENTIQ_GENERATED_FILE_STORAGE_LIMIT_BYTES || String(25 * 1024 * 1024),
   10,
@@ -66,7 +66,7 @@ export interface GeneratedFileMetadataUpdateParams {
 }
 
 export function getStorageBucketName(): string {
-  return process.env.SENTIQ_GENERATED_FILE_STORAGE_BUCKET?.trim() || DEFAULT_STORAGE_BUCKET;
+  return process.env.SENTIQ_GENERATED_FILE_STORAGE_BUCKET?.trim() || DEFAULT_GENERATED_FILE_STORAGE_BUCKET;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -112,7 +112,7 @@ async function ensureStorageBucket(supabaseClient: SupabaseClient): Promise<void
 
     if (!error && data) {
       const isPublic = Boolean((data as { public?: boolean }).public);
-      if (isPublic) {
+      if (isPublic && bucketName === DEFAULT_GENERATED_FILE_STORAGE_BUCKET) {
         const { error: updateError } = await supabaseClient.storage.updateBucket(bucketName, {
           public: false,
           fileSizeLimit: STORAGE_BUCKET_LIMIT_BYTES,
@@ -213,14 +213,6 @@ export async function uploadGeneratedFile(
 
       if (uploadError) throw new Error(uploadError.message);
 
-      const { data: urlData } = supabaseClient.storage
-        .from(bucketName)
-        .getPublicUrl(storagePath);
-
-      if (!urlData?.publicUrl) {
-        throw new Error("Failed to get public URL for generated file");
-      }
-
       return {
         success: true,
         fileId,
@@ -307,6 +299,20 @@ export async function uploadGeneratedFileReplacement(
     success: false,
     error: lastError?.message || "Generated file upload failed",
   };
+}
+
+export async function deleteGeneratedFileObject(
+  supabaseClient: SupabaseClient,
+  storageBucket: string,
+  storagePath: string,
+): Promise<void> {
+  if (!storageBucket || !storagePath) return;
+  const { error } = await supabaseClient.storage
+    .from(storageBucket)
+    .remove([storagePath]);
+  if (error) {
+    throw new Error(`Failed to delete generated file object: ${error.message}`);
+  }
 }
 
 export async function saveGeneratedFileMetadata(
