@@ -1,0 +1,303 @@
+/* ==============================
+   Responsive
+   ============================== */
+@media (max-width: 768px) {
+  :root {
+    --content-padding: 16px;
+    --message-indent: 30px;
+  }
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    height: 100dvh;
+    padding-top: max(0px, env(safe-area-inset-top));
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+    transform: translateX(-100%);
+    box-shadow: var(--shadow-lg);
+    background: rgba(9,9,15,0.95);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+  }
+  .sidebar.open {
+    transform: translateX(0);
+  }
+  .sidebar-toggle {
+    display: flex;
+    top: max(12px, env(safe-area-inset-top));
+    left: max(12px, env(safe-area-inset-left));
+  }
+  .message {
+    padding: 16px var(--content-padding);
+  }
+  .message.assistant {
+    padding: 16px var(--content-padding);
+  }
+  .chat-input-wrapper {
+    padding: 10px var(--content-padding) 16px;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+  .auth-actions {
+    top: max(12px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
+    gap: 8px;
+  }
+  .auth-actions[data-state="signed-in"] .auth-user-chip,
+  .auth-actions[data-state="signed-in"] #auth-logout-btn {
+    display: none !important;
+  }
+  .auth-actions[data-state="signed-in"] .auth-menu-toggle {
+    display: inline-flex;
+  }
+  .auth-btn {
+    padding: 9px 13px;
+    font-size: 0.78rem;
+  }
+  .auth-user-email {
+    max-width: 120px;
+  }
+  .modal-container {
+    width: 95vw;
+    max-height: 90vh;
+    margin: 0;
+  }
+  .message-content.math-enhanced::before {
+    left: 14px;
+  }
+  .message-content .math-display-shell {
+    margin: 14px 0;
+    padding: 12px 14px;
+  }
+  .thinking-panel[data-expanded="true"] .thinking-content {
+    max-height: 280px;
+  }
+  .starter-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  :root {
+    --message-indent: 26px;
+  }
+  .input-tools { gap: 0; }
+  .tool-btn { padding: 6px; }
+}
+
+/* ==============================
+   Stop / Interrupt Button State
+   ============================== */
+.btn-send.is-stop {
+  background: linear-gradient(135deg, var(--danger) 0%, #b91c1c 100%);
+  box-shadow: 0 2px 8px rgba(239,68,68,0.3);
+}
+.btn-send.is-stop:hover {
+  box-shadow: 0 4px 16px rgba(239,68,68,0.45);
+}
+.btn-send.is-stop svg { display: none; }
+.btn-send.is-stop::before {
+  content: '';
+  display: block;
+  width: 14px;
+  height: 14px;
+  background: white;
+  border-radius: 2px;
+}
+
+/* ==============================
+   Message Fade-In Animation
+   ============================== */
+@keyframes msgFadeIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.message {
+  animation: msgFadeIn 0.3s ease-out both;
+  will-change: transform, opacity;
+}
+.message.no-animate { animation: none; }
+
+/* ==============================
+   Virtualized (collapsed) messages
+   ============================== */
+.message.collapsed {
+  display: none;
+}
+.chat-messages .virt-placeholder {
+  text-align: center;
+  padding: 10px 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: color var(--transition);
+}
+.chat-messages .virt-placeholder:hover {
+  color: var(--text-secondary);
+}
+
+/* ==============================
+   GPU-accelerated shimmer for thinking
+   ============================== */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.typing-indicator {
+  will-change: transform;
+}
+
+/* ==============================
+   Performance: touch & tap
+   ============================== */
+button, .tool-btn, .btn-send, .chat-list-item, .btn-settings, .sidebar-toggle {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Image fade-in */
+.message-image {
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.message-image.loaded {
+  opacity: 1;
+}
+
+/* ==============================
+   Smart Scroll — "New messages" pill
+   ============================== */
+.scroll-anchor-pill {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: linear-gradient(135deg, var(--purple-600) 0%, var(--purple-500) 70%, rgba(125,211,252,0.9) 120%);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-radius: 20px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 10;
+  box-shadow: 0 2px 12px rgba(139,92,246,0.35), 0 0 18px var(--accent-cool-glow);
+  white-space: nowrap;
+}
+.scroll-anchor-pill.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ==============================
+   Error Bubble
+   ============================== */
+.message-error-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.message-error-text {
+  color: #fca5a5;
+}
+.error-retry-btn {
+  align-self: flex-start;
+  background: rgba(239,68,68,0.15);
+  color: #fca5a5;
+  border: 1px solid rgba(239,68,68,0.25);
+  border-radius: var(--radius-sm);
+  padding: 5px 14px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.error-retry-btn:hover {
+  background: rgba(239,68,68,0.25);
+  color: #fecaca;
+}
+
+/* ==============================
+   Toast Notification
+   ============================== */
+.toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  background: rgba(30,30,45,0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 12px 18px;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+  transform: translateX(120%);
+  opacity: 0;
+  transition: transform 0.3s cubic-bezier(0.4,0,0.2,1), opacity 0.3s ease;
+  max-width: 340px;
+}
+.toast.show {
+  transform: translateX(0);
+  opacity: 1;
+}
+.toast.toast-error { border-left: 3px solid var(--danger); }
+.toast.toast-success { border-left: 3px solid var(--success); }
+.toast.toast-info { border-left: 3px solid var(--purple-400); }
+
+/* ==============================
+   Send button ripple
+   ============================== */
+.btn-send {
+  position: relative;
+  overflow: hidden;
+}
+.btn-send::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at var(--ripple-x, 50%) var(--ripple-y, 50%), rgba(255,255,255,0.3) 0%, transparent 60%);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+.btn-send.ripple::after {
+  opacity: 1;
+  animation: rippleFade 0.5s ease-out forwards;
+}
+@keyframes rippleFade {
+  0% { opacity: 1; transform: scale(0.5); }
+  100% { opacity: 0; transform: scale(2.5); }
+}
+
+/* ==============================
+   Enhanced thinking indicator shimmer
+   ============================== */
+.typing-text-shimmer {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  background: linear-gradient(90deg, var(--text-muted) 0%, var(--purple-300) 50%, var(--text-muted) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* content-visibility for older messages */
+.message.offscreen {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 80px;
+}
+

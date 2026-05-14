@@ -1,0 +1,292 @@
+/* ==============================
+   Chat Messages
+   ============================== */
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  padding: 28px 0;
+  scrollbar-gutter: stable;
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+  z-index: 1;
+}
+
+.chat-messages.has-messages {
+  display: flex;
+}
+
+.chat-messages.drop-active {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.message {
+  padding: 22px var(--content-padding);
+  max-width: var(--content-max-width);
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* User message — fade + slide up */
+.message.user {
+  background: transparent;
+  animation: msgFadeUp 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+/* Assistant message — fade + slide up with glass effect */
+.message.assistant {
+  background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.02));
+  backdrop-filter: blur(14px) saturate(115%);
+  -webkit-backdrop-filter: blur(14px) saturate(115%);
+  border-top: 1px solid var(--glass-border);
+  border-bottom: 1px solid var(--glass-border);
+  max-width: 100%;
+  padding: 22px calc((100% - var(--content-max-width)) / 2 + var(--content-padding));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+  animation: msgFadeUp 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+@keyframes msgFadeUp {
+  from { opacity: 0; transform: translateY(12px) scale(0.99); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.message-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.message-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.message.user .message-avatar {
+  background: linear-gradient(135deg, var(--purple-500) 0%, var(--purple-700) 100%);
+  color: white;
+  box-shadow: 0 2px 8px rgba(139,92,246,0.25);
+}
+
+.message.assistant .message-avatar {
+  background: linear-gradient(135deg, var(--purple-400) 0%, var(--purple-600) 100%);
+  color: white;
+  box-shadow: 0 2px 8px rgba(167,139,250,0.25);
+}
+
+.message-sender {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.message-content {
+  font-size: 0.96rem;
+  line-height: 1.75;
+  color: var(--text-primary);
+  padding-left: var(--message-indent);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+.message.assistant .message-content {
+  margin-bottom: 16px;
+}
+
+.thinking-panel {
+  border: 1px solid rgba(139, 92, 246, 0.18);
+  background: linear-gradient(180deg, rgba(139,92,246,0.09), rgba(139,92,246,0.04));
+  border-radius: var(--radius-sm);
+  margin: 0 0 12px;
+  overflow: hidden;
+}
+
+.thinking-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.thinking-toggle:hover {
+  background: rgba(139,92,246,0.08);
+}
+
+.thinking-chevron {
+  display: inline-flex;
+  font-size: 0.76rem;
+  line-height: 1;
+  transition: transform var(--transition-slow);
+}
+
+.thinking-toggle[aria-expanded="true"] .thinking-chevron {
+  transform: rotate(90deg);
+}
+
+.thinking-content {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  padding: 0 12px;
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  transition:
+    max-height var(--transition-slow),
+    opacity var(--transition-slow),
+    padding var(--transition-slow);
+}
+
+.thinking-panel[data-expanded="true"] .thinking-content {
+  max-height: 340px;
+  opacity: 1;
+  padding: 0 12px 12px;
+  overflow-y: auto;
+}
+
+.message-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: var(--message-indent);
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.message-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 500;
+  opacity: 0.68;
+  transition: transform 0.18s ease, opacity 0.18s ease, background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.message-action-btn:hover {
+  opacity: 1;
+  color: var(--text-primary);
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.14);
+  transform: scale(1.05);
+}
+
+.message-action-btn:active {
+  transform: scale(0.95);
+}
+
+.message-action-btn:disabled,
+.message-action-btn.is-disabled {
+  cursor: default;
+  opacity: 0.38;
+  transform: none;
+}
+
+.message-action-btn.copied {
+  color: #c4f4d1;
+  background: rgba(34,197,94,0.12);
+  border-color: rgba(34,197,94,0.22);
+  opacity: 1;
+}
+
+.message-action-btn svg {
+  flex-shrink: 0;
+}
+
+.clarification-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.clarification-question {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.96rem;
+  line-height: 1.55;
+}
+
+.clarification-options {
+  display: grid;
+  gap: 8px;
+}
+
+.clarification-option-btn {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color var(--transition), border-color var(--transition), transform var(--transition);
+}
+
+.clarification-option-btn:hover {
+  background: rgba(255,255,255,0.07);
+  border-color: rgba(255,255,255,0.18);
+  transform: translateY(-1px);
+}
+
+.clarification-option-label {
+  font-weight: 650;
+  font-size: 0.88rem;
+}
+
+.clarification-option-desc,
+.clarification-custom-hint {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.clarification-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.clarification-cancel-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.78rem;
+  padding: 4px 0;
+}
+
+.clarification-cancel-btn:hover {
+  color: var(--text-primary);
+}
+

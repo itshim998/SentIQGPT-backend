@@ -8,6 +8,7 @@ import {
   isPrivateOrInternalHost,
 } from "./tools/webSearch/contentExtractor";
 import { validateFileUpload } from "./ai/FileIngestionHandler";
+import { readFrontendSources } from "./frontendSource";
 
 const root = path.resolve(__dirname, "..");
 const validUuid = "123e4567-e89b-12d3-a456-426614174000";
@@ -62,9 +63,9 @@ const validUuid = "123e4567-e89b-12d3-a456-426614174000";
 
 {
   const frontendDirEntries = fs.readdirSync(path.join(root, "frontend")).sort();
-  assert.deepEqual(frontendDirEntries, ["index.html"], "frontend directory should contain only index.html");
+  assert.deepEqual(frontendDirEntries, ["index.html", "scripts", "styles"], "frontend directory should contain modular static assets");
 
-  const indexHtml = fs.readFileSync(path.join(root, "frontend", "index.html"), "utf8");
+  const indexHtml = readFrontendSources(root).combined;
   const maybeGenerateTitleStart = indexHtml.indexOf("async function maybeGenerateTitle");
   const maybeGenerateTitleEnd = indexHtml.indexOf("function scrollToBottom", maybeGenerateTitleStart);
   assert(maybeGenerateTitleStart > 0 && maybeGenerateTitleEnd > maybeGenerateTitleStart);

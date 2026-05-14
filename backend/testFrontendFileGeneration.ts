@@ -1,8 +1,9 @@
 import assert from "assert";
-import { readFileSync } from "fs";
-import { join } from "path";
+import ts from "typescript";
+import { readFrontendSources } from "./frontendSource";
 
-const html = readFileSync(join(process.cwd(), "frontend", "index.html"), "utf8");
+const frontend = readFrontendSources();
+const html = frontend.combined;
 
 assert.match(html, /const DB_VERSION = 3;/);
 assert.match(html, /generatedFiles: "generated_files"/);
@@ -40,14 +41,24 @@ assert.match(html, /generated-slide-card/);
 assert.match(html, /generated-preview-meta/);
 assert.match(html, /generated-pdf-preview/);
 
-const inlineScripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
-assert.ok(inlineScripts.length >= 3, "expected inline scripts to parse");
-inlineScripts.forEach((script, index) => {
-  try {
-    new Function(script);
-  } catch (error) {
-    throw new Error(`inline script ${index + 1} failed to parse: ${error instanceof Error ? error.message : String(error)}`);
-  }
+assert.ok(frontend.scriptFiles.length >= 8, "expected modular frontend scripts to parse");
+frontend.scriptFiles.forEach((file) => {
+  const result = ts.transpileModule(file.content, {
+    fileName: file.relativePath,
+    reportDiagnostics: true,
+    compilerOptions: {
+      allowJs: true,
+      checkJs: false,
+      module: ts.ModuleKind.ES2022,
+      target: ts.ScriptTarget.ES2022,
+    },
+  });
+  const errors = (result.diagnostics || []).filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
+  assert.equal(
+    errors.length,
+    0,
+    `${file.relativePath} failed to parse: ${errors.map((diagnostic) => diagnostic.messageText).join("; ")}`,
+  );
 });
 
 console.log("frontend file generation static checks passed");

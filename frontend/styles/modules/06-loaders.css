@@ -1,0 +1,363 @@
+/* ==============================
+  Typing Indicator — Premium Motion
+   ============================== */
+.typing-indicator {
+  padding: 12px var(--content-padding);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  width: 100%;
+  position: relative;
+  z-index: 1;
+  animation: msgFadeUp 0.25s ease-out both;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  --typing-grid-size: 6;
+  --typing-dot-size: 6px;
+  --typing-gap-size: 5px;
+}
+
+.typing-indicator.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.typing-indicator.loader-image {
+  --typing-grid-size: 5;
+  --typing-dot-size: 7px;
+  --typing-gap-size: 4px;
+}
+
+.typing-indicator.loader-chart {
+  --typing-grid-size: 7;
+  --typing-dot-size: 5px;
+  --typing-gap-size: 4px;
+}
+
+.typing-dots {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--typing-grid-size), var(--typing-dot-size));
+  gap: var(--typing-gap-size);
+  width: max-content;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+
+.typing-dots::after {
+  content: '';
+  position: absolute;
+  inset: -25%;
+  background: radial-gradient(circle at center, rgba(167,139,250,0.22), rgba(139,92,246,0) 64%);
+  animation: sentiqTypingRipple 2.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.typing-dots span,
+.typing-dots .typing-dot {
+  width: var(--typing-dot-size);
+  height: var(--typing-dot-size);
+  background: var(--purple-500);
+  border-radius: 50%;
+  animation: sentiqDotPulse 1.7s ease-in-out infinite both;
+  animation-delay: calc(var(--dot-delay, 0) * 70ms);
+  box-shadow: 0 0 10px rgba(139,92,246,0.36);
+  will-change: transform, opacity;
+}
+
+.typing-indicator.mode-reasoning .typing-dots span,
+.typing-indicator.mode-reasoning .typing-dots .typing-dot {
+  background: linear-gradient(135deg, #d8b4fe 0%, #a78bfa 55%, #8b5cf6 100%);
+}
+
+.slow-hint {
+  font-size: 0.75rem;
+  color: var(--purple-300, #c4b5fd);
+  opacity: 0;
+  animation: fadeIn 0.5s ease forwards;
+  white-space: nowrap;
+}
+@keyframes fadeIn { to { opacity: 1; } }
+
+@keyframes sentiqTypingRipple {
+  0%, 100% { transform: scale(0.88); opacity: 0.34; }
+  50% { transform: scale(1.16); opacity: 0.68; }
+}
+
+@keyframes sentiqDotPulse {
+  0%, 70%, 100% { opacity: 0.28; transform: scale(0.82) translateZ(0); }
+  35% { opacity: 1; transform: scale(1.12) translateZ(0); }
+}
+
+.typing-text {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.typing-indicator.mode-web-search .typing-dots span,
+.typing-indicator.mode-web-search .typing-dots .typing-dot {
+  background: linear-gradient(135deg, #60a5fa 0%, #8b5cf6 100%);
+  box-shadow: 0 0 10px rgba(96,165,250,0.35);
+}
+
+.typing-indicator.mode-web-search .typing-text-shimmer {
+  color: #bfd8ff;
+  background: linear-gradient(90deg, #7dd3fc 0%, #c4b5fd 50%, #7dd3fc 100%);
+  background-size: 220% 100%;
+  animation: shimmer 1.6s linear infinite, surfingPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes surfingPulse {
+  0%, 100% { opacity: 0.78; filter: drop-shadow(0 0 0 rgba(125,211,252,0)); }
+  50% { opacity: 1; filter: drop-shadow(0 0 8px rgba(125,211,252,0.22)); }
+}
+
+/* === SentIQ Quantum Loader === */
+.sentiq-loader-host {
+  position: relative;
+  width: 100%;
+  min-height: 76px;
+}
+
+.sentiq-loader {
+  --loader-radius: 14px;
+  --loader-glow: rgba(139,92,246,0.16);
+  --loader-surface: rgba(255,255,255,0.04);
+  --loader-surface-alt: rgba(255,255,255,0.08);
+  --loader-line-height: 10px;
+  position: relative;
+  width: 100%;
+  border-radius: var(--loader-radius);
+  border: 1px solid rgba(139,92,246,0.16);
+  background: linear-gradient(165deg, rgba(10,12,24,0.66), rgba(18,16,34,0.48));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 14px 32px rgba(25,20,44,0.24);
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  overflow: hidden;
+  transform: translateY(6px) scale(0.985);
+  opacity: 0;
+  filter: blur(0.2px);
+  transition: opacity 0.24s ease, transform 0.3s cubic-bezier(0.2, 0.9, 0.2, 1), filter 0.24s ease;
+  will-change: transform, opacity;
+}
+
+.sentiq-loader.is-live {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  filter: blur(0);
+}
+
+.sentiq-loader.loader-exit {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  filter: blur(5px);
+}
+
+.sentiq-loader::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    118deg,
+    rgba(139,92,246,0) 6%,
+    rgba(139,92,246,0.09) 18%,
+    rgba(167,139,250,0.22) 34%,
+    rgba(196,181,253,0.34) 47%,
+    rgba(167,139,250,0.2) 58%,
+    rgba(139,92,246,0.08) 74%,
+    rgba(139,92,246,0) 88%
+  );
+  background-size: 260% 260%;
+  background-attachment: fixed;
+  animation: sentiqQuantumSweep 2.25s linear infinite;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+.sentiq-loader::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle at 15% 20%, rgba(255,255,255,0.06) 0 1px, transparent 1px),
+    radial-gradient(circle at 70% 65%, rgba(255,255,255,0.05) 0 1px, transparent 1px),
+    radial-gradient(circle at 45% 35%, rgba(255,255,255,0.05) 0 1px, transparent 1px);
+  background-size: 24px 24px, 32px 32px, 20px 20px;
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+@keyframes sentiqQuantumSweep {
+  from { background-position: 220% 0; }
+  to { background-position: -180% 0; }
+}
+
+.sentiq-loader-shell {
+  position: relative;
+  z-index: 1;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.sentiq-loader-shimmer {
+  position: relative;
+  border-radius: 10px;
+  background: linear-gradient(164deg, var(--loader-surface), var(--loader-surface-alt));
+  overflow: hidden;
+  transform: translateZ(0);
+}
+
+.sentiq-loader-shimmer::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(116deg, rgba(255,255,255,0) 10%, rgba(196,181,253,0.42) 50%, rgba(255,255,255,0) 90%);
+  background-size: 260% 260%;
+  background-attachment: fixed;
+  animation: sentiqQuantumSweep 2.25s linear infinite;
+  mix-blend-mode: screen;
+}
+
+.sentiq-loader.loader-text .loader-line {
+  height: var(--loader-line-height);
+}
+
+.sentiq-loader.loader-text .loader-line:nth-child(1) { width: 92%; }
+.sentiq-loader.loader-text .loader-line:nth-child(2) { width: 86%; }
+.sentiq-loader.loader-text .loader-line:nth-child(3) { width: 74%; }
+.sentiq-loader.loader-text .loader-line:nth-child(4) { width: 58%; }
+
+.sentiq-loader.loader-image .sentiq-loader-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.sentiq-loader.loader-image .loader-image-canvas {
+  width: min(100%, 260px);
+  aspect-ratio: 1 / 1;
+  border-radius: 16px;
+  border: 1px solid rgba(139,92,246,0.2);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05), 0 0 24px var(--loader-glow);
+}
+
+.sentiq-loader.loader-chart .loader-chart-frame {
+  position: relative;
+  width: 100%;
+  height: 180px;
+  border-radius: 14px;
+  border: 1px solid rgba(139,92,246,0.18);
+  background: linear-gradient(180deg, rgba(139,92,246,0.07), rgba(18,18,30,0.16));
+  overflow: hidden;
+}
+
+.sentiq-loader.loader-chart .loader-chart-axis-x,
+.sentiq-loader.loader-chart .loader-chart-axis-y {
+  position: absolute;
+  background: rgba(196,181,253,0.42);
+}
+
+.sentiq-loader.loader-chart .loader-chart-axis-x {
+  left: 18px;
+  right: 14px;
+  bottom: 14px;
+  height: 2px;
+}
+
+.sentiq-loader.loader-chart .loader-chart-axis-y {
+  left: 18px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+}
+
+.sentiq-loader.loader-chart .loader-chart-bars {
+  position: absolute;
+  left: 30px;
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.sentiq-loader.loader-chart .loader-chart-bar {
+  border-radius: 8px 8px 4px 4px;
+  min-height: 26px;
+  animation: sentiqChartPulse 1.8s ease-in-out infinite;
+  animation-delay: calc(var(--bar-delay, 0) * 0.1s);
+}
+
+@keyframes sentiqChartPulse {
+  0%, 100% { transform: scaleY(0.9); opacity: 0.55; }
+  45% { transform: scaleY(1.06); opacity: 0.95; }
+}
+
+.sentiq-loader.loader-generic .sentiq-loader-shell {
+  align-items: center;
+}
+
+.sentiq-dot-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(6, 8px);
+  gap: 6px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.08);
+  width: max-content;
+  margin: 0 auto;
+  transform: perspective(500px) rotateX(8deg);
+  transition: transform 0.25s ease;
+}
+
+.sentiq-loader:hover .sentiq-dot-grid {
+  transform: perspective(500px) rotateX(8deg) translateY(-1px);
+}
+
+.sentiq-dot-grid::after {
+  content: '';
+  position: absolute;
+  inset: -18%;
+  background: radial-gradient(circle at center, rgba(167,139,250,0.22), rgba(139,92,246,0) 70%);
+  animation: sentiqDotFieldRipple 2.1s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.sentiq-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #d8b4fe, #8b5cf6 70%);
+  box-shadow: 0 0 10px rgba(139,92,246,0.42);
+  animation: sentiqDotPulse 1.8s ease-in-out infinite;
+  animation-delay: calc(var(--dot-delay, 0) * 55ms);
+}
+
+@keyframes sentiqDotFieldRipple {
+  0%, 100% { opacity: 0.28; transform: scale(0.9); }
+  50% { opacity: 0.7; transform: scale(1.16); }
+}
+
+.sentiq-reveal-target {
+  opacity: 0;
+  transform: scale(0.98);
+  filter: blur(6px);
+  transition: opacity 0.28s ease, transform 0.3s cubic-bezier(0.2, 0.9, 0.2, 1), filter 0.28s ease;
+}
+
+.sentiq-reveal-target.is-visible {
+  opacity: 1;
+  transform: scale(1);
+  filter: blur(0);
+}
+

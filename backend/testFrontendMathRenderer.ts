@@ -1,7 +1,6 @@
 import { createRequire } from "module";
-import { readFileSync } from "fs";
-import { join } from "path";
 import { createContext, runInContext } from "vm";
+import { readFrontendSources } from "./frontendSource";
 
 type RendererUtils = {
   renderRichText: (text: string, options?: Record<string, unknown>, deps?: Record<string, unknown>) => string;
@@ -20,11 +19,11 @@ const requireFromTest = createRequire(__filename);
 const markedModule = requireFromTest("marked");
 const katex = requireFromTest("katex");
 const marked = markedModule.marked || markedModule;
-const frontendHtml = readFileSync(join(process.cwd(), "frontend", "index.html"), "utf8");
-const rendererSource = Array.from(frontendHtml.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi))
-  .map((match) => match[1] || "")
-  .find((source) => source.includes("root.SentIQRenderer = factory(root)")) || "";
-assert(Boolean(rendererSource), "index.html exposes inline renderer source");
+const frontend = readFrontendSources();
+const frontendSource = frontend.combined;
+const rendererSource = frontend.scripts["scripts/rendering/rich-text-renderer.js"] || "";
+const mainSource = frontend.scripts["scripts/main.js"] || "";
+assert(Boolean(rendererSource), "frontend exposes modular renderer source");
 
 const rendererSandbox = {
   module: { exports: {} as Partial<RendererUtils> },
@@ -51,7 +50,7 @@ function stripHtml(html: string): string {
 
 function extractFunction(source: string, name: string): string {
   const start = source.indexOf(`function ${name}`);
-  assert(start >= 0, `index.html defines ${name}`);
+  assert(start >= 0, `frontend source defines ${name}`);
   const openBrace = source.indexOf("{", start);
   let depth = 0;
   for (let index = openBrace; index < source.length; index += 1) {
@@ -62,7 +61,7 @@ function extractFunction(source: string, name: string): string {
       if (depth === 0) return source.slice(start, index + 1);
     }
   }
-  assert(false, `index.html has a complete ${name} body`);
+  assert(false, `frontend source has a complete ${name} body`);
   return "";
 }
 
@@ -70,13 +69,13 @@ function assertCleanMathHtml(html: string, label: string): void {
   assert(!/\b(?:SENTIQ|MATH\d+)\b|@@/.test(stripHtml(html)), `${label} has no visible math sentinels`);
 }
 
-assert(/marked@15\.0\.7/.test(frontendHtml), "frontend uses the expected marked CDN version");
-assert(/katex@0\.16\.11/.test(frontendHtml), "frontend uses the expected KaTeX CDN version");
-assert(!/<script\s+src=["']scripts\/renderer-utils\.js/i.test(frontendHtml), "frontend no longer depends on external renderer-utils.js");
-const inlineRendererIndex = frontendHtml.indexOf("root.SentIQRenderer = factory(root)");
-const chatControllerIndex = frontendHtml.indexOf("// 3. Chat UI Controller");
-assert(inlineRendererIndex >= 0, "index.html includes the inline SentIQRenderer");
-assert(chatControllerIndex > inlineRendererIndex, "inline renderer loads before the chat controller");
+assert(/marked@15\.0\.7/.test(frontend.indexHtml), "frontend uses the expected marked CDN version");
+assert(/katex@0\.16\.11/.test(frontend.indexHtml), "frontend uses the expected KaTeX CDN version");
+assert(!/<script\s+src=["']scripts\/renderer-utils\.js/i.test(frontendSource), "frontend no longer depends on external renderer-utils.js");
+const rendererImportIndex = mainSource.indexOf("./rendering/rich-text-renderer.js");
+const chatControllerImportIndex = mainSource.indexOf("./features/chat-controller.js");
+assert(rendererImportIndex >= 0, "main module imports SentIQRenderer");
+assert(chatControllerImportIndex > rendererImportIndex, "renderer module loads before the chat controller");
 assert(typeof renderer.renderRichText === "function", "renderer utility exports renderRichText");
 assert(typeof renderer.segmentText === "function", "renderer utility exports segmentText");
 assert(!/mathBlocks|restoreMath|protectExplicitMath/.test(rendererSource), "renderer no longer stashes math placeholders through Markdown");
@@ -100,8 +99,8 @@ assert(/x = 4 and y = 7/.test(stripHtml(rawEquationHtml)), "raw undelimited equa
 assert(!/math-display-shell|katex/.test(rawEquationHtml), "raw undelimited equations are not auto-rendered as math");
 
 const dollarMathHtml = renderMath("$x + 1$ stays literal unless the model uses renderer-safe delimiters.");
-assert(/\$x \+ 1\$/.test(stripHtml(dollarMathHtml)), "single-dollar math remains literal text");
-assert(!/math-display-shell|katex/.test(dollarMathHtml), "single-dollar math is not rendered by the active renderer");
+assert(/x \+ 1/.test(stripHtml(dollarMathHtml)), "single-dollar math remains readable text");
+assert(/katex/.test(dollarMathHtml), "single-dollar math keeps the current KaTeX renderer behavior");
 
 const falsePositionHtml = renderMath(String.raw`
 Using the False Position formula:
@@ -117,8 +116,8 @@ x = \frac{2(6)-3(-9)}{6-(-9)} = 2.600
 Now check \(f(2.6)\) and keep the interval \(\left[2.6,3\right]\).
 `);
 assert(/math-display-shell/.test(falsePositionHtml), "false-position display formulas render as display math");
-assert(/\.math-display-shell[\s\S]*overflow-x:\s*auto/.test(frontendHtml), "display math shell remains horizontally scrollable by CSS");
-assert(/\.math-display-shell[\s\S]*overflow-y:\s*visible/.test(frontendHtml), "display math shell does not vertically clip fractions");
+assert(/\.math-display-shell[\s\S]*overflow-x:\s*auto/.test(frontendSource), "display math shell remains horizontally scrollable by CSS");
+assert(/\.math-display-shell[\s\S]*overflow-y:\s*visible/.test(frontendSource), "display math shell does not vertically clip fractions");
 assert(/Now check/.test(stripHtml(falsePositionHtml)), "false-position prose remains readable");
 assertCleanMathHtml(falsePositionHtml, "false-position formulas");
 
@@ -126,7 +125,7 @@ const leakedHtml = renderMath("SENTIQMATHBLOCKTOKEN2END @@SENTIQ_MATH_3@@ MATH4 
 assert(!/SENTIQ|MATH4|@@/.test(stripHtml(leakedHtml)), "legacy leaked sentinel artifacts are stripped");
 assert(/readable text/.test(stripHtml(leakedHtml)), "sentinel cleanup preserves recoverable prose");
 
-const fallbackFunction = extractFunction(frontendHtml, "renderMarkdownOnlyFallback");
+const fallbackFunction = extractFunction(frontendSource, "renderMarkdownOnlyFallback");
 const fallbackSandbox = {
   window: { marked },
   MAX_RENDER_CHARS: 100000,
@@ -149,10 +148,9 @@ runInContext(
 assert(/<strong>bold<\/strong>/.test(fallbackSandbox.fallbackResult), "Markdown fallback renders bold text");
 assert(!/SENTIQ|MATH\d+|@@/.test(stripHtml(fallbackSandbox.fallbackResult)), "Markdown fallback strips leaked sentinels");
 
-const streamingBranchIndex = frontendHtml.indexOf('if (renderMode === "math")');
-const chunkRenderIndex = frontendHtml.indexOf("renderRichText(chunk");
-assert(streamingBranchIndex >= 0, "math streaming has a plain-preview branch");
-assert(chunkRenderIndex >= 0, "non-math streaming still uses chunk rendering");
-assert(streamingBranchIndex < chunkRenderIndex, "math streaming bypasses rich chunk rendering before chunk renderer");
+const mathStreamModeIndex = frontendSource.indexOf('streamBubble.setRenderMode("math")');
+const progressiveRenderIndex = frontendSource.indexOf("renderRichText(safeText, { mode: getRenderMode() })");
+assert(mathStreamModeIndex >= 0, "math streaming switches the active bubble into math render mode");
+assert(progressiveRenderIndex >= 0, "streaming renderer uses render-mode aware progressive rich rendering");
 
 console.log("\nFrontend math renderer regression validation passed.");

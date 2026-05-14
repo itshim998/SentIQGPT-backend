@@ -1,0 +1,139 @@
+/* ============================================================
+   SentIQGPT v3 — Liquid Glass Design System
+   Inspired by HealthIQ's glassmorphism, gradient lighting,
+   and animation philosophy.
+   ============================================================ */
+   
+
+:root {
+  /* Typography */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+
+  /* Purple palette */
+  --purple-300: #c4b5fd;
+  --purple-400: #a78bfa;
+  --purple-500: #8b5cf6;
+  --purple-600: #7c3aed;
+  --purple-700: #6d28d9;
+  --purple-800: #5b21b6;
+
+  /* Backgrounds */
+  --bg-primary: #09090f;
+  --bg-secondary: rgba(255,255,255,0.03);
+  --bg-tertiary: rgba(255,255,255,0.06);
+  --bg-hover: rgba(255,255,255,0.08);
+  --bg-input: rgba(255,255,255,0.05);
+  --bg-glass: rgba(255,255,255,0.04);
+  --bg-glass-hover: rgba(255,255,255,0.07);
+
+  /* Text */
+  --text-primary: #ececf1;
+  --text-secondary: #9494a8;
+  --text-muted: #5a5a72;
+  --text-heading: #f5f3ff;
+
+  /* Accent */
+  --accent: var(--purple-500);
+  --accent-hover: var(--purple-600);
+  --accent-glow: rgba(139,92,246,0.10);
+  --accent-glow-strong: rgba(139,92,246,0.18);
+  --accent-cool: #7dd3fc;
+  --accent-cool-glow: rgba(125,211,252,0.22);
+
+  /* Semantic */
+  --danger: #ef4444;
+  --success: #22c55e;
+
+  /* Borders */
+  --border: rgba(255,255,255,0.08);
+  --border-light: rgba(255,255,255,0.12);
+
+  /* Radii */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* Transitions */
+  --transition: 0.2s ease;
+  --transition-slow: 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Shadows */
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 20px rgba(0,0,0,0.5);
+  --shadow-lg: 0 8px 40px rgba(0,0,0,0.6);
+  --shadow-glow: 0 0 24px rgba(139,92,246,0.10);
+
+  /* Glass */
+  --glass-blur: blur(16px) saturate(120%);
+  --glass-bg: rgba(255,255,255,0.04);
+  --glass-border: rgba(255,255,255,0.1);
+
+  /* Layout */
+  --sidebar-width: 280px;
+  --content-max-width: 860px;
+  --content-padding: 24px;
+  --message-indent: 38px;
+}
+
+/* ==============================
+   Reset & Base
+   ============================== */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
+  color-scheme: dark;
+}
+
+body.body-sidebar-open,
+body.body-modal-open {
+  overscroll-behavior: none;
+}
+
+/* Restrained background glow */
+body::before {
+  content: '';
+  position: fixed;
+  top: -160px;
+  left: -180px;
+  width: 420px;
+  height: 420px;
+  background: radial-gradient(circle, rgba(139,92,246,0.08) 0%, transparent 72%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.9;
+}
+body::after {
+  content: '';
+  position: fixed;
+  right: -140px;
+  bottom: -180px;
+  width: 380px;
+  height: 380px;
+  background: radial-gradient(circle, rgba(125,211,252,0.12) 0%, transparent 72%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.75;
+}
+
+/* Scrollbar — thin purple tint */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.25); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(139,92,246,0.40); }
+

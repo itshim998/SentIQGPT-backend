@@ -8,6 +8,7 @@ import {
   resolveMemoryScopeForRequest,
 } from "./memory/memoryScope";
 import { selectMemoriesForQuery } from "./context/memorySelector";
+import { readFrontendSources } from "./frontendSource";
 
 function assertMemoryScopeContract() {
   assert.strictEqual(
@@ -74,7 +75,7 @@ function assertPromptContract() {
 
 function assertFrontendContract() {
   const root = resolve(__dirname, "..");
-  const frontendSource = readFileSync(resolve(root, "frontend", "index.html"), "utf8");
+  const frontendSource = readFrontendSources(root).combined;
   assert.ok(
     frontendSource.includes('return "global";'),
     "frontend memory scope fallback should default to global",
@@ -84,7 +85,8 @@ function assertFrontendContract() {
     "frontend must not force project memories into chat scope",
   );
   assert.ok(
-    frontendSource.includes("Remembered across chats") &&
+    frontendSource.includes("Across chats") &&
+    frontendSource.includes("Single chat") &&
     frontendSource.includes("memory-scope-badge"),
     "frontend should show persisted memory trust state and scope badges",
   );

@@ -6,6 +6,7 @@ import {
   resolveClarificationInput,
   selectClarificationModel,
 } from "./orchestrator/intentClarifier";
+import { readFrontendSources } from "./frontendSource";
 
 function installSupabaseEnvForDynamicImports(): void {
   for (const id of [1, 2, 3, 4]) {
@@ -581,7 +582,7 @@ async function main(): Promise<void> {
     globalThis.fetch = originalFetch;
   }
 
-  const frontend = await import("fs").then((fs) => fs.readFileSync("frontend/index.html", "utf8"));
+  const frontend = readFrontendSources().combined;
   assert.match(frontend, /clarification_response/, "frontend sends clarification_response");
   assert.match(frontend, /clarification-option-btn/, "frontend renders MCQ option buttons");
   assert.match(frontend, /pendingClarifications/, "frontend tracks pending clarification state");

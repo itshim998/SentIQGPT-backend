@@ -1,0 +1,424 @@
+/* ==============================
+   Input Area — Glass Container
+   ============================== */
+.chat-input-wrapper {
+  padding: 14px var(--content-padding) 24px;
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  width: 100%;
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+}
+
+.file-preview-area {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 4px;
+}
+
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  animation: emptyFadeIn 0.2s ease;
+}
+
+.file-chip-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0;
+  line-height: 1;
+  transition: color var(--transition);
+}
+.file-chip-remove:hover {
+  color: var(--danger);
+}
+
+.image-mode-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--accent-glow);
+  border: 1px solid rgba(139,92,246,0.2);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  color: var(--purple-400);
+  margin-bottom: 8px;
+  animation: emptyFadeIn 0.2s ease;
+}
+
+.image-mode-cancel {
+  background: none;
+  border: none;
+  color: var(--purple-400);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition:
+    background-color var(--transition),
+    color var(--transition);
+}
+.image-mode-cancel:hover {
+  background: rgba(139,92,246,0.2);
+}
+
+.chat-input-area {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  position: relative;
+  overflow: visible;
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03));
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  transition: border-color var(--transition-slow), box-shadow var(--transition-slow), transform var(--transition-slow);
+}
+
+.chat-input-area:focus-within {
+  border-color: rgba(255,255,255,0.18);
+  box-shadow: 0 16px 30px rgba(0,0,0,0.35), 0 0 18px rgba(139,92,246,0.12);
+}
+
+.chat-input-area textarea:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.chat-input-area .composer-drop-overlay {
+  position: absolute;
+  inset: 6px;
+  border-radius: calc(var(--radius-lg) - 4px);
+  border: 1px dashed rgba(125,211,252,0.3);
+  background:
+    radial-gradient(circle at 20% 20%, rgba(125,211,252,0.18), transparent 55%),
+    radial-gradient(circle at 80% 70%, rgba(139,92,246,0.2), transparent 60%),
+    rgba(8, 10, 18, 0.55);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  opacity: 0;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  gap: 6px;
+  transform: scale(0.98);
+  transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+  z-index: 2;
+}
+
+.chat-input-area .composer-drop-overlay::before {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  background: conic-gradient(from 90deg, transparent 0deg, rgba(125,211,252,0.22) 80deg, transparent 160deg, rgba(139,92,246,0.2) 220deg, transparent 300deg);
+  opacity: 0;
+  animation: composerDropSweep 1.7s linear infinite;
+  mix-blend-mode: screen;
+}
+
+.composer-drop-orb {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.95), rgba(125,211,252,0.55), rgba(139,92,246,0.4));
+  box-shadow: 0 0 18px rgba(125,211,252,0.35), 0 0 30px rgba(139,92,246,0.2);
+  animation: composerDropOrb 1.6s ease-in-out infinite;
+}
+
+.composer-drop-text {
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+}
+
+.chat-input-area.drop-ready {
+  border-color: rgba(125,211,252,0.35);
+  box-shadow: 0 0 0 1px rgba(125,211,252,0.2), 0 18px 32px rgba(0,0,0,0.4);
+}
+
+.chat-input-area.drop-ready .composer-drop-overlay {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.chat-input-area.drop-ready .composer-drop-overlay::before {
+  opacity: 1;
+}
+
+.chat-input-area.drop-over {
+  border-color: rgba(125,211,252,0.6);
+  box-shadow: 0 0 0 1px rgba(125,211,252,0.35), 0 0 24px rgba(125,211,252,0.2), 0 20px 36px rgba(0,0,0,0.45);
+  transform: translateY(-1px);
+}
+
+.chat-input-area.drop-over .composer-drop-overlay {
+  border-color: rgba(125,211,252,0.55);
+}
+
+@keyframes composerDropSweep {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes composerDropOrb {
+  0%, 100% { transform: translateY(0) scale(0.96); opacity: 0.75; }
+  50% { transform: translateY(-4px) scale(1.05); opacity: 1; }
+}
+
+.input-tools {
+  display: flex;
+  gap: 2px;
+  padding-bottom: 2px;
+}
+
+.composer-plus-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--text-secondary);
+  font-size: 1.2rem;
+  font-weight: 500;
+}
+
+.composer-plus-btn:hover {
+  background: rgba(255,255,255,0.08);
+  color: var(--text-primary);
+  transform: scale(1.05);
+}
+
+.composer-plus-btn:active {
+  transform: scale(0.95);
+}
+
+.composer-plus-btn.active {
+  color: var(--text-primary);
+  background: var(--accent-glow);
+  border-color: rgba(139,92,246,0.28);
+}
+
+.composer-action-menu {
+  position: absolute;
+  left: 12px;
+  bottom: calc(100% + 10px);
+  width: min(220px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: rgba(15, 15, 25, 0.78);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 16px;
+  box-shadow: 0 14px 36px rgba(0,0,0,0.38), 0 0 0 1px rgba(255,255,255,0.03) inset;
+  opacity: 0;
+  transform: translateY(6px) scale(0.95);
+  transform-origin: bottom left;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 12;
+}
+
+.composer-action-menu.open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.composer-action-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.18s ease, opacity 0.18s ease, background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.composer-action-option:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.09);
+  transform: scale(1.05);
+}
+
+.composer-action-option:active {
+  transform: scale(0.95);
+}
+
+.composer-action-option.auth-disabled,
+.composer-action-option:disabled {
+  opacity: 0.45;
+}
+
+.composer-action-option.active {
+  background: rgba(139,92,246,0.12);
+  border-color: rgba(139,92,246,0.22);
+  color: #ddd6fe;
+}
+
+.composer-action-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--purple-300);
+  flex-shrink: 0;
+}
+
+.composer-action-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.composer-action-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.composer-action-subtitle {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.tool-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease-out, color 0.15s ease-out, transform 0.15s ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tool-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+.tool-btn:active {
+  transform: scale(0.93);
+}
+.tool-btn.active {
+  color: var(--purple-400);
+  background: var(--accent-glow);
+}
+
+.input-field-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  position: relative;
+}
+
+.input-field-wrapper textarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+  padding: 6px 4px;
+  min-height: 44px;
+  max-height: 150px;
+  line-height: 1.55;
+}
+.input-field-wrapper textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.composer-hint-overlay {
+  position: absolute;
+  left: 4px;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(148,148,168,0.78);
+  font-size: 0.93rem;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.composer-hint-overlay.visible {
+  opacity: 1;
+}
+
+.composer-hint-prefix {
+  color: rgba(148,148,168,0.66);
+  flex-shrink: 0;
+}
+
+.composer-hint-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-send {
+  background: linear-gradient(135deg, var(--purple-500) 0%, var(--purple-700) 100%);
+  border: none;
+  color: white;
+  cursor: pointer;
+  width: 38px;
+  height: 38px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, opacity 0.18s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(139,92,246,0.2);
+}
+.btn-send:hover {
+  box-shadow: 0 6px 16px var(--accent-glow-strong);
+  transform: translateY(-1px);
+}
+.btn-send:active {
+  transform: scale(0.95);
+}
+.btn-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+

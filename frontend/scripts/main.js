@@ -1,0 +1,9 @@
+import "./config.js";
+import "./rendering/rich-text-renderer.js";
+import "./services/storage.js";
+import "./services/auth.js";
+import "./services/api.js";
+import "./features/chat-controller.js";
+import "./panels/memory-panel.js";
+import "./panels/file-panel.js";
+import "./panels/settings-panel.js";

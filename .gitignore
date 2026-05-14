@@ -22,8 +22,7 @@ venv/
 *.db
 sentiq_cache.db*
 
-# Frontend - deployed separately
-frontend/
+# Frontend is deployed separately but tracked as static source.
 healthiq_frontend.html
 
 # Backups
@@ -53,3 +52,4 @@ AZURE_DEPLOYMENT_GUIDE.md
 DOCKER_GUIDE.md
 ENVIRONMENT_VARIABLES.md
 All_About_SentIQGPT.txt
+backup_monolithic_index.html
