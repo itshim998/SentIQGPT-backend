@@ -1,6 +1,8 @@
 // ================================================================
 // 3. API Client
 // ================================================================
+import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
+
 const API_BASE = window.SENTIQ_API_BASE ||
   (location.hostname === "localhost" || location.hostname === "127.0.0.1"
     ? "http://localhost:3001"
@@ -14,8 +16,6 @@ async function buildAuthHeaders(baseHeaders = {}) {
   } catch { /* auth header is optional for non-chat routes */ }
   return headers;
 }
-
-const PROFILE_NAME_REQUIRED_EVENT = "sentiq:profile-name-required";
 
 function dispatchProfileNameRequired(detail = {}) {
   window.dispatchEvent(new CustomEvent(PROFILE_NAME_REQUIRED_EVENT, { detail }));
@@ -338,6 +338,7 @@ async function subscribeFileUpdates(callbacks = {}, signal = null) {
         size: options.size,
         ...(conversationId ? { conversationId } : {}),
         ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
+        context: buildChatRequestContext(options.context || {}),
       }),
     });
   }

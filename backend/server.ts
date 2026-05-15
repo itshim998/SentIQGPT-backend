@@ -137,6 +137,7 @@ import {
 import { getOptionalUuid, getRequiredUuid } from "./validation/uuid";
 import { ZodError } from "zod";
 import { collapseAdjacentDuplicateMessages } from "./context/messageDeduper";
+import { resolveContextReferences } from "./context/referenceResolver";
 import { callMathModelRaw } from "./ai/mathVerifier";
 
 const app = express();
@@ -3897,6 +3898,42 @@ app.post(
 
     const conversationId = getOptionalUuid(parsed.data.conversationId, "conversationId") || "";
     const clientRequestId = parsed.data.clientRequestId?.trim() || "";
+    const imageContextRecentMessages = collapseAdjacentDuplicateMessages(
+      parsed.data.context?.recent_messages ?? [],
+    );
+    const promptResolution = resolveContextReferences({
+      input: parsed.data.prompt,
+      tool: "image_generation",
+      recentMessages: imageContextRecentMessages,
+      memories: parsed.data.context?.memories ?? [],
+    });
+    const providerPrompt = promptResolution.changed ? promptResolution.resolved : parsed.data.prompt;
+    if (providerPrompt !== parsed.data.prompt && detectPromptInjection(providerPrompt)) {
+      res.status(400).json({ error: "Image prompt rejected by safety filter." });
+      return;
+    }
+    if (promptResolution.needsClarification) {
+      res.status(409).json({
+        error: promptResolution.candidates.length > 0
+          ? `Which subject should I use for the image: ${promptResolution.candidates.slice(0, 3).join(", ")}?`
+          : "What should I generate an image of?",
+        code: "context_clarification_required",
+        candidates: promptResolution.candidates.slice(0, 3),
+      });
+      return;
+    }
+    if (promptResolution.changed) {
+      console.log(
+        `[IMAGE] prompt resolved original="${parsed.data.prompt.slice(0, 80)}" ` +
+        `resolved="${providerPrompt.slice(0, 140)}" subject="${promptResolution.subject ?? ""}" ` +
+        `source=${promptResolution.source ?? "none"} confidence=${promptResolution.confidence.toFixed(2)}`,
+      );
+    } else if (promptResolution.needsClarification) {
+      console.log(
+        `[IMAGE] prompt reference unresolved original="${parsed.data.prompt.slice(0, 80)}" ` +
+        `candidates=${promptResolution.candidates.join(" | ")}`,
+      );
+    }
     let userDb: any = null;
     if (conversationId) {
       userDb = await resolveUserDatabaseOrThrow(userId, "images.generate");
@@ -3914,7 +3951,9 @@ app.post(
         res.json({
           type: "image",
           url: existingAssistantImage.image_url,
-          prompt: existingAssistantImage.prompt || parsed.data.prompt,
+          prompt: parsed.data.prompt,
+          resolved_prompt: existingAssistantImage.prompt || providerPrompt,
+          original_prompt: parsed.data.prompt,
           provider_used: existingAssistantImage.provider || undefined,
           success: true,
           remaining: quota.remaining,
@@ -3944,12 +3983,12 @@ app.post(
     }
 
     const result = await routeImageGeneration({
-      prompt: parsed.data.prompt,
+      prompt: providerPrompt,
       size: parsed.data.size,
     });
 
     if (!result.success) {
-      console.log(`[IMAGE] endpoint failed prompt="${parsed.data.prompt.slice(0, 40)}..." error="${result.error}"`);
+      console.log(`[IMAGE] endpoint failed prompt="${providerPrompt.slice(0, 40)}..." error="${result.error}"`);
       res.status(502).json({ error: result.error });
       return;
     }
@@ -3975,7 +4014,7 @@ app.post(
           userDb,
           userId,
           conversationId,
-          prompt: parsed.data.prompt,
+          prompt: providerPrompt,
           generatedImageData: imageDataForPersistence,
           provider: result.provider_used,
           clientRequestId,
@@ -4006,7 +4045,15 @@ app.post(
     res.json({
       type: "image",
       url: imageUrl,
-      prompt: result.prompt,
+      prompt: parsed.data.prompt,
+      resolved_prompt: result.prompt,
+      original_prompt: parsed.data.prompt,
+      context_resolution: {
+        changed: promptResolution.changed,
+        subject: promptResolution.subject,
+        confidence: promptResolution.confidence,
+        source: promptResolution.source,
+      },
       provider_used: result.provider_used,
       success: true,
       remaining: quota.remaining,

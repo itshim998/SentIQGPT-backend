@@ -1,6 +1,8 @@
 // ================================================================
 // 4. Memory Panel
 // ================================================================
+import { normalizeMemoryScope } from "../services/storage.js";
+
 (function () {
   const Storage = window.SentIQStorage;
   const API = window.SentIQAPI;
@@ -10,6 +12,16 @@
   const getSafeErrorMessage = window.SentIQGetSafeErrorMessage || ((error) => (
     error instanceof Error ? error.message : String(error || "Unknown error")
   ));
+  const debugWarn = (...args) => {
+    if (window.SentIQChat?.debugWarn) {
+      window.SentIQChat.debugWarn(...args);
+    } else if (window.SENTIQ_DEBUG) {
+      console.warn(...args);
+    }
+  };
+  const showToast = (...args) => {
+    window.SentIQChat?.showToast?.(...args);
+  };
 
   async function renderMemories() {
     if (!memoryList) return;

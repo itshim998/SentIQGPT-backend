@@ -152,7 +152,7 @@ function getMessageTimestampMs(message) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function collapseAdjacentDuplicateChatMessages(messages, duplicateWindowMs = 90 * 1000) {
+export function collapseAdjacentDuplicateChatMessages(messages, duplicateWindowMs = 90 * 1000) {
   if (!Array.isArray(messages) || messages.length === 0) return [];
   const collapsed = [];
   for (const message of messages) {
@@ -303,14 +303,14 @@ async function updateChatTitle(chatId, title, options = {}) {
   return chat;
 }
 
-function normalizeMemoryScope(memory) {
+export function normalizeMemoryScope(memory) {
   if (memory?.scope === "global" || memory?.scope === "chat") {
     return memory.scope;
   }
   return "global";
 }
 
-function normalizeMemoryChatId(memory, scope) {
+export function normalizeMemoryChatId(memory, scope) {
   if (scope !== "chat") return null;
   if (typeof memory?.chat_id === "string" && memory.chat_id.trim()) {
     return memory.chat_id.trim();
@@ -501,4 +501,6 @@ window.SentIQStorage = {
   putSyncJob, getAllSyncJobs, deleteSyncJob,
   getConfig, setConfig, getAllConfig,
   getStorageStats, generateId,
+  normalizeMemoryScope, normalizeMemoryChatId,
+  collapseAdjacentDuplicateChatMessages,
 };

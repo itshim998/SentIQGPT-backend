@@ -1,6 +1,6 @@
 {
   "name": "SentIQGPT Student Builder Golden Prompts",
-  "version": 1,
+  "version": 2,
   "cases": [
     {
       "id": "math-linear-programming",
@@ -90,6 +90,46 @@
         "Routes to image generation",
         "Returns an image URL or base64 payload",
         "Persists result when conversation ID is available"
+      ]
+    },
+    {
+      "id": "context-image-pronoun-current-chat",
+      "category": "context_awareness",
+      "prompt": "Generate their image",
+      "conversation_context": [
+        { "role": "user", "content": "Tell me about Spitz dogs" },
+        { "role": "assistant", "content": "It looks like you're interested in Spitz dogs. They're fluffy companion dogs." }
+      ],
+      "expected_route": "image_generation",
+      "success_criteria": [
+        "Resolves their to Spitz dogs before provider call",
+        "Does not generate unrelated people",
+        "Does not use older global topical memories over current chat"
+      ]
+    },
+    {
+      "id": "context-web-search-pronoun-current-chat",
+      "category": "context_awareness",
+      "prompt": "search about it",
+      "conversation_context": [
+        { "role": "user", "content": "Can you explain the transformer architecture?" }
+      ],
+      "expected_route": "web_search",
+      "success_criteria": [
+        "Search query includes transformer architecture",
+        "Does not search for the literal pronoun it",
+        "Keeps current chat context ahead of saved memories"
+      ]
+    },
+    {
+      "id": "memory-explicit-only-no-silent-save",
+      "category": "memory",
+      "prompt": "I like short answers when debugging JavaScript.",
+      "expected_route": "normal_chat",
+      "success_criteria": [
+        "Does not silently store a durable memory",
+        "May answer naturally using the current message",
+        "Only stores if the user explicitly asks SentIQGPT to remember it"
       ]
     }
   ]

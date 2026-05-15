@@ -59,7 +59,13 @@ export interface ImageAttachmentContext {
 
 export interface BuiltContext {
   readonly recentMessages: readonly { role: string; content: string }[];
-  readonly memories: readonly { type: string; summary: string }[];
+  readonly memories: readonly {
+    type: string;
+    summary: string;
+    importance?: number;
+    scope?: "global" | "chat";
+    chat_id?: string | null;
+  }[];
   readonly fileReferences: readonly {
     filename: string;
     extractedText: string;

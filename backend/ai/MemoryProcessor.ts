@@ -171,14 +171,13 @@ export async function processMessageForMemory(args: {
       : null;
 
   const memType = deterministicType ?? classifiedType;
-  const shouldStore = args.forceStore
-    ? explicitWrite && !!memType
-    : classification.should_store && !!memType;
+  const shouldStore = explicitWrite && !!memType;
 
   if (!shouldStore) {
-    if (args.forceStore) {
-      console.log(`[MEMORY] explicit store rejected: explicitWrite=${explicitWrite} type=${memType ?? "null"}`);
-    }
+    console.log(
+      `[MEMORY] storage skipped: explicitWrite=${explicitWrite} classifiedStore=${classification.should_store} ` +
+      `type=${memType ?? "null"} forceStore=${args.forceStore === true}`,
+    );
     return { stored: false };
   }
 

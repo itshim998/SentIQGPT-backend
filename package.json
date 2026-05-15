@@ -20,6 +20,7 @@
     "test:pass2-reliability": "ts-node --project tsconfig.backend.json backend/testPass2Reliability.ts",
     "test:pass3-memory": "ts-node --project tsconfig.backend.json backend/testPass3MemoryReliability.ts",
     "test:passA": "ts-node --project tsconfig.backend.json backend/testPassABugFixes.ts",
+    "test:frontend-bootstrap": "ts-node --project tsconfig.backend.json backend/testFrontendBootstrap.ts",
     "test:file-generation": "ts-node --project tsconfig.backend.json backend/testFileGeneration.ts",
     "test:frontend-file-generation": "ts-node --project tsconfig.backend.json backend/testFrontendFileGeneration.ts",
     "eval:golden": "ts-node --project tsconfig.backend.json backend/evalGoldenPrompts.ts"

@@ -6,6 +6,20 @@ import { z } from "zod";
 
 // --- Chat ---
 
+const ContextMemorySchema = z.object({
+  type: z.string(),
+  summary: z.string(),
+  importance: z.number().min(1).max(10).optional(),
+  embedding: z.array(z.number()).max(4096).optional(),
+  scope: z.enum(["global", "chat"]).optional(),
+  chat_id: z.string().nullable().optional(),
+});
+
+const RecentMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string(),
+});
+
 export const ChatRequestSchema = z.object({
   message: z.string().min(1, "Message is required").max(10000, "Message too long"),
   conversationId: z.string().min(1).optional(),
@@ -26,14 +40,8 @@ export const ChatRequestSchema = z.object({
     selected_option_id: z.string().min(1).max(120).optional(),
   }).optional(),
   context: z.object({
-    recent_messages: z.array(z.object({
-      role: z.enum(["user", "assistant"]),
-      content: z.string(),
-    })).max(50).optional(),
-    memories: z.array(z.object({
-      type: z.string(),
-      summary: z.string(),
-    })).max(100).optional(),
+    recent_messages: z.array(RecentMessageSchema).max(50).optional(),
+    memories: z.array(ContextMemorySchema).max(100).optional(),
     file_references: z.array(z.object({
       filename: z.string(),
       extractedText: z.string(),
@@ -90,6 +98,10 @@ export const ImageGenerateRequestSchema = z.object({
   conversation_id: z.string().min(1).optional(),
   clientRequestId: z.string().min(1).max(120).optional(),
   client_request_id: z.string().min(1).max(120).optional(),
+  context: z.object({
+    recent_messages: z.array(RecentMessageSchema).max(50).optional(),
+    memories: z.array(ContextMemorySchema).max(100).optional(),
+  }).optional(),
 }).transform(({ conversation_id, client_request_id, ...rest }) => ({
   ...rest,
   conversationId: rest.conversationId ?? conversation_id,

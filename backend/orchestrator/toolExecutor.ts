@@ -26,6 +26,7 @@ import { executeTavilySearchPipeline } from "../tools/webSearch/tavilySearchPipe
 import { normalizeWebSearchMode } from "../tools/webSearch/webSearchMode";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
 import { solveMathDirect } from "../ai/mathVerifier";
+import { resolveContextReferences } from "../context/referenceResolver";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
 import { detectCodeQuery, detectImageMathPrompt, selectModelForPrompt, isMathQuery } from "./modelRouter";
@@ -460,29 +461,58 @@ async function executeStep(
 
   try {
     let result: StepResult;
+    const resolved = planStep.tool === "memory_update"
+      ? {
+          resolved: planStep.input,
+          changed: false,
+          needsClarification: false,
+          confidence: 1,
+          candidates: [] as readonly string[],
+          subject: undefined as string | undefined,
+          source: undefined as "conversation" | "summary" | "chat_memory" | undefined,
+        }
+      : resolveContextReferences({
+          input: planStep.input,
+          tool: planStep.tool,
+          recentMessages: ctx.recentMessages,
+          conversationSummary: ctx.conversationSummary,
+          memories: ctx.memories,
+        });
+    const stepInput = resolved.resolved;
+    if (resolved.changed) {
+      console.log(
+        `[CONTEXT AWARENESS] ${planStep.tool} resolved "${planStep.input.slice(0, 80)}" -> "${stepInput.slice(0, 120)}" ` +
+        `subject="${resolved.subject ?? ""}" source=${resolved.source ?? "none"} confidence=${resolved.confidence.toFixed(2)}`,
+      );
+    } else if (resolved.needsClarification) {
+      console.log(
+        `[CONTEXT AWARENESS] ${planStep.tool} reference unresolved input="${planStep.input.slice(0, 80)}" ` +
+        `candidates=${resolved.candidates.join(" | ")}`,
+      );
+    }
 
     switch (planStep.tool) {
       case "image_generation":
-        result = await execImageGeneration(planStep.input);
+        result = await execImageGeneration(stepInput);
         break;
       case "file_analysis":
-        result = await execFileAnalysis(planStep.input, ctx, priorContext);
+        result = await execFileAnalysis(stepInput, ctx, priorContext);
         break;
       case "memory_update":
-        result = await execMemoryUpdate(planStep.input, ctx);
+        result = await execMemoryUpdate(stepInput, ctx);
         break;
       case "chart_generation":
-        result = await execChartGeneration(planStep.input);
+        result = await execChartGeneration(stepInput);
         break;
       case "file_generation":
-        result = await execFileGeneration(planStep.input, ctx);
+        result = await execFileGeneration(stepInput, ctx);
         break;
       case "web_search":
-        result = await execWebSearch(planStep.input, ctx);
+        result = await execWebSearch(stepInput, ctx);
         break;
       case "conversation":
       default:
-        result = await execConversation(planStep.input, ctx, priorContext);
+        result = await execConversation(stepInput, ctx, priorContext);
         break;
     }
 

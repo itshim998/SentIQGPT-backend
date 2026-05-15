@@ -26,6 +26,11 @@ import {
   SUPPORTED_UPLOAD_MIME_PREFIXES,
   SUPPORTED_UPLOAD_MIME_TYPES,
 } from "./chat/upload-config.js";
+import {
+  collapseAdjacentDuplicateChatMessages,
+  normalizeMemoryScope,
+} from "../services/storage.js";
+import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
 // ================================================================
 // 3. Chat UI Controller
@@ -6891,6 +6896,12 @@ import {
     const state = getChatState(targetChatId);
     state.isThinking = true;
     state.activityMode = "image_generation";
+    let imageContextData = { recentMessages: [], memories: [] };
+    try {
+      imageContextData = await getChatContextData(targetChatId);
+    } catch (error) {
+      debugWarn(`[UI] Image context unavailable: ${getSafeErrorMessage(error)}`);
+    }
 
     appendMessageBubble("user", `Generate image: ${prompt}`);
     await safelyAddImageMessage(targetChatId, "user", `Generate image: ${prompt}`, null, "image prompt");
@@ -6930,6 +6941,10 @@ import {
       const result = await API.generateImage(prompt, {
         conversationId: targetChatId,
         clientRequestId: requestId,
+        context: {
+          recentMessages: imageContextData.recentMessages,
+          memories: imageContextData.memories,
+        },
       });
       if (isRequestStale(targetChatId, requestId)) {
         if (result.success) {
@@ -6982,6 +6997,11 @@ import {
         showQuotaWarning(err.message);
       } else if (err.message && err.message.includes("queue is full")) {
         showQuotaWarning("The image generation server is busy. Please try again in a moment.");
+      } else if (err.code === "context_clarification_required") {
+        const clarificationText = err.message || "What should I generate an image of?";
+        const { contentDiv: genClarifyDiv } = appendMessageBubble("assistant", "");
+        typeMessage(clarificationText, genClarifyDiv);
+        await safelyAddImageMessage(targetChatId, "assistant", clarificationText, null, "image clarification message");
       } else {
         const userFacingError = err.message && err.message.includes("couldn't be saved to your conversation")
           ? err.message
@@ -7530,9 +7550,6 @@ import {
     });
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
-  else init();
-
   window.SentIQGetSafeErrorMessage = getSafeErrorMessage;
   window.SentIQChat = {
     copyCode,
@@ -7544,5 +7561,17 @@ import {
     processSyncQueue,
     queueSyncJob,
     syncJobTypes: SYNC_JOB_TYPES,
+    showToast,
+    debugWarn,
   };
+
+  function startChatUi() {
+    init().catch((error) => {
+      debugWarn(`[UI] SentIQGPT Chat UI failed to start: ${getSafeErrorMessage(error)}`, error);
+      showToast("SentIQGPT couldn't finish starting. Please refresh the page.", "error", 6000);
+    });
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startChatUi);
+  else startChatUi();
 })();

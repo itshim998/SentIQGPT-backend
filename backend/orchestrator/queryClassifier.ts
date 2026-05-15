@@ -98,6 +98,11 @@ const FACTUAL_PATTERNS: readonly RegExp[] = [
 ];
 
 /** Personal context patterns — refer to user's own data */
+const EXPLICIT_WEB_SEARCH_PATTERNS: readonly RegExp[] = [
+  /^\s*(?:please\s+)?(?:search|web\s*search|look\s+up|find\s+online|google)\b/i,
+  /\b(?:search|look\s+up|find\s+online|google)\s+(?:about|for|on|regarding)?\s*(?:it|them|that|this|the\s+same\s+thing)\b/i,
+];
+
 const PERSONAL_PATTERNS: readonly RegExp[] = [
   /\b(?:my\s+(?:name|age|email|phone|address|birthday|project|file|document|preference))\b/i,
   /\b(?:remember\s+(?:that|my|i)|forget\s+(?:that|my)|do\s+you\s+(?:know|remember)\s+(?:my|about\s+me))\b/i,
@@ -178,6 +183,12 @@ export function classifyQueryType(query: string): QueryClassification {
   for (const pat of PERSONAL_PATTERNS) {
     if (pat.test(trimmed)) {
       return { category: "personal_context", needsWebSearch: false, matchedRule: `personal:${pat.source.slice(0, 40)}` };
+    }
+  }
+
+  for (const pat of EXPLICIT_WEB_SEARCH_PATTERNS) {
+    if (pat.test(trimmed)) {
+      return { category: "factual_lookup", needsWebSearch: true, matchedRule: `explicit_web:${pat.source.slice(0, 40)}` };
     }
   }
 
