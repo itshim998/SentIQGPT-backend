@@ -179,6 +179,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   let composerHintTimer = 0;
   let composerHintIndex = 0;
   let composerHintCycleId = 0;
+  let composerHintIntroConsumed = false;
+  let composerResponseLocked = false;
   let greetingUserScope = "";
   let pendingChatListLoad = null;
   let sidebarBackdrop = null;
@@ -187,6 +189,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   let syncQueuePromise = null;
   let memorySyncPromise = null;
   let memoryLastSyncedAt = 0;
+  let recentWarmPromise = null;
+  let chatCacheLoaderEl = null;
   const chatRenderSignatures = new Map();
   const pendingChatCreatePromises = new Map();
   const welcomeGreetingByChatId = new Map();
@@ -199,6 +203,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       return Boolean(window.SENTIQ_DEBUG);
     }
   })();
+  const RECENT_CHAT_WARM_LIMIT = 5;
+  const RECENT_CHAT_WARM_CONCURRENCY = 2;
+  const LAST_ACTIVE_CHAT_CONFIG_PREFIX = "last_active_chat_id:";
 
   function debugLog(...args) {
     if (SENTIQ_DEBUG) console.log(...args);
@@ -608,6 +615,30 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return authSessionState?.user?.id || authSessionState?.user?.sub || "";
   }
 
+  function syncStorageUserScope() {
+    Storage.setActiveUserId?.(getActiveAuthUserId());
+  }
+
+  function getUserConfigKey(key) {
+    const userId = getActiveAuthUserId();
+    return userId ? `${key}${userId}` : "";
+  }
+
+  async function setLastActiveChatId(chatId) {
+    const key = getUserConfigKey(LAST_ACTIVE_CHAT_CONFIG_PREFIX);
+    if (!key || !chatId) return;
+    await Storage.setConfig(key, chatId).catch((error) => {
+      debugWarn("[UI] Failed to persist last active chat:", getSafeErrorMessage(error));
+    });
+  }
+
+  async function getLastActiveChatId() {
+    const key = getUserConfigKey(LAST_ACTIVE_CHAT_CONFIG_PREFIX);
+    if (!key) return "";
+    const chatId = await Storage.getConfig(key).catch(() => "");
+    return typeof chatId === "string" ? chatId : "";
+  }
+
   function normalizeDisplayName(value) {
     if (typeof value !== "string") return null;
     const normalized = value.replace(/\s+/g, " ").trim();
@@ -617,6 +648,65 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function isNameCaptureRequired() {
     return Boolean(isAuthenticatedSession() && authProfileState.requiresName && !authProfileState.fetchFailed);
+  }
+
+  function setControlDisabled(control, disabled) {
+    if (!control) return;
+    control.disabled = Boolean(disabled);
+    control.setAttribute("aria-disabled", disabled ? "true" : "false");
+  }
+
+  function syncComposerInteractivity() {
+    const requiresName = isNameCaptureRequired();
+    const locked = Boolean(composerResponseLocked);
+    const composerDisabled = requiresName || locked;
+    const stopModeActive = Boolean(sendBtn?.classList.contains("is-stop"));
+
+    if (locked) {
+      closeComposerMenu();
+      setExecutionModeMenuOpen(false);
+    }
+
+    setControlDisabled(chatInput, composerDisabled);
+    setControlDisabled(composerPlusBtn, composerDisabled);
+    setControlDisabled(fileAttachBtn, composerDisabled);
+    setControlDisabled(webSurfBasicBtn, composerDisabled);
+    setControlDisabled(voiceBtn, composerDisabled);
+    setControlDisabled(executionModeToggle, composerDisabled);
+    executionModeMenu?.querySelectorAll("button").forEach((option) => setControlDisabled(option, composerDisabled));
+
+    if (imageGenBtn) {
+      imageGenBtn.disabled = !isAuthenticatedSession() || composerDisabled;
+      imageGenBtn.setAttribute("aria-disabled", imageGenBtn.disabled ? "true" : "false");
+      imageGenBtn.style.display = isAuthenticatedSession() ? "" : "none";
+    }
+
+    if (sendBtn) {
+      sendBtn.disabled = requiresName || (locked && !stopModeActive);
+      sendBtn.setAttribute("aria-disabled", sendBtn.disabled ? "true" : "false");
+    }
+
+    if (newChatBtn) setControlDisabled(newChatBtn, requiresName);
+
+    chatInputArea?.classList.toggle("is-response-locked", locked);
+    chatInputArea?.setAttribute("aria-busy", locked ? "true" : "false");
+  }
+
+  function setComposerResponseLocked(locked) {
+    const nextLocked = Boolean(locked);
+    if (composerResponseLocked === nextLocked) {
+      syncComposerInteractivity();
+      return;
+    }
+    composerResponseLocked = nextLocked;
+    syncComposerInteractivity();
+    syncComposerHint();
+  }
+
+  function markComposerHintIntroConsumed() {
+    if (composerHintIntroConsumed) return;
+    composerHintIntroConsumed = true;
+    syncComposerHint();
   }
 
   function getPreferredAccountLabel() {
@@ -804,7 +894,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (getPendingClarification()) return "Enter your custom answer...";
     if (imageMode) return "Describe the image you want to generate...";
     if (webSearchModeOverride) return "Ask about something current on the web...";
-    return "";
+    return composerHintIntroConsumed ? "Message SentIQGPT" : "";
   }
 
   function shouldShowComposerHint() {
@@ -812,6 +902,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       composerHintOverlay
       && composerHintText
       && chatInput
+      && !composerHintIntroConsumed
       && !chatInput.disabled
       && !chatInput.value.trim()
       && pendingFiles.length === 0
@@ -1024,6 +1115,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       created: chat.created || chat.created_at || new Date().toISOString(),
       updated: lastActivity || new Date().toISOString(),
       source: "server",
+      owner_user_id: getActiveAuthUserId(),
       pending_server_sync: Boolean(chat.pending_server_sync),
       last_synced_at: chat.last_synced_at || new Date().toISOString(),
       pending_title_sync: Boolean(chat.pending_title_sync),
@@ -1113,6 +1205,105 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       );
     }
     return Storage.getChat(normalizedChat.id);
+  }
+
+  function serializeMessageForSync(message) {
+    const meta = message?.meta && typeof message.meta === "object" ? message.meta : null;
+    const output = {
+      role: message?.role === "assistant" ? "assistant" : "user",
+      content: typeof message?.content === "string" ? message.content : "",
+      clientRequestId: message?.clientRequestId || message?.client_request_id || message?.clientRequestID || undefined,
+    };
+    if (meta?.type === "image") {
+      output.meta = {
+        type: "image",
+        imageUrl: meta.imageUrl || meta.image_url || "",
+        storagePath: meta.storagePath || meta.storage_path || "",
+        prompt: meta.prompt || "",
+        provider: meta.provider || meta.provider_used || "",
+        fileSizeBytes: meta.fileSizeBytes || meta.file_size_bytes || null,
+      };
+    } else if (meta?.type === "generated-file") {
+      output.meta = {
+        type: "generated-file",
+        id: meta.id || "",
+        file_id: meta.file_id || meta.fileId || meta.generated_file_id || meta.generatedFileId || "",
+        format: meta.format || meta.file_format || meta.fileFormat || "",
+        file_name: meta.file_name || meta.fileName || "",
+        mime_type: meta.mime_type || meta.mimeType || "",
+        file_url: meta.file_url || meta.fileUrl || "",
+        storage_path: meta.storage_path || meta.storagePath || "",
+        file_size_bytes: meta.file_size_bytes || meta.fileSizeBytes || null,
+        preview: meta.preview || null,
+      };
+    }
+    return output;
+  }
+
+  async function upsertChatMessageSyncJob(requestId, payloadPatch = {}) {
+    if (!isAuthenticatedSession() || !requestId) return null;
+    const id = `${SYNC_JOB_TYPES.chatMessage}:${requestId}`;
+    const existing = (await Storage.getAllSyncJobs().catch(() => []))
+      .find((job) => job.id === id);
+    const payload = {
+      ...(existing?.payload || {}),
+      ...payloadPatch,
+      messages: Array.isArray(payloadPatch.messages)
+        ? payloadPatch.messages.map(serializeMessageForSync)
+        : (Array.isArray(existing?.payload?.messages) ? existing.payload.messages : []),
+    };
+    return queueSyncJob(SYNC_JOB_TYPES.chatMessage, payload, {
+      id,
+      attempt_count: existing?.attempt_count || 0,
+      next_retry_at: existing?.next_retry_at || new Date().toISOString(),
+      sync_error: existing?.sync_error || null,
+    });
+  }
+
+  async function clearChatMessageSyncJob(requestId) {
+    if (!requestId) return;
+    await Storage.deleteSyncJob(`${SYNC_JOB_TYPES.chatMessage}:${requestId}`).catch(() => null);
+  }
+
+  async function warmGeneratedFilesForChat(chat) {
+    const messages = Array.isArray(chat?.messages) ? chat.messages : [];
+    const generatedFileMetas = messages
+      .map((message) => message?.meta)
+      .filter((meta) => meta?.type === "generated-file");
+    await Promise.allSettled(generatedFileMetas.map((meta) => cacheGeneratedFileFromMeta(meta)));
+  }
+
+  async function pruneGeneratedFileWarmCache(warmChatIds = []) {
+    if (!Storage.getAllGeneratedFiles) return;
+    const keepChatIds = new Set([currentChatId, ...warmChatIds].filter(Boolean));
+    const files = await Storage.getAllGeneratedFiles().catch(() => []);
+    await Promise.allSettled(files.map((file) => {
+      if (!file?.id || keepChatIds.has(file.chat_id || file.chatId || "")) return Promise.resolve();
+      return Storage.deleteGeneratedFile(file.id);
+    }));
+  }
+
+  async function warmRecentChatCache(chats) {
+    if (!isAuthenticatedSession() || recentWarmPromise) return recentWarmPromise || [];
+    const recentChats = (Array.isArray(chats) ? chats : [])
+      .filter((chat) => chat?.id && !isPlaceholderServerChat(chat))
+      .slice(0, RECENT_CHAT_WARM_LIMIT);
+    recentWarmPromise = (async () => {
+      const warmedIds = [];
+      const results = await runWithConcurrencyLimit(recentChats, RECENT_CHAT_WARM_CONCURRENCY, async (chat) => {
+        const warmedChat = await fetchAuthenticatedChat(chat.id, { silent: true });
+        if (warmedChat?.id) {
+          warmedIds.push(warmedChat.id);
+          await warmGeneratedFilesForChat(warmedChat);
+        }
+        return warmedChat;
+      });
+      await pruneGeneratedFileWarmCache(warmedIds);
+      return results;
+    })().finally(() => {
+      recentWarmPromise = null;
+    });
+    return recentWarmPromise;
   }
 
   async function fetchAuthenticatedChatList(options = {}) {
@@ -1494,6 +1685,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (!isAuthenticatedSession()) return [];
     const chats = await fetchAuthenticatedChatList({ silent: true });
     scheduleChatListRefresh();
+    warmRecentChatCache(chats).catch((error) => {
+      logAuthenticatedConversationError("syncRemoteChatListInBackground.warmRecent", error);
+    });
     if (!currentChatId && selectFirstIfEmpty && Array.isArray(chats) && chats.length > 0) {
       await loadChat(chats[0].id, { silent: true });
     }
@@ -1525,6 +1719,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     let chats = [];
     try {
       chats = await loadChatList(signedIn);
+      if (signedIn) {
+        const lastActiveChatId = await getLastActiveChatId();
+        const hasCachedLastActive = lastActiveChatId && chats.some((chat) => chat.id === lastActiveChatId);
+        if (hasCachedLastActive) {
+          await loadChat(lastActiveChatId, { skipRemoteHydration: true, silent: true });
+        }
+      }
     } catch (error) {
       stopMeasure("error");
       logAuthenticatedConversationError("syncConversationStateForAuth.loadChatList", error);
@@ -1709,19 +1910,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const signedIn = !!enabled;
     const requiresName = signedIn && isNameCaptureRequired();
     if (!signedIn || requiresName) hideSelectionButton();
-    if (chatInput) {
-      chatInput.disabled = requiresName;
-    }
-    if (sendBtn) sendBtn.disabled = requiresName;
-    if (newChatBtn) newChatBtn.disabled = requiresName;
-    if (composerPlusBtn) composerPlusBtn.disabled = requiresName;
-    if (fileAttachBtn) fileAttachBtn.disabled = requiresName;
-    if (webSurfBasicBtn) webSurfBasicBtn.disabled = requiresName;
-    if (voiceBtn) voiceBtn.disabled = requiresName;
-    if (imageGenBtn) {
-      imageGenBtn.disabled = !signedIn || requiresName;
-      imageGenBtn.style.display = signedIn ? "" : "none";
-    }
+    syncComposerInteractivity();
     sendBtn?.classList.remove("auth-disabled");
     newChatBtn?.classList.remove("auth-disabled");
     fileAttachBtn?.classList.remove("auth-disabled");
@@ -1825,6 +2014,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       }
     }
     authSessionState = session || null;
+    syncStorageUserScope();
     const email = authSessionState?.user?.email || "";
     const signedIn = Boolean(authSessionState);
     const activeUserId = getActiveAuthUserId();
@@ -1839,6 +2029,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (authLogoutBtn) authLogoutBtn.style.display = signedIn ? "" : "none";
     if (!signedIn) {
       resetAuthProfileState();
+      Storage.setActiveUserId?.("");
     }
     if (authUserEmail) authUserEmail.textContent = signedIn ? initialAccountLabel : "";
     if (authMenuName) authMenuName.textContent = signedIn ? initialAccountLabel : "";
@@ -1847,9 +2038,14 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     closeAuthMenu();
     if (signedIn) {
       closeAuthModal();
-      await refreshProfileState({ silent: true });
-      if (isNameCaptureRequired()) stopFileAnalysisUpdates();
-      else startFileAnalysisUpdates();
+      setChatAccess(true);
+      refreshProfileState({ silent: true }).then(() => {
+        if (isNameCaptureRequired()) stopFileAnalysisUpdates();
+        else startFileAnalysisUpdates();
+      }).catch((error) => {
+        debugWarn("[UI] Profile refresh failed:", getSafeErrorMessage(error));
+      });
+      startFileAnalysisUpdates();
     } else {
       stopFileAnalysisUpdates();
       setChatAccess(false);
@@ -2096,6 +2292,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     sendBtn.innerHTML = SEND_SVG;
     sendBtn.title = "Send message";
     sendBtn.setAttribute("aria-label", "Send message");
+    setComposerResponseLocked(false);
   }
 
   function setStopMode() {
@@ -2104,6 +2301,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     sendBtn.innerHTML = "";  // CSS ::before draws square stop icon
     sendBtn.title = "Stop generating";
     sendBtn.setAttribute("aria-label", "Stop generating");
+    setComposerResponseLocked(true);
   }
 
   function abortCurrentGeneration() {
@@ -2318,10 +2516,16 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (!imagePayload?.success) return null;
     let imageUrl = "";
     if (imagePayload.image_url) imageUrl = imagePayload.image_url;
-    else if (imagePayload.image_base64) imageUrl = `data:image/png;base64,${imagePayload.image_base64}`;
     else if (imagePayload.url) imageUrl = imagePayload.url;
     if (!imageUrl) return null;
-    return { type: "image", imageUrl, prompt: imagePayload.prompt };
+    return {
+      type: "image",
+      imageUrl,
+      prompt: imagePayload.prompt || imagePayload.original_prompt || "",
+      provider: imagePayload.provider_used || imagePayload.provider || "",
+      storagePath: imagePayload.storage_path || imagePayload.storagePath || "",
+      fileSizeBytes: imagePayload.file_size_bytes || imagePayload.fileSizeBytes || null,
+    };
   }
 
   function normalizeUrlList(value, maxCount = 0) {
@@ -3155,6 +3359,15 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     // Trust, route, provider, and model metadata are intentionally not rendered in chat.
   }
 
+  function extractResponseMetaForSync(response, targetChatId) {
+    const fileMeta = normalizeGeneratedFileMeta(response?.file || (response?.type === "file" ? response : null), { chatId: targetChatId });
+    if (response?.route === "file_generation" && hasRenderableGeneratedFile(fileMeta)) return fileMeta;
+    const rawImagePayload = response?.image || (response?.type === "image" ? response : null);
+    const imageMeta = createImageMeta(rawImagePayload);
+    if ((response?.route === "image_generation" && response?.image) || response?.type === "image") return imageMeta;
+    return null;
+  }
+
   async function deliverAssistantResponse(response, targetChatId, renderInView, renderOptions = {}) {
     const webSearchPayload = normalizeWebSearchPayload(response);
     const assistantText = webSearchPayload?.answer || response?.answer || response?.reply || "";
@@ -3901,6 +4114,25 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (chatMessages) chatMessages.classList.add("has-messages");
   }
 
+  function setChatCacheLoaderVisible(visible) {
+    if (!chatMessages) return;
+    if (visible) {
+      hideWelcome();
+      chatMessages.classList.add("has-messages", "is-cache-loading");
+      if (!chatCacheLoaderEl) {
+        chatCacheLoaderEl = document.createElement("div");
+        chatCacheLoaderEl.className = "chat-cache-loader";
+        chatCacheLoaderEl.setAttribute("role", "status");
+        chatCacheLoaderEl.setAttribute("aria-live", "polite");
+        chatCacheLoaderEl.innerHTML = '<span class="chat-cache-spinner" aria-hidden="true"></span><span>Loading chat...</span>';
+      }
+      if (!chatCacheLoaderEl.parentNode) chatMessages.appendChild(chatCacheLoaderEl);
+      return;
+    }
+    chatMessages.classList.remove("is-cache-loading");
+    chatCacheLoaderEl?.remove();
+  }
+
   let _resizeRaf = 0;
   function autoResizeInput() {
     if (!chatInput) return;
@@ -4163,6 +4395,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     });
     updateHtmlTitle(chat.title && chat.title !== "New Chat" ? chat.title : "");
     syncActiveChatItem();
+    if (isAuthenticatedSession() && chatId) {
+      setLastActiveChatId(chatId);
+    }
   }
 
   async function loadChat(chatId, options = {}) {
@@ -4192,6 +4427,33 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const cachedChat = await Storage.getChat(chatId);
 
     if (cachedChat) {
+      const hasCachedMessages = Array.isArray(cachedChat.messages) && cachedChat.messages.length > 0;
+      const needsForegroundHydration = Boolean(
+        isAuthenticatedSession()
+        && isServerBackedChat(cachedChat)
+        && !isPlaceholderServerChat(cachedChat)
+        && !skipRemoteHydration
+        && !hasCachedMessages
+        && cachedChat.message_cache_status !== "complete"
+      );
+      if (needsForegroundHydration) {
+        try {
+          setChatCacheLoaderVisible(true);
+          const remoteChat = await fetchAuthenticatedChat(chatId, { silent });
+          if (remoteChat) {
+            setChatCacheLoaderVisible(false);
+            renderLoadedChat(chatId, remoteChat, { forceRender: true });
+            stopMeasure("ok", { message_count: Array.isArray(remoteChat.messages) ? remoteChat.messages.length : 0, cached: false });
+          }
+        } catch (error) {
+          stopMeasure("error");
+          logAuthenticatedConversationError("loadChat.foregroundHydrate", error);
+        } finally {
+          setChatCacheLoaderVisible(false);
+        }
+        return;
+      }
+      setChatCacheLoaderVisible(false);
       const cachedSignature = getChatMessageSignature(cachedChat);
       const priorSignature = chatRenderSignatures.get(chatId) || "";
       renderLoadedChat(chatId, cachedChat, {
@@ -4229,11 +4491,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
 
     try {
+      setChatCacheLoaderVisible(true);
       const remoteChat = await fetchAuthenticatedChat(chatId, { silent });
       if (!remoteChat) {
         stopMeasure("missing");
         return;
       }
+      setChatCacheLoaderVisible(false);
       renderLoadedChat(chatId, remoteChat, { forceRender: true });
       markPerf("ui.chat.load.remote_reconciled", {
         chat_id: chatId,
@@ -4243,6 +4507,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     } catch (error) {
       stopMeasure("error");
       logAuthenticatedConversationError("loadChat", error);
+    } finally {
+      setChatCacheLoaderVisible(false);
     }
   }
 
@@ -6057,14 +6323,74 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       ? options.getRenderMode
       : () => options.renderMode || null;
     const minInterval = Number.isFinite(options.minInterval) ? options.minInterval : 80;
+    const tailContainer = tailTextNode?.parentNode || tailTextNode?.parentElement || null;
     let lastSafeIndex = -1;
     let lastRenderAt = 0;
+    let lastTailText = "";
+    let renderPulseTimer = 0;
+
+    function getCommonPrefixLength(a, b) {
+      const max = Math.min(a.length, b.length);
+      let index = 0;
+      while (index < max && a.charCodeAt(index) === b.charCodeAt(index)) index += 1;
+      return index;
+    }
+
+    function setTailText(value) {
+      const nextText = String(value || "");
+      if (!tailContainer) {
+        if (tailTextNode) tailTextNode.nodeValue = nextText;
+        lastTailText = nextText;
+        return;
+      }
+      if (!nextText) {
+        tailContainer.textContent = "";
+        lastTailText = "";
+        return;
+      }
+
+      const stableLength = nextText.startsWith(lastTailText)
+        ? lastTailText.length
+        : getCommonPrefixLength(lastTailText, nextText);
+      const stableText = nextText.slice(0, stableLength);
+      const freshText = nextText.slice(stableLength);
+      tailContainer.textContent = "";
+      if (stableText) tailContainer.appendChild(document.createTextNode(stableText));
+      if (freshText) {
+        if (prefersReducedMotion()) {
+          tailContainer.appendChild(document.createTextNode(freshText));
+        } else {
+          const freshSpan = document.createElement("span");
+          freshSpan.className = "streaming-new-text";
+          freshSpan.textContent = freshText;
+          tailContainer.appendChild(freshSpan);
+        }
+      }
+      lastTailText = nextText;
+    }
+
+    function pulseRenderedContent() {
+      if (!renderedDiv || prefersReducedMotion()) return;
+      renderedDiv.classList.remove("streaming-render-pulse");
+      void renderedDiv.offsetWidth;
+      renderedDiv.classList.add("streaming-render-pulse");
+      if (renderPulseTimer) clearTimeout(renderPulseTimer);
+      renderPulseTimer = window.setTimeout(() => {
+        renderedDiv.classList.remove("streaming-render-pulse");
+        renderPulseTimer = 0;
+      }, 240);
+    }
 
     function reset() {
       lastSafeIndex = -1;
       lastRenderAt = 0;
+      lastTailText = "";
+      if (renderPulseTimer) {
+        clearTimeout(renderPulseTimer);
+        renderPulseTimer = 0;
+      }
       if (renderedDiv) renderedDiv.innerHTML = "";
-      if (tailTextNode) tailTextNode.nodeValue = "";
+      setTailText("");
     }
 
     function render(visibleText, force = false) {
@@ -6073,13 +6399,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       if (!renderedDiv || safeIndex < 0) return;
       const renderedSafeIndex = Math.max(lastSafeIndex, 0);
       if (safeIndex === lastSafeIndex && !force) {
-        if (tailTextNode) tailTextNode.nodeValue = source.slice(renderedSafeIndex);
+        setTailText(source.slice(renderedSafeIndex));
         return;
       }
 
       const now = Date.now();
       if (!force && lastSafeIndex >= 0 && (now - lastRenderAt) < minInterval) {
-        if (tailTextNode) tailTextNode.nodeValue = source.slice(renderedSafeIndex);
+        setTailText(source.slice(renderedSafeIndex));
         return;
       }
 
@@ -6088,9 +6414,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         ? renderRichText(safeText, { mode: getRenderMode() })
         : "";
       wireCodeCopyButtons(renderedDiv);
+      pulseRenderedContent();
       lastSafeIndex = safeIndex;
       lastRenderAt = now;
-      if (tailTextNode) tailTextNode.nodeValue = source.slice(safeIndex);
+      setTailText(source.slice(safeIndex));
     }
 
     return { render, reset };
@@ -6353,6 +6680,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       stopMeasure("blocked", { reason: "name_required" });
       return;
     }
+    if (composerResponseLocked) {
+      stopMeasure("skipped", { reason: "composer_locked" });
+      return;
+    }
 
     const suppliedImageAttachments = Array.isArray(options.imageAttachments) ? options.imageAttachments : [];
     const message = retryMessage || options.message || chatInput.value.trim();
@@ -6395,6 +6726,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
     hideWelcome();
     if (chatMessages) chatMessages.classList.add("has-messages");
+    if (!retryMessage) markComposerHintIntroConsumed();
     if (!retryMessage) { chatInput.value = ""; chatInput.style.height = "auto"; }
     debugLog("[UI] handleSend", { length: message.length, retry: Boolean(retryMessage) });
 
@@ -6473,6 +6805,19 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     state.activityMode = authenticatedFileGenerationRequired ? "file_generation" : "thinking";
     const ac = new AbortController();
     state.abortController = ac;
+    await upsertChatMessageSyncJob(requestId, {
+      localChatId: targetChatId,
+      conversationId: isPlaceholderServerChat(await Storage.getChat(targetChatId)) ? null : targetChatId,
+      title: visibleUserMessage ? visibleUserMessage.slice(0, 50) : "New Chat",
+      messages: [
+        {
+          role: "user",
+          content: visibleUserMessage,
+          clientRequestId: requestId,
+          ...(userMessageMeta ? { meta: userMessageMeta } : {}),
+        },
+      ],
+    });
     setStopMode();
 
     if (!retryMessage) {
@@ -6535,6 +6880,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       let responseSync = null;
       let responseRenderMode = null;
       let fileArtifactResponse = null;
+      let finalAssistantMeta = null;
+      let lastSyncDraftAt = 0;
       const streamDraft = createStreamingDraftPersister(targetChatId, requestId);
 
       if (isRequestStale(targetChatId, requestId)) return;
@@ -6572,6 +6919,27 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
                   }
                   streamBubble.appendToken(token);
                   streamDraft.update(streamBubble.getFullText());
+                  const now = Date.now();
+                  if (now - lastSyncDraftAt > 1500) {
+                    lastSyncDraftAt = now;
+                    upsertChatMessageSyncJob(requestId, {
+                      messages: [
+                        {
+                          role: "user",
+                          content: visibleUserMessage,
+                          clientRequestId: requestId,
+                          ...(userMessageMeta ? { meta: userMessageMeta } : {}),
+                        },
+                        {
+                          role: "assistant",
+                          content: streamBubble.getFullText(),
+                          clientRequestId: requestId,
+                        },
+                      ],
+                    }).catch((error) => {
+                      debugWarn("[UI] Streaming sync draft update failed:", getSafeErrorMessage(error));
+                    });
+                  }
                 }
               },
               onFileToken(token, eventMeta = {}) {
@@ -6643,6 +7011,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
             }, ac.signal);
             if (fileArtifactResponse) {
               const fileMeta = normalizeGeneratedFileMeta(fileArtifactResponse.file, { chatId: targetChatId });
+              finalAssistantMeta = fileMeta;
               fullReply = fileArtifactResponse.reply || fileArtifactResponse.answer || (fileMeta ? `Generated ${fileMeta.file_name}.` : "Sorry, I couldn't generate that file. Please try again.");
               if (fileMeta) {
                 await streamBubble.finish();
@@ -6674,6 +7043,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
                   pendingClarificationContext: contextPayload,
                 },
               );
+              finalAssistantMeta = extractResponseMetaForSync(structuredResponse, targetChatId);
               memoryResult = structuredResponse.memory;
               responseSync = structuredResponse.sync || null;
               assistantPersisted = true;
@@ -6757,6 +7127,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
             pendingClarificationContext: contextPayload,
           },
         );
+        finalAssistantMeta = extractResponseMetaForSync(response, targetChatId);
         memoryResult = response.memory;
         responseSync = response.sync || null;
         assistantPersisted = true;
@@ -6766,29 +7137,35 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         if (usedStreaming) await streamDraft.finalize(fullReply, responseRenderMode ? { renderMode: responseRenderMode } : {});
         else await persistChatMessage(targetChatId, "assistant", fullReply);
       }
-      if (responseSync?.conversationId) {
-        targetChatId = await applyConversationSync(responseSync, targetChatId);
-      }
-      if (isAuthenticatedSession() && responseSync?.deferred && fullReply) {
-        await queueSyncJob(SYNC_JOB_TYPES.chatMessage, {
+      if (fullReply) {
+        await upsertChatMessageSyncJob(requestId, {
           localChatId: targetChatId,
-          conversationId: responseSync.conversationId || null,
+          conversationId: isPlaceholderServerChat(await Storage.getChat(targetChatId)) ? null : targetChatId,
           title: visibleUserMessage ? visibleUserMessage.slice(0, 50) : "New Chat",
           messages: [
             {
               role: "user",
               content: visibleUserMessage,
               clientRequestId: requestId,
+              ...(userMessageMeta ? { meta: userMessageMeta } : {}),
             },
             {
               role: "assistant",
               content: fullReply,
               clientRequestId: requestId,
+              ...(finalAssistantMeta ? { meta: finalAssistantMeta } : {}),
             },
           ],
-        }, {
-          id: `${SYNC_JOB_TYPES.chatMessage}:${requestId}`,
         });
+      }
+      if (responseSync?.conversationId) {
+        targetChatId = await applyConversationSync(responseSync, targetChatId);
+      }
+      if (fullReply && responseSync?.conversationId) {
+        await upsertChatMessageSyncJob(requestId, { conversationId: responseSync.conversationId, localChatId: targetChatId });
+      }
+      if (isAuthenticatedSession() && responseSync?.persisted && !responseSync?.deferred && fullReply) {
+        await clearChatMessageSyncJob(requestId);
       }
       if (memoryResult?.stored && memoryResult.persisted !== false && memoryResult.summary) {
         const scopedMemory = buildScopedMemoryPayload(memoryResult, targetChatId, responseSync);
@@ -6984,7 +7361,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (imageModeBar) imageModeBar.style.display = imageMode ? "flex" : "none";
     if (webSearchModeBar) webSearchModeBar.style.display = "none";
     updateComposerActionSelection();
-    if (chatInput) {
+    if (chatInput && !composerResponseLocked) {
       chatInput.focus();
     }
     syncComposerHint();
@@ -7053,7 +7430,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       clearPendingFiles();
     }
     updateWebSearchButtons();
-    if (chatInput) chatInput.focus();
+    if (chatInput && !composerResponseLocked) chatInput.focus();
     syncComposerHint();
   }
 
@@ -7191,7 +7568,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
               .catch((error) => logAuthenticatedConversationError("image.refresh.stale", error));
           } else {
             const staleImageUrl = result.image_url
-              || (result.image_base64 ? `data:image/png;base64,${result.image_base64}` : "")
               || result.url
               || "";
             if (staleImageUrl) {
@@ -7205,12 +7581,20 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       if (result.success) {
         let imageUrl = "";
         if (result.image_url) imageUrl = result.image_url;
-        else if (result.image_base64) imageUrl = `data:image/png;base64,${result.image_base64}`;
         else if (result.url) imageUrl = result.url;
 
-        const meta = { type: "image", imageUrl, prompt };
-        appendMessageBubble("assistant", "", meta, {}, { animateReveal: true });
-        await safelyAddImageMessage(targetChatId, "assistant", "", meta, "generated image");
+        const meta = imageUrl ? {
+          type: "image",
+          imageUrl,
+          prompt,
+          provider: result.provider_used || "",
+          storagePath: result.storage_path || "",
+          fileSizeBytes: result.file_size_bytes || null,
+        } : null;
+        if (meta) {
+          appendMessageBubble("assistant", "", meta, {}, { animateReveal: true });
+          await safelyAddImageMessage(targetChatId, "assistant", "", meta, "generated image");
+        }
         maybeGenerateTitle(`Generate image: ${prompt}`, "Generated an image.");
         if (isAuthenticatedSession() && targetChatId) {
           settleImageGenerationUi(targetChatId, state);

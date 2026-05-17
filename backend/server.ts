@@ -1462,6 +1462,55 @@ app.post(
       role: "user" | "assistant";
       content: string;
       clientRequestId?: string;
+      meta?: any;
+    };
+    const toNumberOrUndefined = (value: unknown): number | undefined => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+    };
+    const buildSyncMessageOptions = (message: SyncMessage) => {
+      const meta = message.meta && typeof message.meta === "object" ? message.meta : null;
+      const base = { clientRequestId: message.clientRequestId } as {
+        clientRequestId?: string;
+        messageType?: string;
+        imageUrl?: string;
+        storagePath?: string;
+        prompt?: string;
+        provider?: string;
+        fileSizeBytes?: number;
+        fileUrl?: string;
+        fileName?: string;
+        fileFormat?: string;
+        mimeType?: string;
+        generatedFileId?: string;
+        previewJson?: unknown;
+      };
+      if (meta?.type === "image") {
+        return {
+          ...base,
+          messageType: "image",
+          imageUrl: typeof meta.imageUrl === "string" ? meta.imageUrl : typeof meta.image_url === "string" ? meta.image_url : undefined,
+          storagePath: typeof meta.storagePath === "string" ? meta.storagePath : typeof meta.storage_path === "string" ? meta.storage_path : undefined,
+          prompt: typeof meta.prompt === "string" ? meta.prompt : undefined,
+          provider: typeof meta.provider === "string" ? meta.provider : undefined,
+          fileSizeBytes: toNumberOrUndefined(meta.fileSizeBytes ?? meta.file_size_bytes),
+        };
+      }
+      if (meta?.type === "generated-file") {
+        return {
+          ...base,
+          messageType: "file",
+          fileUrl: typeof meta.file_url === "string" ? meta.file_url : typeof meta.fileUrl === "string" ? meta.fileUrl : undefined,
+          fileName: typeof meta.file_name === "string" ? meta.file_name : typeof meta.fileName === "string" ? meta.fileName : undefined,
+          fileFormat: typeof meta.format === "string" ? meta.format : typeof meta.file_format === "string" ? meta.file_format : undefined,
+          mimeType: typeof meta.mime_type === "string" ? meta.mime_type : typeof meta.mimeType === "string" ? meta.mimeType : undefined,
+          generatedFileId: typeof meta.file_id === "string" ? meta.file_id : typeof meta.generated_file_id === "string" ? meta.generated_file_id : undefined,
+          storagePath: typeof meta.storage_path === "string" ? meta.storage_path : typeof meta.storagePath === "string" ? meta.storagePath : undefined,
+          fileSizeBytes: toNumberOrUndefined(meta.file_size_bytes ?? meta.fileSizeBytes),
+          previewJson: meta.preview || undefined,
+        };
+      }
+      return base;
     };
     const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
     const messages = rawMessages
@@ -1471,8 +1520,12 @@ app.post(
         clientRequestId: typeof message?.clientRequestId === "string" && message.clientRequestId.trim()
           ? message.clientRequestId.trim().slice(0, 120)
           : undefined,
+        meta: message?.meta && typeof message.meta === "object" ? message.meta : undefined,
       }))
-      .filter((message: SyncMessage) => message.content.trim().length > 0)
+      .filter((message: SyncMessage) => {
+        if (message.content.trim().length > 0) return true;
+        return message.meta?.type === "image" || message.meta?.type === "generated-file";
+      })
       .slice(0, 20) as SyncMessage[];
 
     for (const message of messages) {
@@ -1483,7 +1536,7 @@ app.post(
         message.role,
         message.content,
         "chat.sync",
-        { clientRequestId: message.clientRequestId },
+        buildSyncMessageOptions(message),
       );
     }
 
@@ -3483,7 +3536,6 @@ app.post(
       let fullReply = "";
 
       while (true) {
-        if (clientDisconnected) break;
         const { done, value } = await reader.read();
         if (done) break;
         if (!value) continue;
@@ -3494,15 +3546,15 @@ app.post(
 
       stopHeartbeat();
 
-      if (!clientDisconnected) {
-        if (fullReply) {
-          const persistPromise = persistAssistantMessage(fullReply);
-          if (executionProfile.persistence.blockOnAssistantWrite) {
-            await persistPromise;
-          } else {
-            void persistPromise;
-          }
+      if (fullReply) {
+        const persistPromise = persistAssistantMessage(fullReply);
+        if (executionProfile.persistence.blockOnAssistantWrite || clientDisconnected) {
+          await persistPromise;
+        } else {
+          void persistPromise;
         }
+      }
+      if (!clientDisconnected) {
         reportStreamMessageGap(Boolean(fullReply), "stream");
         await writeSseJson({ type: "sync", sync: getStreamSyncPayload() });
         await writeSseEvent("[DONE]");

@@ -243,20 +243,6 @@
   50% { opacity: 0; }
 }
 
-/* AI message typing cursor */
-.message-content.typing-active::after {
-  content: '|';
-  color: var(--purple-400);
-  font-weight: 300;
-  animation: msgCursorBlink 0.5s ease-in-out infinite;
-  margin-left: 1px;
-}
-
-@keyframes msgCursorBlink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
 .sidebar-footer {
   padding: 12px 8px;
   border-top: 1px solid var(--border);
@@ -453,4 +439,3 @@
   color: var(--text-primary);
   border-color: rgba(167,139,250,0.24);
 }
-

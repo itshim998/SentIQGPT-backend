@@ -5,8 +5,15 @@ import { readFrontendSources } from "./frontendSource";
 const frontend = readFrontendSources();
 const html = frontend.combined;
 
-assert.match(html, /const DB_VERSION = 3;/);
+assert.match(html, /const DB_VERSION = 4;/);
 assert.match(html, /generatedFiles: "generated_files"/);
+assert.match(html, /setActiveUserId/);
+assert.match(html, /owner_user_id/);
+assert.match(html, /RECENT_CHAT_WARM_LIMIT = 5/);
+assert.match(html, /warmRecentChatCache/);
+assert.match(html, /last_active_chat_id:/);
+assert.match(html, /chat-cache-loader/);
+assert.match(html, /sanitizeMessageMeta/);
 assert.match(html, /storeGeneratedFile/);
 assert.match(html, /getGeneratedFile/);
 assert.match(html, /file_token/);

@@ -2,7 +2,7 @@
 // 1. Storage Manager — IndexedDB
 // ================================================================
 const DB_NAME = "SentIQGPT";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 const STORES = {
   chats: "chats",
@@ -23,6 +23,7 @@ const DEFAULT_LIMITS = {
 
 let dbInstance = null;
 let dbOpenPromise = null;
+let activeCacheUserId = "";
 
 function openDB() {
   if (dbInstance) return Promise.resolve(dbInstance);
@@ -35,6 +36,12 @@ function openDB() {
       if (!db.objectStoreNames.contains(STORES.chats)) {
         const chatStore = db.createObjectStore(STORES.chats, { keyPath: "id" });
         chatStore.createIndex("updated", "updated", { unique: false });
+        chatStore.createIndex("owner_user_id", "owner_user_id", { unique: false });
+      } else {
+        const chatStore = event.target.transaction.objectStore(STORES.chats);
+        if (!chatStore.indexNames.contains("owner_user_id")) {
+          chatStore.createIndex("owner_user_id", "owner_user_id", { unique: false });
+        }
       }
       if (!db.objectStoreNames.contains(STORES.memories)) {
         const memStore = db.createObjectStore(STORES.memories, { keyPath: "id" });
@@ -51,6 +58,12 @@ function openDB() {
         generatedFileStore.createIndex("chat_id", "chat_id", { unique: false });
         generatedFileStore.createIndex("storage_path", "storage_path", { unique: false });
         generatedFileStore.createIndex("created_at", "created_at", { unique: false });
+        generatedFileStore.createIndex("owner_user_id", "owner_user_id", { unique: false });
+      } else {
+        const generatedFileStore = event.target.transaction.objectStore(STORES.generatedFiles);
+        if (!generatedFileStore.indexNames.contains("owner_user_id")) {
+          generatedFileStore.createIndex("owner_user_id", "owner_user_id", { unique: false });
+        }
       }
       if (!db.objectStoreNames.contains(STORES.config)) {
         db.createObjectStore(STORES.config, { keyPath: "key" });
@@ -60,6 +73,12 @@ function openDB() {
         syncStore.createIndex("type", "type", { unique: false });
         syncStore.createIndex("status", "status", { unique: false });
         syncStore.createIndex("next_retry_at", "next_retry_at", { unique: false });
+        syncStore.createIndex("owner_user_id", "owner_user_id", { unique: false });
+      } else {
+        const syncStore = event.target.transaction.objectStore(STORES.syncQueue);
+        if (!syncStore.indexNames.contains("owner_user_id")) {
+          syncStore.createIndex("owner_user_id", "owner_user_id", { unique: false });
+        }
       }
     };
     request.onsuccess = () => {
@@ -142,6 +161,55 @@ function generateId() {
   return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
 
+function normalizeCacheUserId(value) {
+  return String(value || "").trim();
+}
+
+function setActiveUserId(userId) {
+  activeCacheUserId = normalizeCacheUserId(userId);
+}
+
+function getActiveUserId() {
+  return activeCacheUserId;
+}
+
+function isServerScopedItemVisible(item) {
+  if (!item || item.source !== "server") return true;
+  if (!activeCacheUserId) return false;
+  return item.owner_user_id === activeCacheUserId;
+}
+
+function isOwnedCacheItemVisible(item) {
+  if (!activeCacheUserId) return !item?.owner_user_id;
+  return item?.owner_user_id === activeCacheUserId;
+}
+
+function sanitizeMessageMeta(meta) {
+  if (!meta || typeof meta !== "object") return meta;
+  const nextMeta = { ...meta };
+  if (nextMeta.type === "image") {
+    if (/^data:image\//i.test(String(nextMeta.imageUrl || nextMeta.image_url || ""))) {
+      delete nextMeta.imageUrl;
+      delete nextMeta.image_url;
+    }
+    delete nextMeta.imageBase64;
+    delete nextMeta.image_base64;
+    delete nextMeta.base64;
+    delete nextMeta.imageData;
+    delete nextMeta.image_data;
+    delete nextMeta.blob;
+  }
+  return nextMeta;
+}
+
+function sanitizeMessage(message) {
+  if (!message || typeof message !== "object") return message;
+  return {
+    ...message,
+    ...(message.meta ? { meta: sanitizeMessageMeta(message.meta) } : {}),
+  };
+}
+
 function normalizeMessageContentForDedup(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -196,11 +264,16 @@ async function createChat(title) {
   return chat;
 }
 
-async function getChat(id) { return dbGet(STORES.chats, id); }
+async function getChat(id) {
+  const chat = await dbGet(STORES.chats, id);
+  return isServerScopedItemVisible(chat) ? chat : undefined;
+}
 
 async function getAllChats() {
   const chats = await dbGetAll(STORES.chats);
-  return chats.sort((a, b) => new Date(b.updated) - new Date(a.updated));
+  return chats
+    .filter((chat) => isServerScopedItemVisible(chat))
+    .sort((a, b) => new Date(b.updated) - new Date(a.updated));
 }
 
 async function getLocalChats() {
@@ -212,7 +285,7 @@ async function addMessageToChat(chatId, role, content, meta) {
   const chat = await getChat(chatId);
   if (!chat) throw new Error("Chat not found");
   const msg = { id: generateId(), role, content, timestamp: new Date().toISOString() };
-  if (meta) msg.meta = meta;
+  if (meta) msg.meta = sanitizeMessageMeta(meta);
   chat.messages.push(msg);
   chat.updated = new Date().toISOString();
   if (!chat.title || chat.title === "New Chat") {
@@ -228,6 +301,7 @@ async function addMessageToChat(chatId, role, content, meta) {
 async function upsertMessageInChat(chatId, message) {
   const chat = await getChat(chatId);
   if (!chat) throw new Error("Chat not found");
+  const safeMessage = sanitizeMessage(message);
   const messageId = typeof message?.id === "string" && message.id.trim()
     ? message.id.trim()
     : generateId();
@@ -235,10 +309,10 @@ async function upsertMessageInChat(chatId, message) {
   const nextMessage = {
     ...(existingIndex >= 0 ? chat.messages[existingIndex] : {}),
     id: messageId,
-    role: message?.role === "assistant" ? "assistant" : "user",
-    content: typeof message?.content === "string" ? message.content : "",
-    timestamp: message?.timestamp || (existingIndex >= 0 ? chat.messages[existingIndex].timestamp : new Date().toISOString()),
-    ...(message?.meta ? { meta: message.meta } : {}),
+    role: safeMessage?.role === "assistant" ? "assistant" : "user",
+    content: typeof safeMessage?.content === "string" ? safeMessage.content : "",
+    timestamp: safeMessage?.timestamp || (existingIndex >= 0 ? chat.messages[existingIndex].timestamp : new Date().toISOString()),
+    ...(safeMessage?.meta ? { meta: safeMessage.meta } : {}),
   };
   if (existingIndex >= 0) {
     chat.messages[existingIndex] = nextMessage;
@@ -261,11 +335,12 @@ async function updateMessageInChat(chatId, messageId, updates = {}) {
   if (!chat) throw new Error("Chat not found");
   const index = chat.messages.findIndex((message) => message.id === messageId);
   if (index < 0) return chat;
+  const safeUpdates = sanitizeMessage(updates);
   chat.messages[index] = {
     ...chat.messages[index],
-    ...updates,
+    ...safeUpdates,
     id: messageId,
-    ...(updates.meta ? { meta: { ...(chat.messages[index].meta || {}), ...updates.meta } } : {}),
+    ...(safeUpdates.meta ? { meta: sanitizeMessageMeta({ ...(chat.messages[index].meta || {}), ...safeUpdates.meta }) } : {}),
   };
   chat.updated = new Date().toISOString();
   await dbPut(STORES.chats, chat);
@@ -273,39 +348,46 @@ async function updateMessageInChat(chatId, messageId, updates = {}) {
 }
 
 async function upsertServerChat(chatData) {
-  const existing = await getChat(chatData.id);
+  const existing = await dbGet(STORES.chats, chatData.id);
+  if (existing && existing.source === "server" && !isServerScopedItemVisible(existing)) {
+    await dbDelete(STORES.chats, chatData.id);
+  }
+  const visibleExisting = existing && isServerScopedItemVisible(existing) ? existing : null;
   const incomingTitle = chatData.title || "";
   const shouldKeepPendingLocalTitle = Boolean(
-    existing?.pending_title_sync
-    && typeof existing?.title === "string"
-    && existing.title.trim()
+    visibleExisting?.pending_title_sync
+    && typeof visibleExisting?.title === "string"
+    && visibleExisting.title.trim()
     && incomingTitle
-    && incomingTitle !== existing.title,
+    && incomingTitle !== visibleExisting.title,
   );
   const titleWasSynced = Boolean(
-    existing?.pending_title_sync
+    visibleExisting?.pending_title_sync
     && incomingTitle
-    && incomingTitle === existing?.title,
+    && incomingTitle === visibleExisting?.title,
   );
   const chat = {
     id: chatData.id,
     title: shouldKeepPendingLocalTitle
-      ? existing.title
-      : (incomingTitle || existing?.title || "New Chat"),
-    messages: existing?.messages || [],
-    created: chatData.created || chatData.created_at || existing?.created || new Date().toISOString(),
-    updated: chatData.updated || chatData.updated_at || chatData.created_at || existing?.updated || new Date().toISOString(),
+      ? visibleExisting.title
+      : (incomingTitle || visibleExisting?.title || "New Chat"),
+    messages: visibleExisting?.messages || [],
+    created: chatData.created || chatData.created_at || visibleExisting?.created || new Date().toISOString(),
+    updated: chatData.updated || chatData.updated_at || chatData.created_at || visibleExisting?.updated || new Date().toISOString(),
     source: "server",
+    owner_user_id: normalizeCacheUserId(chatData.owner_user_id || chatData.ownerUserId || activeCacheUserId),
     pending_server_sync: Boolean(chatData.pending_server_sync),
     sync_error: chatData.sync_error || null,
-    last_synced_at: chatData.last_synced_at || existing?.last_synced_at || null,
+    last_synced_at: chatData.last_synced_at || visibleExisting?.last_synced_at || null,
+    warmed_at: chatData.warmed_at || visibleExisting?.warmed_at || null,
+    message_cache_status: chatData.message_cache_status || visibleExisting?.message_cache_status || null,
     pending_title_sync: shouldKeepPendingLocalTitle
       ? true
-      : Boolean(chatData.pending_title_sync || (existing?.pending_title_sync && !titleWasSynced)),
-    title_sync_error: shouldKeepPendingLocalTitle ? (existing?.title_sync_error || null) : (chatData.title_sync_error || null),
+      : Boolean(chatData.pending_title_sync || (visibleExisting?.pending_title_sync && !titleWasSynced)),
+    title_sync_error: shouldKeepPendingLocalTitle ? (visibleExisting?.title_sync_error || null) : (chatData.title_sync_error || null),
     last_title_synced_at: titleWasSynced
       ? (chatData.last_title_synced_at || new Date().toISOString())
-      : (chatData.last_title_synced_at || existing?.last_title_synced_at || null),
+      : (chatData.last_title_synced_at || visibleExisting?.last_title_synced_at || null),
   };
   await dbPut(STORES.chats, chat);
   return chat;
@@ -319,12 +401,14 @@ async function replaceChatMessages(chatId, messages) {
     role: message.role,
     content: message.content || "",
     timestamp: message.timestamp || message.created_at || new Date().toISOString(),
-    ...(message.meta ? { meta: message.meta } : {}),
+    ...(message.meta ? { meta: sanitizeMessageMeta(message.meta) } : {}),
   })));
   chat.messages = normalizedMessages;
   chat.updated = chat.messages.length > 0
     ? chat.messages[chat.messages.length - 1].timestamp
     : (chat.updated || new Date().toISOString());
+  chat.message_cache_status = "complete";
+  chat.warmed_at = new Date().toISOString();
   await dbPut(STORES.chats, chat);
   return chat;
 }
@@ -417,6 +501,7 @@ async function putSyncJob(job) {
     ...(existing || {}),
     ...job,
     id: job?.id || generateId(),
+    owner_user_id: normalizeCacheUserId(job?.owner_user_id || job?.ownerUserId || existing?.owner_user_id || activeCacheUserId),
     status: job?.status || existing?.status || "pending",
     attempt_count: typeof job?.attempt_count === "number" ? job.attempt_count : (existing?.attempt_count || 0),
     next_retry_at: job?.next_retry_at || existing?.next_retry_at || new Date().toISOString(),
@@ -429,7 +514,9 @@ async function putSyncJob(job) {
 
 async function getAllSyncJobs() {
   const jobs = await dbGetAll(STORES.syncQueue);
-  return jobs.sort((a, b) => new Date(a.next_retry_at || a.created_at) - new Date(b.next_retry_at || b.created_at));
+  return jobs
+    .filter((job) => isOwnedCacheItemVisible(job))
+    .sort((a, b) => new Date(a.next_retry_at || a.created_at) - new Date(b.next_retry_at || b.created_at));
 }
 
 async function deleteSyncJob(id) { return dbDelete(STORES.syncQueue, id); }
@@ -480,6 +567,7 @@ async function storeGeneratedFile(fileData) {
   const item = {
     ...(fileData || {}),
     id,
+    owner_user_id: normalizeCacheUserId(fileData?.owner_user_id || fileData?.ownerUserId || activeCacheUserId),
     file_id: fileData?.file_id || fileData?.fileId || id,
     file_name: fileData?.file_name || fileData?.fileName || `doc.${fileData?.format || "txt"}`,
     mime_type: fileData?.mime_type || fileData?.mimeType || "application/octet-stream",
@@ -497,7 +585,14 @@ async function storeGeneratedFile(fileData) {
   return item;
 }
 
-async function getGeneratedFile(id) { return dbGet(STORES.generatedFiles, id); }
+async function getGeneratedFile(id) {
+  const item = await dbGet(STORES.generatedFiles, id);
+  return isOwnedCacheItemVisible(item) ? item : undefined;
+}
+async function getAllGeneratedFiles() {
+  const files = await dbGetAll(STORES.generatedFiles);
+  return files.filter((file) => isOwnedCacheItemVisible(file));
+}
 async function deleteGeneratedFile(id) { return dbDelete(STORES.generatedFiles, id); }
 
 async function getConfig(key) {
@@ -541,11 +636,12 @@ async function getStorageStats() {
 }
 
 window.SentIQStorage = {
+  setActiveUserId, getActiveUserId,
   createChat, getChat, getAllChats, addMessageToChat, upsertMessageInChat, updateMessageInChat, updateChatTitle, deleteChat,
   getLocalChats, upsertServerChat, replaceChatMessages,
   storeMemory, getMemory, getAllMemories, getMemoriesByType, deleteMemory, getTopMemories,
   storeFile, getAllFiles, getFile, deleteFile,
-  storeGeneratedFile, getGeneratedFile, deleteGeneratedFile,
+  storeGeneratedFile, getGeneratedFile, getAllGeneratedFiles, deleteGeneratedFile,
   putSyncJob, getAllSyncJobs, deleteSyncJob,
   getConfig, setConfig, getAllConfig,
   getStorageStats, generateId,
