@@ -114,6 +114,7 @@ import { detectCodeQuery, detectImageMathPrompt, isBufferedReasoningQuery, isMat
 import { detectExplicitMemoryWriteIntent, classifyQueryType, shouldForceWebSearch } from "./orchestrator/queryClassifier";
 import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 import { isWebSearchMode, normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
+import { resolveExecutionProfile } from "./orchestrator/executionProfile";
 
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
@@ -1428,6 +1429,94 @@ app.post(
 );
 
 // ===============================
+// POST /api/chat/sync
+// ===============================
+app.post(
+  "/api/chat/sync",
+  asyncHandler(async (req, res) => {
+    const requestStartedAt = Date.now();
+    const userId = await getVerifiedUserId(req);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "chat.sync");
+    await initializeUserSessionOrThrow(userDb, userId, "chat.sync");
+    await ensureNamedWorkspaceProfile(userId, "chat.sync", userDb);
+
+    const requestedConversationId = getOptionalUuid(req.body?.conversationId, "conversationId", {
+      ignoreInvalid: true,
+    });
+    const requestedTitle =
+      typeof req.body?.title === "string" && req.body.title.trim()
+        ? req.body.title.trim().slice(0, TITLE_MAX_CHARS)
+        : "New Chat";
+    let conversationId = requestedConversationId || "";
+    let createdConversation = false;
+
+    if (conversationId) {
+      await getOwnedConversationOrThrow(userDb, userId, conversationId, "chat.sync");
+    } else {
+      const conversation = await createConversationOrThrow(userDb, userId, "chat.sync", requestedTitle);
+      conversationId = conversation.id;
+      createdConversation = true;
+    }
+
+    type SyncMessage = {
+      role: "user" | "assistant";
+      content: string;
+      clientRequestId?: string;
+    };
+    const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    const messages = rawMessages
+      .map((message: any) => ({
+        role: message?.role === "assistant" ? "assistant" as const : "user" as const,
+        content: typeof message?.content === "string" ? message.content : "",
+        clientRequestId: typeof message?.clientRequestId === "string" && message.clientRequestId.trim()
+          ? message.clientRequestId.trim().slice(0, 120)
+          : undefined,
+      }))
+      .filter((message: SyncMessage) => message.content.trim().length > 0)
+      .slice(0, 20) as SyncMessage[];
+
+    for (const message of messages) {
+      await insertConversationMessageOrThrow(
+        userDb,
+        userId,
+        conversationId,
+        message.role,
+        message.content,
+        "chat.sync",
+        { clientRequestId: message.clientRequestId },
+      );
+    }
+
+    const firstUserMessage = messages.find((message) => message.role === "user")?.content || "";
+    const assistantReply = [...messages].reverse().find((message) => message.role === "assistant")?.content || "";
+    if (createdConversation && firstUserMessage && assistantReply) {
+      scheduleAutoTitleConversation({
+        userDb,
+        userId,
+        conversationId,
+        userMessage: firstUserMessage,
+        assistantReply,
+        scope: "chat.sync.title.auto",
+        currentTitle: requestedTitle,
+      });
+    }
+
+    logDbEvent("chat.sync.request.ok", userId, {
+      duration_ms: Date.now() - requestStartedAt,
+      conversationId,
+      count: messages.length,
+    });
+    res.json({
+      sync: {
+        persisted: true,
+        deferred: false,
+        conversationId,
+      },
+    });
+  }),
+);
+
+// ===============================
 // PATCH /api/conversations/:id/title
 // ===============================
 app.patch(
@@ -1573,6 +1662,7 @@ app.post(
       res.status(400).json({ error: formatZodError(parsed.error) });
       return;
     }
+    const executionProfile = resolveExecutionProfile(parsed.data.executionMode);
     const normalizedRecentMessages = collapseAdjacentDuplicateMessages(
       parsed.data.context?.recent_messages ?? [],
     );
@@ -1618,6 +1708,7 @@ app.post(
     if (isGuest && hasExplicitWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
+        executionMode: parsed.data.executionMode,
         clarificationResponse: parsed.data.clarification_response,
         context: {
           recent_messages: normalizedRecentMessages,
@@ -1649,16 +1740,20 @@ app.post(
     }
 
     if (isGuest) {
-      const guestContext = await buildContext({
+      const guestRawContext = {
         recent_messages: normalizedRecentMessages,
         memories: [],
         file_references: orcFileRefs,
         image_attachments: orcImageAttachments,
         web_search_mode: webSearchMode,
         userMessage: guestUserMessage,
-      }, undefined, userId);
+      };
+      const guestContext = executionProfile.context.compressConversation
+        ? await buildContext(guestRawContext, undefined, userId, { profile: executionProfile })
+        : await buildContextFast(guestRawContext, undefined, userId, { profile: executionProfile });
 
-      const guestClarification = await maybeCreateChatClarification({
+      const guestClarification = executionProfile.clarification.enabled
+        ? await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
         originalMessage: resolvedClarification.originalMessage,
         previousAnswers: resolvedClarification.answers,
@@ -1673,7 +1768,8 @@ app.post(
         answeredOptions: resolvedClarification.answeredOptions,
         selectedOptionId: resolvedClarification.selectedOptionId,
         webSearch: false,
-      });
+      })
+        : null;
       if (guestClarification) {
         res.json(guestClarification);
         return;
@@ -1839,7 +1935,8 @@ app.post(
     }
 
     if (isLogicReasoningQuery && !hasExplicitWebSearchMode) {
-      const logicClarification = await maybeCreateChatClarification({
+      const logicClarification = executionProfile.clarification.enabled
+        ? await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
         originalMessage: resolvedClarification.originalMessage,
         previousAnswers: resolvedClarification.answers,
@@ -1854,7 +1951,8 @@ app.post(
         answeredQuestion: resolvedClarification.answeredQuestion,
         answeredOptions: resolvedClarification.answeredOptions,
         selectedOptionId: resolvedClarification.selectedOptionId,
-      });
+      })
+        : null;
       if (logicClarification) {
         if (userDb && activeConversationId) {
           try {
@@ -1882,7 +1980,7 @@ app.post(
         return;
       }
 
-      const reasoningContext = await buildContext({
+      const reasoningRawContext = {
         recent_messages: normalizedRecentMessages,
         memories: parsed.data.context?.memories,
         file_references: orcFileRefs,
@@ -1891,7 +1989,10 @@ app.post(
         web_search_mode: webSearchMode,
         userMessage: effectiveUserMessage,
         conversationId: activeConversationId || undefined,
-      }, userDb, userId);
+      };
+      const reasoningContext = executionProfile.context.compressConversation
+        ? await buildContext(reasoningRawContext, userDb, userId, { profile: executionProfile })
+        : await buildContextFast(reasoningRawContext, userDb, userId, { profile: executionProfile });
 
       const result = await handleChat({
         userMessage: effectiveUserMessage,
@@ -1978,6 +2079,7 @@ app.post(
 
     const result = await orchestrate({
       userMessage: parsed.data.message,
+      executionMode: parsed.data.executionMode,
       clarificationResponse: parsed.data.clarification_response,
       context: {
         recent_messages: normalizedRecentMessages,
@@ -2262,6 +2364,7 @@ app.post(
       res.status(400).json({ error: formatZodError(parsed.error) });
       return;
     }
+    const executionProfile = resolveExecutionProfile(parsed.data.executionMode);
 
     if (detectPromptInjection(parsed.data.message)) {
       res.status(400).json({ error: "Message rejected by safety filter." });
@@ -2301,6 +2404,7 @@ app.post(
     if (isGuest && hasExplicitWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
+        executionMode: parsed.data.executionMode,
         clarificationResponse: parsed.data.clarification_response,
         context: {
           recent_messages: normalizedRecentMessages,
@@ -2331,7 +2435,8 @@ app.post(
     }
 
     if (isGuest) {
-      const guestClarification = await maybeCreateChatClarification({
+      const guestClarification = executionProfile.clarification.enabled
+        ? await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
         originalMessage: resolvedClarification.originalMessage,
         previousAnswers: resolvedClarification.answers,
@@ -2345,7 +2450,8 @@ app.post(
         answeredQuestion: resolvedClarification.answeredQuestion,
         answeredOptions: resolvedClarification.answeredOptions,
         selectedOptionId: resolvedClarification.selectedOptionId,
-      });
+      })
+        : null;
       if (guestClarification) {
         res.json(guestClarification);
         return;
@@ -2372,14 +2478,17 @@ app.post(
         try {
           if (isMathReasoningQuery) {
             await writeSseJson({ type: "route", route: "math_reasoning" });
-            const guestMathContext = await buildContext({
+            const guestMathRawContext = {
               recent_messages: normalizedRecentMessages,
               memories: [],
               file_references: parsed.data.context?.file_references,
               image_attachments: parsed.data.context?.image_attachments,
               web_search_mode: webSearchMode,
               userMessage: guestUserMessage,
-            }, undefined, userId);
+            };
+            const guestMathContext = executionProfile.context.compressConversation
+              ? await buildContext(guestMathRawContext, undefined, userId, { profile: executionProfile })
+              : await buildContextFast(guestMathRawContext, undefined, userId, { profile: executionProfile });
             const result = await solveGuestMathWithGemini({
               userMessage: guestUserMessage,
               userId,
@@ -2398,14 +2507,17 @@ app.post(
             return;
           }
 
-          const guestReasoningContext = await buildContext({
+          const guestReasoningRawContext = {
             recent_messages: normalizedRecentMessages,
             memories: [],
             file_references: parsed.data.context?.file_references,
             image_attachments: parsed.data.context?.image_attachments,
             web_search_mode: webSearchMode,
             userMessage: guestUserMessage,
-          }, undefined, userId);
+          };
+          const guestReasoningContext = executionProfile.context.compressConversation
+            ? await buildContext(guestReasoningRawContext, undefined, userId, { profile: executionProfile })
+            : await buildContextFast(guestReasoningRawContext, undefined, userId, { profile: executionProfile });
 
           const result = await handleChat({
             userMessage: guestUserMessage,
@@ -2449,7 +2561,7 @@ app.post(
         image_attachments: parsed.data.context?.image_attachments,
         web_search_mode: webSearchMode,
         userMessage: guestUserMessage,
-      }, undefined, userId);
+      }, undefined, userId, { profile: executionProfile });
 
       const guestFastPath = !guestCtx.hasFileContext
         && effectiveUserMessage.length <= 280
@@ -2632,6 +2744,7 @@ app.post(
           "assistant",
           content,
           "chat.stream",
+          { clientRequestId: parsed.data.clientRequestId },
         );
         assistantMessagePersisted = true;
         if (
@@ -2659,6 +2772,12 @@ app.post(
         );
       }
     };
+
+    const getStreamSyncPayload = () => ({
+      persisted: sync.persisted && executionProfile.persistence.blockOnAssistantWrite,
+      deferred: sync.deferred || !executionProfile.persistence.blockOnAssistantWrite,
+      conversationId: activeConversationId,
+    });
 
     const persistStoredMemory = async (memory?: {
       id?: string;
@@ -2807,6 +2926,7 @@ app.post(
       try {
         const result = await orchestrate({
           userMessage: parsed.data.message,
+          executionMode: parsed.data.executionMode,
           clarificationResponse: parsed.data.clarification_response,
           context: {
             recent_messages: normalizedRecentMessages,
@@ -2855,6 +2975,7 @@ app.post(
       try {
         const result = await orchestrate({
           userMessage: parsed.data.message,
+          executionMode: parsed.data.executionMode,
           clarificationResponse: parsed.data.clarification_response,
           context: {
             recent_messages: normalizedRecentMessages,
@@ -2954,6 +3075,7 @@ app.post(
       try {
         const result = await orchestrate({
           userMessage: parsed.data.message,
+          executionMode: parsed.data.executionMode,
           clarificationResponse: parsed.data.clarification_response,
           context: {
             recent_messages: normalizedRecentMessages,
@@ -3005,6 +3127,7 @@ app.post(
       try {
         const result = await orchestrate({
           userMessage: parsed.data.message,
+          executionMode: parsed.data.executionMode,
           clarificationResponse: parsed.data.clarification_response,
           context: {
             recent_messages: normalizedRecentMessages,
@@ -3052,7 +3175,7 @@ app.post(
     // ── Safety gate: math queries use the direct math pipeline via orchestrator ──
     // Math queries need the direct openai-large pipeline, which
     // is only available through the orchestrator.  Redirect like chart requests.
-    const reasoningClarification = isBufferedReasoning
+    const reasoningClarification = isBufferedReasoning && executionProfile.clarification.enabled
       ? await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
         originalMessage: resolvedClarification.originalMessage,
@@ -3102,6 +3225,7 @@ app.post(
         if (isMathReasoningQuery) {
           const result = await orchestrate({
             userMessage: parsed.data.message,
+            executionMode: parsed.data.executionMode,
             clarificationResponse: parsed.data.clarification_response,
             context: {
               recent_messages: normalizedRecentMessages,
@@ -3130,7 +3254,7 @@ app.post(
           return;
         }
 
-        const reasoningContext = await buildContext({
+        const reasoningRawContext = {
           recent_messages: normalizedRecentMessages,
           memories: parsed.data.context?.memories,
           file_references: parsed.data.context?.file_references,
@@ -3139,7 +3263,10 @@ app.post(
           web_search_mode: webSearchMode,
           userMessage: effectiveUserMessage,
           conversationId: activeConversationId || undefined,
-        }, userDb, userId);
+        };
+        const reasoningContext = executionProfile.context.compressConversation
+          ? await buildContext(reasoningRawContext, userDb, userId, { profile: executionProfile })
+          : await buildContextFast(reasoningRawContext, userDb, userId, { profile: executionProfile });
 
         const result = await handleChat({
           userMessage: effectiveUserMessage,
@@ -3188,6 +3315,7 @@ app.post(
       try {
         const result = await orchestrate({
           userMessage: parsed.data.message,
+          executionMode: parsed.data.executionMode,
           clarificationResponse: parsed.data.clarification_response,
           context: {
             recent_messages: normalizedRecentMessages,
@@ -3219,7 +3347,8 @@ app.post(
       return;
     }
 
-    const directClarification = await maybeCreateChatClarification({
+    const directClarification = executionProfile.clarification.enabled
+      ? await maybeCreateChatClarification({
       userMessage: effectiveUserMessage,
       originalMessage: resolvedClarification.originalMessage,
       previousAnswers: resolvedClarification.answers,
@@ -3235,7 +3364,8 @@ app.post(
       answeredOptions: resolvedClarification.answeredOptions,
       selectedOptionId: resolvedClarification.selectedOptionId,
       webSearch: false,
-    });
+    })
+      : null;
     if (directClarification) {
       if (directClarification.reply) {
         await persistAssistantMessage(directClarification.reply);
@@ -3302,7 +3432,7 @@ app.post(
     // ── FAST context build (NO LLM calls, minimal latency) ──
     // Use buildContextFast which skips conversation compression for speed.
     // This gets the model started ASAP while still providing recent context.
-    const ctx = await buildContextFast({
+    const directRawContext = {
       recent_messages: normalizedRecentMessages,
       memories: parsed.data.context?.memories,
       file_references: fileRefs,
@@ -3311,7 +3441,10 @@ app.post(
       web_search_mode: webSearchMode,
       userMessage: effectiveUserMessage,
       conversationId: activeConversationId || undefined,
-    }, userDb, userId);
+    };
+    const ctx = executionProfile.context.compressConversation
+      ? await buildContext(directRawContext, userDb, userId, { profile: executionProfile })
+      : await buildContextFast(directRawContext, userDb, userId, { profile: executionProfile });
 
     console.log(`[Latency] context built (+${Date.now() - requestStart}ms)`);
 
@@ -3363,9 +3496,15 @@ app.post(
 
       if (!clientDisconnected) {
         if (fullReply) {
-          await persistAssistantMessage(fullReply);
+          const persistPromise = persistAssistantMessage(fullReply);
+          if (executionProfile.persistence.blockOnAssistantWrite) {
+            await persistPromise;
+          } else {
+            void persistPromise;
+          }
         }
         reportStreamMessageGap(Boolean(fullReply), "stream");
+        await writeSseJson({ type: "sync", sync: getStreamSyncPayload() });
         await writeSseEvent("[DONE]");
         logStreamMetrics(streamMetrics, "complete");
         console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
@@ -3380,10 +3519,16 @@ app.post(
           });
           const fallbackText = fallback.text || "";
           if (fallbackText) {
-            await persistAssistantMessage(fallbackText);
+            const persistPromise = persistAssistantMessage(fallbackText);
+            if (executionProfile.persistence.blockOnAssistantWrite) {
+              await persistPromise;
+            } else {
+              void persistPromise;
+            }
           }
           reportStreamMessageGap(Boolean(fallbackText), "stream.fallback");
           await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
+          await writeSseJson({ type: "sync", sync: getStreamSyncPayload() });
           await writeSseEvent("[DONE]");
           logStreamMetrics(streamMetrics, "fallback");
           finishSse();

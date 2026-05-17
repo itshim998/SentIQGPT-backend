@@ -170,6 +170,17 @@
             </div>
           </div>
 
+          <div id="execution-mode-control" class="execution-mode-control">
+            <button id="execution-mode-toggle" class="execution-mode-toggle" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="execution-mode-menu">
+              <span id="execution-mode-label">Fast</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div id="execution-mode-menu" class="execution-mode-menu" role="listbox" aria-label="Execution mode" aria-hidden="true">
+              <button class="execution-mode-option active" type="button" role="option" data-execution-mode="fast" aria-selected="true">Fast</button>
+              <button class="execution-mode-option" type="button" role="option" data-execution-mode="intuitive" aria-selected="false">Intuitive</button>
+            </div>
+          </div>
+
           <button id="send-btn" class="btn-send" title="Send message" aria-label="Send message">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>

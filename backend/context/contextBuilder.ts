@@ -24,6 +24,7 @@ import { generateEmbedding } from "../memory/memoryEmbedding";
 import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 import { getPriorConversationUserMessages } from "../services/conversationService";
 import { collapseAdjacentDuplicateMessages } from "./messageDeduper";
+import { FAST_PROFILE, INTUITIVE_PROFILE, type ExecutionProfile } from "../orchestrator/executionProfile";
 
 export interface RawMessageContext {
   readonly recent_messages?: readonly { role: string; content: string }[];
@@ -87,6 +88,10 @@ export interface BuiltContext {
     createdAt: string;
   }[];
   readonly isExplicitRecallQuery: boolean;
+}
+
+export interface BuildContextOptions {
+  readonly profile?: ExecutionProfile;
 }
 
 type ContextMemory = {
@@ -366,7 +371,9 @@ export async function buildContext(
   raw: RawMessageContext,
   userDb?: SupabaseClient,
   userId?: string,
+  options: BuildContextOptions = {},
 ): Promise<BuiltContext> {
+  const profile = options.profile ?? INTUITIVE_PROFILE;
   const ctxStart = Date.now();
 
   // Derive the query early so all pipelines can use it.
@@ -387,10 +394,10 @@ export async function buildContext(
 
   // ── PARALLEL: conversation compression + semantic memory search + cloud memory fetch ──
   // All three operations are independent and can run concurrently.
-  const cloudMemoryPromise = (userDb && normalizedUserId)
+  const cloudMemoryPromise = (profile.context.cloudMemories && userDb && normalizedUserId)
     ? fetchCloudMemories(userDb, normalizedUserId, raw.conversationId)
     : Promise.resolve([] as readonly ContextMemory[]);
-  const recallEvidencePromise = (userDb && normalizedUserId && isExplicitRecallQuery)
+  const recallEvidencePromise = (profile.context.priorConversationRecall && userDb && normalizedUserId && isExplicitRecallQuery)
     ? fetchPriorConversationRecallEvidence({
       query,
       userDb,
@@ -399,8 +406,15 @@ export async function buildContext(
     })
     : Promise.resolve([] as readonly ContextRecallEvidence[]);
 
+  const compressionPromise = profile.context.compressConversation
+    ? compressConversation(allMessages, userId)
+    : Promise.resolve({
+        recentMessages: allMessages.slice(-CONVERSATION_WINDOW),
+        summary: undefined as string | undefined,
+      });
+
   const [compressionResult, cloudMemories, priorConversationEvidence] = await Promise.all([
-    compressConversation(allMessages, userId),
+    compressionPromise,
     cloudMemoryPromise,
     recallEvidencePromise,
   ]);
@@ -408,7 +422,9 @@ export async function buildContext(
   const { recentMessages, summary } = compressionResult;
 
   const memoryCandidates = mergeMemoryCandidates(rawMemories, cloudMemories);
-  const semanticResults = await semanticMemorySearch(memoryCandidates, query, 3);
+  const semanticResults = profile.context.semanticMemorySearch
+    ? await semanticMemorySearch(memoryCandidates, query, 3)
+    : null;
   let memories: readonly ContextMemory[];
   if (semanticResults) {
     const semanticMemories = semanticResults.map((r) => r.memory);
@@ -449,7 +465,7 @@ export async function buildContext(
   console.log(`[CONTEXT] messages included: ${recentMessages.length}`);
   console.log(`[CONTEXT] summary used: ${!!summary}`);
   console.log(`[CONTEXT] recall evidence selected: ${priorConversationEvidence.length}`);
-  console.log(`[CONTEXT] buildContext completed in ${Date.now() - ctxStart}ms`);
+  console.log(`[CONTEXT] buildContext profile=${profile.mode} completed in ${Date.now() - ctxStart}ms`);
 
   return {
     recentMessages,
@@ -486,7 +502,9 @@ export async function buildContextFast(
   raw: RawMessageContext,
   userDb?: SupabaseClient,
   userId?: string,
+  options: BuildContextOptions = {},
 ): Promise<BuiltContext> {
+  const profile = options.profile ?? FAST_PROFILE;
   const ctxStart = Date.now();
 
   // Get recent messages directly - no compression, no LLM call
@@ -507,10 +525,10 @@ export async function buildContextFast(
   const normalizedUserId = userId?.trim();
 
   // Start cloud memory fetch early (async)
-  const cloudMemoryPromise = (userDb && normalizedUserId)
+  const cloudMemoryPromise = (profile.context.cloudMemories && userDb && normalizedUserId)
     ? fetchCloudMemories(userDb, normalizedUserId, raw.conversationId)
     : Promise.resolve([] as readonly ContextMemory[]);
-  const recallEvidencePromise = (userDb && normalizedUserId && isExplicitRecallQuery)
+  const recallEvidencePromise = (profile.context.priorConversationRecall && userDb && normalizedUserId && isExplicitRecallQuery)
     ? fetchPriorConversationRecallEvidence({
       query,
       userDb,
@@ -549,7 +567,7 @@ export async function buildContextFast(
   console.log(`[CONTEXT-FAST] memory selected: ${memories.length} (keyword)`);
   console.log(`[CONTEXT-FAST] messages included: ${recentMessages.length}`);
   console.log(`[CONTEXT-FAST] recall evidence selected: ${priorConversationEvidence.length}`);
-  console.log(`[CONTEXT-FAST] buildContextFast completed in ${Date.now() - ctxStart}ms`);
+  console.log(`[CONTEXT-FAST] profile=${profile.mode} buildContextFast completed in ${Date.now() - ctxStart}ms`);
 
   return {
     recentMessages,

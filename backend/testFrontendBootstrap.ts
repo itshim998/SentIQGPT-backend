@@ -47,6 +47,11 @@ assert.match(
   /window\.SentIQStorage\s*=\s*\{[\s\S]*collapseAdjacentDuplicateChatMessages/,
   "SentIQStorage compatibility global should expose chat-message dedupe helper",
 );
+assert.match(storageService, /execution_mode:\s*["']fast["']/, "storage defaults execution mode to fast");
+assert.match(storageService, /window\.SentIQStorage\s*=\s*\{[\s\S]*upsertMessageInChat/, "storage should expose streaming message upsert helper");
+assert.match(apiClient, /execution_mode:\s*executionMode/, "chat API payload should include execution_mode");
+assert.match(chatController, /executionModeToggle/, "chat controller should wire execution mode selector refs");
+assert.match(chatController, /createStreamingDraftPersister/, "chat controller should persist streaming drafts locally");
 
 for (const helperName of ["normalizeMemoryScope", "collapseAdjacentDuplicateChatMessages"]) {
   for (const file of frontend.scriptFiles) {
@@ -240,6 +245,7 @@ const requiredClickIds = [
   "new-chat-btn",
   "settings-btn",
   "send-btn",
+  "execution-mode-toggle",
   "composer-plus-btn",
   "file-attach-btn",
   "image-gen-btn",
@@ -311,6 +317,7 @@ for (const id of [
   "new-chat-btn",
   "settings-btn",
   "send-btn",
+  "execution-mode-toggle",
   "composer-plus-btn",
   "file-attach-btn",
   "image-gen-btn",

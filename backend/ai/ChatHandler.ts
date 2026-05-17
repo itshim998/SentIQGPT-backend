@@ -10,6 +10,23 @@ const REASONING_MAX_OUTPUT_TOKENS = 2600;
 const CONTINUATION_MAX_OUTPUT_TOKENS = 1800;
 const RAW_REASONING_FALLBACK =
   "I'm currently unable to process your request. Please try again shortly.";
+const GENERIC_CHAT_FALLBACK_PATTERN =
+  /\bcurrently unable to process your request\b|\bplease try again shortly\b/i;
+
+function buildMemoryBackedFallbackAnswer(args: {
+  readonly userMessage: string;
+  readonly memories?: readonly { type: string; summary: string }[];
+}): string | null {
+  if (!/\b(?:what(?:'s| is)\s+my\s+name|who\s+am\s+i|do\s+you\s+remember\s+my\s+name)\b/i.test(args.userMessage)) {
+    return null;
+  }
+  const identityMemory = (args.memories ?? []).find((memory) =>
+    memory.type === "identity" && /\b(?:user'?s|my)\s+name\s+is\b/i.test(memory.summary),
+  );
+  const nameMatch = identityMemory?.summary.match(/\bname\s+is\s+([^.!?\n,;]+)/i);
+  const name = nameMatch?.[1]?.trim();
+  return name ? `Your name is ${name}.` : null;
+}
 
 function mergeContinuation(base: string, continuation: string): string {
   const left = base.trimEnd();
@@ -192,6 +209,18 @@ export async function handleChat(args: {
       }
     } catch {
       finalThinking = undefined;
+    }
+  }
+
+  if (GENERIC_CHAT_FALLBACK_PATTERN.test(finalAnswer)) {
+    const memoryBackedAnswer = buildMemoryBackedFallbackAnswer({
+      userMessage: args.userMessage,
+      memories: args.memories,
+    });
+    if (memoryBackedAnswer) {
+      finalAnswer = memoryBackedAnswer;
+      finalThinking = undefined;
+      fallback = true;
     }
   }
 

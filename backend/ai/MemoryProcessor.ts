@@ -32,6 +32,76 @@ export interface MemoryCompression {
   readonly importance: number;
 }
 
+type SupportedMemoryType = "identity" | "preference" | "project";
+
+function cleanMemoryFragment(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/^[\s"'`]+|[\s"'`]+$/g, "")
+    .replace(/[.!?;:,]+$/g, "")
+    .trim();
+}
+
+function capitalizeSentence(value: string): string {
+  const trimmed = cleanMemoryFragment(value);
+  if (!trimmed) return "";
+  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+}
+
+function buildDeterministicMemorySummary(message: string, memoryType: SupportedMemoryType): MemorySummary | null {
+  const nameMatch = message.match(/\bmy\s+name\s+is\s+([^.!?\n,;]+)/i);
+  if (memoryType === "identity" && nameMatch?.[1]) {
+    const name = cleanMemoryFragment(nameMatch[1]);
+    if (name) return { summary: `User's name is ${name}.`, importance: 9 };
+  }
+
+  const preferenceMatch = message.match(/\bi\s+(prefer|like|love|dislike|hate)\s+([^.!?\n;]+)/i);
+  if (memoryType === "preference" && preferenceMatch?.[1] && preferenceMatch?.[2]) {
+    const verbByInput: Record<string, string> = {
+      prefer: "prefers",
+      like: "likes",
+      love: "loves",
+      dislike: "dislikes",
+      hate: "hates",
+    };
+    const object = cleanMemoryFragment(preferenceMatch[2]);
+    if (object) return { summary: `User ${verbByInput[preferenceMatch[1].toLowerCase()] || "prefers"} ${object}.`, importance: 7 };
+  }
+
+  const projectMatch = message.match(/\b(working\s+on|building|developing)\s+([^.!?\n;]+)/i);
+  if (memoryType === "project" && projectMatch?.[1] && projectMatch?.[2]) {
+    const action = projectMatch[1].toLowerCase().replace(/\s+/g, " ");
+    const project = cleanMemoryFragment(projectMatch[2]);
+    if (project) return { summary: `User is ${action} ${project}.`, importance: 8 };
+  }
+
+  const stripped = cleanMemoryFragment(
+    message
+      .replace(/\b(?:please\s+)?(?:remember|save|store|keep)\b(?:\s+(?:that|this|it))?/gi, "")
+      .replace(/\b(?:do\s+not|don't)\s+forget(?:\s+(?:that|this|it))?/gi, "")
+      .replace(/\bfor\s+future\s+reference\b/gi, ""),
+  );
+  if (stripped.length < 4) return null;
+
+  if (/^my\s+/i.test(stripped)) {
+    return {
+      summary: `User's ${cleanMemoryFragment(stripped.replace(/^my\s+/i, ""))}.`,
+      importance: memoryType === "identity" ? 8 : 7,
+    };
+  }
+  if (/^i\s+am\s+/i.test(stripped)) {
+    return {
+      summary: `User is ${cleanMemoryFragment(stripped.replace(/^i\s+am\s+/i, ""))}.`,
+      importance: memoryType === "identity" ? 8 : 7,
+    };
+  }
+
+  return {
+    summary: `${capitalizeSentence(stripped)}.`,
+    importance: memoryType === "project" ? 8 : 7,
+  };
+}
+
 // ==============================
 // Step 1: Classify
 // ==============================
@@ -137,6 +207,7 @@ export async function processMessageForMemory(args: {
   readonly existingMemories?: readonly { type: string; summary: string }[];
   readonly forceStore?: boolean;
   readonly userId?: string;
+  readonly generateEmbedding?: boolean;
 }): Promise<{
   readonly stored: boolean;
   readonly memory?: {
@@ -190,12 +261,20 @@ export async function processMessageForMemory(args: {
     .filter((m) => m.type === memType)
     .map((m) => ({ summary: m.summary }));
 
-  const summary = await summarizeMemory({
+  let summary = await summarizeMemory({
     message: args.message,
     memoryType: memType,
     existingMemories: typeMemories,
     userId: args.userId,
   });
+
+  if (!summary.summary && deterministicType) {
+    const deterministicSummary = buildDeterministicMemorySummary(args.message, deterministicType);
+    if (deterministicSummary) {
+      summary = deterministicSummary;
+      console.log(`[MEMORY] deterministic summary fallback used`);
+    }
+  }
 
   console.log(`[MEMORY] summary generated: "${summary.summary.slice(0, 80)}" (importance: ${summary.importance})`);
 
@@ -205,9 +284,12 @@ export async function processMessageForMemory(args: {
   }
 
   // Step 3: Generate embedding for semantic retrieval
-  const embedding = await generateEmbedding(summary.summary);
+  const shouldGenerateEmbedding = args.generateEmbedding !== false;
+  const embedding = shouldGenerateEmbedding ? await generateEmbedding(summary.summary) : undefined;
   if (embedding) {
     console.log(`[MEMORY] embedding generated (${embedding.length} dims)`);
+  } else if (!shouldGenerateEmbedding) {
+    console.log(`[MEMORY] embedding deferred by execution profile`);
   } else {
     console.log(`[MEMORY] embedding skipped (service unavailable)`);
   }

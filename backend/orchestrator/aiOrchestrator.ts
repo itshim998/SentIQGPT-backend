@@ -23,7 +23,7 @@
 
 import { solveMathDirect } from "../ai/mathVerifier";
 import { finalizeUserFacingReply } from "../ai/replyGuard";
-import { buildContext } from "../context/contextBuilder";
+import { buildContext, buildContextFast } from "../context/contextBuilder";
 import { planTask } from "./planner";
 import { executePlan } from "./toolExecutor";
 import { detectCodeQuery, detectImageMathPrompt, isMathQuery } from "./modelRouter";
@@ -44,6 +44,7 @@ import type { DetectedTool } from "./toolDetector";
 import type { PlanTool } from "./planner";
 import type { StepResult } from "./toolExecutor";
 import type { SearchResult } from "../tools/webSearch/types";
+import { resolveExecutionProfile, type ExecutionMode, type ExecutionProfile } from "./executionProfile";
 
 // ==============================
 // Types
@@ -52,6 +53,7 @@ import type { SearchResult } from "../tools/webSearch/types";
 export interface OrchestratorRequest {
   readonly userMessage: string;
   readonly context?: RawMessageContext;
+  readonly executionMode?: ExecutionMode;
   readonly clarificationResponse?: ClarificationResponsePayload;
   /** Skip reflection loop for faster response (default: false) */
   readonly skipReflection?: boolean;
@@ -230,6 +232,18 @@ function buildClarificationResponse(payload: ClarificationPayload): Orchestrator
     model_used: payload.model_used,
     searched: false,
   };
+}
+
+function buildContextForProfile(
+  profile: ExecutionProfile,
+  rawContext: RawMessageContext | undefined,
+  userMessage: string,
+) {
+  const raw = { ...(rawContext ?? {}), userMessage };
+  const options = { profile };
+  return profile.context.compressConversation
+    ? buildContext(raw, rawContext?.userDb, rawContext?.userId, options)
+    : buildContextFast(raw, rawContext?.userDb, rawContext?.userId, options);
 }
 
 async function maybeClarify(
@@ -419,14 +433,16 @@ export async function orchestrate(
 async function _orchestrateInner(
   request: OrchestratorRequest,
 ): Promise<OrchestratorResponse> {
-  const { context: rawContext, skipReflection = false } = request;
+  const profile = resolveExecutionProfile(request.executionMode);
+  const { context: rawContext } = request;
+  const skipReflection = request.skipReflection ?? !profile.reflection.enabled;
   const resolvedClarification = resolveClarificationInput(
     request.userMessage,
     request.clarificationResponse,
   );
   const userMessage = resolvedClarification.effectiveMessage;
 
-  console.log(`[ORCHESTRATOR] Processing: "${userMessage.slice(0, 80)}..." (skipReflection=${skipReflection})`);
+  console.log(`[ORCHESTRATOR] Processing: "${userMessage.slice(0, 80)}..." (mode=${profile.mode}, skipReflection=${skipReflection})`);
 
 
   // ── Early Math Detection ──
@@ -437,14 +453,11 @@ async function _orchestrateInner(
   // the openai-large math pipeline.
   if (detectExplicitMemoryWriteIntent(userMessage)) {
     console.log(`[ORCHESTRATOR] explicit memory write detected — bypassing planner`);
-    const ctx = await buildContext(
-      { ...(rawContext ?? {}), userMessage },
-      rawContext?.userDb,
-      rawContext?.userId,
-    );
+    const ctx = await buildContextForProfile(profile, rawContext, userMessage);
     const execution = await executePlan(
       [{ step: 1, tool: "memory_update", input: userMessage }],
       ctx,
+      { profile },
     );
     const merged = mergeResults(execution.steps, { stored: false });
     const reply = merged.memory.stored
@@ -467,7 +480,7 @@ async function _orchestrateInner(
     || queryClassification.needsWebSearch
     || shouldForceWebSearch(userMessage);
 
-  if (!maybeWebSearchRequest) {
+  if (profile.clarification.enabled && !maybeWebSearchRequest) {
     const clarificationResponse = await maybeClarify(
       userMessage,
       rawContext,
@@ -523,11 +536,7 @@ async function _orchestrateInner(
   // 1. Build context + run planner in PARALLEL (both are independent)
   //    Memory pipeline is deferred to background — never blocks the LLM response.
   const [ctx, plan] = await Promise.all([
-    buildContext(
-      { ...(rawContext ?? {}), userMessage },
-      rawContext?.userDb,
-      rawContext?.userId,
-    ),
+    buildContextForProfile(profile, rawContext, userMessage),
     planTask({
       userMessage,
       hasFileContext: (rawContext?.file_references?.length ?? 0) > 0,
@@ -544,20 +553,22 @@ async function _orchestrateInner(
   const isWebSearchPlan = firstStep?.tool === "web_search";
   let execution: Awaited<ReturnType<typeof executePlan>>;
   if (isWebSearchPlan) {
-    const executionPromise = executePlan(finalPlan.steps, ctx);
-    const clarificationResponse = await maybeClarify(
-      userMessage,
-      rawContext,
-      resolvedClarification.turn,
-      {
-        webSearch: true,
-        originalMessage: resolvedClarification.originalMessage,
-        previousAnswers: resolvedClarification.answers,
-        answeredQuestion: resolvedClarification.answeredQuestion,
-        answeredOptions: resolvedClarification.answeredOptions,
-        selectedOptionId: resolvedClarification.selectedOptionId,
-      },
-    );
+    const executionPromise = executePlan(finalPlan.steps, ctx, { profile });
+    const clarificationResponse = profile.clarification.enabled
+      ? await maybeClarify(
+          userMessage,
+          rawContext,
+          resolvedClarification.turn,
+          {
+            webSearch: true,
+            originalMessage: resolvedClarification.originalMessage,
+            previousAnswers: resolvedClarification.answers,
+            answeredQuestion: resolvedClarification.answeredQuestion,
+            answeredOptions: resolvedClarification.answeredOptions,
+            selectedOptionId: resolvedClarification.selectedOptionId,
+          },
+        )
+      : null;
     if (clarificationResponse) {
       void executionPromise.catch((error) => {
         console.warn(`[ORCHESTRATOR] discarded WebSurf result failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -566,7 +577,7 @@ async function _orchestrateInner(
     }
     execution = await executionPromise;
   } else {
-    execution = await executePlan(finalPlan.steps, ctx);
+    execution = await executePlan(finalPlan.steps, ctx, { profile });
   }
 
   // 3. Merge step results into a single response

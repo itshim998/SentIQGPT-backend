@@ -7,6 +7,7 @@ import {
   MEMORY_PERSISTENCE_FAILURE_TEXT,
   resolveMemoryScopeForRequest,
 } from "./memory/memoryScope";
+import { processMessageForMemory } from "./ai/MemoryProcessor";
 import { selectMemoriesForQuery } from "./context/memorySelector";
 import { readFrontendSources } from "./frontendSource";
 
@@ -96,13 +97,28 @@ function assertFrontendContract() {
   );
 }
 
-function main() {
+async function assertDeterministicMemoryFallback() {
+  const result = await processMessageForMemory({
+    message: "Remember my name is Soumo.",
+    forceStore: true,
+    generateEmbedding: false,
+  });
+  assert.strictEqual(result.stored, true, "explicit identity memory should store without live summarizer dependency");
+  assert.strictEqual(result.memory?.type, "identity");
+  assert.strictEqual(result.memory?.summary, "User's name is Soumo.");
+}
+
+async function main() {
   assertMemoryScopeContract();
   assertDeterministicRecallFallback();
   assertStaticPersistenceContract();
   assertPromptContract();
   assertFrontendContract();
+  await assertDeterministicMemoryFallback();
   console.log("Pass 3 memory reliability tests passed.");
 }
 
-main();
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

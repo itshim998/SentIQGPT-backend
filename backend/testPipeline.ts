@@ -11,6 +11,7 @@ dotenv.config();
 
 import { orchestrate } from "./orchestrator/aiOrchestrator";
 import type { OrchestratorResponse } from "./orchestrator/aiOrchestrator";
+import type { RendererType } from "./tools/chartGeneration/types";
 
 // ─────────────────────────────
 // Helpers
@@ -18,6 +19,9 @@ import type { OrchestratorResponse } from "./orchestrator/aiOrchestrator";
 
 const PASS = "\x1b[32m✓ PASS\x1b[0m";
 const FAIL = "\x1b[31m✗ FAIL\x1b[0m";
+
+const ONE_PIXEL_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
 let passed = 0;
 let failed = 0;
@@ -70,9 +74,43 @@ async function testNormalConversation(): Promise<void> {
 async function testImageGeneration(): Promise<void> {
   section("Image Generation");
 
-  const res: OrchestratorResponse = await orchestrate({
-    userMessage: "Generate an image of a futuristic cyberpunk city at night.",
-  });
+  const originalFetch = globalThis.fetch;
+  const originalPollinationsKey = process.env.POLLINATIONS_API_KEY;
+  process.env.POLLINATIONS_API_KEY = originalPollinationsKey || "test-pollinations-key";
+
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.startsWith("https://gen.pollinations.ai/image/")) {
+      const body = Buffer.from(ONE_PIXEL_PNG_BASE64, "base64");
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get(name: string) {
+            return name.toLowerCase() === "content-type" ? "image/png" : null;
+          },
+        },
+        async arrayBuffer() {
+          return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+        },
+      } as Response;
+    }
+    return originalFetch(input as any, init);
+  }) as typeof fetch;
+
+  let res: OrchestratorResponse;
+  try {
+    res = await orchestrate({
+      userMessage: "Generate an image of a futuristic cyberpunk city at night.",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalPollinationsKey === undefined) {
+      delete process.env.POLLINATIONS_API_KEY;
+    } else {
+      process.env.POLLINATIONS_API_KEY = originalPollinationsKey;
+    }
+  }
 
   console.log(`  route: ${res.route}  |  image success: ${res.image?.success}  |  provider: ${res.image?.provider_used ?? "none"}`);
 
@@ -184,18 +222,26 @@ async function testChartGeneration(): Promise<void> {
   assert(res.route === "chart_generation", "Route is chart_generation", `got: ${res.route}`);
   assert(!!res.chart, "Chart payload present");
   if (res.chart) {
+    const supportedRenderers: readonly RendererType[] = ["matplotlib", "plotly", "chartjs"];
     assert(res.chart.success === true, "Chart generation succeeded");
     assert(!!res.chart.code && res.chart.code.length > 50, "Code is non-trivial", `length: ${res.chart.code.length}`);
     assert(res.chart.chart_type === "scatter", "Chart type is scatter", `got: ${res.chart.chart_type}`);
     assert(
-      res.chart.renderer === "matplotlib" || res.chart.renderer === "plotly",
-      "Renderer is matplotlib or plotly",
+      supportedRenderers.includes(res.chart.renderer as RendererType),
+      "Renderer is supported",
       `got: ${res.chart.renderer}`,
     );
-    assert(
-      res.chart.code.includes("np.random.seed") || res.chart.code.includes("np.random"),
-      "Code uses numpy random (deterministic)",
-    );
+    if (res.chart.renderer === "chartjs") {
+      assert(!!res.chart.chartjs_config, "Chart.js config is present for frontend-native renderer");
+      assert(/mulberry32|seededRandom|gaussianRandom/.test(res.chart.code), "Chart.js code uses seeded deterministic generation");
+    } else if (res.chart.renderer === "plotly") {
+      assert(!!res.chart.plotly_json, "Plotly JSON is present for Plotly renderer");
+    } else {
+      assert(
+        res.chart.code.includes("np.random.seed") || res.chart.code.includes("np.random"),
+        "Matplotlib code uses numpy random",
+      );
+    }
   }
 }
 

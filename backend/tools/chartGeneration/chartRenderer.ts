@@ -514,24 +514,31 @@ function renderChartJs(spec: ChartSpec): string {
     case "time_series": {
       const steps = gen.x_steps ?? 100;
       chartType = "line";
-      datasetCode = `// Time-series with random walk\nconst labels = Array.from({ length: ${steps} }, (_, i) => i);\nconst values = [50];\nfor (let i = 1; i < ${steps}; i++) values.push(values[i-1] + (Math.random() - 0.5) * 5);\nconst datasets = [{ label: "Value", data: values, borderColor: "${color}", tension: 0.1, pointRadius: 0, fill: false }];`;
+      datasetCode = `// Time-series with seeded random walk\nconst labels = Array.from({ length: ${steps} }, (_, i) => i);\nconst values = [50];\nfor (let i = 1; i < ${steps}; i++) values.push(values[i-1] + (seededRandom() - 0.5) * 5);\nconst datasets = [{ label: "Value", data: values, borderColor: "${color}", tension: 0.1, pointRadius: 0, fill: false }];`;
       scalesCode = `x: { title: { display: true, text: "${axes.x_label ?? "Time"}" } },\n      y: { title: { display: true, text: "${axes.y_label ?? "Value"}" } }`;
       break;
     }
 
     default: {
       chartType = "scatter";
-      datasetCode = `const points = Array.from({ length: 200 }, () => ({ x: Math.random() * 10, y: Math.random() * 10 }));\nconst datasets = [{ label: "Data", data: points, backgroundColor: "${color}" }];`;
+      datasetCode = `const points = Array.from({ length: 200 }, () => ({ x: seededRandom() * 10, y: seededRandom() * 10 }));\nconst datasets = [{ label: "Data", data: points, backgroundColor: "${color}" }];`;
       scalesCode = `x: { min: 0, max: 10 },\n      y: { min: 0, max: 10 }`;
     }
   }
 
   const gaussHelper = [
+    "// Deterministic pseudo-random generator",
+    "let chartSeed = 42;",
+    "function seededRandom() {",
+    "  chartSeed = (chartSeed * 1664525 + 1013904223) >>> 0;",
+    "  return chartSeed / 4294967296;",
+    "}",
+    "",
     "// Box-Muller transform for gaussian samples",
     "function gaussRandom(mean, std) {",
     "  let u = 0, v = 0;",
-    "  while (u === 0) u = Math.random();",
-    "  while (v === 0) v = Math.random();",
+    "  while (u === 0) u = seededRandom();",
+    "  while (v === 0) v = seededRandom();",
     "  return mean + std * Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);",
     "}",
     "",

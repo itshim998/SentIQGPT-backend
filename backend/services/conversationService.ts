@@ -201,10 +201,7 @@ export async function insertConversationMessage(userDb: any, data: InsertConvers
     : "";
   const normalizedMessageType = data.messageType || "text";
   const canDeduplicateByClientRequestId = Boolean(
-    trimmedClientRequestId && (
-      data.role === "user"
-      || (data.role === "assistant" && (normalizedMessageType === "image" || normalizedMessageType === "file"))
-    ),
+    trimmedClientRequestId && (data.role === "user" || data.role === "assistant"),
   );
 
   if (canDeduplicateByClientRequestId) {
@@ -212,7 +209,7 @@ export async function insertConversationMessage(userDb: any, data: InsertConvers
       conversationId: data.conversationId,
       clientRequestId: trimmedClientRequestId,
       role: data.role,
-      ...(data.role === "assistant" && (normalizedMessageType === "image" || normalizedMessageType === "file")
+      ...(data.role === "assistant" && normalizedMessageType !== "text"
         ? { messageType: normalizedMessageType }
         : {}),
     });
@@ -261,7 +258,7 @@ export async function insertConversationMessage(userDb: any, data: InsertConvers
       conversationId: data.conversationId,
       clientRequestId: trimmedClientRequestId,
       role: data.role,
-      ...(data.role === "assistant" && (normalizedMessageType === "image" || normalizedMessageType === "file")
+      ...(data.role === "assistant" && normalizedMessageType !== "text"
         ? { messageType: normalizedMessageType }
         : {}),
     });

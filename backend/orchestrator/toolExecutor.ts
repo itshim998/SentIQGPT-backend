@@ -31,6 +31,7 @@ import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
 import { detectCodeQuery, detectImageMathPrompt, selectModelForPrompt, isMathQuery } from "./modelRouter";
 import type { SearchResult } from "../tools/webSearch/types";
+import { INTUITIVE_PROFILE, type ExecutionProfile } from "./executionProfile";
 
 // ==============================
 // Types
@@ -121,6 +122,10 @@ export interface StepResult {
 
 export interface ExecutionResult {
   readonly steps: readonly StepResult[];
+}
+
+export interface ExecutePlanOptions {
+  readonly profile?: ExecutionProfile;
 }
 
 const VALID_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
@@ -280,6 +285,7 @@ async function execFileAnalysis(
 async function execMemoryUpdate(
   input: string,
   ctx: BuiltContext,
+  profile: ExecutionProfile,
 ): Promise<StepResult> {
   const memResult = await processMessageForMemory({
     message: input,
@@ -287,6 +293,7 @@ async function execMemoryUpdate(
     existingMemories: ctx.memories,
     forceStore: true,
     userId: ctx.userId,
+    generateEmbedding: profile.persistence.blockOnMemoryEmbedding,
   }).catch(() => ({ stored: false as const }));
 
   const memory = memResult.stored
@@ -448,6 +455,7 @@ async function executeStep(
   planStep: PlanStep,
   ctx: BuiltContext,
   priorContext: string,
+  profile: ExecutionProfile,
 ): Promise<StepResult> {
   console.log(`[EXECUTOR] running step ${planStep.step} → ${planStep.tool}`);
 
@@ -499,7 +507,7 @@ async function executeStep(
         result = await execFileAnalysis(stepInput, ctx, priorContext);
         break;
       case "memory_update":
-        result = await execMemoryUpdate(stepInput, ctx);
+        result = await execMemoryUpdate(stepInput, ctx, profile);
         break;
       case "chart_generation":
         result = await execChartGeneration(stepInput);
@@ -566,7 +574,9 @@ function buildContextFromResult(result: StepResult, input: string): string {
 export async function executePlan(
   steps: readonly PlanStep[],
   ctx: BuiltContext,
+  options: ExecutePlanOptions = {},
 ): Promise<ExecutionResult> {
+  const profile = options.profile ?? INTUITIVE_PROFILE;
   const stepsToExecute = steps.slice(0, MAX_EXEC_STEPS);
 
   const results: StepResult[] = [];
@@ -587,7 +597,7 @@ export async function executePlan(
 
       console.log(`[EXECUTOR] running ${group.length} ordered parallel step(s): ${group.map(s => s.tool).join(", ")}`);
       const startTime = Date.now();
-      const groupResults = await Promise.all(group.map(step => executeStep(step, ctx, "")));
+      const groupResults = await Promise.all(group.map(step => executeStep(step, ctx, "", profile)));
       console.log(`[EXECUTOR] ordered parallel group completed in ${Date.now() - startTime}ms`);
 
       for (let i = 0; i < groupResults.length; i++) {
@@ -601,7 +611,7 @@ export async function executePlan(
       continue;
     }
 
-    const result = await executeStep(planStep, ctx, priorContext);
+    const result = await executeStep(planStep, ctx, priorContext, profile);
     results.push(result);
     const contextPart = buildContextFromResult(result, planStep.input);
     if (contextPart) {

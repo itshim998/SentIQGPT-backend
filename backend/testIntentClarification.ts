@@ -530,6 +530,7 @@ async function main(): Promise<void> {
     tavilyQueries.length = 0;
     const unclearWebSurf = await orchestrate({
       userMessage: "Latest news about cricket.",
+      executionMode: "intuitive",
       context: { web_search_mode: "basic", userId: "test-user" },
       skipReflection: true,
     });
@@ -573,6 +574,7 @@ async function main(): Promise<void> {
     }) as typeof fetch;
     const failedTavilyClarification = await orchestrate({
       userMessage: "Latest news about cricket.",
+      executionMode: "intuitive",
       context: { web_search_mode: "basic", userId: "test-user" },
       skipReflection: true,
     });

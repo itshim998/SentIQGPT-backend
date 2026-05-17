@@ -65,6 +65,10 @@ function buildChatRequestContext(context = {}) {
   return requestContext;
 }
 
+function normalizeExecutionMode(mode) {
+  return mode === "intuitive" ? "intuitive" : "fast";
+}
+
 async function sendMessageStream(message, context = {}, callbacks = {}, signal = null) {
   const url = `${API_BASE}/api/chat/stream`;
   const headers = await buildAuthHeaders({ "Content-Type": "application/json" });
@@ -79,6 +83,7 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
   const clarificationResponse = context.clarificationResponse && typeof context.clarificationResponse === "object"
     ? context.clarificationResponse
     : undefined;
+  const executionMode = normalizeExecutionMode(context.executionMode || context.execution_mode);
   const response = await fetch(url, {
     method: "POST",
     headers,
@@ -86,6 +91,7 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
       message,
       ...(conversationId ? { conversationId } : {}),
       ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
+      execution_mode: executionMode,
       ...(clarificationResponse ? { clarification_response: clarificationResponse } : {}),
       context: buildChatRequestContext(context),
     }),
@@ -138,6 +144,7 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
         }
         else if (parsed.type === "route" && parsed.route) { if (callbacks.onRoute) callbacks.onRoute(parsed.route, parsed); }
         else if (parsed.type === "memory" && parsed.memory) { if (callbacks.onMemory) callbacks.onMemory(parsed.memory); }
+        else if (parsed.type === "sync" && parsed.sync) { if (callbacks.onSync) callbacks.onSync(parsed.sync); }
         else if (parsed.type === "error") {
           terminalError = new Error(parsed.error);
           interrupted = tokensReceived;
@@ -183,12 +190,14 @@ async function sendMessage(message, context = {}) {
   const clarificationResponse = context.clarificationResponse && typeof context.clarificationResponse === "object"
     ? context.clarificationResponse
     : undefined;
+  const executionMode = normalizeExecutionMode(context.executionMode || context.execution_mode);
   return apiRequest("/api/chat", {
     method: "POST",
     body: JSON.stringify({
       message,
       ...(conversationId ? { conversationId } : {}),
       ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
+      execution_mode: executionMode,
       ...(clarificationResponse ? { clarification_response: clarificationResponse } : {}),
       context: buildChatRequestContext(context),
     }),
@@ -223,6 +232,13 @@ async function updateConversationTitle(conversationId, title) {
   return apiRequest(`/api/conversations/${encodeURIComponent(conversationId)}/title`, {
     method: "PATCH",
     body: JSON.stringify({ title }),
+  });
+}
+
+async function syncChatMessages(payload = {}) {
+  return apiRequest("/api/chat/sync", {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 
@@ -398,7 +414,7 @@ window.SentIQAPI = {
   sendMessage, sendMessageStream, classifyMemory, compressMemories,
   sendSelectionMessage, uploadFile, subscribeFileUpdates, generateImage, storeImage, getChatImages, getImageQuota, generateTitle,
   getGeneratedFileAccessUrl, updateGeneratedHtmlFile,
-  getConversations, createConversation, getConversationMessages, deleteConversation, updateConversationTitle,
+  getConversations, createConversation, getConversationMessages, deleteConversation, updateConversationTitle, syncChatMessages,
   getMemories, deleteMemory: deleteMemoryAPI, getProfile, updateProfile,
   getHealth, getConfig: getConfigAPI,
 };

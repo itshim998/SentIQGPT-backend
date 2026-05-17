@@ -49,6 +49,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   let selectionButton = null;
   let pendingSelectionPayload = null;
   let webSearchModeOverride = null;
+  let currentExecutionMode = "fast";
   const externalScriptPromises = new Map();
 
   // ---- Per-chat state isolation ----
@@ -102,6 +103,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     composerActionMenu,
     composerHintOverlay,
     composerHintText,
+    executionModeControl,
+    executionModeToggle,
+    executionModeMenu,
+    executionModeLabel,
     fileAttachBtn,
     imageGenBtn,
     webSurfBasicBtn,
@@ -504,6 +509,60 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       return Storage.addMessageToChat(chatId, role, content, meta);
     }
     return addGuestMessage(chatId, role, content, meta);
+  }
+
+  async function upsertLocalChatMessage(chatId, message) {
+    if (isAuthenticatedSession()) {
+      return Storage.upsertMessageInChat(chatId, message);
+    }
+    const chat = ensureGuestChatState(chatId);
+    if (!chat || (chatId && chat.id !== chatId)) return chat;
+    const messageId = message?.id || Storage.generateId();
+    const existingIndex = chat.messages.findIndex((item) => item.id === messageId);
+    const nextMessage = {
+      ...(existingIndex >= 0 ? chat.messages[existingIndex] : {}),
+      id: messageId,
+      role: message?.role === "assistant" ? "assistant" : "user",
+      content: typeof message?.content === "string" ? message.content : "",
+      timestamp: message?.timestamp || (existingIndex >= 0 ? chat.messages[existingIndex].timestamp : new Date().toISOString()),
+      ...(message?.meta ? { meta: message.meta } : {}),
+    };
+    if (existingIndex >= 0) chat.messages[existingIndex] = nextMessage;
+    else chat.messages.push(nextMessage);
+    chat.updated = new Date().toISOString();
+    return chat;
+  }
+
+  function createStreamingDraftPersister(chatId, requestId) {
+    const draftId = `assistant-${requestId}`;
+    let lastWriteAt = 0;
+    let pendingWrite = Promise.resolve();
+    const writeDraft = (content, final = false, meta = {}) => {
+      const now = Date.now();
+      if (!final && now - lastWriteAt < 700) return pendingWrite;
+      lastWriteAt = now;
+      pendingWrite = pendingWrite
+        .catch(() => null)
+        .then(() => upsertLocalChatMessage(chatId, {
+          id: draftId,
+          role: "assistant",
+          content,
+          meta: {
+            clientRequestId: requestId,
+            streaming: !final,
+            ...meta,
+          },
+        }))
+        .catch((error) => {
+          debugWarn("[UI] Streaming draft persistence failed:", getSafeErrorMessage(error));
+        });
+      return pendingWrite;
+    };
+    return {
+      id: draftId,
+      update(content) { return writeDraft(content, false); },
+      finalize(content, meta) { return writeDraft(content, true, meta); },
+    };
   }
 
   function storeGuestMemory(memory) {
@@ -1199,6 +1258,31 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return actualChat;
   }
 
+  async function applyConversationSync(syncMeta, localChatId) {
+    const conversationId = typeof syncMeta?.conversationId === "string" && syncMeta.conversationId.trim()
+      ? syncMeta.conversationId.trim()
+      : "";
+    if (!isAuthenticatedSession() || !conversationId || !localChatId) return localChatId;
+    const localChat = await Storage.getChat(localChatId);
+    const syncedChat = normalizeServerConversation({
+      id: conversationId,
+      title: localChat?.title || "New Chat",
+      pending_server_sync: false,
+      last_synced_at: syncMeta?.persisted ? new Date().toISOString() : null,
+    });
+    if (isPlaceholderServerChat(localChat) && localChatId !== conversationId) {
+      await reconcilePendingServerChat(localChatId, syncedChat);
+      await loadChatList(true);
+      return conversationId;
+    }
+    await Storage.upsertServerChat({
+      ...syncedChat,
+      pending_server_sync: Boolean(syncMeta?.deferred && !syncMeta?.persisted),
+      sync_error: syncMeta?.deferred && !syncMeta?.persisted ? "Message sync deferred" : null,
+    });
+    return conversationId;
+  }
+
   async function removePendingServerChat(chatId) {
     if (!chatId) return;
     const chat = await Storage.getChat(chatId);
@@ -1321,6 +1405,21 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
             await reconcilePendingServerChat(job.payload?.pendingChatId, actualChat);
             await Storage.deleteSyncJob(job.id);
             await loadChatList(true);
+            continue;
+          }
+
+          if (job.type === SYNC_JOB_TYPES.chatMessage) {
+            const payload = job.payload || {};
+            const response = await API.syncChatMessages({
+              conversationId: payload.conversationId,
+              title: payload.title || "New Chat",
+              messages: Array.isArray(payload.messages) ? payload.messages : [],
+            });
+            const syncMeta = response?.sync || null;
+            if (syncMeta?.conversationId && payload.localChatId) {
+              await applyConversationSync(syncMeta, payload.localChatId);
+            }
+            await Storage.deleteSyncJob(job.id);
             continue;
           }
 
@@ -3383,6 +3482,21 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         handleSend();
       }
     });
+    loadExecutionModePreference().catch((error) => {
+      debugWarn("[UI] Execution mode preference load failed:", getSafeErrorMessage(error));
+    });
+    executionModeToggle?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setExecutionModeMenuOpen(!executionModeControl?.classList.contains("open"));
+    });
+    executionModeToggle?.addEventListener("keydown", (event) => {
+      if (!["Enter", " ", "ArrowDown"].includes(event.key)) return;
+      event.preventDefault();
+      setExecutionModeMenuOpen(true);
+      const activeOption = executionModeMenu?.querySelector(".execution-mode-option.active")
+        || executionModeMenu?.querySelector(".execution-mode-option");
+      activeOption?.focus();
+    });
     authLoginBtn?.addEventListener("click", () => openAuthModal("login"));
     authSignupBtn?.addEventListener("click", () => openAuthModal("signup"));
     const handleLogout = async () => {
@@ -3609,6 +3723,38 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       setWebSearchModeOverride(webSearchModeOverride === "basic" ? null : "basic");
       closeComposerMenu();
     });
+    executionModeMenu?.addEventListener("click", (event) => {
+      const option = event.target instanceof Element
+        ? event.target.closest("[data-execution-mode]")
+        : null;
+      const mode = option?.getAttribute("data-execution-mode");
+      if (!mode) return;
+      setExecutionMode(mode).catch((error) => {
+        debugWarn("[UI] Execution mode save failed:", getSafeErrorMessage(error));
+      });
+      setExecutionModeMenuOpen(false);
+      executionModeToggle?.focus();
+    });
+    executionModeMenu?.addEventListener("keydown", (event) => {
+      const options = Array.from(executionModeMenu.querySelectorAll("[data-execution-mode]"));
+      const currentIndex = options.indexOf(document.activeElement);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setExecutionModeMenuOpen(false);
+        executionModeToggle?.focus();
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        document.activeElement?.click?.();
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const nextIndex = (Math.max(0, currentIndex) + direction + options.length) % options.length;
+      options[nextIndex]?.focus();
+    });
     cancelImageMode?.addEventListener("click", () => setImageMode(false));
     cancelWebSearchMode?.addEventListener("click", () => setWebSearchModeOverride(null));
     voiceBtn?.addEventListener("click", handleVoiceInput);
@@ -3635,6 +3781,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         closeComposerMenu();
         return;
       }
+      if (executionModeControl?.classList.contains("open")) {
+        setExecutionModeMenuOpen(false);
+        executionModeToggle?.focus();
+        return;
+      }
       if (authMenuOpen) {
         closeAuthMenu();
         return;
@@ -3656,6 +3807,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     });
     window.addEventListener("resize", () => {
       closeComposerMenu();
+      setExecutionModeMenuOpen(false);
       if (!isMobileAuthMenuViewport()) closeAuthMenu();
       if (!isMobileSidebarViewport()) {
         closeSidebar();
@@ -3685,6 +3837,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         !composerPlusBtn?.contains(event.target)
       ) {
         closeComposerMenu();
+      }
+      if (
+        executionModeControl?.classList.contains("open") &&
+        event.target instanceof Node &&
+        !executionModeControl.contains(event.target)
+      ) {
+        setExecutionModeMenuOpen(false);
       }
       if (!authMenuOpen || !authActions) return;
       if (!(event.target instanceof Node) || !authActions.contains(event.target)) {
@@ -6189,6 +6348,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     hideSelectionButton();
     pendingSelectionPayload = null;
     closeComposerMenu();
+    setExecutionModeMenuOpen(false);
     if (ensureNameCapture()) {
       stopMeasure("blocked", { reason: "name_required" });
       return;
@@ -6271,6 +6431,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const fileGenerationPrompt = Boolean(clarifiedDownloadFormat || typedClarificationDownloadFormat) || (!isClarificationAnswer && isLikelyFileGenerationRequest(originalApiMessage));
     const authenticatedFileGenerationRequired = fileGenerationPrompt && isAuthenticatedSession();
     const htmlFileGenerationRequired = authenticatedFileGenerationRequired && requestedFileFormat === "html";
+    const requestExecutionMode = normalizeExecutionMode(currentExecutionMode);
     if (fileGenerationPrompt && !isAuthenticatedSession()) {
       apiMessage = buildGuestFileGenerationInstruction(originalApiMessage, requestedFileFormat);
     }
@@ -6291,7 +6452,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     let targetChatId = currentChatId;
     if (isAuthenticatedSession()) {
       const activeChat = await Storage.getChat(targetChatId);
-      if (isPlaceholderServerChat(activeChat)) {
+      const canUseLocalFirstConversation = requestExecutionMode === "fast" && !authenticatedFileGenerationRequired;
+      if (isPlaceholderServerChat(activeChat) && !canUseLocalFirstConversation) {
         try {
           targetChatId = await ensureRemoteConversationForChat(targetChatId);
         } catch (error) {
@@ -6357,8 +6519,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         fileReferences,
         imageAttachments: imageAttachmentsForRequest,
         webSearchMode: effectiveWebSearchMode,
-        conversationId: targetChatId,
+        conversationId: isPlaceholderServerChat(await Storage.getChat(targetChatId)) ? undefined : targetChatId,
         clientRequestId: requestId,
+        executionMode: requestExecutionMode,
         clarificationResponse: clarificationResponseForRequest,
         signal: ac.signal,
       };
@@ -6372,6 +6535,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       let responseSync = null;
       let responseRenderMode = null;
       let fileArtifactResponse = null;
+      const streamDraft = createStreamingDraftPersister(targetChatId, requestId);
 
       if (isRequestStale(targetChatId, requestId)) return;
 
@@ -6407,6 +6571,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
                     stopMeasure("first_visible_token", { conversation_id: targetChatId });
                   }
                   streamBubble.appendToken(token);
+                  streamDraft.update(streamBubble.getFullText());
                 }
               },
               onFileToken(token, eventMeta = {}) {
@@ -6465,6 +6630,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
                 }
               },
               onMemory(memory) { memoryResult = memory; },
+              onSync(sync) { responseSync = sync; },
               onError(err, meta) {
                 const phase = meta?.tokensReceived ? "after partial output" : "before first token";
                 debugWarn(`[UI] Stream error (${phase}):`, getSafeErrorMessage(err));
@@ -6525,6 +6691,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
                 showToast("Response interrupted — showing partial output.", "info", 3500);
               }
               debugLog("[UI] Streaming complete", { length: fullReply.length });
+              if (fullReply) {
+                await streamDraft.finalize(fullReply, responseRenderMode ? { renderMode: responseRenderMode } : {});
+                assistantPersisted = true;
+              }
             }
           }
         } catch (streamErr) {
@@ -6558,7 +6728,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       }
 
       if (isRequestStale(targetChatId, requestId) && !ac.signal.aborted) {
-        if (fullReply) await persistChatMessage(targetChatId, "assistant", fullReply);
+        if (fullReply) {
+          if (usedStreaming) await streamDraft.finalize(fullReply, responseRenderMode ? { renderMode: responseRenderMode } : {});
+          else await persistChatMessage(targetChatId, "assistant", fullReply);
+        }
         return;
       }
 
@@ -6590,7 +6763,32 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       }
 
       if (!assistantPersisted && fullReply) {
-        await persistChatMessage(targetChatId, "assistant", fullReply);
+        if (usedStreaming) await streamDraft.finalize(fullReply, responseRenderMode ? { renderMode: responseRenderMode } : {});
+        else await persistChatMessage(targetChatId, "assistant", fullReply);
+      }
+      if (responseSync?.conversationId) {
+        targetChatId = await applyConversationSync(responseSync, targetChatId);
+      }
+      if (isAuthenticatedSession() && responseSync?.deferred && fullReply) {
+        await queueSyncJob(SYNC_JOB_TYPES.chatMessage, {
+          localChatId: targetChatId,
+          conversationId: responseSync.conversationId || null,
+          title: visibleUserMessage ? visibleUserMessage.slice(0, 50) : "New Chat",
+          messages: [
+            {
+              role: "user",
+              content: visibleUserMessage,
+              clientRequestId: requestId,
+            },
+            {
+              role: "assistant",
+              content: fullReply,
+              clientRequestId: requestId,
+            },
+          ],
+        }, {
+          id: `${SYNC_JOB_TYPES.chatMessage}:${requestId}`,
+        });
       }
       if (memoryResult?.stored && memoryResult.persisted !== false && memoryResult.summary) {
         const scopedMemory = buildScopedMemoryPayload(memoryResult, targetChatId, responseSync);
@@ -6794,6 +6992,45 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function getEffectiveWebSearchMode() {
     return webSearchModeOverride === "basic" ? "basic" : undefined;
+  }
+
+  function normalizeExecutionMode(mode) {
+    return mode === "intuitive" ? "intuitive" : "fast";
+  }
+
+  function getExecutionModeLabel(mode = currentExecutionMode) {
+    return normalizeExecutionMode(mode) === "intuitive" ? "Intuitive" : "Fast";
+  }
+
+  function setExecutionModeMenuOpen(open) {
+    if (!executionModeControl || !executionModeToggle || !executionModeMenu) return;
+    executionModeControl.classList.toggle("open", Boolean(open));
+    executionModeToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    executionModeMenu.setAttribute("aria-hidden", open ? "false" : "true");
+  }
+
+  function syncExecutionModeUi() {
+    if (executionModeLabel) executionModeLabel.textContent = getExecutionModeLabel();
+    executionModeMenu?.querySelectorAll("[data-execution-mode]").forEach((option) => {
+      const active = option.getAttribute("data-execution-mode") === currentExecutionMode;
+      option.classList.toggle("active", active);
+      option.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  }
+
+  async function setExecutionMode(mode, options = {}) {
+    currentExecutionMode = normalizeExecutionMode(mode);
+    syncExecutionModeUi();
+    if (!options.skipPersist) {
+      await Storage.setConfig("execution_mode", currentExecutionMode).catch((error) => {
+        debugWarn("[UI] Failed to persist execution mode:", getSafeErrorMessage(error));
+      });
+    }
+  }
+
+  async function loadExecutionModePreference() {
+    const storedMode = await Storage.getConfig("execution_mode").catch(() => null);
+    await setExecutionMode(storedMode, { skipPersist: true });
   }
 
   function updateWebSearchButtons() {

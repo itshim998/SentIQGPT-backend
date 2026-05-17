@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeExecutionMode } from "../orchestrator/executionProfile";
 
 // SentIQGPT v1 — Input Validation Schemas (Zod)
 //
@@ -24,6 +25,8 @@ export const ChatRequestSchema = z.object({
   message: z.string().min(1, "Message is required").max(10000, "Message too long"),
   conversationId: z.string().min(1).optional(),
   conversation_id: z.string().min(1).optional(),
+  executionMode: z.enum(["fast", "intuitive"]).optional(),
+  execution_mode: z.enum(["fast", "intuitive"]).optional(),
   clientRequestId: z.string().min(1).max(120).optional(),
   client_request_id: z.string().min(1).max(120).optional(),
   clarification_response: z.object({
@@ -54,10 +57,11 @@ export const ChatRequestSchema = z.object({
     })).max(3).optional(),
     web_search_mode: z.enum(["basic", "advanced"]).optional(),
   }).optional(),
-}).transform(({ conversation_id, client_request_id, ...rest }) => ({
+}).transform(({ conversation_id, client_request_id, execution_mode, ...rest }) => ({
   ...rest,
   conversationId: rest.conversationId ?? conversation_id,
   clientRequestId: rest.clientRequestId ?? client_request_id,
+  executionMode: normalizeExecutionMode(rest.executionMode ?? execution_mode),
 }));
 
 // --- Memory ---

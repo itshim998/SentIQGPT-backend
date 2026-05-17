@@ -83,6 +83,11 @@
   }
   .input-tools { gap: 0; }
   .tool-btn { padding: 6px; }
+  .execution-mode-toggle {
+    min-width: 74px;
+    padding: 0 8px;
+    font-size: 0.74rem;
+  }
 }
 
 /* ==============================
@@ -300,4 +305,3 @@ button, .tool-btn, .btn-send, .chat-list-item, .btn-settings, .sidebar-toggle {
   content-visibility: auto;
   contain-intrinsic-size: 0 80px;
 }
-

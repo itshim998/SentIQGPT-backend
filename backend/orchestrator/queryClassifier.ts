@@ -129,6 +129,7 @@ const MEMORY_RETRIEVAL_PATTERNS: readonly RegExp[] = [
   /\bdo\s+you\s+remember\b/i,
   /\bwhat\s+do\s+you\s+remember\b/i,
   /\bwhat\s+is\s+my\b/i,
+  /\bwhat'?s\s+my\b/i,
   /\bwho\s+am\s+i\b/i,
 ];
 

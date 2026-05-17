@@ -18,6 +18,7 @@ const DEFAULT_LIMITS = {
   memory_limit: 500,
   file_storage_mb: 100,
   message_window: 20,
+  execution_mode: "fast",
 };
 
 let dbInstance = null;
@@ -220,6 +221,53 @@ async function addMessageToChat(chatId, role, content, meta) {
       chat.title = firstUser.content.slice(0, 50) + (firstUser.content.length > 50 ? "..." : "");
     }
   }
+  await dbPut(STORES.chats, chat);
+  return chat;
+}
+
+async function upsertMessageInChat(chatId, message) {
+  const chat = await getChat(chatId);
+  if (!chat) throw new Error("Chat not found");
+  const messageId = typeof message?.id === "string" && message.id.trim()
+    ? message.id.trim()
+    : generateId();
+  const existingIndex = chat.messages.findIndex((item) => item.id === messageId);
+  const nextMessage = {
+    ...(existingIndex >= 0 ? chat.messages[existingIndex] : {}),
+    id: messageId,
+    role: message?.role === "assistant" ? "assistant" : "user",
+    content: typeof message?.content === "string" ? message.content : "",
+    timestamp: message?.timestamp || (existingIndex >= 0 ? chat.messages[existingIndex].timestamp : new Date().toISOString()),
+    ...(message?.meta ? { meta: message.meta } : {}),
+  };
+  if (existingIndex >= 0) {
+    chat.messages[existingIndex] = nextMessage;
+  } else {
+    chat.messages.push(nextMessage);
+  }
+  chat.updated = new Date().toISOString();
+  if (!chat.title || chat.title === "New Chat") {
+    const firstUser = chat.messages.find((m) => m.role === "user");
+    if (firstUser) {
+      chat.title = firstUser.content.slice(0, 50) + (firstUser.content.length > 50 ? "..." : "");
+    }
+  }
+  await dbPut(STORES.chats, chat);
+  return chat;
+}
+
+async function updateMessageInChat(chatId, messageId, updates = {}) {
+  const chat = await getChat(chatId);
+  if (!chat) throw new Error("Chat not found");
+  const index = chat.messages.findIndex((message) => message.id === messageId);
+  if (index < 0) return chat;
+  chat.messages[index] = {
+    ...chat.messages[index],
+    ...updates,
+    id: messageId,
+    ...(updates.meta ? { meta: { ...(chat.messages[index].meta || {}), ...updates.meta } } : {}),
+  };
+  chat.updated = new Date().toISOString();
   await dbPut(STORES.chats, chat);
   return chat;
 }
@@ -493,7 +541,7 @@ async function getStorageStats() {
 }
 
 window.SentIQStorage = {
-  createChat, getChat, getAllChats, addMessageToChat, updateChatTitle, deleteChat,
+  createChat, getChat, getAllChats, addMessageToChat, upsertMessageInChat, updateMessageInChat, updateChatTitle, deleteChat,
   getLocalChats, upsertServerChat, replaceChatMessages,
   storeMemory, getMemory, getAllMemories, getMemoriesByType, deleteMemory, getTopMemories,
   storeFile, getAllFiles, getFile, deleteFile,

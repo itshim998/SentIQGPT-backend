@@ -310,6 +310,108 @@
   color: var(--text-muted);
 }
 
+.execution-mode-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-bottom: 2px;
+}
+
+.execution-mode-toggle {
+  min-width: 86px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.045);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
+}
+
+.execution-mode-toggle:hover,
+.execution-mode-toggle:focus-visible,
+.execution-mode-control.open .execution-mode-toggle {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.16);
+  color: var(--text-primary);
+}
+
+.execution-mode-toggle:focus-visible {
+  outline: 2px solid rgba(125,211,252,0.45);
+  outline-offset: 2px;
+}
+
+.execution-mode-toggle:active {
+  transform: scale(0.97);
+}
+
+.execution-mode-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: rgba(15, 15, 25, 0.86);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 14px 34px rgba(0,0,0,0.36);
+  opacity: 0;
+  transform: translateY(6px) scale(0.96);
+  transform-origin: bottom right;
+  pointer-events: none;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  z-index: 14;
+}
+
+.execution-mode-control.open .execution-mode-menu {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.execution-mode-option {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+
+.execution-mode-option:hover,
+.execution-mode-option:focus-visible {
+  background: rgba(255,255,255,0.07);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.execution-mode-option.active {
+  background: rgba(125,211,252,0.12);
+  border-color: rgba(125,211,252,0.22);
+  color: #bae6fd;
+}
+
 .tool-btn {
   background: none;
   border: none;
@@ -421,4 +523,3 @@
   cursor: not-allowed;
   transform: none;
 }
-

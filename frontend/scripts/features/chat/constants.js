@@ -39,6 +39,7 @@ export const MAX_SELECTION_CONTEXT_LINES = 3;
 
 export const SYNC_JOB_TYPES = {
   chatCreate: "chat_create",
+  chatMessage: "chat_message",
   chatDelete: "chat_delete",
   chatTitle: "chat_title",
   memoryDelete: "memory_delete",
