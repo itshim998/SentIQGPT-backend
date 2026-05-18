@@ -15,9 +15,9 @@
   opacity: 0;
   transform: translateY(6px);
   transition: opacity 0.2s ease, transform 0.2s ease;
-  --typing-grid-size: 6;
+  --typing-grid-size: 3;
   --typing-dot-size: 6px;
-  --typing-gap-size: 5px;
+  --typing-gap-size: 6px;
 }
 
 .typing-indicator.is-visible {
@@ -26,15 +26,15 @@
 }
 
 .typing-indicator.loader-image {
-  --typing-grid-size: 5;
-  --typing-dot-size: 7px;
-  --typing-gap-size: 4px;
+  --typing-grid-size: 3;
+  --typing-dot-size: 6px;
+  --typing-gap-size: 6px;
 }
 
 .typing-indicator.loader-chart {
-  --typing-grid-size: 7;
-  --typing-dot-size: 5px;
-  --typing-gap-size: 4px;
+  --typing-grid-size: 3;
+  --typing-dot-size: 6px;
+  --typing-gap-size: 6px;
 }
 
 .typing-dots {
@@ -43,33 +43,28 @@
   grid-template-columns: repeat(var(--typing-grid-size), var(--typing-dot-size));
   gap: var(--typing-gap-size);
   width: max-content;
-  padding: 6px;
-  border-radius: 12px;
+  padding: 8px 10px;
+  border-radius: 999px;
   background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.08);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.07);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   overflow: hidden;
 }
 
 .typing-dots::after {
-  content: '';
-  position: absolute;
-  inset: -25%;
-  background: radial-gradient(circle at center, rgba(167,139,250,0.22), rgba(139,92,246,0) 64%);
-  animation: sentiqTypingRipple 2.2s ease-in-out infinite;
-  pointer-events: none;
+  display: none;
 }
 
 .typing-dots span,
 .typing-dots .typing-dot {
   width: var(--typing-dot-size);
   height: var(--typing-dot-size);
-  background: var(--purple-500);
+  background: rgba(196,181,253,0.82);
   border-radius: 50%;
-  animation: sentiqDotPulse 1.7s ease-in-out infinite both;
-  animation-delay: calc(var(--dot-delay, 0) * 70ms);
-  box-shadow: 0 0 10px rgba(139,92,246,0.36);
+  animation: sentiqDotPulse 1.35s ease-in-out infinite both;
+  animation-delay: calc(var(--dot-delay, 0) * 120ms);
+  box-shadow: 0 0 8px rgba(139,92,246,0.2);
   will-change: transform, opacity;
 }
 
@@ -93,8 +88,8 @@
 }
 
 @keyframes sentiqDotPulse {
-  0%, 70%, 100% { opacity: 0.28; transform: scale(0.82) translateZ(0); }
-  35% { opacity: 1; transform: scale(1.12) translateZ(0); }
+  0%, 72%, 100% { opacity: 0.36; transform: scale(0.86) translateZ(0); }
+  36% { opacity: 0.9; transform: scale(1.05) translateZ(0); }
 }
 
 .typing-text {
@@ -105,7 +100,7 @@
 .typing-indicator.mode-web-search .typing-dots span,
 .typing-indicator.mode-web-search .typing-dots .typing-dot {
   background: linear-gradient(135deg, #60a5fa 0%, #8b5cf6 100%);
-  box-shadow: 0 0 10px rgba(96,165,250,0.35);
+  box-shadow: 0 0 8px rgba(96,165,250,0.22);
 }
 
 .typing-indicator.mode-web-search .typing-text-shimmer {
@@ -372,6 +367,28 @@
   animation: streamingTextUnblur 0.22s ease-out both;
 }
 
+.response-inline-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 28px;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.response-inline-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(148,163,184,0.22);
+  border-top-color: rgba(196,181,253,0.72);
+  animation: responseInlineSpin 0.8s linear infinite;
+}
+
+@keyframes responseInlineSpin {
+  to { transform: rotate(360deg); }
+}
+
 @keyframes streamingTextUnblur {
   from {
     opacity: 0.58;
@@ -386,7 +403,8 @@
 @media (prefers-reduced-motion: reduce) {
   .streaming-new-text,
   .streaming-rendered.streaming-render-pulse > :last-child,
-  .streaming-rendered.streaming-render-pulse:empty {
+  .streaming-rendered.streaming-render-pulse:empty,
+  .response-inline-spinner {
     animation: none;
     filter: none;
     opacity: 1;

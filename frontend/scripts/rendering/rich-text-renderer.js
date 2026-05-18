@@ -500,7 +500,7 @@
   };
 });
 
-if (!window.SentIQRenderer?.renderRichText) {
+if (typeof window !== "undefined" && !window.SentIQRenderer?.renderRichText) {
   try {
     if (window.SENTIQ_DEBUG || localStorage.getItem("sentiq_debug") === "1") {
       console.warn("[SentIQRenderer] Inline renderer failed to initialize; Markdown-only fallback will be used.");

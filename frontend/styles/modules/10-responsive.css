@@ -23,6 +23,9 @@
   .sidebar.open {
     transform: translateX(0);
   }
+  .sidebar-collapse-btn {
+    display: none;
+  }
   .sidebar-toggle {
     display: flex;
     top: max(12px, env(safe-area-inset-top));
@@ -81,12 +84,40 @@
   :root {
     --message-indent: 26px;
   }
+  .chat-input-area {
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 18px;
+  }
   .input-tools { gap: 0; }
-  .tool-btn { padding: 6px; }
+  .tool-btn {
+    width: 34px;
+    height: 34px;
+    padding: 6px;
+  }
+  .composer-plus-btn,
+  .btn-send {
+    width: 34px;
+    height: 34px;
+  }
   .execution-mode-toggle {
-    min-width: 74px;
+    min-width: 62px;
+    height: 34px;
     padding: 0 8px;
-    font-size: 0.74rem;
+    font-size: 0.72rem;
+  }
+  .input-field-wrapper textarea {
+    min-height: 38px;
+    padding: 5px 3px;
+    font-size: 0.92rem;
+    line-height: 1.42;
+  }
+  .composer-hint-overlay {
+    right: 4px;
+    font-size: 0.88rem;
+  }
+  .composer-hint-prefix {
+    display: none;
   }
 }
 

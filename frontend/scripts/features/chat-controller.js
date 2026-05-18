@@ -51,10 +51,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   let webSearchModeOverride = null;
   let currentExecutionMode = "fast";
   const externalScriptPromises = new Map();
+  let imageLightbox = null;
+  let imageLightboxScale = 1;
 
   // ---- Per-chat state isolation ----
   // Each chat maintains its own state so switching chats doesn't bleed UI.
-  const chatStates = new Map(); // chatId → { isThinking, currentResponse, requestId, responseBuffer, thinkingSteps, abortController, activityMode, activityLoaderKind }
+  const chatStates = new Map(); // chatId -> per-chat transient UI/session state
 
   function getChatState(chatId) {
     if (!chatId) return null;
@@ -68,9 +70,44 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         abortController: null,
         activityMode: "thinking",
         activityLoaderKind: "loader-text",
+        sessionFile: null,
+        sessionImageAttachments: [],
       });
     }
     return chatStates.get(chatId);
+  }
+
+  function syncCurrentSessionContext(chatId = currentChatId) {
+    const state = getChatState(chatId);
+    currentSessionFile = state?.sessionFile || null;
+    currentSessionImageAttachments = Array.isArray(state?.sessionImageAttachments)
+      ? state.sessionImageAttachments
+      : [];
+  }
+
+  function setCurrentSessionFile(file, chatId = currentChatId) {
+    const state = getChatState(chatId);
+    if (state) state.sessionFile = file || null;
+    if (chatId === currentChatId) currentSessionFile = file || null;
+  }
+
+  function setCurrentSessionImageAttachments(images, chatId = currentChatId) {
+    const normalizedImages = Array.isArray(images) ? images : [];
+    const state = getChatState(chatId);
+    if (state) state.sessionImageAttachments = normalizedImages;
+    if (chatId === currentChatId) currentSessionImageAttachments = normalizedImages;
+  }
+
+  function clearChatSessionContext(chatId = currentChatId) {
+    const state = getChatState(chatId);
+    if (state) {
+      state.sessionFile = null;
+      state.sessionImageAttachments = [];
+    }
+    if (!chatId || chatId === currentChatId) {
+      currentSessionFile = null;
+      currentSessionImageAttachments = [];
+    }
   }
 
   function newRequestId(chatId) {
@@ -110,7 +147,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     fileAttachBtn,
     imageGenBtn,
     webSurfBasicBtn,
-    voiceBtn,
     imageModeBar,
     cancelImageMode,
     webSearchModeBar,
@@ -122,6 +158,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     settingsModal,
     closeSettingsBtn,
     sidebarToggle,
+    sidebarCollapseBtn,
     sidebar,
     scrollAnchorPill,
     toastContainer,
@@ -206,6 +243,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   const RECENT_CHAT_WARM_LIMIT = 5;
   const RECENT_CHAT_WARM_CONCURRENCY = 2;
   const LAST_ACTIVE_CHAT_CONFIG_PREFIX = "last_active_chat_id:";
+  const SIDEBAR_COLLAPSED_STORAGE_KEY = "sentiq_sidebar_collapsed";
 
   function debugLog(...args) {
     if (SENTIQ_DEBUG) console.log(...args);
@@ -260,6 +298,37 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function isMobileSidebarViewport() {
     return window.matchMedia?.("(max-width: 768px)")?.matches ?? (window.innerWidth <= 768);
+  }
+
+  function readSidebarCollapsedPreference() {
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function writeSidebarCollapsedPreference(collapsed) {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, collapsed ? "1" : "0");
+    } catch { /* ignore storage failures */ }
+  }
+
+  function setSidebarCollapsed(collapsed, options = {}) {
+    const { persist = true } = options;
+    const active = Boolean(collapsed) && !isMobileSidebarViewport();
+    appContainer?.classList.toggle("sidebar-collapsed", active);
+    if (sidebarCollapseBtn) {
+      sidebarCollapseBtn.setAttribute("aria-expanded", active ? "false" : "true");
+      sidebarCollapseBtn.setAttribute("aria-label", active ? "Expand chat history" : "Collapse chat history");
+      sidebarCollapseBtn.title = active ? "Expand chat history" : "Collapse chat history";
+    }
+    if (persist) writeSidebarCollapsedPreference(Boolean(collapsed));
+  }
+
+  function toggleSidebarCollapsed() {
+    const collapsed = Boolean(appContainer?.classList.contains("sidebar-collapsed"));
+    setSidebarCollapsed(!collapsed);
   }
 
   function isModalVisible(modal) {
@@ -671,7 +740,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     setControlDisabled(composerPlusBtn, composerDisabled);
     setControlDisabled(fileAttachBtn, composerDisabled);
     setControlDisabled(webSurfBasicBtn, composerDisabled);
-    setControlDisabled(voiceBtn, composerDisabled);
     setControlDisabled(executionModeToggle, composerDisabled);
     executionModeMenu?.querySelectorAll("button").forEach((option) => setControlDisabled(option, composerDisabled));
 
@@ -1055,15 +1123,20 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         : "Analyzing file...";
     setFileAnalysisStatus(entry, status, label);
     if (status === "complete" && event.extracted_text) {
-      if (currentSessionFile?.analysis_id === event.analysis_id) {
-        currentSessionFile = {
-          ...currentSessionFile,
+      for (const [chatId, state] of chatStates.entries()) {
+        if (state?.sessionFile?.analysis_id !== event.analysis_id) continue;
+        const updatedFile = {
+          ...state.sessionFile,
           extracted_text: event.extracted_text,
-          size_bytes: event.size_bytes || currentSessionFile.size_bytes,
-          type: event.file_type || currentSessionFile.type,
+          size_bytes: event.size_bytes || state.sessionFile.size_bytes,
+          type: event.file_type || state.sessionFile.type,
           updated_at: new Date().toISOString(),
         };
-        showToast("File analysis ready.", "success", 2500);
+        state.sessionFile = updatedFile;
+        if (chatId === currentChatId) {
+          currentSessionFile = updatedFile;
+          showToast("File analysis ready.", "success", 2500);
+        }
       }
     }
     if (status === "error" && event.error) {
@@ -1433,6 +1506,19 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       welcomeGreetingByChatId.set(actualChat.id, welcomeGreetingByChatId.get(pendingChatId));
     }
     welcomeGreetingByChatId.delete(pendingChatId);
+    if (pendingChatId !== actualChat.id) {
+      const pendingState = chatStates.get(pendingChatId);
+      if (pendingState && !chatStates.has(actualChat.id)) chatStates.set(actualChat.id, pendingState);
+      chatStates.delete(pendingChatId);
+      if (pendingClarifications.has(pendingChatId) && !pendingClarifications.has(actualChat.id)) {
+        pendingClarifications.set(actualChat.id, pendingClarifications.get(pendingChatId));
+      }
+      pendingClarifications.delete(pendingChatId);
+      if (chatRenderSignatures.has(pendingChatId) && !chatRenderSignatures.has(actualChat.id)) {
+        chatRenderSignatures.set(actualChat.id, chatRenderSignatures.get(pendingChatId));
+      }
+      chatRenderSignatures.delete(pendingChatId);
+    }
     await Storage.deleteChat(pendingChatId);
     await Storage.upsertServerChat({
       ...actualChat,
@@ -1701,6 +1787,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     currentSessionFile = null;
     currentSessionImageAttachments = [];
     pendingClarifications.clear();
+    chatStates.clear();
+    chatRenderSignatures.clear();
     if (!signedIn) {
       guestChatState = null;
       guestMemoryState = [];
@@ -1915,7 +2003,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     newChatBtn?.classList.remove("auth-disabled");
     fileAttachBtn?.classList.remove("auth-disabled");
     imageGenBtn?.classList.toggle("auth-disabled", !signedIn || requiresName);
-    voiceBtn?.classList.remove("auth-disabled");
     if (authGateMessage) {
       authGateMessage.textContent = requiresName
         ? "Add your name to unlock your signed-in workspace."
@@ -2149,7 +2236,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const dots = typingIndicator.querySelector(".typing-dots");
     if (!dots || dots.dataset.matrixReady === "1") return;
     dots.innerHTML = "";
-    const total = 24;
+    const total = 3;
     for (let index = 0; index < total; index += 1) {
       const dot = document.createElement("span");
       dot.className = "typing-dot";
@@ -3230,20 +3317,23 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   function getCurrentFileReferences() {
-    if (!currentSessionFile || !currentSessionFile.extracted_text) return [];
+    const sessionFile = getChatState(currentChatId)?.sessionFile || currentSessionFile;
+    if (!sessionFile || !sessionFile.extracted_text) return [];
     return [{
-      filename: currentSessionFile.filename,
-      extractedText: currentSessionFile.extracted_text,
+      filename: sessionFile.filename,
+      extractedText: sessionFile.extracted_text,
     }];
   }
 
   function shouldReuseCurrentSessionImages(message) {
-    if (!currentSessionImageAttachments.length) return false;
+    const attachments = getChatState(currentChatId)?.sessionImageAttachments || currentSessionImageAttachments;
+    if (!attachments.length) return false;
     return /\b(this|that|it|image|photo|picture|screenshot|attached|above|shown)\b/i.test(String(message || ""));
   }
 
   function getCurrentImageAttachments(message) {
-    return shouldReuseCurrentSessionImages(message) ? currentSessionImageAttachments : [];
+    const attachments = getChatState(currentChatId)?.sessionImageAttachments || currentSessionImageAttachments;
+    return shouldReuseCurrentSessionImages(message) ? attachments : [];
   }
 
   function normalizeClarificationPayload(response = {}) {
@@ -3970,8 +4060,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     });
     cancelImageMode?.addEventListener("click", () => setImageMode(false));
     cancelWebSearchMode?.addEventListener("click", () => setWebSearchModeOverride(null));
-    voiceBtn?.addEventListener("click", handleVoiceInput);
-
     settingsBtn?.addEventListener("click", openSettings);
     closeSettingsBtn?.addEventListener("click", closeSettings);
     settingsModal?.addEventListener("click", (e) => { if (e.target === settingsModal) closeSettings(); });
@@ -3987,7 +4075,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     });
 
     sidebarToggle?.addEventListener("click", toggleSidebar);
+    sidebarCollapseBtn?.addEventListener("click", toggleSidebarCollapsed);
     document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && imageLightbox?.classList.contains("visible")) {
+        closeImageLightbox();
+        return;
+      }
       if (trapFocusInModal(e)) return;
       if (e.key !== "Escape") return;
       if (composerActionMenu?.classList.contains("open")) {
@@ -4024,7 +4117,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       if (!isMobileAuthMenuViewport()) closeAuthMenu();
       if (!isMobileSidebarViewport()) {
         closeSidebar();
+        setSidebarCollapsed(readSidebarCollapsedPreference(), { persist: false });
       } else {
+        setSidebarCollapsed(false, { persist: false });
         updateOverlayLocks();
       }
       syncComposerHint();
@@ -4064,6 +4159,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       }
     });
     initMobileSidebarGestures();
+    setSidebarCollapsed(readSidebarCollapsedPreference(), { persist: false });
     updateOverlayLocks();
     markPerf("ui.init.listeners_ready");
 
@@ -4216,8 +4312,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
       const renameBtn = document.createElement("button");
       renameBtn.className = "chat-rename-btn";
-      renameBtn.textContent = "Edit";
+      renameBtn.type = "button";
+      renameBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
       renameBtn.title = "Rename chat";
+      renameBtn.setAttribute("aria-label", "Rename chat");
       renameBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         if (item.classList.contains("is-renaming")) return;
@@ -4299,8 +4397,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
       const deleteBtn = document.createElement("button");
       deleteBtn.className = "chat-delete-btn";
-      deleteBtn.textContent = "\u00d7";
+      deleteBtn.type = "button";
+      deleteBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
       deleteBtn.title = "Delete chat";
+      deleteBtn.setAttribute("aria-label", "Delete chat");
       deleteBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         if (isAuthenticatedSession() && isServerBackedChat(chat) && !isPlaceholderServerChat(chat)) {
@@ -4347,9 +4447,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
     currentChatId = chatId;
     syncActiveChatItem();
-    currentSessionFile = null;
-    currentSessionImageAttachments = [];
-    pendingClarifications.clear();
+    syncCurrentSessionContext(chatId);
+    syncComposerHint();
     _userScrolledUp = false;
     if (scrollAnchorPill) scrollAnchorPill.classList.remove("visible");
     if (chatMessages && shouldApplyChatTransition({ switchedChats, contentChanged })) {
@@ -4733,6 +4832,69 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     ].join("");
   }
 
+  function setImageLightboxScale(scale) {
+    imageLightboxScale = Math.max(0.5, Math.min(3, Number(scale) || 1));
+    const img = imageLightbox?.querySelector(".image-lightbox-img");
+    if (img) img.style.transform = `scale(${imageLightboxScale})`;
+  }
+
+  function closeImageLightbox() {
+    if (!imageLightbox) return;
+    imageLightbox.classList.remove("visible");
+    imageLightbox.setAttribute("aria-hidden", "true");
+    setImageLightboxScale(1);
+  }
+
+  function ensureImageLightbox() {
+    if (imageLightbox) return imageLightbox;
+    imageLightbox = document.createElement("div");
+    imageLightbox.className = "image-lightbox";
+    imageLightbox.setAttribute("aria-hidden", "true");
+    imageLightbox.innerHTML = [
+      '<div class="image-lightbox-toolbar" role="toolbar" aria-label="Image zoom controls">',
+      '<button type="button" class="image-lightbox-btn" data-lightbox-action="zoom-out" aria-label="Zoom out" title="Zoom out">-</button>',
+      '<button type="button" class="image-lightbox-btn" data-lightbox-action="reset" aria-label="Reset zoom" title="Reset zoom">1:1</button>',
+      '<button type="button" class="image-lightbox-btn" data-lightbox-action="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>',
+      '<button type="button" class="image-lightbox-btn" data-lightbox-action="close" aria-label="Close image preview" title="Close">&times;</button>',
+      '</div>',
+      '<div class="image-lightbox-stage">',
+      '<img class="image-lightbox-img" alt="">',
+      '</div>',
+    ].join("");
+    imageLightbox.addEventListener("click", (event) => {
+      if (event.target === imageLightbox || event.target?.classList?.contains("image-lightbox-stage")) {
+        closeImageLightbox();
+      }
+    });
+    imageLightbox.querySelector(".image-lightbox-toolbar")?.addEventListener("click", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest("[data-lightbox-action]")
+        : null;
+      const action = button?.getAttribute("data-lightbox-action");
+      if (!action) return;
+      if (action === "close") closeImageLightbox();
+      else if (action === "zoom-in") setImageLightboxScale(imageLightboxScale + 0.25);
+      else if (action === "zoom-out") setImageLightboxScale(imageLightboxScale - 0.25);
+      else if (action === "reset") setImageLightboxScale(1);
+    });
+    document.body.appendChild(imageLightbox);
+    return imageLightbox;
+  }
+
+  function openImageLightbox(src, alt = "Generated image") {
+    if (!src) return;
+    const lightbox = ensureImageLightbox();
+    const img = lightbox.querySelector(".image-lightbox-img");
+    if (img) {
+      img.src = src;
+      img.alt = alt || "Generated image";
+    }
+    setImageLightboxScale(1);
+    lightbox.classList.add("visible");
+    lightbox.setAttribute("aria-hidden", "false");
+    lightbox.querySelector('[data-lightbox-action="close"]')?.focus();
+  }
+
   function appendMessageBubble(role, content, meta, renderOptions = {}, ephemeral = {}) {
     if (!chatMessages) return;
     const bubble = document.createElement("div");
@@ -4774,6 +4936,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       img.className = "message-image";
       img.alt = meta.prompt || "Generated image";
       img.loading = "lazy";
+      img.tabIndex = 0;
+      img.setAttribute("role", "button");
+      img.title = "Zoom image";
       img.addEventListener("load", () => {
         skeleton.remove();
         img.classList.add("loaded");
@@ -4785,6 +4950,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         fallback.className = "image-load-error";
         fallback.textContent = "Image failed to load.";
         imgContainer.appendChild(fallback);
+      });
+      img.addEventListener("click", () => openImageLightbox(meta.imageUrl, img.alt));
+      img.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        openImageLightbox(meta.imageUrl, img.alt);
       });
       img.src = meta.imageUrl;
       imgContainer.appendChild(img);
@@ -5413,7 +5584,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (!imageUrl) return Promise.reject(new Error("Missing image URL."));
     const url = String(imageUrl).trim();
     const isDataUrl = url.startsWith("data:");
-    const options = isDataUrl ? {} : { mode: "cors", credentials: "include" };
+    const options = isDataUrl ? {} : { mode: "cors", credentials: "omit" };
     return fetch(url, options).then((response) => {
       if (!response.ok) throw new Error(`Image fetch failed (${response.status}).`);
       return response.blob();
@@ -6445,12 +6616,18 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const contentDiv = document.createElement("div");
     contentDiv.className = "message-content typing-active sentiq-reveal-target";
     bubble.appendChild(contentDiv);
+    const inlineLoader = document.createElement("div");
+    inlineLoader.className = "response-inline-loader";
+    inlineLoader.setAttribute("role", "status");
+    inlineLoader.setAttribute("aria-live", "polite");
+    inlineLoader.innerHTML = '<span class="response-inline-spinner" aria-hidden="true"></span><span>Preparing response</span>';
     const renderedDiv = document.createElement("div");
     renderedDiv.className = "streaming-rendered";
     const tailDiv = document.createElement("div");
     tailDiv.className = "streaming-tail";
     const tailTextNode = document.createTextNode(' ');
     tailDiv.appendChild(tailTextNode);
+    contentDiv.appendChild(inlineLoader);
     contentDiv.appendChild(renderedDiv);
     contentDiv.appendChild(tailDiv);
     const actionBar = attachAssistantActionBar(bubble, "");
@@ -6497,7 +6674,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       requestAnimationFrame(() => contentDiv.classList.add("is-visible"));
     }
 
+    function removeInlineLoader() {
+      inlineLoader.remove();
+    }
+
     function finalize() {
+      removeInlineLoader();
       contentDiv.classList.remove('typing-active');
       revealContent();
       const statusNoticeHtml = interruptionNotice
@@ -6566,6 +6748,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           streamDone = true;
         }
         if (!hadText && fullText.trim()) {
+          removeInlineLoader();
           actionBar?.refresh();
           revealContent();
         }
@@ -6574,6 +6757,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       finish(options = {}) {
         interruptionNotice = options.interruptionNotice || interruptionNotice;
         streamDone = true;
+        removeInlineLoader();
         actionBar?.refresh();
         return new Promise((resolve) => {
           finalizeResolve = resolve;
@@ -6751,7 +6935,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       ? buildImageUploadMeta(suppliedImageAttachments)
       : null;
     if (suppliedImageAttachments.length > 0) {
-      currentSessionImageAttachments = suppliedImageAttachments;
+      setCurrentSessionImageAttachments(suppliedImageAttachments);
     }
 
     const originalApiMessage = apiMessage;
@@ -7953,7 +8137,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     for (let i = uploadResults.length - 1; i >= 0; i--) {
       const result = uploadResults[i];
       if (result?.status === "fulfilled" && result.value) {
-        currentSessionFile = result.value;
+        setCurrentSessionFile(result.value);
         break;
       }
     }
@@ -7965,26 +8149,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       });
     }
     scheduleChatListRefresh();
-  }
-
-  function handleVoiceInput() {
-    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-      alert("Voice input is not supported in this browser.");
-      return;
-    }
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    recognition.lang = "en-US";
-    recognition.interimResults = false;
-    voiceBtn?.classList.add("active");
-    recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      if (chatInput) { chatInput.value += transcript; autoResizeInput(); }
-      voiceBtn?.classList.remove("active");
-    };
-    recognition.onerror = () => { voiceBtn?.classList.remove("active"); };
-    recognition.onend = () => { voiceBtn?.classList.remove("active"); };
-    recognition.start();
   }
 
   function openSettings() {
@@ -8017,10 +8181,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       chatInput.value = "";
       chatInput.style.height = "auto";
     }
-    currentSessionFile = null;
-    currentSessionImageAttachments = [];
+    clearChatSessionContext(previousChatId);
     if (scrollAnchorPill) scrollAnchorPill.classList.remove("visible");
     if (previousChatId) {
+      pendingClarifications.delete(previousChatId);
       chatStates.delete(previousChatId);
       chatRenderSignatures.delete(previousChatId);
       welcomeGreetingByChatId.delete(previousChatId);
@@ -8087,9 +8251,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
     currentChatId = chat.id;
     syncActiveChatItem();
-    currentSessionFile = null;
-    currentSessionImageAttachments = [];
-    pendingClarifications.clear();
+    clearChatSessionContext(chat.id);
+    pendingClarifications.delete(chat.id);
     if (chatMessages) chatMessages.innerHTML = "";
     showWelcome();
     updateHtmlTitle("");
