@@ -11,12 +11,14 @@
 //   5. file (non-coding)   -> gemini-search (Pollinations) - preserve file pipeline
 //   6. coding              -> qwen-coder (Pollinations)
 //   7. math_reasoning      -> openai-large (Pollinations)
-//   8. general_chat        -> gemini-search (Pollinations) - human-like conversations
+//   8. general_chat        -> gpt-oss-120b (Groq) - plain text conversations
 //
 // Gemini direct API is NEVER selected by the router.
 // It is a last-resort fallback handled by the Python gateway.
 
 export type QueryType = string;
+
+export const PLAIN_CHAT_MODEL = "gpt-oss-120b";
 
 export type PromptModelCategory =
   | "coding"
@@ -542,7 +544,7 @@ function detectPromptCategory(
     return "math_reasoning";
   }
 
-  // Priority 6: General chat (default) -> gemini-search for human-like conversations
+  // Priority 6: General chat (default) -> Groq GPT-OSS for plain text conversations
   return "general_chat";
 }
 
@@ -577,12 +579,21 @@ export function selectModelForPrompt(
       break;
     case "general_chat":
     default:
-      model = "gemini-search";
-      console.log("[Router] category=general_chat -> gemini-search");
+      if (isBufferedReasoningQuery(query)) {
+        model = "gemini-search";
+        console.log("[Router] category=general_chat buffered_reasoning -> gemini-search");
+      } else {
+        model = PLAIN_CHAT_MODEL;
+        console.log(`[Router] category=general_chat -> ${PLAIN_CHAT_MODEL}`);
+      }
       break;
   }
 
-  const provider = category === "vision" ? "gemini" : "pollinations";
+  const provider = model === PLAIN_CHAT_MODEL
+    ? "groq"
+    : category === "vision"
+      ? "gemini"
+      : "pollinations";
   console.log(
     `[Router] selected model=${model} provider=${provider} category=${category} query="${query.slice(0, 60)}..."`,
   );

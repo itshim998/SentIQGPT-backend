@@ -41,6 +41,7 @@ from llm_adapter import (
     GROQ_API_KEYS,
     GEMINI_MODEL,
     GROQ_MODEL,
+    GROQ_CHAT_MODEL,
     CODING_MODEL,
     POLLINATIONS_OPENAI_ENDPOINT,
     POLLINATIONS_FALLBACK_OPENAI_ENDPOINT,
@@ -75,6 +76,7 @@ CONTROL_DB_NUMBER = 1
 VALID_DB_NUMBERS = {1, 2, 3, 4}
 GUEST_USER_ID = "guest"
 GUEST_MODEL_OVERRIDE = "gemini-search"
+GUEST_TEXT_MODEL_OVERRIDE = "gpt-oss-120b"
 USER_DB_CACHE_TTL_SECONDS = 300
 INTERNAL_SERVICE_TOKEN = os.getenv("SENTIQ_INTERNAL_SERVICE_TOKEN", "").strip()
 UNSAFE_INTERNAL_ENDPOINTS_ENABLED = os.getenv("SENTIQ_ENABLE_UNSAFE_INTERNAL_ENDPOINTS") == "true"
@@ -200,6 +202,7 @@ class LLMInvokeRequest(BaseModel):
     model_override: Optional[str] = None
     user_id: Optional[str] = None
     max_output_tokens: Optional[int] = None
+    reasoning_effort: Optional[str] = None
     skip_wrappers: Optional[bool] = None
     image_attachments: Optional[list[dict[str, Any]]] = None
 
@@ -578,6 +581,7 @@ async def health_check():
         "gemini_model": GEMINI_MODEL,
         "embedding_model": EMBEDDING_MODEL,
         "groq_model": GROQ_MODEL,
+        "groq_chat_model": GROQ_CHAT_MODEL,
         "coding_model": CODING_MODEL,
         "pollinations_api_key_configured": bool(POLLINATIONS_API_KEY),
         "pollinations_endpoint": POLLINATIONS_OPENAI_ENDPOINT,
@@ -594,7 +598,11 @@ async def invoke_llm(request: LLMInvokeRequest):
     try:
         if is_guest_user(request.user_id):
             user_id = GUEST_USER_ID
-            effective_model_override = GUEST_MODEL_OVERRIDE
+            effective_model_override = (
+                GUEST_TEXT_MODEL_OVERRIDE
+                if request.model_override == GUEST_TEXT_MODEL_OVERRIDE
+                else GUEST_MODEL_OVERRIDE
+            )
             assigned_db = None
         else:
             user_id = require_user_id(request.user_id)
@@ -620,6 +628,7 @@ async def invoke_llm(request: LLMInvokeRequest):
             model_override=effective_model_override,
             user_id=user_id,
             max_output_tokens=request.max_output_tokens,
+            reasoning_effort=request.reasoning_effort,
             skip_wrappers=bool(request.skip_wrappers),
             image_attachments=request.image_attachments or None,
         )
@@ -722,7 +731,11 @@ async def stream_llm(request: LLMInvokeRequest):
         try:
             if is_guest_user(request.user_id):
                 user_id = GUEST_USER_ID
-                effective_model_override = GUEST_MODEL_OVERRIDE
+                effective_model_override = (
+                    GUEST_TEXT_MODEL_OVERRIDE
+                    if request.model_override == GUEST_TEXT_MODEL_OVERRIDE
+                    else GUEST_MODEL_OVERRIDE
+                )
                 assigned_db = None
             else:
                 user_id = require_user_id(request.user_id)
@@ -740,6 +753,8 @@ async def stream_llm(request: LLMInvokeRequest):
                 model_override=effective_model_override,
                 user_id=user_id,
                 image_attachments=request.image_attachments or None,
+                max_output_tokens=request.max_output_tokens,
+                reasoning_effort=request.reasoning_effort,
             ):
                 # Check output safety (if monitor active)
                 if safety_monitor:

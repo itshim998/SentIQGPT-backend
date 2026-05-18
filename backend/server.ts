@@ -381,6 +381,7 @@ function logStreamMetrics(metrics: StreamMetrics, reason: string): void {
 }
 
 const GUEST_MODEL_OVERRIDE = "gemini-search";
+const GUEST_TEXT_MODEL_OVERRIDE = "gpt-oss-120b";
 const GUEST_MATH_MAX_OUTPUT_TOKENS = 6000;
 const GUEST_MATH_EMPTY_FALLBACK = "Sorry, I couldn't complete the math response. Please try again.";
 
@@ -1859,6 +1860,7 @@ app.post(
         return;
       }
 
+      const guestChatModelOverride = isReasoningQuery ? GUEST_MODEL_OVERRIDE : GUEST_TEXT_MODEL_OVERRIDE;
       const guestResult = await handleChat({
         userMessage: guestUserMessage,
         recentMessages: guestContext.recentMessages,
@@ -1868,7 +1870,7 @@ app.post(
         conversationSummary: guestContext.conversationSummary,
         priorConversationEvidence: guestContext.priorConversationEvidence,
         isExplicitRecallQuery: guestContext.isExplicitRecallQuery,
-        modelOverride: GUEST_MODEL_OVERRIDE,
+        modelOverride: guestChatModelOverride,
         userId,
         reasoningMode: isReasoningQuery,
       });
@@ -1877,7 +1879,7 @@ app.post(
         route: "chat",
         answer: guestResult.answer,
         reply: guestResult.reply,
-        thinking: gateThinking(guestResult.thinking, { modelOverride: GUEST_MODEL_OVERRIDE, isReasoning: isReasoningQuery }),
+        thinking: gateThinking(guestResult.thinking, { modelOverride: guestChatModelOverride, isReasoning: isReasoningQuery }),
         disclaimer: guestResult.disclaimer,
         image: undefined,
         chart: undefined,
@@ -2620,14 +2622,18 @@ app.post(
         && effectiveUserMessage.length <= 280
         && !detectCodeQuery(effectiveUserMessage)
         && !isMathQuery(effectiveUserMessage);
+      const guestGeneralModelOverride =
+        (guestCtx.fileReferences?.length ?? 0) > 0 || (guestCtx.imageAttachments?.length ?? 0) > 0
+          ? GUEST_MODEL_OVERRIDE
+          : GUEST_TEXT_MODEL_OVERRIDE;
       const streamMetrics = createStreamMetrics(
         "chat.stream.guest.general",
         requestStart,
-        { model: GUEST_MODEL_OVERRIDE, fastPath: guestFastPath },
+        { model: guestGeneralModelOverride, fastPath: guestFastPath },
       );
 
       console.log(`[Latency] guest buffered response request started (+${Date.now() - requestStart}ms)`);
-      console.log(`[Stream] guest model=${GUEST_MODEL_OVERRIDE} hasFiles=${guestCtx.hasFileContext} msgLen=${parsed.data.message.length}`);
+      console.log(`[Stream] guest model=${guestGeneralModelOverride} hasFiles=${guestCtx.hasFileContext} msgLen=${parsed.data.message.length}`);
 
       try {
         const streamStart = Date.now();
@@ -2661,7 +2667,7 @@ app.post(
           conversationSummary: guestCtx.conversationSummary,
           priorConversationEvidence: guestCtx.priorConversationEvidence,
           isExplicitRecallQuery: guestCtx.isExplicitRecallQuery,
-          modelOverride: GUEST_MODEL_OVERRIDE,
+          modelOverride: guestGeneralModelOverride,
           userId,
           streaming: true,
         });
@@ -4453,7 +4459,7 @@ app.post(
         userMessage,
         recentMessages: normalizedRecentMessages,
         memories: [],
-        modelOverride: GUEST_MODEL_OVERRIDE,
+        modelOverride: GUEST_TEXT_MODEL_OVERRIDE,
         userId,
       });
 
@@ -4461,7 +4467,7 @@ app.post(
         route: "chat",
         answer: guestResult.answer,
         reply: guestResult.reply,
-        thinking: gateThinking(guestResult.thinking, { modelOverride: GUEST_MODEL_OVERRIDE }),
+        thinking: gateThinking(guestResult.thinking, { modelOverride: GUEST_TEXT_MODEL_OVERRIDE }),
         disclaimer: guestResult.disclaimer,
         image: undefined,
         chart: undefined,

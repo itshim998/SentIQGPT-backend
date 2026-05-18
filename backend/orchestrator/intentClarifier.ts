@@ -645,12 +645,13 @@ export function selectClarificationModel(args: ClarificationContext): string {
   if (!detectCodeQuery(message) && isBufferedReasoningQuery(message)) {
     return "openai-large";
   }
-  return selectModelForPrompt(message, undefined, {
+  const selected = selectModelForPrompt(message, undefined, {
     hasFile: args.hasFile,
     hasImage: args.hasImage,
     fileNames: args.fileNames ? [...args.fileNames] : undefined,
     fileContent: args.fileContent,
   });
+  return selected === "gpt-oss-120b" ? "gemini-search" : selected;
 }
 
 function buildIntentClarifyPrompt(

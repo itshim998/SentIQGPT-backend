@@ -75,9 +75,12 @@ GROQ_API_KEYS = [
     os.getenv("GROQ_API_KEY", ""),
     os.getenv("GROQ_API_KEY_2", ""),
     os.getenv("GROQ_API_KEY_3", ""),
+    os.getenv("GROQ_API_KEY_4", ""),
+    os.getenv("GROQ_API_KEY_5", ""),
 ]
 GROQ_API_KEYS = [k for k in GROQ_API_KEYS if k]
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", "openai/gpt-oss-120b")
 
 # --- Smart model routing aliases (resolved to provider-native model IDs) ---
 GEMINI_FAST_MODEL = os.getenv("SMART_MODEL_GEMINI_FAST", "gemini-2.5-flash-lite")
@@ -86,6 +89,14 @@ GEMINI_VISION_MODEL = os.getenv("SMART_MODEL_GEMINI_VISION", "gemini-2.5-flash")
 CODING_MODEL = os.getenv("SMART_MODEL_CODING", "qwen-coder")
 GENERAL_CHAT_MODEL = os.getenv("SMART_MODEL_GENERAL_CHAT", "gemini-2.5-flash-lite")
 SEARCH_MODEL = os.getenv("SMART_MODEL_SEARCH", "gemini-2.5-flash-lite")
+
+GPT_OSS_LOGICAL_MODELS = {"gpt-oss-120b", "openai/gpt-oss-120b"}
+GPT_OSS_SYSTEM_PROMPT = (
+    "You are SentIQGPT, a grounded AI assistant. "
+    "Provide accurate, concise, well-structured answers."
+)
+GPT_OSS_DEFAULT_MAX_COMPLETION_TOKENS = 2000
+GPT_OSS_REASONING_EFFORTS = {"low", "medium"}
 
 # --- Pollinations provider ---
 POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY", "")
@@ -198,6 +209,20 @@ def _get_healthy_keys(keys: list[str]) -> list[str]:
     # If all keys are unhealthy, return all (force retry)
     return healthy if healthy else keys
 
+_groq_key_rotation_lock = threading.Lock()
+_groq_key_rotation_index = 0
+
+def _get_round_robin_groq_keys() -> list[str]:
+    """Return healthy Groq keys starting at the next round-robin position."""
+    global _groq_key_rotation_index
+    keys = _get_healthy_keys(GROQ_API_KEYS)
+    if not keys:
+        return []
+    with _groq_key_rotation_lock:
+        start = _groq_key_rotation_index % len(keys)
+        _groq_key_rotation_index = (_groq_key_rotation_index + 1) % len(keys)
+    return keys[start:] + keys[:start]
+
 # ==============================
 # In-Memory LRU Cache (fast layer)
 # ==============================
@@ -280,12 +305,13 @@ def _cache_key(
     max_output_tokens: Optional[int] = None,
     skip_wrappers: bool = False,
     image_attachments: Optional[list[dict[str, Any]]] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> str:
     h = hashlib.sha256()
     image_fingerprint = _image_attachment_fingerprint(image_attachments)
     h.update(
         f"{provider}|{task}|{model}|{user_id}|{max_output_tokens or ''}|"
-        f"{int(skip_wrappers)}|{image_fingerprint}|{prompt}".encode()
+        f"{reasoning_effort or ''}|{int(skip_wrappers)}|{image_fingerprint}|{prompt}".encode()
     )
     return h.hexdigest()
 
@@ -435,6 +461,10 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
 
     if logical == "mistral":
         return "pollinations", "mistral"
+
+    # --- Groq chat route ---
+    if logical in GPT_OSS_LOGICAL_MODELS:
+        return "groq", GROQ_CHAT_MODEL
 
     # --- Gemini direct routes (vision, explicit gemini models) ---
     if logical == "gemini-vision":
@@ -683,7 +713,25 @@ def _invoke_gemini_vision(prompt: str, image_base64: str, mime_type: str, model_
 # ==============================
 # Groq invocation (key rotation with client pooling)
 # ==============================
-def _call_groq(prompt: str, api_key: str, model: Optional[str] = None) -> str:
+def _is_gpt_oss_model(model: Optional[str]) -> bool:
+    return (model or "").strip().lower() in GPT_OSS_LOGICAL_MODELS
+
+def _gpt_oss_max_tokens(max_output_tokens: Optional[int]) -> int:
+    if isinstance(max_output_tokens, int) and max_output_tokens > 0:
+        return max_output_tokens
+    return GPT_OSS_DEFAULT_MAX_COMPLETION_TOKENS
+
+def _normalize_gpt_oss_reasoning_effort(reasoning_effort: Optional[str]) -> str:
+    normalized = (reasoning_effort or "").strip().lower()
+    return normalized if normalized in GPT_OSS_REASONING_EFFORTS else "medium"
+
+def _call_groq(
+    prompt: str,
+    api_key: str,
+    model: Optional[str] = None,
+    max_output_tokens: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
+) -> str:
     if not GROQ_MODULE:
         raise RuntimeError("Groq SDK not installed")
     if not api_key:
@@ -693,26 +741,90 @@ def _call_groq(prompt: str, api_key: str, model: Optional[str] = None) -> str:
 
     # Use persistent client (connection pooling)
     client = _get_groq_client(api_key)
+    resolved_model = model or GROQ_MODEL
+    if _is_gpt_oss_model(resolved_model):
+        response = client.chat.completions.create(
+            model=resolved_model,
+            messages=[
+                {"role": "system", "content": GPT_OSS_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.9,
+            max_completion_tokens=_gpt_oss_max_tokens(max_output_tokens),
+            top_p=1,
+            reasoning_effort=_normalize_gpt_oss_reasoning_effort(reasoning_effort),
+            stream=False,
+            stop=None,
+            tools=[{"type": "browser_search"}],
+        )
+        return response.choices[0].message.content or ""
+
     response = client.chat.completions.create(
-        model=model or GROQ_MODEL,
+        model=resolved_model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
         max_tokens=2048,
     )
-    return response.choices[0].message.content
+    return response.choices[0].message.content or ""
 
-def _invoke_groq(prompt: str, model_override: Optional[str] = None) -> str:
+def _call_groq_stream(
+    prompt: str,
+    api_key: str,
+    model: Optional[str] = None,
+    max_output_tokens: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
+):
+    if not GROQ_MODULE:
+        raise RuntimeError("Groq SDK not installed")
+    if not api_key:
+        raise RuntimeError("Groq API key is empty")
+    if not groq_bucket.consume():
+        raise RuntimeError("Groq rate limit exceeded")
+
+    resolved_model = model or GROQ_CHAT_MODEL
+    if not _is_gpt_oss_model(resolved_model):
+        raise RuntimeError(f"Groq streaming is only configured for GPT-OSS chat models, got {resolved_model}")
+
+    client = _get_groq_client(api_key)
+    completion = client.chat.completions.create(
+        model=resolved_model,
+        messages=[
+            {"role": "system", "content": GPT_OSS_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.9,
+        max_completion_tokens=_gpt_oss_max_tokens(max_output_tokens),
+        top_p=1,
+        reasoning_effort=_normalize_gpt_oss_reasoning_effort(reasoning_effort),
+        stream=True,
+        stop=None,
+        tools=[{"type": "browser_search"}],
+    )
+    for chunk in completion:
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+        delta = getattr(choices[0], "delta", None)
+        text = getattr(delta, "content", None)
+        if text:
+            yield text
+
+def _invoke_groq(
+    prompt: str,
+    model_override: Optional[str] = None,
+    max_output_tokens: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
+) -> str:
     """Try Groq keys with smart rotation (skip recently failed keys)."""
     if not GROQ_API_KEYS:
         raise RuntimeError("No Groq API keys configured")
 
-    # Prefer healthy keys first
-    keys_to_try = _get_healthy_keys(GROQ_API_KEYS)
+    keys_to_try = _get_round_robin_groq_keys()
     
     last_error = None
     for idx, api_key in enumerate(keys_to_try, 1):
         try:
-            result = _call_groq(prompt, api_key, model_override)
+            result = _call_groq(prompt, api_key, model_override, max_output_tokens, reasoning_effort)
             logger.info("Groq key #%d succeeded", idx)
             return result
         except Exception as e:
@@ -1179,6 +1291,7 @@ def call_llm_router(
     model_override: Optional[str] = None,
     user_id: Optional[str] = None,
     max_output_tokens: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
     skip_wrappers: bool = False,
     image_attachments: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
@@ -1247,6 +1360,7 @@ def call_llm_router(
         max_output_tokens,
         skip_wrappers,
         image_attachments,
+        reasoning_effort,
     )
     cached = _cache_get(key)
     if cached is not None:
@@ -1269,7 +1383,7 @@ def call_llm_router(
     # Enforce JSON if needed
     effective_prompt = prompt
     if task in CHATLIKE_TASKS:
-        if not skip_wrappers:
+        if not skip_wrappers and not _is_gpt_oss_model(model):
             if _should_request_worked_explanation(prompt=prompt, task=task, model_override=resolved_override or model_override):
                 effective_prompt = _wrap_explanation_prompt(prompt)
             else:
@@ -1291,7 +1405,7 @@ def call_llm_router(
                 image_attachments=image_attachments,
             )
         elif provider == "groq":
-            result = _invoke_groq(effective_prompt, resolved_override)
+            result = _invoke_groq(effective_prompt, resolved_override, max_output_tokens, reasoning_effort)
         else:
             result = _invoke_gemini(effective_prompt, resolved_override)
 
@@ -1454,6 +1568,8 @@ def stream_llm_router(
     model_override: Optional[str] = None,
     user_id: Optional[str] = None,
     image_attachments: Optional[list[dict[str, Any]]] = None,
+    max_output_tokens: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
 ):
     """
     Streaming variant — yields text chunks.
@@ -1473,6 +1589,37 @@ def stream_llm_router(
     )
     logger.info("[Provider] %s", provider)
     logger.info("[LLM Request] stream  model=%s  provider=%s  override=%s", model, provider, model_override)
+
+    # --- Groq GPT-OSS streaming path ---
+    if provider == "groq" and _is_gpt_oss_model(model):
+        emitted_groq_text = False
+        last_error = None
+        for idx, api_key in enumerate(_get_round_robin_groq_keys(), 1):
+            try:
+                for chunk in _call_groq_stream(
+                    prompt,
+                    api_key,
+                    model,
+                    max_output_tokens=max_output_tokens,
+                    reasoning_effort=reasoning_effort,
+                ):
+                    if chunk:
+                        emitted_groq_text = True
+                    yield chunk
+                logger.info("Groq GPT-OSS stream key #%d succeeded", idx)
+                return
+            except Exception as e:
+                last_error = e
+                logger.warning("Groq GPT-OSS stream key #%d failed: %s", idx, e)
+                _mark_key_unhealthy(api_key)
+                if emitted_groq_text:
+                    raise
+        logger.warning(
+            "[Fallback] Groq GPT-OSS stream failed before first text: %s - switching to Gemini (%s)",
+            last_error,
+            GEMINI_FAST_MODEL,
+        )
+        model = GEMINI_FAST_MODEL
 
     # --- Pollinations streaming path ---
     if provider == "pollinations":

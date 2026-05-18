@@ -228,6 +228,11 @@ async function main(): Promise<void> {
     "WebSurf clarification uses gemini-search",
   );
   assert.equal(
+    selectClarificationModel({ userMessage: "Help me choose a better study plan." }),
+    "gemini-search",
+    "plain clarification avoids gpt-oss strict JSON routing",
+  );
+  assert.equal(
     selectClarificationModel({ userMessage: "Make an HTML document printing hello world." }),
     "minimax",
     "implied file clarification uses minimax",

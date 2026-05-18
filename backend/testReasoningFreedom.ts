@@ -186,7 +186,7 @@ async function main(): Promise<void> {
     assert(unsanitizedOpenAiLargeReply.sanitize_bypass === true, "openai-large chat marks sanitize bypass");
     assert(unsanitizedOpenAiLargeReply.thinking === undefined, "openai-large bypass does not split thinking");
 
-    assert(selectModelForPrompt("Tell me a joke.") === "gemini-search", "normal chat routing stays on gemini-search");
+    assert(selectModelForPrompt("Tell me a joke.") === "gpt-oss-120b", "normal chat routing uses gpt-oss-120b");
     assert(selectModelForPrompt("Why is this Python loop failing?") === "qwen-coder", "coding routing stays on qwen-coder");
 
     console.log("\nReasoning freedom validation passed.");

@@ -6,6 +6,7 @@ import {
   selectModelForPrompt,
   isCodingPDF,
 } from "./orchestrator/modelRouter";
+import { buildChatPrompt, selectGroqReasoningEffortForMessage } from "./ai/PromptBuilders";
 
 type RoutingCase = {
   name: string;
@@ -102,12 +103,12 @@ const cases: readonly RoutingCase[] = [
     expectedModel: "gemini-search",
   },
   {
-    name: "Normal chat routes to gemini-search",
+    name: "Normal chat routes to gpt-oss-120b",
     query: "Tell me a short story about spring rain.",
     expectCode: false,
     expectMath: false,
     expectBufferedReasoning: false,
-    expectedModel: "gemini-search",
+    expectedModel: "gpt-oss-120b",
   },
   {
     name: "File upload (non-coding) routes to gemini-search",
@@ -168,6 +169,58 @@ for (const test of codingPdfTests) {
   const passed = result === test.expected;
   console.log(`${passed ? "PASS" : "FAIL"} | isCodingPDF(${test.names[0]}) = ${result}, expected ${test.expected}`);
   if (!passed) failed++;
+}
+
+console.log("\n--- GPT-OSS Reasoning Effort Tests ---");
+const lowEffortCall = buildChatPrompt({
+  userMessage: "Tell me a joke.",
+  modelOverride: "gpt-oss-120b",
+});
+if (lowEffortCall.reasoning_effort !== "low") {
+  console.error(`FAIL | short plain GPT-OSS chat expected low, got ${lowEffortCall.reasoning_effort}`);
+  failed++;
+} else {
+  console.log("PASS | short plain GPT-OSS chat uses low reasoning effort");
+}
+
+const mediumEffortCall = buildChatPrompt({
+  userMessage: "Compare React and Vue in detail, including trade-offs and recommendations.",
+  modelOverride: "gpt-oss-120b",
+});
+if (mediumEffortCall.reasoning_effort !== "medium") {
+  console.error(`FAIL | complex GPT-OSS chat expected medium, got ${mediumEffortCall.reasoning_effort}`);
+  failed++;
+} else {
+  console.log("PASS | complex GPT-OSS chat uses medium reasoning effort");
+}
+
+const geminiSearchCall = buildChatPrompt({
+  userMessage: "Tell me a joke.",
+  modelOverride: "gemini-search",
+});
+if (geminiSearchCall.reasoning_effort !== undefined) {
+  console.error(`FAIL | gemini-search should not set reasoning effort, got ${geminiSearchCall.reasoning_effort}`);
+  failed++;
+} else {
+  console.log("PASS | gemini-search does not set GPT-OSS reasoning effort");
+}
+
+const qwenCoderCall = buildChatPrompt({
+  userMessage: "Why is this Python loop failing?",
+  modelOverride: "qwen-coder",
+});
+if (qwenCoderCall.reasoning_effort !== undefined) {
+  console.error(`FAIL | qwen-coder should not set reasoning effort, got ${qwenCoderCall.reasoning_effort}`);
+  failed++;
+} else {
+  console.log("PASS | coding route does not set GPT-OSS reasoning effort");
+}
+
+if (selectGroqReasoningEffortForMessage("One line?\nSecond line?") !== "medium") {
+  console.error("FAIL | multi-line prompt should use medium reasoning effort");
+  failed++;
+} else {
+  console.log("PASS | multi-line prompt uses medium reasoning effort");
 }
 
 if (failed > 0) {

@@ -75,6 +75,7 @@ export interface LLMAdapterCall {
   readonly user_id?: string;
   readonly timeout_ms?: number;
   readonly max_output_tokens?: number;
+  readonly reasoning_effort?: "low" | "medium";
   readonly skip_wrappers?: boolean;
   readonly image_attachments?: readonly ImageAttachment[];
 }
@@ -117,6 +118,7 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
       model_override: call.model_override,
       user_id: call.user_id,
       max_output_tokens: call.max_output_tokens,
+      reasoning_effort: call.reasoning_effort,
       skip_wrappers: call.skip_wrappers,
       image_attachments: call.image_attachments,
     }),
@@ -203,6 +205,7 @@ export async function callLLMAdapterStream(
       model_override: call.model_override,
       user_id: call.user_id,
       max_output_tokens: call.max_output_tokens,
+      reasoning_effort: call.reasoning_effort,
       skip_wrappers: call.skip_wrappers,
       image_attachments: call.image_attachments,
     }),
@@ -370,6 +373,7 @@ export function callLLMAdapterSync(call: LLMAdapterCall): Promise<string> {
         prefer: call.prefer,
         model_override: call.model_override,
         user_id: call.user_id,
+        reasoning_effort: call.reasoning_effort,
         image_attachments: call.image_attachments,
       })
     );
@@ -439,6 +443,34 @@ const DEFAULT_SYSTEM_PROMPT =
   "- For medicines or health products: provide general factual information. " +
   "Do NOT provide diagnosis, treatment instructions, or medical advice.\n";
 
+export type GroqReasoningEffort = "low" | "medium";
+
+const LOW_EFFORT_MAX_CHARS = 280;
+const LOW_EFFORT_MAX_WORDS = 40;
+const MEDIUM_EFFORT_CUE_PATTERNS: readonly RegExp[] = [
+  /\b(?:analy[sz]e|analysis|compare|contrast|evaluate|review|research|summari[sz]e|explain|derive|prove)\b/i,
+  /\b(?:detailed|in\s+detail|comprehensive|thorough|deep(?:ly)?|step[- ]by[- ]step|walk\s+me\s+through)\b/i,
+  /\b(?:pros?\s+and\s+cons?|trade[- ]offs?|table|bullet(?:s|ed)?|list|outline|plan|strategy)\b/i,
+  /\b(?:latest|current|recent|news|today|yesterday|tomorrow|202[0-9])\b/i,
+  /\b(?:first|second|third|also|and then|as well as)\b/i,
+  /[?].*[?]/s,
+  /(?:^|\s)(?:1\.|2\.|3\.|[-*])\s+/m,
+];
+
+function countWords(value: string): number {
+  const matches = value.trim().match(/\S+/g);
+  return matches ? matches.length : 0;
+}
+
+export function selectGroqReasoningEffortForMessage(message: string): GroqReasoningEffort {
+  const trimmed = message.replace(/\s+/g, " ").trim();
+  if (!trimmed) return "medium";
+  const isSingleLine = !/[\r\n]/.test(message);
+  const isShort = trimmed.length <= LOW_EFFORT_MAX_CHARS && countWords(trimmed) <= LOW_EFFORT_MAX_WORDS;
+  const hasMediumCue = MEDIUM_EFFORT_CUE_PATTERNS.some((pattern) => pattern.test(message));
+  return isSingleLine && isShort && !hasMediumCue ? "low" : "medium";
+}
+
 export interface ChatContext {
   readonly userMessage: string;
   readonly recentMessages?: readonly { role: string; content: string }[];
@@ -471,7 +503,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     SYSTEM_PROMPT = MATH_RESPONSE_SYSTEM_PROMPT;
   } else if (ctx.reasoningMode) {
     SYSTEM_PROMPT = "";
-  } else if ((ctx.modelOverride === "mistral" || ctx.modelOverride === "gemini-search") && !hasFiles) {
+  } else if ((ctx.modelOverride === "mistral" || ctx.modelOverride === "gemini-search" || ctx.modelOverride === "gpt-oss-120b") && !hasFiles) {
     // General text chat stays warm and conversational after the default model switch.
     SYSTEM_PROMPT = MISTRAL_CONVERSATIONAL_SYSTEM_PROMPT;
   } else {
@@ -551,13 +583,18 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     ctx.modelOverride === "openai-large" ||
     ctx.modelOverride === "minimax" ||
     ctx.modelOverride === "mistral";
+  const isGroqChat = ctx.modelOverride === "gpt-oss-120b";
+  const groqReasoningEffort = isGroqChat
+    ? selectGroqReasoningEffortForMessage(ctx.userMessage)
+    : undefined;
 
   return {
     task: "chat",
     prompt: finalPrompt,
-    prefer: isPollinations ? undefined : "gemini",
+    prefer: isGroqChat ? "groq" : isPollinations ? undefined : "gemini",
     model_override: ctx.modelOverride,
     user_id: ctx.userId,
+    reasoning_effort: groqReasoningEffort,
     skip_wrappers: ctx.reasoningMode ?? false,
     image_attachments: ctx.imageAttachments,
   };
