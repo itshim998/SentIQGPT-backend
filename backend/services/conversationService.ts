@@ -16,6 +16,32 @@ export type ConversationListRow = {
   last_message_at?: string | null;
 };
 
+export type ConversationAliasRow = {
+  old_conversation_id: string;
+  canonical_conversation_id: string;
+  user_id: string;
+  reason?: string | null;
+  created_at?: string | null;
+};
+
+export type ConversationTurnResolutionRow = {
+  conversation_id: string;
+  title: string | null;
+  created_at: string;
+  last_activity_at?: string | null;
+  created: boolean;
+};
+
+export type DuplicateConversationMergeRow = {
+  canonical_conversation_id: string;
+  duplicate_conversation_id: string;
+  messages_moved: number;
+  messages_deleted: number;
+  images_moved: number;
+  generated_files_moved: number;
+  memories_moved: number;
+};
+
 export type ConversationLimitRow = {
   id: string;
   created_at: string;
@@ -53,6 +79,13 @@ export type CreateConversationInput = {
   userId: string;
   title: string;
   id?: string;
+};
+
+export type ResolveConversationForTurnInput = {
+  userId: string;
+  clientRequestId: string;
+  conversationId?: string | null;
+  title?: string;
 };
 
 export type InsertConversationMessageInput = {
@@ -159,6 +192,58 @@ export async function createConversation(userDb: any, data: CreateConversationIn
 
   return {
     data: result.data as ConversationListRow | null,
+    error: result.error,
+  };
+}
+
+export async function resolveConversationForTurn(userDb: any, data: ResolveConversationForTurnInput) {
+  const result = await userDb.rpc("resolve_conversation_for_turn", {
+    p_user_id: data.userId,
+    p_client_request_id: data.clientRequestId,
+    p_requested_conversation_id: data.conversationId || null,
+    p_title: data.title || "New Chat",
+  });
+
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  return {
+    data: (row ?? null) as ConversationTurnResolutionRow | null,
+    error: result.error,
+  };
+}
+
+export async function getConversationAlias(userDb: any, userId: string, conversationId: string) {
+  const result = await userDb
+    .from("conversation_aliases")
+    .select("old_conversation_id, canonical_conversation_id, user_id, reason, created_at")
+    .eq("old_conversation_id", conversationId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  return {
+    data: (result.data ?? null) as ConversationAliasRow | null,
+    error: result.error,
+  };
+}
+
+export async function mergeDuplicateConversation(
+  userDb: any,
+  data: {
+    userId: string;
+    canonicalConversationId: string;
+    duplicateConversationId: string;
+    reason?: string;
+  },
+) {
+  const result = await userDb.rpc("merge_duplicate_conversation", {
+    p_user_id: data.userId,
+    p_canonical_conversation_id: data.canonicalConversationId,
+    p_duplicate_conversation_id: data.duplicateConversationId,
+    p_reason: data.reason || "duplicate_merge",
+  });
+
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  return {
+    data: (row ?? null) as DuplicateConversationMergeRow | null,
     error: result.error,
   };
 }

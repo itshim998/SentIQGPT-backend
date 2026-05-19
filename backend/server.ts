@@ -64,13 +64,18 @@ import {
   createConversation,
   deleteConversation,
   getConversationById,
+  getConversationAlias,
   getConversationMessages,
   getUserConversations,
   insertConversationMessage,
+  mergeDuplicateConversation,
+  resolveConversationForTurn,
   updateConversationTitle,
+  type ConversationAliasRow,
   type ConversationListRow,
   type ConversationMessageRow,
   type ConversationRow,
+  type DuplicateConversationMergeRow,
 } from "./services/conversationService";
 import {
   decrementUserMemoryUsage,
@@ -621,6 +626,28 @@ function fallbackTitleFromMessage(message: string): string {
   return normalizeTitleCandidate(message.slice(0, TITLE_FALLBACK_MAX_CHARS));
 }
 
+function normalizeComparableText(value: unknown): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isGenericConversationTitle(title: unknown): boolean {
+  const normalized = normalizeComparableText(title);
+  return !normalized || normalized === "new chat" || normalized === "untitled chat" || normalized === "untitled conversation";
+}
+
+function titleLooksLikeFirstMessageFallback(title: unknown, firstUserMessage: unknown): boolean {
+  const normalizedTitle = normalizeComparableText(title);
+  const normalizedFirstUserMessage = normalizeComparableText(firstUserMessage);
+  if (!normalizedTitle || !normalizedFirstUserMessage || isGenericConversationTitle(title)) return false;
+  if (normalizedTitle.length < 8) return false;
+  return normalizedFirstUserMessage.startsWith(normalizedTitle)
+    || normalizedTitle.startsWith(normalizedFirstUserMessage.slice(0, Math.min(normalizedFirstUserMessage.length, normalizedTitle.length)));
+}
+
 function extractTitleFromRaw(raw: string): string {
   const trimmed = (raw || "").trim();
   if (!trimmed) return "";
@@ -748,6 +775,9 @@ async function persistConversationTitleIfEligible(options: {
   title: string;
   scope: string;
   currentTitle?: string | null;
+  allowFallbackReplacement?: boolean;
+  replacementBasisMessage?: string;
+  titleSource?: "llm" | "fallback";
 }): Promise<boolean> {
   const normalizedTitle = normalizeTitleCandidate(options.title);
   if (!normalizedTitle) return false;
@@ -756,7 +786,13 @@ async function persistConversationTitleIfEligible(options: {
     ? options.currentTitle
     : await readConversationTitleIfOwned(options.userDb, options.userId, options.conversationId, options.scope);
   const normalizedCurrent = normalizeTitleCandidate(currentTitle || "");
-  if (normalizedCurrent && normalizedCurrent !== "New Chat") {
+  const canReplaceFallbackTitle = Boolean(
+    options.allowFallbackReplacement
+    && options.titleSource === "llm"
+    && options.replacementBasisMessage
+    && titleLooksLikeFirstMessageFallback(currentTitle || "", options.replacementBasisMessage),
+  );
+  if (normalizedCurrent && normalizedCurrent !== "New Chat" && !canReplaceFallbackTitle) {
     logDbEvent(`${options.scope}.title-persist.skip`, options.userId, {
       conversationId: options.conversationId,
     });
@@ -793,7 +829,8 @@ async function maybeAutoTitleConversation(options: {
 }): Promise<void> {
   if (!options.userDb || !options.conversationId) return;
   const normalizedCurrent = normalizeTitleCandidate(options.currentTitle || "");
-  if (normalizedCurrent && normalizedCurrent !== "New Chat") return;
+  const currentLooksFallback = titleLooksLikeFirstMessageFallback(options.currentTitle || "", options.userMessage);
+  if (normalizedCurrent && normalizedCurrent !== "New Chat" && !currentLooksFallback) return;
 
   const generation = await generateTitleWithFallback({
     userMessage: options.userMessage,
@@ -810,6 +847,9 @@ async function maybeAutoTitleConversation(options: {
     title: generation.title,
     scope: options.scope,
     currentTitle: options.currentTitle ?? null,
+    allowFallbackReplacement: currentLooksFallback,
+    replacementBasisMessage: options.userMessage,
+    titleSource: generation.source,
   });
 }
 
@@ -892,6 +932,65 @@ async function getOwnedConversationOrThrow(
   return data as ConversationRow;
 }
 
+async function getConversationAliasIfPresent(
+  userDb: any,
+  userId: string,
+  conversationId: string,
+  scope: string,
+): Promise<ConversationAliasRow | null> {
+  const { data, error } = await getConversationAlias(userDb, userId, conversationId);
+  if (error) {
+    logDbFailure(`${scope}.conversation-alias`, userId, error, { conversationId });
+    return null;
+  }
+  return data || null;
+}
+
+async function resolveConversationIdThroughAlias(
+  userDb: any,
+  userId: string,
+  conversationId: string,
+  scope: string,
+): Promise<{ conversationId: string; requestedConversationId: string; aliased: boolean }> {
+  const alias = await getConversationAliasIfPresent(userDb, userId, conversationId, scope);
+  if (!alias?.canonical_conversation_id) {
+    return { conversationId, requestedConversationId: conversationId, aliased: false };
+  }
+  logDbEvent(`${scope}.conversation-alias.ok`, userId, {
+    requestedConversationId: conversationId,
+    canonicalConversationId: alias.canonical_conversation_id,
+  });
+  return {
+    conversationId: alias.canonical_conversation_id,
+    requestedConversationId: conversationId,
+    aliased: true,
+  };
+}
+
+async function getOwnedConversationResolvingAliasOrThrow(
+  userDb: any,
+  userId: string,
+  conversationId: string,
+  scope: string,
+): Promise<{ conversation: ConversationRow; requestedConversationId: string; aliased: boolean }> {
+  try {
+    const conversation = await getOwnedConversationOrThrow(userDb, userId, conversationId, scope);
+    return { conversation, requestedConversationId: conversationId, aliased: false };
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.statusCode !== 404) {
+      throw error;
+    }
+    const resolved = await resolveConversationIdThroughAlias(userDb, userId, conversationId, scope);
+    if (!resolved.aliased) throw error;
+    const conversation = await getOwnedConversationOrThrow(userDb, userId, resolved.conversationId, scope);
+    return {
+      conversation,
+      requestedConversationId: conversationId,
+      aliased: true,
+    };
+  }
+}
+
 async function createConversationOrThrow(
   userDb: any,
   userId: string,
@@ -926,8 +1025,51 @@ async function resolveOrCreateConversationForRequest(
   scope: string,
   requestedConversationId?: string | null,
   title = "New Chat",
+  options: { clientRequestId?: string | null } = {},
 ): Promise<{ conversation: ConversationListRow; created: boolean }> {
+  const clientRequestId = typeof options.clientRequestId === "string" && options.clientRequestId.trim()
+    ? options.clientRequestId.trim().slice(0, 120)
+    : "";
+
+  if (clientRequestId) {
+    logDbEvent(`${scope}.conversation-turn.resolve.start`, userId, {
+      requestedConversationId: requestedConversationId || null,
+      clientRequestId,
+    });
+    const { data, error } = await resolveConversationForTurn(userDb, {
+      userId,
+      clientRequestId,
+      conversationId: requestedConversationId || null,
+      title,
+    });
+    if (error) {
+      logDbFailure(`${scope}.conversation-turn.resolve`, userId, error, {
+        requestedConversationId: requestedConversationId || null,
+      });
+      throw new Error(error.message);
+    }
+    if (!data?.conversation_id) {
+      throw new Error("Failed to resolve canonical conversation for chat turn");
+    }
+    logDbEvent(`${scope}.conversation-turn.resolve.ok`, userId, {
+      requestedConversationId: requestedConversationId || null,
+      conversationId: data.conversation_id,
+      created: data.created ? "true" : "false",
+    });
+    return {
+      conversation: {
+        id: data.conversation_id,
+        title: data.title || title,
+        created_at: data.created_at || new Date().toISOString(),
+        last_activity_at: data.last_activity_at || null,
+      },
+      created: Boolean(data.created),
+    };
+  }
+
   if (requestedConversationId) {
+    const resolved = await resolveConversationIdThroughAlias(userDb, userId, requestedConversationId, scope);
+    requestedConversationId = resolved.conversationId;
     try {
       const existing = await getOwnedConversationOrThrow(userDb, userId, requestedConversationId, scope);
       return {
@@ -1188,6 +1330,137 @@ async function listConversationsOrThrow(userDb: any, userId: string, scope: stri
   return (data || []) as ConversationListRow[];
 }
 
+type ConversationMergeNotice = {
+  from: string;
+  to: string;
+  reason: string;
+  messages_moved?: number;
+  messages_deleted?: number;
+  images_moved?: number;
+  generated_files_moved?: number;
+  memories_moved?: number;
+};
+
+const DUPLICATE_MERGE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_DUPLICATE_MERGES_PER_LIST = 6;
+
+function getConversationFirstPromptFingerprint(conversation: ConversationListRow): string {
+  return normalizeComparableText(conversation.first_user_message || "");
+}
+
+function getConversationMessageCount(conversation: ConversationListRow): number {
+  const count = Number(conversation.message_count);
+  return Number.isFinite(count) && count > 0 ? count : 0;
+}
+
+function getConversationCreatedMs(conversation: ConversationListRow): number {
+  const parsed = Date.parse(conversation.created_at || "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function hasSummarizedConversationTitle(conversation: ConversationListRow): boolean {
+  return Boolean(
+    conversation.title
+    && !isGenericConversationTitle(conversation.title)
+    && !titleLooksLikeFirstMessageFallback(conversation.title, conversation.first_user_message || ""),
+  );
+}
+
+function sortCanonicalCandidates(left: ConversationListRow, right: ConversationListRow): number {
+  const leftSummarized = hasSummarizedConversationTitle(left) ? 1 : 0;
+  const rightSummarized = hasSummarizedConversationTitle(right) ? 1 : 0;
+  if (leftSummarized !== rightSummarized) return rightSummarized - leftSummarized;
+
+  const leftCount = getConversationMessageCount(left);
+  const rightCount = getConversationMessageCount(right);
+  if (leftCount !== rightCount) return rightCount - leftCount;
+
+  const leftCreated = getConversationCreatedMs(left);
+  const rightCreated = getConversationCreatedMs(right);
+  if (leftCreated !== rightCreated) return leftCreated - rightCreated;
+
+  return String(left.id).localeCompare(String(right.id));
+}
+
+async function cleanupDuplicateConversationsForUser(
+  userDb: any,
+  userId: string,
+  conversations: ConversationListRow[],
+  scope: string,
+): Promise<ConversationMergeNotice[]> {
+  const groups = new Map<string, ConversationListRow[]>();
+  for (const conversation of conversations) {
+    if (!conversation?.id) continue;
+    const fingerprint = getConversationFirstPromptFingerprint(conversation);
+    if (!fingerprint) continue;
+    const key = `${userId}:${fingerprint}`;
+    groups.set(key, [...(groups.get(key) || []), conversation]);
+  }
+
+  const merged: ConversationMergeNotice[] = [];
+  for (const group of groups.values()) {
+    if (merged.length >= MAX_DUPLICATE_MERGES_PER_LIST || group.length < 2) continue;
+
+    const sortedByCreated = [...group].sort((left, right) => getConversationCreatedMs(left) - getConversationCreatedMs(right));
+    const oldestMs = getConversationCreatedMs(sortedByCreated[0]);
+    const newestMs = getConversationCreatedMs(sortedByCreated[sortedByCreated.length - 1]);
+    if (!oldestMs || !newestMs || newestMs - oldestMs > DUPLICATE_MERGE_WINDOW_MS) continue;
+
+    const hasFallbackTitle = group.some((conversation) =>
+      titleLooksLikeFirstMessageFallback(conversation.title || "", conversation.first_user_message || ""),
+    );
+    const hasSummarizedTitle = group.some(hasSummarizedConversationTitle);
+    if (!hasFallbackTitle || !hasSummarizedTitle) continue;
+
+    const canonical = [...group].sort(sortCanonicalCandidates)[0];
+    if (!canonical?.id || !hasSummarizedConversationTitle(canonical)) continue;
+
+    const duplicates = group
+      .filter((conversation) =>
+        conversation.id !== canonical.id
+        && titleLooksLikeFirstMessageFallback(conversation.title || "", conversation.first_user_message || "")
+      )
+      .sort((left, right) => getConversationCreatedMs(left) - getConversationCreatedMs(right));
+
+    for (const duplicate of duplicates) {
+      if (merged.length >= MAX_DUPLICATE_MERGES_PER_LIST) break;
+      const reason = "same_first_prompt_fallback_title_24h";
+      const { data, error } = await mergeDuplicateConversation(userDb, {
+        userId,
+        canonicalConversationId: canonical.id,
+        duplicateConversationId: duplicate.id,
+        reason,
+      });
+      if (error) {
+        logDbFailure(`${scope}.duplicate-merge`, userId, error, {
+          canonicalConversationId: canonical.id,
+          duplicateConversationId: duplicate.id,
+        });
+        continue;
+      }
+      const stats = (data || {}) as Partial<DuplicateConversationMergeRow>;
+      merged.push({
+        from: duplicate.id,
+        to: canonical.id,
+        reason,
+        messages_moved: stats.messages_moved || 0,
+        messages_deleted: stats.messages_deleted || 0,
+        images_moved: stats.images_moved || 0,
+        generated_files_moved: stats.generated_files_moved || 0,
+        memories_moved: stats.memories_moved || 0,
+      });
+      logDbEvent(`${scope}.duplicate-merge.ok`, userId, {
+        canonicalConversationId: canonical.id,
+        duplicateConversationId: duplicate.id,
+        messages_moved: stats.messages_moved || 0,
+        messages_deleted: stats.messages_deleted || 0,
+      });
+    }
+  }
+
+  return merged;
+}
+
 async function listConversationMessagesOrThrow(
   userDb: any,
   userId: string,
@@ -1435,12 +1708,17 @@ app.get(
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.list");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.list");
     await ensureNamedWorkspaceProfile(userId, "conversations.list", userDb);
-    const conversations = await listConversationsOrThrow(userDb, userId, "conversations.list");
+    let conversations = await listConversationsOrThrow(userDb, userId, "conversations.list");
+    const merged = await cleanupDuplicateConversationsForUser(userDb, userId, conversations, "conversations.list");
+    if (merged.length > 0) {
+      conversations = await listConversationsOrThrow(userDb, userId, "conversations.list.after-merge");
+    }
     logDbEvent("conversations.list.request.ok", userId, {
       duration_ms: Date.now() - requestStartedAt,
       count: conversations.length,
+      merged_count: merged.length,
     });
-    res.json({ conversations });
+    res.json({ conversations, merged });
   }),
 );
 
@@ -1494,12 +1772,25 @@ app.post(
       typeof req.body?.title === "string" && req.body.title.trim()
         ? req.body.title.trim().slice(0, TITLE_MAX_CHARS)
         : "New Chat";
+    const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    const turnClientRequestId =
+      (typeof req.body?.clientRequestId === "string" && req.body.clientRequestId.trim()
+        ? req.body.clientRequestId.trim()
+        : typeof req.body?.client_request_id === "string" && req.body.client_request_id.trim()
+          ? req.body.client_request_id.trim()
+          : rawMessages.find((message: any) => (
+            typeof message?.clientRequestId === "string" && message.clientRequestId.trim()
+          ))?.clientRequestId || rawMessages.find((message: any) => (
+            typeof message?.client_request_id === "string" && message.client_request_id.trim()
+          ))?.client_request_id || ""
+      ).slice(0, 120);
     const resolvedConversation = await resolveOrCreateConversationForRequest(
       userDb,
       userId,
       "chat.sync",
       requestedConversationId || null,
       requestedTitle,
+      { clientRequestId: turnClientRequestId },
     );
     const conversationId = resolvedConversation.conversation.id;
     const createdConversation = resolvedConversation.created;
@@ -1558,7 +1849,6 @@ app.post(
       }
       return base;
     };
-    const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
     const messages = rawMessages
       .map((message: any) => ({
         role: message?.role === "assistant" ? "assistant" as const : "user" as const,
@@ -1637,12 +1927,20 @@ app.patch(
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.title");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.title");
     await ensureNamedWorkspaceProfile(userId, "conversations.title", userDb);
-    await updateConversationTitleIfOwned(userDb, userId, conversationId, title, "conversations.title");
+    const resolved = await resolveConversationIdThroughAlias(userDb, userId, conversationId, "conversations.title");
+    await updateConversationTitleIfOwned(userDb, userId, resolved.conversationId, title, "conversations.title");
     logDbEvent("conversations.title.request.ok", userId, {
       duration_ms: Date.now() - requestStartedAt,
-      conversationId,
+      conversationId: resolved.conversationId,
     });
-    res.json({ success: true, conversationId, title });
+    res.json({
+      success: true,
+      conversationId: resolved.conversationId,
+      canonicalConversationId: resolved.conversationId,
+      requestedConversationId: conversationId,
+      aliased: resolved.aliased,
+      title,
+    });
   }),
 );
 
@@ -1660,23 +1958,24 @@ app.get(
     await ensureNamedWorkspaceProfile(userId, "conversations.messages", userDb);
     
     // Fetch conversation details (including title) along with messages
-    const conversation = await getOwnedConversationOrThrow(
+    const resolved = await getOwnedConversationResolvingAliasOrThrow(
       userDb,
       userId,
       conversationId,
       "conversations.messages",
     );
+    const conversation = resolved.conversation;
     
     const messages = await listConversationMessagesOrThrow(
       userDb,
       userId,
-      conversationId,
+      conversation.id,
       "conversations.messages",
       { skipOwnershipCheck: true },
     );
     logDbEvent("conversations.messages.request.ok", userId, {
       duration_ms: Date.now() - requestStartedAt,
-      conversationId,
+      conversationId: conversation.id,
       count: messages.length,
     });
     
@@ -1686,7 +1985,11 @@ app.get(
         id: conversation.id,
         title: conversation.title || "New Chat",
         created_at: conversation.created_at,
+        last_activity_at: conversation.last_activity_at || null,
       },
+      canonicalConversationId: conversation.id,
+      requestedConversationId: resolved.requestedConversationId,
+      aliased: resolved.aliased,
       message_count: messages.length,
       messages,
     });
@@ -1704,6 +2007,17 @@ app.delete(
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.delete");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.delete");
     await ensureNamedWorkspaceProfile(userId, "conversations.delete", userDb);
+    const alias = await getConversationAliasIfPresent(userDb, userId, conversationId, "conversations.delete");
+    if (alias?.canonical_conversation_id) {
+      res.json({
+        success: true,
+        conversationId: alias.canonical_conversation_id,
+        canonicalConversationId: alias.canonical_conversation_id,
+        requestedConversationId: conversationId,
+        aliased: true,
+      });
+      return;
+    }
     await deleteConversationIfOwned(userDb, userId, conversationId, "conversations.delete");
     res.json({ success: true });
   }),
@@ -1972,6 +2286,8 @@ app.post(
           userId,
           "chat",
           activeConversationId,
+          "New Chat",
+          { clientRequestId: parsed.data.clientRequestId },
         );
         activeConversationId = resolvedConversation.conversation.id;
         sync.conversationId = activeConversationId;
@@ -2753,6 +3069,8 @@ app.post(
           userId,
           "chat.stream",
           activeConversationId,
+          "New Chat",
+          { clientRequestId: parsed.data.clientRequestId },
         );
         activeConversationId = resolvedConversation.conversation.id;
         activeConversationTitle = resolvedConversation.conversation.title || null;
@@ -2837,11 +3155,18 @@ app.post(
       }
     };
 
-    const getStreamSyncPayload = () => ({
-      persisted: sync.persisted && executionProfile.persistence.blockOnAssistantWrite,
-      deferred: sync.deferred || !executionProfile.persistence.blockOnAssistantWrite,
-      conversationId: activeConversationId,
-    });
+    const getStreamSyncPayload = (assistantExpected = true) => {
+      const contentPersisted = Boolean(
+        sync.persisted
+        && userMessagePersisted
+        && (!assistantExpected || assistantMessagePersisted),
+      );
+      return {
+        persisted: contentPersisted,
+        deferred: sync.deferred || !contentPersisted,
+        conversationId: activeConversationId,
+      };
+    };
 
     const persistStoredMemory = async (memory?: {
       id?: string;
@@ -3558,16 +3883,11 @@ app.post(
       stopHeartbeat();
 
       if (fullReply) {
-        const persistPromise = persistAssistantMessage(fullReply);
-        if (executionProfile.persistence.blockOnAssistantWrite || clientDisconnected) {
-          await persistPromise;
-        } else {
-          void persistPromise;
-        }
+        await persistAssistantMessage(fullReply);
       }
       if (!clientDisconnected) {
         reportStreamMessageGap(Boolean(fullReply), "stream");
-        await writeSseJson({ type: "sync", sync: getStreamSyncPayload() });
+        await writeSseJson({ type: "sync", sync: getStreamSyncPayload(Boolean(fullReply)) });
         await writeSseEvent("[DONE]");
         logStreamMetrics(streamMetrics, "complete");
         console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
@@ -3582,16 +3902,11 @@ app.post(
           });
           const fallbackText = fallback.text || "";
           if (fallbackText) {
-            const persistPromise = persistAssistantMessage(fallbackText);
-            if (executionProfile.persistence.blockOnAssistantWrite) {
-              await persistPromise;
-            } else {
-              void persistPromise;
-            }
+            await persistAssistantMessage(fallbackText);
           }
           reportStreamMessageGap(Boolean(fallbackText), "stream.fallback");
           await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
-          await writeSseJson({ type: "sync", sync: getStreamSyncPayload() });
+          await writeSseJson({ type: "sync", sync: getStreamSyncPayload(Boolean(fallbackText)) });
           await writeSseEvent("[DONE]");
           logStreamMetrics(streamMetrics, "fallback");
           finishSse();
@@ -4104,7 +4419,7 @@ app.post(
       return;
     }
 
-    const conversationId = getOptionalUuid(parsed.data.conversationId, "conversationId") || "";
+    let conversationId = getOptionalUuid(parsed.data.conversationId, "conversationId") || "";
     const clientRequestId = parsed.data.clientRequestId?.trim() || "";
     const imageContextRecentMessages = collapseAdjacentDuplicateMessages(
       parsed.data.context?.recent_messages ?? [],
@@ -4147,6 +4462,8 @@ app.post(
       userDb = await resolveUserDatabaseOrThrow(userId, "images.generate");
       await initializeUserSessionOrThrow(userDb, userId, "images.generate");
       await ensureNamedWorkspaceProfile(userId, "images.generate", userDb);
+      const resolvedImageConversation = await resolveConversationIdThroughAlias(userDb, userId, conversationId, "images.generate");
+      conversationId = resolvedImageConversation.conversationId;
       await getOwnedConversationOrThrow(userDb, userId, conversationId, "images.generate");
 
       const existingAssistantImage = await findExistingAssistantImageMessage(
@@ -4546,8 +4863,12 @@ app.post(
       await ensureNamedWorkspaceProfile(userId, "chat.title", userDb);
     }
 
-    const cacheScopedConversationId = rawConversationId
-      ? rawConversationId
+    const resolvedTitleConversation = userDb && rawConversationId
+      ? await resolveConversationIdThroughAlias(userDb, userId, rawConversationId, "chat.title")
+      : null;
+    const titleConversationId = resolvedTitleConversation?.conversationId || rawConversationId;
+    const cacheScopedConversationId = titleConversationId
+      ? titleConversationId
       : `title-${randomUUID()}`;
 
     const generation = await generateTitleWithFallback({
@@ -4559,17 +4880,28 @@ app.post(
       modelOverride: isGuest ? GUEST_MODEL_OVERRIDE : undefined,
     });
 
-    if (!isGuest && userDb && rawConversationId) {
+    if (!isGuest && userDb && titleConversationId) {
       await persistConversationTitleIfEligible({
         userDb,
         userId,
-        conversationId: rawConversationId,
+        conversationId: titleConversationId,
         title: generation.title,
         scope: "chat.title",
+        allowFallbackReplacement: true,
+        replacementBasisMessage: userMessage,
+        titleSource: generation.source,
       });
     }
 
-    res.json({ title: generation.title });
+    res.json({
+      title: generation.title,
+      ...(titleConversationId ? {
+        conversationId: titleConversationId,
+        canonicalConversationId: titleConversationId,
+        requestedConversationId: rawConversationId || null,
+        aliased: Boolean(resolvedTitleConversation?.aliased),
+      } : {}),
+    });
   }),
 );
 

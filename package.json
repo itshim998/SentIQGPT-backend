@@ -22,6 +22,7 @@
     "test:passA": "ts-node --project tsconfig.backend.json backend/testPassABugFixes.ts",
     "test:frontend-bootstrap": "ts-node --project tsconfig.backend.json backend/testFrontendBootstrap.ts",
     "test:conversation-sync": "ts-node --project tsconfig.backend.json backend/testConversationSyncState.ts",
+    "test:supabase-canonicalization": "ts-node --project tsconfig.backend.json backend/testSupabaseCanonicalization.ts",
     "test:execution-profiles": "ts-node --project tsconfig.backend.json backend/testExecutionProfiles.ts",
     "test:file-generation": "ts-node --project tsconfig.backend.json backend/testFileGeneration.ts",
     "test:frontend-file-generation": "ts-node --project tsconfig.backend.json backend/testFrontendFileGeneration.ts",

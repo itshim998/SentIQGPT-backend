@@ -502,6 +502,42 @@ export async function verifyShardMigrations(): Promise<void> {
         );
       }
 
+      // Check: 20260519120000_conversation_canonicalization.sql
+      const { error: turnRequestsTableError } = await client
+        .from("conversation_turn_requests")
+        .select("user_id,client_request_id,conversation_id", { head: true, count: "exact" })
+        .limit(1);
+      if (turnRequestsTableError) {
+        markFailure(
+          id,
+          `is missing conversation turn idempotency table (migration 20260519120000). code=${turnRequestsTableError.code ?? "unknown"} message=${turnRequestsTableError.message}`,
+        );
+      }
+
+      const { error: aliasesTableError } = await client
+        .from("conversation_aliases")
+        .select("old_conversation_id,canonical_conversation_id,user_id", { head: true, count: "exact" })
+        .limit(1);
+      if (aliasesTableError) {
+        markFailure(
+          id,
+          `is missing conversation alias table (migration 20260519120000). code=${aliasesTableError.code ?? "unknown"} message=${aliasesTableError.message}`,
+        );
+      }
+
+      const { error: resolveTurnFnError } = await client.rpc("resolve_conversation_for_turn", {
+        p_user_id: dummyId,
+        p_client_request_id: `startup-probe-${dummyId}`,
+        p_requested_conversation_id: dummyId,
+        p_title: "Startup Probe",
+      });
+      if (resolveTurnFnError) {
+        markFailure(
+          id,
+          `is missing resolve_conversation_for_turn RPC (migration 20260519120000). code=${resolveTurnFnError.code ?? "unknown"} message=${resolveTurnFnError.message}`,
+        );
+      }
+
       // Check: 20260412090000_incremental_memory_usage_tracking.sql
       const { error: adjustMemoryFnError } = await client.rpc("adjust_user_memory_usage", {
         p_user_id: dummyId,

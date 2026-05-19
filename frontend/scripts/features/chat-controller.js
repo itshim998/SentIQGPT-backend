@@ -51,6 +51,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   let webSearchModeOverride = null;
   let currentExecutionMode = "fast";
   const externalScriptPromises = new Map();
+  const conversationAliasCache = new Map();
   let imageLightbox = null;
   let imageLightboxScale = 1;
 
@@ -123,7 +124,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   function getCanonicalConversationIdForRequest(chatId) {
-    return isAuthenticatedSession() && isValidUuid(chatId) ? chatId : undefined;
+    let resolvedChatId = chatId;
+    const seen = new Set();
+    while (conversationAliasCache.has(resolvedChatId) && !seen.has(resolvedChatId)) {
+      seen.add(resolvedChatId);
+      resolvedChatId = conversationAliasCache.get(resolvedChatId);
+    }
+    return isAuthenticatedSession() && isValidUuid(resolvedChatId) ? resolvedChatId : undefined;
   }
 
   function isRequestStale(chatId, requestId) {
@@ -713,6 +720,15 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function syncStorageUserScope() {
     Storage.setActiveUserId?.(getActiveAuthUserId());
+    conversationAliasCache.clear();
+    Storage.getConversationAliases?.()
+      .then((aliases) => {
+        if (!aliases || typeof aliases !== "object") return;
+        for (const [from, to] of Object.entries(aliases)) {
+          if (from && typeof to === "string" && to) conversationAliasCache.set(from, to);
+        }
+      })
+      .catch(() => null);
   }
 
   function getUserConfigKey(key) {
@@ -1311,6 +1327,68 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return Storage.getChat(normalizedChat.id);
   }
 
+  function moveTransientChatState(fromChatId, toChatId) {
+    if (!fromChatId || !toChatId || fromChatId === toChatId) return;
+    if (welcomeGreetingByChatId.has(fromChatId) && !welcomeGreetingByChatId.has(toChatId)) {
+      welcomeGreetingByChatId.set(toChatId, welcomeGreetingByChatId.get(fromChatId));
+    }
+    welcomeGreetingByChatId.delete(fromChatId);
+    const pendingState = chatStates.get(fromChatId);
+    if (pendingState && !chatStates.has(toChatId)) chatStates.set(toChatId, pendingState);
+    chatStates.delete(fromChatId);
+    if (pendingClarifications.has(fromChatId) && !pendingClarifications.has(toChatId)) {
+      pendingClarifications.set(toChatId, pendingClarifications.get(fromChatId));
+    }
+    pendingClarifications.delete(fromChatId);
+    if (chatRenderSignatures.has(fromChatId) && !chatRenderSignatures.has(toChatId)) {
+      chatRenderSignatures.set(toChatId, chatRenderSignatures.get(fromChatId));
+    }
+    chatRenderSignatures.delete(fromChatId);
+  }
+
+  async function applyConversationAlias(fromChatId, toChatId) {
+    const from = typeof fromChatId === "string" ? fromChatId.trim() : "";
+    const to = typeof toChatId === "string" ? toChatId.trim() : "";
+    if (!from || !to || from === to) return to || from;
+    conversationAliasCache.set(from, to);
+    await Storage.setConversationAlias?.(from, to).catch(() => null);
+
+    const oldChat = await Storage.getChat(from).catch(() => null);
+    if (oldChat) {
+      const canonicalChat = await Storage.getChat(to).catch(() => null);
+      if (!canonicalChat) {
+        await Storage.upsertServerChat({
+          ...oldChat,
+          id: to,
+          source: "server",
+          pending_server_sync: false,
+          sync_error: null,
+        });
+      }
+      if (Array.isArray(oldChat.messages) && oldChat.messages.length > 0) {
+        await (Storage.mergeChatMessages || Storage.replaceChatMessages)(to, oldChat.messages);
+      }
+      await Storage.deleteChat(from);
+    }
+
+    moveTransientChatState(from, to);
+    if (currentChatId === from) currentChatId = to;
+    return to;
+  }
+
+  async function applyConversationAliasesFromServer(mergedAliases) {
+    const aliases = Array.isArray(mergedAliases) ? mergedAliases : [];
+    const applied = new Set();
+    for (const item of aliases) {
+      const from = item?.from || item?.old_conversation_id || item?.oldConversationId;
+      const to = item?.to || item?.canonical_conversation_id || item?.canonicalConversationId;
+      if (!from || !to || from === to || applied.has(`${from}:${to}`)) continue;
+      applied.add(`${from}:${to}`);
+      await applyConversationAlias(from, to);
+    }
+    return applied.size;
+  }
+
   function serializeMessageForSync(message) {
     const meta = message?.meta && typeof message.meta === "object" ? message.meta : null;
     const output = {
@@ -1484,12 +1562,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const stopMeasure = startPerf("ui.chat_list.fetch", { silent });
     try {
       const response = await API.getConversations();
+      const aliasCount = await applyConversationAliasesFromServer(response?.merged);
       const chats = Array.isArray(response?.conversations)
         ? response.conversations.map(normalizeServerConversation)
         : [];
       await Promise.all(chats.map((chat) => Storage.upsertServerChat(chat)));
       const deletedIds = await cleanupDuplicateBlankServerChats(chats);
-      stopMeasure("ok", { chat_count: chats.length, deleted_duplicate_count: deletedIds.size });
+      stopMeasure("ok", { chat_count: chats.length, deleted_duplicate_count: deletedIds.size, alias_count: aliasCount });
       return deletedIds.size > 0 ? chats.filter((chat) => !deletedIds.has(chat.id)) : chats;
     } catch (error) {
       stopMeasure("error");
@@ -1507,8 +1586,20 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   async function fetchAuthenticatedChat(chatId, options = {}) {
     const { silent = false } = options;
     try {
-      const response = await API.getConversationMessages(chatId);
-      const cachedChat = await Storage.getChat(chatId);
+      const requestChatId = await Storage.resolveConversationAlias?.(chatId).catch(() => chatId) || chatId;
+      if (requestChatId !== chatId) {
+        conversationAliasCache.set(chatId, requestChatId);
+      }
+      const response = await API.getConversationMessages(requestChatId);
+      const canonicalChatId = response?.canonicalConversationId || response?.conversation?.id || requestChatId;
+      if (canonicalChatId && canonicalChatId !== chatId) {
+        await applyConversationAlias(chatId, canonicalChatId);
+      }
+      if (response?.requestedConversationId && canonicalChatId && response.requestedConversationId !== canonicalChatId) {
+        await applyConversationAlias(response.requestedConversationId, canonicalChatId);
+      }
+      const cacheChatId = canonicalChatId || requestChatId;
+      const cachedChat = await Storage.getChat(cacheChatId);
       
       // Extract title from server response - this ensures titles persist across devices
       const serverTitle = response?.conversation?.title || response?.title;
@@ -1516,7 +1607,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       
       // Upsert chat with proper title from server
       await Storage.upsertServerChat({
-        id: chatId,
+        id: cacheChatId,
         title: chatTitle,
         created_at: response?.conversation?.created_at || cachedChat?.created || new Date().toISOString(),
         last_activity_at: response?.conversation?.last_activity_at || response?.conversation?.created_at || null,
@@ -1525,8 +1616,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       const messages = Array.isArray(response?.messages)
         ? response.messages.map(normalizeServerMessage)
         : [];
-      await (Storage.mergeChatMessages || Storage.replaceChatMessages)(chatId, messages);
-      return Storage.getChat(chatId);
+      await (Storage.mergeChatMessages || Storage.replaceChatMessages)(cacheChatId, messages);
+      return Storage.getChat(cacheChatId);
     } catch (error) {
       logAuthenticatedConversationError("fetchAuthenticatedChat", error);
       if (isProfileNameRequiredError(error)) {
@@ -1652,6 +1743,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       await reconcilePendingServerChat(localChatId, syncedChat);
       await loadChatList(true);
       return conversationId;
+    }
+    if (localChatId !== conversationId) {
+      await applyConversationAlias(localChatId, conversationId);
     }
     await Storage.upsertServerChat({
       ...syncedChat,
@@ -1835,7 +1929,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           }
 
           if (job.type === SYNC_JOB_TYPES.chatTitle) {
-            const conversationId = typeof job.payload?.conversationId === "string" ? job.payload.conversationId.trim() : "";
+            const rawConversationId = typeof job.payload?.conversationId === "string" ? job.payload.conversationId.trim() : "";
+            const conversationId = getCanonicalConversationIdForRequest(rawConversationId) || rawConversationId;
             const title = typeof job.payload?.title === "string" ? job.payload.title.trim() : "";
             if (!conversationId || !title) {
               await Storage.deleteSyncJob(job.id);
@@ -4653,6 +4748,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         stopMeasure("ok", { message_count: 0, cached: false, guest: true });
       }
       return;
+    }
+    const aliasedChatId = await Storage.resolveConversationAlias?.(chatId).catch(() => chatId) || chatId;
+    if (aliasedChatId && aliasedChatId !== chatId) {
+      conversationAliasCache.set(chatId, aliasedChatId);
+      if (currentChatId === chatId) currentChatId = aliasedChatId;
+      return loadChat(aliasedChatId, options);
     }
     const cachedChat = await Storage.getChat(chatId);
 

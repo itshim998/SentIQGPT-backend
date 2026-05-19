@@ -85,12 +85,13 @@ const validUuid = "123e4567-e89b-12d3-a456-426614174000";
 {
   const server = fs.readFileSync(path.join(root, "backend", "server.ts"), "utf8");
   assert(server.includes("getOptionalUuid(parsed.data.conversationId, \"conversationId\", {\n      ignoreInvalid: isGuest"));
-  assert(server.includes("const conversationId = getOptionalUuid(parsed.data.conversationId, \"conversationId\") || \"\""));
+  assert(server.includes("let conversationId = getOptionalUuid(parsed.data.conversationId, \"conversationId\") || \"\""));
+  assert(server.includes("resolveConversationIdThroughAlias(userDb, userId, conversationId, \"images.generate\")"));
   assert(server.includes("const chatId = getRequiredUuid(req.params.chatId, \"chatId\")"));
   assert(server.includes("buildSyncMessageOptions"), "chat sync should preserve generated-file and image metadata");
   assert(server.includes("messageType: \"image\""), "chat sync should map image skeleton metadata");
   assert(server.includes("messageType: \"file\""), "chat sync should map generated file metadata");
-  assert(server.includes("executionProfile.persistence.blockOnAssistantWrite || clientDisconnected"), "stream should persist complete replies after client disconnect");
+  assert(server.includes("await persistAssistantMessage(fullReply);"), "stream should durably persist complete replies before final sync");
   assert(!server.includes("if (clientDisconnected) break;\n        const { done, value } = await reader.read();\n        if (done) break;\n        if (!value) continue;\n        fullReply += value;"), "signed-in stream should keep reading after disconnect");
   assert(server.includes("const selectionConversationId = getOptionalUuid(parsed.data.conversationId, \"conversationId\")"));
   const uploadRouteStart = server.indexOf('"/api/files/upload"');

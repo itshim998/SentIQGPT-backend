@@ -173,6 +173,10 @@ function getActiveUserId() {
   return activeCacheUserId;
 }
 
+function getConversationAliasConfigKey() {
+  return `conversation_aliases:${activeCacheUserId || "guest"}`;
+}
+
 function isServerScopedItemVisible(item) {
   if (!item || item.source !== "server") return true;
   if (!activeCacheUserId) return false;
@@ -719,6 +723,33 @@ async function setConfig(key, value) {
   return dbPut(STORES.config, { key, value });
 }
 
+async function getConversationAliases() {
+  const aliases = await getConfig(getConversationAliasConfigKey());
+  return aliases && typeof aliases === "object" ? aliases : {};
+}
+
+async function setConversationAlias(fromChatId, toChatId) {
+  const from = String(fromChatId || "").trim();
+  const to = String(toChatId || "").trim();
+  if (!from || !to || from === to) return null;
+  const aliases = await getConversationAliases();
+  aliases[from] = to;
+  await setConfig(getConversationAliasConfigKey(), aliases);
+  return aliases;
+}
+
+async function resolveConversationAlias(chatId) {
+  let current = String(chatId || "").trim();
+  if (!current) return "";
+  const aliases = await getConversationAliases();
+  const seen = new Set();
+  while (aliases[current] && !seen.has(current)) {
+    seen.add(current);
+    current = aliases[current];
+  }
+  return current;
+}
+
 async function getAllConfig() {
   const items = await dbGetAll(STORES.config);
   const config = { ...DEFAULT_LIMITS };
@@ -759,6 +790,7 @@ window.SentIQStorage = {
   storeGeneratedFile, getGeneratedFile, getAllGeneratedFiles, deleteGeneratedFile,
   putSyncJob, getAllSyncJobs, deleteSyncJob,
   getConfig, setConfig, getAllConfig,
+  getConversationAliases, setConversationAlias, resolveConversationAlias,
   getStorageStats, generateId,
   normalizeMemoryScope, normalizeMemoryChatId,
   collapseAdjacentDuplicateChatMessages,
