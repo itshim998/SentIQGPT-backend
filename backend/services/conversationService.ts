@@ -11,6 +11,9 @@ export type ConversationListRow = {
   title: string | null;
   created_at: string;
   last_activity_at?: string | null;
+  message_count?: number;
+  first_user_message?: string | null;
+  last_message_at?: string | null;
 };
 
 export type ConversationLimitRow = {
@@ -49,6 +52,7 @@ export type PriorConversationUserMessageRow = {
 export type CreateConversationInput = {
   userId: string;
   title: string;
+  id?: string;
 };
 
 export type InsertConversationMessageInput = {
@@ -121,9 +125,37 @@ export async function getConversationMessageByClientRequestId(
 export async function createConversation(userDb: any, data: CreateConversationInput) {
   const result = await userDb
     .from("conversations")
-    .insert({ user_id: data.userId, title: data.title })
+    .insert({
+      ...(data.id ? { id: data.id } : {}),
+      user_id: data.userId,
+      title: data.title,
+    })
     .select("id, title, created_at, last_activity_at")
     .single();
+
+  if (result.error && data.id && result.error.code === "23505") {
+    const existing = await getConversationById(userDb, data.id);
+    if (existing.error) {
+      return {
+        data: null as ConversationListRow | null,
+        error: existing.error,
+      };
+    }
+    if (!existing.data || existing.data.user_id !== data.userId) {
+      return {
+        data: null as ConversationListRow | null,
+        error: {
+          message: "Conversation id already exists.",
+          code: "conversation_id_conflict",
+        },
+      };
+    }
+    const { user_id: _userId, ...conversation } = existing.data;
+    return {
+      data: conversation as ConversationListRow,
+      error: null,
+    };
+  }
 
   return {
     data: result.data as ConversationListRow | null,
@@ -163,9 +195,65 @@ export async function getUserConversations(userDb: any, userId: string) {
     .order("last_activity_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
 
+  if (result.error) {
+    return {
+      data: [] as ConversationListRow[],
+      error: result.error,
+    };
+  }
+
+  const conversations = (result.data ?? []) as ConversationListRow[];
+  const conversationIds = conversations.map((conversation) => conversation.id).filter(Boolean);
+  if (conversationIds.length === 0) {
+    return {
+      data: conversations,
+      error: null,
+    };
+  }
+
+  const messagesResult = await userDb
+    .from("messages")
+    .select("conversation_id, role, content, created_at")
+    .in("conversation_id", conversationIds)
+    .order("created_at", { ascending: true });
+
+  if (messagesResult.error) {
+    return {
+      data: [] as ConversationListRow[],
+      error: messagesResult.error,
+    };
+  }
+
+  const statsByConversation = new Map<string, { count: number; firstUserMessage: string | null; lastMessageAt: string | null }>();
+  for (const message of messagesResult.data ?? []) {
+    const conversationId = typeof message.conversation_id === "string" ? message.conversation_id : "";
+    if (!conversationId) continue;
+    const stats = statsByConversation.get(conversationId) || {
+      count: 0,
+      firstUserMessage: null,
+      lastMessageAt: null,
+    };
+    stats.count += 1;
+    if (!stats.firstUserMessage && message.role === "user" && typeof message.content === "string") {
+      stats.firstUserMessage = message.content.slice(0, 240);
+    }
+    if (typeof message.created_at === "string") {
+      stats.lastMessageAt = message.created_at;
+    }
+    statsByConversation.set(conversationId, stats);
+  }
+
   return {
-    data: (result.data ?? []) as ConversationListRow[],
-    error: result.error,
+    data: conversations.map((conversation) => {
+      const stats = statsByConversation.get(conversation.id);
+      return {
+        ...conversation,
+        message_count: stats?.count || 0,
+        first_user_message: stats?.firstUserMessage || null,
+        last_message_at: stats?.lastMessageAt || null,
+      };
+    }),
+    error: null,
   };
 }
 

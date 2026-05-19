@@ -49,9 +49,12 @@ assert.match(
 );
 assert.match(storageService, /execution_mode:\s*["']fast["']/, "storage defaults execution mode to fast");
 assert.match(storageService, /window\.SentIQStorage\s*=\s*\{[\s\S]*upsertMessageInChat/, "storage should expose streaming message upsert helper");
+assert.match(storageService, /window\.SentIQStorage\s*=\s*\{[\s\S]*mergeChatMessages/, "storage should expose safe server-message merge helper");
+assert.match(storageService, /incomingMessages\.length === 0 && existingMessages\.length > 0/, "remote hydration should preserve non-empty local chats on empty snapshots");
 assert.match(apiClient, /execution_mode:\s*executionMode/, "chat API payload should include execution_mode");
 assert.match(chatController, /executionModeToggle/, "chat controller should wire execution mode selector refs");
 assert.match(chatController, /createStreamingDraftPersister/, "chat controller should persist streaming drafts locally");
+assert.doesNotMatch(chatController, /id:\s*`pending-\$\{Storage\.generateId\(\)\}`/, "authenticated new chats should use canonical UUID ids, not pending-* ids");
 
 for (const helperName of ["normalizeMemoryScope", "collapseAdjacentDuplicateChatMessages"]) {
   for (const file of frontend.scriptFiles) {

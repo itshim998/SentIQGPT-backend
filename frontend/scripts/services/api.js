@@ -209,10 +209,17 @@ async function getConversations() {
   return apiRequest("/api/conversations", { method: "GET" });
 }
 
-async function createConversation(title = "New Chat") {
+async function createConversation(title = "New Chat", conversationId = null) {
+  const requestedConversationId =
+    typeof conversationId === "string" && conversationId.trim()
+      ? conversationId.trim()
+      : undefined;
   return apiRequest("/api/conversations", {
     method: "POST",
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({
+      title,
+      ...(requestedConversationId ? { conversationId: requestedConversationId } : {}),
+    }),
   });
 }
 

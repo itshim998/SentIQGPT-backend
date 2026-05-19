@@ -210,6 +210,77 @@ function sanitizeMessage(message) {
   };
 }
 
+function normalizeComparableText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isGenericChatTitle(title) {
+  const normalized = normalizeComparableText(title);
+  return !normalized || normalized === "new chat" || normalized === "untitled chat" || normalized === "untitled conversation";
+}
+
+function isFirstMessageFallbackTitle(title, firstUserMessage) {
+  const normalizedTitle = normalizeComparableText(title);
+  const normalizedFirstUserMessage = normalizeComparableText(firstUserMessage);
+  if (!normalizedTitle || !normalizedFirstUserMessage || isGenericChatTitle(normalizedTitle)) return false;
+  if (normalizedTitle.length < 8) return false;
+  return normalizedFirstUserMessage.startsWith(normalizedTitle)
+    || normalizedTitle.startsWith(normalizedFirstUserMessage.slice(0, Math.min(normalizedFirstUserMessage.length, normalizedTitle.length)));
+}
+
+function getClientRequestId(message) {
+  return message?.clientRequestId
+    || message?.client_request_id
+    || message?.clientRequestID
+    || message?.meta?.clientRequestId
+    || message?.meta?.client_request_id
+    || "";
+}
+
+function normalizeStoredMessage(message) {
+  const safeMessage = sanitizeMessage(message || {});
+  const clientRequestId = getClientRequestId(safeMessage);
+  const normalized = {
+    id: typeof safeMessage?.id === "string" && safeMessage.id.trim() ? safeMessage.id.trim() : generateId(),
+    role: safeMessage?.role === "assistant" ? "assistant" : "user",
+    content: typeof safeMessage?.content === "string" ? safeMessage.content : "",
+    timestamp: safeMessage?.timestamp || safeMessage?.created_at || new Date().toISOString(),
+    ...(safeMessage?.meta ? { meta: safeMessage.meta } : {}),
+  };
+  if (clientRequestId) normalized.clientRequestId = String(clientRequestId);
+  return normalized;
+}
+
+function getMessageMergeKey(message) {
+  const clientRequestId = getClientRequestId(message);
+  const messageType = message?.meta?.type || message?.message_type || "text";
+  if (clientRequestId) return `request:${message.role}:${messageType}:${clientRequestId}`;
+  if (message?.id) return `id:${message.id}`;
+  const contentFingerprint = normalizeMessageContentForDedup(message?.content);
+  const metaFingerprint = [
+    message?.meta?.type || "",
+    message?.meta?.imageUrl || message?.meta?.image_url || "",
+    message?.meta?.file_id || message?.meta?.generated_file_id || "",
+    message?.meta?.storagePath || message?.meta?.storage_path || "",
+  ].join(":");
+  return `content:${message?.role || "user"}:${contentFingerprint}:${metaFingerprint}`;
+}
+
+function mergeStoredMessage(existing, incoming) {
+  if (!existing) return incoming;
+  const clientRequestId = getClientRequestId(incoming) || getClientRequestId(existing);
+  return {
+    ...existing,
+    ...incoming,
+    meta: incoming.meta ? sanitizeMessageMeta(incoming.meta) : existing.meta,
+    ...(clientRequestId ? { clientRequestId } : {}),
+  };
+}
+
 function normalizeMessageContentForDedup(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -281,10 +352,17 @@ async function getLocalChats() {
   return chats.filter((chat) => chat.source !== "server");
 }
 
-async function addMessageToChat(chatId, role, content, meta) {
+async function addMessageToChat(chatId, role, content, meta, options = {}) {
   const chat = await getChat(chatId);
   if (!chat) throw new Error("Chat not found");
-  const msg = { id: generateId(), role, content, timestamp: new Date().toISOString() };
+  const clientRequestId = options.clientRequestId || getClientRequestId({ meta });
+  const msg = {
+    id: options.id || generateId(),
+    role,
+    content,
+    timestamp: options.timestamp || new Date().toISOString(),
+    ...(clientRequestId ? { clientRequestId } : {}),
+  };
   if (meta) msg.meta = sanitizeMessageMeta(meta);
   chat.messages.push(msg);
   chat.updated = new Date().toISOString();
@@ -312,6 +390,7 @@ async function upsertMessageInChat(chatId, message) {
     role: safeMessage?.role === "assistant" ? "assistant" : "user",
     content: typeof safeMessage?.content === "string" ? safeMessage.content : "",
     timestamp: safeMessage?.timestamp || (existingIndex >= 0 ? chat.messages[existingIndex].timestamp : new Date().toISOString()),
+    ...(getClientRequestId(safeMessage) ? { clientRequestId: getClientRequestId(safeMessage) } : {}),
     ...(safeMessage?.meta ? { meta: safeMessage.meta } : {}),
   };
   if (existingIndex >= 0) {
@@ -354,6 +433,7 @@ async function upsertServerChat(chatData) {
   }
   const visibleExisting = existing && isServerScopedItemVisible(existing) ? existing : null;
   const incomingTitle = chatData.title || "";
+  const incomingFirstUserMessage = chatData.first_user_message || chatData.firstUserMessage || visibleExisting?.first_user_message || "";
   const shouldKeepPendingLocalTitle = Boolean(
     visibleExisting?.pending_title_sync
     && typeof visibleExisting?.title === "string"
@@ -366,9 +446,16 @@ async function upsertServerChat(chatData) {
     && incomingTitle
     && incomingTitle === visibleExisting?.title,
   );
+  const shouldKeepBetterExistingTitle = Boolean(
+    visibleExisting?.title
+    && incomingTitle
+    && visibleExisting.title !== incomingTitle
+    && !isGenericChatTitle(visibleExisting.title)
+    && (isGenericChatTitle(incomingTitle) || isFirstMessageFallbackTitle(incomingTitle, incomingFirstUserMessage)),
+  );
   const chat = {
     id: chatData.id,
-    title: shouldKeepPendingLocalTitle
+    title: (shouldKeepPendingLocalTitle || shouldKeepBetterExistingTitle)
       ? visibleExisting.title
       : (incomingTitle || visibleExisting?.title || "New Chat"),
     messages: visibleExisting?.messages || [],
@@ -381,6 +468,8 @@ async function upsertServerChat(chatData) {
     last_synced_at: chatData.last_synced_at || visibleExisting?.last_synced_at || null,
     warmed_at: chatData.warmed_at || visibleExisting?.warmed_at || null,
     message_cache_status: chatData.message_cache_status || visibleExisting?.message_cache_status || null,
+    message_count: Number.isFinite(Number(chatData.message_count)) ? Number(chatData.message_count) : (visibleExisting?.message_count || 0),
+    first_user_message: incomingFirstUserMessage || visibleExisting?.first_user_message || null,
     pending_title_sync: shouldKeepPendingLocalTitle
       ? true
       : Boolean(chatData.pending_title_sync || (visibleExisting?.pending_title_sync && !titleWasSynced)),
@@ -393,24 +482,50 @@ async function upsertServerChat(chatData) {
   return chat;
 }
 
-async function replaceChatMessages(chatId, messages) {
+async function mergeChatMessages(chatId, messages, options = {}) {
   const chat = await getChat(chatId);
   if (!chat) throw new Error("Chat not found");
-  const normalizedMessages = collapseAdjacentDuplicateChatMessages(messages.map((message) => ({
-    id: message.id || generateId(),
-    role: message.role,
-    content: message.content || "",
-    timestamp: message.timestamp || message.created_at || new Date().toISOString(),
-    ...(message.meta ? { meta: sanitizeMessageMeta(message.meta) } : {}),
-  })));
+  const existingMessages = Array.isArray(chat.messages) ? chat.messages.map(normalizeStoredMessage) : [];
+  const incomingMessages = Array.isArray(messages) ? messages.map(normalizeStoredMessage) : [];
+  if (incomingMessages.length === 0 && existingMessages.length > 0 && !options.allowEmptyRemoteReplace) {
+    chat.message_cache_status = "local-preserved";
+    chat.warmed_at = new Date().toISOString();
+    await dbPut(STORES.chats, chat);
+    return chat;
+  }
+
+  const mergedByKey = new Map();
+  const baseMessages = options.replaceExisting ? [] : existingMessages;
+  for (const message of baseMessages) {
+    mergedByKey.set(getMessageMergeKey(message), message);
+  }
+  for (const message of incomingMessages) {
+    const key = getMessageMergeKey(message);
+    mergedByKey.set(key, mergeStoredMessage(mergedByKey.get(key), message));
+  }
+  const normalizedMessages = collapseAdjacentDuplicateChatMessages(
+    [...mergedByKey.values()].sort((a, b) => {
+      const left = getMessageTimestampMs(a) ?? 0;
+      const right = getMessageTimestampMs(b) ?? 0;
+      if (left !== right) return left - right;
+      return String(a.id).localeCompare(String(b.id));
+    }),
+  );
   chat.messages = normalizedMessages;
   chat.updated = chat.messages.length > 0
     ? chat.messages[chat.messages.length - 1].timestamp
     : (chat.updated || new Date().toISOString());
   chat.message_cache_status = "complete";
   chat.warmed_at = new Date().toISOString();
+  chat.message_count = chat.messages.length;
+  const firstUserMessage = chat.messages.find((message) => message.role === "user")?.content || "";
+  if (firstUserMessage) chat.first_user_message = firstUserMessage;
   await dbPut(STORES.chats, chat);
   return chat;
+}
+
+async function replaceChatMessages(chatId, messages) {
+  return mergeChatMessages(chatId, messages, { replaceExisting: true });
 }
 
 async function deleteChat(id) { return dbDelete(STORES.chats, id); }
@@ -638,7 +753,7 @@ async function getStorageStats() {
 window.SentIQStorage = {
   setActiveUserId, getActiveUserId,
   createChat, getChat, getAllChats, addMessageToChat, upsertMessageInChat, updateMessageInChat, updateChatTitle, deleteChat,
-  getLocalChats, upsertServerChat, replaceChatMessages,
+  getLocalChats, upsertServerChat, replaceChatMessages, mergeChatMessages,
   storeMemory, getMemory, getAllMemories, getMemoriesByType, deleteMemory, getTopMemories,
   storeFile, getAllFiles, getFile, deleteFile,
   storeGeneratedFile, getGeneratedFile, getAllGeneratedFiles, deleteGeneratedFile,

@@ -897,13 +897,14 @@ async function createConversationOrThrow(
   userId: string,
   scope: string,
   title = "New Chat",
+  conversationId?: string,
 ): Promise<ConversationListRow> {
-  logDbEvent(`${scope}.conversation-create.start`, userId, { title });
+  logDbEvent(`${scope}.conversation-create.start`, userId, { title, conversationId });
   const startedAt = Date.now();
-  const { data, error } = await createConversation(userDb, { userId, title });
+  const { data, error } = await createConversation(userDb, { userId, title, id: conversationId });
 
   if (error) {
-    logDbFailure(`${scope}.conversation-create`, userId, error, { title });
+    logDbFailure(`${scope}.conversation-create`, userId, error, { title, conversationId });
     throw new Error(error.message);
   }
   if (!data?.id) {
@@ -913,9 +914,47 @@ async function createConversationOrThrow(
 
   logDbEvent(`${scope}.conversation-create.ok`, userId, {
     conversationId: data.id,
+    requestedConversationId: conversationId || null,
     duration_ms: Date.now() - startedAt,
   });
   return data as ConversationListRow;
+}
+
+async function resolveOrCreateConversationForRequest(
+  userDb: any,
+  userId: string,
+  scope: string,
+  requestedConversationId?: string | null,
+  title = "New Chat",
+): Promise<{ conversation: ConversationListRow; created: boolean }> {
+  if (requestedConversationId) {
+    try {
+      const existing = await getOwnedConversationOrThrow(userDb, userId, requestedConversationId, scope);
+      return {
+        conversation: {
+          id: existing.id,
+          title: existing.title || title,
+          created_at: existing.created_at || new Date().toISOString(),
+          last_activity_at: existing.last_activity_at || null,
+        },
+        created: false,
+      };
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.statusCode !== 404) {
+        throw error;
+      }
+      logDbEvent(`${scope}.conversation-owner.create-missing`, userId, { conversationId: requestedConversationId });
+    }
+  }
+
+  const conversation = await createConversationOrThrow(
+    userDb,
+    userId,
+    scope,
+    title,
+    requestedConversationId || undefined,
+  );
+  return { conversation, created: true };
 }
 
 async function insertConversationMessageOrThrow(
@@ -1417,10 +1456,17 @@ app.post(
       typeof req.body?.title === "string" && req.body.title.trim()
         ? req.body.title.trim().slice(0, 120)
         : "New Chat";
+    const requestedConversationId = getOptionalUuid(req.body?.conversationId || req.body?.conversation_id, "conversationId");
     const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.create");
     await initializeUserSessionOrThrow(userDb, userId, "conversations.create");
     await ensureNamedWorkspaceProfile(userId, "conversations.create", userDb);
-    const conversation = await createConversationOrThrow(userDb, userId, "conversations.create", requestedTitle);
+    const { conversation } = await resolveOrCreateConversationForRequest(
+      userDb,
+      userId,
+      "conversations.create",
+      requestedConversationId || null,
+      requestedTitle,
+    );
     logDbEvent("conversations.create.request.ok", userId, {
       duration_ms: Date.now() - requestStartedAt,
       conversationId: conversation.id,
@@ -1448,16 +1494,15 @@ app.post(
       typeof req.body?.title === "string" && req.body.title.trim()
         ? req.body.title.trim().slice(0, TITLE_MAX_CHARS)
         : "New Chat";
-    let conversationId = requestedConversationId || "";
-    let createdConversation = false;
-
-    if (conversationId) {
-      await getOwnedConversationOrThrow(userDb, userId, conversationId, "chat.sync");
-    } else {
-      const conversation = await createConversationOrThrow(userDb, userId, "chat.sync", requestedTitle);
-      conversationId = conversation.id;
-      createdConversation = true;
-    }
+    const resolvedConversation = await resolveOrCreateConversationForRequest(
+      userDb,
+      userId,
+      "chat.sync",
+      requestedConversationId || null,
+      requestedTitle,
+    );
+    const conversationId = resolvedConversation.conversation.id;
+    const createdConversation = resolvedConversation.created;
 
     type SyncMessage = {
       role: "user" | "assistant";
@@ -1920,47 +1965,26 @@ app.post(
 
     const trustedProfile = await ensureNamedWorkspaceProfile(userId, "chat", userDb || undefined);
 
-    if (userDb && activeConversationId) {
+    if (userDb) {
       try {
-        const conversationRow = await getOwnedConversationOrThrow(
+        const resolvedConversation = await resolveOrCreateConversationForRequest(
           userDb,
           userId,
-          activeConversationId,
           "chat",
+          activeConversationId,
         );
+        activeConversationId = resolvedConversation.conversation.id;
         sync.conversationId = activeConversationId;
-        activeConversationTitle = typeof conversationRow.title === "string" ? conversationRow.title : null;
-      } catch (conversationLookupError) {
-        sync.deferred = true;
-        const normalizedLookupError =
-          conversationLookupError instanceof Error
-            ? conversationLookupError
-            : new Error(String(conversationLookupError));
-        if (normalizedLookupError instanceof HttpError && normalizedLookupError.statusCode === 404) {
-          logDbEvent("chat.conversation.resolve.not-found", userId, { conversationId: activeConversationId });
-        } else {
-          sync.persisted = false;
-          logDbFailure("chat.conversation.resolve", userId, normalizedLookupError, {
-            conversationId: activeConversationId,
-          });
-        }
-        activeConversationId = null;
-      }
-    }
-    if (userDb && !activeConversationId) {
-      try {
-        const conversationRow = await createConversationOrThrow(userDb, userId, "chat");
-        activeConversationId = conversationRow.id;
-        sync.conversationId = activeConversationId;
-        activeConversationTitle = conversationRow.title || null;
-        createdConversation = true;
+        activeConversationTitle = resolvedConversation.conversation.title || null;
+        createdConversation = resolvedConversation.created;
       } catch (conversationCreateError) {
         sync.persisted = false;
         sync.deferred = true;
         logDbFailure(
-          "chat.conversation.create",
+          "chat.conversation.resolve-or-create",
           userId,
           conversationCreateError instanceof Error ? conversationCreateError : new Error(String(conversationCreateError)),
+          { conversationId: activeConversationId },
         );
         activeConversationId = null;
       }
@@ -2722,46 +2746,27 @@ app.post(
       );
     }
     const trustedProfile = await ensureNamedWorkspaceProfile(userId, "chat.stream", userDb || undefined);
-    if (userDb && activeConversationId) {
+    if (userDb) {
       try {
-        const conversationRow = await getOwnedConversationOrThrow(
+        const resolvedConversation = await resolveOrCreateConversationForRequest(
           userDb,
           userId,
-          activeConversationId,
           "chat.stream",
+          activeConversationId,
         );
-        activeConversationTitle = typeof conversationRow.title === "string" ? conversationRow.title : null;
-      } catch (conversationOwnershipError) {
-        sync.deferred = true;
-        const normalizedOwnershipError =
-          conversationOwnershipError instanceof Error
-            ? conversationOwnershipError
-            : new Error(String(conversationOwnershipError));
-        if (normalizedOwnershipError instanceof HttpError && normalizedOwnershipError.statusCode === 404) {
-          logDbEvent("chat.stream.conversation-resolve.not-found", userId, { conversationId: activeConversationId });
-        } else {
-          sync.persisted = false;
-          logDbFailure("chat.stream.conversation-resolve", userId, normalizedOwnershipError, {
-            conversationId: activeConversationId,
-          });
-        }
-        activeConversationId = null;
-      }
-    }
-    if (userDb && !activeConversationId) {
-      try {
-        const conversationRow = await createConversationOrThrow(userDb, userId, "chat.stream");
-        activeConversationId = conversationRow.id;
-        activeConversationTitle = conversationRow.title || null;
-        createdConversation = true;
+        activeConversationId = resolvedConversation.conversation.id;
+        activeConversationTitle = resolvedConversation.conversation.title || null;
+        createdConversation = resolvedConversation.created;
       } catch (conversationCreateError) {
         sync.persisted = false;
         sync.deferred = true;
         logDbFailure(
-          "chat.stream.conversation-create",
+          "chat.stream.conversation-resolve-or-create",
           userId,
           conversationCreateError instanceof Error ? conversationCreateError : new Error(String(conversationCreateError)),
+          { conversationId: activeConversationId },
         );
+        activeConversationId = null;
       }
     }
     sync.conversationId = activeConversationId;

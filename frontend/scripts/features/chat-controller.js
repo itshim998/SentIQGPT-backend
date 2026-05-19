@@ -117,6 +117,15 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return id;
   }
 
+  const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  function isValidUuid(value) {
+    return typeof value === "string" && UUID_PATTERN.test(value.trim());
+  }
+
+  function getCanonicalConversationIdForRequest(chatId) {
+    return isAuthenticatedSession() && isValidUuid(chatId) ? chatId : undefined;
+  }
+
   function isRequestStale(chatId, requestId) {
     const state = getChatState(chatId);
     return !state || state.requestId !== requestId;
@@ -564,10 +573,16 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return guestChatState.id === chatId ? guestChatState : null;
   }
 
-  function addGuestMessage(chatId, role, content, meta) {
+  function addGuestMessage(chatId, role, content, meta, options = {}) {
     const chat = ensureGuestChatState(chatId);
     if (!chat || (chatId && chat.id !== chatId)) return chat;
-    const msg = { id: Storage.generateId(), role, content, timestamp: new Date().toISOString() };
+    const msg = {
+      id: options.id || Storage.generateId(),
+      role,
+      content,
+      timestamp: options.timestamp || new Date().toISOString(),
+      ...(options.clientRequestId ? { clientRequestId: options.clientRequestId } : {}),
+    };
     if (meta) msg.meta = meta;
     chat.messages.push(msg);
     chat.updated = msg.timestamp;
@@ -580,11 +595,21 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return chat;
   }
 
-  async function persistChatMessage(chatId, role, content, meta) {
+  async function persistChatMessage(chatId, role, content, meta, options = {}) {
     if (isAuthenticatedSession()) {
-      return Storage.addMessageToChat(chatId, role, content, meta);
+      if (options.id) {
+        return Storage.upsertMessageInChat(chatId, {
+          id: options.id,
+          role,
+          content,
+          timestamp: options.timestamp || new Date().toISOString(),
+          ...(options.clientRequestId ? { clientRequestId: options.clientRequestId } : {}),
+          ...(meta ? { meta } : {}),
+        });
+      }
+      return Storage.addMessageToChat(chatId, role, content, meta, options);
     }
-    return addGuestMessage(chatId, role, content, meta);
+    return addGuestMessage(chatId, role, content, meta, options);
   }
 
   async function upsertLocalChatMessage(chatId, message) {
@@ -601,6 +626,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       role: message?.role === "assistant" ? "assistant" : "user",
       content: typeof message?.content === "string" ? message.content : "",
       timestamp: message?.timestamp || (existingIndex >= 0 ? chat.messages[existingIndex].timestamp : new Date().toISOString()),
+      ...(message?.clientRequestId ? { clientRequestId: message.clientRequestId } : {}),
       ...(message?.meta ? { meta: message.meta } : {}),
     };
     if (existingIndex >= 0) chat.messages[existingIndex] = nextMessage;
@@ -623,6 +649,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           id: draftId,
           role: "assistant",
           content,
+          clientRequestId: requestId,
           meta: {
             clientRequestId: requestId,
             streaming: !final,
@@ -1190,6 +1217,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       source: "server",
       owner_user_id: getActiveAuthUserId(),
       pending_server_sync: Boolean(chat.pending_server_sync),
+      message_count: Number.isFinite(Number(chat.message_count)) ? Number(chat.message_count) : undefined,
+      first_user_message: chat.first_user_message || chat.firstUserMessage || null,
+      last_message_at: chat.last_message_at || chat.lastMessageAt || null,
       last_synced_at: chat.last_synced_at || new Date().toISOString(),
       pending_title_sync: Boolean(chat.pending_title_sync),
       title_sync_error: chat.title_sync_error || null,
@@ -1231,6 +1261,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       role: message.role,
       content: message.content || "",
       timestamp: message.timestamp || message.created_at || new Date().toISOString(),
+      clientRequestId: message.client_request_id || message.clientRequestId || message.clientRequestID || undefined,
       meta,
     };
   }
@@ -1272,7 +1303,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const normalizedChat = normalizeServerConversation(chat);
     await Storage.upsertServerChat(normalizedChat);
     if (Array.isArray(messages)) {
-      await Storage.replaceChatMessages(
+      await (Storage.mergeChatMessages || Storage.replaceChatMessages)(
         normalizedChat.id,
         messages.map(normalizeServerMessage),
       );
@@ -1379,6 +1410,75 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return recentWarmPromise;
   }
 
+  function normalizeDuplicateFingerprint(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function getFirstUserMessagePreview(chat) {
+    const cachedMessage = Array.isArray(chat?.messages)
+      ? chat.messages.find((message) => message?.role === "user" && typeof message.content === "string" && message.content.trim())
+      : null;
+    return chat?.first_user_message || chat?.firstUserMessage || cachedMessage?.content || "";
+  }
+
+  function getKnownMessageCount(chat) {
+    const localCount = Array.isArray(chat?.messages) ? chat.messages.length : 0;
+    const serverCount = Number(chat?.message_count);
+    return {
+      localCount,
+      serverCount: Number.isFinite(serverCount) ? serverCount : null,
+    };
+  }
+
+  function titleLooksLikeFirstMessageFallback(title, firstUserMessage) {
+    const titleFingerprint = normalizeDuplicateFingerprint(title);
+    const firstMessageFingerprint = normalizeDuplicateFingerprint(firstUserMessage);
+    if (titleFingerprint.length < 8 || !firstMessageFingerprint) return false;
+    return firstMessageFingerprint.startsWith(titleFingerprint);
+  }
+
+  async function cleanupDuplicateBlankServerChats(serverChats) {
+    if (!isAuthenticatedSession() || !Array.isArray(serverChats) || serverChats.length === 0) return new Set();
+    const cachedChats = await Storage.getAllChats().catch(() => []);
+    const cachedById = new Map(cachedChats.map((chat) => [chat.id, chat]));
+    const mergedChats = serverChats.map((chat) => ({ ...(cachedById.get(chat.id) || {}), ...chat }));
+    const nonblankChats = mergedChats.filter((chat) => {
+      const counts = getKnownMessageCount(chat);
+      return counts.localCount > 0 || (counts.serverCount !== null && counts.serverCount > 0);
+    });
+    const deletedIds = new Set();
+
+    for (const blankChat of mergedChats) {
+      if (!blankChat?.id || deletedIds.has(blankChat.id)) continue;
+      const counts = getKnownMessageCount(blankChat);
+      if (counts.localCount > 0 || counts.serverCount !== 0) continue;
+      const matchedCanonicalChat = nonblankChats.find((candidate) => (
+        candidate?.id
+        && candidate.id !== blankChat.id
+        && titleLooksLikeFirstMessageFallback(blankChat.title, getFirstUserMessagePreview(candidate))
+      ));
+      if (!matchedCanonicalChat) continue;
+      try {
+        await API.deleteConversation(blankChat.id);
+        await Storage.deleteChat(blankChat.id);
+        deletedIds.add(blankChat.id);
+        if (currentChatId === blankChat.id) {
+          currentChatId = matchedCanonicalChat.id;
+          const canonicalChat = await fetchAuthenticatedChat(matchedCanonicalChat.id, { silent: true })
+            .catch(() => Storage.getChat(matchedCanonicalChat.id));
+          if (canonicalChat) renderLoadedChat(matchedCanonicalChat.id, canonicalChat);
+        }
+      } catch (error) {
+        logAuthenticatedConversationError("chatList.duplicateCleanup", error);
+      }
+    }
+    return deletedIds;
+  }
+
   async function fetchAuthenticatedChatList(options = {}) {
     const { silent = false } = options;
     const stopMeasure = startPerf("ui.chat_list.fetch", { silent });
@@ -1388,8 +1488,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         ? response.conversations.map(normalizeServerConversation)
         : [];
       await Promise.all(chats.map((chat) => Storage.upsertServerChat(chat)));
-      stopMeasure("ok", { chat_count: chats.length });
-      return chats;
+      const deletedIds = await cleanupDuplicateBlankServerChats(chats);
+      stopMeasure("ok", { chat_count: chats.length, deleted_duplicate_count: deletedIds.size });
+      return deletedIds.size > 0 ? chats.filter((chat) => !deletedIds.has(chat.id)) : chats;
     } catch (error) {
       stopMeasure("error");
       logAuthenticatedConversationError("fetchAuthenticatedChatList", error);
@@ -1424,7 +1525,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       const messages = Array.isArray(response?.messages)
         ? response.messages.map(normalizeServerMessage)
         : [];
-      await Storage.replaceChatMessages(chatId, messages);
+      await (Storage.mergeChatMessages || Storage.replaceChatMessages)(chatId, messages);
       return Storage.getChat(chatId);
     } catch (error) {
       logAuthenticatedConversationError("fetchAuthenticatedChat", error);
@@ -1484,7 +1585,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   async function createPendingServerChat(title = "New Chat") {
     const chat = {
-      id: `pending-${Storage.generateId()}`,
+      id: Storage.generateId(),
       title,
       created: new Date().toISOString(),
       updated: new Date().toISOString(),
@@ -1529,7 +1630,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       last_title_synced_at: pendingChat?.last_title_synced_at || null,
     });
     if (pendingMessages.length > 0) {
-      await Storage.replaceChatMessages(actualChat.id, pendingMessages);
+      await (Storage.mergeChatMessages || Storage.replaceChatMessages)(actualChat.id, pendingMessages);
     }
     if (currentChatId === pendingChatId) currentChatId = actualChat.id;
     return actualChat;
@@ -1569,10 +1670,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
   }
 
-  async function createAuthenticatedChat(title = "New Chat") {
-    const stopMeasure = startPerf("ui.authenticated_chat.create", { title });
+  async function createAuthenticatedChat(title = "New Chat", conversationId = null) {
+    const stopMeasure = startPerf("ui.authenticated_chat.create", { title, conversation_id: conversationId });
     try {
-      const response = await API.createConversation(title);
+      const response = await API.createConversation(title, conversationId);
       const chat = normalizeServerConversation(response?.conversation || { id: "", title });
       if (!chat.id) throw new Error("Failed to create conversation");
       await Storage.upsertServerChat(chat);
@@ -1646,8 +1747,20 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const createPromise = (async () => {
       const title = existingChat?.title || "New Chat";
       try {
-        const actualChat = await createAuthenticatedChat(title);
-        await reconcilePendingServerChat(chatId, actualChat);
+        const requestedConversationId = isValidUuid(chatId) ? chatId : null;
+        const actualChat = await createAuthenticatedChat(title, requestedConversationId);
+        if (actualChat.id === chatId) {
+          await Storage.upsertServerChat({
+            ...actualChat,
+            title: existingChat?.title || actualChat.title,
+            pending_server_sync: false,
+            pending_title_sync: Boolean(existingChat?.pending_title_sync),
+            title_sync_error: existingChat?.title_sync_error || null,
+            last_title_synced_at: existingChat?.last_title_synced_at || null,
+          });
+        } else {
+          await reconcilePendingServerChat(chatId, actualChat);
+        }
         await loadChatList(true);
         return actualChat.id;
       } catch (error) {
@@ -1678,8 +1791,22 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
               await Storage.deleteSyncJob(job.id);
               continue;
             }
-            const actualChat = await createAuthenticatedChat(job.payload?.title || pendingChat.title || "New Chat");
-            await reconcilePendingServerChat(job.payload?.pendingChatId, actualChat);
+            const pendingChatId = job.payload?.pendingChatId || pendingChat.id;
+            const actualChat = await createAuthenticatedChat(
+              job.payload?.title || pendingChat.title || "New Chat",
+              isValidUuid(pendingChatId) ? pendingChatId : null,
+            );
+            if (actualChat.id === pendingChatId) {
+              await Storage.upsertServerChat({
+                ...actualChat,
+                pending_server_sync: false,
+                pending_title_sync: Boolean(pendingChat.pending_title_sync),
+                title_sync_error: pendingChat.title_sync_error || null,
+                last_title_synced_at: pendingChat.last_title_synced_at || null,
+              });
+            } else {
+              await reconcilePendingServerChat(pendingChatId, actualChat);
+            }
             await Storage.deleteSyncJob(job.id);
             await loadChatList(true);
             continue;
@@ -1687,8 +1814,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
           if (job.type === SYNC_JOB_TYPES.chatMessage) {
             const payload = job.payload || {};
+            const jobConversationId = payload.conversationId || getCanonicalConversationIdForRequest(payload.localChatId);
             const response = await API.syncChatMessages({
-              conversationId: payload.conversationId,
+              conversationId: jobConversationId,
               title: payload.title || "New Chat",
               messages: Array.isArray(payload.messages) ? payload.messages : [],
             });
@@ -3466,6 +3594,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const effectiveRenderOptions = renderOptions?.mode
       ? renderOptions
       : (response?.route === "web_search" ? { mode: "web_search" } : {});
+    const assistantPersistOptions = renderOptions?.clientRequestId
+      ? { id: `assistant-${renderOptions.clientRequestId}`, clientRequestId: renderOptions.clientRequestId }
+      : {};
     if (renderInView) {
       hideActivityIndicator(targetChatId);
     }
@@ -3479,7 +3610,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           animateReveal: true,
         });
       }
-      await persistChatMessage(targetChatId, "assistant", assistantText);
+      await persistChatMessage(targetChatId, "assistant", assistantText, null, assistantPersistOptions);
       return assistantText || clarificationPayload.question;
     }
 
@@ -3495,7 +3626,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         });
       }
       cacheGeneratedFileFromMeta(fileMeta).catch(() => null);
-      await persistChatMessage(targetChatId, "assistant", assistantText || `Generated ${fileMeta.file_name}.`, fileMeta);
+      await persistChatMessage(targetChatId, "assistant", assistantText || `Generated ${fileMeta.file_name}.`, fileMeta, assistantPersistOptions);
       return assistantText || `Generated ${fileMeta.file_name}.`;
     }
 
@@ -3510,7 +3641,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           { thinking: assistantThinking, animateReveal: true, responseTrust }
         );
       }
-      await persistChatMessage(targetChatId, "assistant", assistantText, webSearchMeta);
+      await persistChatMessage(targetChatId, "assistant", assistantText, webSearchMeta, assistantPersistOptions);
       return assistantText || "Web search results are ready.";
     }
     const rawChartPayload = response?.chart || (response?.type === "chart" ? response : null);
@@ -3521,7 +3652,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         animateReveal: true,
         responseTrust,
       });
-      await persistChatMessage(targetChatId, "assistant", assistantText, chartMeta);
+      await persistChatMessage(targetChatId, "assistant", assistantText, chartMeta, assistantPersistOptions);
       return assistantText || "Generated a chart.";
     }
 
@@ -3534,7 +3665,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           animateReveal: true,
           responseTrust,
         });
-        await persistChatMessage(targetChatId, "assistant", assistantText, imageMeta);
+        await persistChatMessage(targetChatId, "assistant", assistantText, imageMeta, assistantPersistOptions);
         return assistantText || "Generated an image.";
       }
 
@@ -3543,7 +3674,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         const { contentDiv: imgErrDiv } = appendMessageBubble("assistant", "");
         await typeMessage(fallbackText, imgErrDiv, effectiveRenderOptions);
       }
-      await persistChatMessage(targetChatId, "assistant", fallbackText);
+      await persistChatMessage(targetChatId, "assistant", fallbackText, null, assistantPersistOptions);
       return fallbackText;
     }
 
@@ -3552,7 +3683,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       await typeMessage(assistantText, contentDiv, effectiveRenderOptions, assistantThinking);
       appendResponseTrustRow(contentDiv, responseTrust);
     }
-    await persistChatMessage(targetChatId, "assistant", assistantText);
+    await persistChatMessage(targetChatId, "assistant", assistantText, null, assistantPersistOptions);
     return assistantText;
   }
 
@@ -6984,6 +7115,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       }
     }
     const requestId = newRequestId(targetChatId);
+    const conversationIdForRequest = getCanonicalConversationIdForRequest(targetChatId);
     const state = getChatState(targetChatId);
     state.isThinking = true;
     state.activityMode = authenticatedFileGenerationRequired ? "file_generation" : "thinking";
@@ -6991,7 +7123,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     state.abortController = ac;
     await upsertChatMessageSyncJob(requestId, {
       localChatId: targetChatId,
-      conversationId: isPlaceholderServerChat(await Storage.getChat(targetChatId)) ? null : targetChatId,
+      conversationId: conversationIdForRequest || null,
       title: visibleUserMessage ? visibleUserMessage.slice(0, 50) : "New Chat",
       messages: [
         {
@@ -7007,7 +7139,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (!retryMessage) {
       appendMessageBubble("user", visibleUserMessage, userMessageMeta);
       if (chatMessages) chatMessages.classList.add("has-messages");
-      await persistChatMessage(targetChatId, "user", visibleUserMessage, userMessageMeta);
+      await persistChatMessage(targetChatId, "user", visibleUserMessage, userMessageMeta, {
+        id: `user-${requestId}`,
+        clientRequestId: requestId,
+      });
     }
     if (targetChatId === currentChatId && typingIndicator) {
       const shouldPreferWebSurfIndicator = Boolean(webSearchModeOverride) && !authenticatedFileGenerationRequired;
@@ -7048,7 +7183,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         fileReferences,
         imageAttachments: imageAttachmentsForRequest,
         webSearchMode: effectiveWebSearchMode,
-        conversationId: isPlaceholderServerChat(await Storage.getChat(targetChatId)) ? undefined : targetChatId,
+        conversationId: conversationIdForRequest,
         clientRequestId: requestId,
         executionMode: requestExecutionMode,
         clarificationResponse: clarificationResponseForRequest,
@@ -7199,14 +7334,20 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
               fullReply = fileArtifactResponse.reply || fileArtifactResponse.answer || (fileMeta ? `Generated ${fileMeta.file_name}.` : "Sorry, I couldn't generate that file. Please try again.");
               if (fileMeta) {
                 await streamBubble.finish();
-                await persistChatMessage(targetChatId, "assistant", fullReply, fileMeta);
+                await persistChatMessage(targetChatId, "assistant", fullReply, fileMeta, {
+                  id: `assistant-${requestId}`,
+                  clientRequestId: requestId,
+                });
                 cacheGeneratedFileFromMeta(fileMeta).catch(() => null);
               } else {
                 chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"]`)?.remove();
                 if (!isRequestStale(targetChatId, requestId) && targetChatId === currentChatId) {
                   appendMessageBubble("assistant", fullReply, null, {}, { animateReveal: true });
                 }
-                await persistChatMessage(targetChatId, "assistant", fullReply);
+                await persistChatMessage(targetChatId, "assistant", fullReply, null, {
+                  id: `assistant-${requestId}`,
+                  clientRequestId: requestId,
+                });
               }
               assistantPersisted = true;
             } else if (structuredResponse) {
@@ -7225,6 +7366,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
                 {
                   ...(responseRenderMode ? { mode: responseRenderMode } : {}),
                   pendingClarificationContext: contextPayload,
+                  clientRequestId: requestId,
                 },
               );
               finalAssistantMeta = extractResponseMetaForSync(structuredResponse, targetChatId);
@@ -7284,7 +7426,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       if (isRequestStale(targetChatId, requestId) && !ac.signal.aborted) {
         if (fullReply) {
           if (usedStreaming) await streamDraft.finalize(fullReply, responseRenderMode ? { renderMode: responseRenderMode } : {});
-          else await persistChatMessage(targetChatId, "assistant", fullReply);
+          else await persistChatMessage(targetChatId, "assistant", fullReply, null, {
+            id: `assistant-${requestId}`,
+            clientRequestId: requestId,
+          });
         }
         return;
       }
@@ -7309,6 +7454,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           {
             ...(responseRenderMode ? { mode: responseRenderMode } : {}),
             pendingClarificationContext: contextPayload,
+            clientRequestId: requestId,
           },
         );
         finalAssistantMeta = extractResponseMetaForSync(response, targetChatId);
@@ -7319,12 +7465,15 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
       if (!assistantPersisted && fullReply) {
         if (usedStreaming) await streamDraft.finalize(fullReply, responseRenderMode ? { renderMode: responseRenderMode } : {});
-        else await persistChatMessage(targetChatId, "assistant", fullReply);
+        else await persistChatMessage(targetChatId, "assistant", fullReply, null, {
+          id: `assistant-${requestId}`,
+          clientRequestId: requestId,
+        });
       }
       if (fullReply) {
         await upsertChatMessageSyncJob(requestId, {
           localChatId: targetChatId,
-          conversationId: isPlaceholderServerChat(await Storage.getChat(targetChatId)) ? null : targetChatId,
+          conversationId: conversationIdForRequest || null,
           title: visibleUserMessage ? visibleUserMessage.slice(0, 50) : "New Chat",
           messages: [
             {
@@ -7358,7 +7507,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         }
       }
       const titleSeedMessage = clarificationResponseForRequest?.original_message || visibleUserMessage || apiMessage;
-      maybeGenerateTitle(titleSeedMessage, fullReply || (chartResponseRequired ? "Generated a chart." : ""));
+      maybeGenerateTitle(titleSeedMessage, fullReply || (chartResponseRequired ? "Generated a chart." : ""), targetChatId);
     } catch (err) {
       stopMeasure("error");
       if (err.name === "AbortError") { /* user-initiated stop */ }
@@ -7450,7 +7599,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
     const userSelectionMessage = `Selected text:\n${payload.selected_text}`;
     appendMessageBubble("user", userSelectionMessage);
-    await persistChatMessage(targetChatId, "user", userSelectionMessage);
+    await persistChatMessage(targetChatId, "user", userSelectionMessage, null, {
+      id: `user-${requestId}`,
+      clientRequestId: requestId,
+    });
 
     if (targetChatId === currentChatId && typingIndicator) {
       SentIQLoaderEngine.showForRoute("math_reasoning", { chatId: targetChatId, withTimer: true });
@@ -7471,7 +7623,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       }, ac.signal);
 
       const renderInView = !isRequestStale(targetChatId, requestId) && targetChatId === currentChatId;
-      const replyText = await deliverAssistantResponse(response, targetChatId, renderInView);
+      const replyText = await deliverAssistantResponse(response, targetChatId, renderInView, {
+        clientRequestId: requestId,
+      });
 
       if (response.memory?.stored && response.memory.persisted !== false && response.memory.summary) {
         const scopedMemory = buildScopedMemoryPayload(response.memory, targetChatId, response.sync || null);
@@ -7480,7 +7634,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         }
       }
 
-      maybeGenerateTitle(userSelectionMessage, replyText || "Selection context response.");
+      maybeGenerateTitle(userSelectionMessage, replyText || "Selection context response.", targetChatId);
     } catch (err) {
       if (err.name === "AbortError") { /* user-initiated stop */ }
       else if (await maybeHandleProfileNameRequiredError(err, "selection.ask")) {
@@ -7636,9 +7790,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     setComposerMenuOpen(false);
   }
 
-  async function safelyAddImageMessage(chatId, role, content, meta, label) {
+  async function safelyAddImageMessage(chatId, role, content, meta, label, options = {}) {
     try {
-      await persistChatMessage(chatId, role, content, meta);
+      await persistChatMessage(chatId, role, content, meta, options);
       return true;
     } catch (error) {
       debugWarn(`[UI] Failed to persist ${label || "image message"} locally:`, getSafeErrorMessage(error));
@@ -7702,7 +7856,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
 
     appendMessageBubble("user", `Generate image: ${prompt}`);
-    await safelyAddImageMessage(targetChatId, "user", `Generate image: ${prompt}`, null, "image prompt");
+    await safelyAddImageMessage(targetChatId, "user", `Generate image: ${prompt}`, null, "image prompt", {
+      id: `user-${requestId}`,
+      clientRequestId: requestId,
+    });
     if (targetChatId === currentChatId && typingIndicator) {
       updateActivityIndicator("image_generation", {
         chatId: targetChatId,
@@ -7756,7 +7913,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
               || "";
             if (staleImageUrl) {
               const meta = { type: "image", imageUrl: staleImageUrl, prompt };
-              await safelyAddImageMessage(targetChatId, "assistant", "", meta, "stale generated image");
+              await safelyAddImageMessage(targetChatId, "assistant", "", meta, "stale generated image", {
+                id: `assistant-${requestId}`,
+                clientRequestId: requestId,
+              });
             }
           }
         }
@@ -7777,9 +7937,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         } : null;
         if (meta) {
           appendMessageBubble("assistant", "", meta, {}, { animateReveal: true });
-          await safelyAddImageMessage(targetChatId, "assistant", "", meta, "generated image");
+          await safelyAddImageMessage(targetChatId, "assistant", "", meta, "generated image", {
+            id: `assistant-${requestId}`,
+            clientRequestId: requestId,
+          });
         }
-        maybeGenerateTitle(`Generate image: ${prompt}`, "Generated an image.");
+        maybeGenerateTitle(`Generate image: ${prompt}`, "Generated an image.", targetChatId);
         if (isAuthenticatedSession() && targetChatId) {
           settleImageGenerationUi(targetChatId, state);
           refreshCanonicalChatAfterImageGeneration(targetChatId)
@@ -7790,7 +7953,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         const friendlyErr = "Sorry, I couldn\u2019t generate that image. Please try again.";
         const { contentDiv: imgErrDiv } = appendMessageBubble("assistant", "");
         typeMessage(friendlyErr, imgErrDiv);
-        await safelyAddImageMessage(targetChatId, "assistant", friendlyErr, null, "image failure message");
+        await safelyAddImageMessage(targetChatId, "assistant", friendlyErr, null, "image failure message", {
+          id: `assistant-${requestId}`,
+          clientRequestId: requestId,
+        });
       }
     } catch (err) {
       if (isRequestStale(targetChatId, requestId)) return;
@@ -7806,7 +7972,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         const clarificationText = err.message || "What should I generate an image of?";
         const { contentDiv: genClarifyDiv } = appendMessageBubble("assistant", "");
         typeMessage(clarificationText, genClarifyDiv);
-        await safelyAddImageMessage(targetChatId, "assistant", clarificationText, null, "image clarification message");
+        await safelyAddImageMessage(targetChatId, "assistant", clarificationText, null, "image clarification message", {
+          id: `assistant-${requestId}`,
+          clientRequestId: requestId,
+        });
       } else {
         const userFacingError = err.message && err.message.includes("couldn't be saved to your conversation")
           ? err.message
@@ -8218,24 +8387,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         renderLoadedChat(pendingChat.id, { ...pendingChat, messages: [] });
         await loadChatList(true);
         stopMeasure("placeholder_ready", { chat_id: pendingChat.id });
-        ensureRemoteConversationForChat(pendingChat.id)
-          .then(async (actualChatId) => {
-            if (!actualChatId) return;
-            if (currentChatId === actualChatId) {
-              const actualChat = await Storage.getChat(actualChatId);
-              if (actualChat) renderLoadedChat(actualChatId, actualChat);
-            }
-            await loadChatList(true);
-            processSyncQueue().catch((error) => {
-              logAuthenticatedConversationError("startNewChat.queue", error);
-            });
-          })
-          .catch(async (error) => {
-            if (await maybeHandleProfileNameRequiredError(error, "new_chat.background_create")) {
-              return;
-            }
-            logAuthenticatedConversationError("startNewChat.backgroundCreate", error);
-          });
         chat = pendingChat;
       } else {
         chat = await Storage.createChat("New Chat");
@@ -8284,20 +8435,20 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     });
   }
 
-  async function maybeGenerateTitle(userMessage, assistantReply) {
-    if (!currentChatId || !isAuthenticatedSession()) return;
-    let titleChatId = currentChatId;
-    let chat = await Storage.getChat(currentChatId);
+  async function maybeGenerateTitle(userMessage, assistantReply, chatId = currentChatId) {
+    if (!chatId || !isAuthenticatedSession()) return;
+    let titleChatId = chatId;
+    let chat = await Storage.getChat(chatId);
     if (isAuthenticatedSession() && isPlaceholderServerChat(chat)) {
       try {
-        titleChatId = await ensureRemoteConversationForChat(currentChatId);
+        titleChatId = await ensureRemoteConversationForChat(chatId);
         chat = await Storage.getChat(titleChatId);
       } catch {
         return;
       }
     }
     const msgCount = isAuthenticatedSession()
-      ? (chatMessages?.querySelectorAll(".message.user").length || chat?.messages?.filter((m) => m.role === "user").length || 0)
+      ? ((chatId === currentChatId ? chatMessages?.querySelectorAll(".message.user").length : 0) || chat?.messages?.filter((m) => m.role === "user").length || 0)
       : (chat?.messages?.filter((m) => m.role === "user").length || 0);
     if (msgCount > 1) return;
     try {
