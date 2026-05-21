@@ -74,6 +74,7 @@ export interface LLMAdapterCall {
   readonly use_simulation?: boolean;
   readonly user_id?: string;
   readonly timeout_ms?: number;
+  readonly signal?: AbortSignal;
   readonly max_output_tokens?: number;
   readonly reasoning_effort?: "low" | "medium";
   readonly skip_wrappers?: boolean;
@@ -104,38 +105,77 @@ export interface LLMAdapterResult {
 
 const LLM_SERVICE_URL = process.env.LLM_SERVICE_URL || `http://localhost:${process.env.LLM_SERVICE_PORT || "3002"}`;
 
+function createAdapterAbortSignal(parentSignal: AbortSignal | undefined, timeoutMs: number): {
+  readonly signal: AbortSignal;
+  readonly cleanup: () => void;
+} {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error(`LLM adapter request timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+  const abortFromParent = () => {
+    controller.abort(parentSignal?.reason ?? new Error("LLM adapter request aborted"));
+  };
+
+  if (parentSignal?.aborted) {
+    abortFromParent();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeout);
+      parentSignal?.removeEventListener("abort", abortFromParent);
+    },
+  };
+}
+
 export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMAdapterResult> {
   const url = `${LLM_SERVICE_URL}/llm/invoke`;
+  const abort = createAdapterAbortSignal(call.signal, call.timeout_ms ?? 90_000);
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt: call.prompt,
-      task: call.task,
-      use_simulation: call.use_simulation ?? false,
-      prefer: call.prefer,
-      model_override: call.model_override,
-      user_id: call.user_id,
-      max_output_tokens: call.max_output_tokens,
-      reasoning_effort: call.reasoning_effort,
-      skip_wrappers: call.skip_wrappers,
-      image_attachments: call.image_attachments,
-    }),
-    signal: AbortSignal.timeout(call.timeout_ms ?? 90_000), // 90s default; override for long-running direct math
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: call.prompt,
+        task: call.task,
+        use_simulation: call.use_simulation ?? false,
+        prefer: call.prefer,
+        model_override: call.model_override,
+        user_id: call.user_id,
+        max_output_tokens: call.max_output_tokens,
+        reasoning_effort: call.reasoning_effort,
+        skip_wrappers: call.skip_wrappers,
+        image_attachments: call.image_attachments,
+      }),
+      signal: abort.signal,
+    });
+  } finally {
+    abort.cleanup();
+  }
 
   if (!response.ok) {
     const text = await response.text();
     // Check for safety violation response
     try {
       const errorData = JSON.parse(text) as { detail?: { status?: string; reason?: string } | string };
-      if (typeof errorData.detail === "object" && errorData.detail?.status === "blocked" && errorData.detail?.reason === "safety_violation") {
-        throw new Error("Message rejected by safety filter.");
+      if (typeof errorData.detail === "object" && errorData.detail?.status === "blocked") {
+        const reason = errorData.detail?.reason === "safety_degraded"
+          ? "Safety checks are temporarily unavailable. Please try again shortly."
+          : "Message rejected by safety filter.";
+        throw new Error(reason);
       }
     } catch (parseError) {
       // If it's not JSON or not a safety error, throw the original error
-      if ((parseError as Error).message === "Message rejected by safety filter.") {
+      if (
+        (parseError as Error).message === "Message rejected by safety filter." ||
+        (parseError as Error).message === "Safety checks are temporarily unavailable. Please try again shortly."
+      ) {
         throw parseError;
       }
     }
@@ -193,36 +233,50 @@ export async function callLLMAdapterStream(
   call: LLMAdapterCall,
 ): Promise<ReadableStream<string>> {
   const url = `${LLM_SERVICE_URL}/llm/stream`;
+  const abort = createAdapterAbortSignal(call.signal, call.timeout_ms ?? 120_000);
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt: call.prompt,
-      task: call.task,
-      use_simulation: call.use_simulation ?? false,
-      prefer: call.prefer,
-      model_override: call.model_override,
-      user_id: call.user_id,
-      max_output_tokens: call.max_output_tokens,
-      reasoning_effort: call.reasoning_effort,
-      skip_wrappers: call.skip_wrappers,
-      image_attachments: call.image_attachments,
-    }),
-    signal: AbortSignal.timeout(call.timeout_ms ?? 120_000), // 120s default; override when needed
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: call.prompt,
+        task: call.task,
+        use_simulation: call.use_simulation ?? false,
+        prefer: call.prefer,
+        model_override: call.model_override,
+        user_id: call.user_id,
+        max_output_tokens: call.max_output_tokens,
+        reasoning_effort: call.reasoning_effort,
+        skip_wrappers: call.skip_wrappers,
+        image_attachments: call.image_attachments,
+      }),
+      signal: abort.signal,
+    });
+  } catch (err) {
+    abort.cleanup();
+    throw err;
+  }
 
   if (!response.ok) {
+    abort.cleanup();
     const text = await response.text();
     // Check for safety violation response
     try {
       const errorData = JSON.parse(text) as { detail?: { status?: string; reason?: string } | string };
-      if (typeof errorData.detail === "object" && errorData.detail?.status === "blocked" && errorData.detail?.reason === "safety_violation") {
-        throw new Error("Message rejected by safety filter.");
+      if (typeof errorData.detail === "object" && errorData.detail?.status === "blocked") {
+        const reason = errorData.detail?.reason === "safety_degraded"
+          ? "Safety checks are temporarily unavailable. Please try again shortly."
+          : "Message rejected by safety filter.";
+        throw new Error(reason);
       }
     } catch (parseError) {
       // If it's not JSON or not a safety error, throw the original error
-      if ((parseError as Error).message === "Message rejected by safety filter.") {
+      if (
+        (parseError as Error).message === "Message rejected by safety filter." ||
+        (parseError as Error).message === "Safety checks are temporarily unavailable. Please try again shortly."
+      ) {
         throw parseError;
       }
     }
@@ -230,6 +284,7 @@ export async function callLLMAdapterStream(
   }
 
   if (!response.body) {
+    abort.cleanup();
     throw new Error("No response body for streaming");
   }
 
@@ -298,13 +353,21 @@ export async function callLLMAdapterStream(
   return new ReadableStream<string>({
     async pull(controller) {
       while (eventQueue.length === 0) {
-        const { done, value } = await reader.read();
+        let readResult;
+        try {
+          readResult = await reader.read();
+        } catch (err) {
+          abort.cleanup();
+          throw err;
+        }
+        const { done, value } = readResult;
         if (done) {
           sseBuffer += decoder.decode();
           if (sseBuffer.trim()) {
             enqueueEventBlock(sseBuffer.replace(/\r/g, ""));
             sseBuffer = "";
           }
+          abort.cleanup();
           break;
         }
 
@@ -313,27 +376,35 @@ export async function callLLMAdapterStream(
       }
 
       if (eventQueue.length === 0) {
+        abort.cleanup();
         controller.close();
         return;
       }
 
       const nextEvent = eventQueue.shift();
       if (!nextEvent) {
+        abort.cleanup();
         controller.close();
         return;
       }
 
       if (nextEvent.type === "done") {
+        abort.cleanup();
         controller.close();
         return;
       }
 
       if (nextEvent.type === "error") {
+        abort.cleanup();
         controller.error(new Error(nextEvent.error));
         return;
       }
 
       controller.enqueue(nextEvent.text);
+    },
+    async cancel(reason) {
+      abort.cleanup();
+      await reader.cancel(reason).catch(() => undefined);
     },
   });
 }

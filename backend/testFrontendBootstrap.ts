@@ -48,6 +48,13 @@ assert.match(
   "SentIQStorage compatibility global should expose chat-message dedupe helper",
 );
 assert.match(storageService, /execution_mode:\s*["']fast["']/, "storage defaults execution mode to fast");
+assert.match(storageService, /const DB_VERSION = 5;/, "storage migration version should include owner-scoped memories and files");
+assert.match(storageService, /memStore\.createIndex\(["']owner_user_id["']/, "memory cache should index owner_user_id");
+assert.match(storageService, /fileStore\.createIndex\(["']owner_user_id["']/, "file cache should index owner_user_id");
+assert.match(storageService, /owner_user_id:\s*normalizeCacheUserId\(memory\.owner_user_id/, "stored memories should carry owner_user_id");
+assert.match(storageService, /owner_user_id:\s*normalizeCacheUserId\(fileData\.owner_user_id/, "stored uploaded files should carry owner_user_id");
+assert.match(storageService, /filter\(\(memory\) => isOwnedCacheItemVisible\(memory\)\)/, "memory reads should be scoped to the active owner");
+assert.match(storageService, /filter\(\(file\) => isOwnedCacheItemVisible\(file\)\)/, "file reads should be scoped to the active owner");
 assert.match(storageService, /window\.SentIQStorage\s*=\s*\{[\s\S]*upsertMessageInChat/, "storage should expose streaming message upsert helper");
 assert.match(storageService, /window\.SentIQStorage\s*=\s*\{[\s\S]*mergeChatMessages/, "storage should expose safe server-message merge helper");
 assert.match(storageService, /incomingMessages\.length === 0 && existingMessages\.length > 0/, "remote hydration should preserve non-empty local chats on empty snapshots");

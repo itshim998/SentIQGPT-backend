@@ -1707,6 +1707,7 @@ class SafetyResult:
     SAFE = "SAFE"
     UNSAFE = "UNSAFE"
     CONTROVERSIAL = "CONTROVERSIAL"
+    DEGRADED = "DEGRADED"
     ERROR = "ERROR"
     TIMEOUT = "TIMEOUT"
 
@@ -1746,9 +1747,8 @@ def _parse_safety_response(response_text: str) -> str:
     except (json.JSONDecodeError, TypeError):
         pass
     
-    # Default to SAFE if we can't parse (fail-open for UX)
-    logger.warning("[Safety] Could not parse safety response: %s — defaulting to SAFE", response_text[:100])
-    return SafetyResult.SAFE
+    logger.warning("[Safety] Could not parse safety response: %s", response_text[:100])
+    return SafetyResult.ERROR
 
 
 def call_safety_model(
@@ -1771,8 +1771,8 @@ def call_safety_model(
     effective_timeout = timeout or SAFETY_TIMEOUT
     
     if not safety_bucket.consume():
-        logger.warning("[Safety] Rate limit exceeded — defaulting to SAFE")
-        return SafetyResult.SAFE, "rate_limit_exceeded"
+        logger.warning("[Safety] Rate limit exceeded")
+        return SafetyResult.DEGRADED, "rate_limit_exceeded"
     
     # Build the safety check prompt
     if check_type == "input":
@@ -1825,8 +1825,8 @@ Respond with ONLY the classification word (SAFE, UNSAFE, or CONTROVERSIAL):"""
         )
         
         if not resp.ok:
-            logger.warning("[Safety] API error status=%d — defaulting to SAFE", resp.status_code)
-            return SafetyResult.SAFE, f"api_error_{resp.status_code}"
+            logger.warning("[Safety] API error status=%d", resp.status_code)
+            return SafetyResult.DEGRADED, f"api_error_{resp.status_code}"
         
         raw_response, _ = _extract_pollinations_response(resp)
         classification = _parse_safety_response(raw_response)
@@ -1835,15 +1835,14 @@ Respond with ONLY the classification word (SAFE, UNSAFE, or CONTROVERSIAL):"""
         return classification, raw_response
         
     except _requests_lib.Timeout:
-        logger.warning("[Safety] Timeout after %ds — defaulting to SAFE", effective_timeout)
+        logger.warning("[Safety] Timeout after %ds", effective_timeout)
         return SafetyResult.TIMEOUT, "timeout"
     except Exception as e:
-        logger.error("[Safety] Error: %s — defaulting to SAFE", e)
+        logger.error("[Safety] Error: %s", e)
         return SafetyResult.ERROR, str(e)
 
 
 def is_safe_content(text: str, check_type: str = "input", timeout: Optional[int] = None) -> bool:
-    """Convenience function: returns True if content is SAFE or CONTROVERSIAL (allow-list approach)."""
+    """Convenience function: fail closed unless content is explicitly SAFE or CONTROVERSIAL."""
     classification, _ = call_safety_model(text, timeout=timeout, check_type=check_type)
-    # Block only explicit UNSAFE — allow SAFE, CONTROVERSIAL, TIMEOUT, ERROR (fail-open)
-    return classification != SafetyResult.UNSAFE
+    return classification in {SafetyResult.SAFE, SafetyResult.CONTROVERSIAL}

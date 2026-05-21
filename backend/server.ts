@@ -1535,20 +1535,37 @@ type FileAnalysisEvent = {
   file_type: "pdf" | "txt" | "image";
   status: FileAnalysisStatus;
   size_bytes: number;
-  extracted_text?: string;
   error?: string;
   updated_at: number;
 };
 
-const fileAnalysisSubscribers: Map<string, SseWriter> = new Map();
+const fileAnalysisSubscribersByUser: Map<string, Map<string, SseWriter>> = new Map();
 
-function emitFileAnalysisEvent(event: FileAnalysisEvent): void {
+function registerFileAnalysisSubscriber(userId: string, subscriberId: string, writer: SseWriter): void {
+  const subscribers = fileAnalysisSubscribersByUser.get(userId) ?? new Map<string, SseWriter>();
+  subscribers.set(subscriberId, writer);
+  fileAnalysisSubscribersByUser.set(userId, subscribers);
+}
+
+function unregisterFileAnalysisSubscriber(userId: string, subscriberId: string): void {
+  const subscribers = fileAnalysisSubscribersByUser.get(userId);
+  if (!subscribers) return;
+  subscribers.delete(subscriberId);
+  if (subscribers.size === 0) {
+    fileAnalysisSubscribersByUser.delete(userId);
+  }
+}
+
+function emitFileAnalysisEvent(userId: string | undefined, event: FileAnalysisEvent): void {
+  if (!userId) return;
+  const subscribers = fileAnalysisSubscribersByUser.get(userId);
+  if (!subscribers) return;
   const payload = JSON.stringify(event);
-  for (const [subscriberId, writer] of fileAnalysisSubscribers) {
+  for (const [subscriberId, writer] of subscribers) {
     writer.write(payload).catch((err) => {
-      console.warn(`[FileAnalysis] subscriber ${subscriberId} dropped: ${err instanceof Error ? err.message : err}`);
+      console.warn(`[FileAnalysis] subscriber ${subscriberId} dropped for user ${userId}: ${err instanceof Error ? err.message : err}`);
       writer.close();
-      fileAnalysisSubscribers.delete(subscriberId);
+      unregisterFileAnalysisSubscriber(userId, subscriberId);
     });
   }
 }
@@ -2653,7 +2670,13 @@ app.post(
   aiRateLimiter,
   asyncHandler(async (req, res) => {
     let clientDisconnected = false;
-    req.on("close", () => { clientDisconnected = true; });
+    let responseCompleted = false;
+    const requestAbortController = new AbortController();
+    req.on("close", () => {
+      if (responseCompleted) return;
+      clientDisconnected = true;
+      requestAbortController.abort(new Error("Client disconnected"));
+    });
 
     const sseWriter = createSseWriter(res, { maxBufferedBytes: 512 * 1024 });
     const writeSseEvent = async (payload: string) => {
@@ -2664,6 +2687,7 @@ app.post(
       await writeSseEvent(JSON.stringify(payload));
     };
     const finishSse = () => {
+      responseCompleted = true;
       sseWriter.close();
     };
 
@@ -2801,6 +2825,7 @@ app.post(
         userMessage: parsed.data.message,
         executionMode: parsed.data.executionMode,
         clarificationResponse: parsed.data.clarification_response,
+        signal: requestAbortController.signal,
         context: {
           recent_messages: normalizedRecentMessages,
           memories: [],
@@ -2926,6 +2951,7 @@ app.post(
             modelOverride: GUEST_MODEL_OVERRIDE,
             userId,
             reasoningMode: true,
+            signal: requestAbortController.signal,
           });
 
           if (!clientDisconnected) {
@@ -3011,16 +3037,22 @@ app.post(
           userId,
           streaming: true,
         });
-        const adapterStream = await callLLMAdapterStream(call);
+        const adapterStream = await callLLMAdapterStream({ ...call, signal: requestAbortController.signal });
         const reader = adapterStream.getReader();
 
-        while (true) {
-          if (clientDisconnected) break;
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (!value) continue;
-          recordStreamChunk(streamMetrics, value);
-          await writeSseJson({ type: "token", text: value });
+        try {
+          while (true) {
+            if (clientDisconnected) break;
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!value) continue;
+            recordStreamChunk(streamMetrics, value);
+            await writeSseJson({ type: "token", text: value });
+          }
+        } finally {
+          if (clientDisconnected) {
+            await reader.cancel("client disconnected").catch(() => undefined);
+          }
         }
 
         if (!clientDisconnected) {
@@ -3317,6 +3349,7 @@ app.post(
           userMessage: parsed.data.message,
           executionMode: parsed.data.executionMode,
           clarificationResponse: parsed.data.clarification_response,
+          signal: requestAbortController.signal,
           context: {
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
@@ -3366,6 +3399,7 @@ app.post(
           userMessage: parsed.data.message,
           executionMode: parsed.data.executionMode,
           clarificationResponse: parsed.data.clarification_response,
+          signal: requestAbortController.signal,
           context: {
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
@@ -3466,6 +3500,7 @@ app.post(
           userMessage: parsed.data.message,
           executionMode: parsed.data.executionMode,
           clarificationResponse: parsed.data.clarification_response,
+          signal: requestAbortController.signal,
           context: {
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
@@ -3518,6 +3553,7 @@ app.post(
           userMessage: parsed.data.message,
           executionMode: parsed.data.executionMode,
           clarificationResponse: parsed.data.clarification_response,
+          signal: requestAbortController.signal,
           context: {
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
@@ -3616,6 +3652,7 @@ app.post(
             userMessage: parsed.data.message,
             executionMode: parsed.data.executionMode,
             clarificationResponse: parsed.data.clarification_response,
+            signal: requestAbortController.signal,
             context: {
               recent_messages: normalizedRecentMessages,
               memories: parsed.data.context?.memories,
@@ -3669,6 +3706,7 @@ app.post(
           trustedProfile: reasoningContext.trustedProfile,
           userId,
           reasoningMode: true,
+          signal: requestAbortController.signal,
         });
         if (result.reply) {
           await persistAssistantMessage(result.reply);
@@ -3706,6 +3744,7 @@ app.post(
           userMessage: parsed.data.message,
           executionMode: parsed.data.executionMode,
           clarificationResponse: parsed.data.clarification_response,
+          signal: requestAbortController.signal,
           context: {
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
@@ -3863,7 +3902,11 @@ app.post(
     try {
       const streamStart = Date.now();
       const streamTimeoutMs = modelOverride === "openai-large" ? 240_000 : undefined;
-      const streamCall = streamTimeoutMs ? { ...call, timeout_ms: streamTimeoutMs } : call;
+      const streamCall = {
+        ...call,
+        ...(streamTimeoutMs ? { timeout_ms: streamTimeoutMs } : {}),
+        signal: requestAbortController.signal,
+      };
       stopHeartbeat = modelOverride === "openai-large"
         ? startStreamHeartbeat(10_000, "openai-large")
         : () => {};
@@ -3871,18 +3914,24 @@ app.post(
       const reader = adapterStream.getReader();
       let fullReply = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (!value) continue;
-        fullReply += value;
-        recordStreamChunk(streamMetrics, value);
-        await writeSseJson({ type: "token", text: value });
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          fullReply += value;
+          recordStreamChunk(streamMetrics, value);
+          await writeSseJson({ type: "token", text: value });
+        }
+      } finally {
+        if (clientDisconnected) {
+          await reader.cancel("client disconnected").catch(() => undefined);
+        }
       }
 
       stopHeartbeat();
 
-      if (fullReply) {
+      if (fullReply && !clientDisconnected) {
         await persistAssistantMessage(fullReply);
       }
       if (!clientDisconnected) {
@@ -3899,6 +3948,7 @@ app.post(
           const fallback = await callLLMAdapterDetailed({
             ...call,
             timeout_ms: 180_000,
+            signal: requestAbortController.signal,
           });
           const fallbackText = fallback.text || "";
           if (fallbackText) {
@@ -4013,10 +4063,10 @@ app.get(
 
     const subscriberId = randomUUID();
     const writer = createSseWriter(res, { maxBufferedBytes: 256 * 1024 });
-    fileAnalysisSubscribers.set(subscriberId, writer);
+    registerFileAnalysisSubscriber(userId, subscriberId, writer);
 
     req.on("close", () => {
-      fileAnalysisSubscribers.delete(subscriberId);
+      unregisterFileAnalysisSubscriber(userId, subscriberId);
       writer.close();
     });
   }),
@@ -4057,7 +4107,7 @@ app.post(
       size_bytes: file.size,
     };
 
-    emitFileAnalysisEvent({
+    emitFileAnalysisEvent(isGuest ? undefined : userId, {
       ...baseEvent,
       event: "processing",
       status: "processing",
@@ -4074,7 +4124,7 @@ app.post(
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      emitFileAnalysisEvent({
+      emitFileAnalysisEvent(isGuest ? undefined : userId, {
         ...baseEvent,
         event: "error",
         status: "error",
@@ -4091,11 +4141,10 @@ app.post(
       return;
     }
 
-    emitFileAnalysisEvent({
+    emitFileAnalysisEvent(isGuest ? undefined : userId, {
       ...baseEvent,
       event: "update",
       status: "complete",
-      extracted_text: result.extracted_text,
       updated_at: Date.now(),
     });
 

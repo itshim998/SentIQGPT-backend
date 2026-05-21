@@ -55,6 +55,7 @@ export interface OrchestratorRequest {
   readonly context?: RawMessageContext;
   readonly executionMode?: ExecutionMode;
   readonly clarificationResponse?: ClarificationResponsePayload;
+  readonly signal?: AbortSignal;
   /** Skip reflection loop for faster response (default: false) */
   readonly skipReflection?: boolean;
 }
@@ -217,6 +218,53 @@ function computeConfidence(
   });
 
   return confidence;
+}
+
+function createOrchestratorAbortSignal(parentSignal: AbortSignal | undefined, timeoutMs: number): {
+  readonly signal: AbortSignal;
+  readonly cleanup: () => void;
+} {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error(`Orchestration timed out after ${timeoutMs / 1000}s`));
+  }, timeoutMs);
+  const abortFromParent = () => {
+    controller.abort(parentSignal?.reason ?? new Error("Orchestration aborted"));
+  };
+
+  if (parentSignal?.aborted) {
+    abortFromParent();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeout);
+      parentSignal?.removeEventListener("abort", abortFromParent);
+    },
+  };
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new Error("Orchestration aborted");
+}
+
+function waitForAbort(signal: AbortSignal): Promise<never> {
+  if (signal.aborted) {
+    return Promise.reject(signal.reason instanceof Error ? signal.reason : new Error("Orchestration aborted"));
+  }
+  return new Promise((_, reject) => {
+    signal.addEventListener(
+      "abort",
+      () => reject(signal.reason instanceof Error ? signal.reason : new Error("Orchestration aborted")),
+      { once: true },
+    );
+  });
 }
 
 function buildClarificationResponse(payload: ClarificationPayload): OrchestratorResponse {
@@ -419,21 +467,24 @@ export function mergeResults(
 export async function orchestrate(
   request: OrchestratorRequest,
 ): Promise<OrchestratorResponse> {
-  // Wrap entire pipeline in a 120s hard timeout to prevent infinite hangs
   const timeoutMs = 120_000;
-  const result = await Promise.race([
-    _orchestrateInner(request),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Orchestration timed out after 120s")), timeoutMs),
-    ),
-  ]);
-  return result;
+  const abort = createOrchestratorAbortSignal(request.signal, timeoutMs);
+  try {
+    return await Promise.race([
+      _orchestrateInner({ ...request, signal: abort.signal }),
+      waitForAbort(abort.signal),
+    ]);
+  } finally {
+    abort.cleanup();
+  }
 }
 
 async function _orchestrateInner(
   request: OrchestratorRequest,
 ): Promise<OrchestratorResponse> {
   const profile = resolveExecutionProfile(request.executionMode);
+  const signal = request.signal;
+  throwIfAborted(signal);
   const { context: rawContext } = request;
   const skipReflection = request.skipReflection ?? !profile.reflection.enabled;
   const resolvedClarification = resolveClarificationInput(
@@ -457,7 +508,7 @@ async function _orchestrateInner(
     const execution = await executePlan(
       [{ step: 1, tool: "memory_update", input: userMessage }],
       ctx,
-      { profile },
+      { profile, signal },
     );
     const merged = mergeResults(execution.steps, { stored: false });
     const reply = merged.memory.stored
@@ -497,6 +548,7 @@ async function _orchestrateInner(
       return clarificationResponse;
     }
   }
+  throwIfAborted(signal);
 
   const isCodingQuery = detectCodeQuery(userMessage);
 
@@ -544,6 +596,7 @@ async function _orchestrateInner(
       explicitWebSearchMode: rawContext?.web_search_mode,
     }),
   ]);
+  throwIfAborted(signal);
 
   console.log(`[ORCHESTRATOR] plan: ${plan.steps.length} step(s)`);
 
@@ -553,7 +606,6 @@ async function _orchestrateInner(
   const isWebSearchPlan = firstStep?.tool === "web_search";
   let execution: Awaited<ReturnType<typeof executePlan>>;
   if (isWebSearchPlan) {
-    const executionPromise = executePlan(finalPlan.steps, ctx, { profile });
     const clarificationResponse = profile.clarification.enabled
       ? await maybeClarify(
           userMessage,
@@ -570,15 +622,14 @@ async function _orchestrateInner(
         )
       : null;
     if (clarificationResponse) {
-      void executionPromise.catch((error) => {
-        console.warn(`[ORCHESTRATOR] discarded WebSurf result failed: ${error instanceof Error ? error.message : String(error)}`);
-      });
       return clarificationResponse;
     }
-    execution = await executionPromise;
+    throwIfAborted(signal);
+    execution = await executePlan(finalPlan.steps, ctx, { profile, signal });
   } else {
-    execution = await executePlan(finalPlan.steps, ctx, { profile });
+    execution = await executePlan(finalPlan.steps, ctx, { profile, signal });
   }
+  throwIfAborted(signal);
 
   // 3. Merge step results into a single response
   const merged = mergeResults(execution.steps, { stored: false });

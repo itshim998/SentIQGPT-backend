@@ -169,12 +169,24 @@ def check_input_safety(prompt: str, user_id: str, endpoint: str) -> tuple[bool, 
     """Check if input is safe. Returns (is_safe, classification, raw_response)."""
     classification, raw_response = call_safety_model(prompt, check_type="input")
     
-    # Log all UNSAFE hits (and optionally CONTROVERSIAL for review)
-    if classification == SafetyResult.UNSAFE:
+    # Log blocked or degraded safety decisions for review.
+    if classification not in {SafetyResult.SAFE, SafetyResult.CONTROVERSIAL}:
         log_safety_violation("input", classification, user_id, prompt, raw_response, endpoint)
     
-    is_safe = classification != SafetyResult.UNSAFE
+    is_safe = classification in {SafetyResult.SAFE, SafetyResult.CONTROVERSIAL}
     return is_safe, classification, raw_response
+
+
+def check_output_safety(text: str, user_id: str, endpoint: str) -> tuple[bool, str, str]:
+    """Check final model output. Returns (is_safe, classification, raw_response)."""
+    classification, raw_response = call_safety_model(
+        text,
+        timeout=SAFETY_OUTPUT_TIMEOUT,
+        check_type="output",
+    )
+    if classification not in {SafetyResult.SAFE, SafetyResult.CONTROVERSIAL}:
+        log_safety_violation("output", classification, user_id, text, raw_response, endpoint)
+    return classification in {SafetyResult.SAFE, SafetyResult.CONTROVERSIAL}, classification, raw_response
 
 
 # ============================
@@ -615,9 +627,10 @@ async def invoke_llm(request: LLMInvokeRequest):
         is_safe, classification, _ = check_input_safety(request.prompt, user_id, "/llm/invoke")
         if not is_safe:
             logger.warning("[Safety] Input blocked for user=%s classification=%s", user_id, classification)
+            reason = "safety_violation" if classification == SafetyResult.UNSAFE else "safety_degraded"
             raise HTTPException(
                 status_code=400,
-                detail={"status": "blocked", "reason": "safety_violation"},
+                detail={"status": "blocked", "reason": reason},
             )
         
         result = call_llm_router(
@@ -719,9 +732,10 @@ async def stream_llm(request: LLMInvokeRequest):
     is_safe, classification, _ = check_input_safety(request.prompt, user_id_for_safety, "/llm/stream")
     if not is_safe:
         logger.warning("[Safety] Stream input blocked for user=%s classification=%s", user_id_for_safety, classification)
+        reason = "safety_violation" if classification == SafetyResult.UNSAFE else "safety_degraded"
         raise HTTPException(
             status_code=400,
-            detail={"status": "blocked", "reason": "safety_violation"},
+            detail={"status": "blocked", "reason": reason},
         )
     
     # Check if this is a chart-related task (exempt from output guard)
@@ -746,6 +760,7 @@ async def stream_llm(request: LLMInvokeRequest):
             # ── OUTPUT SAFETY MONITOR ──
             # Skip for chart generation to prevent false positives on code/data
             safety_monitor = None if is_chart_task else StreamingSafetyMonitor(user_id)
+            full_output_parts: list[str] = []
             
             for chunk in stream_llm_router(
                 prompt=request.prompt,
@@ -758,14 +773,28 @@ async def stream_llm(request: LLMInvokeRequest):
             ):
                 # Check output safety (if monitor active)
                 if safety_monitor:
+                    full_output_parts.append(chunk)
                     if not safety_monitor.add_token(chunk):
                         # Safety violation detected — terminate stream
                         logger.warning("[Safety] Output violation detected — terminating stream")
-                        yield f"event: error\ndata: {json.dumps({'message': 'Response blocked due to safety concerns'})}\n\n"
+                        yield f"event: error\ndata: {json.dumps({'code': 'safety_violation', 'message': 'Response blocked due to safety concerns'})}\n\n"
                         return
                 
                 # SSE format: data: <text>\n\n
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
+            if safety_monitor:
+                final_output = "".join(full_output_parts).strip()
+                if final_output:
+                    output_safe, output_classification, _ = check_output_safety(final_output, user_id, "/llm/stream")
+                    if not output_safe:
+                        code = "safety_violation" if output_classification == SafetyResult.UNSAFE else "safety_degraded"
+                        logger.warning(
+                            "[Safety] Final stream output blocked user=%s classification=%s",
+                            user_id,
+                            output_classification,
+                        )
+                        yield f"event: error\ndata: {json.dumps({'code': code, 'message': 'Response blocked due to safety concerns'})}\n\n"
+                        return
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error("Streaming failed: %s", e)

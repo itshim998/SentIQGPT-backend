@@ -541,7 +541,7 @@ async function main(): Promise<void> {
     });
     assert.equal(unclearWebSurf.route, "clarification", "unclear WebSurf intent should return clarification");
     assert.doesNotMatch(unclearWebSurf.reply ?? "", /Mock Tavily answer/, "unclear WebSurf discards Tavily output");
-    assert.ok(tavilyQueries.length > 0, "unclear WebSurf starts Tavily while clarification is classified");
+    assert.equal(tavilyQueries.length, 0, "unclear WebSurf should clarify before starting Tavily");
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -585,6 +585,7 @@ async function main(): Promise<void> {
     });
     assert.equal(failedTavilyClarification.route, "clarification", "discarded Tavily failure should still return clarification");
     assert.doesNotMatch(failedTavilyClarification.reply ?? "", /Tavily|temporarily unavailable/i, "discarded Tavily failure should not leak to UI");
+    assert.equal(tavilyQueries.length, 0, "clarification path should not start a failing Tavily request");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -604,7 +605,7 @@ async function main(): Promise<void> {
   assert.match(frontend, /const options = Array\.isArray\(clarification\.options\)/, "frontend sends answered clarification options");
   assert.match(frontend, /submitClarificationOption\(chatId,\s*payload\.id,\s*option\)/, "option clicks pass clarification id");
   assert.match(frontend, /state\.clarification\?\.id !== clarificationId/, "stale clarification option clicks are ignored");
-  assert.match(frontend, /persistChatMessage\(targetChatId, "assistant", assistantText\)/, "clarification persistence stays plain text live-only");
+  assert.match(frontend, /persistChatMessage\(targetChatId, "assistant", assistantText, null,/, "clarification persistence stays plain text live-only");
   const clarificationRenderSnippet = frontend.slice(
     frontend.indexOf('if (response?.route === "clarification" && clarificationPayload)'),
     frontend.indexOf("clearPendingClarification(targetChatId);"),

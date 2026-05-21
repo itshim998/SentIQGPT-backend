@@ -175,11 +175,12 @@ export class TavilyProvider implements WebSearchProvider {
   async search(
     query: string,
     maxResults = 5,
-    mode: WebSearchMode = DEFAULT_WEB_SEARCH_MODE
+    mode: WebSearchMode = DEFAULT_WEB_SEARCH_MODE,
+    signal?: AbortSignal,
   ): Promise<readonly SearchResult[]> {
     const normalizedMode = normalizeWebSearchMode(mode);
     const data = await this.executeWithRotation(query, maxResults, (apiKey) =>
-      this.executeRequest(query, apiKey, maxResults, normalizedMode)
+      this.executeRequest(query, apiKey, maxResults, normalizedMode, signal)
     );
     return this.mapResults(data, normalizedMode);
   }
@@ -187,11 +188,12 @@ export class TavilyProvider implements WebSearchProvider {
   async searchWithMetadata(
     query: string,
     maxResults = 5,
-    mode: WebSearchMode = DEFAULT_WEB_SEARCH_MODE
+    mode: WebSearchMode = DEFAULT_WEB_SEARCH_MODE,
+    signal?: AbortSignal,
   ): Promise<{ results: SearchResult[]; answer?: string; images: string[] }> {
     const normalizedMode = normalizeWebSearchMode(mode);
     const data = await this.executeWithRotation(query, maxResults, (apiKey) =>
-      this.executeRequest(query, apiKey, maxResults, normalizedMode)
+      this.executeRequest(query, apiKey, maxResults, normalizedMode, signal)
     );
     return {
       results: this.mapResults(data, normalizedMode),
@@ -249,7 +251,8 @@ export class TavilyProvider implements WebSearchProvider {
     query: string,
     apiKey: string,
     maxResults: number,
-    mode: WebSearchMode
+    mode: WebSearchMode,
+    signal?: AbortSignal,
   ): Promise<TavilyResponse> {
     const requestBody: Record<string, unknown> = {
       query,
@@ -265,7 +268,7 @@ export class TavilyProvider implements WebSearchProvider {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {

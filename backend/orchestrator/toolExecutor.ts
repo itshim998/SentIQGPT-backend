@@ -126,6 +126,7 @@ export interface ExecutionResult {
 
 export interface ExecutePlanOptions {
   readonly profile?: ExecutionProfile;
+  readonly signal?: AbortSignal;
 }
 
 const VALID_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
@@ -140,6 +141,13 @@ const VALID_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
 
 const MAX_EXEC_STEPS = 3;
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new Error("Execution aborted");
+}
+
 // ==============================
 // Per-tool executors
 // ==============================
@@ -148,6 +156,7 @@ async function execConversation(
   input: string,
   ctx: BuiltContext,
   priorContext: string,
+  signal?: AbortSignal,
 ): Promise<StepResult> {
   const augmentedInput = priorContext
     ? `${input}\n\n[Previous step context]: ${priorContext}`
@@ -203,6 +212,7 @@ async function execConversation(
     trustedProfile: ctx.trustedProfile,
     modelOverride,
     userId: ctx.userId,
+    signal,
   });
 
   return {
@@ -239,6 +249,7 @@ async function execFileAnalysis(
   input: string,
   ctx: BuiltContext,
   priorContext: string,
+  signal?: AbortSignal,
 ): Promise<StepResult> {
   // Pass file context to router for coding PDF detection
   const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
@@ -269,6 +280,7 @@ async function execFileAnalysis(
     trustedProfile: ctx.trustedProfile,
     modelOverride,
     userId: ctx.userId,
+    signal,
   });
 
   return {
@@ -286,7 +298,9 @@ async function execMemoryUpdate(
   input: string,
   ctx: BuiltContext,
   profile: ExecutionProfile,
+  signal?: AbortSignal,
 ): Promise<StepResult> {
+  throwIfAborted(signal);
   const memResult = await processMessageForMemory({
     message: input,
     recentMessages: ctx.recentMessages,
@@ -381,6 +395,7 @@ async function execFileGeneration(
 async function execWebSearch(
   input: string,
   ctx: BuiltContext,
+  signal?: AbortSignal,
 ): Promise<StepResult> {
   console.log(`[WebSearch] executing Tavily pipeline for: "${input.slice(0, 60)}..."`);
   const webSearchMode = normalizeWebSearchMode(ctx.webSearchMode);
@@ -391,6 +406,7 @@ async function execWebSearch(
       maxResults: 8,
       skipLLMSynthesis: true,
       webSearchMode,
+      signal,
     });
 
     if (!result.success) {
@@ -421,6 +437,9 @@ async function execWebSearch(
       },
     };
   } catch (err) {
+    if (signal?.aborted) {
+      throwIfAborted(signal);
+    }
     const message = err instanceof Error ? err.message : String(err);
     console.log(`[WebSearch] error: ${message}`);
     return {
@@ -436,27 +455,15 @@ async function execWebSearch(
 // Parallelization Helpers
 // ==============================
 
-/** Tools that can run in parallel (independent, no context dependency) */
-const PARALLELIZABLE_TOOLS: ReadonlySet<PlanTool> = new Set([
-  "image_generation",
-  "chart_generation",
-  "file_generation",
-  "memory_update",
-  "web_search",
-]);
-
-/** Check if a step can run independently (doesn't need prior context) */
-function canRunInParallel(tool: PlanTool): boolean {
-  return PARALLELIZABLE_TOOLS.has(tool);
-}
-
 /** Execute a single step and return the result with proper step number */
 async function executeStep(
   planStep: PlanStep,
   ctx: BuiltContext,
   priorContext: string,
   profile: ExecutionProfile,
+  signal?: AbortSignal,
 ): Promise<StepResult> {
+  throwIfAborted(signal);
   console.log(`[EXECUTOR] running step ${planStep.step} → ${planStep.tool}`);
 
   if (!VALID_TOOLS.has(planStep.tool)) {
@@ -504,7 +511,7 @@ async function executeStep(
         result = await execImageGeneration(stepInput);
         break;
       case "file_analysis":
-        result = await execFileAnalysis(stepInput, ctx, priorContext);
+        result = await execFileAnalysis(stepInput, ctx, priorContext, signal);
         break;
       case "memory_update":
         result = await execMemoryUpdate(stepInput, ctx, profile);
@@ -516,16 +523,20 @@ async function executeStep(
         result = await execFileGeneration(stepInput, ctx);
         break;
       case "web_search":
-        result = await execWebSearch(stepInput, ctx);
+        result = await execWebSearch(stepInput, ctx, signal);
         break;
       case "conversation":
       default:
-        result = await execConversation(stepInput, ctx, priorContext);
+        result = await execConversation(stepInput, ctx, priorContext, signal);
         break;
     }
 
+    throwIfAborted(signal);
     return { ...result, step: planStep.step };
   } catch (err) {
+    if (signal?.aborted) {
+      throwIfAborted(signal);
+    }
     const message = err instanceof Error ? err.message : String(err);
     console.log(`[EXECUTOR] step ${planStep.step} failed: ${message}`);
     return {
@@ -563,10 +574,8 @@ function buildContextFromResult(result: StepResult, input: string): string {
 /**
  * Execute an ordered plan, routing each step to its capability module.
  *
- * OPTIMIZATION: Independent steps (image_generation, chart_generation,
- * memory_update, web_search) can run in parallel when they don't depend
- * on prior step outputs. Context-dependent steps (conversation, file_analysis)
- * run sequentially to preserve context threading.
+ * Side-effectful and quota-consuming tools run sequentially to preserve
+ * ordering and avoid partial parallel commits.
  *
  * Results from prior steps are condensed and forwarded to subsequent
  * steps as context so the LLM can produce coherent multi-step answers.
@@ -577,47 +586,22 @@ export async function executePlan(
   options: ExecutePlanOptions = {},
 ): Promise<ExecutionResult> {
   const profile = options.profile ?? INTUITIVE_PROFILE;
+  const signal = options.signal;
   const stepsToExecute = steps.slice(0, MAX_EXEC_STEPS);
 
   const results: StepResult[] = [];
   let priorContext = "";
 
-  for (let index = 0; index < stepsToExecute.length;) {
+  for (let index = 0; index < stepsToExecute.length; index += 1) {
+    throwIfAborted(signal);
     const planStep = stepsToExecute[index];
 
-    if (canRunInParallel(planStep.tool)) {
-      const group: PlanStep[] = [];
-      while (
-        index < stepsToExecute.length &&
-        canRunInParallel(stepsToExecute[index].tool)
-      ) {
-        group.push(stepsToExecute[index]);
-        index += 1;
-      }
-
-      console.log(`[EXECUTOR] running ${group.length} ordered parallel step(s): ${group.map(s => s.tool).join(", ")}`);
-      const startTime = Date.now();
-      const groupResults = await Promise.all(group.map(step => executeStep(step, ctx, "", profile)));
-      console.log(`[EXECUTOR] ordered parallel group completed in ${Date.now() - startTime}ms`);
-
-      for (let i = 0; i < groupResults.length; i++) {
-        const result = groupResults[i];
-        results.push(result);
-        const contextPart = buildContextFromResult(result, group[i].input);
-        if (contextPart) {
-          priorContext += (priorContext ? "\n" : "") + contextPart;
-        }
-      }
-      continue;
-    }
-
-    const result = await executeStep(planStep, ctx, priorContext, profile);
+    const result = await executeStep(planStep, ctx, priorContext, profile, signal);
     results.push(result);
     const contextPart = buildContextFromResult(result, planStep.input);
     if (contextPart) {
       priorContext += (priorContext ? "\n" : "") + contextPart;
     }
-    index += 1;
   }
 
   // Sort results by step number to maintain original order

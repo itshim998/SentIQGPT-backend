@@ -47,6 +47,7 @@ export interface TavilySearchRequest {
   maxResults?: number;
   skipLLMSynthesis?: boolean;
   webSearchMode?: WebSearchMode;
+  signal?: AbortSignal;
 }
 
 export interface TavilySearchResponse {
@@ -91,7 +92,8 @@ Provide your synthesized answer:`;
 
 async function synthesizeWithLLM(
   query: string,
-  context: string
+  context: string,
+  signal?: AbortSignal,
 ): Promise<{ answer: string; success: boolean; error?: string }> {
   const prompt = SYNTHESIS_PROMPT
     .replace("{query}", query)
@@ -107,7 +109,7 @@ async function synthesizeWithLLM(
         model_override: "gemini-search",
         user_id: "system",
       }),
-      signal: AbortSignal.timeout(60_000),
+      signal: signal ?? AbortSignal.timeout(60_000),
     });
 
     if (!response.ok) {
@@ -155,13 +157,14 @@ async function executeParallelSearches(
   queries: string[],
   provider: TavilyProvider,
   maxResultsPerQuery: number,
-  mode: WebSearchMode
+  mode: WebSearchMode,
+  signal?: AbortSignal,
 ): Promise<ReadonlyArray<readonly SearchResult[]>> {
   console.log(`[TavilyPipeline] executing ${queries.length} parallel searches`);
 
   const searchPromises = queries.map(async (q) => {
     try {
-      return await provider.search(q, maxResultsPerQuery, mode);
+      return await provider.search(q, maxResultsPerQuery, mode, signal);
     } catch (err) {
       console.log(`[TavilyPipeline] search failed for "${q.slice(0, 40)}...": ${err}`);
       return [] as readonly SearchResult[];
@@ -263,6 +266,7 @@ export async function executeTavilySearchPipeline(
     maxResults = TOTAL_MAX_RESULTS,
     skipLLMSynthesis = false,
     webSearchMode,
+    signal,
   } = request;
   const mode = normalizeWebSearchMode(webSearchMode);
 
@@ -297,7 +301,8 @@ export async function executeTavilySearchPipeline(
     const primary = await provider.searchWithMetadata(
       expanded.original,
       MAX_RESULTS_PER_QUERY,
-      mode
+      mode,
+      signal,
     );
     primaryAnswer = primary.answer;
     primaryImages = primary.images;
@@ -311,7 +316,8 @@ export async function executeTavilySearchPipeline(
     expanded.variations,
     provider,
     MAX_RESULTS_PER_QUERY,
-    mode
+    mode,
+    signal,
   );
 
   const resultSets = [primaryResults, ...variationResults];
@@ -358,7 +364,7 @@ export async function executeTavilySearchPipeline(
   if (primaryAnswer && primaryAnswer.trim()) {
     answer = primaryAnswer.trim();
   } else if (!skipLLMSynthesis) {
-    const synthesis = await synthesizeWithLLM(query, context);
+    const synthesis = await synthesizeWithLLM(query, context, signal);
 
     if (synthesis.success) {
       answer = synthesis.answer;

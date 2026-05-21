@@ -5,7 +5,7 @@ import { readFrontendSources } from "./frontendSource";
 const frontend = readFrontendSources();
 const html = frontend.combined;
 
-assert.match(html, /const DB_VERSION = 4;/);
+assert.match(html, /const DB_VERSION = 5;/);
 assert.match(html, /generatedFiles: "generated_files"/);
 assert.match(html, /setActiveUserId/);
 assert.match(html, /owner_user_id/);
@@ -47,6 +47,7 @@ assert.match(html, /generated-slide-preview/);
 assert.match(html, /generated-slide-card/);
 assert.match(html, /generated-preview-meta/);
 assert.match(html, /generated-pdf-preview/);
+assert.doesNotMatch(html, /allow-scripts/, "generated HTML previews must not execute scripts by default");
 
 assert.ok(frontend.scriptFiles.length >= 8, "expected modular frontend scripts to parse");
 frontend.scriptFiles.forEach((file) => {

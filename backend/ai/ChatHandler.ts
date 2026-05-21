@@ -82,6 +82,7 @@ export async function handleChat(args: {
   readonly modelOverride?: string;
   readonly userId?: string;
   readonly reasoningMode?: boolean;
+  readonly signal?: AbortSignal;
 }): Promise<ChatResponse> {
   if (!args.userMessage.trim()) {
     throw new Error("userMessage must be a non-empty string.");
@@ -120,7 +121,7 @@ export async function handleChat(args: {
   let finishReason: string | null | undefined;
 
   try {
-    const result = await callLLMAdapterDetailed(call);
+    const result = await callLLMAdapterDetailed({ ...call, signal: args.signal });
     raw = result.text;
     model_used = result.model_used;
     fallback = result.fallback ?? false;
@@ -190,7 +191,7 @@ export async function handleChat(args: {
       const continuationCall = args.reasoningMode
         ? { ...continuationBaseCall, max_output_tokens: CONTINUATION_MAX_OUTPUT_TOKENS, skip_wrappers: true }
         : continuationBaseCall;
-      const continuationResult = await callLLMAdapterDetailed(continuationCall);
+      const continuationResult = await callLLMAdapterDetailed({ ...continuationCall, signal: args.signal });
       if (continuationResult.finish_reason || continuationResult.truncated) {
         console.log(
           `[ChatHandler] continuation finish_reason=${continuationResult.finish_reason ?? "none"} truncated=${continuationResult.truncated ? "true" : "false"}`,

@@ -2,7 +2,7 @@
 // 1. Storage Manager — IndexedDB
 // ================================================================
 const DB_NAME = "SentIQGPT";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 const STORES = {
   chats: "chats",
@@ -48,10 +48,22 @@ function openDB() {
         memStore.createIndex("type", "type", { unique: false });
         memStore.createIndex("timestamp", "timestamp", { unique: false });
         memStore.createIndex("importance", "importance", { unique: false });
+        memStore.createIndex("owner_user_id", "owner_user_id", { unique: false });
+      } else {
+        const memStore = event.target.transaction.objectStore(STORES.memories);
+        if (!memStore.indexNames.contains("owner_user_id")) {
+          memStore.createIndex("owner_user_id", "owner_user_id", { unique: false });
+        }
       }
       if (!db.objectStoreNames.contains(STORES.files)) {
         const fileStore = db.createObjectStore(STORES.files, { keyPath: "id" });
         fileStore.createIndex("timestamp", "timestamp", { unique: false });
+        fileStore.createIndex("owner_user_id", "owner_user_id", { unique: false });
+      } else {
+        const fileStore = event.target.transaction.objectStore(STORES.files);
+        if (!fileStore.indexNames.contains("owner_user_id")) {
+          fileStore.createIndex("owner_user_id", "owner_user_id", { unique: false });
+        }
       }
       if (!db.objectStoreNames.contains(STORES.generatedFiles)) {
         const generatedFileStore = db.createObjectStore(STORES.generatedFiles, { keyPath: "id" });
@@ -583,6 +595,7 @@ async function storeMemory(memory) {
     summary: memory.summary,
     importance: memory.importance || 5,
     timestamp: memory.timestamp || memory.created_at || existing?.timestamp || new Date().toISOString(),
+    owner_user_id: normalizeCacheUserId(memory.owner_user_id || memory.ownerUserId || existing?.owner_user_id || activeCacheUserId),
     source_message_id: memory.source_message_id || existing?.source_message_id || null,
     scope,
     chat_id: chatId,
@@ -602,10 +615,15 @@ async function storeMemory(memory) {
 
 async function getAllMemories() {
   const memories = await dbGetAll(STORES.memories);
-  return memories.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  return memories
+    .filter((memory) => isOwnedCacheItemVisible(memory))
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 }
 
-async function getMemory(id) { return dbGet(STORES.memories, id); }
+async function getMemory(id) {
+  const memory = await dbGet(STORES.memories, id);
+  return isOwnedCacheItemVisible(memory) ? memory : undefined;
+}
 
 async function getMemoriesByType(type) {
   const all = await getAllMemories();
@@ -659,14 +677,21 @@ async function storeFile(fileData) {
     extracted_text: fileData.extracted_text || "",
     blob: fileData.blob || null,
     size_bytes: fileData.size_bytes || 0,
+    owner_user_id: normalizeCacheUserId(fileData.owner_user_id || fileData.ownerUserId || activeCacheUserId),
     timestamp: new Date().toISOString(),
   };
   await dbPut(STORES.files, item);
   return item;
 }
 
-async function getAllFiles() { return dbGetAll(STORES.files); }
-async function getFile(id) { return dbGet(STORES.files, id); }
+async function getAllFiles() {
+  const files = await dbGetAll(STORES.files);
+  return files.filter((file) => isOwnedCacheItemVisible(file));
+}
+async function getFile(id) {
+  const file = await dbGet(STORES.files, id);
+  return isOwnedCacheItemVisible(file) ? file : undefined;
+}
 async function deleteFile(id) { return dbDelete(STORES.files, id); }
 
 function normalizeGeneratedFileCacheId(fileData) {
@@ -760,10 +785,14 @@ async function getAllConfig() {
 async function enforceLimit(storeName, limitKey) {
   const limit = await getConfig(limitKey);
   if (!limit) return;
-  const count = await dbCount(storeName);
+  const all = await dbGetAll(storeName);
+  const scopedStores = new Set([STORES.memories, STORES.files]);
+  const candidates = scopedStores.has(storeName)
+    ? all.filter((item) => isOwnedCacheItemVisible(item))
+    : all;
+  const count = candidates.length;
   if (count >= limit) {
-    const all = await dbGetAll(storeName);
-    const sorted = all.sort((a, b) => new Date(a.updated || a.timestamp) - new Date(b.updated || b.timestamp));
+    const sorted = candidates.sort((a, b) => new Date(a.updated || a.timestamp) - new Date(b.updated || b.timestamp));
     const toDelete = sorted.slice(0, count - limit + 1);
     for (const item of toDelete) await dbDelete(storeName, item.id);
   }

@@ -1165,22 +1165,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         ? "Analysis failed"
         : "Analyzing file...";
     setFileAnalysisStatus(entry, status, label);
-    if (status === "complete" && event.extracted_text) {
-      for (const [chatId, state] of chatStates.entries()) {
-        if (state?.sessionFile?.analysis_id !== event.analysis_id) continue;
-        const updatedFile = {
-          ...state.sessionFile,
-          extracted_text: event.extracted_text,
-          size_bytes: event.size_bytes || state.sessionFile.size_bytes,
-          type: event.file_type || state.sessionFile.type,
-          updated_at: new Date().toISOString(),
-        };
-        state.sessionFile = updatedFile;
-        if (chatId === currentChatId) {
-          currentSessionFile = updatedFile;
-          showToast("File analysis ready.", "success", 2500);
-        }
-      }
+    if (status === "complete") {
+      showToast("File analysis ready.", "success", 2500);
     }
     if (status === "error" && event.error) {
       showToast(`File analysis failed: ${event.error}`, "error", 3500);
@@ -1289,6 +1275,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       summary: memory.summary,
       importance: memory.importance || 5,
       timestamp: memory.timestamp || memory.created_at || new Date().toISOString(),
+      owner_user_id: getActiveAuthUserId(),
       scope: memory.scope === "chat" ? "chat" : "global",
       chat_id: typeof memory.chat_id === "string" && memory.chat_id.trim() ? memory.chat_id.trim() : null,
       embedding: Array.isArray(memory.embedding) ? memory.embedding : undefined,
@@ -3532,6 +3519,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       importance: memory.importance,
       scope,
       chat_id: scope === "chat" ? (memory.chat_id || chatId) : null,
+      owner_user_id: getActiveAuthUserId(),
       persisted: memory.persisted === true,
       source_conversation_id: memory.source_conversation_id || chatId || null,
       source: memory.id ? "server" : "local",
@@ -6171,7 +6159,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       previewPane.className = "generated-html-preview-pane";
       const iframe = document.createElement("iframe");
       iframe.className = "generated-html-preview-frame";
-      iframe.setAttribute("sandbox", "allow-forms allow-modals allow-pointer-lock allow-popups allow-scripts");
+      iframe.setAttribute("sandbox", "allow-forms allow-modals allow-pointer-lock allow-popups");
       iframe.title = "HTML preview";
       previewPane.appendChild(iframe);
       layout.appendChild(codePane);
@@ -8377,13 +8365,16 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           const queuedEvent = pendingFileAnalysisEvents.get(analysisId);
           if (queuedEvent) {
             pendingFileAnalysisEvents.delete(analysisId);
-            applyFileAnalysisEvent(queuedEvent);
+            if (!(status === "complete" && queuedEvent.status !== "error" && queuedEvent.status !== "complete")) {
+              applyFileAnalysisEvent(queuedEvent);
+            }
           }
         }
         if (isAuthenticatedSession()) {
           await Storage.storeFile({
             filename: result.filename, type: result.type,
             extracted_text: result.extracted_text, size_bytes: result.size_bytes, blob: file,
+            owner_user_id: getActiveAuthUserId(),
           });
         }
         return sessionFile;
