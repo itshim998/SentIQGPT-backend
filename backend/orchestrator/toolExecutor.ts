@@ -230,8 +230,10 @@ async function execConversation(
 
 async function execImageGeneration(
   input: string,
+  ctx: BuiltContext,
+  signal?: AbortSignal,
 ): Promise<StepResult> {
-  const result = await routeImageGeneration({ prompt: input });
+  const result = await routeImageGeneration({ prompt: input, userId: ctx.userId, signal });
 
   return {
     step: 0,
@@ -511,7 +513,7 @@ async function executeStep(
 
     switch (planStep.tool) {
       case "image_generation":
-        result = await execImageGeneration(stepInput);
+        result = await execImageGeneration(stepInput, ctx, signal);
         break;
       case "file_analysis":
         result = await execFileAnalysis(stepInput, ctx, priorContext, signal);

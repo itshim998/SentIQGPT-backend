@@ -273,12 +273,7 @@ export async function deleteConversations(userDb: any, ids: string[], userId?: s
 }
 
 export async function getUserConversations(userDb: any, userId: string) {
-  const result = await userDb
-    .from("conversations")
-    .select("id, title, created_at, last_activity_at")
-    .eq("user_id", userId)
-    .order("last_activity_at", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false });
+  const result = await userDb.rpc("list_user_conversations", { p_user_id: userId });
 
   if (result.error) {
     return {
@@ -287,55 +282,14 @@ export async function getUserConversations(userDb: any, userId: string) {
     };
   }
 
-  const conversations = (result.data ?? []) as ConversationListRow[];
-  const conversationIds = conversations.map((conversation) => conversation.id).filter(Boolean);
-  if (conversationIds.length === 0) {
-    return {
-      data: conversations,
-      error: null,
-    };
-  }
-
-  const messagesResult = await userDb
-    .from("messages")
-    .select("conversation_id, role, content, created_at")
-    .in("conversation_id", conversationIds)
-    .order("created_at", { ascending: true });
-
-  if (messagesResult.error) {
-    return {
-      data: [] as ConversationListRow[],
-      error: messagesResult.error,
-    };
-  }
-
-  const statsByConversation = new Map<string, { count: number; firstUserMessage: string | null; lastMessageAt: string | null }>();
-  for (const message of messagesResult.data ?? []) {
-    const conversationId = typeof message.conversation_id === "string" ? message.conversation_id : "";
-    if (!conversationId) continue;
-    const stats = statsByConversation.get(conversationId) || {
-      count: 0,
-      firstUserMessage: null,
-      lastMessageAt: null,
-    };
-    stats.count += 1;
-    if (!stats.firstUserMessage && message.role === "user" && typeof message.content === "string") {
-      stats.firstUserMessage = message.content.slice(0, 240);
-    }
-    if (typeof message.created_at === "string") {
-      stats.lastMessageAt = message.created_at;
-    }
-    statsByConversation.set(conversationId, stats);
-  }
-
   return {
-    data: conversations.map((conversation) => {
-      const stats = statsByConversation.get(conversation.id);
+    data: ((result.data ?? []) as ConversationListRow[]).map((conversation) => {
+      const rawMessageCount = Number(conversation.message_count ?? 0);
       return {
         ...conversation,
-        message_count: stats?.count || 0,
-        first_user_message: stats?.firstUserMessage || null,
-        last_message_at: stats?.lastMessageAt || null,
+        message_count: Number.isFinite(rawMessageCount) ? rawMessageCount : 0,
+        first_user_message: conversation.first_user_message || null,
+        last_message_at: conversation.last_message_at || null,
       };
     }),
     error: null,

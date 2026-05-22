@@ -1,4 +1,4 @@
-// SentIQGPT v2 — File Chunking Utility
+// SentIQGPT v2 - File Chunking Utility
 //
 // Splits large extracted text into overlapping chunks for
 // efficient context window usage. During conversation, only
@@ -23,7 +23,14 @@ export function chunkText(
   chunkSize: number = DEFAULT_CHUNK_SIZE,
   overlap: number = DEFAULT_OVERLAP,
 ): TextChunk[] {
-  if (!text || text.length <= chunkSize) {
+  const safeChunkSize = Number.isFinite(chunkSize) && chunkSize > 0
+    ? Math.floor(chunkSize)
+    : DEFAULT_CHUNK_SIZE;
+  const safeOverlap = Number.isFinite(overlap) && overlap > 0
+    ? Math.min(Math.floor(overlap), safeChunkSize - 1)
+    : 0;
+
+  if (!text || text.length <= safeChunkSize) {
     return [{ index: 0, text, filename }];
   }
 
@@ -32,14 +39,15 @@ export function chunkText(
   let idx = 0;
 
   while (start < text.length) {
-    let end = Math.min(start + chunkSize, text.length);
+    let end = Math.min(start + safeChunkSize, text.length);
 
     // Try to break at a sentence boundary (. ! ? \n)
     if (end < text.length) {
-      const searchRegion = text.slice(start + chunkSize - 100, end);
+      const searchStart = Math.max(start, end - Math.min(100, safeChunkSize));
+      const searchRegion = text.slice(searchStart, end);
       const lastSentence = searchRegion.search(/[.!?\n][^.!?\n]*$/);
       if (lastSentence > 0) {
-        end = start + chunkSize - 100 + lastSentence + 1;
+        end = searchStart + lastSentence + 1;
       }
     }
 
@@ -49,8 +57,8 @@ export function chunkText(
       filename,
     });
 
-    start = end - overlap;
-    if (start >= text.length) break;
+    const nextStart = end - safeOverlap;
+    start = nextStart > start ? nextStart : end;
   }
 
   return chunks;
@@ -58,7 +66,7 @@ export function chunkText(
 
 /**
  * Score how relevant a chunk is to a user query.
- * Uses simple keyword overlap — fast, no LLM needed.
+ * Uses simple keyword overlap - fast, no LLM needed.
  */
 export function scoreChunkRelevance(chunk: TextChunk, query: string): number {
   const queryWords = new Set(

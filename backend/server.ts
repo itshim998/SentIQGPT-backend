@@ -159,6 +159,10 @@ const JSON_BODY_LIMIT = process.env.SENTIQ_JSON_BODY_LIMIT?.trim() || "6mb";
 const TITLE_MAX_CHARS = 120;
 const TITLE_FALLBACK_MAX_CHARS = 50;
 const TITLE_GENERATION_TIMEOUT_MS = parseInt(process.env.SENTIQ_TITLE_TIMEOUT_MS || "12000", 10);
+const SHUTDOWN_GRACE_MS = (() => {
+  const parsed = Number.parseInt(process.env.SENTIQ_SHUTDOWN_GRACE_MS || "10000", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 10_000;
+})();
 
 app.set("trust proxy", process.env.TRUST_PROXY ?? "loopback, linklocal, uniquelocal");
 
@@ -226,7 +230,34 @@ app.use((_req, res, next) => {
   next();
 });
 
+let activeRequests = 0;
+app.use((_req, res, next) => {
+  activeRequests += 1;
+  let counted = true;
+  const releaseRequest = () => {
+    if (!counted) return;
+    counted = false;
+    activeRequests = Math.max(0, activeRequests - 1);
+  };
+  res.on("finish", releaseRequest);
+  res.on("close", releaseRequest);
+  next();
+});
+
+async function attachRateLimitIdentity(req: Request, _res: Response, next: NextFunction): Promise<void> {
+  try {
+    await resolveRequestUser(req, { allowGuest: true });
+  } catch (error) {
+    if (!(error instanceof AuthError)) {
+      console.warn(`[RateLimit] auth identity pre-resolution failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } finally {
+    next();
+  }
+}
+
 // ---- Middleware stack ----
+app.use(attachRateLimitIdentity);
 app.use(generalRateLimiter);
 app.use(auditMiddleware);
 
@@ -4813,6 +4844,7 @@ app.post(
       result = await routeImageGeneration({
         prompt: providerPrompt,
         size: parsed.data.size,
+        userId,
       });
     } catch (error) {
       if (imageQuotaReserved) {
@@ -5446,8 +5478,48 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 // ===============================
 // Start
 // ===============================
+let httpServer: ReturnType<typeof app.listen> | null = null;
+let shutdownStarted = false;
+
+function shutdownProcess(reason: string, exitCode: number, error?: unknown): void {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+
+  if (error) {
+    console.error(`[SentIQGPT] ${reason}:`, error);
+  } else {
+    console.log(`[SentIQGPT] ${reason} received - shutting down gracefully`);
+  }
+
+  const forceExitTimer = setTimeout(() => {
+    console.error(`[SentIQGPT] forced shutdown after ${SHUTDOWN_GRACE_MS}ms active_requests=${activeRequests}`);
+    process.exit(exitCode);
+  }, SHUTDOWN_GRACE_MS);
+  forceExitTimer.unref();
+
+  const finish = () => {
+    clearTimeout(forceExitTimer);
+    console.log(`[SentIQGPT] HTTP server closed active_requests=${activeRequests}`);
+    process.exit(exitCode);
+  };
+
+  if (!httpServer) {
+    finish();
+    return;
+  }
+
+  httpServer.close((closeError?: Error) => {
+    if (closeError) {
+      console.error(`[SentIQGPT] HTTP server close failed: ${closeError.message}`);
+      process.exit(exitCode || 1);
+      return;
+    }
+    finish();
+  });
+}
+
 verifyShardMigrations().then(() => {
-  const server = app.listen(PORT, () => {
+  httpServer = app.listen(PORT, () => {
     console.log(`[SentIQGPT v2] Server running on port ${PORT}`);
     console.log(`[SentIQGPT v2] Architecture: Orchestrated Dual-Model (Gemini + Groq)`);
     console.log(`[SentIQGPT v2] LLM Service expected on port ${process.env.LLM_SERVICE_PORT || "3002"}`);
@@ -5462,27 +5534,16 @@ verifyShardMigrations().then(() => {
     console.log(`[SentIQGPT v2] Tavily Web Search: ${tavilyStatus ? "ENABLED" : "DISABLED (set TAVILY_KEYS in env)"}`);
   });
 
-  // ---- Graceful shutdown ----
-  function gracefulShutdown(signal: string) {
-    console.log(`[SentIQGPT] ${signal} received — shutting down gracefully`);
-    server.close(() => {
-      console.log("[SentIQGPT] HTTP server closed");
-      process.exit(0);
-    });
-    // Force exit after 10s if connections don't drain
-    setTimeout(() => process.exit(1), 10_000).unref();
-  }
-  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdownProcess("SIGTERM", 0));
+  process.on("SIGINT", () => shutdownProcess("SIGINT", 0));
 }).catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`[SentIQGPT] FATAL: startup migration verification failed: ${message}`);
   process.exit(1);
 });
 process.on("uncaughtException", (err) => {
-  console.error("[SentIQGPT] UNCAUGHT EXCEPTION (kept alive):", err.message);
-  console.error(err.stack);
+  shutdownProcess("FATAL uncaught exception", 1, err);
 });
 process.on("unhandledRejection", (reason) => {
-  console.error("[SentIQGPT] UNHANDLED REJECTION (kept alive):", reason);
+  shutdownProcess("FATAL unhandled rejection", 1, reason);
 });

@@ -538,6 +538,16 @@ export async function verifyShardMigrations(): Promise<void> {
         );
       }
 
+      const { error: listConversationsFnError } = await client.rpc("list_user_conversations", {
+        p_user_id: dummyId,
+      });
+      if (listConversationsFnError) {
+        markFailure(
+          id,
+          `is missing list_user_conversations RPC (migration 20260522140000). code=${listConversationsFnError.code ?? "unknown"} message=${listConversationsFnError.message}`,
+        );
+      }
+
       // Check: 20260412090000_incremental_memory_usage_tracking.sql
       const { error: adjustMemoryFnError } = await client.rpc("adjust_user_memory_usage", {
         p_user_id: dummyId,
