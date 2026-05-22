@@ -148,6 +148,47 @@ runInContext(
 assert(/<strong>bold<\/strong>/.test(fallbackSandbox.fallbackResult), "Markdown fallback renders bold text");
 assert(!/SENTIQ|MATH\d+|@@/.test(stripHtml(fallbackSandbox.fallbackResult)), "Markdown fallback strips leaked sentinels");
 
+const payloadFunctionSource = [
+  "splitThinkBlocks",
+  "splitFinalAnswerSection",
+  "looksLikeReasoningOnly",
+  "extractStructuredAnswerText",
+  "beautifyAnswerText",
+  "normalizeAssistantPayload",
+].map((name) => extractFunction(frontendSource, name)).join("\n");
+const payloadSandbox = {
+  mathPayload: null as null | { answer: string; thinking: string },
+  legacyPayload: null as null | { answer: string; thinking: string },
+};
+createContext(payloadSandbox);
+const mathWithFinalSection = [
+  "## Solution",
+  "",
+  "First integrate term by term.",
+  "",
+  "## Final Answer",
+  "",
+  "\\[\\boxed{x^3 + C}\\]",
+].join("\n");
+const legacyThinkPayload = [
+  "<think>",
+  "Try a few graph-search strategies.",
+  "</think>",
+  "Final Answer:",
+  "Use BFS for the shortest path.",
+].join("\n");
+runInContext(
+  `${payloadFunctionSource}
+mathPayload = normalizeAssistantPayload(${JSON.stringify(mathWithFinalSection)}, "");
+legacyPayload = normalizeAssistantPayload(${JSON.stringify(legacyThinkPayload)}, "");`,
+  payloadSandbox,
+);
+assert(payloadSandbox.mathPayload?.answer.includes("## Solution") ?? false, "math final render preserves solution section before Final Answer");
+assert(payloadSandbox.mathPayload?.answer.includes("## Final Answer") ?? false, "math final render preserves Final Answer heading");
+assert(payloadSandbox.mathPayload?.answer.includes("\\boxed{x^3 + C}") ?? false, "math final render preserves boxed final answer");
+assert(payloadSandbox.legacyPayload?.answer === "Use BFS for the shortest path.", "legacy think payload still extracts final answer");
+assert(payloadSandbox.legacyPayload?.thinking.includes("graph-search") ?? false, "legacy think payload still captures thinking");
+
 const mathStreamModeIndex = frontendSource.indexOf('streamBubble.setRenderMode("math")');
 const progressiveRenderIndex = frontendSource.indexOf("renderRichText(safeText, { mode: getRenderMode() })");
 assert(mathStreamModeIndex >= 0, "math streaming switches the active bubble into math render mode");

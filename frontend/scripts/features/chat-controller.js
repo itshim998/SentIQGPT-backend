@@ -5043,10 +5043,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const answerSource = String(answerText || "");
     const explicitThinking = String(thinkingText || "").replace(/<\/?think[^>]*>/gi, "").trim();
     const structuredAnswer = extractStructuredAnswerText(answerSource);
+    const hasHiddenThinkingMarkup = /<think[\s>]/i.test(answerSource);
     const shouldUseLegacyFallback =
       !structuredAnswer &&
       !explicitThinking &&
-      /<think[\s>]|(?:^|\n)\s*(?:#{1,6}\s*)?Final Answer\s*:?\s*/i.test(answerSource);
+      hasHiddenThinkingMarkup;
 
     if (!shouldUseLegacyFallback) {
       const cleanAnswer = beautifyAnswerText(structuredAnswer || answerSource);

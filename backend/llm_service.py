@@ -19,6 +19,7 @@ from datetime import date
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import Any, Optional
 import uvicorn
@@ -607,7 +608,12 @@ async def health_check():
 async def invoke_llm(request: LLMInvokeRequest):
     try:
         user_id_for_safety = request.user_id or GUEST_USER_ID
-        is_safe, classification, _ = check_input_safety(request.prompt, user_id_for_safety, "/llm/invoke")
+        is_safe, classification, _ = await run_in_threadpool(
+            check_input_safety,
+            request.prompt,
+            user_id_for_safety,
+            "/llm/invoke",
+        )
         if not is_safe:
             logger.warning("[Safety] Input blocked for user=%s classification=%s", user_id_for_safety, classification)
             reason = "safety_violation" if classification == SafetyResult.UNSAFE else "safety_degraded"
@@ -626,20 +632,21 @@ async def invoke_llm(request: LLMInvokeRequest):
             assigned_db = None
         else:
             user_id = require_user_id(request.user_id)
-            assigned_db = reserve_llm_request_slot(user_id)
+            assigned_db = await run_in_threadpool(reserve_llm_request_slot, user_id)
             effective_model_override = request.model_override
             logger.info("[invoke] quota_reserved user_id=%s db=%s task=%s", user_id, assigned_db, request.task)
-        result = call_llm_router(
-            prompt=request.prompt,
-            task=request.task,
-            use_simulation=request.use_simulation,
-            prefer=request.prefer,
-            model_override=effective_model_override,
-            user_id=user_id,
-            max_output_tokens=request.max_output_tokens,
-            reasoning_effort=request.reasoning_effort,
-            skip_wrappers=bool(request.skip_wrappers),
-            image_attachments=request.image_attachments or None,
+        result = await run_in_threadpool(
+            call_llm_router,
+            request.prompt,
+            request.task,
+            request.use_simulation,
+            request.prefer,
+            effective_model_override,
+            user_id,
+            request.max_output_tokens,
+            request.reasoning_effort,
+            bool(request.skip_wrappers),
+            request.image_attachments or None,
         )
         # Resolve the actual provider (not just the prefer hint)
         from llm_adapter import resolve_model_override, get_provider_for_task
@@ -725,7 +732,12 @@ async def stream_llm(request: LLMInvokeRequest):
     
     # ── INPUT SAFETY GUARD (pre-check before streaming) ──
     user_id_for_safety = request.user_id or GUEST_USER_ID
-    is_safe, classification, _ = check_input_safety(request.prompt, user_id_for_safety, "/llm/stream")
+    is_safe, classification, _ = await run_in_threadpool(
+        check_input_safety,
+        request.prompt,
+        user_id_for_safety,
+        "/llm/stream",
+    )
     if not is_safe:
         logger.warning("[Safety] Stream input blocked for user=%s classification=%s", user_id_for_safety, classification)
         reason = "safety_violation" if classification == SafetyResult.UNSAFE else "safety_degraded"

@@ -3,7 +3,7 @@
 // Single-model math pipeline for mathematical/numerical queries.
 // Uses openai-large directly via the shared LLM adapter.
 
-import { buildChatPrompt, callLLMAdapterDetailed } from "./PromptBuilders";
+import { buildChatPrompt, callLLMAdapterDetailed, callLLMAdapterStream } from "./PromptBuilders";
 import type { ImageAttachment } from "./PromptBuilders";
 import { isProviderFailurePayload } from "./replyGuard";
 
@@ -359,6 +359,45 @@ export async function callMathModelRaw(args: {
     model_used: result.model_used,
     fallback,
   };
+}
+
+export async function streamMathModelRaw(args: {
+  readonly userMessage: string;
+  readonly modelOverride: string;
+  readonly userId?: string;
+  readonly recentMessages?: readonly { role: string; content: string }[];
+  readonly memories?: readonly { type: string; summary: string }[];
+  readonly fileReferences?: readonly { filename: string; extractedText: string }[];
+  readonly imageAttachments?: readonly ImageAttachment[];
+  readonly conversationSummary?: string;
+  readonly priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
+  readonly isExplicitRecallQuery?: boolean;
+  readonly maxOutputTokens?: number;
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+}): Promise<ReadableStream<string>> {
+  const call = buildChatPrompt({
+    userMessage: args.userMessage,
+    recentMessages: args.recentMessages,
+    memories: args.memories,
+    fileReferences: args.fileReferences,
+    imageAttachments: args.imageAttachments,
+    conversationSummary: args.conversationSummary,
+    priorConversationEvidence: args.priorConversationEvidence,
+    isExplicitRecallQuery: args.isExplicitRecallQuery,
+    modelOverride: args.modelOverride,
+    userId: args.userId,
+    mathMode: true,
+    streaming: true,
+  });
+
+  return callLLMAdapterStream({
+    ...call,
+    max_output_tokens: args.maxOutputTokens ?? SOLVER_MAX_OUTPUT_TOKENS,
+    timeout_ms: args.timeoutMs ?? 240_000,
+    skip_wrappers: true,
+    signal: args.signal,
+  });
 }
 
 /**

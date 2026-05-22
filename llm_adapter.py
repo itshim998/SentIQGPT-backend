@@ -1191,6 +1191,7 @@ def _call_pollinations_stream(
     model: str, 
     temperature: float = 0.7,
     image_attachments: Optional[list[dict[str, Any]]] = None,
+    max_output_tokens: Optional[int] = None,
 ):
     """
     True provider SSE stream for Pollinations.
@@ -1207,7 +1208,7 @@ def _call_pollinations_stream(
         image_attachments,
         model,
     )
-    payload = _build_pollinations_payload(effective_prompt, model, temperature, None, effective_images)
+    payload = _build_pollinations_payload(effective_prompt, model, temperature, max_output_tokens, effective_images)
     payload["stream"] = True
 
     logger.info("[Pollinations] provider_sse stream mode enabled")
@@ -1625,7 +1626,12 @@ def stream_llm_router(
     if provider == "pollinations":
         emitted_primary_text = False
         try:
-            for chunk in _call_pollinations_stream(prompt, resolved_override or model, image_attachments=image_attachments):
+            for chunk in _call_pollinations_stream(
+                prompt,
+                resolved_override or model,
+                image_attachments=image_attachments,
+                max_output_tokens=max_output_tokens,
+            ):
                 if chunk:
                     emitted_primary_text = True
                 yield chunk
@@ -1652,7 +1658,12 @@ def stream_llm_router(
             emitted_alt_text = False
             try:
                 logger.info("[Fallback] Trying alternate Pollinations model: %s", alt_pollinations_model)
-                for chunk in _call_pollinations_stream(prompt, alt_pollinations_model, image_attachments=image_attachments):
+                for chunk in _call_pollinations_stream(
+                    prompt,
+                    alt_pollinations_model,
+                    image_attachments=image_attachments,
+                    max_output_tokens=max_output_tokens,
+                ):
                     if chunk:
                         emitted_alt_text = True
                     yield chunk

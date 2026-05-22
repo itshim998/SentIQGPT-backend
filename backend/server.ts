@@ -151,7 +151,7 @@ import { getOptionalUuid, getRequiredUuid } from "./validation/uuid";
 import { ZodError } from "zod";
 import { collapseAdjacentDuplicateMessages } from "./context/messageDeduper";
 import { resolveContextReferences } from "./context/referenceResolver";
-import { callMathModelRaw } from "./ai/mathVerifier";
+import { callMathModelRaw, streamMathModelRaw } from "./ai/mathVerifier";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -3121,6 +3121,7 @@ app.post(
         try {
           if (isMathReasoningQuery) {
             await writeSseJson({ type: "route", route: "math_reasoning" });
+            let guestMathStreamReply = "";
             const guestMathRawContext = {
               recent_messages: normalizedRecentMessages,
               memories: [],
@@ -3132,18 +3133,60 @@ app.post(
             const guestMathContext = executionProfile.context.compressConversation
               ? await buildContext(guestMathRawContext, undefined, userId, { profile: executionProfile })
               : await buildContextFast(guestMathRawContext, undefined, userId, { profile: executionProfile });
-            const result = await solveGuestMathWithGemini({
-              userMessage: guestUserMessage,
-              userId,
-              recentMessages: guestMathContext.recentMessages,
-              fileReferences: guestMathContext.fileReferences,
-              imageAttachments: guestMathContext.imageAttachments,
-              conversationSummary: guestMathContext.conversationSummary,
-              priorConversationEvidence: guestMathContext.priorConversationEvidence,
-              isExplicitRecallQuery: guestMathContext.isExplicitRecallQuery,
-            });
-            if (!clientDisconnected) {
+
+            try {
+              const mathStream = await streamMathModelRaw({
+                userMessage: guestUserMessage,
+                modelOverride: GUEST_MODEL_OVERRIDE,
+                userId,
+                recentMessages: guestMathContext.recentMessages,
+                memories: [],
+                fileReferences: guestMathContext.fileReferences,
+                imageAttachments: guestMathContext.imageAttachments,
+                conversationSummary: guestMathContext.conversationSummary,
+                priorConversationEvidence: guestMathContext.priorConversationEvidence,
+                isExplicitRecallQuery: guestMathContext.isExplicitRecallQuery,
+                maxOutputTokens: GUEST_MATH_MAX_OUTPUT_TOKENS,
+                signal: requestAbortController.signal,
+              });
+              const reader = mathStream.getReader();
+              try {
+                while (true) {
+                  if (clientDisconnected) break;
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  if (!value) continue;
+                  guestMathStreamReply += value;
+                  recordStreamChunk(streamMetrics, value);
+                  await writeSseJson({ type: "token", text: value });
+                }
+              } finally {
+                if (clientDisconnected) {
+                  await reader.cancel("client disconnected").catch(() => undefined);
+                }
+              }
+            } catch (streamErr) {
+              if (streamMetrics.chunkCount > 0 || clientDisconnected) {
+                throw streamErr;
+              }
+              console.warn(
+                `[Stream] guest math live stream failed before first token; falling back to buffered math: ${streamErr instanceof Error ? streamErr.message : streamErr}`,
+              );
+              const result = await solveGuestMathWithGemini({
+                userMessage: guestUserMessage,
+                userId,
+                recentMessages: guestMathContext.recentMessages,
+                fileReferences: guestMathContext.fileReferences,
+                imageAttachments: guestMathContext.imageAttachments,
+                conversationSummary: guestMathContext.conversationSummary,
+                priorConversationEvidence: guestMathContext.priorConversationEvidence,
+                isExplicitRecallQuery: guestMathContext.isExplicitRecallQuery,
+              });
+              guestMathStreamReply = result.reply;
               await streamBufferedAnswer(result.reply, undefined, false, streamMetrics);
+            }
+
+            if (!clientDisconnected) {
               await writeSseEvent("[DONE]");
               logStreamMetrics(streamMetrics, "complete");
             }
@@ -3874,38 +3917,86 @@ app.post(
       const streamMetrics = createStreamMetrics(
         "chat.stream.reasoning",
         Date.now(),
-        { model: isMathReasoningQuery ? "orchestrator" : "openai-large" },
+        { model: "openai-large" },
       );
       const stopHeartbeat = startStreamHeartbeat(10_000, "reasoning");
 
       try {
         if (isMathReasoningQuery) {
-          const result = await orchestrate({
-            userMessage: parsed.data.message,
-            executionMode: parsed.data.executionMode,
-            clarificationResponse: parsed.data.clarification_response,
-            signal: requestAbortController.signal,
-            context: {
-              recent_messages: normalizedRecentMessages,
-              memories: parsed.data.context?.memories,
-              file_references: parsed.data.context?.file_references,
-              image_attachments: parsed.data.context?.image_attachments,
-              trustedProfile,
-              web_search_mode: webSearchMode,
-              conversationId: activeConversationId || undefined,
-              userDb,
+          await writeSseJson({ type: "route", route: "math_reasoning" });
+          let mathStreamReply = "";
+          const mathRawContext = {
+            recent_messages: normalizedRecentMessages,
+            memories: parsed.data.context?.memories,
+            file_references: parsed.data.context?.file_references,
+            image_attachments: parsed.data.context?.image_attachments,
+            trustedProfile,
+            web_search_mode: webSearchMode,
+            userMessage: effectiveUserMessage,
+            conversationId: activeConversationId || undefined,
+          };
+          const mathContext = executionProfile.context.compressConversation
+            ? await buildContext(mathRawContext, userDb, userId, { profile: executionProfile })
+            : await buildContextFast(mathRawContext, userDb, userId, { profile: executionProfile });
+
+          try {
+            const mathStream = await streamMathModelRaw({
+              userMessage: effectiveUserMessage,
+              modelOverride: "openai-large",
               userId,
-            },
-          });
-          if (result.reply) {
-            await persistAssistantMessage(result.reply);
+              recentMessages: mathContext.recentMessages,
+              memories: mathContext.memories,
+              fileReferences: mathContext.fileReferences,
+              imageAttachments: mathContext.imageAttachments,
+              conversationSummary: mathContext.conversationSummary,
+              priorConversationEvidence: mathContext.priorConversationEvidence,
+              isExplicitRecallQuery: mathContext.isExplicitRecallQuery,
+              signal: requestAbortController.signal,
+            });
+            const reader = mathStream.getReader();
+            try {
+              while (true) {
+                if (clientDisconnected) break;
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (!value) continue;
+                mathStreamReply += value;
+                recordStreamChunk(streamMetrics, value);
+                await writeSseJson({ type: "token", text: value });
+              }
+            } finally {
+              if (clientDisconnected) {
+                await reader.cancel("client disconnected").catch(() => undefined);
+              }
+            }
+          } catch (streamErr) {
+            if (streamMetrics.chunkCount > 0 || clientDisconnected) {
+              throw streamErr;
+            }
+            console.warn(
+              `[Stream] signed-in math live stream failed before first token; falling back to buffered math: ${streamErr instanceof Error ? streamErr.message : streamErr}`,
+            );
+            const fallback = await callMathModelRaw({
+              userMessage: effectiveUserMessage,
+              modelOverride: "openai-large",
+              userId,
+              recentMessages: mathContext.recentMessages,
+              memories: mathContext.memories,
+              fileReferences: mathContext.fileReferences,
+              imageAttachments: mathContext.imageAttachments,
+              conversationSummary: mathContext.conversationSummary,
+              priorConversationEvidence: mathContext.priorConversationEvidence,
+              isExplicitRecallQuery: mathContext.isExplicitRecallQuery,
+            });
+            mathStreamReply = fallback.answer;
+            await streamBufferedAnswer(fallback.answer, undefined, false, streamMetrics);
           }
-          await persistStoredMemory(result.memory);
-          finalizeMemoryUpdateCopy(result);
-          reportStreamMessageGap(Boolean(result.reply), "reasoning.math");
+
+          if (mathStreamReply && !clientDisconnected) {
+            await persistAssistantMessage(mathStreamReply);
+          }
+          reportStreamMessageGap(Boolean(mathStreamReply), "reasoning.math.stream");
           if (!clientDisconnected) {
-            const thinking = gateThinking(result.thinking, { route: result.route, isReasoning: true });
-            await streamBufferedAnswer(result.reply ?? "", thinking, true, streamMetrics);
             await writeSseEvent("[DONE]");
             logStreamMetrics(streamMetrics, "complete");
           }
