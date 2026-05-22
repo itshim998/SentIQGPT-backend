@@ -15,6 +15,10 @@ const migration = fs.readFileSync(
   path.join(root, "supabase", "migrations", "20260504120000_add_memory_embeddings.sql"),
   "utf8",
 );
+const memoryMaintenanceMigration = fs.readFileSync(
+  path.join(root, "supabase", "migrations", "20260522130000_memory_maintenance.sql"),
+  "utf8",
+);
 
 function routeBlock(route: string): string {
   const needle = `"${route}"`;
@@ -129,8 +133,9 @@ for (const route of [
   assert(migration.includes("embedding_model text"), "migration adds embedding model");
   assert(migration.includes("embedding_created_at timestamptz"), "migration adds embedding timestamp");
   assert(memoryService.includes("embedding_model"), "memory service persists embedding metadata");
-  assert(contextBuilder.includes("scheduleCloudMemoryEmbeddingBackfill"), "context builder schedules embedding backfill");
-  assert(contextBuilder.includes(".select(\"id, summary, type, importance, embedding"), "cloud memories fetch embeddings");
+  assert(contextBuilder.includes("await maintainCloudMemoryEmbeddings"), "context builder runs bounded durable embedding maintenance");
+  assert(memoryMaintenanceMigration.includes("embedding_backfill_requested_at"), "maintenance migration adds durable embedding backfill queue metadata");
+  assert(contextBuilder.includes("id, summary, type, importance, embedding"), "cloud memories fetch embeddings");
 }
 
 console.log("Pass 2 reliability checks passed.");

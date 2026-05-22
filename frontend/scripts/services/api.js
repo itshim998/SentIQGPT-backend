@@ -117,6 +117,7 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
   let tokensReceived = false;
   let interrupted = false;
   let terminalError = null;
+  let structuredReceived = false;
 
   function processSseLines(lines) {
     for (const line of lines) {
@@ -142,9 +143,14 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
         else if (parsed.type === "thinking" && parsed.text) {
           if (callbacks.onThinking) callbacks.onThinking(parsed.text);
         }
+        else if (parsed.type === "structured_response" && parsed.response) {
+          structuredReceived = true;
+          if (callbacks.onStructuredResponse) callbacks.onStructuredResponse(parsed.response);
+          return true;
+        }
         else if (parsed.type === "route" && parsed.route) { if (callbacks.onRoute) callbacks.onRoute(parsed.route, parsed); }
         else if (parsed.type === "memory" && parsed.memory) { if (callbacks.onMemory) callbacks.onMemory(parsed.memory); }
-        else if (parsed.type === "sync" && parsed.sync) { if (callbacks.onSync) callbacks.onSync(parsed.sync); }
+        else if (parsed.type === "sync" && parsed.sync) { if (callbacks.onSync) callbacks.onSync(parsed.sync, parsed.degraded || null); }
         else if (parsed.type === "error") {
           terminalError = new Error(parsed.error);
           interrupted = tokensReceived;
@@ -175,7 +181,7 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
     throw terminalError;
   }
   if (!interrupted && callbacks.onDone) callbacks.onDone();
-  return { structured: false, tokensReceived, interrupted, error: terminalError };
+  return { structured: structuredReceived, tokensReceived, interrupted, error: terminalError };
 }
 
 async function sendMessage(message, context = {}) {
@@ -192,6 +198,33 @@ async function sendMessage(message, context = {}) {
     : undefined;
   const executionMode = normalizeExecutionMode(context.executionMode || context.execution_mode);
   return apiRequest("/api/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      message,
+      ...(conversationId ? { conversationId } : {}),
+      ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
+      execution_mode: executionMode,
+      ...(clarificationResponse ? { clarification_response: clarificationResponse } : {}),
+      context: buildChatRequestContext(context),
+    }),
+    signal: context.signal || null,
+  });
+}
+
+async function getChatIntent(message, context = {}) {
+  const conversationId =
+    typeof context.conversationId === "string" && context.conversationId.trim()
+      ? context.conversationId.trim()
+      : undefined;
+  const clientRequestId =
+    typeof context.clientRequestId === "string" && context.clientRequestId.trim()
+      ? context.clientRequestId.trim()
+      : undefined;
+  const clarificationResponse = context.clarificationResponse && typeof context.clarificationResponse === "object"
+    ? context.clarificationResponse
+    : undefined;
+  const executionMode = normalizeExecutionMode(context.executionMode || context.execution_mode);
+  return apiRequest("/api/chat/intent", {
     method: "POST",
     body: JSON.stringify({
       message,
@@ -418,7 +451,7 @@ async function getHealth() { return apiRequest("/api/health"); }
 async function getConfigAPI() { return apiRequest("/api/config"); }
 
 window.SentIQAPI = {
-  sendMessage, sendMessageStream, classifyMemory, compressMemories,
+  sendMessage, sendMessageStream, getChatIntent, classifyMemory, compressMemories,
   sendSelectionMessage, uploadFile, subscribeFileUpdates, generateImage, storeImage, getChatImages, getImageQuota, generateTitle,
   getGeneratedFileAccessUrl, updateGeneratedHtmlFile,
   getConversations, createConversation, getConversationMessages, deleteConversation, updateConversationTitle, syncChatMessages,

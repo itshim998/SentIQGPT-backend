@@ -29,6 +29,16 @@ export interface SemanticSearchResult {
   readonly similarity: number;
 }
 
+const DEFAULT_MIN_SIMILARITY = 0.72;
+
+function readMinimumSimilarity(): number {
+  const raw = process.env.MEMORY_SEMANTIC_MIN_SIMILARITY?.trim();
+  if (!raw) return DEFAULT_MIN_SIMILARITY;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_MIN_SIMILARITY;
+  return Math.min(1, Math.max(0, parsed));
+}
+
 // ==============================
 // Cosine Similarity
 // ==============================
@@ -50,6 +60,13 @@ function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
   return denom === 0 ? 0 : dot / denom;
 }
 
+export function filterSemanticResultsByThreshold(
+  results: readonly SemanticSearchResult[],
+  minimumSimilarity = readMinimumSimilarity(),
+): SemanticSearchResult[] {
+  return results.filter((result) => result.similarity >= minimumSimilarity);
+}
+
 // ==============================
 // Public API
 // ==============================
@@ -68,6 +85,7 @@ export async function semanticMemorySearch(
   memories: readonly EmbeddedMemory[],
   query: string,
   limit: number = 3,
+  minimumSimilarity = readMinimumSimilarity(),
 ): Promise<SemanticSearchResult[] | null> {
   // Only consider memories that actually have embeddings
   const embedded = memories.filter(
@@ -92,13 +110,16 @@ export async function semanticMemorySearch(
 
   scored.sort((a, b) => b.similarity - a.similarity);
 
-  const topN = scored.slice(0, limit);
+  const topN = filterSemanticResultsByThreshold(scored, minimumSimilarity).slice(0, limit);
 
   // Diagnostic logging
   for (const item of topN) {
     console.log(
       `[MEMORY SEARCH] similarity: ${item.similarity.toFixed(3)} | type: ${item.memory.type} | "${item.memory.summary.slice(0, 60)}"`,
     );
+  }
+  if (topN.length === 0) {
+    console.log(`[MEMORY SEARCH] no memories met similarity threshold ${minimumSimilarity.toFixed(3)}`);
   }
 
   return topN;

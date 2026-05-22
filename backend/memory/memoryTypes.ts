@@ -29,6 +29,11 @@ export interface MemoryObject {
   readonly importance: number; // 1–10
   readonly timestamp: string; // ISO 8601
   readonly embedding?: readonly number[];
+  readonly scope?: "global" | "chat";
+  readonly chat_id?: string | null;
+  readonly persisted?: boolean;
+  readonly source_conversation_id?: string | null;
+  readonly failure_reason?: string;
   readonly source_message_id?: string;
 }
 
@@ -38,7 +43,13 @@ export interface MemoryObject {
 export interface MemoryReference {
   readonly type: string;
   readonly summary: string;
+  readonly importance?: number;
   readonly embedding?: readonly number[];
+  readonly scope?: "global" | "chat";
+  readonly chat_id?: string | null;
+  readonly persisted?: boolean;
+  readonly source_conversation_id?: string | null;
+  readonly failure_reason?: string;
 }
 
 /**
@@ -71,11 +82,17 @@ export interface MemoryCompressionResult {
  */
 export interface MemoryPipelineResult {
   readonly stored: boolean;
+  readonly failure_reason?: string;
   readonly memory?: {
     readonly type: MemoryType;
     readonly summary: string;
     readonly importance: number;
     readonly embedding?: readonly number[];
+    readonly scope?: "global" | "chat";
+    readonly chat_id?: string | null;
+    readonly persisted?: boolean;
+    readonly source_conversation_id?: string | null;
+    readonly failure_reason?: string;
   };
 }
 

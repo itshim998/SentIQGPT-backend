@@ -55,6 +55,10 @@ export interface GeneratedFileResult {
   readonly fallback?: boolean;
   readonly fallback_reason?: string | null;
   readonly error?: string;
+  readonly warning?: string;
+  readonly cleanup_failed?: boolean;
+  readonly orphaned_storage_path?: string;
+  readonly orphaned_storage_bucket?: string;
 }
 
 export interface FileGenerationRequest {

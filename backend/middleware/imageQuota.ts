@@ -23,7 +23,7 @@ const WINDOW_MS = 24 * 60 * 60 * 1_000; // 24 hours
 // ==============================
 
 interface ImageTracker {
-  /** Timestamps of image generations within the current window. */
+  /** Timestamps of successful image generations within the current window. */
   timestamps: number[];
   /** Last generation timestamp for cooldown enforcement. */
   lastGeneration: number;
@@ -84,6 +84,13 @@ export function getQuotaInfo(ip: string): {
   return { remaining, limit: MAX_IMAGES_PER_DAY, cooldownActive, resetMs };
 }
 
+export function commitImageQuotaSuccess(key: string, committedAt = Date.now()): void {
+  const tracker = getTracker(key);
+  prune(tracker, committedAt);
+  tracker.timestamps.push(committedAt);
+  tracker.lastGeneration = committedAt;
+}
+
 // ==============================
 // Middleware — enforce quota + cooldown
 // ==============================
@@ -112,28 +119,6 @@ export function imageQuotaMiddleware(
     });
     return;
   }
-
-  // Check daily quota
-  if (tracker.timestamps.length >= MAX_IMAGES_PER_DAY) {
-    const resetMs = WINDOW_MS - (now - tracker.timestamps[0]);
-    const resetMin = Math.ceil(resetMs / 60_000);
-    console.log(`[IMAGE] quota: daily limit reached for ${ip} (resets in ${resetMin}min)`);
-    res.status(429).json({
-      error: `Daily image limit reached (${MAX_IMAGES_PER_DAY} images per 24 hours). Resets in ~${resetMin} minutes.`,
-      type: "quota_exceeded",
-      remaining: 0,
-      limit: MAX_IMAGES_PER_DAY,
-      resetMs,
-    });
-    return;
-  }
-
-  // Record this generation
-  tracker.timestamps.push(now);
-  tracker.lastGeneration = now;
-
-  const remaining = MAX_IMAGES_PER_DAY - tracker.timestamps.length;
-  console.log(`[IMAGE] quota: ${ip} used ${tracker.timestamps.length}/${MAX_IMAGES_PER_DAY} (${remaining} remaining)`);
 
   next();
 }

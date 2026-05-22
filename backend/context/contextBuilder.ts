@@ -20,7 +20,10 @@ import { formatMemoriesForPrompt } from "../memory/memoryStore";
 import { selectMemoriesForQuery } from "./memorySelector";
 import { compressConversation, CONVERSATION_WINDOW } from "./contextCompressor";
 import { semanticMemorySearch } from "../memory/semanticSearch";
-import { generateEmbedding } from "../memory/memoryEmbedding";
+import {
+  enqueueMemoryEmbeddingBackfill,
+  processQueuedMemoryEmbeddingBackfill,
+} from "../memory/memoryMaintenance";
 import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 import { getPriorConversationUserMessages } from "../services/conversationService";
 import { collapseAdjacentDuplicateMessages } from "./messageDeduper";
@@ -116,11 +119,14 @@ type CloudMemoryRow = {
   embedding?: unknown;
   embedding_model?: string | null;
   embedding_created_at?: string | null;
+  embedding_backfill_requested_at?: string | null;
+  embedding_backfill_attempts?: number | null;
+  embedding_backfill_last_attempt_at?: string | null;
+  embedding_backfill_error?: string | null;
   scope?: "global" | "chat";
   chat_id?: string | null;
+  created_at?: string;
 };
-
-const MEMORY_EMBEDDING_MODEL = process.env.GEMINI_EMBEDDING_MODEL?.trim() || "gemini-embedding-001";
 
 function normalizeEmbedding(value: unknown): readonly number[] | undefined {
   if (!Array.isArray(value) || value.length === 0) return undefined;
@@ -130,44 +136,18 @@ function normalizeEmbedding(value: unknown): readonly number[] | undefined {
   return vector.length === value.length ? vector : undefined;
 }
 
-function scheduleCloudMemoryEmbeddingBackfill(
+async function maintainCloudMemoryEmbeddings(
   userDb: SupabaseClient,
   userId: string,
   memories: readonly CloudMemoryRow[],
-): void {
-  const candidates = memories
-    .filter((memory) => {
-      if (!memory.id || !memory.summary) return false;
-      if (normalizeEmbedding(memory.embedding)) return false;
-      return (memory.importance ?? 5) >= 7;
-    })
-    .slice(0, 3);
-
-  if (candidates.length === 0) return;
-
-  void (async () => {
-    for (const memory of candidates) {
-      try {
-        const embedding = await generateEmbedding(memory.summary);
-        if (!embedding) continue;
-        const { error } = await userDb
-          .from("memories")
-          .update({
-            embedding,
-            embedding_model: MEMORY_EMBEDDING_MODEL,
-            embedding_created_at: new Date().toISOString(),
-          })
-          .eq("id", memory.id)
-          .eq("user_id", userId);
-        if (error) {
-          console.warn(`[CONTEXT] memory embedding backfill failed id=${memory.id} error=${error.message}`);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[CONTEXT] memory embedding backfill failed id=${memory.id} error=${message}`);
-      }
-    }
-  })();
+): Promise<void> {
+  try {
+    await enqueueMemoryEmbeddingBackfill(userDb, userId, memories);
+    await processQueuedMemoryEmbeddingBackfill(userDb, userId, 2);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[CONTEXT] memory embedding maintenance failed userId=${userId} error=${message}`);
+  }
 }
 
 async function fetchCloudMemories(
@@ -175,26 +155,47 @@ async function fetchCloudMemories(
   userId: string,
   conversationId?: string,
 ): Promise<readonly ContextMemory[]> {
-  const { data: cloudMemories, error } = await userDb
+  const selectColumns =
+    "id, summary, type, importance, embedding, embedding_model, embedding_created_at, embedding_backfill_requested_at, embedding_backfill_attempts, embedding_backfill_last_attempt_at, embedding_backfill_error, scope, chat_id, created_at";
+  const globalQuery = userDb
     .from("memories")
-    .select("id, summary, type, importance, embedding, embedding_model, embedding_created_at, scope, chat_id")
+    .select(selectColumns)
     .eq("user_id", userId)
+    .eq("scope", "global")
     .order("created_at", { ascending: false })
     .limit(20);
+  const chatQuery = conversationId
+    ? userDb
+        .from("memories")
+        .select(selectColumns)
+        .eq("user_id", userId)
+        .eq("scope", "chat")
+        .eq("chat_id", conversationId)
+        .order("created_at", { ascending: false })
+        .limit(20)
+    : Promise.resolve({ data: [] as CloudMemoryRow[], error: null });
 
-  if (error) {
-    throw error;
+  const [globalResult, chatResult] = await Promise.all([globalQuery, chatQuery]);
+  if (globalResult.error) {
+    throw globalResult.error;
+  }
+  if (chatResult.error) {
+    throw chatResult.error;
   }
 
-  const rows = (cloudMemories ?? []) as CloudMemoryRow[];
-  scheduleCloudMemoryEmbeddingBackfill(userDb, userId, rows);
+  const rows = [
+    ...((globalResult.data ?? []) as CloudMemoryRow[]),
+    ...((chatResult.data ?? []) as CloudMemoryRow[]),
+  ]
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.created_at ?? "") || 0;
+      const rightTime = Date.parse(right.created_at ?? "") || 0;
+      return rightTime - leftTime;
+    })
+    .slice(0, 20);
+  await maintainCloudMemoryEmbeddings(userDb, userId, rows);
 
   return rows
-    .filter((memory) => {
-      const scope = memory.scope === "chat" ? "chat" : "global";
-      if (scope === "global") return true;
-      return !!conversationId && memory.chat_id === conversationId;
-    })
     .map((memory) => ({
       type: memory.type,
       summary: memory.summary,
@@ -426,7 +427,7 @@ export async function buildContext(
     ? await semanticMemorySearch(memoryCandidates, query, 3)
     : null;
   let memories: readonly ContextMemory[];
-  if (semanticResults) {
+  if (semanticResults && semanticResults.length > 0) {
     const semanticMemories = semanticResults.map((r) => r.memory);
     memories = isExplicitRecallQuery
       ? selectMemoriesForPrompt(mergeMemoryCandidates(semanticMemories, memoryCandidates), query, 6, true)

@@ -33,6 +33,11 @@ export interface MemoryCompression {
 }
 
 type SupportedMemoryType = "identity" | "preference" | "project";
+type MemoryFailureReason =
+  | "explicit_intent_missing"
+  | "unsupported_memory_type"
+  | "knowledge_memory_skipped"
+  | "empty_summary";
 
 function cleanMemoryFragment(value: string): string {
   return value
@@ -210,6 +215,7 @@ export async function processMessageForMemory(args: {
   readonly generateEmbedding?: boolean;
 }): Promise<{
   readonly stored: boolean;
+  readonly failure_reason?: MemoryFailureReason;
   readonly memory?: {
     type: string;
     summary: string;
@@ -231,7 +237,7 @@ export async function processMessageForMemory(args: {
   // Only store meaningful long-term memory: identity, preference, project.
   if (classification.type === "knowledge") {
     console.log(`[MEMORY] skipping knowledge storage (overhead reduction)`);
-    return { stored: false };
+    return { stored: false, failure_reason: "knowledge_memory_skipped" };
   }
 
   const classifiedType =
@@ -242,18 +248,22 @@ export async function processMessageForMemory(args: {
       : null;
 
   const memType = deterministicType ?? classifiedType;
-  const shouldStore = explicitWrite && !!memType;
+  const forceStore = args.forceStore === true;
+  const shouldStore = (explicitWrite || forceStore) && !!memType;
 
   if (!shouldStore) {
     console.log(
       `[MEMORY] storage skipped: explicitWrite=${explicitWrite} classifiedStore=${classification.should_store} ` +
-      `type=${memType ?? "null"} forceStore=${args.forceStore === true}`,
+      `type=${memType ?? "null"} forceStore=${forceStore}`,
     );
-    return { stored: false };
+    return {
+      stored: false,
+      failure_reason: memType ? "explicit_intent_missing" : "unsupported_memory_type",
+    };
   }
 
   if (!memType) {
-    return { stored: false };
+    return { stored: false, failure_reason: "unsupported_memory_type" };
   }
 
   // Step 2: Summarize
@@ -280,7 +290,7 @@ export async function processMessageForMemory(args: {
 
   if (!summary.summary) {
     console.log(`[MEMORY] empty summary, not storing`);
-    return { stored: false };
+    return { stored: false, failure_reason: "empty_summary" };
   }
 
   // Step 3: Generate embedding for semantic retrieval

@@ -9,6 +9,10 @@ export type MemoryRow = {
   embedding?: number[] | null;
   embedding_model?: string | null;
   embedding_created_at?: string | null;
+  embedding_backfill_requested_at?: string | null;
+  embedding_backfill_attempts?: number | null;
+  embedding_backfill_last_attempt_at?: string | null;
+  embedding_backfill_error?: string | null;
   scope?: MemoryScope | null;
   chat_id?: string | null;
   created_at: string;
@@ -70,7 +74,7 @@ export async function insertMemory(userDb: any, data: InsertMemoryInput) {
       scope: normalizedScope,
       chat_id: normalizedScope === "chat" ? data.chat_id ?? null : null,
     })
-    .select("id, user_id, type, summary, importance, embedding, embedding_model, embedding_created_at, scope, chat_id, created_at")
+    .select("id, user_id, type, summary, importance, embedding, embedding_model, embedding_created_at, embedding_backfill_requested_at, embedding_backfill_attempts, embedding_backfill_last_attempt_at, embedding_backfill_error, scope, chat_id, created_at")
     .single();
 
   return {
@@ -82,7 +86,7 @@ export async function insertMemory(userDb: any, data: InsertMemoryInput) {
 export async function getUserMemories(userDb: any, userId: string) {
   const result = await userDb
     .from("memories")
-    .select("id, user_id, type, summary, importance, embedding, embedding_model, embedding_created_at, scope, chat_id, created_at")
+    .select("id, user_id, type, summary, importance, embedding, embedding_model, embedding_created_at, embedding_backfill_requested_at, embedding_backfill_attempts, embedding_backfill_last_attempt_at, embedding_backfill_error, scope, chat_id, created_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
@@ -113,6 +117,8 @@ export async function updateMemoryEmbedding(
       embedding: normalizedEmbedding,
       embedding_model: embeddingModel,
       embedding_created_at: new Date().toISOString(),
+      embedding_backfill_requested_at: null,
+      embedding_backfill_error: null,
     })
     .eq("id", memoryId)
     .eq("user_id", userId)
@@ -197,4 +203,15 @@ export async function incrementUserMemoryUsage(userDb: any, userId: string, byte
 
 export async function decrementUserMemoryUsage(userDb: any, userId: string, bytes: number) {
   return adjustUserMemoryUsage(userDb, userId, -Math.max(0, Math.trunc(bytes)));
+}
+
+export async function repairUserMemoryUsage(userDb: any, userId: string) {
+  const result = await userDb.rpc("repair_user_memory_usage", {
+    p_user_id: userId,
+  });
+
+  return {
+    data: normalizeByteCount(result.data),
+    error: result.error,
+  };
 }

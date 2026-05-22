@@ -1,4 +1,8 @@
 import {
+  readFileSync,
+} from "fs";
+import { resolve } from "path";
+import {
   buildImagePromptMessageContent,
   findExistingAssistantImageMessage,
   persistGeneratedImageResult,
@@ -114,10 +118,24 @@ async function testFindExistingAssistantImageMessage(): Promise<void> {
   assert(found?.image_url === existingMessage.image_url, "assistant image lookup returns persisted image message");
 }
 
+function testImageRouteSourceGuards(): void {
+  const server = readFileSync(resolve(__dirname, "server.ts"), "utf8");
+  const routeStart = server.indexOf('"/api/images/generate"');
+  assert(routeStart >= 0, "image generation route exists");
+  const routeBlock = server.slice(routeStart, routeStart + 9500);
+  assert(routeBlock.includes("reserveCentralImageQuota"), "image route reserves central quota before provider generation");
+  assert(routeBlock.includes("releaseCentralImageQuota"), "image route releases quota when provider generation fails");
+  assert(routeBlock.includes("commitImageQuotaSuccess"), "image route updates local cooldown/quota only after successful generation");
+  assert(routeBlock.includes('persisted: false'), "image route returns recoverable unpersisted image results");
+  assert(routeBlock.includes('code: "image_persistence_failed"'), "image route labels persistence-only failures");
+  assert(routeBlock.includes("image_base64: imageBase64"), "image route returns generated payload when persistence fails");
+}
+
 async function main(): Promise<void> {
   console.log("Running generated image persistence tests...");
   await testPersistGeneratedImageResult();
   await testFindExistingAssistantImageMessage();
+  testImageRouteSourceGuards();
   console.log("Generated image persistence tests passed.");
 }
 

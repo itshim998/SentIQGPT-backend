@@ -82,6 +82,7 @@ type FileGeneratorDependencies = {
   readonly callModel?: typeof callLLMAdapterDetailed;
   readonly uploadFile?: typeof uploadGeneratedFile;
   readonly saveMetadata?: typeof saveGeneratedFileMetadata;
+  readonly deleteFile?: typeof deleteGeneratedFileObject;
   readonly storageDb?: any;
 };
 
@@ -989,6 +990,7 @@ export async function routeFileGeneration(
   const callModel = dependencies.callModel ?? callLLMAdapterDetailed;
   const uploadFile = dependencies.uploadFile ?? uploadGeneratedFile;
   const saveMetadata = dependencies.saveMetadata ?? saveGeneratedFileMetadata;
+  const deleteFile = dependencies.deleteFile ?? deleteGeneratedFileObject;
   const storageDb = dependencies.storageDb ?? args.storageDb ?? getGeneratedFileStorageDatabase();
 
   let rendered: RenderedFile;
@@ -1081,8 +1083,19 @@ export async function routeFileGeneration(
       preview: rendered.preview,
     });
   } catch (metadataError) {
+    let cleanupFailed = false;
+    let cleanupMessage: string | undefined;
     if (uploaded.storageBucket && uploaded.storagePath) {
-      await deleteGeneratedFileObject(storageDb, uploaded.storageBucket, uploaded.storagePath).catch(() => undefined);
+      try {
+        await deleteFile(storageDb, uploaded.storageBucket, uploaded.storagePath);
+      } catch (cleanupError) {
+        cleanupFailed = true;
+        cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+        console.warn(
+          `[FileGeneration] metadata save failed and orphan cleanup failed ` +
+          `fileId=${uploaded.fileId} bucket=${uploaded.storageBucket} path=${uploaded.storagePath} error=${cleanupMessage}`,
+        );
+      }
     }
     return {
       success: false,
@@ -1096,6 +1109,10 @@ export async function routeFileGeneration(
       fallback: true,
       fallback_reason: metadataError instanceof Error ? metadataError.message : String(metadataError),
       error: "Generated file could not be saved. Please try again.",
+      warning: cleanupFailed ? "Uploaded generated file could not be cleaned up after metadata failure." : undefined,
+      cleanup_failed: cleanupFailed || undefined,
+      orphaned_storage_bucket: cleanupFailed ? uploaded.storageBucket : undefined,
+      orphaned_storage_path: cleanupFailed ? uploaded.storagePath : undefined,
     };
   }
 

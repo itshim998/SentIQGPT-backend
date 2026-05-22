@@ -102,10 +102,12 @@ export interface StepResult {
     type?: string;
     summary?: string;
     importance?: number;
+    embedding?: readonly number[];
     scope?: "global" | "chat";
     chat_id?: string | null;
     persisted?: boolean;
     source_conversation_id?: string | null;
+    failure_reason?: string;
   };
   /** Web search payload (web_search) */
   readonly web_search?: {
@@ -308,16 +310,17 @@ async function execMemoryUpdate(
     forceStore: true,
     userId: ctx.userId,
     generateEmbedding: profile.persistence.blockOnMemoryEmbedding,
-  }).catch(() => ({ stored: false as const }));
+  }).catch((error) => ({
+    stored: false as const,
+    failure_reason: error instanceof Error ? error.message : String(error),
+  }));
 
   const memory = memResult.stored
     ? {
         stored: true,
-        type: memResult.memory?.type,
-        summary: memResult.memory?.summary,
-        importance: memResult.memory?.importance,
+        ...memResult.memory,
       }
-    : { stored: false };
+    : { stored: false, failure_reason: memResult.failure_reason };
 
   return { step: 0, tool: "memory_update", memory };
 }
@@ -514,7 +517,7 @@ async function executeStep(
         result = await execFileAnalysis(stepInput, ctx, priorContext, signal);
         break;
       case "memory_update":
-        result = await execMemoryUpdate(stepInput, ctx, profile);
+        result = await execMemoryUpdate(stepInput, ctx, profile, signal);
         break;
       case "chart_generation":
         result = await execChartGeneration(stepInput);

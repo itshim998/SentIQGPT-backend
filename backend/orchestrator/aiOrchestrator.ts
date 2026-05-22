@@ -123,10 +123,12 @@ export interface OrchestratorResponse {
     type?: string;
     summary?: string;
     importance?: number;
+    embedding?: readonly number[];
     scope?: "global" | "chat";
     chat_id?: string | null;
     persisted?: boolean;
     source_conversation_id?: string | null;
+    failure_reason?: string;
   };
   /** Web search payload (for structured rendering) */
   readonly web_search?: {
@@ -414,10 +416,13 @@ export function mergeResults(
 
     if (step.memory?.stored) {
       memory = {
+        ...step.memory,
         stored: true,
-        type: step.memory.type,
-        summary: step.memory.summary,
-        importance: step.memory.importance,
+      };
+    } else if (step.memory) {
+      memory = {
+        stored: false,
+        failure_reason: step.memory.failure_reason,
       };
     }
 

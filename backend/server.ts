@@ -85,6 +85,7 @@ import {
   getUserMemories,
   incrementUserMemoryUsage,
   insertMemory,
+  repairUserMemoryUsage,
   type MemoryRow,
 } from "./services/memoryService";
 import {
@@ -103,6 +104,12 @@ import {
   findExistingAssistantImageMessage,
   persistGeneratedImageResult,
 } from "./services/generatedImagePersistenceService";
+import {
+  getCentralImageQuotaInfo,
+  ImageQuotaError,
+  releaseCentralImageQuota,
+  reserveCentralImageQuota,
+} from "./services/imageQuotaService";
 
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
@@ -124,7 +131,7 @@ import { resolveExecutionProfile } from "./orchestrator/executionProfile";
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
 import { auditMiddleware, getRecentAuditEntries } from "./middleware/audit";
-import { imageQuotaMiddleware, getImageQuotaKey, getQuotaInfo, isImageRequest } from "./middleware/imageQuota";
+import { commitImageQuotaSuccess, imageQuotaMiddleware, getImageQuotaKey, getQuotaInfo, isImageRequest } from "./middleware/imageQuota";
 import { AuthError, getRequestUser, resolveRequestUser, verifyJWT } from "./middleware/auth";
 import { HttpError, buildHttpErrorResponse } from "./httpErrors";
 
@@ -616,6 +623,67 @@ function logMessagePersistenceGap(
     client_disconnected: details.clientDisconnected ? "true" : "false",
     error: details.error ? details.error.slice(0, 160) : undefined,
   });
+}
+
+type SyncStatus = {
+  persisted: boolean;
+  deferred: boolean;
+  conversationId?: string;
+  reason?: string;
+  warnings: string[];
+};
+
+type DegradedStatus = {
+  status: "ok" | "degraded";
+  degraded: boolean;
+  reasons: string[];
+  persistence: {
+    persisted: boolean;
+    deferred: boolean;
+    conversationId?: string;
+    reason?: string;
+    warnings: string[];
+  };
+};
+
+function createSyncStatus(conversationId?: string): SyncStatus {
+  return {
+    persisted: true,
+    deferred: false,
+    conversationId,
+    warnings: [],
+  };
+}
+
+function finalizeSyncStatus(sync: SyncStatus): SyncStatus {
+  if (sync.deferred) {
+    const reason = sync.reason || "persistence_deferred";
+    sync.reason = reason;
+    if (!sync.warnings.includes(reason)) {
+      sync.warnings.push(reason);
+    }
+  }
+  return sync;
+}
+
+function buildDegradedStatus(sync: SyncStatus): DegradedStatus {
+  const finalized = finalizeSyncStatus(sync);
+  const reasons = Array.from(new Set([
+    ...(finalized.warnings || []),
+    ...(finalized.deferred ? [finalized.reason || "persistence_deferred"] : []),
+  ].filter(Boolean)));
+  return {
+    status: finalized.deferred || !finalized.persisted ? "degraded" : "ok",
+    degraded: finalized.deferred || !finalized.persisted,
+    reasons,
+    persistence: {
+      persisted: finalized.persisted,
+      deferred: finalized.deferred,
+      conversationId: finalized.conversationId,
+      reason: finalized.reason,
+      warnings: finalized.warnings || [],
+    },
+  };
 }
 
 function normalizeTitleCandidate(value: string): string {
@@ -1303,6 +1371,15 @@ async function deleteMemoryIfOwned(
         memoryId,
         memoryBytes,
       });
+      const { error: repairError } = await repairUserMemoryUsage(userDb, userId);
+      if (repairError) {
+        logDbFailure(`${scope}.memory-delete.usage-repair-failed`, userId, repairError, {
+          memoryId,
+          memoryBytes,
+        });
+      } else {
+        logDbEvent(`${scope}.memory-delete.usage-repair.ok`, userId, { memoryId });
+      }
     }
   }
 
@@ -1634,6 +1711,86 @@ app.get("/api/health", (_req, res) => {
 });
 
 // ===============================
+// POST /api/chat/intent - Backend-owned chat routing preflight
+// ===============================
+app.post(
+  "/api/chat/intent",
+  verifyJWT({ allowGuest: true }),
+  asyncHandler(async (req, res) => {
+    const parsed = ChatRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: formatZodError(parsed.error) });
+      return;
+    }
+
+    const { isGuest } = getRequestUser(req);
+    const resolvedClarification = resolveClarificationInput(
+      parsed.data.message,
+      parsed.data.clarification_response,
+    );
+    const effectiveUserMessage = resolvedClarification.effectiveMessage;
+    if (detectPromptInjection(parsed.data.message) || detectPromptInjection(effectiveUserMessage)) {
+      res.status(400).json({ error: "Message rejected by safety filter." });
+      return;
+    }
+
+    const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
+    const hasExplicitWebSearchMode = Boolean(webSearchMode);
+    const hasImageAttachments = (parsed.data.context?.image_attachments?.length ?? 0) > 0;
+    const hasImageMathPrompt = hasImageAttachments && detectImageMathPrompt(effectiveUserMessage);
+    const isBufferedReasoning = isBufferedReasoningQuery(effectiveUserMessage) || hasImageMathPrompt;
+    const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && (isMathQuery(effectiveUserMessage) || hasImageMathPrompt);
+    const queryClassification = classifyQueryType(effectiveUserMessage);
+    const forceWebSearch = shouldForceWebSearch(effectiveUserMessage);
+    const fileGeneration = isFileGenerationRequest(effectiveUserMessage);
+    const fileFormat = detectGeneratedFileFormat(effectiveUserMessage);
+    const chartRequest = !fileGeneration && isChartRequest(effectiveUserMessage);
+    const imageRequest = !fileGeneration && !chartRequest && !hasImageAttachments && isImageRequest(effectiveUserMessage);
+    const webSearchRequest =
+      !fileGeneration &&
+      (hasExplicitWebSearchMode || ((queryClassification.needsWebSearch || forceWebSearch) && isTavilyAvailable()));
+
+    let route: string = "normal_chat";
+    if (isGuest && fileGeneration) route = "normal_chat";
+    else if (fileGeneration) route = "file_generation";
+    else if (chartRequest) route = "chart_generation";
+    else if (webSearchRequest) route = "web_search";
+    else if (isMathReasoningQuery) route = "math_reasoning";
+    else if (isBufferedReasoning) route = "reasoning";
+    else if (imageRequest && !isGuest) route = "image_generation";
+
+    res.json({
+      route,
+      stream: route === "normal_chat" || route === "reasoning" || route === "math_reasoning",
+      structured: route === "file_generation" || route === "chart_generation" || route === "web_search",
+      direct: route === "image_generation" ? "image_generation" : null,
+      loader: route === "image_generation"
+        ? "loader-image"
+        : route === "chart_generation"
+          ? "loader-chart"
+          : route === "file_generation" || route === "reasoning" || route === "math_reasoning"
+            ? "loader-generic"
+            : route === "web_search"
+              ? "loader-generic"
+              : "loader-text",
+      file: fileGeneration ? { format: fileFormat } : null,
+      web_search: webSearchRequest
+        ? {
+            mode: webSearchMode || "basic",
+            explicit: hasExplicitWebSearchMode,
+            matched_rule: queryClassification.matchedRule,
+            category: queryClassification.category,
+          }
+        : null,
+      reasoning: isBufferedReasoning
+        ? { buffered: true, math: isMathReasoningQuery }
+        : { buffered: false, math: false },
+      fallback: false,
+    });
+  }),
+);
+
+// ===============================
 // GET /api/profile
 // ===============================
 app.get(
@@ -1864,6 +2021,22 @@ app.post(
           previewJson: meta.preview || undefined,
         };
       }
+      if (meta?.type === "file-upload") {
+        return {
+          ...base,
+          messageType: "file_upload",
+          fileName: typeof meta.filename === "string" ? meta.filename : typeof meta.file_name === "string" ? meta.file_name : undefined,
+          mimeType: typeof meta.mime_type === "string" ? meta.mime_type : typeof meta.mimeType === "string" ? meta.mimeType : undefined,
+          fileSizeBytes: toNumberOrUndefined(meta.size_bytes ?? meta.file_size_bytes ?? meta.fileSizeBytes),
+          previewJson: {
+            filename: typeof meta.filename === "string" ? meta.filename : typeof meta.file_name === "string" ? meta.file_name : undefined,
+            analysis_id: typeof meta.analysis_id === "string" ? meta.analysis_id : undefined,
+            analysis_status: typeof meta.analysis_status === "string" ? meta.analysis_status : undefined,
+            size_bytes: toNumberOrUndefined(meta.size_bytes ?? meta.file_size_bytes ?? meta.fileSizeBytes),
+            mime_type: typeof meta.mime_type === "string" ? meta.mime_type : typeof meta.mimeType === "string" ? meta.mimeType : undefined,
+          },
+        };
+      }
       return base;
     };
     const messages = rawMessages
@@ -1877,7 +2050,7 @@ app.post(
       }))
       .filter((message: SyncMessage) => {
         if (message.content.trim().length > 0) return true;
-        return message.meta?.type === "image" || message.meta?.type === "generated-file";
+        return message.meta?.type === "image" || message.meta?.type === "generated-file" || message.meta?.type === "file-upload";
       })
       .slice(0, 20) as SyncMessage[];
 
@@ -1918,6 +2091,7 @@ app.post(
         deferred: false,
         conversationId,
       },
+      degraded: buildDegradedStatus(createSyncStatus(conversationId)),
     });
   }),
 );
@@ -2267,11 +2441,7 @@ app.post(
       return;
     }
 
-    const sync = {
-      persisted: true,
-      deferred: false,
-      conversationId: undefined as string | undefined,
-    };
+    const sync = createSyncStatus();
 
     let createdConversation = false;
     let activeConversationTitle: string | null = null;
@@ -2388,7 +2558,7 @@ app.post(
             );
           }
         }
-        res.json({ ...logicClarification, sync });
+        res.json({ ...logicClarification, sync: finalizeSyncStatus(sync), degraded: buildDegradedStatus(sync) });
         return;
       }
 
@@ -2484,7 +2654,8 @@ app.post(
         confidence: undefined,
         model_used: result.model_used,
         searched: false,
-        sync,
+        sync: finalizeSyncStatus(sync),
+        degraded: buildDegradedStatus(sync),
       });
       return;
     }
@@ -2656,7 +2827,8 @@ app.post(
       confidence: result.confidence,
       model_used: result.model_used,
       searched: result.searched === true,
-      sync,
+      sync: finalizeSyncStatus(sync),
+      degraded: buildDegradedStatus(sync),
     });
   }),
 );
@@ -2689,6 +2861,22 @@ app.post(
     const finishSse = () => {
       responseCompleted = true;
       sseWriter.close();
+    };
+    let sseStarted = false;
+    const ensureSseStarted = () => {
+      if (sseStarted || res.headersSent) return;
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+      sseStarted = true;
+    };
+    const writeStructuredResponse = async (response: Record<string, unknown>) => {
+      ensureSseStarted();
+      await writeSseJson({ type: "structured_response", response });
+      await writeSseEvent("[DONE]");
+      finishSse();
     };
 
     const streamBufferedAnswer = async (
@@ -2761,7 +2949,11 @@ app.post(
           console.error(`[Stream] failed to emit error event: ${writeErr instanceof Error ? writeErr.message : writeErr}`);
         }
       }
-      reportStreamMessageGap(true, "stream.error", message);
+      try {
+        reportStreamMessageGap(true, "stream.error", message);
+      } catch {
+        // Guest and early validation stream failures may happen before persistence state exists.
+      }
       if (metrics) {
         logStreamMetrics(metrics, "error");
       }
@@ -2835,7 +3027,7 @@ app.post(
           userId,
         },
       });
-      res.json({
+      await writeStructuredResponse({
         route: result.route,
         answer: result.answer ?? result.reply,
         reply: result.reply,
@@ -2873,7 +3065,7 @@ app.post(
       })
         : null;
       if (guestClarification) {
-        res.json(guestClarification);
+        await writeStructuredResponse(guestClarification as unknown as Record<string, unknown>);
         return;
       }
     }
@@ -3070,11 +3262,7 @@ app.post(
 
     const conversationId = requestedConversationId || null;
     let activeConversationId = conversationId;
-    const sync = {
-      persisted: true,
-      deferred: false,
-      conversationId: activeConversationId,
-    };
+    const sync = createSyncStatus(activeConversationId || undefined);
     let createdConversation = false;
     let activeConversationTitle: string | null = null;
     let userMessagePersisted = false;
@@ -3119,7 +3307,7 @@ app.post(
         activeConversationId = null;
       }
     }
-    sync.conversationId = activeConversationId;
+    sync.conversationId = activeConversationId || undefined;
     if (userDb && activeConversationId) {
       try {
         await insertConversationMessageOrThrow(
@@ -3197,8 +3385,20 @@ app.post(
         persisted: contentPersisted,
         deferred: sync.deferred || !contentPersisted,
         conversationId: activeConversationId,
+        reason: sync.deferred || !contentPersisted ? (sync.reason || "persistence_deferred") : undefined,
+        warnings: sync.deferred || !contentPersisted
+          ? Array.from(new Set([...(sync.warnings || []), sync.reason || "persistence_deferred"]))
+          : [],
       };
     };
+    const buildDegradedStatusFromStreamSync = (streamSync: ReturnType<typeof getStreamSyncPayload>) =>
+      buildDegradedStatus({
+        persisted: streamSync.persisted,
+        deferred: streamSync.deferred,
+        conversationId: streamSync.conversationId || undefined,
+        reason: streamSync.reason,
+        warnings: streamSync.warnings || [],
+      });
 
     const persistStoredMemory = async (memory?: {
       id?: string;
@@ -3206,10 +3406,12 @@ app.post(
       type?: string;
       summary?: string;
       importance?: number;
+      embedding?: readonly number[];
       scope?: MemoryScope;
       chat_id?: string | null;
       persisted?: boolean;
       source_conversation_id?: string | null;
+      failure_reason?: string;
     }): Promise<boolean> => {
       if (!memory || memory.stored !== true) return true;
       const normalizedScope = resolveMemoryScopeForRequest(memory, parsed.data.message);
@@ -3341,6 +3543,11 @@ app.post(
         error: error || null,
       });
     };
+    const buildStreamStructuredPayload = (payload: Record<string, unknown>) => ({
+      ...payload,
+      sync: finalizeSyncStatus(sync),
+      degraded: buildDegradedStatus(sync),
+    });
 
     if (hasExplicitWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
       console.log(`[Stream] explicit WebSurf mode=${webSearchMode} - redirecting to orchestrator`);
@@ -3368,7 +3575,7 @@ app.post(
           await persistAssistantMessage(result.reply);
         }
         reportStreamMessageGap(Boolean(result.reply), "orchestrator.web_search");
-        res.json({
+        await writeStructuredResponse(buildStreamStructuredPayload({
           route: result.route,
           answer: result.answer ?? result.reply,
           reply: result.reply,
@@ -3382,12 +3589,11 @@ app.post(
           confidence: result.confidence,
           model_used: result.model_used,
           searched: result.searched === true,
-          sync,
-        });
+        }));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[Stream] explicit WebSurf orchestration failed: ${message}`);
-        res.status(500).json({ error: message });
+        await sendStreamError(err);
       }
       return;
     }
@@ -3418,7 +3624,7 @@ app.post(
           await persistAssistantMessage(result.reply);
         }
         reportStreamMessageGap(Boolean(result.reply), "orchestrator.memory");
-        res.json({
+        await writeStructuredResponse(buildStreamStructuredPayload({
           route: result.route,
           answer: result.answer ?? result.reply,
           reply: result.reply,
@@ -3432,12 +3638,11 @@ app.post(
           confidence: result.confidence,
           model_used: result.model_used,
           searched: result.searched === true,
-          sync,
-        });
+        }));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[Stream] memory orchestration failed: ${message}`);
-        res.status(500).json({ error: message });
+        await sendStreamError(err);
       }
       return;
     }
@@ -3483,7 +3688,8 @@ app.post(
             reply,
             answer: reply,
             file: result,
-            sync,
+            sync: finalizeSyncStatus(sync),
+            degraded: buildDegradedStatus(sync),
           });
           await writeSseEvent("[DONE]");
         } catch (err) {
@@ -3521,7 +3727,7 @@ app.post(
           await persistAssistantMessage(result.reply);
         }
         reportStreamMessageGap(Boolean(result.reply), "orchestrator.file_generation");
-        res.json({
+        await writeStructuredResponse(buildStreamStructuredPayload({
           route: result.route,
           answer: result.answer ?? result.reply,
           reply: result.reply,
@@ -3536,12 +3742,11 @@ app.post(
           confidence: result.confidence,
           model_used: result.model_used,
           searched: result.searched === true,
-          sync,
-        });
+        }));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[Stream] file generation orchestration failed: ${message}`);
-        res.status(500).json({ error: message });
+        await sendStreamError(err);
       }
       return;
     }
@@ -3571,9 +3776,7 @@ app.post(
         }
         await persistStoredMemory(result.memory);
         reportStreamMessageGap(Boolean(result.reply), "orchestrator.chart");
-        // Return the full orchestrator result as JSON (not SSE) so the frontend
-        // can use deliverAssistantResponse to render the chart.
-        res.json({
+        await writeStructuredResponse(buildStreamStructuredPayload({
           route: result.route,
           answer: result.answer ?? result.reply,
           reply: result.reply,
@@ -3587,12 +3790,11 @@ app.post(
           confidence: result.confidence,
           model_used: result.model_used,
           searched: result.searched === true,
-          sync,
-        });
+        }));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[Stream] chart orchestration failed: ${message}`);
-        res.status(500).json({ error: message });
+        await sendStreamError(err);
       }
       return;
     }
@@ -3624,10 +3826,9 @@ app.post(
         await persistAssistantMessage(reasoningClarification.reply);
       }
       reportStreamMessageGap(Boolean(reasoningClarification.reply), "clarification.reasoning");
-      res.json({
+      await writeStructuredResponse(buildStreamStructuredPayload({
         ...reasoningClarification,
-        sync,
-      });
+      } as unknown as Record<string, unknown>));
       return;
     }
 
@@ -3763,14 +3964,14 @@ app.post(
         await persistStoredMemory(result.memory);
         finalizeMemoryUpdateCopy(result);
         reportStreamMessageGap(Boolean(result.reply), "orchestrator.web_search_auto");
-        res.json({
+        await writeStructuredResponse(buildStreamStructuredPayload({
           ...result,
           searched: result.searched === true,
-          sync,
-        });
+        }));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        res.status(500).json({ error: message });
+        console.error(`[Stream] auto web search orchestration failed: ${message}`);
+        await sendStreamError(err);
       }
       return;
     }
@@ -3799,10 +4000,9 @@ app.post(
         await persistAssistantMessage(directClarification.reply);
       }
       reportStreamMessageGap(Boolean(directClarification.reply), "clarification");
-      res.json({
+      await writeStructuredResponse(buildStreamStructuredPayload({
         ...directClarification,
-        sync,
-      });
+      } as unknown as Record<string, unknown>));
       return;
     }
 
@@ -3936,7 +4136,8 @@ app.post(
       }
       if (!clientDisconnected) {
         reportStreamMessageGap(Boolean(fullReply), "stream");
-        await writeSseJson({ type: "sync", sync: getStreamSyncPayload(Boolean(fullReply)) });
+        const streamSync = getStreamSyncPayload(Boolean(fullReply));
+        await writeSseJson({ type: "sync", sync: streamSync, degraded: buildDegradedStatusFromStreamSync(streamSync) });
         await writeSseEvent("[DONE]");
         logStreamMetrics(streamMetrics, "complete");
         console.log(`[Latency] response completed (+${Date.now() - requestStart}ms)`);
@@ -3956,7 +4157,8 @@ app.post(
           }
           reportStreamMessageGap(Boolean(fallbackText), "stream.fallback");
           await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
-          await writeSseJson({ type: "sync", sync: getStreamSyncPayload(Boolean(fallbackText)) });
+          const streamSync = getStreamSyncPayload(Boolean(fallbackText));
+          await writeSseJson({ type: "sync", sync: streamSync, degraded: buildDegradedStatusFromStreamSync(streamSync) });
           await writeSseEvent("[DONE]");
           logStreamMetrics(streamMetrics, "fallback");
           finishSse();
@@ -4433,6 +4635,8 @@ app.patch(
     res.json({
       success: true,
       file: serializeGeneratedFileRow(updatedRow),
+      degraded: Boolean(messageUpdateError),
+      warnings: messageUpdateError ? ["generated_file_message_metadata_update_failed"] : [],
     });
   }),
 );
@@ -4440,10 +4644,38 @@ app.patch(
 app.get(
   "/api/images/quota",
   verifyJWT({ allowGuest: true }),
-  (req, res) => {
-    const info = getQuotaInfo(getImageQuotaKey(req));
-    res.json(info);
-  },
+  asyncHandler(async (req, res) => {
+    const localInfo = getQuotaInfo(getImageQuotaKey(req));
+    const requestUser = getRequestUser(req);
+    if (requestUser.isGuest) {
+      res.json(localInfo);
+      return;
+    }
+
+    const userDb = await resolveUserDatabaseOrThrow(requestUser.sub, "images.quota");
+    await initializeUserSessionOrThrow(userDb, requestUser.sub, "images.quota");
+    let centralInfo;
+    try {
+      centralInfo = await getCentralImageQuotaInfo(userDb, requestUser.sub);
+    } catch (error) {
+      if (error instanceof ImageQuotaError) {
+        res.status(error.statusCode).json({
+          error: error.message,
+          type: error.type,
+          remaining: error.remaining,
+          limit: error.limit,
+          resetMs: error.resetMs,
+        });
+        return;
+      }
+      throw error;
+    }
+    res.json({
+      ...centralInfo,
+      cooldownActive: localInfo.cooldownActive,
+      cooldownResetMs: localInfo.cooldownActive ? 5_000 : 0,
+    });
+  }),
 );
 
 // ===============================
@@ -4506,10 +4738,9 @@ app.post(
         `candidates=${promptResolution.candidates.join(" | ")}`,
       );
     }
-    let userDb: any = null;
+    let userDb: any = await resolveUserDatabaseOrThrow(userId, "images.generate");
+    await initializeUserSessionOrThrow(userDb, userId, "images.generate");
     if (conversationId) {
-      userDb = await resolveUserDatabaseOrThrow(userId, "images.generate");
-      await initializeUserSessionOrThrow(userDb, userId, "images.generate");
       await ensureNamedWorkspaceProfile(userId, "images.generate", userDb);
       const resolvedImageConversation = await resolveConversationIdThroughAlias(userDb, userId, conversationId, "images.generate");
       conversationId = resolvedImageConversation.conversationId;
@@ -4521,7 +4752,8 @@ app.post(
         clientRequestId,
       );
       if (existingAssistantImage?.image_url) {
-          const quota = getQuotaInfo(getImageQuotaKey(req));
+        const localQuota = getQuotaInfo(getImageQuotaKey(req));
+        const quota = await getCentralImageQuotaInfo(userDb, userId);
         res.json({
           type: "image",
           url: existingAssistantImage.image_url,
@@ -4532,6 +4764,7 @@ app.post(
           success: true,
           remaining: quota.remaining,
           limit: quota.limit,
+          cooldownActive: localQuota.cooldownActive,
           image_url: existingAssistantImage.image_url,
           image_base64: undefined,
           storage_path: existingAssistantImage.storage_path || undefined,
@@ -4553,15 +4786,47 @@ app.post(
         { clientRequestId },
       );
     } else {
-      await ensureNamedWorkspaceProfile(userId, "images.generate");
+      await ensureNamedWorkspaceProfile(userId, "images.generate", userDb);
     }
 
-    const result = await routeImageGeneration({
-      prompt: providerPrompt,
-      size: parsed.data.size,
-    });
+    let imageQuotaReserved = false;
+    try {
+      await reserveCentralImageQuota(userDb, userId);
+      imageQuotaReserved = true;
+    } catch (error) {
+      if (error instanceof ImageQuotaError) {
+        res.status(error.statusCode).json({
+          error: error.message,
+          type: error.type,
+          remaining: error.remaining,
+          limit: error.limit,
+          resetMs: error.resetMs,
+          retryAfterMs: error.retryAfterMs,
+        });
+        return;
+      }
+      throw error;
+    }
+
+    let result: Awaited<ReturnType<typeof routeImageGeneration>>;
+    try {
+      result = await routeImageGeneration({
+        prompt: providerPrompt,
+        size: parsed.data.size,
+      });
+    } catch (error) {
+      if (imageQuotaReserved) {
+        await releaseCentralImageQuota(userDb, userId);
+        imageQuotaReserved = false;
+      }
+      throw error;
+    }
 
     if (!result.success) {
+      if (imageQuotaReserved) {
+        await releaseCentralImageQuota(userDb, userId);
+        imageQuotaReserved = false;
+      }
       console.log(`[IMAGE] endpoint failed prompt="${providerPrompt.slice(0, 40)}..." error="${result.error}"`);
       res.status(502).json({ error: result.error });
       return;
@@ -4573,13 +4838,23 @@ app.post(
     let storagePath: string | undefined;
     let fileSizeBytes: number | undefined;
 
+    if (!imageUrl && !imageBase64) {
+      if (imageQuotaReserved) {
+        await releaseCentralImageQuota(userDb, userId);
+        imageQuotaReserved = false;
+      }
+      res.status(502).json({ error: "Image provider returned no image payload." });
+      return;
+    }
+
     if (userDb && conversationId) {
       const imageDataForPersistence = result.image_base64 || result.image_url || "";
       if (!imageDataForPersistence) {
-        res.status(500).json({
-          error: "Image generated, but no image payload was available to save.",
-          code: "image_persistence_failed",
-        });
+        if (imageQuotaReserved) {
+          await releaseCentralImageQuota(userDb, userId);
+          imageQuotaReserved = false;
+        }
+        res.status(502).json({ error: "Image provider returned no image payload." });
         return;
       }
 
@@ -4604,15 +4879,31 @@ app.post(
         console.error(
           `[IMAGE] persistence failed conversationId=${conversationId} clientRequestId=${clientRequestId || "none"} error="${message}"`,
         );
-        res.status(500).json({
-          error: "Image was generated, but couldn't be saved to your conversation. Please try again.",
+        commitImageQuotaSuccess(getImageQuotaKey(req));
+        const quota = await getCentralImageQuotaInfo(userDb, userId);
+        res.json({
+          type: "image",
+          url: imageUrl,
+          prompt: parsed.data.prompt,
+          resolved_prompt: result.prompt,
+          original_prompt: parsed.data.prompt,
+          provider_used: result.provider_used,
+          success: true,
+          persisted: false,
           code: "image_persistence_failed",
+          warning: "Image was generated, but couldn't be saved to your conversation.",
+          remaining: quota.remaining,
+          limit: quota.limit,
+          image_url: imageUrl,
+          image_base64: imageBase64,
+          conversation_id: conversationId || undefined,
         });
         return;
       }
     }
 
-    const quota = getQuotaInfo(getImageQuotaKey(req));
+    commitImageQuotaSuccess(getImageQuotaKey(req));
+    const quota = await getCentralImageQuotaInfo(userDb, userId);
 
     console.log(`[IMAGE] provider=${result.provider_used} success prompt="${parsed.data.prompt.slice(0, 40)}..." remaining=${quota.remaining}`);
 

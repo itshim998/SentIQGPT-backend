@@ -561,6 +561,28 @@ export async function verifyShardMigrations(): Promise<void> {
           `is missing users.user_memory_usage_bytes column (migration 20260412090000). code=${memoryUsageColumnError.code ?? "unknown"} message=${memoryUsageColumnError.message}`,
         );
       }
+
+      // Check: 20260522130000_memory_maintenance.sql
+      const { error: memoryBackfillColumnsError } = await client
+        .from("memories")
+        .select("embedding_backfill_requested_at,embedding_backfill_attempts,embedding_backfill_last_attempt_at,embedding_backfill_error", { head: true, count: "exact" })
+        .limit(1);
+      if (memoryBackfillColumnsError) {
+        markFailure(
+          id,
+          `is missing memory maintenance columns (migration 20260522130000). code=${memoryBackfillColumnsError.code ?? "unknown"} message=${memoryBackfillColumnsError.message}`,
+        );
+      }
+
+      const { error: repairMemoryUsageFnError } = await client.rpc("repair_user_memory_usage", {
+        p_user_id: dummyId,
+      });
+      if (repairMemoryUsageFnError) {
+        markFailure(
+          id,
+          `is missing repair_user_memory_usage RPC (migration 20260522130000). code=${repairMemoryUsageFnError.code ?? "unknown"} message=${repairMemoryUsageFnError.message}`,
+        );
+      }
     } finally {
       // Best-effort cleanup for probe records.
       await client.from("usage_logs").delete().eq("user_id", dummyId);

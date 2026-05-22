@@ -120,8 +120,12 @@ async function dbPut(storeName, item) {
     const tx = db.transaction(storeName, "readwrite");
     const store = tx.objectStore(storeName);
     const req = store.put(item);
-    req.onsuccess = () => resolve(req.result);
+    let requestResult;
+    req.onsuccess = () => { requestResult = req.result; };
     req.onerror = () => reject(req.error);
+    tx.oncomplete = () => resolve(requestResult);
+    tx.onerror = () => reject(tx.error || req.error);
+    tx.onabort = () => reject(tx.error || new Error(`IndexedDB ${storeName} write transaction aborted`));
   });
 }
 
@@ -153,8 +157,10 @@ async function dbDelete(storeName, key) {
     const tx = db.transaction(storeName, "readwrite");
     const store = tx.objectStore(storeName);
     const req = store.delete(key);
-    req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || req.error);
+    tx.onabort = () => reject(tx.error || new Error(`IndexedDB ${storeName} delete transaction aborted`));
   });
 }
 
@@ -594,6 +600,7 @@ async function storeMemory(memory) {
     type: memory.type,
     summary: memory.summary,
     importance: memory.importance || 5,
+    embedding: Array.isArray(memory.embedding) ? memory.embedding : existing?.embedding,
     timestamp: memory.timestamp || memory.created_at || existing?.timestamp || new Date().toISOString(),
     owner_user_id: normalizeCacheUserId(memory.owner_user_id || memory.ownerUserId || existing?.owner_user_id || activeCacheUserId),
     source_message_id: memory.source_message_id || existing?.source_message_id || null,
@@ -604,6 +611,7 @@ async function storeMemory(memory) {
       ? Boolean(memory.persisted)
       : Boolean(existing?.persisted || memory.source === "server"),
     source_conversation_id: memory.source_conversation_id || existing?.source_conversation_id || null,
+    failure_reason: memory.failure_reason || existing?.failure_reason || null,
     pending_server_sync: Boolean(memory.pending_server_sync),
     last_synced_at: memory.last_synced_at || existing?.last_synced_at || null,
     sync_error: memory.sync_error || null,

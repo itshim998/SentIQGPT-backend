@@ -412,6 +412,52 @@ async function testMetadataFailureCleansUploadedObject(): Promise<void> {
   }]);
 }
 
+async function testMetadataFailureReportsCleanupFailure(): Promise<void> {
+  const result = await routeFileGeneration(
+    {
+      userMessage: "Create a text file with release notes as .txt",
+      userId: "00000000-0000-4000-8000-000000000001",
+      conversationId: "00000000-0000-4000-8000-000000000002",
+      userDb: {},
+      storageDb: {},
+    },
+    {},
+    {
+      callModel: async () => llmResult(
+        JSON.stringify({
+          title: "Release Note",
+          format: "txt",
+          text: "Release notes with enough content to render into a generated text file.",
+        }),
+        "minimax",
+      ),
+      uploadFile: async (_client, params) => ({
+        success: true,
+        fileId: "file-7",
+        fileUrl: "/api/generated-files/file-7/download",
+        storagePath: "u/c/file-7/v1/release-note.txt",
+        storageBucket: "sentiq-generated-files-private",
+        fileSizeBytes: params.buffer.length,
+        contentSha256: "txt-hash",
+        version: 1,
+      }),
+      saveMetadata: async () => {
+        throw new Error("db unavailable");
+      },
+      deleteFile: async () => {
+        throw new Error("storage unavailable");
+      },
+      storageDb: {},
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.cleanup_failed, true);
+  assert.equal(result.orphaned_storage_bucket, "sentiq-generated-files-private");
+  assert.equal(result.orphaned_storage_path, "u/c/file-7/v1/release-note.txt");
+  assert.match(result.warning || "", /could not be cleaned up/i);
+}
+
 function sourceBlock(source: string, needle: string, chars = 1800): string {
   const start = source.indexOf(needle);
   assert.ok(start >= 0, `Expected source to include ${needle}`);
@@ -440,6 +486,7 @@ function testStorageApiSourceGuards(): void {
   assert.match(patchBlock, /uploadGeneratedFileReplacement/, "HTML replacement endpoint should store a new private version");
   assert.match(patchBlock, /\.eq\("generated_file_id", fileId\)/, "HTML replacement should update linked assistant file messages");
   assert.match(patchBlock, /logDbFailure\("generated-files\.update\.messages"/, "message update failures should be logged");
+  assert.match(patchBlock, /generated_file_message_metadata_update_failed/, "message update failures should be returned as degraded warnings");
 
   assert.match(storage, /sentiq-generated-files-private/, "new generated files should default to the private bucket");
   assert.match(storage, /public:\s*false/, "generated file bucket should be private");
@@ -448,6 +495,7 @@ function testStorageApiSourceGuards(): void {
   assert.match(storage, /bucketName === DEFAULT_GENERATED_FILE_STORAGE_BUCKET/, "legacy public buckets should not be forcibly converted to private");
   assert.doesNotMatch(storage, /getPublicUrl/, "new uploads should not depend on public URLs");
   assert.match(generator, /deleteGeneratedFileObject/, "metadata failures should clean uploaded storage objects");
+  assert.match(generator, /cleanup_failed/, "metadata cleanup failures should be surfaced in result metadata");
   assert.match(generator, /validateOfficeZip/, "Office files should be ZIP-structure validated");
 }
 
@@ -463,6 +511,7 @@ async function main(): Promise<void> {
   await testMarkdownTableXlsxRepair();
   await testFallbackFailureIsStructured();
   await testMetadataFailureCleansUploadedObject();
+  await testMetadataFailureReportsCleanupFailure();
   testStorageApiSourceGuards();
   console.log("file generation tests passed");
 }

@@ -55,6 +55,9 @@ assert.match(storageService, /owner_user_id:\s*normalizeCacheUserId\(memory\.own
 assert.match(storageService, /owner_user_id:\s*normalizeCacheUserId\(fileData\.owner_user_id/, "stored uploaded files should carry owner_user_id");
 assert.match(storageService, /filter\(\(memory\) => isOwnedCacheItemVisible\(memory\)\)/, "memory reads should be scoped to the active owner");
 assert.match(storageService, /filter\(\(file\) => isOwnedCacheItemVisible\(file\)\)/, "file reads should be scoped to the active owner");
+assert.match(storageService, /tx\.oncomplete\s*=\s*\(\)\s*=>\s*resolve\(requestResult\)/, "IndexedDB put helper should resolve after transaction completion");
+assert.match(storageService, /tx\.onabort\s*=\s*\(\)\s*=>\s*reject\(tx\.error \|\| new Error\(`IndexedDB \$\{storeName\} write transaction aborted`\)\)/, "IndexedDB put helper should reject aborted transactions");
+assert.match(storageService, /tx\.oncomplete\s*=\s*\(\)\s*=>\s*resolve\(\)/, "IndexedDB delete helper should resolve after transaction completion");
 assert.match(storageService, /window\.SentIQStorage\s*=\s*\{[\s\S]*upsertMessageInChat/, "storage should expose streaming message upsert helper");
 assert.match(storageService, /window\.SentIQStorage\s*=\s*\{[\s\S]*mergeChatMessages/, "storage should expose safe server-message merge helper");
 assert.match(storageService, /incomingMessages\.length === 0 && existingMessages\.length > 0/, "remote hydration should preserve non-empty local chats on empty snapshots");

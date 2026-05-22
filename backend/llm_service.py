@@ -266,7 +266,7 @@ def is_missing_quota_rpc_error(error: SupabaseRequestError) -> bool:
 
     # PostgREST returns 404/406 for unresolved rpc signatures depending on gateway mode.
     if error.status_code in {404, 406}:
-        return True
+        return details_contain_missing_function_marker(error.details)
 
     return details_contain_missing_function_marker(error.details)
 
@@ -535,11 +535,9 @@ def get_enforced_usage(user_id: str, assigned_db: Optional[int] = None) -> tuple
 
 
 def should_fallback_quota_rpc(error: SupabaseRequestError) -> bool:
-    if error.kind != "rpc":
-        return False
-    # Fallback only when the RPC path itself is unavailable or rejected, not on
-    # successful quota exhaustion. This keeps the atomic RPC as the primary path.
-    return error.status_code in {400, 401, 403, 404, 406, 500}
+    # Fallback is only allowed for confirmed migration drift where the atomic
+    # quota RPC is missing. Auth, permission, and 5xx failures must fail closed.
+    return is_missing_quota_rpc_error(error)
 
 
 def reserve_llm_request_slot(user_id: str) -> int:
@@ -608,6 +606,16 @@ async def health_check():
 @app.post("/llm/invoke", response_model=LLMInvokeResponse)
 async def invoke_llm(request: LLMInvokeRequest):
     try:
+        user_id_for_safety = request.user_id or GUEST_USER_ID
+        is_safe, classification, _ = check_input_safety(request.prompt, user_id_for_safety, "/llm/invoke")
+        if not is_safe:
+            logger.warning("[Safety] Input blocked for user=%s classification=%s", user_id_for_safety, classification)
+            reason = "safety_violation" if classification == SafetyResult.UNSAFE else "safety_degraded"
+            raise HTTPException(
+                status_code=400,
+                detail={"status": "blocked", "reason": reason},
+            )
+
         if is_guest_user(request.user_id):
             user_id = GUEST_USER_ID
             effective_model_override = (
@@ -621,18 +629,6 @@ async def invoke_llm(request: LLMInvokeRequest):
             assigned_db = reserve_llm_request_slot(user_id)
             effective_model_override = request.model_override
             logger.info("[invoke] quota_reserved user_id=%s db=%s task=%s", user_id, assigned_db, request.task)
-        
-        # ── INPUT SAFETY GUARD ──
-        # Check user prompt for safety violations before calling primary model
-        is_safe, classification, _ = check_input_safety(request.prompt, user_id, "/llm/invoke")
-        if not is_safe:
-            logger.warning("[Safety] Input blocked for user=%s classification=%s", user_id, classification)
-            reason = "safety_violation" if classification == SafetyResult.UNSAFE else "safety_degraded"
-            raise HTTPException(
-                status_code=400,
-                detail={"status": "blocked", "reason": reason},
-            )
-        
         result = call_llm_router(
             prompt=request.prompt,
             task=request.task,

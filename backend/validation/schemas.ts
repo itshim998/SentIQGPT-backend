@@ -48,6 +48,9 @@ export const ChatRequestSchema = z.object({
     file_references: z.array(z.object({
       filename: z.string(),
       extractedText: z.string(),
+      analysis_id: z.string().optional(),
+      size_bytes: z.number().int().positive().optional(),
+      mime_type: z.string().optional(),
     })).max(10).optional(),
     image_attachments: z.array(z.object({
       filename: z.string().min(1).max(255),

@@ -26,6 +26,7 @@
     "test:execution-profiles": "ts-node --project tsconfig.backend.json backend/testExecutionProfiles.ts",
     "test:file-generation": "ts-node --project tsconfig.backend.json backend/testFileGeneration.ts",
     "test:frontend-file-generation": "ts-node --project tsconfig.backend.json backend/testFrontendFileGeneration.ts",
+    "test:priority4-contracts": "ts-node --project tsconfig.backend.json backend/testPriority4Contracts.ts",
     "eval:golden": "ts-node --project tsconfig.backend.json backend/evalGoldenPrompts.ts"
   },
   "dependencies": {

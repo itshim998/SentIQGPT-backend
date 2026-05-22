@@ -43,7 +43,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   let imageMode = false;
   let pendingFiles = [];
   let composerDragDepth = 0;
-  let currentSessionFile = null; // Tracks the most recently uploaded file for priority context
+  let currentSessionFiles = []; // Tracks uploaded files for current-chat context
   let currentSessionImageAttachments = []; // Tracks recent image inputs for follow-up questions
   const pendingClarifications = new Map();
   let selectionButton = null;
@@ -71,6 +71,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         abortController: null,
         activityMode: "thinking",
         activityLoaderKind: "loader-text",
+        sessionFiles: [],
         sessionFile: null,
         sessionImageAttachments: [],
       });
@@ -80,16 +81,43 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function syncCurrentSessionContext(chatId = currentChatId) {
     const state = getChatState(chatId);
-    currentSessionFile = state?.sessionFile || null;
+    currentSessionFiles = Array.isArray(state?.sessionFiles)
+      ? state.sessionFiles
+      : (state?.sessionFile ? [state.sessionFile] : []);
     currentSessionImageAttachments = Array.isArray(state?.sessionImageAttachments)
       ? state.sessionImageAttachments
       : [];
   }
 
-  function setCurrentSessionFile(file, chatId = currentChatId) {
+  function setCurrentSessionFiles(files, chatId = currentChatId) {
     const state = getChatState(chatId);
-    if (state) state.sessionFile = file || null;
-    if (chatId === currentChatId) currentSessionFile = file || null;
+    const normalizedFiles = Array.isArray(files)
+      ? files.filter((file) => file && file.extracted_text)
+      : [];
+    if (state) {
+      state.sessionFiles = normalizedFiles.slice(-10);
+      state.sessionFile = state.sessionFiles[state.sessionFiles.length - 1] || null;
+    }
+    if (chatId === currentChatId) currentSessionFiles = normalizedFiles.slice(-10);
+  }
+
+  function addCurrentSessionFiles(files, chatId = currentChatId) {
+    const state = getChatState(chatId);
+    const existing = Array.isArray(state?.sessionFiles)
+      ? state.sessionFiles
+      : (state?.sessionFile ? [state.sessionFile] : []);
+    const next = [...existing];
+    for (const file of Array.isArray(files) ? files : [files]) {
+      if (!file || !file.extracted_text) continue;
+      const key = file.analysis_id || `${file.filename}:${file.timestamp || ""}`;
+      const existingIndex = next.findIndex((item) => (
+        (item.analysis_id && file.analysis_id && item.analysis_id === file.analysis_id)
+        || `${item.filename}:${item.timestamp || ""}` === key
+      ));
+      if (existingIndex >= 0) next.splice(existingIndex, 1);
+      next.push(file);
+    }
+    setCurrentSessionFiles(next.slice(-10), chatId);
   }
 
   function setCurrentSessionImageAttachments(images, chatId = currentChatId) {
@@ -102,11 +130,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   function clearChatSessionContext(chatId = currentChatId) {
     const state = getChatState(chatId);
     if (state) {
+      state.sessionFiles = [];
       state.sessionFile = null;
       state.sessionImageAttachments = [];
     }
     if (!chatId || chatId === currentChatId) {
-      currentSessionFile = null;
+      currentSessionFiles = [];
       currentSessionImageAttachments = [];
     }
   }
@@ -1258,6 +1287,17 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         model_used: message.provider || "",
       }, { chatId: message.conversation_id || message.conversationId || null });
     }
+    if (!meta && messageType === "file_upload") {
+      const preview = message.preview_json || message.previewJson || {};
+      meta = {
+        type: "file-upload",
+        filename: message.file_name || message.fileName || preview.filename || "File",
+        size_bytes: message.file_size_bytes || message.fileSizeBytes || preview.size_bytes || null,
+        mime_type: message.mime_type || message.mimeType || preview.mime_type || "",
+        analysis_id: preview.analysis_id || "",
+        analysis_status: preview.analysis_status || "complete",
+      };
+    }
     return {
       id: message.id,
       role: message.role,
@@ -1281,6 +1321,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       embedding: Array.isArray(memory.embedding) ? memory.embedding : undefined,
       persisted: true,
       source_conversation_id: memory.source_conversation_id || memory.chat_id || null,
+      failure_reason: memory.failure_reason || null,
       source: "server",
       pending_server_sync: false,
       last_synced_at: new Date().toISOString(),
@@ -1404,6 +1445,15 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         storage_path: meta.storage_path || meta.storagePath || "",
         file_size_bytes: meta.file_size_bytes || meta.fileSizeBytes || null,
         preview: meta.preview || null,
+      };
+    } else if (meta?.type === "file-upload") {
+      output.meta = {
+        type: "file-upload",
+        filename: meta.filename || meta.file_name || "",
+        size_bytes: meta.size_bytes || meta.file_size_bytes || null,
+        mime_type: meta.mime_type || meta.mimeType || "",
+        analysis_id: meta.analysis_id || "",
+        analysis_status: meta.analysis_status || "",
       };
     }
     return output;
@@ -1994,7 +2044,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   async function syncConversationStateForAuth(signedIn) {
     const stopMeasure = startPerf("ui.auth.sync_state", { signed_in: signedIn });
     currentChatId = null;
-    currentSessionFile = null;
+    currentSessionFiles = [];
     currentSessionImageAttachments = [];
     pendingClarifications.clear();
     chatStates.clear();
@@ -2674,6 +2724,18 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const data = getImageQuotaData();
     data.timestamps.push(Date.now());
     localStorage.setItem(IMAGE_QUOTA_KEY, JSON.stringify(data));
+    updateImageButtonState();
+  }
+
+  function syncImageQuotaFromServer(result) {
+    if (!result || typeof result.limit !== "number" || typeof result.remaining !== "number") {
+      return;
+    }
+    const used = Math.max(0, Math.min(result.limit, result.limit - result.remaining));
+    const now = Date.now();
+    localStorage.setItem(IMAGE_QUOTA_KEY, JSON.stringify({
+      timestamps: Array.from({ length: used }, () => now),
+    }));
     updateImageButtonState();
   }
 
@@ -3517,23 +3579,33 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       type,
       summary: memory.summary,
       importance: memory.importance,
+      embedding: Array.isArray(memory.embedding) ? memory.embedding : undefined,
       scope,
       chat_id: scope === "chat" ? (memory.chat_id || chatId) : null,
       owner_user_id: getActiveAuthUserId(),
       persisted: memory.persisted === true,
       source_conversation_id: memory.source_conversation_id || chatId || null,
+      failure_reason: memory.failure_reason || null,
       source: memory.id ? "server" : "local",
       pending_server_sync: Boolean(syncMeta?.deferred && !memory.id),
     };
   }
 
   function getCurrentFileReferences() {
-    const sessionFile = getChatState(currentChatId)?.sessionFile || currentSessionFile;
-    if (!sessionFile || !sessionFile.extracted_text) return [];
-    return [{
-      filename: sessionFile.filename,
-      extractedText: sessionFile.extracted_text,
-    }];
+    const state = getChatState(currentChatId);
+    const sessionFiles = Array.isArray(state?.sessionFiles) && state.sessionFiles.length
+      ? state.sessionFiles
+      : (state?.sessionFile ? [state.sessionFile] : currentSessionFiles);
+    return sessionFiles
+      .filter((file) => file && file.extracted_text)
+      .slice(-10)
+      .map((file) => ({
+        filename: file.filename,
+        extractedText: file.extracted_text,
+        analysis_id: file.analysis_id || undefined,
+        size_bytes: file.size_bytes || undefined,
+        mime_type: file.mime_type || file.type || undefined,
+      }));
   }
 
   function shouldReuseCurrentSessionImages(message) {
@@ -7159,28 +7231,49 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
 
     const originalApiMessage = apiMessage;
+    const requestExecutionMode = normalizeExecutionMode(currentExecutionMode);
+    const preliminaryWebSearchMode = getEffectiveWebSearchMode();
+    let routeIntent = null;
+    if (apiMessage && typeof API.getChatIntent === "function") {
+      try {
+        routeIntent = await API.getChatIntent(apiMessage, {
+          imageAttachments: imageAttachmentsForRequest,
+          webSearchMode: preliminaryWebSearchMode,
+          executionMode: requestExecutionMode,
+          clarificationResponse: clarificationResponseForRequest,
+        });
+      } catch (error) {
+        debugWarn("[UI] Chat intent preflight failed; using local fallback:", getSafeErrorMessage(error));
+      }
+    }
+    const intentRoute = routeIntent?.route || "";
     const clarifiedDownloadFormat = detectClarificationDownloadFormat(clarificationResponseForRequest);
     const typedClarificationDownloadFormat = isClarificationAnswer && /\bdownloadable\b/i.test(originalApiMessage)
       ? detectRequestedFileFormat(originalApiMessage)
       : null;
-    const requestedFileFormat = clarifiedDownloadFormat || typedClarificationDownloadFormat || detectRequestedFileFormat(originalApiMessage);
-    const fileGenerationPrompt = Boolean(clarifiedDownloadFormat || typedClarificationDownloadFormat) || (!isClarificationAnswer && isLikelyFileGenerationRequest(originalApiMessage));
+    const requestedFileFormat = routeIntent?.file?.format || clarifiedDownloadFormat || typedClarificationDownloadFormat || detectRequestedFileFormat(originalApiMessage);
+    const fileGenerationPrompt = intentRoute === "file_generation"
+      || Boolean(clarifiedDownloadFormat || typedClarificationDownloadFormat)
+      || (!routeIntent && !isClarificationAnswer && isLikelyFileGenerationRequest(originalApiMessage));
     const authenticatedFileGenerationRequired = fileGenerationPrompt && isAuthenticatedSession();
     const htmlFileGenerationRequired = authenticatedFileGenerationRequired && requestedFileFormat === "html";
-    const requestExecutionMode = normalizeExecutionMode(currentExecutionMode);
     if (fileGenerationPrompt && !isAuthenticatedSession()) {
       apiMessage = buildGuestFileGenerationInstruction(originalApiMessage, requestedFileFormat);
     }
-    const chartResponseRequired = !authenticatedFileGenerationRequired && isChartRequest(apiMessage);
-    const bufferedReasoningRequired = !authenticatedFileGenerationRequired && isLikelyBufferedReasoningPrompt(apiMessage);
-    const structuredResponseRequired = chartResponseRequired || bufferedReasoningRequired || (authenticatedFileGenerationRequired && !htmlFileGenerationRequired);
-    const requestLoaderKind = SentIQLoaderEngine.resolveKind(apiMessage, {
+    const chartResponseRequired = !authenticatedFileGenerationRequired && (
+      intentRoute === "chart_generation" || (!routeIntent && isChartRequest(apiMessage))
+    );
+    const bufferedReasoningRequired = !authenticatedFileGenerationRequired && (
+      intentRoute === "reasoning" || intentRoute === "math_reasoning" || (!routeIntent && isLikelyBufferedReasoningPrompt(apiMessage))
+    );
+    const structuredResponseRequired = false;
+    const requestLoaderKind = routeIntent?.loader || SentIQLoaderEngine.resolveKind(apiMessage, {
       structured: chartResponseRequired,
       reasoning: bufferedReasoningRequired,
       file: authenticatedFileGenerationRequired,
     });
 
-    if (!isClarificationAnswer && !webSearchModeOverride && imageAttachmentsForRequest.length === 0 && !chartResponseRequired && !bufferedReasoningRequired && !authenticatedFileGenerationRequired && apiMessage && isImageRequest(apiMessage)) {
+    if (!isClarificationAnswer && !webSearchModeOverride && imageAttachmentsForRequest.length === 0 && !chartResponseRequired && !bufferedReasoningRequired && !authenticatedFileGenerationRequired && apiMessage && (intentRoute === "image_generation" || (!routeIntent && isImageRequest(apiMessage)))) {
       await handleImageGeneration(apiMessage);
       return;
     }
@@ -7260,7 +7353,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         : getCurrentFileReferences();
       const effectiveWebSearchMode = isClarificationAnswer && clarificationContextSnapshot?.webSearchMode
         ? clarificationContextSnapshot.webSearchMode
-        : getEffectiveWebSearchMode();
+        : preliminaryWebSearchMode;
       if (fileReferences.length > 0) {
         debugLog("[Frontend] using session file", { extracted_chars: fileReferences[0].extractedText.length });
       }
@@ -7980,8 +8073,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     setStopMode();
 
     try {
-      updateImageCooldown();
-      incrementImageQuota();
       const result = await API.generateImage(prompt, {
         conversationId: targetChatId,
         clientRequestId: requestId,
@@ -7990,6 +8081,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           memories: imageContextData.memories,
         },
       });
+      syncImageQuotaFromServer(result);
       if (isRequestStale(targetChatId, requestId)) {
         if (result.success) {
           if (isAuthenticatedSession() && targetChatId) {
@@ -8012,6 +8104,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         return;
       }
       if (result.success) {
+        updateImageCooldown();
         let imageUrl = "";
         if (result.image_url) imageUrl = result.image_url;
         else if (result.url) imageUrl = result.url;
@@ -8032,6 +8125,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           });
         }
         maybeGenerateTitle(`Generate image: ${prompt}`, "Generated an image.", targetChatId);
+        if (result.persisted === false) {
+          showToast(result.warning || "Image generated, but it could not be synced to this chat yet.", "error", 6000);
+        }
         if (isAuthenticatedSession() && targetChatId) {
           settleImageGenerationUi(targetChatId, state);
           refreshCanonicalChatAfterImageGeneration(targetChatId)
@@ -8335,13 +8431,36 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
     const uploadResults = await runWithConcurrencyLimit(regularFiles, 2, async (file) => {
       const localUploadId = crypto.randomUUID();
-      const uploadMeta = { type: "file-upload", filename: file.name };
+      const uploadRequestId = `file-${localUploadId}`;
+      const uploadMeta = {
+        type: "file-upload",
+        filename: file.name,
+        size_bytes: file.size,
+        mime_type: file.type || "application/octet-stream",
+        analysis_id: localUploadId,
+        analysis_status: "processing",
+        clientRequestId: uploadRequestId,
+      };
       const { contentDiv } = appendMessageBubble("user", `Uploaded file: ${file.name}`, uploadMeta);
       const statusEntry = attachFileAnalysisStatus(contentDiv, "processing", "Uploading and analyzing...");
       if (statusEntry) {
         pendingFileUploadUi.set(localUploadId, { ...statusEntry, filename: file.name });
       }
-      await persistChatMessage(currentChatId, "user", `Uploaded file: ${file.name}`);
+      await persistChatMessage(currentChatId, "user", `Uploaded file: ${file.name}`, uploadMeta, {
+        id: `user-${uploadRequestId}`,
+        clientRequestId: uploadRequestId,
+      });
+      await upsertChatMessageSyncJob(uploadRequestId, {
+        localChatId: currentChatId,
+        conversationId: getCanonicalConversationIdForRequest(currentChatId) || null,
+        title: `Uploaded file: ${file.name}`.slice(0, 50),
+        messages: [{
+          role: "user",
+          content: `Uploaded file: ${file.name}`,
+          clientRequestId: uploadRequestId,
+          meta: uploadMeta,
+        }],
+      });
       showActivityIndicator("thinking", { chatId: currentChatId, withTimer: false, persist: false });
       scrollToBottom();
       try {
@@ -8356,7 +8475,31 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           size_bytes: result.size_bytes,
           timestamp: new Date().toISOString(),
           analysis_id: analysisId,
+          mime_type: file.type || result.mime_type || "application/octet-stream",
         };
+        const completedUploadMeta = {
+          ...uploadMeta,
+          filename: result.filename,
+          size_bytes: result.size_bytes || file.size,
+          mime_type: sessionFile.mime_type,
+          analysis_id: analysisId,
+          analysis_status: result.analysis_status || "complete",
+        };
+        await persistChatMessage(currentChatId, "user", `Uploaded file: ${result.filename}`, completedUploadMeta, {
+          id: `user-${uploadRequestId}`,
+          clientRequestId: uploadRequestId,
+        });
+        await upsertChatMessageSyncJob(uploadRequestId, {
+          localChatId: currentChatId,
+          conversationId: getCanonicalConversationIdForRequest(currentChatId) || null,
+          title: `Uploaded file: ${result.filename}`.slice(0, 50),
+          messages: [{
+            role: "user",
+            content: `Uploaded file: ${result.filename}`,
+            clientRequestId: uploadRequestId,
+            meta: completedUploadMeta,
+          }],
+        });
         if (pendingEntry) {
           fileAnalysisUi.set(analysisId, { ...pendingEntry, filename: result.filename, fileType: result.type });
           const status = result.analysis_status || "processing";
@@ -8395,18 +8538,21 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       }
     });
 
-    for (let i = uploadResults.length - 1; i >= 0; i--) {
-      const result = uploadResults[i];
-      if (result?.status === "fulfilled" && result.value) {
-        setCurrentSessionFile(result.value);
-        break;
-      }
+    const completedSessionFiles = uploadResults
+      .filter((result) => result?.status === "fulfilled" && result.value)
+      .map((result) => result.value);
+    if (completedSessionFiles.length > 0) {
+      addCurrentSessionFiles(completedSessionFiles);
     }
     if (message || imageAttachments.length > 0) {
       await handleSend(null, {
         message,
         imageAttachments,
         skipPendingFileProcessing: true,
+      });
+    } else if (isAuthenticatedSession()) {
+      processSyncQueue().catch((error) => {
+        debugWarn("[UI] Upload-only file sync failed:", getSafeErrorMessage(error));
       });
     }
     scheduleChatListRefresh();
