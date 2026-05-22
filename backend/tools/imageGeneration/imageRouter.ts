@@ -88,6 +88,18 @@ export function detectPromptComplexity(prompt: string): boolean {
   return matchCount >= 1;
 }
 
+export type ImageModelPreference = "zimage" | "wan-image";
+
+export function selectImageProviderMode(
+  prompt: string,
+  preferredModel?: ImageModelPreference,
+): "standard" | "complex" {
+  if (detectPromptComplexity(prompt)) {
+    return "complex";
+  }
+  return preferredModel === "wan-image" ? "complex" : "standard";
+}
+
 // ==============================
 // Per-provider cooldown tracking
 // ==============================
@@ -151,7 +163,13 @@ const MAX_QUEUE_SIZE_PER_USER = parsePositiveInt(process.env.SENTIQ_IMAGE_QUEUE_
 const MAX_CONCURRENT_JOBS = parsePositiveInt(process.env.SENTIQ_IMAGE_QUEUE_CONCURRENCY, 2);
 
 interface QueueItem {
-  args: { readonly prompt: string; readonly size?: string; readonly userId?: string; readonly signal?: AbortSignal };
+  args: {
+    readonly prompt: string;
+    readonly size?: string;
+    readonly userId?: string;
+    readonly signal?: AbortSignal;
+    readonly preferredModel?: ImageModelPreference;
+  };
   userKey: string;
   resolve: (result: ImageGenerationResult) => void;
   reject: (err: Error) => void;
@@ -248,6 +266,7 @@ export async function routeImageGeneration(args: {
   readonly size?: string;
   readonly userId?: string;
   readonly signal?: AbortSignal;
+  readonly preferredModel?: ImageModelPreference;
 }): Promise<ImageGenerationResult> {
   if (!args.prompt.trim()) {
     return { success: false, prompt: args.prompt, error: "Prompt is required" };
@@ -316,14 +335,15 @@ async function executeImageGeneration(args: {
   readonly prompt: string;
   readonly size?: string;
   readonly signal?: AbortSignal;
+  readonly preferredModel?: ImageModelPreference;
 }): Promise<ImageGenerationResult> {
   throwIfAborted(args.signal);
   const errors: string[] = [];
   const startTime = Date.now();
-  const isComplex = detectPromptComplexity(args.prompt);
-  const selectedProviders = isComplex ? complexProviders : standardProviders;
+  const providerMode = selectImageProviderMode(args.prompt, args.preferredModel);
+  const selectedProviders = providerMode === "complex" ? complexProviders : standardProviders;
   console.log(
-    `[IMAGE] routing prompt="${args.prompt.slice(0, 60)}..." complex=${isComplex} primary=${selectedProviders[0]?.name ?? "none"} providers=${selectedProviders.length}`,
+    `[IMAGE] routing prompt="${args.prompt.slice(0, 60)}..." mode=${providerMode} preferred=${args.preferredModel ?? "none"} primary=${selectedProviders[0]?.name ?? "none"} providers=${selectedProviders.length}`,
   );
 
   for (const provider of selectedProviders) {

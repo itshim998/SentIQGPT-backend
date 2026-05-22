@@ -81,6 +81,10 @@ GROQ_API_KEYS = [
 GROQ_API_KEYS = [k for k in GROQ_API_KEYS if k]
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", "openai/gpt-oss-120b")
+MASTER_ROUTER_MODEL = os.getenv(
+    "MASTER_ROUTER_MODEL",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+)
 
 # --- Smart model routing aliases (resolved to provider-native model IDs) ---
 GEMINI_FAST_MODEL = os.getenv("SMART_MODEL_GEMINI_FAST", "gemini-2.5-flash-lite")
@@ -94,6 +98,12 @@ GPT_OSS_LOGICAL_MODELS = {"gpt-oss-120b", "openai/gpt-oss-120b"}
 GPT_OSS_SYSTEM_PROMPT = (
     "You are SentIQGPT, a grounded AI assistant. "
     "Provide accurate, concise, well-structured answers."
+)
+MASTER_ROUTER_SYSTEM_PROMPT = (
+    "You are the Master Routing AI for SentIQGPT. "
+    "Your task is not to answer user prompts. "
+    "Determine the minimum sufficient specialized model while minimizing unnecessary cost. "
+    "Output strict JSON only."
 )
 GPT_OSS_DEFAULT_MAX_COMPLETION_TOKENS = 2000
 GPT_OSS_REASONING_EFFORTS = {"low", "medium"}
@@ -398,6 +408,7 @@ GROQ_TASKS = {
     "memory_summarize",
     "memory_compress",
     "route_classify",
+    "master_route",
 }
 
 CHATLIKE_TASKS = {"chat", "general", "math_reasoning"}
@@ -479,6 +490,12 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
 # Simulation (safe dev mode)
 # ==============================
 def simulated_response(prompt: str, task: str) -> str:
+    if task == "master_route":
+        return json.dumps({
+            "selected_model": "general_model",
+            "confidence": 0.0,
+            "reason": "simulated fallback",
+        })
     if _should_request_worked_explanation(prompt=prompt, task=task, model_override=None):
         return json.dumps({
             "explanation": "Step 1: Work through the problem in concise user-facing steps.",
@@ -731,6 +748,7 @@ def _call_groq(
     model: Optional[str] = None,
     max_output_tokens: Optional[int] = None,
     reasoning_effort: Optional[str] = None,
+    response_format_json: bool = False,
 ) -> str:
     if not GROQ_MODULE:
         raise RuntimeError("Groq SDK not installed")
@@ -742,6 +760,21 @@ def _call_groq(
     # Use persistent client (connection pooling)
     client = _get_groq_client(api_key)
     resolved_model = model or GROQ_MODEL
+    if response_format_json:
+        response = client.chat.completions.create(
+            model=resolved_model,
+            messages=[
+                {"role": "system", "content": MASTER_ROUTER_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.5,
+            max_completion_tokens=max_output_tokens or 200,
+            top_p=0.9,
+            stream=False,
+            response_format={"type": "json_object"},
+        )
+        return response.choices[0].message.content or ""
+
     if _is_gpt_oss_model(resolved_model):
         response = client.chat.completions.create(
             model=resolved_model,
@@ -814,6 +847,7 @@ def _invoke_groq(
     model_override: Optional[str] = None,
     max_output_tokens: Optional[int] = None,
     reasoning_effort: Optional[str] = None,
+    response_format_json: bool = False,
 ) -> str:
     """Try Groq keys with smart rotation (skip recently failed keys)."""
     if not GROQ_API_KEYS:
@@ -824,7 +858,14 @@ def _invoke_groq(
     last_error = None
     for idx, api_key in enumerate(keys_to_try, 1):
         try:
-            result = _call_groq(prompt, api_key, model_override, max_output_tokens, reasoning_effort)
+            result = _call_groq(
+                prompt,
+                api_key,
+                model_override,
+                max_output_tokens,
+                reasoning_effort,
+                response_format_json=response_format_json,
+            )
             logger.info("Groq key #%d succeeded", idx)
             return result
         except Exception as e:
@@ -1314,6 +1355,10 @@ def call_llm_router(
     default_provider = prefer or get_provider_for_task(task)
     provider, resolved_override = resolve_model_override(model_override, default_provider)
     model = resolved_override or _default_model_for_provider(provider)
+    if task == "master_route":
+        provider = "groq"
+        resolved_override = resolved_override or MASTER_ROUTER_MODEL
+        model = resolved_override
     actual_model_used = model
     fallback_triggered = False
     fallback_reason = None
@@ -1406,7 +1451,13 @@ def call_llm_router(
                 image_attachments=image_attachments,
             )
         elif provider == "groq":
-            result = _invoke_groq(effective_prompt, resolved_override, max_output_tokens, reasoning_effort)
+            result = _invoke_groq(
+                effective_prompt,
+                resolved_override,
+                max_output_tokens,
+                reasoning_effort,
+                response_format_json=task == "master_route",
+            )
         else:
             result = _invoke_gemini(effective_prompt, resolved_override)
 

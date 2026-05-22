@@ -122,7 +122,8 @@ import {
   type ClarificationPayload,
 } from "./orchestrator/intentClarifier";
 
-import { detectCodeQuery, detectImageMathPrompt, isBufferedReasoningQuery, isMathQuery, selectModelForPrompt } from "./orchestrator/modelRouter";
+import { detectCodeQuery, detectImageMathPrompt, isBufferedReasoningQuery, isMathQuery } from "./orchestrator/modelRouter";
+import { selectImageModelPreferenceWithMaster, selectModelForPromptWithMaster } from "./orchestrator/masterRouter";
 import { detectExplicitMemoryWriteIntent, classifyQueryType, shouldForceWebSearch } from "./orchestrator/queryClassifier";
 import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 import { isWebSearchMode, normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
@@ -4159,12 +4160,21 @@ app.post(
     const fileNames = hasFile ? fileRefs.map((f: { filename?: string }) => f.filename || "") : undefined;
     const fileContent = hasFile ? fileRefs.map((f: { extractedText?: string }) => f.extractedText || "").join("\n") : undefined;
 
-    const modelOverride = selectModelForPrompt(effectiveUserMessage, undefined, {
-      hasImage, 
-      hasFile,
-      fileNames,
-      fileContent,
+    const routedModel = await selectModelForPromptWithMaster({
+      query: effectiveUserMessage,
+      options: {
+        hasImage,
+        hasFile,
+        fileNames,
+        fileContent,
+      },
+      userId,
+      signal: requestAbortController.signal,
     });
+    const modelOverride = routedModel.model;
+    if (routedModel.source === "deterministic" && routedModel.fallback_reason) {
+      console.log(`[MasterRouter] stream deterministic fallback=${routedModel.fallback_reason}`);
+    }
 
     const fastPathEligible =
       !hasFile &&
@@ -4930,12 +4940,18 @@ app.post(
       throw error;
     }
 
+    const preferredModel = await selectImageModelPreferenceWithMaster({
+      prompt: providerPrompt,
+      userId,
+    });
+
     let result: Awaited<ReturnType<typeof routeImageGeneration>>;
     try {
       result = await routeImageGeneration({
         prompt: providerPrompt,
         size: parsed.data.size,
         userId,
+        preferredModel,
       });
     } catch (error) {
       if (imageQuotaReserved) {

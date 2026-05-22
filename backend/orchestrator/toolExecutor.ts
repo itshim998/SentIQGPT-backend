@@ -29,7 +29,8 @@ import { solveMathDirect } from "../ai/mathVerifier";
 import { resolveContextReferences } from "../context/referenceResolver";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
-import { detectCodeQuery, detectImageMathPrompt, selectModelForPrompt, isMathQuery } from "./modelRouter";
+import { detectCodeQuery, detectImageMathPrompt, isMathQuery } from "./modelRouter";
+import { selectImageModelPreferenceWithMaster, selectModelForPromptWithMaster } from "./masterRouter";
 import type { SearchResult } from "../tools/webSearch/types";
 import { INTUITIVE_PROFILE, type ExecutionProfile } from "./executionProfile";
 
@@ -195,12 +196,22 @@ async function execConversation(
   const fileNames = hasFiles ? ctx.fileReferences.map((f) => f.filename) : undefined;
   const fileContent = hasFiles ? ctx.fileReferences.map((f) => f.extractedText).join("\n") : undefined;
   
-  const modelOverride = selectModelForPrompt(input, undefined, {
-    hasImage: hasImages,
-    hasFile: hasFiles,
-    fileNames,
-    fileContent,
+  const routedModel = await selectModelForPromptWithMaster({
+    query: input,
+    options: {
+      hasImage: hasImages,
+      hasFile: hasFiles,
+      fileNames,
+      fileContent,
+    },
+    userId: ctx.userId,
+    signal,
   });
+  const modelOverride = routedModel.model;
+
+  if (routedModel.source === "deterministic" && routedModel.fallback_reason) {
+    console.log(`[MasterRouter] conversation deterministic fallback=${routedModel.fallback_reason}`);
+  }
   
   const result = await handleChat({
     userMessage: augmentedInput,
@@ -233,7 +244,12 @@ async function execImageGeneration(
   ctx: BuiltContext,
   signal?: AbortSignal,
 ): Promise<StepResult> {
-  const result = await routeImageGeneration({ prompt: input, userId: ctx.userId, signal });
+  const preferredModel = await selectImageModelPreferenceWithMaster({
+    prompt: input,
+    userId: ctx.userId,
+    signal,
+  });
+  const result = await routeImageGeneration({ prompt: input, userId: ctx.userId, signal, preferredModel });
 
   return {
     step: 0,
@@ -261,12 +277,22 @@ async function execFileAnalysis(
   const fileNames = hasFiles ? ctx.fileReferences.map((f) => f.filename) : undefined;
   const fileContent = hasFiles ? ctx.fileReferences.map((f) => f.extractedText).join("\n") : undefined;
   
-  const modelOverride = selectModelForPrompt(input, undefined, {
-    hasImage: hasImages,
-    hasFile: hasFiles,
-    fileNames,
-    fileContent,
+  const routedModel = await selectModelForPromptWithMaster({
+    query: input,
+    options: {
+      hasImage: hasImages,
+      hasFile: hasFiles,
+      fileNames,
+      fileContent,
+    },
+    userId: ctx.userId,
+    signal,
   });
+  const modelOverride = routedModel.model;
+
+  if (routedModel.source === "deterministic" && routedModel.fallback_reason) {
+    console.log(`[MasterRouter] file_analysis deterministic fallback=${routedModel.fallback_reason}`);
+  }
   
   const augmentedInput = priorContext
     ? `${input}\n\n[Previous step context]: ${priorContext}`

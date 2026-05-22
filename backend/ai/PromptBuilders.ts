@@ -49,6 +49,7 @@ try {
     "memory_summarize",
     "memory_compress",
     "route_classify",
+    "master_route",
     "file_extract",
     "image_generate",
   ]);
@@ -60,6 +61,7 @@ export type TaskName =
   | "memory_summarize"
   | "memory_compress"
   | "route_classify"
+  | "master_route"
   | "intent_clarify"
   | "file_extract"
   | "file_generate"
@@ -809,6 +811,12 @@ export function getDemoFallbackResponse(task: TaskName): string {
       return JSON.stringify({ compressed_summary: "", importance: 1 });
     case "route_classify":
       return JSON.stringify({ tool: "normal_chat", confidence: 0.5 });
+    case "master_route":
+      return JSON.stringify({
+        selected_model: "general_model",
+        confidence: 0,
+        reason: "fallback",
+      });
     case "intent_clarify":
       return JSON.stringify({ needs_clarification: false, options: [] });
     default:
