@@ -62,6 +62,46 @@ assert.match(storageService, /window\.SentIQStorage\s*=\s*\{[\s\S]*upsertMessage
 assert.match(storageService, /window\.SentIQStorage\s*=\s*\{[\s\S]*mergeChatMessages/, "storage should expose safe server-message merge helper");
 assert.match(storageService, /incomingMessages\.length === 0 && existingMessages\.length > 0/, "remote hydration should preserve non-empty local chats on empty snapshots");
 assert.match(apiClient, /execution_mode:\s*executionMode/, "chat API payload should include execution_mode");
+assert.match(
+  apiClient,
+  /async function generateImage[\s\S]*execution_mode:\s*executionMode/,
+  "image API payload should include execution_mode",
+);
+assert.match(
+  chatController,
+  /API\.generateImage\(prompt,\s*\{[\s\S]*executionMode:\s*normalizeExecutionMode\(currentExecutionMode\)/,
+  "image generation should send current execution mode",
+);
+assert.match(
+  chatController,
+  /function\s+shouldSkipFastIntentPreflight/,
+  "chat controller should include a fast plain-chat intent preflight skip helper",
+);
+assert.match(
+  chatController,
+  /if\s*\(\s*!skipFastIntentPreflight\s*&&\s*apiMessage\s*&&\s*typeof\s+API\.getChatIntent\s*===\s*["']function["']\s*\)/,
+  "fast plain-chat should skip the intent preflight only through the explicit guard",
+);
+assert.match(
+  chatController,
+  /function\s+shouldSkipFastIntentPreflight[\s\S]*!isLikelyFileGenerationRequest[\s\S]*!isChartRequest[\s\S]*!isLikelyBufferedReasoningPrompt[\s\S]*!isImageRequest[\s\S]*!isLikelyCurrentInfoPrompt/,
+  "fast intent skip should retain local guards for file, chart, reasoning, image, and web-current prompts",
+);
+assert.match(
+  chatController,
+  /getChatContextData\(targetChatId,\s*\{\s*recentLimit:\s*requestExecutionMode\s*===\s*["']fast["']\s*\?\s*6\s*:\s*20,\s*\}\)/,
+  "fast chat should send only six recent messages while intuitive keeps the larger context",
+);
+assert.match(
+  chatController,
+  /trustedProfile:\s*requestExecutionMode\s*===\s*["']fast["']\s*&&\s*authProfileState\.displayName/,
+  "fast chat should pass cached profile context when available",
+);
+assert.match(
+  apiClient,
+  /requestContext\.trusted_profile\s*=\s*\{\s*display_name:\s*trustedDisplayName\s*\}/,
+  "API client should serialize cached trusted profile context",
+);
 assert.match(chatController, /executionModeToggle/, "chat controller should wire execution mode selector refs");
 assert.match(chatController, /createStreamingDraftPersister/, "chat controller should persist streaming drafts locally");
 assert.doesNotMatch(chatController, /id:\s*`pending-\$\{Storage\.generateId\(\)\}`/, "authenticated new chats should use canonical UUID ids, not pending-* ids");

@@ -599,6 +599,7 @@ async function _orchestrateInner(
       hasFileContext: (rawContext?.file_references?.length ?? 0) > 0,
       userId: rawContext?.userId,
       explicitWebSearchMode: rawContext?.web_search_mode,
+      executionMode: profile.mode,
     }),
   ]);
   throwIfAborted(signal);

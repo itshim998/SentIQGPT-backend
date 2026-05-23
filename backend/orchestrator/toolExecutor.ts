@@ -159,6 +159,7 @@ async function execConversation(
   input: string,
   ctx: BuiltContext,
   priorContext: string,
+  profile: ExecutionProfile,
   signal?: AbortSignal,
 ): Promise<StepResult> {
   const augmentedInput = priorContext
@@ -204,7 +205,9 @@ async function execConversation(
       fileNames,
       fileContent,
     },
+    executionMode: profile.mode,
     userId: ctx.userId,
+    isGuest: ctx.userId === "guest",
     signal,
   });
   const modelOverride = routedModel.model;
@@ -225,6 +228,7 @@ async function execConversation(
     trustedProfile: ctx.trustedProfile,
     modelOverride,
     userId: ctx.userId,
+    reasoningEffort: profile.model.reasoningEffort,
     signal,
   });
 
@@ -242,11 +246,14 @@ async function execConversation(
 async function execImageGeneration(
   input: string,
   ctx: BuiltContext,
+  profile: ExecutionProfile,
   signal?: AbortSignal,
 ): Promise<StepResult> {
   const preferredModel = await selectImageModelPreferenceWithMaster({
     prompt: input,
+    executionMode: profile.mode,
     userId: ctx.userId,
+    isGuest: ctx.userId === "guest",
     signal,
   });
   const result = await routeImageGeneration({ prompt: input, userId: ctx.userId, signal, preferredModel });
@@ -269,6 +276,7 @@ async function execFileAnalysis(
   input: string,
   ctx: BuiltContext,
   priorContext: string,
+  profile: ExecutionProfile,
   signal?: AbortSignal,
 ): Promise<StepResult> {
   // Pass file context to router for coding PDF detection
@@ -285,7 +293,9 @@ async function execFileAnalysis(
       fileNames,
       fileContent,
     },
+    executionMode: profile.mode,
     userId: ctx.userId,
+    isGuest: ctx.userId === "guest",
     signal,
   });
   const modelOverride = routedModel.model;
@@ -310,6 +320,7 @@ async function execFileAnalysis(
     trustedProfile: ctx.trustedProfile,
     modelOverride,
     userId: ctx.userId,
+    reasoningEffort: profile.model.reasoningEffort,
     signal,
   });
 
@@ -539,10 +550,10 @@ async function executeStep(
 
     switch (planStep.tool) {
       case "image_generation":
-        result = await execImageGeneration(stepInput, ctx, signal);
+        result = await execImageGeneration(stepInput, ctx, profile, signal);
         break;
       case "file_analysis":
-        result = await execFileAnalysis(stepInput, ctx, priorContext, signal);
+        result = await execFileAnalysis(stepInput, ctx, priorContext, profile, signal);
         break;
       case "memory_update":
         result = await execMemoryUpdate(stepInput, ctx, profile, signal);
@@ -558,7 +569,7 @@ async function executeStep(
         break;
       case "conversation":
       default:
-        result = await execConversation(stepInput, ctx, priorContext, signal);
+        result = await execConversation(stepInput, ctx, priorContext, profile, signal);
         break;
     }
 

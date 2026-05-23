@@ -21,6 +21,13 @@ const RecentMessageSchema = z.object({
   content: z.string(),
 });
 
+const TrustedProfileContextSchema = z.object({
+  displayName: z.string().min(1).max(80).optional(),
+  display_name: z.string().min(1).max(80).optional(),
+}).transform(({ display_name, ...rest }) => ({
+  displayName: rest.displayName ?? display_name,
+}));
+
 export const ChatRequestSchema = z.object({
   message: z.string().min(1, "Message is required").max(10000, "Message too long"),
   conversationId: z.string().min(1).optional(),
@@ -59,12 +66,20 @@ export const ChatRequestSchema = z.object({
       size_bytes: z.number().int().min(1).max(10 * 1024 * 1024),
     })).max(3).optional(),
     web_search_mode: z.enum(["basic", "advanced"]).optional(),
+    trustedProfile: TrustedProfileContextSchema.optional(),
+    trusted_profile: TrustedProfileContextSchema.optional(),
   }).optional(),
 }).transform(({ conversation_id, client_request_id, execution_mode, ...rest }) => ({
   ...rest,
   conversationId: rest.conversationId ?? conversation_id,
   clientRequestId: rest.clientRequestId ?? client_request_id,
   executionMode: normalizeExecutionMode(rest.executionMode ?? execution_mode),
+  context: rest.context
+    ? {
+        ...rest.context,
+        trustedProfile: rest.context.trustedProfile ?? rest.context.trusted_profile,
+      }
+    : undefined,
 }));
 
 // --- Memory ---
@@ -101,6 +116,8 @@ export const ImageGenerateRequestSchema = z.object({
   prompt: z.string().min(1, "Prompt is required").max(2000, "Prompt too long"),
   style: z.string().max(100).optional(),
   size: z.enum(["256x256", "512x512", "1024x1024"]).optional(),
+  executionMode: z.enum(["fast", "intuitive"]).optional(),
+  execution_mode: z.enum(["fast", "intuitive"]).optional(),
   conversationId: z.string().min(1).optional(),
   conversation_id: z.string().min(1).optional(),
   clientRequestId: z.string().min(1).max(120).optional(),
@@ -109,10 +126,11 @@ export const ImageGenerateRequestSchema = z.object({
     recent_messages: z.array(RecentMessageSchema).max(50).optional(),
     memories: z.array(ContextMemorySchema).max(100).optional(),
   }).optional(),
-}).transform(({ conversation_id, client_request_id, ...rest }) => ({
+}).transform(({ conversation_id, client_request_id, execution_mode, ...rest }) => ({
   ...rest,
   conversationId: rest.conversationId ?? conversation_id,
   clientRequestId: rest.clientRequestId ?? client_request_id,
+  executionMode: normalizeExecutionMode(rest.executionMode ?? execution_mode),
 }));
 
 // --- Chart Generation ---

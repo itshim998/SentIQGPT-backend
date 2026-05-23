@@ -5,6 +5,7 @@ import {
   type LLMAdapterResult,
 } from "../ai/PromptBuilders";
 import { detectPromptComplexity } from "../tools/imageGeneration/imageRouter";
+import { normalizeExecutionMode, type ExecutionMode } from "./executionProfile";
 import { selectModelForPrompt } from "./modelRouter";
 
 export type MasterModelName =
@@ -67,6 +68,7 @@ interface MasterSelectionArgs {
   readonly query: string;
   readonly classification?: string;
   readonly options?: RouterOptions;
+  readonly executionMode?: ExecutionMode;
   readonly userId?: string;
   readonly isGuest?: boolean;
   readonly signal?: AbortSignal;
@@ -74,6 +76,7 @@ interface MasterSelectionArgs {
 
 interface ImageSelectionArgs {
   readonly prompt: string;
+  readonly executionMode?: ExecutionMode;
   readonly userId?: string;
   readonly isGuest?: boolean;
   readonly signal?: AbortSignal;
@@ -88,14 +91,21 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function isMasterRouterEnabled(isGuest?: boolean): boolean {
+function getMasterRouterDisabledReason(args: {
+  readonly executionMode?: ExecutionMode;
+  readonly userId?: string;
+  readonly isGuest?: boolean;
+}): string | null {
+  if (normalizeExecutionMode(args.executionMode) !== "intuitive") {
+    return "master_router_fast_mode";
+  }
+  if (args.isGuest === true || args.userId === "guest") {
+    return "master_router_guest";
+  }
   if ((process.env.MASTER_ROUTER_ENABLED || "true").toLowerCase() === "false") {
-    return false;
+    return "master_router_disabled";
   }
-  if (isGuest && (process.env.MASTER_ROUTER_FOR_GUESTS || "false").toLowerCase() !== "true") {
-    return false;
-  }
-  return true;
+  return null;
 }
 
 function clampConfidence(value: number): number {
@@ -289,11 +299,12 @@ export async function selectModelForPromptWithMaster(
 ): Promise<MasterRoutingResult> {
   const deterministicModel = selectModelForPrompt(args.query, args.classification, args.options);
 
-  if (!isMasterRouterEnabled(args.isGuest)) {
+  const disabledReason = getMasterRouterDisabledReason(args);
+  if (disabledReason) {
     return {
       model: deterministicModel,
       source: "deterministic",
-      fallback_reason: "master_router_disabled",
+      fallback_reason: disabledReason,
     };
   }
 
@@ -354,7 +365,9 @@ export async function selectImageModelPreferenceWithMaster(
   args: ImageSelectionArgs,
   dependencies: MasterRouterDependencies = {},
 ): Promise<ImageModelPreference | undefined> {
-  if (!isMasterRouterEnabled(args.isGuest)) {
+  const disabledReason = getMasterRouterDisabledReason(args);
+  if (disabledReason) {
+    console.log(`[MasterRouter] image deterministic fallback=${disabledReason}`);
     return undefined;
   }
 

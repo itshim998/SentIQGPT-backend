@@ -561,6 +561,7 @@ export interface ChatContext {
   readonly streaming?: boolean;
   readonly reasoningMode?: boolean;
   readonly mathMode?: boolean;
+  readonly reasoningEffort?: "low" | "medium";
 }
 
 export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
@@ -658,7 +659,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     ctx.modelOverride === "mistral";
   const isGroqChat = ctx.modelOverride === "gpt-oss-120b";
   const groqReasoningEffort = isGroqChat
-    ? selectGroqReasoningEffortForMessage(ctx.userMessage)
+    ? ctx.reasoningEffort ?? selectGroqReasoningEffortForMessage(ctx.userMessage)
     : undefined;
 
   return {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   applyMasterChatRoutingPolicy,
   applyMasterImageRoutingPolicy,
+  selectImageModelPreferenceWithMaster,
   selectModelForPromptWithMaster,
   validateMasterRoutingDecision,
   type MasterRoutingDecision,
@@ -126,6 +127,8 @@ async function main(): Promise<void> {
   await withEnv("MASTER_ROUTER_ENABLED", "true", async () => {
     const routed = await selectModelForPromptWithMaster({
       query: "Why is this Python loop failing?",
+      executionMode: "intuitive",
+      isGuest: false,
     }, {
       callModel: async (_call: LLMAdapterCall) => result(JSON.stringify({
         selected_model: "general_model",
@@ -138,6 +141,8 @@ async function main(): Promise<void> {
 
     const malformed = await selectModelForPromptWithMaster({
       query: "Tell me a short story.",
+      executionMode: "intuitive",
+      isGuest: false,
     }, {
       callModel: async () => result("not json"),
     });
@@ -146,6 +151,8 @@ async function main(): Promise<void> {
 
     const failed = await selectModelForPromptWithMaster({
       query: "Tell me a short story.",
+      executionMode: "intuitive",
+      isGuest: false,
     }, {
       callModel: async () => {
         throw new Error("Groq unavailable");
@@ -153,11 +160,106 @@ async function main(): Promise<void> {
     });
     assert.equal(failed.source, "deterministic");
     assert.equal(failed.model, "gpt-oss-120b");
+
+    let fastCalls = 0;
+    const fast = await selectModelForPromptWithMaster({
+      query: "Build a React component.",
+      executionMode: "fast",
+      isGuest: false,
+    }, {
+      callModel: async () => {
+        fastCalls += 1;
+        throw new Error("should not call model in fast mode");
+      },
+    });
+    assert.equal(fast.source, "deterministic");
+    assert.equal(fast.model, "qwen-coder");
+    assert.equal(fast.fallback_reason, "master_router_fast_mode");
+    assert.equal(fastCalls, 0, "fast mode must not invoke the Master Router model");
+
+    let defaultCalls = 0;
+    const defaultMode = await selectModelForPromptWithMaster({
+      query: "Build a React component.",
+      isGuest: false,
+    }, {
+      callModel: async () => {
+        defaultCalls += 1;
+        throw new Error("missing mode defaults to fast");
+      },
+    });
+    assert.equal(defaultMode.source, "deterministic");
+    assert.equal(defaultMode.model, "qwen-coder");
+    assert.equal(defaultMode.fallback_reason, "master_router_fast_mode");
+    assert.equal(defaultCalls, 0, "missing mode must default to fast and skip Master Router");
+
+    let guestCalls = 0;
+    const guest = await selectModelForPromptWithMaster({
+      query: "Tell me a short story.",
+      executionMode: "intuitive",
+      isGuest: true,
+    }, {
+      callModel: async () => {
+        guestCalls += 1;
+        throw new Error("guests must not call the Master Router");
+      },
+    });
+    assert.equal(guest.source, "deterministic");
+    assert.equal(guest.model, "gpt-oss-120b");
+    assert.equal(guest.fallback_reason, "master_router_guest");
+    assert.equal(guestCalls, 0, "guest intuitive mode must not invoke the Master Router model");
+
+    let imageFastCalls = 0;
+    const fastImagePreference = await selectImageModelPreferenceWithMaster({
+      prompt: "Generate a poster with text that says Study Smarter.",
+      executionMode: "fast",
+      isGuest: false,
+    }, {
+      callModel: async () => {
+        imageFastCalls += 1;
+        throw new Error("fast image mode must not call Master Router");
+      },
+    });
+    assert.equal(fastImagePreference, undefined);
+    assert.equal(imageFastCalls, 0, "fast image generation must not invoke the Master Router model");
+
+    let imageGuestCalls = 0;
+    const guestImagePreference = await selectImageModelPreferenceWithMaster({
+      prompt: "Generate a poster with text that says Study Smarter.",
+      executionMode: "intuitive",
+      isGuest: true,
+    }, {
+      callModel: async () => {
+        imageGuestCalls += 1;
+        throw new Error("guest image mode must not call Master Router");
+      },
+    });
+    assert.equal(guestImagePreference, undefined);
+    assert.equal(imageGuestCalls, 0, "guest image generation must not invoke the Master Router model");
+
+    let intuitiveImageCalls = 0;
+    const intuitiveImagePreference = await selectImageModelPreferenceWithMaster({
+      prompt: "Generate a poster with text that says Study Smarter.",
+      executionMode: "intuitive",
+      isGuest: false,
+    }, {
+      callModel: async () => {
+        intuitiveImageCalls += 1;
+        return result(JSON.stringify({
+          selected_model: "advanced_image_generator",
+          confidence: 0.9,
+          reason: "text-heavy poster",
+        }));
+      },
+    });
+    assert.equal(intuitiveImagePreference, "wan-image");
+    assert.equal(intuitiveImageCalls, 1, "signed-in intuitive image generation can invoke Master Router");
   });
 
   await withEnv("MASTER_ROUTER_ENABLED", "false", async () => {
     const disabled = await selectModelForPromptWithMaster({
       query: "Build a React component.",
+      executionMode: "intuitive",
+      isGuest: false,
     }, {
       callModel: async () => {
         throw new Error("should not call model");

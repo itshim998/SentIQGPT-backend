@@ -160,6 +160,7 @@ const JSON_BODY_LIMIT = process.env.SENTIQ_JSON_BODY_LIMIT?.trim() || "6mb";
 const TITLE_MAX_CHARS = 120;
 const TITLE_FALLBACK_MAX_CHARS = 50;
 const TITLE_GENERATION_TIMEOUT_MS = parseInt(process.env.SENTIQ_TITLE_TIMEOUT_MS || "12000", 10);
+const FAST_STREAM_SYNC_GRACE_MS = parseInt(process.env.SENTIQ_FAST_STREAM_SYNC_GRACE_MS || "250", 10);
 const SHUTDOWN_GRACE_MS = (() => {
   const parsed = Number.parseInt(process.env.SENTIQ_SHUTDOWN_GRACE_MS || "10000", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 10_000;
@@ -716,6 +717,24 @@ function buildDegradedStatus(sync: SyncStatus): DegradedStatus {
       warnings: finalized.warnings || [],
     },
   };
+}
+
+async function waitForFastStreamSync<T>(
+  promise: Promise<T>,
+  timeoutMs = FAST_STREAM_SYNC_GRACE_MS,
+): Promise<T | null> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return null;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<null>((resolve) => {
+        timeout = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function normalizeTitleCandidate(value: string): string {
@@ -2455,6 +2474,7 @@ app.post(
         modelOverride: guestChatModelOverride,
         userId,
         reasoningMode: isReasoningQuery,
+        reasoningEffort: executionProfile.model.reasoningEffort,
       });
 
       res.json({
@@ -2620,6 +2640,7 @@ app.post(
         trustedProfile: reasoningContext.trustedProfile,
         userId,
         reasoningMode: true,
+        reasoningEffort: executionProfile.model.reasoningEffort,
       });
 
       if (userDb && activeConversationId) {
@@ -3218,6 +3239,7 @@ app.post(
             modelOverride: GUEST_MODEL_OVERRIDE,
             userId,
             reasoningMode: true,
+            reasoningEffort: executionProfile.model.reasoningEffort,
             signal: requestAbortController.signal,
           });
 
@@ -3303,6 +3325,7 @@ app.post(
           modelOverride: guestGeneralModelOverride,
           userId,
           streaming: true,
+          reasoningEffort: executionProfile.model.reasoningEffort,
         });
         const adapterStream = await callLLMAdapterStream({ ...call, signal: requestAbortController.signal });
         const reader = adapterStream.getReader();
@@ -3329,6 +3352,321 @@ app.post(
         console.log(`[Stream] guest live stream completed in ${Date.now() - streamStart}ms`);
       } catch (err) {
         await sendStreamError(err, streamMetrics);
+      } finally {
+        finishSse();
+      }
+      return;
+    }
+
+    const fastQueryClassification = classifyQueryType(effectiveUserMessage);
+    const fastForceWebSearch = shouldForceWebSearch(effectiveUserMessage);
+    const fastHasFileContext = (parsed.data.context?.file_references?.length ?? 0) > 0;
+    const fastHasImageContext = (parsed.data.context?.image_attachments?.length ?? 0) > 0;
+    const fastPlainChatEligible =
+      executionProfile.mode === "fast" &&
+      !hasExplicitWebSearchMode &&
+      !fastHasFileContext &&
+      !fastHasImageContext &&
+      !isFileGenerationRequest(effectiveUserMessage) &&
+      !detectExplicitMemoryWriteIntent(effectiveUserMessage) &&
+      !isChartRequest(effectiveUserMessage) &&
+      !isBufferedReasoning &&
+      !fastQueryClassification.needsWebSearch &&
+      !fastForceWebSearch;
+
+    if (fastPlainChatEligible) {
+      const requestStart = Date.now();
+      console.log(`[FastStream] signed-in plain chat fast path start`);
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+      sseStarted = true;
+
+      type FastPersistenceBootstrap = {
+        sync: SyncStatus;
+        userDb: any | null;
+        activeConversationId: string | null;
+        activeConversationTitle: string | null;
+        createdConversation: boolean;
+        userMessagePersisted: boolean;
+      };
+
+      const createDeferredFastSync = (reason = "persistence_deferred") => {
+        const sync = createSyncStatus(requestedConversationId || undefined);
+        sync.persisted = false;
+        sync.deferred = true;
+        sync.reason = reason;
+        return sync;
+      };
+
+      const bootstrapFastPersistence = async (): Promise<FastPersistenceBootstrap> => {
+        const sync = createSyncStatus(requestedConversationId || undefined);
+        let fastUserDb: any | null = null;
+        let fastConversationId = requestedConversationId || null;
+        let fastConversationTitle: string | null = null;
+        let fastCreatedConversation = false;
+        let fastUserMessagePersisted = false;
+
+        try {
+          fastUserDb = await resolveUserDatabaseOrThrow(userId, "chat.stream.fast");
+          await initializeUserSessionOrThrow(fastUserDb, userId, "chat.stream.fast");
+          await ensureNamedWorkspaceProfile(userId, "chat.stream.fast", fastUserDb);
+        } catch (dbBootstrapError) {
+          sync.persisted = false;
+          sync.deferred = true;
+          sync.reason = "persistence_deferred";
+          logDbFailure(
+            "chat.stream.fast.bootstrap",
+            userId,
+            dbBootstrapError instanceof Error ? dbBootstrapError : new Error(String(dbBootstrapError)),
+            { conversationId: fastConversationId },
+          );
+          return {
+            sync,
+            userDb: null,
+            activeConversationId: fastConversationId,
+            activeConversationTitle: null,
+            createdConversation: false,
+            userMessagePersisted: false,
+          };
+        }
+
+        try {
+          const resolvedConversation = await resolveOrCreateConversationForRequest(
+            fastUserDb,
+            userId,
+            "chat.stream.fast",
+            fastConversationId,
+            "New Chat",
+            { clientRequestId: parsed.data.clientRequestId },
+          );
+          fastConversationId = resolvedConversation.conversation.id;
+          sync.conversationId = fastConversationId;
+          fastConversationTitle = resolvedConversation.conversation.title || null;
+          fastCreatedConversation = resolvedConversation.created;
+        } catch (conversationCreateError) {
+          sync.persisted = false;
+          sync.deferred = true;
+          sync.reason = "persistence_deferred";
+          logDbFailure(
+            "chat.stream.fast.conversation-resolve-or-create",
+            userId,
+            conversationCreateError instanceof Error ? conversationCreateError : new Error(String(conversationCreateError)),
+            { conversationId: fastConversationId },
+          );
+          fastConversationId = null;
+        }
+
+        if (fastUserDb && fastConversationId) {
+          try {
+            await insertConversationMessageOrThrow(
+              fastUserDb,
+              userId,
+              fastConversationId,
+              "user",
+              parsed.data.message,
+              "chat.stream.fast",
+              { clientRequestId: parsed.data.clientRequestId },
+            );
+            fastUserMessagePersisted = true;
+          } catch (messagePersistError) {
+            sync.persisted = false;
+            sync.deferred = true;
+            sync.reason = "persistence_deferred";
+            logDbFailure(
+              "chat.stream.fast.user-message",
+              userId,
+              messagePersistError instanceof Error ? messagePersistError : new Error(String(messagePersistError)),
+              { conversationId: fastConversationId },
+            );
+          }
+        }
+
+        return {
+          sync,
+          userDb: fastUserDb,
+          activeConversationId: fastConversationId,
+          activeConversationTitle: fastConversationTitle,
+          createdConversation: fastCreatedConversation,
+          userMessagePersisted: fastUserMessagePersisted,
+        };
+      };
+
+      const persistenceBootstrapPromise = bootstrapFastPersistence();
+      persistenceBootstrapPromise.catch((error) => {
+        logDbFailure(
+          "chat.stream.fast.bootstrap.background",
+          userId,
+          error instanceof Error ? error : new Error(String(error)),
+          { conversationId: requestedConversationId || null },
+        );
+      });
+
+      const persistFastAssistantMessage = async (content: string): Promise<SyncStatus> => {
+        const bootstrap = await persistenceBootstrapPromise;
+        const sync = bootstrap.sync;
+        let assistantMessagePersisted = false;
+
+        if (!bootstrap.userDb || !bootstrap.activeConversationId) {
+          sync.persisted = false;
+          sync.deferred = true;
+          sync.reason = sync.reason || "persistence_deferred";
+          return sync;
+        }
+
+        try {
+          await insertConversationMessageOrThrow(
+            bootstrap.userDb,
+            userId,
+            bootstrap.activeConversationId,
+            "assistant",
+            content,
+            "chat.stream.fast",
+            { clientRequestId: parsed.data.clientRequestId },
+          );
+          assistantMessagePersisted = true;
+        } catch (assistantPersistError) {
+          sync.persisted = false;
+          sync.deferred = true;
+          sync.reason = "persistence_deferred";
+          logDbFailure(
+            "chat.stream.fast.assistant-message",
+            userId,
+            assistantPersistError instanceof Error ? assistantPersistError : new Error(String(assistantPersistError)),
+            { conversationId: bootstrap.activeConversationId },
+          );
+        }
+
+        if (
+          bootstrap.userDb &&
+          bootstrap.activeConversationId &&
+          bootstrap.userMessagePersisted &&
+          (bootstrap.createdConversation || !bootstrap.activeConversationTitle || bootstrap.activeConversationTitle === "New Chat")
+        ) {
+          scheduleAutoTitleConversation({
+            userDb: bootstrap.userDb,
+            userId,
+            conversationId: bootstrap.activeConversationId,
+            userMessage: parsed.data.message,
+            assistantReply: content,
+            scope: "chat.stream.fast.title.auto",
+            currentTitle: bootstrap.activeConversationTitle,
+          });
+        }
+
+        logMessagePersistenceGap("chat.stream.fast", userId, {
+          conversationId: bootstrap.activeConversationId,
+          userMessagePersisted: bootstrap.userMessagePersisted,
+          assistantMessagePersisted,
+          assistantExpected: Boolean(content),
+          deferred: sync.deferred,
+          created: bootstrap.createdConversation,
+          route: "stream.fast",
+          clientDisconnected,
+        });
+
+        sync.persisted = Boolean(sync.persisted && bootstrap.userMessagePersisted && (!content || assistantMessagePersisted));
+        sync.deferred = sync.deferred || !sync.persisted;
+        if (sync.deferred) {
+          sync.reason = sync.reason || "persistence_deferred";
+        }
+        sync.conversationId = bootstrap.activeConversationId || sync.conversationId;
+        return sync;
+      };
+
+      const cachedTrustedProfile =
+        parsed.data.context?.trustedProfile?.displayName
+          ? { displayName: parsed.data.context.trustedProfile.displayName }
+          : undefined;
+      const fastRawContext = {
+        recent_messages: normalizedRecentMessages,
+        memories: parsed.data.context?.memories,
+        trustedProfile: cachedTrustedProfile,
+        web_search_mode: webSearchMode,
+        userMessage: effectiveUserMessage,
+        conversationId: requestedConversationId || undefined,
+      };
+
+      try {
+        const [fastCtx, routedModel] = await Promise.all([
+          buildContextFast(fastRawContext, undefined, userId, { profile: executionProfile }),
+          selectModelForPromptWithMaster({
+            query: effectiveUserMessage,
+            options: { hasImage: false, hasFile: false },
+            executionMode: executionProfile.mode,
+            userId,
+            isGuest,
+            signal: requestAbortController.signal,
+          }),
+        ]);
+        const modelOverride = routedModel.model;
+        const streamMetrics = createStreamMetrics(
+          "chat.stream.fast",
+          requestStart,
+          { model: modelOverride, fastPath: true },
+        );
+        const call = buildChatPrompt({
+          userMessage: effectiveUserMessage,
+          recentMessages: fastCtx.recentMessages,
+          memories: fastCtx.memories,
+          conversationSummary: fastCtx.conversationSummary,
+          priorConversationEvidence: fastCtx.priorConversationEvidence,
+          isExplicitRecallQuery: fastCtx.isExplicitRecallQuery,
+          trustedProfile: fastCtx.trustedProfile,
+          modelOverride,
+          userId,
+          streaming: true,
+          reasoningEffort: executionProfile.model.reasoningEffort,
+        });
+        const adapterStream = await callLLMAdapterStream({
+          ...call,
+          signal: requestAbortController.signal,
+        });
+        const reader = adapterStream.getReader();
+        let fullReply = "";
+
+        try {
+          while (true) {
+            if (clientDisconnected) break;
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!value) continue;
+            fullReply += value;
+            recordStreamChunk(streamMetrics, value);
+            await writeSseJson({ type: "token", text: value });
+          }
+        } finally {
+          if (clientDisconnected) {
+            await reader.cancel("client disconnected").catch(() => undefined);
+          }
+        }
+
+        let streamSync = createDeferredFastSync();
+        if (fullReply && !clientDisconnected) {
+          const assistantPersistencePromise = persistFastAssistantMessage(fullReply).catch((error) => {
+            logDbFailure(
+              "chat.stream.fast.assistant-background",
+              userId,
+              error instanceof Error ? error : new Error(String(error)),
+              { conversationId: requestedConversationId || null },
+            );
+            return createDeferredFastSync();
+          });
+          streamSync = await waitForFastStreamSync(assistantPersistencePromise) ?? createDeferredFastSync();
+        }
+
+        if (!clientDisconnected) {
+          const finalizedSync = finalizeSyncStatus(streamSync);
+          await writeSseJson({ type: "sync", sync: finalizedSync, degraded: buildDegradedStatus(finalizedSync) });
+          await writeSseEvent("[DONE]");
+          logStreamMetrics(streamMetrics, "complete");
+          console.log(`[FastStream] response completed (+${Date.now() - requestStart}ms)`);
+        }
+      } catch (err) {
+        await sendStreamError(err);
       } finally {
         finishSse();
       }
@@ -4030,6 +4368,7 @@ app.post(
           trustedProfile: reasoningContext.trustedProfile,
           userId,
           reasoningMode: true,
+          reasoningEffort: executionProfile.model.reasoningEffort,
           signal: requestAbortController.signal,
         });
         if (result.reply) {
@@ -4168,7 +4507,9 @@ app.post(
         fileNames,
         fileContent,
       },
+      executionMode: executionProfile.mode,
       userId,
+      isGuest,
       signal: requestAbortController.signal,
     });
     const modelOverride = routedModel.model;
@@ -4229,6 +4570,7 @@ app.post(
       modelOverride,
       userId,
       streaming: true,
+      reasoningEffort: executionProfile.model.reasoningEffort,
     });
 
     try {
@@ -4942,7 +5284,9 @@ app.post(
 
     const preferredModel = await selectImageModelPreferenceWithMaster({
       prompt: providerPrompt,
+      executionMode: parsed.data.executionMode,
       userId,
+      isGuest: false,
     });
 
     let result: Awaited<ReturnType<typeof routeImageGeneration>>;

@@ -1,4 +1,5 @@
 export type ExecutionMode = "fast" | "intuitive";
+export type ModelReasoningEffort = "low" | "medium";
 
 export type ExecutionProfile = {
   readonly mode: ExecutionMode;
@@ -21,6 +22,9 @@ export type ExecutionProfile = {
   readonly streaming: {
     readonly preferDirectStream: boolean;
   };
+  readonly model: {
+    readonly reasoningEffort?: ModelReasoningEffort;
+  };
 };
 
 export const FAST_PROFILE: ExecutionProfile = {
@@ -39,6 +43,9 @@ export const FAST_PROFILE: ExecutionProfile = {
   },
   streaming: {
     preferDirectStream: true,
+  },
+  model: {
+    reasoningEffort: "low",
   },
 };
 
@@ -59,6 +66,7 @@ export const INTUITIVE_PROFILE: ExecutionProfile = {
   streaming: {
     preferDirectStream: false,
   },
+  model: {},
 };
 
 export function normalizeExecutionMode(value: unknown): ExecutionMode {

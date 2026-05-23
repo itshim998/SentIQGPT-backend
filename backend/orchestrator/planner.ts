@@ -24,6 +24,7 @@ import { isChartRequest } from "../tools/chartGeneration/chartDetector";
 import { isFileGenerationRequest, isImpliedFileGenerationRequest } from "../tools/fileGeneration/fileDetector";
 import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 import { isTavilyAvailable } from "../tools/webSearch/providers/tavilyProvider";
+import { normalizeExecutionMode, type ExecutionMode } from "./executionProfile";
 import { classifyQueryType, shouldForceWebSearch } from "./queryClassifier";
 
 // ==============================
@@ -224,6 +225,7 @@ export async function planTask(args: {
   readonly hasFileContext?: boolean;
   readonly userId?: string;
   readonly explicitWebSearchMode?: WebSearchMode;
+  readonly executionMode?: ExecutionMode;
 }): Promise<ExecutionPlan> {
   const hasWebSearch = isTavilyAvailable();
   const hardRoutedPlan = resolveHardRoutedPlan({
@@ -233,6 +235,11 @@ export async function planTask(args: {
   });
   if (hardRoutedPlan) {
     return hardRoutedPlan;
+  }
+
+  if (normalizeExecutionMode(args.executionMode) === "fast") {
+    console.log("[PLANNER] fast mode - skipping planner LLM for plain conversation");
+    return createSingleStepPlan("conversation", args.userMessage);
   }
 
   const call = buildPlannerPrompt(

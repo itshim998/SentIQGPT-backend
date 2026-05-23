@@ -62,6 +62,15 @@ function buildChatRequestContext(context = {}) {
   if (context.webSearchMode === "basic" || context.webSearchMode === "advanced") {
     requestContext.web_search_mode = "basic";
   }
+  const trustedDisplayName =
+    typeof context.trustedProfile?.displayName === "string" && context.trustedProfile.displayName.trim()
+      ? context.trustedProfile.displayName.trim()
+      : typeof context.trustedProfile?.display_name === "string" && context.trustedProfile.display_name.trim()
+        ? context.trustedProfile.display_name.trim()
+        : "";
+  if (trustedDisplayName) {
+    requestContext.trusted_profile = { display_name: trustedDisplayName };
+  }
   return requestContext;
 }
 
@@ -386,12 +395,14 @@ async function subscribeFileUpdates(callbacks = {}, signal = null) {
       typeof options.clientRequestId === "string" && options.clientRequestId.trim()
         ? options.clientRequestId.trim()
         : undefined;
+    const executionMode = normalizeExecutionMode(options.executionMode || options.execution_mode);
     return apiRequest("/api/images/generate", {
       method: "POST",
       body: JSON.stringify({
         prompt,
         style: options.style,
         size: options.size,
+        execution_mode: executionMode,
         ...(conversationId ? { conversationId } : {}),
         ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
         context: buildChatRequestContext(options.context || {}),

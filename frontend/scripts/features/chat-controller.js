@@ -3537,13 +3537,16 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     container.appendChild(panel);
   }
 
-  async function getChatContextData(chatId) {
+  async function getChatContextData(chatId, options = {}) {
+    const recentLimit = Number.isFinite(Number(options.recentLimit))
+      ? Math.max(1, Math.min(50, Number(options.recentLimit)))
+      : 20;
     if (isGuestSession()) {
       const chat = getGuestChat(chatId);
       const recentMessages = collapseAdjacentDuplicateChatMessages(chat?.messages || []);
       const memories = getGuestTopMemories(10, chatId);
       return {
-        recentMessages: recentMessages.slice(-20).map((msg) => ({ role: msg.role, content: msg.content })),
+        recentMessages: recentMessages.slice(-recentLimit).map((msg) => ({ role: msg.role, content: msg.content })),
         memories: memories.map((memory) => ({
           type: memory.type,
           summary: memory.summary,
@@ -3558,7 +3561,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const recentMessages = collapseAdjacentDuplicateChatMessages(chat?.messages || []);
     const memories = await Storage.getTopMemories(10, chatId);
     return {
-      recentMessages: recentMessages.slice(-20).map((msg) => ({ role: msg.role, content: msg.content })),
+      recentMessages: recentMessages.slice(-recentLimit).map((msg) => ({ role: msg.role, content: msg.content })),
       memories: memories.map((memory) => ({
         type: memory.type,
         summary: memory.summary,
@@ -7139,6 +7142,42 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     };
   }
 
+  function isLikelyCurrentInfoPrompt(text) {
+    const value = String(text || "").trim();
+    if (!value) return false;
+    if (/\b(?:latest|recent|current|breaking|today|tonight|tomorrow|yesterday|live|newest|now|this\s+(?:week|month|year))\b/i.test(value)) {
+      return true;
+    }
+    if (/\b(?:search|browse|look\s+up|google|find\s+(?:me\s+)?(?:online|on\s+the\s+web)|web|internet)\b/i.test(value)) {
+      return true;
+    }
+    if (/\b(?:weather|forecast|stock\s+price|share\s+price|exchange\s+rate|crypto\s+price|bitcoin\s+price|score|standings|fixtures?|schedule|news|release\s+date|launched?|available\s+now|CEO|president)\b/i.test(value)) {
+      return true;
+    }
+    return /\b20(?:2[6-9]|[3-9]\d)\b/.test(value)
+      && /\b(?:best|top|compare|comparison|price|cost|latest|new|release|launch|update|version|benchmark|models?|tools?|apps?|restaurants?|hotels?|flights?)\b/i.test(value);
+  }
+
+  function shouldSkipFastIntentPreflight({
+    message,
+    executionMode,
+    webSearchMode,
+    imageAttachments = [],
+    isClarificationAnswer = false,
+  } = {}) {
+    const text = String(message || "").trim();
+    return executionMode === "fast"
+      && Boolean(text)
+      && !isClarificationAnswer
+      && !webSearchMode
+      && imageAttachments.length === 0
+      && !isLikelyFileGenerationRequest(text)
+      && !isChartRequest(text)
+      && !isLikelyBufferedReasoningPrompt(text)
+      && !isImageRequest(text)
+      && !isLikelyCurrentInfoPrompt(text);
+  }
+
   async function handleSend(retryMessage, options = {}) {
     const stopMeasure = startPerf("ui.chat.send", {
       retry: Boolean(retryMessage),
@@ -7235,7 +7274,14 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const requestExecutionMode = normalizeExecutionMode(currentExecutionMode);
     const preliminaryWebSearchMode = getEffectiveWebSearchMode();
     let routeIntent = null;
-    if (apiMessage && typeof API.getChatIntent === "function") {
+    const skipFastIntentPreflight = shouldSkipFastIntentPreflight({
+      message: apiMessage,
+      executionMode: requestExecutionMode,
+      webSearchMode: preliminaryWebSearchMode,
+      imageAttachments: imageAttachmentsForRequest,
+      isClarificationAnswer,
+    });
+    if (!skipFastIntentPreflight && apiMessage && typeof API.getChatIntent === "function") {
       try {
         routeIntent = await API.getChatIntent(apiMessage, {
           imageAttachments: imageAttachmentsForRequest,
@@ -7348,7 +7394,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
     let retryClarificationContextSnapshot = clarificationContextSnapshot;
     try {
-      const contextData = await getChatContextData(targetChatId);
+      const contextData = await getChatContextData(targetChatId, {
+        recentLimit: requestExecutionMode === "fast" ? 6 : 20,
+      });
       const fileReferences = isClarificationAnswer && Array.isArray(clarificationContextSnapshot?.fileReferences)
         ? clarificationContextSnapshot.fileReferences
         : getCurrentFileReferences();
@@ -7369,6 +7417,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         conversationId: conversationIdForRequest,
         clientRequestId: requestId,
         executionMode: requestExecutionMode,
+        trustedProfile: requestExecutionMode === "fast" && authProfileState.displayName
+          ? { displayName: authProfileState.displayName }
+          : undefined,
         clarificationResponse: clarificationResponseForRequest,
         signal: ac.signal,
       };
@@ -8077,6 +8128,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       const result = await API.generateImage(prompt, {
         conversationId: targetChatId,
         clientRequestId: requestId,
+        executionMode: normalizeExecutionMode(currentExecutionMode),
         context: {
           recentMessages: imageContextData.recentMessages,
           memories: imageContextData.memories,

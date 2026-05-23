@@ -82,6 +82,7 @@ export async function handleChat(args: {
   readonly modelOverride?: string;
   readonly userId?: string;
   readonly reasoningMode?: boolean;
+  readonly reasoningEffort?: "low" | "medium";
   readonly signal?: AbortSignal;
 }): Promise<ChatResponse> {
   if (!args.userMessage.trim()) {
@@ -101,6 +102,7 @@ export async function handleChat(args: {
     modelOverride: args.modelOverride,
     userId: args.userId,
     reasoningMode: args.reasoningMode,
+    reasoningEffort: args.reasoningEffort,
   };
 
   const baseCall = buildChatPrompt(ctx);
