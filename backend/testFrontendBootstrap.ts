@@ -102,6 +102,26 @@ assert.match(
   /requestContext\.trusted_profile\s*=\s*\{\s*display_name:\s*trustedDisplayName\s*\}/,
   "API client should serialize cached trusted profile context",
 );
+assert.match(
+  chatController,
+  /authGateMessage\.classList\.toggle\(["']visible["'],\s*requiresName\)/,
+  "guest mode should not show the lower auth gate above the composer",
+);
+assert.doesNotMatch(
+  chatController,
+  /authGateMessage\.classList\.toggle\(["']visible["'],\s*!signedIn\s*\|\|\s*requiresName\)/,
+  "guest auth upsell should stay in the welcome note instead of blocking the composer",
+);
+assert.match(
+  apiClient,
+  /!tokensReceived\s*&&\s*!structuredReceived\s*&&\s*!terminalError/,
+  "empty SSE streams should be treated as retryable failures",
+);
+assert.match(
+  chatController,
+  /response did not complete\|please retry/i,
+  "retryable empty stream failures should go to the existing retry UI instead of non-stream fallback",
+);
 assert.match(chatController, /executionModeToggle/, "chat controller should wire execution mode selector refs");
 assert.match(chatController, /createStreamingDraftPersister/, "chat controller should persist streaming drafts locally");
 assert.doesNotMatch(chatController, /id:\s*`pending-\$\{Storage\.generateId\(\)\}`/, "authenticated new chats should use canonical UUID ids, not pending-* ids");

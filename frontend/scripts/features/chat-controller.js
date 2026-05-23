@@ -2267,7 +2267,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       authGateMessage.textContent = requiresName
         ? "Add your name to unlock your signed-in workspace."
         : "Sign in for access to higher intelligence, image generation.";
-      authGateMessage.classList.toggle("visible", !signedIn || requiresName);
+      authGateMessage.classList.toggle("visible", requiresName);
     }
     if (authWelcomeNote) {
       authWelcomeNote.textContent = requiresName
@@ -7649,10 +7649,15 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
             }
             usedStreaming = true;
           } else {
-            debugWarn("[UI] Streaming failed, falling back to non-streaming:", getSafeErrorMessage(streamErr));
-            usedStreaming = false;
+            const streamErrorMessage = getSafeErrorMessage(streamErr);
+            debugWarn("[UI] Streaming failed:", streamErrorMessage);
             const orphan = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .typing-active`);
             if (orphan) orphan.closest(".message")?.remove();
+            if (/response did not complete|please retry/i.test(streamErrorMessage)) {
+              throw streamErr;
+            }
+            debugWarn("[UI] Falling back to non-streaming after stream failure.");
+            usedStreaming = false;
           }
         }
       }

@@ -47,7 +47,7 @@ import {
   buildTitleGeneratePrompt,
   strictParseJsonObject,
 } from "./ai/PromptBuilders";
-import type { ImageAttachment } from "./ai/PromptBuilders";
+import type { ImageAttachment, LLMAdapterCall } from "./ai/PromptBuilders";
 import { buildContext, buildContextFast } from "./context/contextBuilder";
 import {
   getControlDatabase,
@@ -423,6 +423,78 @@ function logStreamMetrics(metrics: StreamMetrics, reason: string): void {
     ` tps=${tokensPerSec} chunks=${metrics.chunkCount} avg_chunk_gap_ms=${avgGapMs}` +
     ` max_chunk_gap_ms=${metrics.maxChunkGapMs} min_chunk_gap_ms=${minGapMs} reason=${reason}`,
   );
+}
+
+const GENERIC_UNAVAILABLE_REPLY_PATTERN =
+  /\bcurrently unable to process your request\b|\bplease try again shortly\b/i;
+const STREAM_RECOVERY_USER_ERROR = "The response did not complete. Please retry.";
+
+function getUnavailableReplyReason(text: string | null | undefined): string | null {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return "empty_response";
+  if (GENERIC_UNAVAILABLE_REPLY_PATTERN.test(trimmed)) return "generic_unavailable_reply";
+  return null;
+}
+
+function assertUsableAssistantText(text: string | null | undefined, context: {
+  readonly route: string;
+  readonly model?: string;
+  readonly reason: string;
+}): string {
+  const normalized = String(text || "").trim();
+  const unavailableReason = getUnavailableReplyReason(normalized);
+  if (unavailableReason) {
+    console.warn(
+      `[StreamRecovery] route=${context.route} model=${context.model ?? "unknown"}` +
+      ` reason=${context.reason} rejected=${unavailableReason}`,
+    );
+    throw new Error(STREAM_RECOVERY_USER_ERROR);
+  }
+  return normalized;
+}
+
+async function recoverBufferedStreamText(args: {
+  readonly route: string;
+  readonly model?: string;
+  readonly reason: string;
+  readonly call: LLMAdapterCall;
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+}): Promise<string> {
+  const model = args.model ?? args.call.model_override ?? "unknown";
+  console.warn(`[StreamRecovery] route=${args.route} model=${model} reason=${args.reason} attempt=buffered_adapter`);
+  const result = await callLLMAdapterDetailed({
+    ...args.call,
+    ...(args.timeoutMs ? { timeout_ms: args.timeoutMs } : {}),
+    ...(args.signal ? { signal: args.signal } : {}),
+  });
+  const text = assertUsableAssistantText(result.text, {
+    route: args.route,
+    model,
+    reason: args.reason,
+  });
+  console.log(
+    `[StreamRecovery] route=${args.route} model=${model}` +
+    ` recovered_model=${result.model_used ?? "unknown"} chars=${text.length}`,
+  );
+  return text;
+}
+
+async function recoverBufferedReplyText(args: {
+  readonly route: string;
+  readonly model?: string;
+  readonly reason: string;
+  readonly invoke: () => Promise<string>;
+}): Promise<string> {
+  const model = args.model ?? "unknown";
+  console.warn(`[StreamRecovery] route=${args.route} model=${model} reason=${args.reason} attempt=buffered_reply`);
+  const text = assertUsableAssistantText(await args.invoke(), {
+    route: args.route,
+    model,
+    reason: args.reason,
+  });
+  console.log(`[StreamRecovery] route=${args.route} model=${model} recovered_reply_chars=${text.length}`);
+  return text;
 }
 
 const GUEST_MODEL_OVERRIDE = "gemini-search";
@@ -3208,6 +3280,26 @@ app.post(
               await streamBufferedAnswer(result.reply, undefined, false, streamMetrics);
             }
 
+            if (!guestMathStreamReply.trim() && !clientDisconnected) {
+              console.warn(`[StreamRecovery] route=guest.math model=${GUEST_MODEL_OVERRIDE} reason=empty_stream attempt=buffered_math`);
+              const result = await solveGuestMathWithGemini({
+                userMessage: guestUserMessage,
+                userId,
+                recentMessages: guestMathContext.recentMessages,
+                fileReferences: guestMathContext.fileReferences,
+                imageAttachments: guestMathContext.imageAttachments,
+                conversationSummary: guestMathContext.conversationSummary,
+                priorConversationEvidence: guestMathContext.priorConversationEvidence,
+                isExplicitRecallQuery: guestMathContext.isExplicitRecallQuery,
+              });
+              guestMathStreamReply = assertUsableAssistantText(result.reply, {
+                route: "guest.math",
+                model: GUEST_MODEL_OVERRIDE,
+                reason: "empty_stream",
+              });
+              await streamBufferedAnswer(guestMathStreamReply, undefined, false, streamMetrics);
+            }
+
             if (!clientDisconnected) {
               await writeSseEvent("[DONE]");
               logStreamMetrics(streamMetrics, "complete");
@@ -3244,8 +3336,32 @@ app.post(
           });
 
           if (!clientDisconnected) {
-            const thinking = gateThinking(result.thinking, { isReasoning: true });
-            await streamBufferedAnswer(result.reply, thinking, true, streamMetrics);
+            let reply = result.reply;
+            const unavailableReason = getUnavailableReplyReason(reply);
+            if (unavailableReason) {
+              reply = await recoverBufferedReplyText({
+                route: "guest.reasoning",
+                model: GUEST_MODEL_OVERRIDE,
+                reason: unavailableReason,
+                invoke: async () => (await handleChat({
+                  userMessage: guestUserMessage,
+                  recentMessages: guestReasoningContext.recentMessages,
+                  memories: [],
+                  fileReferences: guestReasoningContext.fileReferences,
+                  imageAttachments: guestReasoningContext.imageAttachments,
+                  conversationSummary: guestReasoningContext.conversationSummary,
+                  priorConversationEvidence: guestReasoningContext.priorConversationEvidence,
+                  isExplicitRecallQuery: guestReasoningContext.isExplicitRecallQuery,
+                  modelOverride: GUEST_MODEL_OVERRIDE,
+                  userId,
+                  reasoningMode: true,
+                  reasoningEffort: executionProfile.model.reasoningEffort,
+                  signal: requestAbortController.signal,
+                })).reply,
+              });
+            }
+            const thinking = unavailableReason ? undefined : gateThinking(result.thinking, { isReasoning: true });
+            await streamBufferedAnswer(reply, thinking, !unavailableReason, streamMetrics);
             await writeSseEvent("[DONE]");
             logStreamMetrics(streamMetrics, "complete");
           }
@@ -3290,6 +3406,7 @@ app.post(
       console.log(`[Latency] guest buffered response request started (+${Date.now() - requestStart}ms)`);
       console.log(`[Stream] guest model=${guestGeneralModelOverride} hasFiles=${guestCtx.hasFileContext} msgLen=${parsed.data.message.length}`);
 
+      let guestGeneralCallForRecovery: LLMAdapterCall | null = null;
       try {
         const streamStart = Date.now();
         if (isMathReasoningQuery) {
@@ -3327,8 +3444,10 @@ app.post(
           streaming: true,
           reasoningEffort: executionProfile.model.reasoningEffort,
         });
+        guestGeneralCallForRecovery = call;
         const adapterStream = await callLLMAdapterStream({ ...call, signal: requestAbortController.signal });
         const reader = adapterStream.getReader();
+        let fullReply = "";
 
         try {
           while (true) {
@@ -3336,6 +3455,7 @@ app.post(
             const { done, value } = await reader.read();
             if (done) break;
             if (!value) continue;
+            fullReply += value;
             recordStreamChunk(streamMetrics, value);
             await writeSseJson({ type: "token", text: value });
           }
@@ -3345,12 +3465,46 @@ app.post(
           }
         }
 
+        if (!fullReply.trim() && !clientDisconnected) {
+          const fallbackText = await recoverBufferedStreamText({
+            route: "guest.general",
+            model: guestGeneralModelOverride,
+            reason: "empty_stream",
+            call,
+            timeoutMs: 90_000,
+            signal: requestAbortController.signal,
+          });
+          await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
+        }
+
         if (!clientDisconnected) {
           await writeSseEvent("[DONE]");
           logStreamMetrics(streamMetrics, "complete");
         }
         console.log(`[Stream] guest live stream completed in ${Date.now() - streamStart}ms`);
       } catch (err) {
+        if (streamMetrics.chunkCount === 0 && !clientDisconnected && guestGeneralCallForRecovery) {
+          try {
+            const fallbackText = await recoverBufferedStreamText({
+              route: "guest.general",
+              model: guestGeneralModelOverride,
+              reason: "stream_error_before_first_token",
+              call: guestGeneralCallForRecovery,
+              timeoutMs: 90_000,
+              signal: requestAbortController.signal,
+            });
+            await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
+            await writeSseEvent("[DONE]");
+            logStreamMetrics(streamMetrics, "fallback");
+            return;
+          } catch (fallbackErr) {
+            console.error(
+              `[StreamRecovery] route=guest.general fallback_failed=${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
+            );
+            await sendStreamError(fallbackErr, streamMetrics);
+            return;
+          }
+        }
         await sendStreamError(err, streamMetrics);
       } finally {
         finishSse();
@@ -3589,6 +3743,9 @@ app.post(
         userMessage: effectiveUserMessage,
         conversationId: requestedConversationId || undefined,
       };
+      let fastStreamMetrics: StreamMetrics | null = null;
+      let fastCallForRecovery: LLMAdapterCall | null = null;
+      let fastModelForRecovery = "unknown";
 
       try {
         const [fastCtx, routedModel] = await Promise.all([
@@ -3603,11 +3760,13 @@ app.post(
           }),
         ]);
         const modelOverride = routedModel.model;
+        fastModelForRecovery = modelOverride;
         const streamMetrics = createStreamMetrics(
           "chat.stream.fast",
           requestStart,
           { model: modelOverride, fastPath: true },
         );
+        fastStreamMetrics = streamMetrics;
         const call = buildChatPrompt({
           userMessage: effectiveUserMessage,
           recentMessages: fastCtx.recentMessages,
@@ -3621,6 +3780,7 @@ app.post(
           streaming: true,
           reasoningEffort: executionProfile.model.reasoningEffort,
         });
+        fastCallForRecovery = call;
         const adapterStream = await callLLMAdapterStream({
           ...call,
           signal: requestAbortController.signal,
@@ -3642,6 +3802,18 @@ app.post(
           if (clientDisconnected) {
             await reader.cancel("client disconnected").catch(() => undefined);
           }
+        }
+
+        if (!fullReply.trim() && !clientDisconnected) {
+          fullReply = await recoverBufferedStreamText({
+            route: "stream.fast",
+            model: modelOverride,
+            reason: "empty_stream",
+            call,
+            timeoutMs: modelOverride === "openai-large" ? 180_000 : 90_000,
+            signal: requestAbortController.signal,
+          });
+          await streamBufferedAnswer(fullReply, undefined, false, streamMetrics);
         }
 
         let streamSync = createDeferredFastSync();
@@ -3666,6 +3838,40 @@ app.post(
           console.log(`[FastStream] response completed (+${Date.now() - requestStart}ms)`);
         }
       } catch (err) {
+        if (fastStreamMetrics && fastCallForRecovery && fastStreamMetrics.chunkCount === 0 && !clientDisconnected) {
+          try {
+            const fallbackText = await recoverBufferedStreamText({
+              route: "stream.fast",
+              model: fastModelForRecovery,
+              reason: "stream_error_before_first_token",
+              call: fastCallForRecovery,
+              timeoutMs: fastModelForRecovery === "openai-large" ? 180_000 : 90_000,
+              signal: requestAbortController.signal,
+            });
+            const assistantPersistencePromise = persistFastAssistantMessage(fallbackText).catch((error) => {
+              logDbFailure(
+                "chat.stream.fast.assistant-background",
+                userId,
+                error instanceof Error ? error : new Error(String(error)),
+                { conversationId: requestedConversationId || null },
+              );
+              return createDeferredFastSync();
+            });
+            const streamSync = await waitForFastStreamSync(assistantPersistencePromise) ?? createDeferredFastSync();
+            const finalizedSync = finalizeSyncStatus(streamSync);
+            await streamBufferedAnswer(fallbackText, undefined, false, fastStreamMetrics);
+            await writeSseJson({ type: "sync", sync: finalizedSync, degraded: buildDegradedStatus(finalizedSync) });
+            await writeSseEvent("[DONE]");
+            logStreamMetrics(fastStreamMetrics, "fallback");
+            return;
+          } catch (fallbackErr) {
+            console.error(
+              `[StreamRecovery] route=stream.fast fallback_failed=${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
+            );
+            await sendStreamError(fallbackErr, fastStreamMetrics);
+            return;
+          }
+        }
         await sendStreamError(err);
       } finally {
         finishSse();
@@ -4331,6 +4537,28 @@ app.post(
             await streamBufferedAnswer(fallback.answer, undefined, false, streamMetrics);
           }
 
+          if (!mathStreamReply.trim() && !clientDisconnected) {
+            console.warn(`[StreamRecovery] route=reasoning.math.stream model=openai-large reason=empty_stream attempt=buffered_math`);
+            const fallback = await callMathModelRaw({
+              userMessage: effectiveUserMessage,
+              modelOverride: "openai-large",
+              userId,
+              recentMessages: mathContext.recentMessages,
+              memories: mathContext.memories,
+              fileReferences: mathContext.fileReferences,
+              imageAttachments: mathContext.imageAttachments,
+              conversationSummary: mathContext.conversationSummary,
+              priorConversationEvidence: mathContext.priorConversationEvidence,
+              isExplicitRecallQuery: mathContext.isExplicitRecallQuery,
+            });
+            mathStreamReply = assertUsableAssistantText(fallback.answer, {
+              route: "reasoning.math.stream",
+              model: "openai-large",
+              reason: "empty_stream",
+            });
+            await streamBufferedAnswer(mathStreamReply, undefined, false, streamMetrics);
+          }
+
           if (mathStreamReply && !clientDisconnected) {
             await persistAssistantMessage(mathStreamReply);
           }
@@ -4371,16 +4599,42 @@ app.post(
           reasoningEffort: executionProfile.model.reasoningEffort,
           signal: requestAbortController.signal,
         });
-        if (result.reply) {
-          await persistAssistantMessage(result.reply);
+        let reply = result.reply;
+        const unavailableReason = getUnavailableReplyReason(reply);
+        if (unavailableReason) {
+          reply = await recoverBufferedReplyText({
+            route: "reasoning",
+            model: "default",
+            reason: unavailableReason,
+            invoke: async () => (await handleChat({
+              userMessage: effectiveUserMessage,
+              recentMessages: reasoningContext.recentMessages,
+              memories: reasoningContext.memories,
+              fileReferences: reasoningContext.fileReferences,
+              imageAttachments: reasoningContext.imageAttachments,
+              conversationSummary: reasoningContext.conversationSummary,
+              priorConversationEvidence: reasoningContext.priorConversationEvidence,
+              isExplicitRecallQuery: reasoningContext.isExplicitRecallQuery,
+              trustedProfile: reasoningContext.trustedProfile,
+              userId,
+              reasoningMode: true,
+              reasoningEffort: executionProfile.model.reasoningEffort,
+              signal: requestAbortController.signal,
+            })).reply,
+          });
         }
-        reportStreamMessageGap(Boolean(result.reply), "reasoning");
-        if (!clientDisconnected) {
-          const thinking = gateThinking(result.thinking, { isReasoning: true });
-          await streamBufferedAnswer(result.reply, thinking, true, streamMetrics);
+        if (reply) {
+          await persistAssistantMessage(reply);
+        }
+        reportStreamMessageGap(Boolean(reply), "reasoning");
+        if (!clientDisconnected && reply) {
+          const thinking = unavailableReason ? undefined : gateThinking(result.thinking, { isReasoning: true });
+          await streamBufferedAnswer(reply, thinking, !unavailableReason, streamMetrics);
           await writeSseEvent("[DONE]");
           logStreamMetrics(streamMetrics, "complete");
+          return;
         }
+        throw new Error(STREAM_RECOVERY_USER_ERROR);
       } catch (err) {
         await sendStreamError(err, streamMetrics);
       } finally {
@@ -4605,6 +4859,18 @@ app.post(
 
       stopHeartbeat();
 
+      if (!fullReply.trim() && !clientDisconnected) {
+        fullReply = await recoverBufferedStreamText({
+          route: "stream",
+          model: modelOverride,
+          reason: "empty_stream",
+          call,
+          timeoutMs: modelOverride === "openai-large" ? 180_000 : 90_000,
+          signal: requestAbortController.signal,
+        });
+        await streamBufferedAnswer(fullReply, undefined, false, streamMetrics);
+      }
+
       if (fullReply && !clientDisconnected) {
         await persistAssistantMessage(fullReply);
       }
@@ -4618,17 +4884,17 @@ app.post(
       }
       console.log(`[Stream] live stream completed in ${Date.now() - streamStart}ms`);
     } catch (err) {
-      if (modelOverride === "openai-large" && streamMetrics.chunkCount === 0 && !clientDisconnected) {
+      if (streamMetrics.chunkCount === 0 && !clientDisconnected) {
         try {
-          const fallback = await callLLMAdapterDetailed({
-            ...call,
-            timeout_ms: 180_000,
+          const fallbackText = await recoverBufferedStreamText({
+            route: "stream",
+            model: modelOverride,
+            reason: "stream_error_before_first_token",
+            call,
+            timeoutMs: modelOverride === "openai-large" ? 180_000 : 90_000,
             signal: requestAbortController.signal,
           });
-          const fallbackText = fallback.text || "";
-          if (fallbackText) {
-            await persistAssistantMessage(fallbackText);
-          }
+          await persistAssistantMessage(fallbackText);
           reportStreamMessageGap(Boolean(fallbackText), "stream.fallback");
           await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
           const streamSync = getStreamSyncPayload(Boolean(fallbackText));
@@ -4639,8 +4905,10 @@ app.post(
           return;
         } catch (fallbackErr) {
           console.error(
-            `[Stream] openai-large fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
+            `[StreamRecovery] route=stream fallback_failed=${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
           );
+          await sendStreamError(fallbackErr, streamMetrics);
+          return;
         }
       }
       await sendStreamError(err, streamMetrics);

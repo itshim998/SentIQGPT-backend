@@ -143,5 +143,35 @@ assert.match(
   /requestedConversationId \|\| null,\s*requestedTitle/s,
   "chat sync should create missing requested conversations with the same client id",
 );
+assert.match(
+  server,
+  /function getUnavailableReplyReason/,
+  "backend stream recovery should classify empty and generic unavailable replies",
+);
+assert.match(
+  server,
+  /async function recoverBufferedStreamText/,
+  "backend stream recovery should use a shared buffered adapter fallback",
+);
+assert.match(
+  server,
+  /route:\s*"guest\.general"[\s\S]*reason:\s*"empty_stream"/,
+  "guest general streams should recover empty completions",
+);
+assert.match(
+  server,
+  /route:\s*"stream\.fast"[\s\S]*reason:\s*"stream_error_before_first_token"/,
+  "signed-in fast streams should recover pre-token failures once",
+);
+assert.match(
+  server,
+  /route:\s*"stream"[\s\S]*reason:\s*"empty_stream"/,
+  "signed-in general streams should recover empty completions",
+);
+assert.match(
+  server,
+  /GENERIC_UNAVAILABLE_REPLY_PATTERN/,
+  "backend should reject the generic unavailable assistant phrase during recovery",
+);
 
 console.log("PASS | Conversation sync state regression checks passed.");

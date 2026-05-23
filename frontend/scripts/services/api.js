@@ -186,6 +186,11 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
     buffer = lines.pop() || "";
     if (processSseLines(lines)) break;
   }
+  if (!tokensReceived && !structuredReceived && !terminalError) {
+    terminalError = new Error("The response did not complete. Please retry.");
+    if (callbacks.onError) callbacks.onError(terminalError, { tokensReceived: false, interrupted: false });
+    throw terminalError;
+  }
   if (terminalError && !tokensReceived) {
     throw terminalError;
   }
