@@ -27,7 +27,7 @@ import { buildContext, buildContextFast } from "../context/contextBuilder";
 import { planTask } from "./planner";
 import { executePlan } from "./toolExecutor";
 import { detectCodeQuery, detectImageMathPrompt, isMathQuery } from "./modelRouter";
-import { classifyQueryType, detectExplicitMemoryWriteIntent, shouldForceWebSearch } from "./queryClassifier";
+import { detectExplicitMemoryWriteIntent } from "./queryClassifier";
 import {
   DEFAULT_MAX_CLARIFICATION_TURNS,
   formatClarificationText,
@@ -531,10 +531,7 @@ async function _orchestrateInner(
     };
   }
 
-  const queryClassification = classifyQueryType(userMessage);
-  const maybeWebSearchRequest = Boolean(rawContext?.web_search_mode)
-    || queryClassification.needsWebSearch
-    || shouldForceWebSearch(userMessage);
+  const maybeWebSearchRequest = Boolean(rawContext?.web_search_mode);
 
   if (profile.clarification.enabled && !maybeWebSearchRequest) {
     const clarificationResponse = await maybeClarify(

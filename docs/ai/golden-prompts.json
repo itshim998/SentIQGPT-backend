@@ -50,12 +50,12 @@
     },
     {
       "id": "web-current-ai-models",
-      "category": "web_search",
+      "category": "current_info_chat",
       "prompt": "What are the best AI coding models in 2026?",
-      "expected_route": "web_search",
+      "expected_route": "normal_chat",
       "success_criteria": [
-        "Uses web search",
-        "Cites current sources",
+        "Does not trigger Tavily WebSurf without manual mode",
+        "Uses model-grounded current information when available",
         "Compares models for coding use"
       ]
     },
@@ -114,10 +114,10 @@
       "conversation_context": [
         { "role": "user", "content": "Can you explain the transformer architecture?" }
       ],
-      "expected_route": "web_search",
+      "expected_route": "normal_chat",
       "success_criteria": [
-        "Search query includes transformer architecture",
-        "Does not search for the literal pronoun it",
+        "Does not trigger Tavily WebSurf without manual mode",
+        "Resolves it to transformer architecture in the answer",
         "Keeps current chat context ahead of saved memories"
       ]
     },

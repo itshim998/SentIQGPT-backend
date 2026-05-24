@@ -84,8 +84,13 @@ assert.match(
 );
 assert.match(
   chatController,
-  /function\s+shouldSkipFastIntentPreflight[\s\S]*!isLikelyFileGenerationRequest[\s\S]*!isChartRequest[\s\S]*!isLikelyBufferedReasoningPrompt[\s\S]*!isImageRequest[\s\S]*!isLikelyCurrentInfoPrompt/,
-  "fast intent skip should retain local guards for file, chart, reasoning, image, and web-current prompts",
+  /function\s+shouldSkipFastIntentPreflight[\s\S]*!isLikelyFileGenerationRequest[\s\S]*!isChartRequest[\s\S]*!isLikelyBufferedReasoningPrompt[\s\S]*!isImageRequest/,
+  "fast intent skip should retain local guards for file, chart, reasoning, and image prompts",
+);
+assert.doesNotMatch(
+  chatController,
+  /shouldSkipFastIntentPreflight[\s\S]*!isLikelyCurrentInfoPrompt/,
+  "current-info prompts should not force an intent preflight without manual WebSurf",
 );
 assert.match(
   chatController,

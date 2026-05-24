@@ -37,7 +37,7 @@ async function main(): Promise<void> {
     userMessage: "latest NVIDIA announcements in 2026",
     hasWebSearch: true,
   });
-  assert(automaticSearchPlan?.steps[0]?.tool === "web_search", "current-events queries still auto-route to web_search");
+  assert(automaticSearchPlan === null, "current-events queries do not auto-route to WebSurf without explicit mode");
 
   const capturedBodies: Array<Record<string, unknown>> = [];
   const originalFetch = globalThis.fetch;

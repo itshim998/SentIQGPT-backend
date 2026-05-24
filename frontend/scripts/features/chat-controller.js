@@ -7142,22 +7142,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     };
   }
 
-  function isLikelyCurrentInfoPrompt(text) {
-    const value = String(text || "").trim();
-    if (!value) return false;
-    if (/\b(?:latest|recent|current|breaking|today|tonight|tomorrow|yesterday|live|newest|now|this\s+(?:week|month|year))\b/i.test(value)) {
-      return true;
-    }
-    if (/\b(?:search|browse|look\s+up|google|find\s+(?:me\s+)?(?:online|on\s+the\s+web)|web|internet)\b/i.test(value)) {
-      return true;
-    }
-    if (/\b(?:weather|forecast|stock\s+price|share\s+price|exchange\s+rate|crypto\s+price|bitcoin\s+price|score|standings|fixtures?|schedule|news|release\s+date|launched?|available\s+now|CEO|president)\b/i.test(value)) {
-      return true;
-    }
-    return /\b20(?:2[6-9]|[3-9]\d)\b/.test(value)
-      && /\b(?:best|top|compare|comparison|price|cost|latest|new|release|launch|update|version|benchmark|models?|tools?|apps?|restaurants?|hotels?|flights?)\b/i.test(value);
-  }
-
   function shouldSkipFastIntentPreflight({
     message,
     executionMode,
@@ -7174,8 +7158,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       && !isLikelyFileGenerationRequest(text)
       && !isChartRequest(text)
       && !isLikelyBufferedReasoningPrompt(text)
-      && !isImageRequest(text)
-      && !isLikelyCurrentInfoPrompt(text);
+      && !isImageRequest(text);
   }
 
   async function handleSend(retryMessage, options = {}) {

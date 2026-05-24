@@ -25,7 +25,7 @@ import { isFileGenerationRequest, isImpliedFileGenerationRequest } from "../tool
 import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 import { isTavilyAvailable } from "../tools/webSearch/providers/tavilyProvider";
 import { normalizeExecutionMode, type ExecutionMode } from "./executionProfile";
-import { classifyQueryType, shouldForceWebSearch } from "./queryClassifier";
+import { classifyQueryType } from "./queryClassifier";
 
 // ==============================
 // Types
@@ -133,7 +133,7 @@ function buildPlannerPrompt(
 // Parser
 // ==============================
 
-function parsePlan(raw: string): ExecutionPlan {
+function parsePlan(raw: string, allowWebSearch: boolean): ExecutionPlan {
   const parsed = strictParseJsonObject(raw);
   const rawPlan = Array.isArray(parsed.plan) ? parsed.plan : [];
   const steps: PlanStep[] = [];
@@ -155,9 +155,11 @@ function parsePlan(raw: string): ExecutionPlan {
 
     // Secondary safety: if the LLM incorrectly assigned image_generation for a
     // chart-like message, override to chart_generation.
-    const safeTool: PlanTool = (parsedTool === "image_generation" && isChartRequest(input))
-      ? "chart_generation"
-      : parsedTool;
+    const safeTool: PlanTool = parsedTool === "web_search" && !allowWebSearch
+      ? "conversation"
+      : (parsedTool === "image_generation" && isChartRequest(input))
+        ? "chart_generation"
+        : parsedTool;
 
     steps.push({
       step: steps.length + 1,
@@ -200,13 +202,6 @@ export function resolveHardRoutedPlan(args: {
     return createSingleStepPlan("image_generation", args.userMessage);
   }
 
-  const forceWebSearch = shouldForceWebSearch(args.userMessage);
-
-  if (args.hasWebSearch && (queryClassification.needsWebSearch || forceWebSearch)) {
-    console.log(`[PLANNER] web search needed (rule: ${queryClassification.matchedRule}) - hard-routing to web_search`);
-    return createSingleStepPlan("web_search", args.userMessage);
-  }
-
   return null;
 }
 
@@ -227,7 +222,7 @@ export async function planTask(args: {
   readonly explicitWebSearchMode?: WebSearchMode;
   readonly executionMode?: ExecutionMode;
 }): Promise<ExecutionPlan> {
-  const hasWebSearch = isTavilyAvailable();
+  const hasWebSearch = Boolean(args.explicitWebSearchMode) && isTavilyAvailable();
   const hardRoutedPlan = resolveHardRoutedPlan({
     userMessage: args.userMessage,
     hasWebSearch,
@@ -257,7 +252,7 @@ export async function planTask(args: {
   }
 
   try {
-    const plan = parsePlan(raw);
+    const plan = parsePlan(raw, hasWebSearch);
 
     if (plan.steps.length === 0) {
       return createSingleStepPlan("conversation", args.userMessage);

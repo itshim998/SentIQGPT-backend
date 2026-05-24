@@ -124,7 +124,7 @@ import {
 
 import { detectCodeQuery, detectImageMathPrompt, isBufferedReasoningQuery, isMathQuery } from "./orchestrator/modelRouter";
 import { selectImageModelPreferenceWithMaster, selectModelForPromptWithMaster } from "./orchestrator/masterRouter";
-import { detectExplicitMemoryWriteIntent, classifyQueryType, shouldForceWebSearch } from "./orchestrator/queryClassifier";
+import { detectExplicitMemoryWriteIntent } from "./orchestrator/queryClassifier";
 import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 import { isWebSearchMode, normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
 import { resolveExecutionProfile } from "./orchestrator/executionProfile";
@@ -1863,15 +1863,13 @@ app.post(
     const hasImageMathPrompt = hasImageAttachments && detectImageMathPrompt(effectiveUserMessage);
     const isBufferedReasoning = isBufferedReasoningQuery(effectiveUserMessage) || hasImageMathPrompt;
     const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && (isMathQuery(effectiveUserMessage) || hasImageMathPrompt);
-    const queryClassification = classifyQueryType(effectiveUserMessage);
-    const forceWebSearch = shouldForceWebSearch(effectiveUserMessage);
     const fileGeneration = isFileGenerationRequest(effectiveUserMessage);
     const fileFormat = detectGeneratedFileFormat(effectiveUserMessage);
     const chartRequest = !fileGeneration && isChartRequest(effectiveUserMessage);
     const imageRequest = !fileGeneration && !chartRequest && !hasImageAttachments && isImageRequest(effectiveUserMessage);
     const webSearchRequest =
       !fileGeneration &&
-      (hasExplicitWebSearchMode || ((queryClassification.needsWebSearch || forceWebSearch) && isTavilyAvailable()));
+      hasExplicitWebSearchMode;
 
     let route: string = "normal_chat";
     if (isGuest && fileGeneration) route = "normal_chat";
@@ -1901,8 +1899,8 @@ app.post(
         ? {
             mode: webSearchMode || "basic",
             explicit: hasExplicitWebSearchMode,
-            matched_rule: queryClassification.matchedRule,
-            category: queryClassification.category,
+            matched_rule: "manual_websurf",
+            category: "manual",
           }
         : null,
       reasoning: isBufferedReasoning
@@ -3512,8 +3510,6 @@ app.post(
       return;
     }
 
-    const fastQueryClassification = classifyQueryType(effectiveUserMessage);
-    const fastForceWebSearch = shouldForceWebSearch(effectiveUserMessage);
     const fastHasFileContext = (parsed.data.context?.file_references?.length ?? 0) > 0;
     const fastHasImageContext = (parsed.data.context?.image_attachments?.length ?? 0) > 0;
     const fastPlainChatEligible =
@@ -3524,9 +3520,7 @@ app.post(
       !isFileGenerationRequest(effectiveUserMessage) &&
       !detectExplicitMemoryWriteIntent(effectiveUserMessage) &&
       !isChartRequest(effectiveUserMessage) &&
-      !isBufferedReasoning &&
-      !fastQueryClassification.needsWebSearch &&
-      !fastForceWebSearch;
+      !isBufferedReasoning;
 
     if (fastPlainChatEligible) {
       const requestStart = Date.now();
@@ -4644,54 +4638,6 @@ app.post(
       return;
     }
 
-    // ── Safety gate: web search queries require real-time information ──
-    // If the query requires web search (e.g., "2026 NVIDIA news", "latest stock price"),
-    // redirect to orchestrator which handles the Tavily pipeline.
-    const queryClassification = classifyQueryType(effectiveUserMessage);
-    const forceWebSearch = shouldForceWebSearch(effectiveUserMessage);
-    const tavilyAvailable = isTavilyAvailable();
-    
-    // Diagnostic logging for web search routing
-    console.log(`[WebSearchCheck] query="${effectiveUserMessage.slice(0, 50)}..." needsWebSearch=${queryClassification.needsWebSearch} forceWebSearch=${forceWebSearch} tavilyAvailable=${tavilyAvailable} rule=${queryClassification.matchedRule} category=${queryClassification.category}`);
-    
-    if ((queryClassification.needsWebSearch || forceWebSearch) && tavilyAvailable) {
-      console.log(`[Stream] web search detected — redirecting to orchestrator (rule: ${queryClassification.matchedRule}, category: ${queryClassification.category})`);
-      try {
-        const result = await orchestrate({
-          userMessage: parsed.data.message,
-          executionMode: parsed.data.executionMode,
-          clarificationResponse: parsed.data.clarification_response,
-          signal: requestAbortController.signal,
-          context: {
-            recent_messages: normalizedRecentMessages,
-            memories: parsed.data.context?.memories,
-            file_references: parsed.data.context?.file_references,
-            image_attachments: parsed.data.context?.image_attachments,
-            trustedProfile,
-            web_search_mode: webSearchMode,
-            conversationId: activeConversationId || undefined,
-            userDb,
-            userId,
-          },
-        });
-        if (result.reply) {
-          await persistAssistantMessage(result.reply);
-        }
-        await persistStoredMemory(result.memory);
-        finalizeMemoryUpdateCopy(result);
-        reportStreamMessageGap(Boolean(result.reply), "orchestrator.web_search_auto");
-        await writeStructuredResponse(buildStreamStructuredPayload({
-          ...result,
-          searched: result.searched === true,
-        }));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Stream] auto web search orchestration failed: ${message}`);
-        await sendStreamError(err);
-      }
-      return;
-    }
-
     const directClarification = executionProfile.clarification.enabled
       ? await maybeCreateChatClarification({
       userMessage: effectiveUserMessage,
@@ -4775,9 +4721,7 @@ app.post(
       !hasFile &&
       !hasImage &&
       lowComplexity &&
-      !isBufferedReasoning &&
-      !queryClassification.needsWebSearch &&
-      !forceWebSearch;
+      !isBufferedReasoning;
 
     console.log(
       `[FastPath] eligible=${fastPathEligible} lowComplexity=${lowComplexity} ` +

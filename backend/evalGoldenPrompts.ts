@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { classifyQueryType, detectExplicitMemoryWriteIntent } from "./orchestrator/queryClassifier";
+import { detectExplicitMemoryWriteIntent } from "./orchestrator/queryClassifier";
 import { isChartRequest } from "./tools/chartGeneration/chartDetector";
 import { isMathQuery } from "./orchestrator/modelRouter";
 
@@ -26,8 +26,6 @@ function inferOfflineRoute(testCase: GoldenCase): string {
   if (detectExplicitMemoryWriteIntent(testCase.prompt)) return "memory_update";
   if (isChartRequest(testCase.prompt)) return "chart_generation";
   if (isMathQuery(testCase.prompt)) return "math_reasoning";
-  const classification = classifyQueryType(testCase.prompt);
-  if (classification.needsWebSearch) return "web_search";
   return "normal_chat";
 }
 
