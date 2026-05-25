@@ -42,6 +42,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   let currentChatId = null;
   let imageMode = false;
   let pendingFiles = [];
+  let fileUploadInFlight = false;
+  const pendingFileStatusByFile = new WeakMap();
   let composerDragDepth = 0;
   let currentSessionFiles = []; // Tracks uploaded files for current-chat context
   let currentSessionImageAttachments = []; // Tracks recent image inputs for follow-up questions
@@ -8259,10 +8261,29 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       else rejected.push(validation.reason);
     }
     pendingFiles.push(...accepted);
+    accepted.forEach((file) => {
+      pendingFileStatusByFile.set(file, { status: "queued", label: "Ready to upload" });
+    });
     if (rejected.length > 0) {
       showToast(rejected[0] + (rejected.length > 1 ? ` (${rejected.length} files skipped.)` : ""), "error", 4200);
     }
+    debugLog("[Upload] files queued", {
+      incoming: incoming.length,
+      accepted: accepted.length,
+      rejected: rejected.length,
+      guest: isGuestSession(),
+    });
     return { accepted, rejected };
+  }
+
+  function setPendingFileStatus(file, status, label) {
+    if (!file) return;
+    pendingFileStatusByFile.set(file, { status, label });
+  }
+
+  function removePendingFile(file) {
+    pendingFiles = pendingFiles.filter((item) => item !== file);
+    if (file) pendingFileStatusByFile.delete(file);
   }
 
   function queueDroppedFiles(files, options = {}) {
@@ -8356,6 +8377,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     pendingFiles.forEach((file, index) => {
       const chip = document.createElement("div");
       chip.className = "file-chip";
+      const status = pendingFileStatusByFile.get(file);
+      if (status?.status) chip.classList.add(`file-chip-${status.status}`);
       chip.title = `${file.name} - ${formatFileSize(file.size)}`;
       const icon = document.createElement("span");
       icon.className = "file-chip-icon";
@@ -8367,14 +8390,14 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       name.textContent = file.name.length > 25 ? file.name.slice(0, 22) + "..." : file.name;
       const meta = document.createElement("span");
       meta.className = "file-chip-meta";
-      meta.textContent = formatFileSize(file.size);
+      meta.textContent = status?.label || formatFileSize(file.size);
       const removeBtn = document.createElement("button");
       removeBtn.className = "file-chip-remove";
       removeBtn.type = "button";
       removeBtn.textContent = "✕";
       removeBtn.textContent = "x";
       removeBtn.setAttribute("aria-label", `Remove ${file.name}`);
-      removeBtn.addEventListener("click", () => { pendingFiles.splice(index, 1); renderFilePreview(); });
+      removeBtn.addEventListener("click", () => { pendingFiles.splice(index, 1); pendingFileStatusByFile.delete(file); renderFilePreview(); });
       chip.appendChild(icon);
       chip.appendChild(name);
       chip.appendChild(meta);
@@ -8452,151 +8475,189 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   async function processPendingFiles(message) {
+    if (fileUploadInFlight) {
+      showToast("Files are still uploading. Please wait a moment.", "info", 2500);
+      return;
+    }
     const filesToProcess = [...pendingFiles];
-    pendingFiles = [];
-    renderFilePreview();
-    const imageFiles = filesToProcess.filter(isNativeChatImageFile);
-    const regularFiles = filesToProcess.filter((file) => !isNativeChatImageFile(file));
-    const imageAttachmentResults = await Promise.allSettled(imageFiles.map(buildImageAttachment));
-    const imageAttachments = [];
-    imageAttachmentResults.forEach((result, index) => {
-      if (result.status === "fulfilled") {
-        imageAttachments.push(result.value);
-        return;
-      }
-      const file = imageFiles[index];
-      const { contentDiv: upErrDiv } = appendMessageBubble("assistant", "");
-      typeMessage(`Sorry, I couldn't read ${file.name}. Please try again.`, upErrDiv);
-      debugWarn(`[UI] Image read error: ${getSafeErrorMessage(result.reason)}`);
-    });
+    if (filesToProcess.length === 0) return;
+    fileUploadInFlight = true;
+    try {
+      filesToProcess.forEach((file) => setPendingFileStatus(file, "processing", "Uploading..."));
+      renderFilePreview();
+      const imageFiles = filesToProcess.filter(isNativeChatImageFile);
+      const regularFiles = filesToProcess.filter((file) => !isNativeChatImageFile(file));
+      debugLog("[Upload] processing files", {
+        total: filesToProcess.length,
+        images: imageFiles.length,
+        regular: regularFiles.length,
+        guest: isGuestSession(),
+      });
+      const imageAttachmentResults = await Promise.allSettled(imageFiles.map(buildImageAttachment));
+      const imageAttachments = [];
+      imageAttachmentResults.forEach((result, index) => {
+        const file = imageFiles[index];
+        if (result.status === "fulfilled") {
+          imageAttachments.push(result.value);
+          removePendingFile(file);
+          return;
+        }
+        setPendingFileStatus(file, "error", "Read failed");
+        const { contentDiv: upErrDiv } = appendMessageBubble("assistant", "");
+        typeMessage(`Sorry, I couldn't read ${file.name}. Please try again.`, upErrDiv);
+        debugWarn(`[UI] Image read error: ${getSafeErrorMessage(result.reason)}`);
+      });
+      renderFilePreview();
 
-    const uploadResults = await runWithConcurrencyLimit(regularFiles, 2, async (file) => {
-      const localUploadId = crypto.randomUUID();
-      const uploadRequestId = `file-${localUploadId}`;
-      const uploadMeta = {
-        type: "file-upload",
-        filename: file.name,
-        size_bytes: file.size,
-        mime_type: file.type || "application/octet-stream",
-        analysis_id: localUploadId,
-        analysis_status: "processing",
-        clientRequestId: uploadRequestId,
-      };
-      const { contentDiv } = appendMessageBubble("user", `Uploaded file: ${file.name}`, uploadMeta);
-      const statusEntry = attachFileAnalysisStatus(contentDiv, "processing", "Uploading and analyzing...");
-      if (statusEntry) {
-        pendingFileUploadUi.set(localUploadId, { ...statusEntry, filename: file.name });
-      }
-      await persistChatMessage(currentChatId, "user", `Uploaded file: ${file.name}`, uploadMeta, {
-        id: `user-${uploadRequestId}`,
-        clientRequestId: uploadRequestId,
-      });
-      await upsertChatMessageSyncJob(uploadRequestId, {
-        localChatId: currentChatId,
-        conversationId: getCanonicalConversationIdForRequest(currentChatId) || null,
-        title: `Uploaded file: ${file.name}`.slice(0, 50),
-        messages: [{
-          role: "user",
-          content: `Uploaded file: ${file.name}`,
+      const uploadResults = await runWithConcurrencyLimit(regularFiles, 2, async (file) => {
+        setPendingFileStatus(file, "processing", "Analyzing...");
+        renderFilePreview();
+        const localUploadId = crypto.randomUUID();
+        const uploadRequestId = `file-${localUploadId}`;
+        const uploadMeta = {
+          type: "file-upload",
+          filename: file.name,
+          size_bytes: file.size,
+          mime_type: file.type || "application/octet-stream",
+          analysis_id: localUploadId,
+          analysis_status: "processing",
           clientRequestId: uploadRequestId,
-          meta: uploadMeta,
-        }],
-      });
-      showActivityIndicator("thinking", { chatId: currentChatId, withTimer: false, persist: false });
-      scrollToBottom();
-      try {
-        const result = await API.uploadFile(file);
-        const analysisId = result.analysis_id || localUploadId;
-        const pendingEntry = pendingFileUploadUi.get(localUploadId);
-        pendingFileUploadUi.delete(localUploadId);
-        const sessionFile = {
-          filename: result.filename,
-          type: result.type,
-          extracted_text: result.extracted_text,
-          size_bytes: result.size_bytes,
-          timestamp: new Date().toISOString(),
-          analysis_id: analysisId,
-          mime_type: file.type || result.mime_type || "application/octet-stream",
         };
-        const completedUploadMeta = {
-          ...uploadMeta,
-          filename: result.filename,
-          size_bytes: result.size_bytes || file.size,
-          mime_type: sessionFile.mime_type,
-          analysis_id: analysisId,
-          analysis_status: result.analysis_status || "complete",
-        };
-        await persistChatMessage(currentChatId, "user", `Uploaded file: ${result.filename}`, completedUploadMeta, {
+        const { contentDiv } = appendMessageBubble("user", `Uploaded file: ${file.name}`, uploadMeta);
+        const statusEntry = attachFileAnalysisStatus(contentDiv, "processing", "Uploading and analyzing...");
+        if (statusEntry) {
+          pendingFileUploadUi.set(localUploadId, { ...statusEntry, filename: file.name });
+        }
+        await persistChatMessage(currentChatId, "user", `Uploaded file: ${file.name}`, uploadMeta, {
           id: `user-${uploadRequestId}`,
           clientRequestId: uploadRequestId,
         });
         await upsertChatMessageSyncJob(uploadRequestId, {
           localChatId: currentChatId,
           conversationId: getCanonicalConversationIdForRequest(currentChatId) || null,
-          title: `Uploaded file: ${result.filename}`.slice(0, 50),
+          title: `Uploaded file: ${file.name}`.slice(0, 50),
           messages: [{
             role: "user",
-            content: `Uploaded file: ${result.filename}`,
+            content: `Uploaded file: ${file.name}`,
             clientRequestId: uploadRequestId,
-            meta: completedUploadMeta,
+            meta: uploadMeta,
           }],
         });
-        if (pendingEntry) {
-          fileAnalysisUi.set(analysisId, { ...pendingEntry, filename: result.filename, fileType: result.type });
-          const status = result.analysis_status || "processing";
-          const label = status === "complete" ? "Analysis ready" : "Analyzing file...";
-          setFileAnalysisStatus(pendingEntry, status, label);
-          const queuedEvent = pendingFileAnalysisEvents.get(analysisId);
-          if (queuedEvent) {
-            pendingFileAnalysisEvents.delete(analysisId);
-            if (!(status === "complete" && queuedEvent.status !== "error" && queuedEvent.status !== "complete")) {
-              applyFileAnalysisEvent(queuedEvent);
+        showActivityIndicator("thinking", { chatId: currentChatId, withTimer: false, persist: false });
+        scrollToBottom();
+        try {
+          const result = await API.uploadFile(file);
+          const analysisId = result.analysis_id || localUploadId;
+          const pendingEntry = pendingFileUploadUi.get(localUploadId);
+          pendingFileUploadUi.delete(localUploadId);
+          const sessionFile = {
+            filename: result.filename,
+            type: result.type,
+            extracted_text: result.extracted_text,
+            size_bytes: result.size_bytes,
+            timestamp: new Date().toISOString(),
+            analysis_id: analysisId,
+            mime_type: file.type || result.mime_type || "application/octet-stream",
+          };
+          const completedUploadMeta = {
+            ...uploadMeta,
+            filename: result.filename,
+            size_bytes: result.size_bytes || file.size,
+            mime_type: sessionFile.mime_type,
+            analysis_id: analysisId,
+            analysis_status: result.analysis_status || "complete",
+          };
+          await persistChatMessage(currentChatId, "user", `Uploaded file: ${result.filename}`, completedUploadMeta, {
+            id: `user-${uploadRequestId}`,
+            clientRequestId: uploadRequestId,
+          });
+          await upsertChatMessageSyncJob(uploadRequestId, {
+            localChatId: currentChatId,
+            conversationId: getCanonicalConversationIdForRequest(currentChatId) || null,
+            title: `Uploaded file: ${result.filename}`.slice(0, 50),
+            messages: [{
+              role: "user",
+              content: `Uploaded file: ${result.filename}`,
+              clientRequestId: uploadRequestId,
+              meta: completedUploadMeta,
+            }],
+          });
+          if (pendingEntry) {
+            fileAnalysisUi.set(analysisId, { ...pendingEntry, filename: result.filename, fileType: result.type });
+            const status = result.analysis_status || "processing";
+            const label = status === "complete" ? "Analysis ready" : "Analyzing file...";
+            setFileAnalysisStatus(pendingEntry, status, label);
+            const queuedEvent = pendingFileAnalysisEvents.get(analysisId);
+            if (queuedEvent) {
+              pendingFileAnalysisEvents.delete(analysisId);
+              if (!(status === "complete" && queuedEvent.status !== "error" && queuedEvent.status !== "complete")) {
+                applyFileAnalysisEvent(queuedEvent);
+              }
             }
           }
+          if (isAuthenticatedSession()) {
+            await Storage.storeFile({
+              filename: result.filename, type: result.type,
+              extracted_text: result.extracted_text, size_bytes: result.size_bytes, blob: file,
+              owner_user_id: getActiveAuthUserId(),
+            });
+          } else {
+            debugLog("[Upload] guest upload ready", {
+              filename: sessionFile.filename,
+              extracted_chars: sessionFile.extracted_text.length,
+              analysis_id: sessionFile.analysis_id,
+            });
+          }
+          removePendingFile(file);
+          renderFilePreview();
+          return sessionFile;
+        } catch (err) {
+          setPendingFileStatus(file, "error", "Upload failed - retry");
+          renderFilePreview();
+          const pendingEntry = pendingFileUploadUi.get(localUploadId);
+          if (pendingEntry) {
+            setFileAnalysisStatus(pendingEntry, "error", "Upload failed");
+            pendingFileUploadUi.delete(localUploadId);
+          }
+          if (!(await maybeHandleProfileNameRequiredError(err, "file.upload"))) {
+            const { contentDiv: upErrDiv } = appendMessageBubble("assistant", "");
+            typeMessage(`Sorry, I couldn\u2019t process that file. Please try again.`, upErrDiv);
+            debugWarn(`[UI] Upload error: ${getSafeErrorMessage(err)}`);
+          }
+          return null;
+        } finally {
+          hideActivityIndicator(null);
         }
-        if (isAuthenticatedSession()) {
-          await Storage.storeFile({
-            filename: result.filename, type: result.type,
-            extracted_text: result.extracted_text, size_bytes: result.size_bytes, blob: file,
-            owner_user_id: getActiveAuthUserId(),
+      });
+
+      const completedSessionFiles = uploadResults
+        .filter((result) => result?.status === "fulfilled" && result.value)
+        .map((result) => result.value);
+      if (completedSessionFiles.length > 0) {
+        addCurrentSessionFiles(completedSessionFiles);
+        if (isGuestSession()) {
+          debugLog("[Upload] guest files attached to session", {
+            files: completedSessionFiles.length,
+            context_files: getCurrentFileReferences().length,
           });
         }
-        return sessionFile;
-      } catch (err) {
-        const pendingEntry = pendingFileUploadUi.get(localUploadId);
-        if (pendingEntry) {
-          setFileAnalysisStatus(pendingEntry, "error", "Upload failed");
-          pendingFileUploadUi.delete(localUploadId);
-        }
-        if (!(await maybeHandleProfileNameRequiredError(err, "file.upload"))) {
-          const { contentDiv: upErrDiv } = appendMessageBubble("assistant", "");
-          typeMessage(`Sorry, I couldn\u2019t process that file. Please try again.`, upErrDiv);
-          debugWarn(`[UI] Upload error: ${getSafeErrorMessage(err)}`);
-        }
-        return null;
-      } finally {
-        hideActivityIndicator(null);
       }
-    });
-
-    const completedSessionFiles = uploadResults
-      .filter((result) => result?.status === "fulfilled" && result.value)
-      .map((result) => result.value);
-    if (completedSessionFiles.length > 0) {
-      addCurrentSessionFiles(completedSessionFiles);
+      if (message || imageAttachments.length > 0) {
+        await handleSend(null, {
+          message,
+          imageAttachments,
+          skipPendingFileProcessing: true,
+        });
+      } else if (isAuthenticatedSession()) {
+        processSyncQueue().catch((error) => {
+          debugWarn("[UI] Upload-only file sync failed:", getSafeErrorMessage(error));
+        });
+      }
+      scheduleChatListRefresh();
+    } finally {
+      fileUploadInFlight = false;
+      renderFilePreview();
     }
-    if (message || imageAttachments.length > 0) {
-      await handleSend(null, {
-        message,
-        imageAttachments,
-        skipPendingFileProcessing: true,
-      });
-    } else if (isAuthenticatedSession()) {
-      processSyncQueue().catch((error) => {
-        debugWarn("[UI] Upload-only file sync failed:", getSafeErrorMessage(error));
-      });
-    }
-    scheduleChatListRefresh();
   }
 
   function openSettings() {

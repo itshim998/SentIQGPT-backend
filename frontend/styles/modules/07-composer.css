@@ -46,6 +46,15 @@
   color: var(--danger);
 }
 
+.file-chip-processing {
+  border-color: rgba(125,211,252,0.28);
+}
+
+.file-chip-error {
+  border-color: rgba(239,68,68,0.42);
+  color: #fecaca;
+}
+
 .image-mode-bar {
   display: flex;
   align-items: center;

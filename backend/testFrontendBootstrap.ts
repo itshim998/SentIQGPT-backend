@@ -112,11 +112,37 @@ assert.match(
   /authGateMessage\.classList\.toggle\(["']visible["'],\s*requiresName\)/,
   "guest mode should not show the lower auth gate above the composer",
 );
+assert.match(
+  chatController,
+  /setControlDisabled\(fileAttachBtn,\s*composerDisabled\)/,
+  "guest mode should not disable file attachment just because the user is signed out",
+);
+assert.doesNotMatch(
+  chatController,
+  /fileAttachBtn\.(disabled|style\.display)\s*=\s*!?isAuthenticatedSession\(\)/,
+  "file attachment should not be hidden or disabled by signed-in state",
+);
 assert.doesNotMatch(
   chatController,
   /authGateMessage\.classList\.toggle\(["']visible["'],\s*!signedIn\s*\|\|\s*requiresName\)/,
   "guest auth upsell should stay in the welcome note instead of blocking the composer",
 );
+const queueDroppedFilesStart = chatController.indexOf("function queueDroppedFiles");
+const queueDroppedFilesEnd = chatController.indexOf("function handleFileSelect", queueDroppedFilesStart);
+assert(queueDroppedFilesStart > 0 && queueDroppedFilesEnd > queueDroppedFilesStart);
+const queueDroppedFilesBlock = chatController.slice(queueDroppedFilesStart, queueDroppedFilesEnd);
+assert.match(queueDroppedFilesBlock, /addPendingFiles\(files\)[\s\S]*renderFilePreview\(\)/, "guest file drops should queue and preview files");
+assert.doesNotMatch(queueDroppedFilesBlock, /requireAuthAccess|isAuthenticatedSession\(\)/, "guest file drops should not require authentication");
+const processPendingFilesStart = chatController.indexOf("async function processPendingFiles");
+const processPendingFilesEnd = chatController.indexOf("function openSettings", processPendingFilesStart);
+assert(processPendingFilesStart > 0 && processPendingFilesEnd > processPendingFilesStart);
+const processPendingFilesBlock = chatController.slice(processPendingFilesStart, processPendingFilesEnd);
+assert.match(processPendingFilesBlock, /fileUploadInFlight/, "file uploads should guard against duplicate processing");
+assert.match(processPendingFilesBlock, /API\.uploadFile\(file\)/, "guest and authenticated regular files should use the upload endpoint");
+assert.match(processPendingFilesBlock, /addCurrentSessionFiles\(completedSessionFiles\)/, "uploaded files should be attached to session context");
+assert.match(processPendingFilesBlock, /debugLog\(["']\[Upload\] guest files attached to session["']/, "guest upload context attachment should be logged");
+assert.match(processPendingFilesBlock, /skipPendingFileProcessing:\s*true/, "follow-up chat after upload should not reprocess the same files");
+assert.match(chatController, /pendingFileStatusByFile\.set\(file,\s*\{\s*status:\s*["']queued["']/, "selected files should remain previewable before upload");
 assert.match(
   apiClient,
   /!tokensReceived\s*&&\s*!structuredReceived\s*&&\s*!terminalError/,
