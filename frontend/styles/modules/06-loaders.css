@@ -442,6 +442,46 @@
   to { transform: rotate(360deg); }
 }
 
+.chat-load-error {
+  min-height: min(360px, 54vh);
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 24px;
+}
+
+.chat-load-error-title {
+  color: var(--text-primary);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.chat-load-error-detail {
+  max-width: 360px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.chat-load-retry-btn {
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.chat-load-retry-btn:hover {
+  border-color: rgba(139,92,246,0.7);
+  background: rgba(139,92,246,0.12);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat-cache-spinner {
     animation: none;

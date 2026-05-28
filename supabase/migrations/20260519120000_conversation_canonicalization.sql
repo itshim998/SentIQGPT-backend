@@ -2,6 +2,9 @@
 -- Adds canonical conversation resolution for chat-turn idempotency and
 -- safe duplicate conversation merges.
 
+alter table public.conversations
+  add column if not exists last_activity_at timestamptz;
+
 create table if not exists public.conversation_turn_requests (
   user_id uuid not null references public.users (id) on delete cascade,
   client_request_id text not null,

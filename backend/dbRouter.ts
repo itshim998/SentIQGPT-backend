@@ -548,6 +548,17 @@ export async function verifyShardMigrations(): Promise<void> {
         );
       }
 
+      const { error: conversationActivityColumnError } = await client
+        .from("conversations")
+        .select("last_activity_at", { head: true, count: "exact" })
+        .limit(1);
+      if (conversationActivityColumnError) {
+        markFailure(
+          id,
+          `is missing conversations.last_activity_at activity tracking (migration 20260528120000). code=${conversationActivityColumnError.code ?? "unknown"} message=${conversationActivityColumnError.message}`,
+        );
+      }
+
       // Check: 20260412090000_incremental_memory_usage_tracking.sql
       const { error: adjustMemoryFnError } = await client.rpc("adjust_user_memory_usage", {
         p_user_id: dummyId,

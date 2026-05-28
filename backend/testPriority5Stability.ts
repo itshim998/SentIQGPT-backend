@@ -13,6 +13,7 @@ const toolExecutor = read("backend/orchestrator/toolExecutor.ts");
 const conversationService = read("backend/services/conversationService.ts");
 const dbRouter = read("backend/dbRouter.ts");
 const migration = read("supabase/migrations/20260522140000_list_user_conversations.sql");
+const activityMigration = read("supabase/migrations/20260528120000_conversation_last_activity.sql");
 const architecture = read("docs/ARCHITECTURE.md");
 
 function assertOrder(source: string, before: string, after: string, message: string): void {
@@ -60,7 +61,10 @@ assert(getUserConversationsBlock.includes(".rpc(\"list_user_conversations\""), "
 assert(!getUserConversationsBlock.includes(".from(\"messages\")"), "conversation list does not fetch all messages in backend");
 assert(migration.includes("create or replace function public.list_user_conversations"), "migration creates list_user_conversations RPC");
 assert(migration.includes("left join lateral"), "conversation-list RPC uses lateral aggregate lookups");
+assert(activityMigration.includes("messages_touch_conversation_last_activity"), "activity migration maintains conversation timestamps from message inserts");
+assert(activityMigration.includes("conversations_user_last_activity_idx"), "activity migration indexes per-user activity ordering");
 assert(dbRouter.includes("client.rpc(\"list_user_conversations\""), "startup verification checks list_user_conversations");
+assert(dbRouter.includes("conversations.last_activity_at activity tracking"), "startup verification checks last_activity_at dependency");
 
 const chunks = chunkText("abcdefghij", "sample.txt", 3, 99);
 assert(chunks.length > 1, "chunker still splits long text");

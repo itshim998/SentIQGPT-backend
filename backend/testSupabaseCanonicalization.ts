@@ -6,12 +6,28 @@ const root = path.resolve(__dirname, "..");
 const read = (relativePath: string) => fs.readFileSync(path.join(root, relativePath), "utf8");
 
 const migration = read("supabase/migrations/20260519120000_conversation_canonicalization.sql");
+const activityMigration = read("supabase/migrations/20260528120000_conversation_last_activity.sql");
 const server = read("backend/server.ts");
 const storage = read("frontend/scripts/services/storage.js");
 const chatController = read("frontend/scripts/features/chat-controller.js");
 const packageJson = read("package.json");
 const dbRouter = read("backend/dbRouter.ts");
 
+assert.match(
+  migration,
+  /alter table public\.conversations[\s\S]*add column if not exists last_activity_at/,
+  "fresh shard migration path must create conversations.last_activity_at before canonicalization functions reference it",
+);
+assert.match(
+  activityMigration,
+  /create trigger messages_touch_conversation_last_activity[\s\S]*after insert on public\.messages/,
+  "message inserts must touch conversation last_activity_at",
+);
+assert.match(
+  activityMigration,
+  /create or replace function public\.list_user_conversations[\s\S]*coalesce\(c\.last_activity_at, last_message\.created_at, c\.created_at\)/,
+  "conversation list RPC must order through canonical activity timestamps",
+);
 assert.match(
   migration,
   /create table if not exists public\.conversation_turn_requests[\s\S]*primary key \(user_id, client_request_id\)/,
@@ -120,8 +136,13 @@ assert.doesNotMatch(
 );
 assert.match(
   server,
-  /if \(fullReply\) \{\s*await persistAssistantMessage\(fullReply\);\s*\}/,
+  /if \(fullReply && !clientDisconnected\) \{\s*streamSync = await persistFastAssistantMessage\(fullReply\);\s*\}/,
   "fast stream must await chat-content persistence before final sync",
+);
+assert.doesNotMatch(
+  server,
+  /waitForFastStreamSync\(assistantPersistencePromise\)/,
+  "fast stream must not emit final sync from a short persistence grace race",
 );
 
 assert.match(
@@ -154,6 +175,26 @@ assert.match(
   /if \(localChatId !== conversationId\) \{\s*await applyConversationAlias\(localChatId, conversationId\);/,
   "frontend sync reconciliation must collapse local duplicates onto canonical ids",
 );
+assert.match(
+  chatController,
+  /isConversationNotFoundError/,
+  "frontend must identify stale conversation_not_found responses",
+);
+assert.match(
+  chatController,
+  /queueRemoteMissingChatRecovery/,
+  "frontend must preserve local messages and queue recovery when remote chat rows are missing",
+);
+assert.match(
+  chatController,
+  /reconcileCachedServerChatsWithRemote/,
+  "frontend must reconcile IndexedDB server-chat cache after successful Supabase list hydration",
+);
+assert.match(
+  storage,
+  /async function updateChatSyncState/,
+  "local storage must expose scoped sync-state repair updates",
+);
 
 assert.match(
   dbRouter,
@@ -164,6 +205,11 @@ assert.match(
   dbRouter,
   /resolve_conversation_for_turn/,
   "startup migration verification must check the turn resolution RPC",
+);
+assert.match(
+  dbRouter,
+  /last_activity_at activity tracking \(migration 20260528120000\)/,
+  "startup migration verification must check conversation activity tracking",
 );
 assert.match(
   packageJson,

@@ -314,6 +314,19 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return "Unexpected error";
   }
 
+  function isConversationNotFoundError(error) {
+    return Boolean(
+      error && (
+        error.code === "conversation_not_found" ||
+        (error.status === 404 && /conversation not found/i.test(getSafeErrorMessage(error)))
+      )
+    );
+  }
+
+  function chatHasMessages(chat) {
+    return Array.isArray(chat?.messages) && chat.messages.length > 0;
+  }
+
   function markPerf(label, extra = {}) {
     if (!SENTIQ_DEBUG) return;
     const details = Object.entries(extra)
@@ -1606,17 +1619,89 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return deletedIds;
   }
 
+  async function refreshRemoteConversationIndex() {
+    const response = await API.getConversations();
+    const aliasCount = await applyConversationAliasesFromServer(response?.merged);
+    const chats = Array.isArray(response?.conversations)
+      ? response.conversations.map(normalizeServerConversation)
+      : [];
+    await Promise.all(chats.map((chat) => Storage.upsertServerChat(chat)));
+    return { chats, aliasCount };
+  }
+
+  async function queueRemoteMissingChatRecovery(chat, reason = "conversation_not_found") {
+    if (!isAuthenticatedSession() || !chat?.id || !chatHasMessages(chat)) return null;
+    if (chat.pending_server_sync && chat.missing_remote_at) {
+      return Storage.getChat(chat.id) || chat;
+    }
+    const messages = chat.messages.map(serializeMessageForSync).filter((message) => (
+      message.content || message.meta
+    ));
+    if (messages.length === 0) return null;
+
+    await Storage.updateChatSyncState?.(chat.id, {
+      pending_server_sync: true,
+      sync_error: "Remote conversation missing; recovery sync queued",
+      missing_remote_at: new Date().toISOString(),
+      message_cache_status: "local-preserved",
+      message_count: messages.length,
+    });
+    await queueSyncJob(SYNC_JOB_TYPES.chatMessage, {
+      localChatId: chat.id,
+      conversationId: getCanonicalConversationIdForRequest(chat.id) || chat.id,
+      title: chat.title || "New Chat",
+      messages,
+    }, {
+      id: `${SYNC_JOB_TYPES.chatMessage}:recover:${chat.id}`,
+      sync_error: reason,
+    });
+    processSyncQueue().catch((error) => {
+      logAuthenticatedConversationError("remoteMissingChat.recoverySync", error);
+    });
+    return Storage.getChat(chat.id);
+  }
+
+  async function reconcileCachedServerChatsWithRemote(serverChats) {
+    if (!isAuthenticatedSession()) return { deletedIds: new Set(), recoveryCount: 0 };
+    const remoteIds = new Set((Array.isArray(serverChats) ? serverChats : []).map((chat) => chat?.id).filter(Boolean));
+    const cachedChats = await getCachedServerChats();
+    const deletedIds = new Set();
+    let recoveryCount = 0;
+
+    for (const cachedChat of cachedChats) {
+      if (!cachedChat?.id || isPlaceholderServerChat(cachedChat) || remoteIds.has(cachedChat.id)) continue;
+      const resolvedId = await Storage.resolveConversationAlias?.(cachedChat.id).catch(() => cachedChat.id) || cachedChat.id;
+      if (resolvedId !== cachedChat.id && remoteIds.has(resolvedId)) {
+        await applyConversationAlias(cachedChat.id, resolvedId);
+        continue;
+      }
+
+      if (chatHasMessages(cachedChat)) {
+        const recovered = await queueRemoteMissingChatRecovery(cachedChat, "remote_list_missing");
+        if (recovered) recoveryCount += 1;
+        continue;
+      }
+
+      await Storage.deleteChat(cachedChat.id);
+      deletedIds.add(cachedChat.id);
+      if (currentChatId === cachedChat.id) {
+        currentChatId = null;
+        showWelcome();
+        if (chatMessages) chatMessages.innerHTML = "";
+      }
+    }
+
+    return { deletedIds, recoveryCount };
+  }
+
   async function fetchAuthenticatedChatList(options = {}) {
     const { silent = false } = options;
     const stopMeasure = startPerf("ui.chat_list.fetch", { silent });
     try {
-      const response = await API.getConversations();
-      const aliasCount = await applyConversationAliasesFromServer(response?.merged);
-      const chats = Array.isArray(response?.conversations)
-        ? response.conversations.map(normalizeServerConversation)
-        : [];
-      await Promise.all(chats.map((chat) => Storage.upsertServerChat(chat)));
+      const { chats, aliasCount } = await refreshRemoteConversationIndex();
       const deletedIds = await cleanupDuplicateBlankServerChats(chats);
+      const staleReconcile = await reconcileCachedServerChatsWithRemote(chats);
+      for (const deletedId of staleReconcile.deletedIds) deletedIds.add(deletedId);
       stopMeasure("ok", { chat_count: chats.length, deleted_duplicate_count: deletedIds.size, alias_count: aliasCount });
       return deletedIds.size > 0 ? chats.filter((chat) => !deletedIds.has(chat.id)) : chats;
     } catch (error) {
@@ -1633,9 +1718,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   async function fetchAuthenticatedChat(chatId, options = {}) {
-    const { silent = false } = options;
+    const { silent = false, aliasRefreshTried = false } = options;
+    let requestChatId = chatId;
     try {
-      const requestChatId = await Storage.resolveConversationAlias?.(chatId).catch(() => chatId) || chatId;
+      requestChatId = await Storage.resolveConversationAlias?.(chatId).catch(() => chatId) || chatId;
       if (requestChatId !== chatId) {
         conversationAliasCache.set(chatId, requestChatId);
       }
@@ -1672,11 +1758,47 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       if (isProfileNameRequiredError(error)) {
         return Storage.getChat(chatId);
       }
+
+      const cachedChat = await Storage.getChat(chatId)
+        || (requestChatId && requestChatId !== chatId ? await Storage.getChat(requestChatId) : null);
+
+      if (isConversationNotFoundError(error)) {
+        if (!aliasRefreshTried) {
+          try {
+            await refreshRemoteConversationIndex();
+            const refreshedChatId = await Storage.resolveConversationAlias?.(requestChatId).catch(() => requestChatId) || requestChatId;
+            if (refreshedChatId && refreshedChatId !== requestChatId) {
+              conversationAliasCache.set(requestChatId, refreshedChatId);
+              return fetchAuthenticatedChat(refreshedChatId, { ...options, aliasRefreshTried: true });
+            }
+          } catch (refreshError) {
+            logAuthenticatedConversationError("fetchAuthenticatedChat.aliasRefresh", refreshError);
+          }
+        }
+
+        if (chatHasMessages(cachedChat)) {
+          const recoveredChat = await queueRemoteMissingChatRecovery(cachedChat, "conversation_not_found");
+          if (!silent) {
+            showToast("Loaded your local copy while this chat resyncs.", "info", 4500);
+          }
+          return recoveredChat || cachedChat;
+        }
+
+        if (cachedChat && isServerBackedChat(cachedChat) && !isPlaceholderServerChat(cachedChat)) {
+          await Storage.deleteChat(cachedChat.id);
+          if (currentChatId === cachedChat.id) currentChatId = null;
+          scheduleChatListRefresh();
+          if (!silent) {
+            showToast("Removed a stale chat entry from your list.", "info", 3500);
+          }
+          return null;
+        }
+      }
+
       if (!silent) {
         showToast("Couldn't open that conversation right now. Please try again.", "error");
       }
-      const cachedChat = await Storage.getChat(chatId);
-      if (isServerBackedChat(cachedChat)) {
+      if (isServerBackedChat(cachedChat) && chatHasMessages(cachedChat)) {
         return cachedChat;
       }
       throw error;
@@ -4583,6 +4705,43 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     chatCacheLoaderEl?.remove();
   }
 
+  function renderChatLoadFailure(chatId, error) {
+    if (!chatMessages) return;
+    setChatCacheLoaderVisible(false);
+    hideWelcome();
+    chatMessages.classList.add("has-messages");
+    chatMessages.innerHTML = "";
+
+    const wrap = document.createElement("div");
+    wrap.className = "chat-load-error";
+    wrap.setAttribute("role", "status");
+
+    const title = document.createElement("div");
+    title.className = "chat-load-error-title";
+    title.textContent = isConversationNotFoundError(error)
+      ? "This chat is no longer available from the server."
+      : "Couldn't load this chat.";
+    wrap.appendChild(title);
+
+    const detail = document.createElement("div");
+    detail.className = "chat-load-error-detail";
+    detail.textContent = "Try again, or pick another chat from the sidebar.";
+    wrap.appendChild(detail);
+
+    const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "chat-load-retry-btn";
+    retryBtn.textContent = "Retry";
+    retryBtn.addEventListener("click", () => {
+      loadChat(chatId, { silent: false, forceRemoteHydration: true }).catch((retryError) => {
+        logAuthenticatedConversationError("chatLoad.retry", retryError);
+      });
+    });
+    wrap.appendChild(retryBtn);
+
+    chatMessages.appendChild(wrap);
+  }
+
   let _resizeRaf = 0;
   function autoResizeInput() {
     if (!chatInput) return;
@@ -4854,7 +5013,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   async function loadChat(chatId, options = {}) {
-    const { skipRemoteHydration = false, silent = true } = options;
+    const { skipRemoteHydration = false, silent = true, forceRemoteHydration = false } = options;
     debugLog("[UI] loadChat", { hasChat: Boolean(chatId) });
     const stopMeasure = startPerf("ui.chat.load", { chat_id: chatId });
     if (isGuestSession()) {
@@ -4892,8 +5051,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         && isServerBackedChat(cachedChat)
         && !isPlaceholderServerChat(cachedChat)
         && !skipRemoteHydration
-        && !hasCachedMessages
-        && cachedChat.message_cache_status !== "complete"
+        && (
+          forceRemoteHydration
+          || (!hasCachedMessages && cachedChat.message_cache_status !== "complete")
+        )
       );
       if (needsForegroundHydration) {
         try {
@@ -4901,12 +5062,15 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           const remoteChat = await fetchAuthenticatedChat(chatId, { silent });
           if (remoteChat) {
             setChatCacheLoaderVisible(false);
-            renderLoadedChat(chatId, remoteChat, { forceRender: true });
+            renderLoadedChat(remoteChat.id || chatId, remoteChat, { forceRender: true });
             stopMeasure("ok", { message_count: Array.isArray(remoteChat.messages) ? remoteChat.messages.length : 0, cached: false });
+          } else {
+            stopMeasure("missing");
           }
         } catch (error) {
           stopMeasure("error");
           logAuthenticatedConversationError("loadChat.foregroundHydrate", error);
+          renderChatLoadFailure(chatId, error);
         } finally {
           setChatCacheLoaderVisible(false);
         }
@@ -4926,14 +5090,15 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       if (isAuthenticatedSession() && !skipRemoteHydration && !isPlaceholderServerChat(cachedChat)) {
         fetchAuthenticatedChat(chatId, { silent })
           .then((remoteChat) => {
-            if (!remoteChat || currentChatId !== chatId) return;
+            const renderChatId = remoteChat?.id || chatId;
+            if (!remoteChat || (currentChatId !== chatId && currentChatId !== renderChatId)) return;
             const remoteSignature = getChatMessageSignature(remoteChat);
-            const knownSignature = chatRenderSignatures.get(chatId) || "";
+            const knownSignature = chatRenderSignatures.get(renderChatId) || chatRenderSignatures.get(chatId) || "";
             if (remoteSignature !== knownSignature) {
-              renderLoadedChat(chatId, remoteChat, { forceRender: true });
+              renderLoadedChat(renderChatId, remoteChat, { forceRender: true });
             }
             markPerf("ui.chat.load.remote_reconciled", {
-              chat_id: chatId,
+              chat_id: renderChatId,
               message_count: Array.isArray(remoteChat.messages) ? remoteChat.messages.length : 0,
             });
           })
@@ -4957,15 +5122,16 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         return;
       }
       setChatCacheLoaderVisible(false);
-      renderLoadedChat(chatId, remoteChat, { forceRender: true });
+      renderLoadedChat(remoteChat.id || chatId, remoteChat, { forceRender: true });
       markPerf("ui.chat.load.remote_reconciled", {
-        chat_id: chatId,
+        chat_id: remoteChat.id || chatId,
         message_count: Array.isArray(remoteChat.messages) ? remoteChat.messages.length : 0,
       });
       stopMeasure("ok", { message_count: Array.isArray(remoteChat.messages) ? remoteChat.messages.length : 0, cached: false });
     } catch (error) {
       stopMeasure("error");
       logAuthenticatedConversationError("loadChat", error);
+      renderChatLoadFailure(chatId, error);
     } finally {
       setChatCacheLoaderVisible(false);
     }

@@ -490,6 +490,9 @@ async function upsertServerChat(chatData) {
     last_synced_at: chatData.last_synced_at || visibleExisting?.last_synced_at || null,
     warmed_at: chatData.warmed_at || visibleExisting?.warmed_at || null,
     message_cache_status: chatData.message_cache_status || visibleExisting?.message_cache_status || null,
+    missing_remote_at: Object.prototype.hasOwnProperty.call(chatData, "missing_remote_at")
+      ? (chatData.missing_remote_at || null)
+      : null,
     message_count: Number.isFinite(Number(chatData.message_count)) ? Number(chatData.message_count) : (visibleExisting?.message_count || 0),
     first_user_message: incomingFirstUserMessage || visibleExisting?.first_user_message || null,
     pending_title_sync: shouldKeepPendingLocalTitle
@@ -500,6 +503,30 @@ async function upsertServerChat(chatData) {
       ? (chatData.last_title_synced_at || new Date().toISOString())
       : (chatData.last_title_synced_at || visibleExisting?.last_title_synced_at || null),
   };
+  await dbPut(STORES.chats, chat);
+  return chat;
+}
+
+async function updateChatSyncState(chatId, updates = {}) {
+  const chat = await getChat(chatId);
+  if (!chat) return undefined;
+  const allowed = [
+    "pending_server_sync",
+    "sync_error",
+    "last_synced_at",
+    "warmed_at",
+    "message_cache_status",
+    "missing_remote_at",
+    "message_count",
+  ];
+  for (const key of allowed) {
+    if (Object.prototype.hasOwnProperty.call(updates, key)) {
+      chat[key] = updates[key];
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "updated")) {
+    chat.updated = updates.updated || chat.updated;
+  }
   await dbPut(STORES.chats, chat);
   return chat;
 }
@@ -820,7 +847,7 @@ async function getStorageStats() {
 
 window.SentIQStorage = {
   setActiveUserId, getActiveUserId,
-  createChat, getChat, getAllChats, addMessageToChat, upsertMessageInChat, updateMessageInChat, updateChatTitle, deleteChat,
+  createChat, getChat, getAllChats, addMessageToChat, upsertMessageInChat, updateMessageInChat, updateChatTitle, updateChatSyncState, deleteChat,
   getLocalChats, upsertServerChat, replaceChatMessages, mergeChatMessages,
   storeMemory, getMemory, getAllMemories, getMemoriesByType, deleteMemory, getTopMemories,
   storeFile, getAllFiles, getFile, deleteFile,

@@ -3812,16 +3812,7 @@ app.post(
 
         let streamSync = createDeferredFastSync();
         if (fullReply && !clientDisconnected) {
-          const assistantPersistencePromise = persistFastAssistantMessage(fullReply).catch((error) => {
-            logDbFailure(
-              "chat.stream.fast.assistant-background",
-              userId,
-              error instanceof Error ? error : new Error(String(error)),
-              { conversationId: requestedConversationId || null },
-            );
-            return createDeferredFastSync();
-          });
-          streamSync = await waitForFastStreamSync(assistantPersistencePromise) ?? createDeferredFastSync();
+          streamSync = await persistFastAssistantMessage(fullReply);
         }
 
         if (!clientDisconnected) {
@@ -3842,16 +3833,7 @@ app.post(
               timeoutMs: fastModelForRecovery === "openai-large" ? 180_000 : 90_000,
               signal: requestAbortController.signal,
             });
-            const assistantPersistencePromise = persistFastAssistantMessage(fallbackText).catch((error) => {
-              logDbFailure(
-                "chat.stream.fast.assistant-background",
-                userId,
-                error instanceof Error ? error : new Error(String(error)),
-                { conversationId: requestedConversationId || null },
-              );
-              return createDeferredFastSync();
-            });
-            const streamSync = await waitForFastStreamSync(assistantPersistencePromise) ?? createDeferredFastSync();
+            const streamSync = await persistFastAssistantMessage(fallbackText);
             const finalizedSync = finalizeSyncStatus(streamSync);
             await streamBufferedAnswer(fallbackText, undefined, false, fastStreamMetrics);
             await writeSseJson({ type: "sync", sync: finalizedSync, degraded: buildDegradedStatus(finalizedSync) });

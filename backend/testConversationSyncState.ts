@@ -69,6 +69,31 @@ assert.match(
   /counts\.localCount > 0 \|\| counts\.serverCount !== 0/,
   "duplicate cleanup must skip any chat that may contain messages",
 );
+assert.match(
+  chatController,
+  /function isConversationNotFoundError/,
+  "frontend should classify stale backend conversation ids",
+);
+assert.match(
+  chatController,
+  /queueRemoteMissingChatRecovery[\s\S]*pending_server_sync: true[\s\S]*missing_remote_at/,
+  "frontend should preserve local messages and mark missing remote chats for resync",
+);
+assert.match(
+  chatController,
+  /reconcileCachedServerChatsWithRemote[\s\S]*Storage\.deleteChat\(cachedChat\.id\)/,
+  "frontend should prune stale empty cached server chats after a successful remote list",
+);
+assert.match(
+  chatController,
+  /renderLoadedChat\(remoteChat\.id \|\| chatId, remoteChat/,
+  "remote hydration should render with the canonical chat id returned by the server",
+);
+assert.match(
+  chatController,
+  /function renderChatLoadFailure/,
+  "older chat hydration failures should render a retry state instead of falling through to a blank view",
+);
 
 assert.match(
   storageService,
@@ -89,6 +114,16 @@ assert.match(
   storageService,
   /isFirstMessageFallbackTitle/,
   "fallback first-message titles should not beat stronger summarized titles",
+);
+assert.match(
+  storageService,
+  /async function updateChatSyncState/,
+  "storage should support scoped cache repair metadata for stale server chats",
+);
+assert.match(
+  storageService,
+  /missing_remote_at/,
+  "storage should persist stale remote markers without clearing IndexedDB",
 );
 
 assert.match(
