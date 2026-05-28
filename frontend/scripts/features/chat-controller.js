@@ -224,7 +224,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     authMenuLogoutBtn,
     authModal,
     authCloseBtn,
+    authModalBody,
     authForm,
+    authOauthGroup,
+    authGoogleBtn,
+    authGoogleLabel,
     authEmailInput,
     authPasswordInput,
     authPasswordToggle,
@@ -270,6 +274,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   let sidebarBackdrop = null;
   let sidebarTouchSession = null;
   let authMenuOpen = false;
+  let authGooglePending = false;
   let syncQueuePromise = null;
   let memorySyncPromise = null;
   let memoryLastSyncedAt = 0;
@@ -291,6 +296,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   const RECENT_CHAT_WARM_CONCURRENCY = 2;
   const LAST_ACTIVE_CHAT_CONFIG_PREFIX = "last_active_chat_id:";
   const SIDEBAR_COLLAPSED_STORAGE_KEY = "sentiq_sidebar_collapsed";
+  const AUTH_GOOGLE_DEFAULT_LABEL = "Continue with Google";
 
   function debugLog(...args) {
     if (SENTIQ_DEBUG) console.log(...args);
@@ -337,6 +343,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function isPasswordAuthView(mode = authView) {
     return mode === "login" || mode === "signup" || mode === "password-recovery";
+  }
+
+  function isOAuthAuthView(mode = authView) {
+    return mode === "login" || mode === "signup";
   }
 
   function getAuthPrimaryFocus(mode = authView) {
@@ -2143,6 +2153,25 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     authStatus.textContent = message;
     authStatus.classList.toggle("is-error", type === "error");
     authStatus.classList.toggle("is-success", type === "success");
+    authStatus.classList.toggle("is-visible", Boolean(message));
+  }
+
+  function setAuthGooglePending(pending) {
+    authGooglePending = Boolean(pending);
+    if (authGoogleBtn) {
+      authGoogleBtn.disabled = authGooglePending;
+      authGoogleBtn.classList.toggle("is-loading", authGooglePending);
+      authGoogleBtn.setAttribute("aria-busy", authGooglePending ? "true" : "false");
+    }
+    if (authGoogleLabel) {
+      authGoogleLabel.textContent = authGooglePending ? "Connecting..." : AUTH_GOOGLE_DEFAULT_LABEL;
+    }
+  }
+
+  function setAuthFormControlsDisabled(disabled) {
+    [authEmailInput, authPasswordInput, authPasswordToggle, authSubmitBtn, authSwitchBtn, authForgotBtn].forEach((el) => {
+      if (el) el.disabled = disabled;
+    });
   }
 
   function setAuthView(mode) {
@@ -2152,6 +2181,14 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const isSignup = authView === "signup";
     const isResetRequest = isPasswordResetRequestView(authView);
     const isRecovery = isPasswordRecoveryView(authView);
+    const showOAuth = isOAuthAuthView(authView);
+    setAuthGooglePending(false);
+    if (authModal) authModal.dataset.authView = authView;
+    if (authModalBody && isModalVisible(authModal)) {
+      authModalBody.classList.remove("auth-view-transition");
+      void authModalBody.offsetWidth;
+      authModalBody.classList.add("auth-view-transition");
+    }
     if (authModalTitle) {
       authModalTitle.textContent = isSignup
         ? "Create your account"
@@ -2202,6 +2239,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           ? "Back to sign in."
           : "Create new account.";
     }
+    if (authOauthGroup) authOauthGroup.style.display = showOAuth ? "" : "none";
     if (authPasswordInput) {
       authPasswordInput.autocomplete = isSignup || isRecovery ? "new-password" : "current-password";
       authPasswordInput.required = isPasswordAuthView(authView);
@@ -2249,6 +2287,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       authModal.setAttribute("aria-hidden", "true");
     }
     setAuthStatus("");
+    setAuthGooglePending(false);
+    setAuthFormControlsDisabled(false);
     if (authForm) authForm.reset();
     setPasswordVisibility(false);
     setAuthView("login");
@@ -4114,6 +4154,24 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     authModal?.addEventListener("click", (e) => { if (e.target === authModal) closeAuthModal(); });
     authSwitchBtn?.addEventListener("click", () => openAuthModal(authView === "login" ? "signup" : "login"));
     authForgotBtn?.addEventListener("click", () => openAuthModal("forgot-password-request"));
+    authGoogleBtn?.addEventListener("click", async () => {
+      if (authGooglePending) return;
+      if (!window.SentIQAuth?.configured) {
+        setAuthStatus("Supabase auth is not configured yet.", "error");
+        return;
+      }
+      if (!isOAuthAuthView()) return;
+      setAuthGooglePending(true);
+      setAuthFormControlsDisabled(true);
+      setAuthStatus("Opening Google sign-in...");
+      try {
+        await window.SentIQAuth.signInWithGoogle();
+      } catch (err) {
+        setAuthStatus(err?.message || "Google sign-in could not start.", "error");
+        setAuthGooglePending(false);
+        setAuthFormControlsDisabled(false);
+      }
+    });
     authPasswordToggle?.addEventListener("click", () => {
       if (!authPasswordInput) return;
       setPasswordVisibility(authPasswordInput.type === "password");
@@ -4165,6 +4223,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     });
     authForm?.addEventListener("submit", async (e) => {
       e.preventDefault();
+      if (authGooglePending) return;
       const email = authEmailInput?.value?.trim() || "";
       const password = authPasswordInput?.value || "";
       if (!email && !isPasswordRecoveryView()) {
@@ -4180,6 +4239,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         return;
       }
       if (authSubmitBtn) authSubmitBtn.disabled = true;
+      authSubmitBtn?.classList.add("is-loading");
+      authSubmitBtn?.setAttribute("aria-busy", "true");
       setAuthStatus("");
       try {
         if (authView === "signup") {
@@ -4212,6 +4273,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         setAuthStatus(err?.message || "Authentication failed.", "error");
       } finally {
         if (authSubmitBtn) authSubmitBtn.disabled = false;
+        authSubmitBtn?.classList.remove("is-loading");
+        authSubmitBtn?.setAttribute("aria-busy", "false");
       }
     });
     chatInput?.addEventListener("keydown", (e) => {

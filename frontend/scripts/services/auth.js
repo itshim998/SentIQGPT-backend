@@ -66,6 +66,18 @@
     return data;
   }
 
+  async function signInWithGoogle() {
+    if (!client) throw configError || new Error("Supabase auth is not configured.");
+    const { data, error } = await client.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin,
+      },
+    });
+    if (error) throw error;
+    return data;
+  }
+
   async function signUp(email, password) {
     if (!client) throw configError || new Error("Supabase auth is not configured.");
     const emailRedirectTo = buildEmailRedirectUrl();
@@ -125,6 +137,7 @@
     getSession,
     getAccessToken,
     signInWithPassword,
+    signInWithGoogle,
     signUp,
     resetPasswordForEmail,
     updatePassword,

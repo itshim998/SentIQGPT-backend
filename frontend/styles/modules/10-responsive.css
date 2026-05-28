@@ -119,6 +119,23 @@
   .composer-hint-prefix {
     display: none;
   }
+  .auth-modal-body {
+    padding: 24px 18px 20px;
+  }
+  .auth-modal-copy {
+    margin-bottom: 18px;
+  }
+  .auth-modal-copy h2 {
+    font-size: 1.52rem;
+  }
+  .auth-form {
+    gap: 12px;
+  }
+  .auth-google-btn,
+  .auth-submit-btn {
+    min-height: 46px;
+    border-radius: 16px;
+  }
 }
 
 /* ==============================

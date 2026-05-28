@@ -94,10 +94,47 @@
         <h2 id="welcome-heading">Ready when you are.</h2>
         <p id="welcome-subtitle" class="welcome-subtitle">Ask a question, work through a file, or pick up a thread from earlier.</p>
         <div id="starter-actions" class="starter-actions" aria-label="Starter actions">
-          <button class="starter-action-btn" type="button" data-starter-action="file">Attach file</button>
-          <button class="starter-action-btn" type="button" data-starter-action="math">Solve math</button>
-          <button class="starter-action-btn" type="button" data-starter-action="code">Debug code</button>
-          <button class="starter-action-btn" type="button" data-starter-action="web">Search web</button>
+          <button class="starter-action-btn" type="button" data-starter-action="file">
+            <span class="starter-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+              </svg>
+            </span>
+            <span>Attach file</span>
+          </button>
+          <button class="starter-action-btn" type="button" data-starter-action="math">
+            <span class="starter-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 19 10 5"></path>
+                <path d="M8 5h6"></path>
+                <path d="M6.5 12h5"></path>
+                <path d="m14.5 11.5 5 5"></path>
+                <path d="m19.5 11.5-5 5"></path>
+              </svg>
+            </span>
+            <span>Solve math</span>
+          </button>
+          <button class="starter-action-btn" type="button" data-starter-action="code">
+            <span class="starter-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m8 18-5-6 5-6"></path>
+                <path d="m16 6 5 6-5 6"></path>
+                <path d="m14 4-4 16"></path>
+              </svg>
+            </span>
+            <span>Debug code</span>
+          </button>
+          <button class="starter-action-btn" type="button" data-starter-action="web">
+            <span class="starter-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M2 12h20"></path>
+                <path d="M12 2a15 15 0 0 1 0 20"></path>
+                <path d="M12 2a15 15 0 0 0 0 20"></path>
+              </svg>
+            </span>
+            <span>Search web</span>
+          </button>
         </div>
         <p id="auth-welcome-note" class="auth-welcome-note">Sign in for access to higher intelligence, image generation, and synced conversations.</p>
       </div>
@@ -213,6 +250,17 @@
           <p id="auth-modal-subtitle">Continue with your email and password to unlock the full chat experience.</p>
         </div>
         <form id="auth-form" class="auth-form">
+          <div id="auth-oauth-group" class="auth-oauth-group">
+            <button id="auth-google-btn" class="auth-google-btn" type="button">
+              <span class="auth-google-mark" aria-hidden="true">G</span>
+              <span id="auth-google-label">Continue with Google</span>
+            </button>
+            <div class="auth-divider" aria-hidden="true">
+              <span></span>
+              <span>or</span>
+              <span></span>
+            </div>
+          </div>
           <div class="auth-field">
             <label for="auth-email">Email</label>
             <input id="auth-email" type="email" autocomplete="email" placeholder="Email address" required>
