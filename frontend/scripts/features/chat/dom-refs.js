@@ -30,6 +30,7 @@ export function getChatDomRefs(doc = document) {
     cancelWebSearchMode: doc.getElementById("cancel-web-search-mode"),
     filePreviewArea: doc.getElementById("file-preview-area"),
     chatInputArea: doc.querySelector(".chat-input-area"),
+    mainContent: doc.querySelector(".main-content"),
     settingsBtn: doc.getElementById("settings-btn"),
     settingsModal: doc.getElementById("settings-modal"),
     closeSettingsBtn: doc.getElementById("close-settings-btn"),

@@ -201,6 +201,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     cancelWebSearchMode,
     filePreviewArea,
     chatInputArea,
+    mainContent,
     settingsBtn,
     settingsModal,
     closeSettingsBtn,
@@ -4676,12 +4677,14 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   function showWelcome() {
+    mainContent?.classList.add("is-empty-chat");
     if (welcomeScreen) welcomeScreen.style.display = "flex";
     if (chatMessages) chatMessages.classList.remove("has-messages");
     refreshWelcomeCopy();
     syncComposerHint();
   }
   function hideWelcome() {
+    mainContent?.classList.remove("is-empty-chat");
     if (welcomeScreen) welcomeScreen.style.display = "none";
     if (chatMessages) chatMessages.classList.add("has-messages");
   }
