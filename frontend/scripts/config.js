@@ -4,7 +4,9 @@ export const SENTIQ_API_BASE = window.SENTIQ_API_BASE ||
   (location.hostname === "localhost" || location.hostname === "127.0.0.1"
     ? "http://localhost:3001"
     : "https://sentiqgpt-backend.ashygrass-913d190e.centralindia.azurecontainerapps.io");
+export const SENTIQ_SUPPORT_EMAIL = window.SENTIQ_SUPPORT_EMAIL || "support@sentiqlabs.com";
 
 window.SENTIQ_SUPABASE_URL = SENTIQ_SUPABASE_URL;
 window.SENTIQ_SUPABASE_ANON_KEY = SENTIQ_SUPABASE_ANON_KEY;
 window.SENTIQ_API_BASE = SENTIQ_API_BASE;
+window.SENTIQ_SUPPORT_EMAIL = SENTIQ_SUPPORT_EMAIL;

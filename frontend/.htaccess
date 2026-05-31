@@ -1,3 +1,11 @@
+<IfModule mod_mime.c>
+  AddType application/javascript .js .mjs
+  AddType text/css .css
+  AddType font/woff2 .woff2
+  AddType font/woff .woff
+  AddType font/ttf .ttf
+</IfModule>
+
 <IfModule mod_headers.c>
   <FilesMatch "\.(html|css|js)$">
     Header set Cache-Control "no-cache, no-store, must-revalidate"

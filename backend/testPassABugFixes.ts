@@ -66,7 +66,7 @@ const validUuid = "123e4567-e89b-12d3-a456-426614174000";
     .readdirSync(path.join(root, "frontend"))
     .filter((entry) => entry !== "backup_monolithic_index.html")
     .sort();
-  assert.deepEqual(frontendDirEntries, [".htaccess", "index.html", "scripts", "styles"], "frontend directory should contain modular static assets");
+  assert.deepEqual(frontendDirEntries, [".htaccess", "index.html", "scripts", "styles", "vendor"], "frontend directory should contain modular static assets");
 
   const indexHtml = readFrontendSources(root).combined;
   const maybeGenerateTitleStart = indexHtml.indexOf("async function maybeGenerateTitle");

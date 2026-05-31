@@ -604,7 +604,7 @@ export async function deleteChatImage(
     
     if (storageError) {
       console.warn(`[ImageStorage] delete.storage.failed imageId=${imageId} error=${storageError.message}`);
-      // Continue to delete metadata even if storage delete fails
+      return false;
     }
     
     // Delete metadata

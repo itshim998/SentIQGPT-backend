@@ -71,6 +71,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         responseBuffer: "",
         thinkingSteps: [],
         abortController: null,
+        stopRequested: false,
         activityMode: "thinking",
         activityLoaderKind: "loader-text",
         sessionFiles: [],
@@ -143,7 +144,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   function newRequestId(chatId) {
-    const id = crypto.randomUUID();
+    const id = Storage.generateId();
     const state = getChatState(chatId);
     if (state) state.requestId = id;
     return id;
@@ -286,9 +287,61 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   const welcomeGreetingByChatId = new Map();
   let guestChatState = null;
   let guestMemoryState = [];
+
+  function readLocalStorage(key, fallback = null) {
+    try {
+      return window.localStorage?.getItem(key) ?? fallback;
+    } catch {
+      window.SentIQBootstrap?.addLimitedReason?.("local-storage", "Some browser preferences cannot be saved in this session.");
+      return fallback;
+    }
+  }
+
+  function writeLocalStorage(key, value) {
+    try {
+      window.localStorage?.setItem(key, value);
+    } catch {
+      window.SentIQBootstrap?.addLimitedReason?.("local-storage", "Some browser preferences cannot be saved in this session.");
+    }
+  }
+
+  function removeLocalStorage(key) {
+    try {
+      window.localStorage?.removeItem(key);
+    } catch { /* blocked web storage is already reported by the bootstrap guard */ }
+  }
+
+  function readSessionStorage(key, fallback = null) {
+    try {
+      return window.sessionStorage?.getItem(key) ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function writeSessionStorage(key, value) {
+    try {
+      window.sessionStorage?.setItem(key, value);
+    } catch {
+      window.SentIQBootstrap?.addLimitedReason?.("session-storage", "Interrupted guest responses cannot be restored after a reload in this session.");
+    }
+  }
+
+  function removeSessionStorage(key) {
+    try {
+      window.sessionStorage?.removeItem(key);
+    } catch { /* optional recovery storage */ }
+  }
+
+  function createAbortController() {
+    if (typeof AbortController === "function") return new AbortController();
+    window.SentIQBootstrap?.addLimitedReason?.("abort-controller", "Request cancellation is unavailable in this browser session.");
+    return { abort() {}, signal: undefined };
+  }
+
   const SENTIQ_DEBUG = (() => {
     try {
-      return Boolean(window.SENTIQ_DEBUG || localStorage.getItem("sentiq_debug") === "1");
+      return Boolean(window.SENTIQ_DEBUG || readLocalStorage("sentiq_debug") === "1");
     } catch {
       return Boolean(window.SENTIQ_DEBUG);
     }
@@ -298,6 +351,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   const LAST_ACTIVE_CHAT_CONFIG_PREFIX = "last_active_chat_id:";
   const SIDEBAR_COLLAPSED_STORAGE_KEY = "sentiq_sidebar_collapsed";
   const AUTH_GOOGLE_DEFAULT_LABEL = "Continue with Google";
+  const GUEST_RECOVERY_DRAFT_KEY = "sentiq_guest_recovery_draft";
 
   function debugLog(...args) {
     if (SENTIQ_DEBUG) console.log(...args);
@@ -307,12 +361,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (SENTIQ_DEBUG) console.warn(...args);
   }
 
-  function getSafeErrorMessage(error) {
-    if (!error) return "Unknown error";
-    if (error instanceof Error) return error.message || error.name || "Error";
-    if (typeof error === "string") return error;
-    if (typeof error?.message === "string") return error.message;
-    return "Unexpected error";
+  function getSafeErrorMessage(error, context = {}) {
+    return window.SentIQErrors?.getSafeErrorMessage?.(error, context)
+      || "SentIQGPT could not finish that action. Please try again.";
   }
 
   function isConversationNotFoundError(error) {
@@ -372,17 +423,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   function readSidebarCollapsedPreference() {
-    try {
-      return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
-    } catch {
-      return false;
-    }
+    return readLocalStorage(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
   }
 
   function writeSidebarCollapsedPreference(collapsed) {
-    try {
-      localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, collapsed ? "1" : "0");
-    } catch { /* ignore storage failures */ }
+    writeLocalStorage(SIDEBAR_COLLAPSED_STORAGE_KEY, collapsed ? "1" : "0");
   }
 
   function setSidebarCollapsed(collapsed, options = {}) {
@@ -715,9 +760,17 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           meta: {
             clientRequestId: requestId,
             streaming: !final,
+            responseStatus: final ? (meta.responseStatus || "complete") : "generating",
             ...meta,
           },
         }))
+        .then((result) => {
+          if (!isAuthenticatedSession()) {
+            if (final && meta.responseStatus === "complete") removeSessionStorage(GUEST_RECOVERY_DRAFT_KEY);
+            else persistGuestRecoveryDraft(chatId);
+          }
+          return result;
+        })
         .catch((error) => {
           debugWarn("[UI] Streaming draft persistence failed:", getSafeErrorMessage(error));
         });
@@ -727,7 +780,100 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       id: draftId,
       update(content) { return writeDraft(content, false); },
       finalize(content, meta) { return writeDraft(content, true, meta); },
+      markIncomplete(content, responseStatus, meta = {}) {
+        return writeDraft(content, true, { ...meta, responseStatus });
+      },
     };
+  }
+
+  function persistGuestRecoveryDraft(chatId) {
+    const chat = getGuestChat(chatId);
+    if (!chat?.messages?.length) return;
+    writeSessionStorage(GUEST_RECOVERY_DRAFT_KEY, JSON.stringify({
+      savedAt: Date.now(),
+      chat: {
+        ...chat,
+        messages: chat.messages.slice(-24),
+      },
+    }));
+  }
+
+  function restoreGuestRecoveryDraft() {
+    const raw = readSessionStorage(GUEST_RECOVERY_DRAFT_KEY);
+    if (!raw || isAuthenticatedSession()) return false;
+    try {
+      const snapshot = JSON.parse(raw);
+      if (!snapshot?.chat?.id || !Array.isArray(snapshot.chat.messages) || Date.now() - Number(snapshot.savedAt || 0) > 24 * 60 * 60 * 1000) {
+        removeSessionStorage(GUEST_RECOVERY_DRAFT_KEY);
+        return false;
+      }
+      const lastAssistant = [...snapshot.chat.messages].reverse().find((message) => message.role === "assistant");
+      if (lastAssistant?.meta?.responseStatus === "generating") {
+        lastAssistant.meta.responseStatus = "interrupted";
+      }
+      guestChatState = snapshot.chat;
+      currentChatId = guestChatState.id;
+      renderLoadedChat(guestChatState.id, guestChatState, { forceRender: true });
+      showToast("Restored an interrupted guest response from this browser tab.", "info", 3600);
+      return true;
+    } catch {
+      removeSessionStorage(GUEST_RECOVERY_DRAFT_KEY);
+      return false;
+    }
+  }
+
+  const CONTINUE_RESPONSE_PROMPT = "Continue generating from where the previous response stopped. Avoid repeating completed text.";
+  let pendingAutomaticContinuation = null;
+
+  function appendResponseRecoveryRow(contentDiv, options = {}) {
+    if (!contentDiv || contentDiv.querySelector("[data-response-recovery]")) return;
+    const responseStatus = options.responseStatus === "stopped" ? "stopped" : "interrupted";
+    const row = document.createElement("div");
+    row.className = "response-recovery-row";
+    row.dataset.responseRecovery = responseStatus;
+    const text = document.createElement("span");
+    text.textContent = responseStatus === "stopped"
+      ? "Stopped by you. The partial answer was saved."
+      : "Response interrupted. The partial answer was saved.";
+    row.appendChild(text);
+    const button = document.createElement("button");
+    button.className = "response-recovery-btn";
+    button.type = "button";
+    button.textContent = "Continue generating";
+    button.addEventListener("click", () => {
+      button.disabled = true;
+      button.textContent = "Continuing...";
+      handleSend(CONTINUE_RESPONSE_PROMPT, {
+        continuationOf: options.requestId || "",
+        allowAutoResume: false,
+        skipPendingFileProcessing: true,
+      }).finally(() => {
+        button.textContent = "Continue generating";
+        button.disabled = false;
+      });
+    });
+    row.appendChild(button);
+    contentDiv.appendChild(row);
+  }
+
+  function scheduleAutomaticContinuation(options = {}) {
+    if (!options.chatId || !options.requestId || !options.content?.trim()) return;
+    pendingAutomaticContinuation = options;
+  }
+
+  function flushAutomaticContinuation() {
+    const options = pendingAutomaticContinuation;
+    pendingAutomaticContinuation = null;
+    if (!options || options.chatId !== currentChatId) return;
+    window.setTimeout(() => {
+      const state = getChatState(options.chatId);
+      if (state?.isThinking) return;
+      handleSend(CONTINUE_RESPONSE_PROMPT, {
+        continuationOf: options.requestId,
+        allowAutoResume: false,
+        skipPendingFileProcessing: true,
+      });
+    }, 0);
   }
 
   function storeGuestMemory(memory) {
@@ -1005,7 +1151,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function readGreetingIndex() {
     try {
-      const raw = localStorage.getItem(getGreetingStorageKey());
+      const raw = readLocalStorage(getGreetingStorageKey());
       const parsed = Number.parseInt(raw || "0", 10);
       if (!Number.isFinite(parsed) || parsed < 0) return 0;
       return parsed % WELCOME_GREETINGS.length;
@@ -1016,7 +1162,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function writeGreetingIndex(index) {
     try {
-      localStorage.setItem(getGreetingStorageKey(), String(index % WELCOME_GREETINGS.length));
+      writeLocalStorage(getGreetingStorageKey(), String(index % WELCOME_GREETINGS.length));
     } catch { /* ignore storage failures */ }
   }
 
@@ -1238,7 +1384,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function startFileAnalysisUpdates() {
     if (fileUpdatesPromise || !isAuthenticatedSession()) return;
-    const controller = new AbortController();
+    const controller = createAbortController();
     fileUpdatesAbort = controller;
     fileUpdatesPromise = API.subscribeFileUpdates({
       onEvent: handleFileAnalysisEvent,
@@ -1288,6 +1434,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const messageType = message.message_type || message.messageType || "";
     const imageUrl = message.image_url || message.imageUrl || "";
     const storagePath = message.storage_path || message.storagePath || "";
+    const preview = message.preview_json || message.previewJson || {};
     let meta = message.meta;
     if (!meta && messageType === "image" && imageUrl) {
       meta = {
@@ -1314,7 +1461,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       }, { chatId: message.conversation_id || message.conversationId || null });
     }
     if (!meta && messageType === "file_upload") {
-      const preview = message.preview_json || message.previewJson || {};
       meta = {
         type: "file-upload",
         filename: message.file_name || message.fileName || preview.filename || "File",
@@ -1322,6 +1468,15 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         mime_type: message.mime_type || message.mimeType || preview.mime_type || "",
         analysis_id: preview.analysis_id || "",
         analysis_status: preview.analysis_status || "complete",
+      };
+    }
+    if (!meta && messageType === "text" && preview.response_status) {
+      meta = {
+        type: "response-state",
+        responseStatus: preview.response_status,
+        continuationOf: preview.continuation_of || "",
+        autoResumeAttempted: Boolean(preview.auto_resume_attempted),
+        clientRequestId: message.client_request_id || message.clientRequestId || "",
       };
     }
     return {
@@ -1480,6 +1635,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         mime_type: meta.mime_type || meta.mimeType || "",
         analysis_id: meta.analysis_id || "",
         analysis_status: meta.analysis_status || "",
+      };
+    } else if (meta?.responseStatus) {
+      output.meta = {
+        type: "response-state",
+        response_status: meta.responseStatus,
+        continuation_of: meta.continuationOf || "",
+        auto_resume_attempted: Boolean(meta.autoResumeAttempted),
       };
     }
     return output;
@@ -2140,7 +2302,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
             if (conversationId && title) {
               await Storage.updateChatTitle(conversationId, title, {
                 pendingTitleSync: true,
-                titleSyncError: error?.message || String(error),
+                titleSyncError: getSafeErrorMessage(error),
               });
             }
           }
@@ -2149,7 +2311,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
             status: "pending",
             attempt_count: nextAttempt,
             next_retry_at: new Date(Date.now() + backoffDelayMs(nextAttempt)).toISOString(),
-            sync_error: error?.message || String(error),
+            sync_error: getSafeErrorMessage(error),
           });
           logAuthenticatedConversationError(`processSyncQueue.${job.type}`, error);
         }
@@ -2437,7 +2599,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (authWelcomeNote) {
       authWelcomeNote.textContent = requiresName
         ? "Add your name to personalize SentIQGPT and continue."
-        : "Sign in for access to higher intelligence, image generation, and synced conversations.";
+        : "Guest chats are temporary. Sign in to sync conversations and use image generation.";
       authWelcomeNote.style.display = (!signedIn || requiresName) ? "block" : "none";
     }
     document.querySelectorAll(".settings-tab[data-tab=\"memory\"], #compress-memories-btn").forEach((el) => {
@@ -2493,7 +2655,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         };
         closeRequiredNameModal();
         if (!silent) {
-          showToast(error?.message || "Couldn't load your profile right now.", "error");
+          showToast(getSafeErrorMessage(error), "error");
         }
       } finally {
         if (profileRefreshUserId === userId) {
@@ -2822,11 +2984,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (!state || !state.isThinking) return;
     debugLog("[UI] abortCurrentGeneration", { hasChat: Boolean(currentChatId) });
     if (state.abortController) {
+      state.stopRequested = true;
       state.abortController.abort();
-      state.abortController = null;
     }
-    state.requestId = null; // mark stale
-    state.isThinking = false;
     hideActivityIndicator(currentChatId);
     setSendMode();
   }
@@ -2841,32 +3001,32 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   // Migrate legacy quota formats on startup
   (function migrateImageQuota() {
     try {
-      const raw = localStorage.getItem(IMAGE_QUOTA_KEY);
+      const raw = readLocalStorage(IMAGE_QUOTA_KEY);
       if (!raw) return;
       const data = JSON.parse(raw);
       // Legacy format: { imageCount, lastReset }
       if (typeof data.imageCount === "number" && !Array.isArray(data.timestamps)) {
         const now = Date.now();
         if (data.lastReset && (now - data.lastReset) >= IMAGE_QUOTA_WINDOW_MS) {
-          localStorage.setItem(IMAGE_QUOTA_KEY, JSON.stringify({ timestamps: [] }));
+          writeLocalStorage(IMAGE_QUOTA_KEY, JSON.stringify({ timestamps: [] }));
         } else {
           const count = Math.min(data.imageCount, IMAGE_QUOTA_LIMIT);
           const ts = [];
           for (let i = 0; i < count; i++) ts.push(now - i * 1000);
-          localStorage.setItem(IMAGE_QUOTA_KEY, JSON.stringify({ timestamps: ts }));
+          writeLocalStorage(IMAGE_QUOTA_KEY, JSON.stringify({ timestamps: ts }));
         }
         return;
       }
       // Corrupt or unrecognized — reset
       if (!Array.isArray(data.timestamps)) {
-        localStorage.setItem(IMAGE_QUOTA_KEY, JSON.stringify({ timestamps: [] }));
+        writeLocalStorage(IMAGE_QUOTA_KEY, JSON.stringify({ timestamps: [] }));
       }
-    } catch { localStorage.removeItem(IMAGE_QUOTA_KEY); }
+    } catch { removeLocalStorage(IMAGE_QUOTA_KEY); }
   })();
 
   function getImageQuotaData() {
     try {
-      const raw = localStorage.getItem(IMAGE_QUOTA_KEY);
+      const raw = readLocalStorage(IMAGE_QUOTA_KEY);
       if (!raw) return { timestamps: [] };
       const data = JSON.parse(raw);
       const now = Date.now();
@@ -2888,7 +3048,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   function incrementImageQuota() {
     const data = getImageQuotaData();
     data.timestamps.push(Date.now());
-    localStorage.setItem(IMAGE_QUOTA_KEY, JSON.stringify(data));
+    writeLocalStorage(IMAGE_QUOTA_KEY, JSON.stringify(data));
     updateImageButtonState();
   }
 
@@ -2898,7 +3058,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
     const used = Math.max(0, Math.min(result.limit, result.limit - result.remaining));
     const now = Date.now();
-    localStorage.setItem(IMAGE_QUOTA_KEY, JSON.stringify({
+    writeLocalStorage(IMAGE_QUOTA_KEY, JSON.stringify({
       timestamps: Array.from({ length: used }, () => now),
     }));
     updateImageButtonState();
@@ -2906,14 +3066,14 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function checkImageCooldown() {
     try {
-      const last = parseInt(localStorage.getItem(IMAGE_COOLDOWN_KEY) || "0", 10);
+      const last = parseInt(readLocalStorage(IMAGE_COOLDOWN_KEY, "0") || "0", 10);
       const elapsed = Date.now() - last;
       return { active: elapsed < IMAGE_COOLDOWN_MS, waitMs: Math.max(0, IMAGE_COOLDOWN_MS - elapsed) };
     } catch { return { active: false, waitMs: 0 }; }
   }
 
   function updateImageCooldown() {
-    localStorage.setItem(IMAGE_COOLDOWN_KEY, String(Date.now()));
+    writeLocalStorage(IMAGE_COOLDOWN_KEY, String(Date.now()));
   }
 
   function hideImageButton() {
@@ -3045,6 +3205,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return {
       type: "image",
       imageUrl,
+      imageId: imagePayload.image_id || imagePayload.imageId || "",
       prompt: imagePayload.prompt || imagePayload.original_prompt || "",
       provider: imagePayload.provider_used || imagePayload.provider || "",
       storagePath: imagePayload.storage_path || imagePayload.storagePath || "",
@@ -3803,7 +3964,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         .slice(0, 4)
       : [];
     return {
-      id: String(payload.id || crypto.randomUUID()).trim(),
+      id: String(payload.id || Storage.generateId()).trim(),
       original_message: String(payload.original_message || "").trim(),
       previous_answers: Array.isArray(payload.previous_answers)
         ? payload.previous_answers.map((answer) => String(answer || "").trim()).filter(Boolean).slice(0, 2)
@@ -4264,7 +4425,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         await syncConversationStateForAuth(false);
         showToast("Logged out successfully.", "info");
       } catch (err) {
-        showToast(err?.message || "Unable to log out right now.", "error");
+        showToast(getSafeErrorMessage(err), "error");
       }
     };
     authLogoutBtn?.addEventListener("click", handleLogout);
@@ -4290,7 +4451,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       try {
         await window.SentIQAuth.signInWithGoogle();
       } catch (err) {
-        setAuthStatus(err?.message || "Google sign-in could not start.", "error");
+        setAuthStatus(getSafeErrorMessage(err), "error");
         setAuthGooglePending(false);
         setAuthFormControlsDisabled(false);
       }
@@ -4330,7 +4491,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         showToast("Name saved.", "success", 2400);
         chatInput?.focus();
       } catch (error) {
-        setNameStatus(error?.message || "Couldn't save your name right now.", "error");
+        setNameStatus(getSafeErrorMessage(error), "error");
       } finally {
         if (nameSubmitBtn) nameSubmitBtn.disabled = false;
       }
@@ -4341,7 +4502,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         await refreshAuthUI(null);
         await syncConversationStateForAuth(false);
       } catch (error) {
-        setNameStatus(error?.message || "Couldn't switch accounts right now.", "error");
+        setNameStatus(getSafeErrorMessage(error), "error");
       }
     });
     authForm?.addEventListener("submit", async (e) => {
@@ -4393,7 +4554,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           chatInput?.focus();
         }
       } catch (err) {
-        setAuthStatus(err?.message || "Authentication failed.", "error");
+        setAuthStatus(getSafeErrorMessage(err), "error");
       } finally {
         if (authSubmitBtn) authSubmitBtn.disabled = false;
         authSubmitBtn?.classList.remove("is-loading");
@@ -4541,11 +4702,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     closeSettingsBtn?.addEventListener("click", closeSettings);
     settingsModal?.addEventListener("click", (e) => { if (e.target === settingsModal) closeSettings(); });
 
-    document.querySelectorAll(".settings-tab").forEach((tab) => {
+    settingsModal?.querySelectorAll(".settings-tab").forEach((tab) => {
       tab.addEventListener("click", () => {
         const tabName = tab.getAttribute("data-tab");
-        document.querySelectorAll(".settings-tab").forEach((t) => t.classList.remove("active"));
-        document.querySelectorAll(".settings-tab-content").forEach((c) => c.classList.remove("active"));
+        settingsModal.querySelectorAll(".settings-tab").forEach((t) => t.classList.remove("active"));
+        settingsModal.querySelectorAll(".settings-tab-content").forEach((c) => c.classList.remove("active"));
         tab.classList.add("active");
         document.getElementById("settings-tab-" + tabName)?.classList.add("active");
       });
@@ -4668,6 +4829,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       await refreshAuthUI();
       await handleAuthReturnFlow();
       await syncConversationStateForAuth(isAuthenticatedSession());
+      restoreGuestRecoveryDraft();
       markPerf("ui.bootstrap.local_ready", { signed_in: isAuthenticatedSession() });
       stopInitMeasure("ok", { signed_in: isAuthenticatedSession() });
     } catch (error) {
@@ -4920,7 +5082,15 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       deleteBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         if (isAuthenticatedSession() && isServerBackedChat(chat) && !isPlaceholderServerChat(chat)) {
-          await queueSyncJob(SYNC_JOB_TYPES.chatDelete, { conversationId: chat.id });
+          deleteBtn.disabled = true;
+          try {
+            await API.deleteConversation(chat.id);
+          } catch (error) {
+            deleteBtn.disabled = false;
+            debugWarn(`[UI] Chat deletion failed: ${getSafeErrorMessage(error)}`);
+            showToast("Couldn't remove that chat and its stored artifacts. Please try again.", "error", 4200);
+            return;
+          }
         }
         await Storage.deleteChat(chat.id);
         if (currentChatId === chat.id) {
@@ -4932,9 +5102,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           else { showWelcome(); if (chatMessages) chatMessages.innerHTML = ""; }
         }
         await loadChatList(true);
-        processSyncQueue().catch((error) => {
-          logAuthenticatedConversationError("chatDelete.sync", error);
-        });
       });
       item.appendChild(deleteBtn);
       chatList.appendChild(item);
@@ -5511,6 +5678,40 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       });
       actions.appendChild(downloadBtn);
 
+      if (isAuthenticatedSession() && (meta.imageId || meta.storagePath)) {
+        const removeBtn = document.createElement("button");
+        removeBtn.className = "image-download-btn";
+        removeBtn.type = "button";
+        removeBtn.textContent = "Remove";
+        removeBtn.addEventListener("click", async () => {
+          if (!window.confirm("Remove this generated image from your account?")) return;
+          removeBtn.disabled = true;
+          try {
+            let imageId = meta.imageId || "";
+            if (!imageId && currentChatId && API.getChatImages) {
+              const chatId = getCanonicalConversationIdForRequest(currentChatId) || currentChatId;
+              const response = await API.getChatImages(chatId);
+              const images = Array.isArray(response?.images) ? response.images : [];
+              const match = images.find((image) => (
+                image.storagePath === meta.storagePath ||
+                image.storage_path === meta.storagePath ||
+                image.imageUrl === meta.imageUrl
+              ));
+              imageId = match?.id || "";
+            }
+            if (!imageId) throw new Error("Stored image metadata is unavailable.");
+            await API.deleteImage(imageId);
+            imgContainer.innerHTML = '<p class="message-status">Generated image removed.</p>';
+            showToast("Generated image removed.", "success", 2400);
+          } catch (error) {
+            debugWarn(`[UI] Image removal failed: ${getSafeErrorMessage(error)}`);
+            showToast("Couldn't remove that image. Please try again.", "error");
+            removeBtn.disabled = false;
+          }
+        });
+        actions.appendChild(removeBtn);
+      }
+
       imgContainer.appendChild(actions);
       contentDiv.appendChild(imgContainer);
 
@@ -5600,6 +5801,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
     if (role === "assistant" && ephemeral?.responseTrust) {
       appendResponseTrustRow(contentDiv, ephemeral.responseTrust);
+    }
+    if (role === "assistant" && ["interrupted", "stopped"].includes(meta?.responseStatus)) {
+      appendResponseRecoveryRow(contentDiv, {
+        responseStatus: meta.responseStatus,
+        requestId: meta.clientRequestId || ephemeral.clientRequestId || "",
+      });
     }
 
     bubble.appendChild(contentDiv);
@@ -6433,6 +6640,23 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         showToast("Couldn't download that file.", "error");
       }
     });
+    const removeBtn = isAuthenticatedSession() && meta.file_id && API.deleteGeneratedFile
+      ? createArtifactButton("Remove")
+      : null;
+    removeBtn?.addEventListener("click", async () => {
+      if (!window.confirm("Remove this generated file from your account?")) return;
+      removeBtn.disabled = true;
+      try {
+        await API.deleteGeneratedFile(current.meta.file_id);
+        await Storage.deleteGeneratedFile(current.meta.id).catch(() => null);
+        container.innerHTML = '<p class="message-status">Generated file removed.</p>';
+        showToast("Generated file removed.", "success", 2400);
+      } catch (error) {
+        debugWarn(`[UI] Generated file removal failed: ${getSafeErrorMessage(error)}`);
+        showToast("Couldn't remove that generated file. Please try again.", "error");
+        removeBtn.disabled = false;
+      }
+    });
 
     let refreshArtifactControls = null;
     function finalizeControls() {
@@ -6450,6 +6674,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       saveBtn.style.display = "none";
       cancelBtn.style.display = "none";
       actions.append(copyBtn, editBtn, saveBtn, cancelBtn, downloadBtn, previewBtn);
+      if (removeBtn) actions.appendChild(removeBtn);
 
       const layout = document.createElement("div");
       layout.className = "generated-html-layout";
@@ -6579,7 +6804,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         if (showing) iframe.srcdoc = current.html || "";
       });
       if (options.streaming) {
-        [copyBtn, editBtn, saveBtn, cancelBtn, downloadBtn, previewBtn].forEach((button) => setArtifactButtonState(button, false));
+        [copyBtn, editBtn, saveBtn, cancelBtn, downloadBtn, previewBtn, removeBtn].filter(Boolean).forEach((button) => setArtifactButtonState(button, false));
       }
       updateHtml(current.html);
       return {
@@ -6599,6 +6824,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
 
     actions.appendChild(downloadBtn);
+    if (removeBtn) actions.appendChild(removeBtn);
     const preview = meta.preview || {};
     let previewRendered = false;
 
@@ -7482,7 +7708,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         : getCurrentImageAttachments(apiMessage);
     const userMessageMeta = suppliedImageAttachments.length > 0
       ? buildImageUploadMeta(suppliedImageAttachments)
-      : null;
+      : options.continuationOf
+        ? { type: "continuation-request", continuationOf: options.continuationOf }
+        : null;
     if (suppliedImageAttachments.length > 0) {
       setCurrentSessionImageAttachments(suppliedImageAttachments);
     }
@@ -7565,7 +7793,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const state = getChatState(targetChatId);
     state.isThinking = true;
     state.activityMode = authenticatedFileGenerationRequired ? "file_generation" : "thinking";
-    const ac = new AbortController();
+    const ac = createAbortController();
     state.abortController = ac;
     await upsertChatMessageSyncJob(requestId, {
       localChatId: targetChatId,
@@ -7662,7 +7890,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         let streamBubble = null;
         try {
           debugLog("[UI] Attempting streaming");
-          streamBubble = (targetChatId === currentChatId)
+          streamBubble = (targetChatId === currentChatId && API.canStreamResponses?.() !== false)
             ? (htmlFileGenerationRequired
               ? createFileGenerationStreamingBubble({ chatId: targetChatId, requestId, format: requestedFileFormat || "html" })
               : createStreamingBubble({ loaderKind: requestLoaderKind, chatId: targetChatId, requestId }))
@@ -7676,7 +7904,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
               : null;
             return streamBubble;
           };
-          if (streamBubble && typeof API.sendMessageStream === "function") {
+          if (streamBubble && typeof API.sendMessageStream === "function" && API.canStreamResponses?.() !== false) {
             usedStreaming = true;
             streamResult = await API.sendMessageStream(apiMessage, contextPayload, {
               onToken(token) {
@@ -7839,47 +8067,100 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
               }
               debugLog("[UI] Streaming complete", { length: fullReply.length });
               if (fullReply) {
-                await streamDraft.finalize(fullReply, responseRenderMode ? { renderMode: responseRenderMode } : {});
+                const responseStatus = streamResult?.interrupted ? "interrupted" : "complete";
+                if (streamResult?.interrupted) {
+                  finalAssistantMeta = {
+                    responseStatus,
+                    ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+                    autoResumeAttempted: options.allowAutoResume !== false,
+                  };
+                }
+                await streamDraft.finalize(fullReply, {
+                  ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
+                  responseStatus,
+                  ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+                  ...(streamResult?.interrupted ? { autoResumeAttempted: options.allowAutoResume !== false } : {}),
+                });
                 assistantPersisted = true;
+                if (streamResult?.interrupted) {
+                  appendResponseRecoveryRow(
+                    chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .message-content`),
+                    { responseStatus, requestId },
+                  );
+                  if (options.allowAutoResume !== false) {
+                    scheduleAutomaticContinuation({ chatId: targetChatId, requestId, content: fullReply });
+                  }
+                }
               }
             }
           }
         } catch (streamErr) {
           if (streamErr.name === "AbortError") {
             debugLog("[UI] Stream aborted by user");
-            const orphanContent = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .typing-active`);
-            if (orphanContent) {
-              orphanContent.classList.remove("typing-active");
-              const partial = orphanContent.textContent || "";
-              if (partial) {
-                orphanContent.innerHTML = renderAssistantMessageHtml(
-                  partial,
-                  streamThinking,
-                  responseRenderMode ? { mode: responseRenderMode } : {},
-                );
-                wireThinkingPanels(orphanContent);
-                wireCodeCopyButtons(orphanContent);
-                fullReply = partial;
-              } else {
-                orphanContent.closest(".message")?.remove();
-              }
+            const partial = streamBubble?.getFullText?.() || "";
+            if (partial) {
+              await streamBubble.finish({ interruptionNotice: "Stopped by you. Partial output was preserved." });
+              fullReply = partial;
+              await streamDraft.markIncomplete(fullReply, "stopped", {
+                ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
+                ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+              });
+              finalAssistantMeta = {
+                responseStatus: "stopped",
+                ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+              };
+              appendResponseRecoveryRow(
+                chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .message-content`),
+                { responseStatus: "stopped", requestId },
+              );
+              assistantPersisted = true;
+            } else {
+              chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"]`)?.remove();
             }
             usedStreaming = true;
           } else {
             const streamErrorMessage = getSafeErrorMessage(streamErr);
             debugWarn("[UI] Streaming failed:", streamErrorMessage);
+            const partial = streamBubble?.getFullText?.() || "";
             const orphan = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .typing-active`);
-            if (orphan) orphan.closest(".message")?.remove();
-            if (/response did not complete|please retry/i.test(streamErrorMessage)) {
+            if (partial) {
+              await streamBubble.finish({ interruptionNotice: "Response interrupted. Partial output was preserved." });
+              fullReply = partial;
+              await streamDraft.markIncomplete(fullReply, "interrupted", {
+                ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
+                ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+                autoResumeAttempted: options.allowAutoResume !== false,
+              });
+              finalAssistantMeta = {
+                responseStatus: "interrupted",
+                ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+                autoResumeAttempted: options.allowAutoResume !== false,
+              };
+              appendResponseRecoveryRow(
+                chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .message-content`),
+                { responseStatus: "interrupted", requestId },
+              );
+              assistantPersisted = true;
+              usedStreaming = true;
+              if (options.allowAutoResume !== false) {
+                scheduleAutomaticContinuation({ chatId: targetChatId, requestId, content: fullReply });
+              }
+              showToast("Response interrupted. Your partial answer was preserved.", "info", 3500);
+            } else if (orphan) {
+              orphan.closest(".message")?.remove();
+            }
+            if (!partial && /response did not complete|please retry/i.test(streamErrorMessage)) {
               throw streamErr;
             }
-            debugWarn("[UI] Falling back to non-streaming after stream failure.");
-            usedStreaming = false;
+            if (!partial) {
+              debugWarn("[UI] Falling back to non-streaming after stream failure.");
+              usedStreaming = false;
+            }
           }
         }
       }
 
-      if (isRequestStale(targetChatId, requestId) && !ac.signal.aborted) {
+      if (isRequestStale(targetChatId, requestId) && !ac.signal?.aborted) {
         if (fullReply) {
           if (usedStreaming) await streamDraft.finalize(fullReply, responseRenderMode ? { renderMode: responseRenderMode } : {});
           else await persistChatMessage(targetChatId, "assistant", fullReply, null, {
@@ -8005,6 +8286,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       state.isThinking = false;
       state.activityMode = "thinking";
       state.abortController = null;
+      state.stopRequested = false;
       hideActivityIndicator(targetChatId);
       if (clarificationStateLockedForRequest) {
         const currentClarification = getPendingClarification(clarificationLockChatId);
@@ -8014,6 +8296,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       }
       setSendMode();
       scheduleChatListRefresh();
+      flushAutomaticContinuation();
     }
   }
 
@@ -8049,7 +8332,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const state = getChatState(targetChatId);
     state.isThinking = true;
     state.activityMode = "thinking";
-    const ac = new AbortController();
+    const ac = createAbortController();
     state.abortController = ac;
     setStopMode();
 
@@ -8342,7 +8625,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       }, hintDelay);
     }
 
-    const ac = new AbortController();
+    const ac = createAbortController();
     state.abortController = ac;
     setStopMode();
 
@@ -8744,7 +9027,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       const uploadResults = await runWithConcurrencyLimit(regularFiles, 2, async (file) => {
         setPendingFileStatus(file, "processing", "Analyzing...");
         renderFilePreview();
-        const localUploadId = crypto.randomUUID();
+        const localUploadId = Storage.generateId();
         const uploadRequestId = `file-${localUploadId}`;
         const uploadMeta = {
           type: "file-upload",
@@ -8909,6 +9192,18 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     updateOverlayLocks();
   }
 
+  async function clearUploadedSourceContext() {
+    clearPendingFiles();
+    clearChatSessionContext(currentChatId);
+    await API.clearFileSession?.().catch((error) => {
+      debugWarn("[UI] Temporary source session clear failed:", getSafeErrorMessage(error, { area: "file" }));
+      throw error;
+    });
+    const files = await Storage.getAllFiles?.().catch(() => []);
+    await Promise.all((files || []).map((file) => Storage.deleteFile(file.id)));
+    renderFilePreview();
+  }
+
   function resetGuestSession() {
     const previousChatId = currentChatId;
     abortCurrentGeneration();
@@ -9064,6 +9359,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     loadChatList,
     openSettings,
     closeSettings,
+    clearUploadedSourceContext,
     syncCloudMemoriesFromServer,
     processSyncQueue,
     queueSyncJob,
@@ -9073,10 +9369,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   };
 
   function startChatUi() {
-    init().catch((error) => {
-      debugWarn(`[UI] SentIQGPT Chat UI failed to start: ${getSafeErrorMessage(error)}`, error);
-      showToast("SentIQGPT couldn't finish starting. Please refresh the page.", "error", 6000);
-    });
+    init()
+      .then(() => window.SentIQBootstrap?.markReady?.())
+      .catch((error) => {
+        window.SentIQBootstrap?.fail?.();
+        debugWarn(`[UI] SentIQGPT Chat UI failed to start: ${getSafeErrorMessage(error)}`, error);
+        showToast("SentIQGPT couldn't finish starting. Please refresh the page.", "error", 6000);
+      });
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startChatUi);

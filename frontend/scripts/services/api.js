@@ -22,19 +22,21 @@ function dispatchProfileNameRequired(detail = {}) {
 }
 
 function createApiError(response, errorData, fallbackMessage) {
-  const message = errorData?.error || fallbackMessage || `Request failed: ${response.status}`;
-  const error = new Error(message);
+  const internalMessage = errorData?.error || fallbackMessage || `Request failed: ${response.status}`;
+  const error = new Error(internalMessage);
   error.status = response.status;
   error.code = typeof errorData?.code === "string" ? errorData.code : "";
   error.requiresName = Boolean(errorData?.requires_name);
   error.requires_name = Boolean(errorData?.requires_name);
   error.response = response;
   error.details = errorData;
+  error.internalMessage = internalMessage;
+  error.message = window.SentIQErrors?.getSafeErrorMessage?.(error) || "SentIQGPT could not finish that action. Please try again.";
   if (error.code === "profile_name_required" || error.requiresName || error.requires_name) {
     dispatchProfileNameRequired({
       endpoint: response.url,
       status: response.status,
-      message,
+      message: error.message,
     });
   }
   return error;
@@ -44,12 +46,23 @@ async function apiRequest(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
   const headers = await buildAuthHeaders({ "Content-Type": "application/json", ...(options.headers || {}) });
   const config = { ...options, headers };
+  if (typeof fetch !== "function") {
+    const error = new Error("Fetch is unavailable.");
+    error.code = "browser_feature_blocked";
+    throw error;
+  }
   const response = await fetch(url, config);
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
     throw createApiError(response, errorData, `Request failed: ${response.status}`);
   }
   return response.json();
+}
+
+function canStreamResponses() {
+  return typeof fetch === "function" &&
+    typeof ReadableStream === "function" &&
+    typeof TextDecoder === "function";
 }
 
 function buildChatRequestContext(context = {}) {
@@ -120,6 +133,11 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
     }
     return { structured: true, tokensReceived: false, interrupted: false, error: null };
   }
+  if (!response.body?.getReader || typeof TextDecoder !== "function") {
+    const error = new Error("Streaming response support is unavailable.");
+    error.code = "browser_feature_blocked";
+    throw error;
+  }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -162,6 +180,7 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
         else if (parsed.type === "sync" && parsed.sync) { if (callbacks.onSync) callbacks.onSync(parsed.sync, parsed.degraded || null); }
         else if (parsed.type === "error") {
           terminalError = new Error(parsed.error);
+          terminalError.code = typeof parsed.code === "string" ? parsed.code : "";
           interrupted = tokensReceived;
           if (callbacks.onError) callbacks.onError(terminalError, { tokensReceived, interrupted });
           return true;
@@ -171,20 +190,29 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
     return false;
   }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      if (buffer) {
-        const flushed = buffer.split("\n");
-        buffer = "";
-        if (processSseLines(flushed)) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        if (buffer) {
+          const flushed = buffer.split("\n");
+          buffer = "";
+          if (processSseLines(flushed)) break;
+        }
+        break;
       }
-      break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      if (processSseLines(lines)) break;
     }
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-    if (processSseLines(lines)) break;
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    if (!tokensReceived) throw error;
+    terminalError = error instanceof Error ? error : new Error("Response interrupted.");
+    terminalError.code = "response_interrupted";
+    interrupted = true;
+    callbacks.onError?.(terminalError, { tokensReceived: true, interrupted: true });
   }
   if (!tokensReceived && !structuredReceived && !terminalError) {
     terminalError = new Error("The response did not complete. Please retry.");
@@ -279,6 +307,13 @@ async function getConversationMessages(conversationId) {
 async function deleteConversation(conversationId) {
   return apiRequest(`/api/conversations/${encodeURIComponent(conversationId)}`, {
     method: "DELETE",
+  });
+}
+
+async function clearFileSession(analysisId = "") {
+  return apiRequest("/api/files/session", {
+    method: "DELETE",
+    body: JSON.stringify(analysisId ? { analysis_id: analysisId } : {}),
   });
 }
 
@@ -445,6 +480,14 @@ async function updateGeneratedHtmlFile(fileId, html, version) {
   });
 }
 
+async function deleteGeneratedFile(fileId) {
+  return apiRequest(`/api/generated-files/${encodeURIComponent(fileId)}`, { method: "DELETE" });
+}
+
+async function deleteImage(imageId) {
+  return apiRequest(`/api/images/${encodeURIComponent(imageId)}`, { method: "DELETE" });
+}
+
 async function getProfile() {
   return apiRequest("/api/profile", { method: "GET" });
 }
@@ -467,9 +510,9 @@ async function getHealth() { return apiRequest("/api/health"); }
 async function getConfigAPI() { return apiRequest("/api/config"); }
 
 window.SentIQAPI = {
-  sendMessage, sendMessageStream, getChatIntent, classifyMemory, compressMemories,
-  sendSelectionMessage, uploadFile, subscribeFileUpdates, generateImage, storeImage, getChatImages, getImageQuota, generateTitle,
-  getGeneratedFileAccessUrl, updateGeneratedHtmlFile,
+  sendMessage, sendMessageStream, canStreamResponses, getChatIntent, classifyMemory, compressMemories,
+  sendSelectionMessage, uploadFile, subscribeFileUpdates, clearFileSession, generateImage, storeImage, getChatImages, getImageQuota, deleteImage, generateTitle,
+  getGeneratedFileAccessUrl, updateGeneratedHtmlFile, deleteGeneratedFile,
   getConversations, createConversation, getConversationMessages, deleteConversation, updateConversationTitle, syncChatMessages,
   getMemories, deleteMemory: deleteMemoryAPI, getProfile, updateProfile,
   getHealth, getConfig: getConfigAPI,

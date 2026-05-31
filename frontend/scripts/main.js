@@ -1,4 +1,5 @@
 import "./config.js";
+import "./services/errors.js";
 import "./rendering/rich-text-renderer.js";
 import "./services/storage.js";
 import "./services/auth.js";
@@ -7,3 +8,4 @@ import "./features/chat-controller.js";
 import "./panels/memory-panel.js";
 import "./panels/file-panel.js";
 import "./panels/settings-panel.js";
+import "./panels/trust-panel.js";

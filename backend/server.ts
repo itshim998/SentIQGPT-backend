@@ -38,7 +38,7 @@ import {
   uploadGeneratedFileReplacement,
 } from "./tools/fileGeneration/fileStorageService";
 import type { GeneratedFileFormat, GeneratedFilePreview } from "./tools/fileGeneration/types";
-import { uploadChatImage, getChatImages } from "./tools/imageGeneration/imageStorageService";
+import { deleteChatImage, uploadChatImage, getChatImages } from "./tools/imageGeneration/imageStorageService";
 import {
   buildChatPrompt,
   callLLMAdapter,
@@ -212,6 +212,54 @@ const corsOptions: cors.CorsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
+
+const PUBLIC_PRIVATE_RESPONSE_KEYS = new Set([
+  "architecture",
+  "keyStatus",
+  "models",
+  "model_used",
+  "modelUsed",
+  "provider",
+  "provider_used",
+  "storage_bucket",
+  "storageBucket",
+  "storage_path",
+  "storagePath",
+  "tag",
+]);
+
+function sanitizePublicPayload(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizePublicPayload);
+  if (!value || typeof value !== "object") return value;
+  const output: Record<string, unknown> = {};
+  for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+    if (PUBLIC_PRIVATE_RESPONSE_KEYS.has(key)) continue;
+    if (key === "route" && typeof nestedValue === "string") {
+      const publicRoutes = new Set([
+        "chat",
+        "normal_chat",
+        "reasoning",
+        "math_reasoning",
+        "web_search",
+        "file_generation",
+        "chart_generation",
+        "image_generation",
+        "memory_update",
+        "clarification",
+      ]);
+      output[key] = publicRoutes.has(nestedValue) ? nestedValue : "chat";
+      continue;
+    }
+    output[key] = sanitizePublicPayload(nestedValue);
+  }
+  return output;
+}
+
+app.use((_req, res, next) => {
+  const sendJson = res.json.bind(res);
+  res.json = ((body: unknown) => sendJson(sanitizePublicPayload(body))) as typeof res.json;
+  next();
+});
 
 // ---- Security headers ----
 app.use(
@@ -1715,6 +1763,45 @@ async function deleteConversationIfOwned(
 ): Promise<void> {
   await getOwnedConversationOrThrow(userDb, userId, conversationId, scope);
   logDbEvent(`${scope}.conversation-delete.start`, userId, { conversationId });
+
+  const { data: generatedFiles, error: generatedFilesError } = await userDb
+    .from("generated_files")
+    .select("id,storage_bucket,storage_path")
+    .eq("user_id", userId)
+    .eq("chat_id", conversationId);
+  if (generatedFilesError) {
+    logDbFailure(`${scope}.generated-files-list`, userId, generatedFilesError, { conversationId });
+    throw new HttpError(503, "Stored artifacts could not be removed. Please try again.", { code: "artifact_cleanup_failed" });
+  }
+  for (const file of generatedFiles || []) {
+    try {
+      await deleteGeneratedFileObject(
+        getGeneratedFileStorageDatabase(),
+        file.storage_bucket || getStorageBucketName(),
+        file.storage_path || "",
+      );
+    } catch (error) {
+      console.error(`[ConversationDelete] generated-file cleanup failed conversationId=${conversationId} fileId=${file.id}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new HttpError(503, "Stored artifacts could not be removed. Please try again.", { code: "artifact_cleanup_failed" });
+    }
+  }
+
+  const { data: images, error: imagesError } = await userDb
+    .from("chat_images")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("chat_id", conversationId);
+  if (imagesError) {
+    logDbFailure(`${scope}.images-list`, userId, imagesError, { conversationId });
+    throw new HttpError(503, "Stored artifacts could not be removed. Please try again.", { code: "artifact_cleanup_failed" });
+  }
+  for (const image of images || []) {
+    const deleted = await deleteChatImage(userDb, userId, image.id, { storageDb: getImageStorageDatabase() });
+    if (!deleted) {
+      throw new HttpError(503, "Stored artifacts could not be removed. Please try again.", { code: "artifact_cleanup_failed" });
+    }
+  }
+
   const { error } = await deleteConversation(userDb, conversationId, userId);
 
   if (error) {
@@ -1812,24 +1899,7 @@ app.get("/api/health", (_req, res) => {
     status: "ok",
     system: "SentIQGPT",
     version: "2.0.0",
-    architecture: "orchestrated-dual-model",
-    models: { reasoning: "gemini", cognition: "groq" },
-    storage: "client-indexeddb",
     timestamp: new Date().toISOString(),
-    features: [
-      "chat",
-      "persistent-memory",
-      "file-upload",
-      "image-generation",
-      "chart-generation",
-      "memory-compression",
-      "tool-detection",
-      "ai-orchestrator",
-      "session-title-generation",
-      "knowledge-query",
-      "memory-update",
-      "streaming",
-    ],
   });
 });
 
@@ -2158,6 +2228,17 @@ app.post(
           },
         };
       }
+      if (meta?.type === "response-state") {
+        return {
+          ...base,
+          messageType: "text",
+          previewJson: {
+            response_status: typeof meta.response_status === "string" ? meta.response_status : undefined,
+            continuation_of: typeof meta.continuation_of === "string" ? meta.continuation_of : undefined,
+            auto_resume_attempted: Boolean(meta.auto_resume_attempted),
+          },
+        };
+      }
       return base;
     };
     const messages = rawMessages
@@ -2185,6 +2266,19 @@ app.post(
         "chat.sync",
         buildSyncMessageOptions(message),
       );
+      if (message.role === "assistant" && message.meta?.type === "response-state" && message.clientRequestId) {
+        const options = buildSyncMessageOptions(message);
+        const { error: responseStateError } = await userDb
+          .from("messages")
+          .update({ preview_json: options.previewJson })
+          .eq("conversation_id", conversationId)
+          .eq("role", "assistant")
+          .eq("client_request_id", message.clientRequestId)
+          .eq("message_type", "text");
+        if (responseStateError) {
+          logDbFailure("chat.sync.response-state", userId, responseStateError, { conversationId });
+        }
+      }
     }
 
     const firstUserMessage = messages.find((message) => message.role === "user")?.content || "";
@@ -2979,7 +3073,7 @@ app.post(
       await sseWriter.write(payload);
     };
     const writeSseJson = async (payload: unknown) => {
-      await writeSseEvent(JSON.stringify(payload));
+      await writeSseEvent(JSON.stringify(sanitizePublicPayload(payload)));
     };
     const finishSse = () => {
       responseCompleted = true;
@@ -3057,13 +3151,17 @@ app.post(
 
     const sendStreamError = async (err: unknown, metrics?: StreamMetrics) => {
       const message = err instanceof Error ? err.message : String(err);
+      const partial = Boolean(metrics && metrics.chunkCount > 0);
       console.error(`[Stream] error: ${message}`);
       if (!clientDisconnected) {
         try {
           await writeSseJson({
             type: "error",
-            error: message,
-            partial: Boolean(metrics && metrics.chunkCount > 0),
+            code: partial ? "response_interrupted" : "backend_unavailable",
+            error: partial
+              ? "The response was interrupted. Your partial answer has been preserved."
+              : "SentIQGPT could not finish that response. Please try again.",
+            partial,
             streamed_chunks: metrics?.chunkCount ?? 0,
             approx_tokens: metrics?.approxTokens ?? 0,
           });
@@ -3086,7 +3184,7 @@ app.post(
       if (!intervalMs || intervalMs <= 0) return () => {};
       const timer = setInterval(() => {
         if (clientDisconnected) return;
-        writeSseJson({ type: "heartbeat", tag, ts: Date.now() }).catch((err) => {
+        writeSseJson({ type: "heartbeat", ts: Date.now() }).catch((err) => {
           console.warn(`[Stream] heartbeat failed: ${err instanceof Error ? err.message : err}`);
         });
       }, intervalMs);
@@ -4994,15 +5092,18 @@ app.post(
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const publicMessage = "File analysis could not finish. Please try again.";
+      console.error(`[File Upload] analysis failed analysisId=${analysisId}: ${message}`);
       emitFileAnalysisEvent(isGuest ? undefined : userId, {
         ...baseEvent,
         event: "error",
         status: "error",
-        error: message,
+        error: publicMessage,
         updated_at: Date.now(),
       });
       res.status(500).json({
-        error: message,
+        error: publicMessage,
+        code: "file_analysis_failed",
         analysis_id: analysisId,
         analysis_status: "error",
         update_protocol: "sse",
@@ -5048,7 +5149,24 @@ app.post(
 );
 
 // ===============================
-// GET /api/images/quota — Check remaining image quota
+// DELETE /api/files/session - Clear temporary uploaded source context
+// ===============================
+app.delete(
+  "/api/files/session",
+  verifyJWT({ allowGuest: true }),
+  asyncHandler(async (req, res) => {
+    const { userId, isGuest } = await getRequestIdentity(req);
+    const sessionKey = getFileSessionKey(req, userId, isGuest);
+    const requestedAnalysisId = typeof req.body?.analysis_id === "string" ? req.body.analysis_id.trim() : "";
+    const session = fileSessionMap.get(sessionKey);
+    const shouldClear = Boolean(session) && (!requestedAnalysisId || session?.analysisId === requestedAnalysisId);
+    if (shouldClear) fileSessionMap.delete(sessionKey);
+    res.json({ success: true, cleared: shouldClear });
+  }),
+);
+
+// ===============================
+// Generated file metadata and access routes
 // ===============================
 type GeneratedFileRow = {
   id: string;
@@ -5309,6 +5427,39 @@ app.patch(
   }),
 );
 
+app.delete(
+  "/api/generated-files/:id",
+  verifyJWT({ allowGuest: false }),
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const fileId = getRequiredUuid(req.params.id, "Generated file id");
+    const userDb = await resolveUserDatabaseOrThrow(userId, "generated-files.delete");
+    await initializeUserSessionOrThrow(userDb, userId, "generated-files.delete");
+    const row = await getGeneratedFileRowOrThrow(userDb, userId, fileId, "generated-files.delete");
+    try {
+      await deleteGeneratedFileObject(
+        getGeneratedFileStorageDatabase(),
+        row.storage_bucket || getStorageBucketName(),
+        row.storage_path || "",
+      );
+    } catch (error) {
+      console.error(`[GeneratedFiles] object delete failed fileId=${fileId}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new HttpError(503, "Stored file could not be removed. Please try again.", { code: "artifact_cleanup_failed" });
+    }
+    const { error: messageDeleteError } = await userDb.from("messages").delete().eq("generated_file_id", fileId);
+    if (messageDeleteError) {
+      logDbFailure("generated-files.delete.messages", userId, messageDeleteError, { fileId });
+      throw new HttpError(503, "Stored file could not be removed. Please try again.", { code: "artifact_cleanup_failed" });
+    }
+    const { error: fileDeleteError } = await userDb.from("generated_files").delete().eq("id", fileId).eq("user_id", userId);
+    if (fileDeleteError) {
+      logDbFailure("generated-files.delete.metadata", userId, fileDeleteError, { fileId });
+      throw new HttpError(503, "Stored file could not be removed. Please try again.", { code: "artifact_cleanup_failed" });
+    }
+    res.json({ success: true, file_id: fileId });
+  }),
+);
+
 app.get(
   "/api/images/quota",
   verifyJWT({ allowGuest: true }),
@@ -5505,13 +5656,14 @@ app.post(
         imageQuotaReserved = false;
       }
       console.log(`[IMAGE] endpoint failed prompt="${providerPrompt.slice(0, 40)}..." error="${result.error}"`);
-      res.status(502).json({ error: result.error });
+      res.status(502).json({ error: "Image generation could not finish. Please try again.", code: "image_generation_failed" });
       return;
     }
 
     let imageUrl = result.image_url
       || (result.image_base64 ? `data:image/png;base64,${result.image_base64}` : undefined);
     let imageBase64 = result.image_base64;
+    let imageId: string | undefined;
     let storagePath: string | undefined;
     let fileSizeBytes: number | undefined;
 
@@ -5520,7 +5672,7 @@ app.post(
         await releaseCentralImageQuota(userDb, userId);
         imageQuotaReserved = false;
       }
-      res.status(502).json({ error: "Image provider returned no image payload." });
+      res.status(502).json({ error: "Image generation could not finish. Please try again.", code: "image_generation_failed" });
       return;
     }
 
@@ -5531,7 +5683,7 @@ app.post(
           await releaseCentralImageQuota(userDb, userId);
           imageQuotaReserved = false;
         }
-        res.status(502).json({ error: "Image provider returned no image payload." });
+        res.status(502).json({ error: "Image generation could not finish. Please try again.", code: "image_generation_failed" });
         return;
       }
 
@@ -5549,6 +5701,7 @@ app.post(
 
         imageUrl = persisted.assistantMessage.image_url || persisted.storedImage.imageUrl;
         imageBase64 = undefined;
+        imageId = persisted.storedImage.imageId;
         storagePath = persisted.assistantMessage.storage_path || persisted.storedImage.storagePath;
         fileSizeBytes = persisted.assistantMessage.file_size_bytes || persisted.storedImage.fileSizeBytes;
       } catch (error) {
@@ -5603,6 +5756,7 @@ app.post(
       // Keep legacy fields for frontend compatibility
       image_url: imageUrl,
       image_base64: imageBase64,
+      image_id: imageId,
       storage_path: storagePath,
       file_size_bytes: fileSizeBytes,
       conversation_id: conversationId || undefined,
@@ -5703,6 +5857,42 @@ app.get(
     res.json({ images });
   }),
 );
+
+app.delete(
+  "/api/images/:id",
+  verifyJWT({ allowGuest: false }),
+  asyncHandler(async (req, res) => {
+    const userId = await getVerifiedUserId(req);
+    const imageId = getRequiredUuid(req.params.id, "Image id");
+    const userDb = await resolveUserDatabaseOrThrow(userId, "images.delete");
+    await initializeUserSessionOrThrow(userDb, userId, "images.delete");
+    const { data: image, error: imageError } = await userDb
+      .from("chat_images")
+      .select("storage_path")
+      .eq("id", imageId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (imageError || !image) {
+      throw new HttpError(404, "Image not found.", { code: "image_not_found" });
+    }
+    const deleted = await deleteChatImage(userDb, userId, imageId, { storageDb: getImageStorageDatabase() });
+    if (!deleted) {
+      throw new HttpError(503, "Stored image could not be removed. Please try again.", { code: "artifact_cleanup_failed" });
+    }
+    if (image.storage_path) {
+      const { error: messageDeleteError } = await userDb
+        .from("messages")
+        .delete()
+        .eq("message_type", "image")
+        .eq("storage_path", image.storage_path);
+      if (messageDeleteError) {
+        logDbFailure("images.delete.messages", userId, messageDeleteError, { imageId });
+      }
+    }
+    res.json({ success: true, image_id: imageId, degraded: false });
+  }),
+);
+
 app.post(
   "/api/charts/generate",
   verifyJWT({ allowGuest: false }),
@@ -5728,7 +5918,7 @@ app.post(
 
     if (!result.success) {
       console.log(`[CHART] generation failed: ${result.error}`);
-      res.status(500).json({ error: result.error });
+      res.status(500).json({ error: "Chart generation could not finish. Please try again.", code: "chart_generation_failed" });
       return;
     }
 
@@ -6008,7 +6198,8 @@ app.post(
     });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ success: false, results: [], error: message });
+      console.error(`[Search] direct search failed: ${message}`);
+      res.status(503).json({ success: false, results: [], error: "Web search is temporarily unavailable. Please try again shortly.", code: "search_unavailable" });
     }
   }),
 );
@@ -6018,7 +6209,7 @@ app.post(
  */
 app.get("/api/search/status", (_req, res) => {
   const status = getTavilyPipelineStatus();
-  res.json(status);
+  res.json({ available: status.available });
 });
 
 // ===============================
@@ -6028,19 +6219,12 @@ app.get("/api/config", (_req, res) => {
   const searchStatus = getTavilyPipelineStatus();
   res.json({
     version: "2.0.0",
-    architecture: "orchestrated-dual-model",
-    models: {
-      reasoning: "gemini",
-      cognition: "groq",
-    },
     features: {
       chat: true,
       memory: true,
       file_upload: true,
       image_generation: true,
       chart_generation: true,
-      tool_detection: true,
-      ai_orchestrator: true,
       streaming: true,
       session_title_generation: true,
       knowledge_query: true,

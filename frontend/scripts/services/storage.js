@@ -24,13 +24,51 @@ const DEFAULT_LIMITS = {
 let dbInstance = null;
 let dbOpenPromise = null;
 let activeCacheUserId = "";
+let storageMode = "persistent";
+let volatileReason = "";
+const volatileStores = new Map(Object.values(STORES).map((storeName) => [storeName, new Map()]));
+
+function switchToVolatileStorage(error) {
+  storageMode = "volatile";
+  volatileReason = String(error?.message || error || "Persistent browser storage is unavailable.");
+  if (dbInstance) dbInstance.close();
+  dbInstance = null;
+  dbOpenPromise = null;
+  window.SentIQBootstrap?.addLimitedReason?.(
+    "indexed-db",
+    "Browser storage is unavailable. This session will use temporary in-memory storage."
+  );
+}
+
+function getVolatileStore(storeName) {
+  if (!volatileStores.has(storeName)) volatileStores.set(storeName, new Map());
+  return volatileStores.get(storeName);
+}
 
 function openDB() {
+  if (storageMode === "volatile") return Promise.resolve(null);
   if (dbInstance) return Promise.resolve(dbInstance);
   if (dbOpenPromise) return dbOpenPromise;
+  if (typeof indexedDB === "undefined") {
+    switchToVolatileStorage(new Error("IndexedDB is unavailable."));
+    return Promise.resolve(null);
+  }
 
-  dbOpenPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+  dbOpenPromise = new Promise((resolve) => {
+    let request;
+    let settled = false;
+    const useVolatileStorage = (error) => {
+      if (settled) return;
+      settled = true;
+      switchToVolatileStorage(error);
+      resolve(null);
+    };
+    try {
+      request = indexedDB.open(DB_NAME, DB_VERSION);
+    } catch (error) {
+      useVolatileStorage(error);
+      return;
+    }
     request.onupgradeneeded = (event) => {
       const db = event.target.result;
       if (!db.objectStoreNames.contains(STORES.chats)) {
@@ -94,6 +132,11 @@ function openDB() {
       }
     };
     request.onsuccess = () => {
+      if (settled || storageMode === "volatile") {
+        request.result.close();
+        return;
+      }
+      settled = true;
       dbInstance = request.result;
       dbInstance.onversionchange = () => {
         dbInstance.close();
@@ -103,12 +146,10 @@ function openDB() {
       resolve(dbInstance);
     };
     request.onerror = () => {
-      dbOpenPromise = null;
-      reject(request.error);
+      useVolatileStorage(request.error);
     };
     request.onblocked = () => {
-      dbOpenPromise = null;
-      reject(new Error("SentIQGPT storage is blocked by another open tab. Close other tabs and retry."));
+      useVolatileStorage(new Error("SentIQGPT storage is blocked by another open tab."));
     };
   });
   return dbOpenPromise;
@@ -116,6 +157,10 @@ function openDB() {
 
 async function dbPut(storeName, item) {
   const db = await openDB();
+  if (!db) {
+    getVolatileStore(storeName).set(item.id ?? item.key, item);
+    return item.id ?? item.key;
+  }
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, "readwrite");
     const store = tx.objectStore(storeName);
@@ -131,6 +176,7 @@ async function dbPut(storeName, item) {
 
 async function dbGet(storeName, key) {
   const db = await openDB();
+  if (!db) return getVolatileStore(storeName).get(key);
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, "readonly");
     const store = tx.objectStore(storeName);
@@ -142,6 +188,7 @@ async function dbGet(storeName, key) {
 
 async function dbGetAll(storeName) {
   const db = await openDB();
+  if (!db) return Array.from(getVolatileStore(storeName).values());
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, "readonly");
     const store = tx.objectStore(storeName);
@@ -153,6 +200,10 @@ async function dbGetAll(storeName) {
 
 async function dbDelete(storeName, key) {
   const db = await openDB();
+  if (!db) {
+    getVolatileStore(storeName).delete(key);
+    return;
+  }
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, "readwrite");
     const store = tx.objectStore(storeName);
@@ -166,6 +217,7 @@ async function dbDelete(storeName, key) {
 
 async function dbCount(storeName) {
   const db = await openDB();
+  if (!db) return getVolatileStore(storeName).size;
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, "readonly");
     const store = tx.objectStore(storeName);
@@ -176,7 +228,69 @@ async function dbCount(storeName) {
 }
 
 function generateId() {
-  return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+    window.SentIQBootstrap?.addLimitedReason?.(
+      "secure-random",
+      "Secure browser identifiers are unavailable. Avoid using this session for sensitive work."
+    );
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+}
+
+function getStorageStatus() {
+  return {
+    mode: storageMode,
+    persistent: storageMode === "persistent",
+    reason: volatileReason,
+  };
+}
+
+function clearSentIqWebStorage(storageName) {
+  try {
+    const storage = window[storageName];
+    if (!storage) return;
+    const keysToRemove = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key?.startsWith("sentiq_") || key?.startsWith("sentiq:")) keysToRemove.push(key);
+    }
+    keysToRemove.forEach((key) => storage.removeItem(key));
+  } catch {
+    window.SentIQBootstrap?.addLimitedReason?.(
+      "web-storage",
+      "Some browser preferences could not be cleared because web storage is blocked."
+    );
+  }
+}
+
+async function clearLocalData() {
+  Object.values(STORES).forEach((storeName) => getVolatileStore(storeName).clear());
+  const db = await openDB();
+  if (db) {
+    const storeNames = Object.values(STORES).filter((storeName) => db.objectStoreNames.contains(storeName));
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(storeNames, "readwrite");
+      storeNames.forEach((storeName) => tx.objectStore(storeName).clear());
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Local browser data clear was interrupted."));
+    });
+  }
+  clearSentIqWebStorage("localStorage");
+  clearSentIqWebStorage("sessionStorage");
+  return getStorageStatus();
 }
 
 function normalizeCacheUserId(value) {
@@ -855,7 +969,7 @@ window.SentIQStorage = {
   putSyncJob, getAllSyncJobs, deleteSyncJob,
   getConfig, setConfig, getAllConfig,
   getConversationAliases, setConversationAlias, resolveConversationAlias,
-  getStorageStats, generateId,
+  getStorageStats, getStorageStatus, clearLocalData, generateId,
   normalizeMemoryScope, normalizeMemoryChatId,
   collapseAdjacentDuplicateChatMessages,
 };
