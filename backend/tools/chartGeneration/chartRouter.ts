@@ -13,17 +13,13 @@ import { generateChartSpec } from "./chartSpecGenerator";
 import { renderChart, rendererLabel } from "./chartRenderer";
 import type { ChartResult } from "./types";
 import { buildChartJsConfig, buildPlotlyFigure } from "./frontendPayloadBuilder";
+import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../../internalGateway";
 
 // ==============================
 // Preview (optional)
 // ==============================
 
-/** URL of the LLM/chart service that can execute matplotlib code. */
-const LLM_SERVICE_URL =
-  process.env.LLM_SERVICE_URL ??
-  `http://localhost:${process.env.LLM_SERVICE_PORT ?? "3002"}`;
 const PYTHON_CHART_RENDER_ENABLED = process.env.SENTIQ_ENABLE_PYTHON_CHART_RENDER === "true";
-const INTERNAL_SERVICE_TOKEN = process.env.SENTIQ_INTERNAL_SERVICE_TOKEN?.trim() || "";
 
 /**
  * Ask the Python service to execute matplotlib code and return a PNG
@@ -38,12 +34,9 @@ async function fetchMatplotlibPreview(code: string): Promise<string | undefined>
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
 
-    const resp = await fetch(`${LLM_SERVICE_URL}/chart/render`, {
+    const resp = await fetch(getInternalGatewayUrl("/chart/render"), {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(INTERNAL_SERVICE_TOKEN ? { "X-SentIQ-Internal-Token": INTERNAL_SERVICE_TOKEN } : {}),
-      },
+      headers: getInternalGatewayHeaders(),
       body: JSON.stringify({ code }),
       signal: controller.signal,
     });

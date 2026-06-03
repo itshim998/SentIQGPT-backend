@@ -62,6 +62,7 @@ RUN chmod +x ./scripts/start-container.sh \
 
 USER node
 
+# Only the Node API is ingress-facing. The Python gateway binds to loopback.
 EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

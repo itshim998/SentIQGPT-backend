@@ -12,13 +12,15 @@ Endpoints:
 import os
 import sys
 import json
+import hmac
 import logging
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import date
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import Any, Optional
@@ -71,6 +73,7 @@ logger.setLevel(logging.INFO)
 
 LLM_SERVICE_HOST = os.getenv("LLM_SERVICE_HOST", "0.0.0.0")
 LLM_SERVICE_PORT = int(os.getenv("LLM_SERVICE_PORT", "3002"))
+RUNTIME_ENV = os.getenv("NODE_ENV", "").strip().lower()
 REQUESTS_PER_DAY = 50
 SUPABASE_REST_TIMEOUT_SECONDS = 15
 SUPABASE_ERROR_BODY_LIMIT = 400
@@ -195,17 +198,102 @@ def check_output_safety(text: str, user_id: str, endpoint: str) -> tuple[bool, s
 # FastAPI Application
 # ============================
 
-app = FastAPI(title="SentIQGPT LLM Service", version="1.0.0")
+def is_production_runtime(runtime_env: Optional[str] = None) -> bool:
+    return (RUNTIME_ENV if runtime_env is None else runtime_env.strip().lower()) == "production"
 
 
-def require_internal_service_token(token: Optional[str]) -> None:
-    if not INTERNAL_SERVICE_TOKEN:
-        if UNSAFE_INTERNAL_ENDPOINTS_ENABLED:
+def validate_internal_service_configuration(
+    runtime_env: Optional[str] = None,
+    internal_service_token: Optional[str] = None,
+    unsafe_internal_endpoints_enabled: Optional[bool] = None,
+    llm_service_host: Optional[str] = None,
+) -> None:
+    token = INTERNAL_SERVICE_TOKEN if internal_service_token is None else internal_service_token.strip()
+    unsafe_enabled = (
+        UNSAFE_INTERNAL_ENDPOINTS_ENABLED
+        if unsafe_internal_endpoints_enabled is None
+        else unsafe_internal_endpoints_enabled
+    )
+    host = LLM_SERVICE_HOST if llm_service_host is None else llm_service_host.strip()
+
+    if not is_production_runtime(runtime_env):
+        return
+    if not token:
+        raise RuntimeError("SENTIQ_INTERNAL_SERVICE_TOKEN is required in production")
+    if unsafe_enabled:
+        raise RuntimeError("SENTIQ_ENABLE_UNSAFE_INTERNAL_ENDPOINTS cannot be enabled in production")
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        raise RuntimeError("LLM_SERVICE_HOST must use a loopback host in production")
+
+
+def require_internal_service_token(
+    token: Optional[str],
+    runtime_env: Optional[str] = None,
+    internal_service_token: Optional[str] = None,
+    unsafe_internal_endpoints_enabled: Optional[bool] = None,
+) -> None:
+    expected_token = INTERNAL_SERVICE_TOKEN if internal_service_token is None else internal_service_token.strip()
+    unsafe_enabled = (
+        UNSAFE_INTERNAL_ENDPOINTS_ENABLED
+        if unsafe_internal_endpoints_enabled is None
+        else unsafe_internal_endpoints_enabled
+    )
+    if not expected_token:
+        if unsafe_enabled and not is_production_runtime(runtime_env):
             logger.warning("[internal] unsafe internal endpoint access enabled without token")
             return
         raise HTTPException(status_code=404, detail="Not found")
-    if token != INTERNAL_SERVICE_TOKEN:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    if not token or not hmac.compare_digest(token, expected_token):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+class InternalGatewayAuthMiddleware:
+    """Require internal authentication before dispatch without buffering streams."""
+
+    def __init__(self, app: Any):
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        if scope.get("method") == "GET" and scope.get("path") == "/llm/health":
+            await self.app(scope, receive, send)
+            return
+
+        header_value = next(
+            (
+                value
+                for name, value in scope.get("headers", [])
+                if name.lower() == b"x-sentiq-internal-token"
+            ),
+            b"",
+        )
+        try:
+            require_internal_service_token(header_value.decode("utf-8", errors="ignore"))
+        except HTTPException:
+            response = JSONResponse(status_code=404, content={"detail": "Not found"})
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
+@asynccontextmanager
+async def internal_gateway_lifespan(_app: FastAPI):
+    validate_internal_service_configuration()
+    yield
+
+
+app = FastAPI(
+    title="SentIQGPT LLM Service",
+    version="1.0.0",
+    docs_url=None if is_production_runtime() else "/docs",
+    redoc_url=None if is_production_runtime() else "/redoc",
+    openapi_url=None if is_production_runtime() else "/openapi.json",
+    lifespan=internal_gateway_lifespan,
+)
+app.add_middleware(InternalGatewayAuthMiddleware)
 
 
 class LLMInvokeRequest(BaseModel):
@@ -585,6 +673,11 @@ def reserve_llm_request_slot(user_id: str) -> int:
 
 @app.get("/llm/health")
 async def health_check():
+    return {"status": "ok"}
+
+
+@app.get("/llm/health/details")
+async def health_details():
     return {
         "status": "ok",
         "system": "SentIQGPT",
@@ -659,7 +752,7 @@ async def invoke_llm(request: LLMInvokeRequest):
         raise
     except Exception as e:
         logger.error("LLM invocation failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal model service failure")
 
 
 class StreamingSafetyMonitor:
@@ -808,7 +901,7 @@ async def stream_llm(request: LLMInvokeRequest):
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error("Streaming failed: %s", e)
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'error': 'internal_service_failure'})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -858,7 +951,7 @@ async def vision_llm(request: VisionRequest):
         return {"result": result, "provider": "gemini-vision"}
     except Exception as e:
         logger.error("Vision invocation failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal model service failure")
 
 
 # ============================
@@ -971,7 +1064,7 @@ async def render_chart(
         if pat.search(request.code):
             raise HTTPException(
                 status_code=400,
-                detail=f"Forbidden pattern in chart code: {pat.pattern!r}",
+                detail="Chart code rejected",
             )
 
     try:
@@ -984,7 +1077,7 @@ async def render_chart(
         stdout = proc.stdout.strip()
         if proc.returncode != 0:
             logger.warning("Chart render failed (rc=%d): %s", proc.returncode, proc.stderr[:200])
-            return {"preview": None, "error": proc.stderr[:200]}
+            return {"preview": None, "error": "render failed"}
 
         # Find the data URI in stdout
         for line in stdout.splitlines():
@@ -999,7 +1092,7 @@ async def render_chart(
         return {"preview": None, "error": "render timed out"}
     except Exception as e:
         logger.error("Chart render error: %s", e)
-        return {"preview": None, "error": str(e)}
+        return {"preview": None, "error": "render failed"}
 
 
 # ============================
@@ -1024,19 +1117,23 @@ async def safety_health():
     """Check if the safety model is accessible."""
     try:
         # Quick test call with innocuous input
-        classification, raw = call_safety_model("Hello, how are you?", timeout=5, check_type="input")
+        classification, _ = call_safety_model("Hello, how are you?", timeout=5, check_type="input")
+        available = classification in {
+            SafetyResult.SAFE,
+            SafetyResult.UNSAFE,
+            SafetyResult.CONTROVERSIAL,
+        }
         return {
-            "status": "ok",
-            "safety_model": "qwen-safety",
-            "test_classification": classification,
-            "test_response_preview": raw[:50] if raw else None,
+            "status": "ok" if available else "degraded",
+            "available": available,
+            "fail_closed": True,
         }
     except Exception as e:
+        logger.error("Safety health check failed: %s", e)
         return {
             "status": "degraded",
-            "safety_model": "qwen-safety",
-            "error": str(e),
-            "note": "Safety checks will default to SAFE on failure",
+            "available": False,
+            "fail_closed": True,
         }
 
 

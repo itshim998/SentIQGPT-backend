@@ -12,10 +12,7 @@
 //   2. At query time (to compare against stored embeddings)
 
 import { getCachedEmbedding, setCachedEmbedding } from "../cache/cacheManager";
-
-const LLM_SERVICE_URL =
-  process.env.LLM_SERVICE_URL ||
-  `http://localhost:${process.env.LLM_SERVICE_PORT || "3002"}`;
+import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../internalGateway";
 
 /**
  * Generate a vector embedding for a piece of text.
@@ -32,9 +29,9 @@ export async function generateEmbedding(
   if (cached) return cached;
 
   try {
-    const response = await fetch(`${LLM_SERVICE_URL}/llm/embed`, {
+    const response = await fetch(getInternalGatewayUrl("/llm/embed"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getInternalGatewayHeaders(),
       body: JSON.stringify({ text }),
     });
 

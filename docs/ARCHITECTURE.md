@@ -17,10 +17,11 @@ SentIQGPT is an authenticated AI assistant with persistent conversations, memory
 
 1. The browser sends authenticated requests to the Express API.
 2. The backend resolves identity, applies rate limits, validates payloads, and routes to the appropriate handler.
-3. Chat requests build context from recent messages, memory retrieval, uploaded file context, and optional conversation summaries.
-4. The orchestrator executes tool steps sequentially for side-effecting work and passes abort signals into cancellable operations.
-5. Canonical responses, messages, memories, images, generated files, and quota usage are persisted on the user shard when applicable.
-6. The frontend reconciles server responses with local IndexedDB state.
+3. Node calls the loopback-only Python model gateway with `X-SentIQ-Internal-Token`; the browser never calls that gateway directly.
+4. Chat requests build context from recent messages, memory retrieval, uploaded file context, and optional conversation summaries.
+5. The orchestrator executes tool steps sequentially for side-effecting work and passes abort signals into cancellable operations.
+6. Canonical responses, messages, memories, images, generated files, and quota usage are persisted on the user shard when applicable.
+7. The frontend reconciles server responses with local IndexedDB state.
 
 ## Auth, Rate Limits, And Reliability
 
@@ -28,6 +29,7 @@ SentIQGPT is an authenticated AI assistant with persistent conversations, memory
 - Guest chat is allowed only on explicitly guest-enabled routes.
 - Fatal backend errors use a shared shutdown path that stops accepting new HTTP connections, waits for active requests to drain, and exits so the process manager can restart cleanly.
 - Startup shard verification checks required tables, columns, and RPCs before serving traffic.
+- Production startup rejects a missing internal gateway token, unsafe tokenless overrides, and non-loopback Python bindings.
 
 ## Data And Sharding
 
@@ -64,7 +66,7 @@ SentIQGPT is an authenticated AI assistant with persistent conversations, memory
 | `backend/context/*` | Context assembly, compression, file chunking, reference resolution |
 | `backend/services/*` | Database-backed conversation, memory, profile, quota, and persistence services |
 | `backend/tools/*` | Image, chart, file generation, and web search tools |
-| `backend/llm_service.py` | Python gateway for LLM invoke/stream/embed and safety enforcement |
+| `backend/llm_service.py` | Loopback Python gateway for LLM invoke/stream/embed and safety enforcement; all non-liveness routes require internal authentication |
 
 ## Operational Notes
 

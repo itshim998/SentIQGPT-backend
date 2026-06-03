@@ -1,5 +1,6 @@
 import { callLLMAdapter, strictParseJsonObject, getDemoFallbackResponse } from "./PromptBuilders";
 import type { LLMAdapterCall } from "./PromptBuilders";
+import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../internalGateway";
 
 // SentIQGPT v1 — File Ingestion Handler
 //
@@ -264,8 +265,6 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
  * Analyze an image using Gemini Vision (multimodal).
  * Sends the image as base64 to the Python LLM gateway's /llm/vision endpoint.
  */
-const LLM_SERVICE_URL = process.env.LLM_SERVICE_URL || `http://localhost:${process.env.LLM_SERVICE_PORT || "3002"}`;
-
 async function analyzeImageWithVision(
   buffer: Buffer,
   filename: string,
@@ -289,9 +288,9 @@ async function analyzeImageWithVision(
     `Filename: ${filename}`;
 
   try {
-    const response = await fetch(`${LLM_SERVICE_URL}/llm/vision`, {
+    const response = await fetch(getInternalGatewayUrl("/llm/vision"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getInternalGatewayHeaders(),
       body: JSON.stringify({
         prompt,
         image_base64: base64,
@@ -302,8 +301,7 @@ async function analyzeImageWithVision(
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Vision API error (${response.status}): ${errText}`);
+      throw new Error(`Vision API request failed (${response.status}).`);
     }
 
     const data = (await response.json()) as {

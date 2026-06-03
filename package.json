@@ -28,6 +28,7 @@
     "test:frontend-file-generation": "ts-node --project tsconfig.backend.json backend/testFrontendFileGeneration.ts",
     "test:priority4-contracts": "ts-node --project tsconfig.backend.json backend/testPriority4Contracts.ts",
     "test:phase0": "ts-node --project tsconfig.backend.json backend/testPhase0EmergencyStabilization.ts",
+    "test:pass1-internal-gateway": "python backend/testPass1InternalGateway.py && ts-node --project tsconfig.backend.json backend/testPass1InternalGateway.ts",
     "eval:golden": "ts-node --project tsconfig.backend.json backend/evalGoldenPrompts.ts"
   },
   "dependencies": {

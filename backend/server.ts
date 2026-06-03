@@ -135,6 +135,7 @@ import { auditMiddleware, getRecentAuditEntries } from "./middleware/audit";
 import { commitImageQuotaSuccess, imageQuotaMiddleware, getImageQuotaKey, getQuotaInfo, isImageRequest } from "./middleware/imageQuota";
 import { AuthError, getRequestUser, resolveRequestUser, verifyJWT } from "./middleware/auth";
 import { HttpError, buildHttpErrorResponse } from "./httpErrors";
+import { validateInternalGatewayConfiguration } from "./internalGateway";
 
 // Validation
 import {
@@ -6347,7 +6348,10 @@ function shutdownProcess(reason: string, exitCode: number, error?: unknown): voi
   });
 }
 
-verifyShardMigrations().then(() => {
+Promise.resolve().then(() => {
+  validateInternalGatewayConfiguration();
+  return verifyShardMigrations();
+}).then(() => {
   httpServer = app.listen(PORT, () => {
     console.log(`[SentIQGPT v2] Server running on port ${PORT}`);
     console.log(`[SentIQGPT v2] Architecture: Orchestrated Dual-Model (Gemini + Groq)`);
@@ -6367,7 +6371,7 @@ verifyShardMigrations().then(() => {
   process.on("SIGINT", () => shutdownProcess("SIGINT", 0));
 }).catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`[SentIQGPT] FATAL: startup migration verification failed: ${message}`);
+  console.error(`[SentIQGPT] FATAL: startup verification failed: ${message}`);
   process.exit(1);
 });
 process.on("uncaughtException", (err) => {

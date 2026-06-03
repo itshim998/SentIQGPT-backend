@@ -47,6 +47,25 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Verify production internal gateway configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_port="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.targetPort" -o tsv)"
+          token_secret_ref="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='SENTIQ_INTERNAL_SERVICE_TOKEN'].secretRef | [0]" -o tsv)"
+          node_env="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='NODE_ENV'].value | [0]" -o tsv)"
+          llm_host="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='LLM_SERVICE_HOST'].value | [0]" -o tsv)"
+          llm_url="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='LLM_SERVICE_URL'].value | [0]" -o tsv)"
+          unsafe_override="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='SENTIQ_ENABLE_UNSAFE_INTERNAL_ENDPOINTS'].value | [0]" -o tsv)"
+
+          [[ "${target_port}" == "3001" ]] || { echo "::error::Azure ingress must target Node port 3001"; exit 1; }
+          [[ -n "${token_secret_ref}" && "${token_secret_ref}" != "null" && "${token_secret_ref}" != "None" ]] || { echo "::error::SENTIQ_INTERNAL_SERVICE_TOKEN must use an Azure secretRef"; exit 1; }
+          [[ "${node_env}" == "production" ]] || { echo "::error::NODE_ENV must be production"; exit 1; }
+          [[ "${llm_host}" == "127.0.0.1" ]] || { echo "::error::LLM_SERVICE_HOST must remain on loopback"; exit 1; }
+          [[ "${llm_url}" == "http://127.0.0.1:3002" ]] || { echo "::error::LLM_SERVICE_URL must remain on the internal loopback service"; exit 1; }
+          [[ "${unsafe_override,,}" != "true" ]] || { echo "::error::Unsafe internal endpoints cannot be enabled in production"; exit 1; }
+          echo "Production internal gateway configuration verified."
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -83,6 +102,25 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify production internal gateway configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_port="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.targetPort" -o tsv)"
+          token_secret_ref="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='SENTIQ_INTERNAL_SERVICE_TOKEN'].secretRef | [0]" -o tsv)"
+          node_env="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='NODE_ENV'].value | [0]" -o tsv)"
+          llm_host="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='LLM_SERVICE_HOST'].value | [0]" -o tsv)"
+          llm_url="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='LLM_SERVICE_URL'].value | [0]" -o tsv)"
+          unsafe_override="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='SENTIQ_ENABLE_UNSAFE_INTERNAL_ENDPOINTS'].value | [0]" -o tsv)"
+
+          [[ "${target_port}" == "3001" ]] || { echo "::error::Azure ingress must target Node port 3001"; exit 1; }
+          [[ -n "${token_secret_ref}" && "${token_secret_ref}" != "null" && "${token_secret_ref}" != "None" ]] || { echo "::error::SENTIQ_INTERNAL_SERVICE_TOKEN must use an Azure secretRef"; exit 1; }
+          [[ "${node_env}" == "production" ]] || { echo "::error::NODE_ENV must be production"; exit 1; }
+          [[ "${llm_host}" == "127.0.0.1" ]] || { echo "::error::LLM_SERVICE_HOST must remain on loopback"; exit 1; }
+          [[ "${llm_url}" == "http://127.0.0.1:3002" ]] || { echo "::error::LLM_SERVICE_URL must remain on the internal loopback service"; exit 1; }
+          [[ "${unsafe_override,,}" != "true" ]] || { echo "::error::Unsafe internal endpoints cannot be enabled in production"; exit 1; }
+          echo "Production internal gateway configuration verified."
 
       - name: Deploy selected immutable image to Azure Container Apps
         env:

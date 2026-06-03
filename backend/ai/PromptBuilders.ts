@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "fs";
 import { resolve as pathResolve } from "path";
 import { composeContext } from "../orchestrator/contextComposer";
 import { MATH_RESPONSE_SYSTEM_PROMPT } from "./mathPrompt";
+import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../internalGateway";
 
 // SentIQGPT v1 — Prompt Builders & LLM Adapter Bridge
 //
@@ -105,8 +106,6 @@ export interface LLMAdapterResult {
 // LLM Adapter invocation (via HTTP to FastAPI service)
 // ==============================
 
-const LLM_SERVICE_URL = process.env.LLM_SERVICE_URL || `http://localhost:${process.env.LLM_SERVICE_PORT || "3002"}`;
-
 function createAdapterAbortSignal(parentSignal: AbortSignal | undefined, timeoutMs: number): {
   readonly signal: AbortSignal;
   readonly cleanup: () => void;
@@ -135,14 +134,14 @@ function createAdapterAbortSignal(parentSignal: AbortSignal | undefined, timeout
 }
 
 export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMAdapterResult> {
-  const url = `${LLM_SERVICE_URL}/llm/invoke`;
+  const url = getInternalGatewayUrl("/llm/invoke");
   const abort = createAdapterAbortSignal(call.signal, call.timeout_ms ?? 90_000);
 
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getInternalGatewayHeaders(),
       body: JSON.stringify({
         prompt: call.prompt,
         task: call.task,
@@ -181,7 +180,8 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
         throw parseError;
       }
     }
-    throw new Error(`LLM service error (${response.status}): ${text}`);
+    console.error(`[LLM adapter] invoke failed status=${response.status}`);
+    throw new Error("LLM service request failed.");
   }
 
   const data = (await response.json()) as {
@@ -234,14 +234,14 @@ export async function callLLMAdapter(call: LLMAdapterCall): Promise<string> {
 export async function callLLMAdapterStream(
   call: LLMAdapterCall,
 ): Promise<ReadableStream<string>> {
-  const url = `${LLM_SERVICE_URL}/llm/stream`;
+  const url = getInternalGatewayUrl("/llm/stream");
   const abort = createAdapterAbortSignal(call.signal, call.timeout_ms ?? 120_000);
 
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getInternalGatewayHeaders(),
       body: JSON.stringify({
         prompt: call.prompt,
         task: call.task,
@@ -282,7 +282,8 @@ export async function callLLMAdapterStream(
         throw parseError;
       }
     }
-    throw new Error(`LLM stream error (${response.status}): ${text}`);
+    console.error(`[LLM adapter] stream failed status=${response.status}`);
+    throw new Error("LLM stream request failed.");
   }
 
   if (!response.body) {

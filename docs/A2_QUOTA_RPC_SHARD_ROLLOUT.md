@@ -56,6 +56,7 @@ Expected result:
    - POST /llm/invoke
    - POST /llm/stream
    - POST /llm/vision
+   - Include `X-SentIQ-Internal-Token` from the runtime-only `SENTIQ_INTERNAL_SERVICE_TOKEN` value for direct internal gateway checks. Do not print the token.
 2. Confirm logs include quota reserve RPC success messages.
 3. Confirm logs do not include:
    - [quota] reserve.rpc_failed_fallback
