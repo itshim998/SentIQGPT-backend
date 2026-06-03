@@ -1,0 +1,7 @@
+Over the past few months, I’ve been building SentIQGPT, a general-purpose assistant designed less as a thin model interface and more as a dependable execution system.
+
+The work has centered on orchestration: a TypeScript/Node.js layer coordinating requests, a Python FastAPI gateway handling model access, and routing logic that selects different models for different classes of problems. Programming tasks are sent through a coding-oriented path, while broader reasoning and conversation use a separate route.
+
+A large part of the effort went into things users rarely see directly: context budgeting, prompt composition, memory retrieval and summarization, streaming responses, file ingestion, and safeguards against overflow and runtime failure. The result is a system that can handle conversation, code, documents, web-grounded answers, memory, and multimodal inputs with more control and reliability than a simple API wrapper.
+
+If anyone is interested in discussing the technical architecture or implementation details, feel free to message me.
