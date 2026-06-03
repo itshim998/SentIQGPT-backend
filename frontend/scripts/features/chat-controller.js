@@ -1417,6 +1417,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       title: chat.title || "New Chat",
       created: chat.created || chat.created_at || new Date().toISOString(),
       updated: lastActivity || new Date().toISOString(),
+      last_activity_at: lastActivity || null,
       source: "server",
       owner_user_id: getActiveAuthUserId(),
       pending_server_sync: Boolean(chat.pending_server_sync),
@@ -1690,11 +1691,25 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }));
   }
 
+  async function pruneChatMessageWarmCache(warmChatIds = []) {
+    if (!Storage.pruneServerChatMessageCache) return;
+    const keepChatIds = new Set([currentChatId, ...warmChatIds].filter(Boolean));
+    const jobs = await Storage.getAllSyncJobs?.().catch(() => []);
+    for (const job of jobs || []) {
+      const payload = job?.payload || {};
+      if (payload.localChatId) keepChatIds.add(payload.localChatId);
+      if (payload.conversationId) keepChatIds.add(payload.conversationId);
+      if (payload.pendingChatId) keepChatIds.add(payload.pendingChatId);
+    }
+    await Storage.pruneServerChatMessageCache([...keepChatIds]);
+  }
+
   async function warmRecentChatCache(chats) {
     if (!isAuthenticatedSession() || recentWarmPromise) return recentWarmPromise || [];
     const recentChats = (Array.isArray(chats) ? chats : [])
-      .filter((chat) => chat?.id && !isPlaceholderServerChat(chat))
+      .filter((chat) => chat?.id && isVisibleChatListItem(chat))
       .slice(0, RECENT_CHAT_WARM_LIMIT);
+    const recentChatIds = recentChats.map((chat) => chat.id);
     recentWarmPromise = (async () => {
       const warmedIds = [];
       const results = await runWithConcurrencyLimit(recentChats, RECENT_CHAT_WARM_CONCURRENCY, async (chat) => {
@@ -1706,6 +1721,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         return warmedChat;
       });
       await pruneGeneratedFileWarmCache(warmedIds);
+      await pruneChatMessageWarmCache(recentChatIds);
       return results;
     })().finally(() => {
       recentWarmPromise = null;
@@ -1735,6 +1751,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       localCount,
       serverCount: Number.isFinite(serverCount) ? serverCount : null,
     };
+  }
+
+  function isVisibleChatListItem(chat) {
+    if (!isAuthenticatedSession() || !isServerBackedChat(chat)) return true;
+    const counts = getKnownMessageCount(chat);
+    if (counts.localCount > 0 || (counts.serverCount !== null && counts.serverCount > 0)) return true;
+    return Boolean(chat?.first_user_message || chat?.firstUserMessage || chat?.last_message_at || chat?.lastMessageAt);
   }
 
   function titleLooksLikeFirstMessageFallback(title, firstUserMessage) {
@@ -4968,10 +4991,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const chats = isAuthenticatedSession()
       ? (preferCachedServer ? await getCachedServerChats() : await fetchAuthenticatedChatList())
       : await Storage.getLocalChats();
+    const sidebarChats = isAuthenticatedSession()
+      ? chats.filter(isVisibleChatListItem)
+      : chats;
     const searchTerm = String(chatSearchInput?.value || "").trim().toLowerCase();
     const visibleChats = searchTerm
-      ? chats.filter((chat) => String(chat.title || "New Chat").toLowerCase().includes(searchTerm))
-      : chats;
+      ? sidebarChats.filter((chat) => String(chat.title || "New Chat").toLowerCase().includes(searchTerm))
+      : sidebarChats;
     chatList.innerHTML = "";
     for (const chat of visibleChats) {
       const item = document.createElement("div");
@@ -5096,7 +5122,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         if (currentChatId === chat.id) {
           currentChatId = null;
           const remaining = isAuthenticatedSession()
-            ? await getCachedServerChats()
+            ? (await getCachedServerChats()).filter(isVisibleChatListItem)
             : await Storage.getLocalChats();
           if (remaining.length > 0) await loadChat(remaining[0].id);
           else { showWelcome(); if (chatMessages) chatMessages.innerHTML = ""; }

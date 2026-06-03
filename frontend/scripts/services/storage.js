@@ -320,6 +320,79 @@ function isOwnedCacheItemVisible(item) {
   return item?.owner_user_id === activeCacheUserId;
 }
 
+function getTimestampMs(value) {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getFirstValidTimestamp(...values) {
+  for (const value of values) {
+    if (getTimestampMs(value) !== null) return value;
+  }
+  return "";
+}
+
+function getNewestTimestampValue(...values) {
+  let newestValue = "";
+  let newestMs = null;
+  for (const value of values) {
+    const parsed = getTimestampMs(value);
+    if (parsed === null) continue;
+    if (newestMs === null || parsed > newestMs) {
+      newestMs = parsed;
+      newestValue = value;
+    }
+  }
+  return newestValue;
+}
+
+function getChatCreatedTimestamp(chat) {
+  return getFirstValidTimestamp(chat?.created, chat?.created_at);
+}
+
+function getServerChatActivityTimestamp(chat) {
+  return getFirstValidTimestamp(
+    chat?.last_activity_at,
+    chat?.lastActivityAt,
+    chat?.last_message_at,
+    chat?.lastMessageAt,
+    chat?.updated,
+    chat?.updated_at,
+    chat?.created,
+    chat?.created_at,
+  );
+}
+
+function getChatActivityTimestamp(chat) {
+  if (chat?.source === "server") return getServerChatActivityTimestamp(chat);
+  return getFirstValidTimestamp(chat?.updated, chat?.updated_at, chat?.timestamp, chat?.created, chat?.created_at);
+}
+
+export function compareChatsByActivity(left, right) {
+  const rightActivity = getTimestampMs(getChatActivityTimestamp(right)) || 0;
+  const leftActivity = getTimestampMs(getChatActivityTimestamp(left)) || 0;
+  if (rightActivity !== leftActivity) return rightActivity - leftActivity;
+
+  const rightCreated = getTimestampMs(getChatCreatedTimestamp(right)) || 0;
+  const leftCreated = getTimestampMs(getChatCreatedTimestamp(left)) || 0;
+  if (rightCreated !== leftCreated) return rightCreated - leftCreated;
+
+  return String(left?.id || "").localeCompare(String(right?.id || ""));
+}
+
+function touchChatActivity(chat, timestamp = new Date().toISOString()) {
+  const activity = getNewestTimestampValue(timestamp, chat?.updated, chat?.created) || timestamp;
+  chat.updated = activity;
+  if (chat.source === "server") {
+    const serverActivity = getNewestTimestampValue(activity, chat.last_activity_at, chat.created) || activity;
+    chat.last_activity_at = serverActivity;
+    chat.updated = serverActivity;
+    chat.last_message_at = getNewestTimestampValue(timestamp, chat.last_message_at) || timestamp;
+  }
+  return chat;
+}
+
 function sanitizeMessageMeta(meta) {
   if (!meta || typeof meta !== "object") return meta;
   const nextMeta = { ...meta };
@@ -480,7 +553,7 @@ async function getAllChats() {
   const chats = await dbGetAll(STORES.chats);
   return chats
     .filter((chat) => isServerScopedItemVisible(chat))
-    .sort((a, b) => new Date(b.updated) - new Date(a.updated));
+    .sort(compareChatsByActivity);
 }
 
 async function getLocalChats() {
@@ -501,7 +574,8 @@ async function addMessageToChat(chatId, role, content, meta, options = {}) {
   };
   if (meta) msg.meta = sanitizeMessageMeta(meta);
   chat.messages.push(msg);
-  chat.updated = new Date().toISOString();
+  touchChatActivity(chat, msg.timestamp);
+  chat.message_count = chat.messages.length;
   if (!chat.title || chat.title === "New Chat") {
     const firstUser = chat.messages.find((m) => m.role === "user");
     if (firstUser) {
@@ -534,7 +608,8 @@ async function upsertMessageInChat(chatId, message) {
   } else {
     chat.messages.push(nextMessage);
   }
-  chat.updated = new Date().toISOString();
+  touchChatActivity(chat, new Date().toISOString());
+  chat.message_count = chat.messages.length;
   if (!chat.title || chat.title === "New Chat") {
     const firstUser = chat.messages.find((m) => m.role === "user");
     if (firstUser) {
@@ -557,7 +632,7 @@ async function updateMessageInChat(chatId, messageId, updates = {}) {
     id: messageId,
     ...(safeUpdates.meta ? { meta: sanitizeMessageMeta({ ...(chat.messages[index].meta || {}), ...safeUpdates.meta }) } : {}),
   };
-  chat.updated = new Date().toISOString();
+  touchChatActivity(chat, new Date().toISOString());
   await dbPut(STORES.chats, chat);
   return chat;
 }
@@ -570,6 +645,22 @@ async function upsertServerChat(chatData) {
   const visibleExisting = existing && isServerScopedItemVisible(existing) ? existing : null;
   const incomingTitle = chatData.title || "";
   const incomingFirstUserMessage = chatData.first_user_message || chatData.firstUserMessage || visibleExisting?.first_user_message || "";
+  const created = getFirstValidTimestamp(chatData.created, chatData.created_at, visibleExisting?.created) || new Date().toISOString();
+  const incomingLastMessageAt = getFirstValidTimestamp(
+    chatData.last_message_at,
+    chatData.lastMessageAt,
+    visibleExisting?.last_message_at,
+  );
+  const incomingActivity = getFirstValidTimestamp(
+    chatData.last_activity_at,
+    chatData.lastActivityAt,
+    incomingLastMessageAt,
+    chatData.updated,
+    chatData.updated_at,
+    created,
+  );
+  const existingActivity = getServerChatActivityTimestamp(visibleExisting);
+  const activity = getNewestTimestampValue(incomingActivity, existingActivity, created) || created;
   const shouldKeepPendingLocalTitle = Boolean(
     visibleExisting?.pending_title_sync
     && typeof visibleExisting?.title === "string"
@@ -595,8 +686,10 @@ async function upsertServerChat(chatData) {
       ? visibleExisting.title
       : (incomingTitle || visibleExisting?.title || "New Chat"),
     messages: visibleExisting?.messages || [],
-    created: chatData.created || chatData.created_at || visibleExisting?.created || new Date().toISOString(),
-    updated: chatData.updated || chatData.updated_at || chatData.created_at || visibleExisting?.updated || new Date().toISOString(),
+    created,
+    updated: activity,
+    last_activity_at: activity,
+    last_message_at: getNewestTimestampValue(incomingLastMessageAt, visibleExisting?.last_message_at) || null,
     source: "server",
     owner_user_id: normalizeCacheUserId(chatData.owner_user_id || chatData.ownerUserId || activeCacheUserId),
     pending_server_sync: Boolean(chatData.pending_server_sync),
@@ -632,6 +725,8 @@ async function updateChatSyncState(chatId, updates = {}) {
     "message_cache_status",
     "missing_remote_at",
     "message_count",
+    "last_activity_at",
+    "last_message_at",
   ];
   for (const key of allowed) {
     if (Object.prototype.hasOwnProperty.call(updates, key)) {
@@ -640,6 +735,13 @@ async function updateChatSyncState(chatId, updates = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(updates, "updated")) {
     chat.updated = updates.updated || chat.updated;
+  }
+  if (chat.source === "server") {
+    const activity = getNewestTimestampValue(chat.last_activity_at, chat.updated, chat.created);
+    if (activity) {
+      chat.last_activity_at = activity;
+      chat.updated = activity;
+    }
   }
   await dbPut(STORES.chats, chat);
   return chat;
@@ -675,9 +777,14 @@ async function mergeChatMessages(chatId, messages, options = {}) {
     }),
   );
   chat.messages = normalizedMessages;
-  chat.updated = chat.messages.length > 0
+  const lastMessageTimestamp = chat.messages.length > 0
     ? chat.messages[chat.messages.length - 1].timestamp
-    : (chat.updated || new Date().toISOString());
+    : "";
+  if (lastMessageTimestamp) {
+    touchChatActivity(chat, lastMessageTimestamp);
+  } else {
+    chat.updated = chat.updated || new Date().toISOString();
+  }
   chat.message_cache_status = "complete";
   chat.warmed_at = new Date().toISOString();
   chat.message_count = chat.messages.length;
@@ -692,6 +799,31 @@ async function replaceChatMessages(chatId, messages) {
 }
 
 async function deleteChat(id) { return dbDelete(STORES.chats, id); }
+
+async function pruneServerChatMessageCache(keepChatIds = []) {
+  const keepIds = new Set(Array.from(keepChatIds || []).filter(Boolean).map(String));
+  const chats = await dbGetAll(STORES.chats);
+  let pruned = 0;
+  for (const chat of chats) {
+    if (!chat?.id || chat.source !== "server" || !isServerScopedItemVisible(chat)) continue;
+    if (keepIds.has(chat.id) || chat.pending_server_sync || chat.missing_remote_at) continue;
+    if (!Array.isArray(chat.messages) || chat.messages.length === 0) continue;
+    const cachedMessageCount = chat.messages.length;
+    const knownMessageCount = Number(chat.message_count);
+    chat.message_count = Number.isFinite(knownMessageCount) && knownMessageCount > 0
+      ? knownMessageCount
+      : cachedMessageCount;
+    if (!chat.first_user_message) {
+      chat.first_user_message = chat.messages.find((message) => message?.role === "user")?.content || null;
+    }
+    chat.messages = [];
+    chat.message_cache_status = "metadata-only";
+    chat.warmed_at = null;
+    await dbPut(STORES.chats, chat);
+    pruned += 1;
+  }
+  return pruned;
+}
 
 async function updateChatTitle(chatId, title, options = {}) {
   const chat = await getChat(chatId);
@@ -962,7 +1094,7 @@ async function getStorageStats() {
 window.SentIQStorage = {
   setActiveUserId, getActiveUserId,
   createChat, getChat, getAllChats, addMessageToChat, upsertMessageInChat, updateMessageInChat, updateChatTitle, updateChatSyncState, deleteChat,
-  getLocalChats, upsertServerChat, replaceChatMessages, mergeChatMessages,
+  getLocalChats, upsertServerChat, replaceChatMessages, mergeChatMessages, pruneServerChatMessageCache, compareChatsByActivity,
   storeMemory, getMemory, getAllMemories, getMemoriesByType, deleteMemory, getTopMemories,
   storeFile, getAllFiles, getFile, deleteFile,
   storeGeneratedFile, getGeneratedFile, getAllGeneratedFiles, deleteGeneratedFile,

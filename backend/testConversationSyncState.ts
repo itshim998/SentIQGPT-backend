@@ -125,6 +125,126 @@ assert.match(
   /missing_remote_at/,
   "storage should persist stale remote markers without clearing IndexedDB",
 );
+const getAllChatsBlock = functionBlock(
+  storageService,
+  "async function getAllChats()",
+  "async function getLocalChats()",
+);
+assert.match(
+  getAllChatsBlock,
+  /\.sort\(compareChatsByActivity\)/,
+  "cached chat lists must use the canonical activity comparator",
+);
+const serverActivityBlock = functionBlock(
+  storageService,
+  "function getServerChatActivityTimestamp",
+  "function getChatActivityTimestamp",
+);
+assert.match(
+  serverActivityBlock,
+  /last_activity_at[\s\S]*last_message_at[\s\S]*updated[\s\S]*created/,
+  "server chat ordering must prefer last activity, then last message, then cached update, then creation",
+);
+const compareChatsBlock = functionBlock(
+  storageService,
+  "export function compareChatsByActivity",
+  "function touchChatActivity",
+);
+assert.match(
+  compareChatsBlock,
+  /getChatActivityTimestamp\(right\)[\s\S]*getChatActivityTimestamp\(left\)[\s\S]*getChatCreatedTimestamp\(right\)[\s\S]*localeCompare/,
+  "chat activity comparator must sort newest activity first with stable tie-breaks",
+);
+const upsertServerChatBlock = functionBlock(
+  storageService,
+  "async function upsertServerChat",
+  "async function updateChatSyncState",
+);
+assert.match(
+  upsertServerChatBlock,
+  /const activity = getNewestTimestampValue\(incomingActivity, existingActivity, created\)/,
+  "server cache upserts must not downgrade a newer cached activity timestamp",
+);
+assert.match(
+  upsertServerChatBlock,
+  /updated:\s*activity[\s\S]*last_activity_at:\s*activity[\s\S]*last_message_at:/,
+  "server cache upserts must persist canonical activity metadata",
+);
+const mergeChatMessagesBlock = functionBlock(
+  storageService,
+  "async function mergeChatMessages",
+  "async function replaceChatMessages",
+);
+assert.match(
+  mergeChatMessagesBlock,
+  /touchChatActivity\(chat, lastMessageTimestamp\)/,
+  "message hydration must update server activity from message timestamps instead of load time",
+);
+const pruneServerChatMessageCacheBlock = functionBlock(
+  storageService,
+  "async function pruneServerChatMessageCache",
+  "async function updateChatTitle",
+);
+assert.match(
+  pruneServerChatMessageCacheBlock,
+  /keepIds\.has\(chat\.id\) \|\| chat\.pending_server_sync \|\| chat\.missing_remote_at/,
+  "message-cache pruning must preserve current/recent, pending-sync, and missing-remote chats",
+);
+assert.match(
+  pruneServerChatMessageCacheBlock,
+  /chat\.messages = \[\][\s\S]*message_cache_status = "metadata-only"/,
+  "message-cache pruning must keep metadata while dropping older full message payloads",
+);
+assert.match(
+  pruneServerChatMessageCacheBlock,
+  /cachedMessageCount = chat\.messages\.length[\s\S]*chat\.message_count =/,
+  "message-cache pruning must preserve a visible message count before clearing cached messages",
+);
+assert.match(
+  storageService,
+  /pruneServerChatMessageCache, compareChatsByActivity/,
+  "storage public surface must expose cache pruning and canonical ordering helpers",
+);
+const warmRecentChatCacheBlock = functionBlock(
+  chatController,
+  "async function warmRecentChatCache",
+  "function normalizeDuplicateFingerprint",
+);
+assert.match(
+  warmRecentChatCacheBlock,
+  /filter\(\(chat\) => chat\?\.id && isVisibleChatListItem\(chat\)\)[\s\S]*slice\(0, RECENT_CHAT_WARM_LIMIT\)/,
+  "recent local warming must target the newest visible five chats",
+);
+assert.match(
+  warmRecentChatCacheBlock,
+  /pruneChatMessageWarmCache\(recentChatIds\)/,
+  "recent warming must prune older unprotected full-message caches",
+);
+const visibleChatListItemBlock = functionBlock(
+  chatController,
+  "function isVisibleChatListItem",
+  "function titleLooksLikeFirstMessageFallback",
+);
+assert.match(
+  visibleChatListItemBlock,
+  /counts\.localCount > 0 \|\| \(counts\.serverCount !== null && counts\.serverCount > 0\)/,
+  "empty authenticated chats must stay hidden until they have local or server messages",
+);
+assert.match(
+  visibleChatListItemBlock,
+  /first_user_message[\s\S]*last_message_at/,
+  "older cached metadata with message evidence should remain visible even without full message cache",
+);
+const loadChatListBlock = functionBlock(
+  chatController,
+  "async function _loadChatListImpl",
+  "function renderLoadedChat",
+);
+assert.match(
+  loadChatListBlock,
+  /const sidebarChats = isAuthenticatedSession\(\)[\s\S]*chats\.filter\(isVisibleChatListItem\)/,
+  "sidebar rendering and search must filter hidden empty authenticated chats without reordering",
+);
 
 assert.match(
   apiClient,
