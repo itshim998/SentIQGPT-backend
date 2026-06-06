@@ -1,8 +1,8 @@
-# SentIQGPT Architecture
+# SentIQ Chat Architecture
 
 ## System Overview
 
-SentIQGPT is an authenticated AI assistant with persistent conversations, memory, file handling, generated files, image generation, chart generation, and web search. The browser keeps local IndexedDB state for responsiveness, while the backend owns canonical authenticated data in sharded Supabase databases.
+SentIQ Chat is an authenticated AI assistant with persistent conversations, memory, file handling, generated files, image generation, chart generation, and web search. The browser keeps local IndexedDB state for responsiveness, while the backend owns canonical authenticated data in sharded Supabase databases.
 
 | Area | Current Behavior |
 | --- | --- |

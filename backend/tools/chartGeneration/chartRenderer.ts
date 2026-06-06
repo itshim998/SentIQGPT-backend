@@ -1,4 +1,4 @@
-// SentIQGPT — Chart Renderer
+// SentIQ Chat — Chart Renderer
 //
 // Converts a ChartSpec into runnable code for the chosen renderer.
 //

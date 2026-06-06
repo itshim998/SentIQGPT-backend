@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Web Search Router
+// SentIQ Chat v2 — Web Search Router
 //
 // Sequential fallback router for web search providers.
 // Tries each provider in priority order; returns as soon as one succeeds.

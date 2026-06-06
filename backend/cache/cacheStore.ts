@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Cache Store
+// SentIQ Chat v2 — Cache Store
 //
 // In-memory key-value store with TTL expiration and LRU-style eviction.
 // Each cache category has an independent size cap to bound total memory

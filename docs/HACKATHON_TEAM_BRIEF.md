@@ -1,16 +1,16 @@
-# SentIQGPT + StudentOS Hackathon Team Brief
+# SentIQ Chat + StudentOS Hackathon Team Brief
 
 ## 1. One-Line Summary
 
-"SentIQGPT is the working AI brain; StudentOS is the student-focused operating layer we are building on top of it."
+"SentIQ Chat is the working AI brain; StudentOS is the student-focused operating layer we are building on top of it."
 
-- SentIQGPT = current working AI foundation
+- SentIQ Chat = current working AI foundation
 - StudentOS = future student-native academic operating system
 - Hackathon strategy = present a real foundation + clear product vision
 
-## 2. What SentIQGPT Is Today
+## 2. What SentIQ Chat Is Today
 
-On the surface, SentIQGPT may look like a general AI chatbot. But underneath, it already has the core infrastructure needed for a larger AI operating system.
+On the surface, SentIQ Chat may look like a general AI chatbot. But underneath, it already has the core infrastructure needed for a larger AI operating system.
 
 - AI chat interface with authenticated sessions
 - Persistent conversations and history
@@ -24,13 +24,13 @@ On the surface, SentIQGPT may look like a general AI chatbot. But underneath, it
 - Safety checks, validation, and rate limiting
 - Storage and persistence for user data and artifacts
 
-## 3. Simple SentIQGPT Architecture Diagram
+## 3. Simple SentIQ Chat Architecture Diagram
 
 User
   |
 Frontend Interface
   |
-SentIQGPT App Layer
+SentIQ Chat App Layer
   |
 AI Orchestration Layer
   |------------------|
@@ -43,7 +43,7 @@ User Experience
 
 - User: a student or teammate interacting through the UI
 - Frontend Interface: chat UI and local state
-- SentIQGPT App Layer: API surface and session handling
+- SentIQ Chat App Layer: API surface and session handling
 - AI Orchestration Layer: routes tasks and tool steps
 - Memory / Context: recalls relevant facts and history
 - File Handling: uploads, analysis, and references
@@ -83,10 +83,10 @@ StudentOS IS:
 
 ## 6. Strategic Positioning for the Hackathon
 
-SentIQGPT = the brain
+SentIQ Chat = the brain
 StudentOS = the student operating system built around that brain
 
-SentIQGPT Foundation
+SentIQ Chat Foundation
   |
   | provides:
   | - AI reasoning
@@ -106,10 +106,10 @@ StudentOS Layer
   | - weak topic tracking
   | - Today dashboard
 
-"We are not claiming that the full StudentOS is already complete. We are showing that we have already built the AI foundation, SentIQGPT, and we are now turning it into a focused student operating system."
+"We are not claiming that the full StudentOS is already complete. We are showing that we have already built the AI foundation, SentIQ Chat, and we are now turning it into a focused student operating system."
 
 Good way to say it:
-- "SentIQGPT is our working AI foundation."
+- "SentIQ Chat is our working AI foundation."
 - "StudentOS is the student-native layer we are building on top."
 - "The hackathon prototype demonstrates the transition from generic AI assistant to academic operating system."
 
@@ -133,7 +133,7 @@ Bad way to say it:
 
 Demo flow:
 
-1. Start with SentIQGPT
+1. Start with SentIQ Chat
    - Show it is a working AI platform
    - Mention that this is the current foundation
 
@@ -167,7 +167,7 @@ Demo flow:
 ## 9. Exact Team Talking Points
 
 - "Students do not need another chatbot. They need a connected academic system."
-- "SentIQGPT gives us the working AI foundation."
+- "SentIQ Chat gives us the working AI foundation."
 - "StudentOS turns that foundation into a student-native product."
 - "The key shift is from answering questions to managing academic context."
 - "The output is not only a response; it becomes a plan, a task, a quiz, or a revision workflow."
@@ -176,11 +176,11 @@ Demo flow:
 ## 10. What Judges May Ask
 
 - Q: Is this just ChatGPT for students? A: No. StudentOS maintains academic context across courses, materials, deadlines, notes, weak concepts, and study plans.
-- Q: What have you actually built? A: We have built SentIQGPT, a working AI foundation with chat, memory/context, file handling, persistence, generated outputs, and orchestration. The hackathon prototype shows how this foundation becomes StudentOS.
+- Q: What have you actually built? A: We have built SentIQ Chat, a working AI foundation with chat, memory/context, file handling, persistence, generated outputs, and orchestration. The hackathon prototype shows how this foundation becomes StudentOS.
 - Q: What is still future work? A: The full StudentOS interface, course object model, Today dashboard, adaptive planner, and deeper revision engine are the next product layer.
 - Q: Why would students use this instead of Notion or NotebookLM? A: Notion requires manual setup. NotebookLM is strong for source Q&A but not daily planning or student workflow orchestration. StudentOS connects course context, tutoring, planning, and revision.
 - Q: How do you prevent cheating? A: StudentOS is positioned as a learning scaffold. It focuses on explanation, planning, quizzes, review, source grounding, and weak concept tracking - not automated assignment cheating.
-- Q: Why is SentIQGPT important? A: SentIQGPT proves that we already have a functioning AI platform. StudentOS is not just a vague idea; it is being built on an existing AI foundation.
+- Q: Why is SentIQ Chat important? A: SentIQ Chat proves that we already have a functioning AI platform. StudentOS is not just a vague idea; it is being built on an existing AI foundation.
 
 ## 11. Presentation Slide Strategy
 
@@ -201,7 +201,7 @@ Demo flow:
 Team Alignment: What We Must All Say Consistently
 
 We should always say:
-- SentIQGPT is the existing AI foundation
+- SentIQ Chat is the existing AI foundation
 - StudentOS is the future student operating layer
 - The hackathon demonstrates the transition from generic AI to academic operating system
 - The product is focused on student workflow, not just chatting
@@ -217,4 +217,4 @@ We should avoid saying:
 
 ## 13. Final Summary
 
-> Key message: "SentIQGPT is the brain. StudentOS is the student operating system. Our hackathon goal is to show how a real AI foundation can become a focused academic product that helps students understand, plan, revise, and act."
+> Key message: "SentIQ Chat is the brain. StudentOS is the student operating system. Our hackathon goal is to show how a real AI foundation can become a focused academic product that helps students understand, plan, revise, and act."

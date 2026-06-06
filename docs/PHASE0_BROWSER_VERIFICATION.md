@@ -32,7 +32,7 @@ npm.cmd run test:priority4-contracts
 
 1. Open `Privacy & data` from the sidebar as a guest and as a signed-in user.
 2. Confirm Support opens an email to `support@sentiqlabs.com`.
-3. Upload a source file, use `Clear local SentIQGPT data`, and confirm the browser cache and temporary upload session are cleared without signing the user out.
+3. Upload a source file, use `Clear local SentIQ Chat data`, and confirm the browser cache and temporary upload session are cleared without signing the user out.
 4. Remove a generated image and generated file. Confirm the UI shows success only after backend deletion succeeds.
 5. Delete a cloud conversation containing generated artifacts. Confirm storage objects and metadata are removed before the conversation disappears from the sidebar.
 

@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 
-// SentIQGPT v1 — In-Memory Audit Logger
+// SentIQ Chat v1 — In-Memory Audit Logger
 //
 // Lightweight request auditing. Circular buffer of last N entries.
 

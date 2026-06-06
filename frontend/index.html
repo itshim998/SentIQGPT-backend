@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content, viewport-fit=cover">
-  <title>SentIQGPT</title>
+  <title>SentIQ Chat</title>
+  <meta name="application-name" content="SentIQ Chat">
+  <meta name="apple-mobile-web-app-title" content="SentIQ Chat">
+  <link rel="canonical" href="https://sentiqchat.sentiqlabs.com/">
   <link rel="icon" type="image/png" href="https://i.ibb.co/TxPHCpDf/download.png">
   <link rel="shortcut icon" type="image/png" href="https://i.ibb.co/TxPHCpDf/download.png">
   <link rel="apple-touch-icon" href="https://i.ibb.co/TxPHCpDf/download.png">
@@ -21,7 +24,7 @@
 </head>
 <body>
   <div id="compatibility-banner" class="compatibility-banner" role="status" aria-live="polite">
-    <span id="compatibility-banner-message">Starting SentIQGPT...</span>
+    <span id="compatibility-banner-message">Starting SentIQ Chat...</span>
   </div>
   <div class="app-container">
 
@@ -29,7 +32,7 @@
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <div class="sidebar-title-row">
-          <h1 class="logo">SentIQ<span class="logo-accent">GPT</span></h1>
+          <h1 class="logo">SentIQ<span class="logo-accent">Chat</span></h1>
           <button id="sidebar-collapse-btn" class="sidebar-collapse-btn" type="button" title="Collapse chat history" aria-label="Collapse chat history" aria-expanded="true" aria-controls="sidebar">
             <svg class="sidebar-collapse-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M15 18l-6-6 6-6"></path>
@@ -92,13 +95,14 @@
               <span id="auth-menu-email" class="auth-menu-email"></span>
             </div>
           </div>
+          <button id="auth-menu-billing-btn" class="auth-btn auth-menu-billing" type="button" role="menuitem">Billing</button>
           <button id="auth-menu-logout-btn" class="auth-btn auth-menu-logout" type="button" role="menuitem">Log out</button>
         </div>
       </div>
 
       <!-- Welcome screen -->
       <div id="welcome-screen" class="welcome-screen">
-        <div class="welcome-eyebrow">SentIQGPT</div>
+        <div class="welcome-eyebrow">SentIQ Chat</div>
         <h2 id="welcome-heading">Ready when you are.</h2>
         <p id="welcome-subtitle" class="welcome-subtitle">Ask a question, work through a file, or pick up a thread from earlier.</p>
         <div id="starter-actions" class="starter-actions" aria-label="Starter actions">
@@ -216,7 +220,7 @@
           </div>
 
           <div class="input-field-wrapper">
-            <textarea id="chat-input" rows="1" aria-label="Message SentIQGPT" autocomplete="off" spellcheck="true"></textarea>
+            <textarea id="chat-input" rows="1" aria-label="Message SentIQ Chat" autocomplete="off" spellcheck="true"></textarea>
             <div id="composer-hint-overlay" class="composer-hint-overlay" aria-hidden="true">
               <span class="composer-hint-prefix">Try asking about</span>
               <span id="composer-hint-text" class="composer-hint-text"></span>
@@ -233,6 +237,7 @@
               <button class="execution-mode-option" type="button" role="option" data-execution-mode="intuitive" aria-selected="false">Intuitive</button>
             </div>
           </div>
+          <button id="composer-quota-chip" class="composer-quota-chip" type="button" title="Open billing" aria-label="Open billing usage" style="display: none;">Free</button>
 
           <button id="send-btn" class="btn-send" title="Send message" aria-label="Send message">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -249,7 +254,7 @@
   <div id="auth-modal" class="modal-overlay" style="display: none;" aria-hidden="true">
     <div class="modal-container auth-modal-container" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
       <div class="modal-header">
-        <h2 id="auth-modal-title">Log in to SentIQGPT</h2>
+        <h2 id="auth-modal-title">Log in to SentIQ Chat</h2>
         <button id="auth-close-btn" class="modal-close" title="Close" aria-label="Close authentication dialog">✕</button>
       </div>
       <div class="modal-body auth-modal-body">
@@ -291,7 +296,7 @@
           <div id="auth-status" class="auth-status" aria-live="polite"></div>
           <button id="auth-submit-btn" class="btn btn-primary auth-submit-btn" type="submit">Log in</button>
           <div class="auth-switch">
-            <span id="auth-switch-label">New to SentIQGPT?</span>
+            <span id="auth-switch-label">New to SentIQ Chat?</span>
             <button id="auth-switch-btn" type="button">Create new account.</button>
           </div>
         </form>
@@ -302,7 +307,7 @@
   <div id="name-modal" class="modal-overlay" style="display: none;" aria-hidden="true">
     <div class="modal-container name-modal-container" role="dialog" aria-modal="true" aria-labelledby="name-modal-title">
       <div class="modal-header">
-        <h2 id="name-modal-title">What should SentIQGPT call you?</h2>
+        <h2 id="name-modal-title">What should SentIQ Chat call you?</h2>
       </div>
       <div class="modal-body name-modal-body">
         <div class="auth-modal-copy">
@@ -335,6 +340,7 @@
       <div class="modal-body">
         <div class="settings-tabs">
           <button class="settings-tab active" data-tab="general">General</button>
+          <button class="settings-tab" data-tab="billing">Billing</button>
           <button class="settings-tab" data-tab="memory">Memory Manager</button>
           <button class="settings-tab" data-tab="storage">Storage</button>
         </div>
@@ -357,6 +363,13 @@
             </div>
           </div>
           <button id="save-settings-btn" class="btn btn-primary">Save Settings</button>
+        </div>
+
+        <!-- Billing -->
+        <div id="settings-tab-billing" class="settings-tab-content">
+          <div id="billing-panel" class="billing-panel" aria-live="polite">
+            <div class="billing-panel-status">Loading billing details...</div>
+          </div>
         </div>
 
         <!-- Memory Manager -->
@@ -392,21 +405,21 @@
         </div>
         <section id="trust-tab-privacy" class="trust-tab-content active">
           <h3>How data is handled</h3>
-          <p>SentIQGPT is an AI assistant for chat, file analysis, web-assisted research, and generated artifacts. Review important outputs before relying on them.</p>
+          <p>SentIQ Chat is an AI assistant for chat, file analysis, web-assisted research, and generated artifacts. Review important outputs before relying on them.</p>
           <p>Guest chats are sent to the backend when you use chat features, but they are not saved as cloud conversations or memories. A recovery draft may remain in this browser tab if a response is interrupted.</p>
           <p>When you sign in, conversations, messages, memories, and generated artifacts can be stored in your account. This browser also keeps a local cache so recent work remains available.</p>
           <p>Uploaded source files are processed for analysis. The latest temporary extraction may remain in the backend session cache for up to about one hour. Relevant context can be processed by configured AI and search services when you use those features.</p>
         </section>
         <section id="trust-tab-terms" class="trust-tab-content">
           <h3>Terms of use</h3>
-          <p>Use SentIQGPT lawfully and review important outputs before relying on them. Do not upload data you are not authorized to process. Generated and analyzed content can contain mistakes.</p>
+          <p>Use SentIQ Chat lawfully and review important outputs before relying on them. Do not upload data you are not authorized to process. Generated and analyzed content can contain mistakes.</p>
         </section>
         <section id="trust-tab-controls" class="trust-tab-content">
           <h3>Data controls</h3>
-          <p>Clearing local data removes this browser's SentIQGPT cache and temporary upload session without signing you out. Cloud conversations and memories remain until you remove them from their respective controls.</p>
+          <p>Clearing local data removes this browser's SentIQ Chat cache and temporary upload session without signing you out. Cloud conversations and memories remain until you remove them from their respective controls.</p>
           <div id="data-controls-status" class="data-controls-status" role="status" aria-live="polite"></div>
           <button id="clear-source-files-btn" class="btn btn-secondary" type="button">Clear temporary source files</button>
-          <button id="clear-local-data-btn" class="btn btn-danger" type="button">Clear local SentIQGPT data</button>
+          <button id="clear-local-data-btn" class="btn btn-danger" type="button">Clear local SentIQ Chat data</button>
           <p class="data-controls-note">Remove cloud conversations from the sidebar and memories from Memory Manager. Generated artifacts include their own Remove action. For account-deletion help, contact support.</p>
         </section>
         <section id="trust-tab-support" class="trust-tab-content">

@@ -1,15 +1,42 @@
 // ================================================================
 // 3. API Client
 // ================================================================
+import { PRODUCT_NAME, STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "../shared/brand.js";
 import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
 const API_BASE = window.SENTIQ_API_BASE ||
   (location.hostname === "localhost" || location.hostname === "127.0.0.1"
     ? "http://localhost:3001"
+    // Azure backend resource identifier remains unchanged until a verified replacement exists.
     : "https://sentiqgpt-backend.ashygrass-913d190e.centralindia.azurecontainerapps.io");
+const ANONYMOUS_ID_KEY = STORAGE_KEYS.anonymousQuotaId;
+const LEGACY_ANONYMOUS_ID_KEY = LEGACY_STORAGE_KEYS.anonymousQuotaId;
+
+function createAnonymousId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function getAnonymousId() {
+  try {
+    const existing = localStorage.getItem(ANONYMOUS_ID_KEY);
+    if (existing && existing.length <= 96) return existing;
+    const legacy = localStorage.getItem(LEGACY_ANONYMOUS_ID_KEY);
+    if (legacy && legacy.length <= 96) {
+      localStorage.setItem(ANONYMOUS_ID_KEY, legacy);
+      return legacy;
+    }
+    const created = createAnonymousId();
+    localStorage.setItem(ANONYMOUS_ID_KEY, created);
+    return created;
+  } catch {
+    return createAnonymousId();
+  }
+}
 
 async function buildAuthHeaders(baseHeaders = {}) {
   const headers = { ...baseHeaders };
+  headers["X-SentIQ-Anonymous-Id"] = getAnonymousId();
   try {
     const token = await window.SentIQAuth?.getAccessToken?.();
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -31,7 +58,9 @@ function createApiError(response, errorData, fallbackMessage) {
   error.response = response;
   error.details = errorData;
   error.internalMessage = internalMessage;
-  error.message = window.SentIQErrors?.getSafeErrorMessage?.(error) || "SentIQGPT could not finish that action. Please try again.";
+  error.message = errorData?.type === "quota_exceeded" && errorData?.error
+    ? errorData.error
+    : (window.SentIQErrors?.getSafeErrorMessage?.(error) || `${PRODUCT_NAME} could not finish that action. Please try again.`);
   if (error.code === "profile_name_required" || error.requiresName || error.requires_name) {
     dispatchProfileNameRequired({
       endpoint: response.url,
@@ -181,6 +210,7 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
         else if (parsed.type === "error") {
           terminalError = new Error(parsed.error);
           terminalError.code = typeof parsed.code === "string" ? parsed.code : "";
+          terminalError.details = parsed;
           interrupted = tokensReceived;
           if (callbacks.onError) callbacks.onError(terminalError, { tokensReceived, interrupted });
           return true;
@@ -223,6 +253,7 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
     throw terminalError;
   }
   if (!interrupted && callbacks.onDone) callbacks.onDone();
+  if (!interrupted) window.dispatchEvent(new CustomEvent("sentiq-billing-refresh"));
   return { structured: structuredReceived, tokensReceived, interrupted, error: terminalError };
 }
 
@@ -239,7 +270,7 @@ async function sendMessage(message, context = {}) {
     ? context.clarificationResponse
     : undefined;
   const executionMode = normalizeExecutionMode(context.executionMode || context.execution_mode);
-  return apiRequest("/api/chat", {
+  const result = await apiRequest("/api/chat", {
     method: "POST",
     body: JSON.stringify({
       message,
@@ -251,6 +282,8 @@ async function sendMessage(message, context = {}) {
     }),
     signal: context.signal || null,
   });
+  window.dispatchEvent(new CustomEvent("sentiq-billing-refresh"));
+  return result;
 }
 
 async function getChatIntent(message, context = {}) {
@@ -465,6 +498,36 @@ async function getImageQuota() {
   return apiRequest("/api/images/quota");
 }
 
+async function getBillingPlans() {
+  return apiRequest("/api/billing/plans", { method: "GET" });
+}
+
+async function getBillingMe() {
+  return apiRequest("/api/billing/me", { method: "GET" });
+}
+
+async function getBillingUsage() {
+  return apiRequest("/api/billing/usage", { method: "GET" });
+}
+
+async function startBillingCheckout(planCode) {
+  return apiRequest("/api/billing/checkout", {
+    method: "POST",
+    body: JSON.stringify({ plan_code: planCode }),
+  });
+}
+
+async function verifyBillingCheckout(payload) {
+  return apiRequest("/api/billing/verify", {
+    method: "POST",
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+async function cancelBillingSubscription() {
+  return apiRequest("/api/billing/cancel", { method: "POST", body: JSON.stringify({}) });
+}
+
 async function getGeneratedFileAccessUrl(fileId, mode = "download") {
   const endpoint = mode === "preview" ? "preview-url" : "download";
   return apiRequest(`/api/generated-files/${encodeURIComponent(fileId)}/${endpoint}`, { method: "GET" });
@@ -512,6 +575,7 @@ async function getConfigAPI() { return apiRequest("/api/config"); }
 window.SentIQAPI = {
   sendMessage, sendMessageStream, canStreamResponses, getChatIntent, classifyMemory, compressMemories,
   sendSelectionMessage, uploadFile, subscribeFileUpdates, clearFileSession, generateImage, storeImage, getChatImages, getImageQuota, deleteImage, generateTitle,
+  getBillingPlans, getBillingMe, getBillingUsage, startBillingCheckout, verifyBillingCheckout, cancelBillingSubscription,
   getGeneratedFileAccessUrl, updateGeneratedHtmlFile, deleteGeneratedFile,
   getConversations, createConversation, getConversationMessages, deleteConversation, updateConversationTitle, syncChatMessages,
   getMemories, deleteMemory: deleteMemoryAPI, getProfile, updateProfile,

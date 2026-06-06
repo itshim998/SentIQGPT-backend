@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Memory Relevance Selector
+// SentIQ Chat v2 — Memory Relevance Selector
 //
 // Scores each memory against the current user query using:
 //   1. Keyword overlap  (50% weight)

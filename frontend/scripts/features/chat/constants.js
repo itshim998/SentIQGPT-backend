@@ -1,3 +1,5 @@
+import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "../../shared/brand.js";
+
 export const DEFAULT_IMAGE_ANALYSIS_PROMPT = "Analyze this image. Describe what it shows, read any visible text, and explain any important details.";
 
 export const CHART_REQUEST_PATTERNS = [
@@ -46,7 +48,8 @@ export const SYNC_JOB_TYPES = {
 };
 
 export const MEMORY_SYNC_STALE_MS = 60 * 1000;
-export const WELCOME_GREETING_STORAGE_PREFIX = "sentiq:greeting-index:";
+export const WELCOME_GREETING_STORAGE_PREFIX = STORAGE_KEYS.greetingIndexPrefix;
+export const LEGACY_WELCOME_GREETING_STORAGE_PREFIX = LEGACY_STORAGE_KEYS.greetingIndexPrefix;
 
 export const WELCOME_GREETINGS = [
   "Ready when you are{suffix}.",

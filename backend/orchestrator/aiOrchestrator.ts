@@ -1,4 +1,4 @@
-// SentIQGPT v2 — AI Orchestrator (with Autonomous Tool Selection)
+// SentIQ Chat v2 — AI Orchestrator (with Autonomous Tool Selection)
 //
 // Central intelligence pipeline. The orchestrator:
 //
@@ -38,6 +38,7 @@ import {
   type ClarificationResponsePayload,
 } from "./intentClarifier";
 import { evaluateAnswer } from "../reflection/answerCritic";
+import { PRODUCT_DISCLAIMER } from "../branding";
 import { improveAnswer } from "../reflection/answerImprover";
 import type { RawMessageContext } from "../context/contextBuilder";
 import type { DetectedTool } from "./toolDetector";
@@ -45,6 +46,8 @@ import type { PlanTool } from "./planner";
 import type { StepResult } from "./toolExecutor";
 import type { SearchResult } from "../tools/webSearch/types";
 import { resolveExecutionProfile, type ExecutionMode, type ExecutionProfile } from "./executionProfile";
+import { BillingQuotaService } from "../billing/quotaService";
+import type { UsageReservation } from "../billing/entitlementTypes";
 
 // ==============================
 // Types
@@ -163,6 +166,15 @@ type InternalMergedResponse = Omit<OrchestratorResponse, "confidence"> & {
   _sanitize_bypass?: boolean;
 };
 
+const billingQuotaService = new BillingQuotaService();
+
+async function releaseBillingReservation(reservation: UsageReservation | null | undefined): Promise<void> {
+  if (!reservation) return;
+  await billingQuotaService.release(reservation).catch((error) => {
+    console.warn(`[Billing] failed to release reservation ${reservation.requestId}: ${error instanceof Error ? error.message : error}`);
+  });
+}
+
 // ==============================
 // Helpers
 // ==============================
@@ -275,7 +287,7 @@ function buildClarificationResponse(payload: ClarificationPayload): Orchestrator
     route: "clarification" as DetectedTool,
     answer: reply,
     reply,
-    disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+    disclaimer: PRODUCT_DISCLAIMER,
     memory: { stored: false },
     clarification: payload,
     confidence: 0.9,
@@ -445,7 +457,7 @@ export function mergeResults(
     reply,
     thinking,
     disclaimer: reply
-      ? "SentIQGPT is an AI assistant. Verify important information independently."
+      ? PRODUCT_DISCLAIMER
       : undefined,
     image,
     chart,
@@ -525,7 +537,7 @@ async function _orchestrateInner(
       route: "memory_update",
       answer: reply,
       reply,
-      disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+      disclaimer: PRODUCT_DISCLAIMER,
       memory: merged.memory,
       confidence,
     };
@@ -562,7 +574,30 @@ async function _orchestrateInner(
     console.log(`[MathPipeline] math query detected on raw input — bypassing planner`);
     console.log(`[MathPipeline] solving with openai-large`);
 
-    const mathResult = await solveMathDirect(userMessage, rawContext?.userId, rawContext?.image_attachments);
+    const reservation = rawContext?.billingIdentity
+      ? await billingQuotaService.reserveAdvancedReasoning({
+          identity: rawContext.billingIdentity,
+          requestId: `${rawContext.billingRequestId ?? "orchestrator"}:math`,
+          conversationId: rawContext.conversationId,
+          clientRequestId: rawContext.billingRequestId,
+          metadata: { endpoint: "orchestrator", route: "math_reasoning" },
+        })
+      : null;
+    let mathResult: Awaited<ReturnType<typeof solveMathDirect>>;
+    try {
+      mathResult = await solveMathDirect(
+        userMessage,
+        rawContext?.userId,
+        rawContext?.image_attachments,
+        reservation ? { modelOverride: reservation.adapterModelOverride } : {},
+      );
+      if (reservation) {
+        await billingQuotaService.commit(reservation, { endpoint: "orchestrator", route: "math_reasoning" });
+      }
+    } catch (error) {
+      await releaseBillingReservation(reservation);
+      throw error;
+    }
 
     console.log(
       `[MathPipeline] solved using openai-large`,
@@ -581,7 +616,7 @@ async function _orchestrateInner(
       route: "math_reasoning" as DetectedTool,
       answer: finalReply,
       reply: finalReply,
-      disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+      disclaimer: PRODUCT_DISCLAIMER,
       memory: { stored: false },
       confidence: computedConfidence,
     };

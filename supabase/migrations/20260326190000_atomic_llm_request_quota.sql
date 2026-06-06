@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
--- SentIQGPT Atomic LLM Request Quota RPC
+-- SentIQ Chat Atomic LLM Request Quota RPC
 --
 -- RUN ON: Database 1, 2, 3, 4 (Control DB + Data shards)
 --

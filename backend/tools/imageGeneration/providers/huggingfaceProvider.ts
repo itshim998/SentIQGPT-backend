@@ -1,4 +1,4 @@
-// SentIQGPT v2 — HuggingFace Image Provider
+// SentIQ Chat v2 — HuggingFace Image Provider
 //
 // Uses the HuggingFace Inference API with Stable Diffusion XL.
 // Requires HUGGINGFACE_API_TOKEN in environment.

@@ -2,7 +2,7 @@ import rateLimit from "express-rate-limit";
 import type { Request } from "express";
 import type { AuthenticatedRequest } from "./auth";
 
-// SentIQGPT v1 — Rate Limiting Middleware
+// SentIQ Chat v1 — Rate Limiting Middleware
 //
 // Three tiers:
 // 1. General API: 100 req/min per client

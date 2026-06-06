@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
--- SentIQGPT Capacity Limits Migration
+-- SentIQ Chat Capacity Limits Migration
 -- 
 -- This migration adds database-level enforcement for capacity limits:
 --   1. MAX 50 conversations per user (auto-delete oldest)

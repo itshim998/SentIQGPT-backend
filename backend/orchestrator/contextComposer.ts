@@ -1,4 +1,4 @@
-// SentIQGPT — Context Composer
+// SentIQ Chat — Context Composer
 //
 // Receives raw context components, ranks them by importance, enforces
 // per-slot budgets via the Context Budget Manager, applies safe

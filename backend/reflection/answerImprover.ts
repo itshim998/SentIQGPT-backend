@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Answer Improver (Self-Reflection)
+// SentIQ Chat v2 — Answer Improver (Self-Reflection)
 //
 // Takes an initial AI answer plus the critic's evaluation and
 // produces an improved version that addresses the identified issues.

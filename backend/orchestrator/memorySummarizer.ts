@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Memory Summarizer (Orchestrator Layer)
+// SentIQ Chat v2 — Memory Summarizer (Orchestrator Layer)
 //
 // Thin orchestrator wrapper around MemoryProcessor.summarizeMemory().
 // Translates the v1 result into canonical MemorySummaryResult types.

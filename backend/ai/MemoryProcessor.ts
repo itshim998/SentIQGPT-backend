@@ -9,7 +9,7 @@ import {
 import { generateEmbedding } from "../memory/memoryEmbedding";
 import { detectExplicitMemoryWriteIntent, detectPersonalMemoryType } from "../orchestrator/queryClassifier";
 
-// SentIQGPT v1 — Memory Processor
+// SentIQ Chat v1 — Memory Processor
 //
 // Orchestrates the Groq-powered memory pipeline:
 // 1. CLASSIFY: Should this message be stored as memory?

@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Web Search Types
+// SentIQ Chat v2 — Web Search Types
 //
 // Shared interfaces for all search providers and the router.
 

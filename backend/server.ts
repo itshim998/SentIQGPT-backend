@@ -104,12 +104,6 @@ import {
   findExistingAssistantImageMessage,
   persistGeneratedImageResult,
 } from "./services/generatedImagePersistenceService";
-import {
-  getCentralImageQuotaInfo,
-  ImageQuotaError,
-  releaseCentralImageQuota,
-  reserveCentralImageQuota,
-} from "./services/imageQuotaService";
 
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
@@ -123,7 +117,7 @@ import {
 } from "./orchestrator/intentClarifier";
 
 import { detectCodeQuery, detectImageMathPrompt, isBufferedReasoningQuery, isMathQuery } from "./orchestrator/modelRouter";
-import { selectImageModelPreferenceWithMaster, selectModelForPromptWithMaster } from "./orchestrator/masterRouter";
+import { selectModelForPromptWithMaster } from "./orchestrator/masterRouter";
 import { detectExplicitMemoryWriteIntent } from "./orchestrator/queryClassifier";
 import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 import { isWebSearchMode, normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
@@ -153,8 +147,24 @@ import { ZodError } from "zod";
 import { collapseAdjacentDuplicateMessages } from "./context/messageDeduper";
 import { resolveContextReferences } from "./context/referenceResolver";
 import { callMathModelRaw, streamMathModelRaw } from "./ai/mathVerifier";
+import { registerBillingRoutes } from "./billing/billingRoutes";
+import { buildBillingIdentity, getAnonymousIdHeaderName } from "./billing/anonymousIdentity";
+import { BillingQuotaError, BillingQuotaService, buildQuotaErrorPayload } from "./billing/quotaService";
+import type { BillingIdentity, UsageReservation } from "./billing/entitlementTypes";
+import { getImageModelForPlan } from "./billing/modelEntitlementRouter";
+import {
+  CANONICAL_FRONTEND_ORIGIN,
+  LEGACY_FRONTEND_ORIGINS,
+  LOG_PREFIX,
+  PRODUCT_DISCLAIMER,
+  PRODUCT_NAME,
+  PUBLIC_BACKEND_SERVICE_NAME,
+  PUBLIC_SYSTEM_NAME,
+} from "./branding";
+import { validateInternalGatewayConfiguration } from "./internalGateway";
 
 const app = express();
+const billingQuotaService = new BillingQuotaService();
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const JSON_BODY_LIMIT = process.env.SENTIQ_JSON_BODY_LIMIT?.trim() || "6mb";
 const TITLE_MAX_CHARS = 120;
@@ -175,8 +185,9 @@ function getExplicitWebSearchMode(value: unknown): "basic" | undefined {
 
 // ---- CORS ----
 const DEFAULT_ORIGINS = [
-  "https://sentiqgpt.sentiqlabs.com",
-  "https://www.sentiqgpt.sentiqlabs.com",
+  CANONICAL_FRONTEND_ORIGIN,
+  // Legacy frontend origins remain temporarily for old sessions, OAuth redirects, and cached deployed clients.
+  ...LEGACY_FRONTEND_ORIGINS,
   "http://localhost:5500",
   "http://127.0.0.1:5500",
   "http://localhost:3000",
@@ -187,7 +198,7 @@ const ALLOWED_ORIGINS: string[] = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
   : DEFAULT_ORIGINS;
 
-console.log("[SentIQGPT v1] CORS allowed origins:", ALLOWED_ORIGINS);
+console.log(`${LOG_PREFIX} CORS allowed origins:`, ALLOWED_ORIGINS);
 
 const corsOptions: cors.CorsOptions = {
   origin(
@@ -205,13 +216,20 @@ const corsOptions: cors.CorsOptions = {
     callback(null, false);
   },
   methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", getAnonymousIdHeaderName()],
   credentials: true,
 };
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
-app.use(express.json({ limit: JSON_BODY_LIMIT }));
+app.use(express.json({
+  limit: JSON_BODY_LIMIT,
+  verify: (req, _res, buf) => {
+    if ((req as Request).originalUrl.startsWith("/api/billing/webhook/razorpay")) {
+      (req as Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+    }
+  },
+}));
 
 const PUBLIC_PRIVATE_RESPONSE_KEYS = new Set([
   "architecture",
@@ -310,6 +328,7 @@ async function attachRateLimitIdentity(req: Request, _res: Response, next: NextF
 app.use(attachRateLimitIdentity);
 app.use(generalRateLimiter);
 app.use(auditMiddleware);
+registerBillingRoutes(app);
 
 // ---- Multer for file uploads ----
 const upload = multer({
@@ -322,6 +341,106 @@ function asyncHandler(fn: (req: Request, res: Response) => Promise<void>) {
   return (req: Request, res: Response, next: NextFunction) => {
     fn(req, res).catch(next);
   };
+}
+
+function buildBillingRequestId(
+  scope: string,
+  userId: string,
+  clientRequestId?: string | null,
+): string {
+  const requestPart = clientRequestId?.trim() || randomUUID();
+  return `${scope}:${userId}:${requestPart}`;
+}
+
+function quotaErrorToPublicResponse(error: BillingQuotaError) {
+  return buildQuotaErrorPayload(error);
+}
+
+async function releaseBillingReservation(reservation: UsageReservation | null | undefined): Promise<void> {
+  if (!reservation) return;
+  await billingQuotaService.release(reservation).catch((releaseError) => {
+    console.warn(`[Billing] failed to release reservation ${reservation.requestId}: ${releaseError instanceof Error ? releaseError.message : releaseError}`);
+  });
+}
+
+async function reserveTextBilling(args: {
+  readonly identity: BillingIdentity;
+  readonly requestId: string;
+  readonly conversationId?: string | null;
+  readonly clientRequestId?: string | null;
+  readonly route: string;
+}): Promise<UsageReservation> {
+  return billingQuotaService.reserveTextRoute({
+    identity: args.identity,
+    requestId: args.requestId,
+    conversationId: args.conversationId,
+    clientRequestId: args.clientRequestId,
+    metadata: {
+      endpoint: "chat",
+      route: args.route,
+    },
+  });
+}
+
+async function reserveAdvancedBilling(args: {
+  readonly identity: BillingIdentity;
+  readonly requestId: string;
+  readonly conversationId?: string | null;
+  readonly clientRequestId?: string | null;
+  readonly route: string;
+}): Promise<UsageReservation> {
+  return billingQuotaService.reserveAdvancedReasoning({
+    identity: args.identity,
+    requestId: args.requestId,
+    conversationId: args.conversationId,
+    clientRequestId: args.clientRequestId,
+    metadata: {
+      endpoint: "chat",
+      route: args.route,
+    },
+  });
+}
+
+async function commitTextBilling(reservation: UsageReservation, route: string): Promise<void> {
+  await billingQuotaService.commit(reservation, {
+    endpoint: "chat",
+    route,
+  });
+}
+
+async function getImageQuotaDisplay(
+  identity: BillingIdentity,
+  localInfo: ReturnType<typeof getQuotaInfo>,
+): Promise<{
+  remaining: number;
+  limit: number;
+  resetMs: number;
+  reset_at: string | null;
+  plan_code: string;
+  cooldownActive: boolean;
+  cooldownResetMs: number;
+}> {
+  try {
+    const summary = await billingQuotaService.getUsageSummary(identity);
+    const quota = summary?.quotas?.image_generation;
+    return {
+      remaining: typeof quota?.remaining === "number" ? quota.remaining : localInfo.remaining,
+      limit: typeof quota?.limit === "number" ? quota.limit : localInfo.limit,
+      resetMs: 0,
+      reset_at: typeof quota?.reset_at === "string" ? quota.reset_at : null,
+      plan_code: typeof summary?.plan_code === "string" ? summary.plan_code : "free",
+      cooldownActive: localInfo.cooldownActive,
+      cooldownResetMs: localInfo.cooldownActive ? 5_000 : 0,
+    };
+  } catch (error) {
+    console.warn(`[Billing] image quota display fallback: ${error instanceof Error ? error.message : error}`);
+    return {
+      ...localInfo,
+      reset_at: null,
+      plan_code: "free",
+      cooldownResetMs: localInfo.cooldownActive ? 5_000 : 0,
+    };
+  }
 }
 
 function formatZodError(err: ZodError): string {
@@ -557,7 +676,7 @@ function buildClarificationApiResponse(payload: ClarificationPayload) {
     answer: reply,
     reply,
     thinking: undefined,
-    disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+    disclaimer: PRODUCT_DISCLAIMER,
     image: undefined,
     chart: undefined,
     memory: { stored: false },
@@ -639,7 +758,7 @@ function logProfileEvent(
     .filter(([, value]) => value !== null && typeof value !== "undefined" && value !== "")
     .map(([key, value]) => `${key}=${String(value)}`)
     .join(" ");
-  console.log(`[SentIQGPT][profile] ${event}${suffix ? ` ${suffix}` : ""}`);
+  console.log(`${LOG_PREFIX}[profile] ${event}${suffix ? ` ${suffix}` : ""}`);
 }
 
 async function resolveTrustedProfileContext(
@@ -723,7 +842,7 @@ function logDbEvent(
     .map(([key, value]) => `${key}=${String(value)}`)
     .join(" ");
   const suffix = detailString ? ` ${detailString}` : "";
-  console.log(`[SentIQGPT][db] ${scope} userId=${userId}${suffix}`);
+  console.log(`${LOG_PREFIX}[db] ${scope} userId=${userId}${suffix}`);
 }
 
 function logDbFailure(
@@ -740,7 +859,7 @@ function logDbFailure(
     ? error.message
     : formatDbError(error);
   const suffix = detailString ? ` ${detailString}` : "";
-  console.error(`[SentIQGPT][db] ${scope}.failed userId=${userId}${suffix} error=${normalizedError}`);
+  console.error(`${LOG_PREFIX}[db] ${scope}.failed userId=${userId}${suffix} error=${normalizedError}`);
 }
 
 function logMessagePersistenceGap(
@@ -1112,7 +1231,7 @@ async function resolveUserDatabaseOrThrow(userId: string, scope: string) {
   } catch (error) {
     if (error instanceof ShardCapacityError) {
       console.error(
-        `[SentIQGPT][alert] shard-capacity.exhausted userId=${userId} scope=${scope}` +
+        `${LOG_PREFIX}[alert] shard-capacity.exhausted userId=${userId} scope=${scope}` +
         ` total_users=${error.totalUsers} threshold=${error.threshold}` +
         ` retry_after_seconds=${error.retryAfterSeconds} counts=${JSON.stringify(error.counts)}`,
       );
@@ -1888,7 +2007,7 @@ setInterval(() => {
 // GET /health — Lightweight uptime ping (UptimeRobot / Render keep-alive)
 // ===============================
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "SentIQGPT backend" });
+  res.json({ status: "ok", service: PUBLIC_BACKEND_SERVICE_NAME });
 });
 
 // ===============================
@@ -1897,7 +2016,7 @@ app.get("/health", (_req, res) => {
 app.get("/api/health", (_req, res) => {
   res.json({
     status: "ok",
-    system: "SentIQGPT",
+    system: PUBLIC_SYSTEM_NAME,
     version: "2.0.0",
     timestamp: new Date().toISOString(),
   });
@@ -2485,7 +2604,10 @@ app.post(
     const normalizedRecentMessages = collapseAdjacentDuplicateMessages(
       parsed.data.context?.recent_messages ?? [],
     );
-    const { sub: userId, isGuest } = getRequestUser(req);
+    const requestUser = getRequestUser(req);
+    const { sub: userId, isGuest } = requestUser;
+    const billingIdentity = buildBillingIdentity(req, requestUser);
+    const billingRequestId = buildBillingRequestId("chat", userId, parsed.data.clientRequestId);
     const resolvedClarification = resolveClarificationInput(
       parsed.data.message,
       parsed.data.clarification_response,
@@ -2536,6 +2658,8 @@ app.post(
           image_attachments: orcImageAttachments,
           web_search_mode: webSearchMode,
           userId,
+          billingIdentity,
+          billingRequestId,
         },
       });
 
@@ -2566,6 +2690,8 @@ app.post(
         image_attachments: orcImageAttachments,
         web_search_mode: webSearchMode,
         userMessage: guestUserMessage,
+        billingIdentity,
+        billingRequestId,
       };
       const guestContext = executionProfile.context.compressConversation
         ? await buildContext(guestRawContext, undefined, userId, { profile: executionProfile })
@@ -2595,26 +2721,40 @@ app.post(
       }
 
       if (isMathReasoningQuery) {
-        const mathResult = await callMathModelRaw({
-          userMessage: guestUserMessage,
-          modelOverride: GUEST_MODEL_OVERRIDE,
-          recentMessages: guestContext.recentMessages,
-          memories: [],
-          fileReferences: guestContext.fileReferences,
-          imageAttachments: guestContext.imageAttachments,
-          conversationSummary: guestContext.conversationSummary,
-          priorConversationEvidence: guestContext.priorConversationEvidence,
-          isExplicitRecallQuery: guestContext.isExplicitRecallQuery,
-          userId,
-          maxOutputTokens: GUEST_MATH_MAX_OUTPUT_TOKENS,
-          emptyFallback: GUEST_MATH_EMPTY_FALLBACK,
+        const mathReservation = await reserveAdvancedBilling({
+          identity: billingIdentity,
+          requestId: `${billingRequestId}:guest-math`,
+          conversationId: requestedConversationId,
+          clientRequestId: parsed.data.clientRequestId,
+          route: "guest.math",
         });
+        let mathResult: Awaited<ReturnType<typeof callMathModelRaw>>;
+        try {
+          mathResult = await callMathModelRaw({
+            userMessage: guestUserMessage,
+            modelOverride: mathReservation.adapterModelOverride,
+            recentMessages: guestContext.recentMessages,
+            memories: [],
+            fileReferences: guestContext.fileReferences,
+            imageAttachments: guestContext.imageAttachments,
+            conversationSummary: guestContext.conversationSummary,
+            priorConversationEvidence: guestContext.priorConversationEvidence,
+            isExplicitRecallQuery: guestContext.isExplicitRecallQuery,
+            userId,
+            maxOutputTokens: GUEST_MATH_MAX_OUTPUT_TOKENS,
+            emptyFallback: GUEST_MATH_EMPTY_FALLBACK,
+          });
+          await commitTextBilling(mathReservation, "guest.math");
+        } catch (error) {
+          await releaseBillingReservation(mathReservation);
+          throw error;
+        }
         res.json({
           route: "math_reasoning",
           answer: mathResult.answer,
           reply: mathResult.answer,
           thinking: undefined,
-          disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+          disclaimer: PRODUCT_DISCLAIMER,
           image: undefined,
           chart: undefined,
           memory: undefined,
@@ -2625,21 +2765,35 @@ app.post(
         return;
       }
 
-      const guestChatModelOverride = isReasoningQuery ? GUEST_MODEL_OVERRIDE : GUEST_TEXT_MODEL_OVERRIDE;
-      const guestResult = await handleChat({
-        userMessage: guestUserMessage,
-        recentMessages: guestContext.recentMessages,
-        memories: [],
-        fileReferences: guestContext.fileReferences,
-        imageAttachments: guestContext.imageAttachments,
-        conversationSummary: guestContext.conversationSummary,
-        priorConversationEvidence: guestContext.priorConversationEvidence,
-        isExplicitRecallQuery: guestContext.isExplicitRecallQuery,
-        modelOverride: guestChatModelOverride,
-        userId,
-        reasoningMode: isReasoningQuery,
-        reasoningEffort: executionProfile.model.reasoningEffort,
+      const guestReservation = await reserveTextBilling({
+        identity: billingIdentity,
+        requestId: `${billingRequestId}:guest-chat`,
+        conversationId: requestedConversationId,
+        clientRequestId: parsed.data.clientRequestId,
+        route: "guest.chat",
       });
+      const guestChatModelOverride = guestReservation.adapterModelOverride;
+      let guestResult: Awaited<ReturnType<typeof handleChat>>;
+      try {
+        guestResult = await handleChat({
+          userMessage: guestUserMessage,
+          recentMessages: guestContext.recentMessages,
+          memories: [],
+          fileReferences: guestContext.fileReferences,
+          imageAttachments: guestContext.imageAttachments,
+          conversationSummary: guestContext.conversationSummary,
+          priorConversationEvidence: guestContext.priorConversationEvidence,
+          isExplicitRecallQuery: guestContext.isExplicitRecallQuery,
+          modelOverride: guestChatModelOverride,
+          userId,
+          reasoningMode: isReasoningQuery,
+          reasoningEffort: executionProfile.model.reasoningEffort,
+        });
+        await commitTextBilling(guestReservation, "guest.chat");
+      } catch (error) {
+        await releaseBillingReservation(guestReservation);
+        throw error;
+      }
 
       res.json({
         route: "chat",
@@ -2787,25 +2941,42 @@ app.post(
         web_search_mode: webSearchMode,
         userMessage: effectiveUserMessage,
         conversationId: activeConversationId || undefined,
+        billingIdentity,
+        billingRequestId,
       };
       const reasoningContext = executionProfile.context.compressConversation
         ? await buildContext(reasoningRawContext, userDb, userId, { profile: executionProfile })
         : await buildContextFast(reasoningRawContext, userDb, userId, { profile: executionProfile });
 
-      const result = await handleChat({
-        userMessage: effectiveUserMessage,
-        recentMessages: reasoningContext.recentMessages,
-        memories: reasoningContext.memories,
-        fileReferences: reasoningContext.fileReferences,
-        imageAttachments: reasoningContext.imageAttachments,
-        conversationSummary: reasoningContext.conversationSummary,
-        priorConversationEvidence: reasoningContext.priorConversationEvidence,
-        isExplicitRecallQuery: reasoningContext.isExplicitRecallQuery,
-        trustedProfile: reasoningContext.trustedProfile,
-        userId,
-        reasoningMode: true,
-        reasoningEffort: executionProfile.model.reasoningEffort,
+      const reasoningReservation = await reserveAdvancedBilling({
+        identity: billingIdentity,
+        requestId: `${billingRequestId}:reasoning`,
+        conversationId: activeConversationId,
+        clientRequestId: parsed.data.clientRequestId,
+        route: "reasoning",
       });
+      let result: Awaited<ReturnType<typeof handleChat>>;
+      try {
+        result = await handleChat({
+          userMessage: effectiveUserMessage,
+          recentMessages: reasoningContext.recentMessages,
+          memories: reasoningContext.memories,
+          fileReferences: reasoningContext.fileReferences,
+          imageAttachments: reasoningContext.imageAttachments,
+          conversationSummary: reasoningContext.conversationSummary,
+          priorConversationEvidence: reasoningContext.priorConversationEvidence,
+          isExplicitRecallQuery: reasoningContext.isExplicitRecallQuery,
+          trustedProfile: reasoningContext.trustedProfile,
+          modelOverride: reasoningReservation.adapterModelOverride,
+          userId,
+          reasoningMode: true,
+          reasoningEffort: executionProfile.model.reasoningEffort,
+        });
+        await commitTextBilling(reasoningReservation, "reasoning");
+      } catch (error) {
+        await releaseBillingReservation(reasoningReservation);
+        throw error;
+      }
 
       if (userDb && activeConversationId) {
         try {
@@ -2891,6 +3062,8 @@ app.post(
         userDb,
         userId,
         conversationId: activeConversationId || undefined,
+        billingIdentity,
+        billingRequestId,
       },
     });
 
@@ -3070,6 +3243,7 @@ app.post(
     const sseWriter = createSseWriter(res, { maxBufferedBytes: 512 * 1024 });
     const writeSseEvent = async (payload: string) => {
       if (clientDisconnected) return;
+      ensureSseStarted();
       await sseWriter.write(payload);
     };
     const writeSseJson = async (payload: unknown) => {
@@ -3127,10 +3301,11 @@ app.post(
       conversationSummary?: string;
       priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
       isExplicitRecallQuery?: boolean;
+      modelOverride?: string;
     }) => {
       const result = await callMathModelRaw({
         userMessage: args.userMessage,
-        modelOverride: GUEST_MODEL_OVERRIDE,
+        modelOverride: args.modelOverride ?? GUEST_MODEL_OVERRIDE,
         recentMessages: args.recentMessages,
         memories: [],
         fileReferences: args.fileReferences,
@@ -3155,12 +3330,25 @@ app.post(
       console.error(`[Stream] error: ${message}`);
       if (!clientDisconnected) {
         try {
+          ensureSseStarted();
+          if (err instanceof BillingQuotaError) {
+            const quotaPayload = quotaErrorToPublicResponse(err);
+            await writeSseJson({
+              ...quotaPayload,
+              type: "error",
+              partial,
+              streamed_chunks: metrics?.chunkCount ?? 0,
+              approx_tokens: metrics?.approxTokens ?? 0,
+            });
+            await writeSseEvent("[DONE]");
+            return;
+          }
           await writeSseJson({
             type: "error",
             code: partial ? "response_interrupted" : "backend_unavailable",
             error: partial
               ? "The response was interrupted. Your partial answer has been preserved."
-              : "SentIQGPT could not finish that response. Please try again.",
+              : `${PRODUCT_NAME} could not finish that response. Please try again.`,
             partial,
             streamed_chunks: metrics?.chunkCount ?? 0,
             approx_tokens: metrics?.approxTokens ?? 0,
@@ -3210,7 +3398,10 @@ app.post(
     const normalizedRecentMessages = collapseAdjacentDuplicateMessages(
       parsed.data.context?.recent_messages ?? [],
     );
-    const { sub: userId, isGuest } = getRequestUser(req);
+    const requestUser = getRequestUser(req);
+    const { sub: userId, isGuest } = requestUser;
+    const billingIdentity = buildBillingIdentity(req, requestUser);
+    const billingRequestId = buildBillingRequestId("chat-stream", userId, parsed.data.clientRequestId);
     const resolvedClarification = resolveClarificationInput(
       parsed.data.message,
       parsed.data.clarification_response,
@@ -3246,6 +3437,8 @@ app.post(
           image_attachments: parsed.data.context?.image_attachments,
           web_search_mode: webSearchMode,
           userId,
+          billingIdentity,
+          billingRequestId,
         },
       });
       await writeStructuredResponse({
@@ -3296,12 +3489,6 @@ app.post(
       console.log(`[Latency] guest user query received`);
 
       if (isBufferedReasoning) {
-        res.setHeader("Content-Type", "text/event-stream");
-        res.setHeader("Cache-Control", "no-cache");
-        res.setHeader("Connection", "keep-alive");
-        res.setHeader("X-Accel-Buffering", "no");
-        res.flushHeaders();
-
         const streamMetrics = createStreamMetrics(
           "chat.stream.guest.reasoning",
           requestStart,
@@ -3310,8 +3497,17 @@ app.post(
 
         try {
           if (isMathReasoningQuery) {
-            await writeSseJson({ type: "route", route: "math_reasoning" });
             let guestMathStreamReply = "";
+            const guestMathReservation = await reserveAdvancedBilling({
+              identity: billingIdentity,
+              requestId: `${billingRequestId}:guest-math-stream`,
+              conversationId: requestedConversationId,
+              clientRequestId: parsed.data.clientRequestId,
+              route: "guest.math.stream",
+            });
+            await writeSseJson({ type: "route", route: "math_reasoning" });
+            let guestMathCommitted = false;
+            try {
             const guestMathRawContext = {
               recent_messages: normalizedRecentMessages,
               memories: [],
@@ -3319,6 +3515,8 @@ app.post(
               image_attachments: parsed.data.context?.image_attachments,
               web_search_mode: webSearchMode,
               userMessage: guestUserMessage,
+              billingIdentity,
+              billingRequestId,
             };
             const guestMathContext = executionProfile.context.compressConversation
               ? await buildContext(guestMathRawContext, undefined, userId, { profile: executionProfile })
@@ -3327,7 +3525,7 @@ app.post(
             try {
               const mathStream = await streamMathModelRaw({
                 userMessage: guestUserMessage,
-                modelOverride: GUEST_MODEL_OVERRIDE,
+                modelOverride: guestMathReservation.adapterModelOverride,
                 userId,
                 recentMessages: guestMathContext.recentMessages,
                 memories: [],
@@ -3362,16 +3560,17 @@ app.post(
               console.warn(
                 `[Stream] guest math live stream failed before first token; falling back to buffered math: ${streamErr instanceof Error ? streamErr.message : streamErr}`,
               );
-              const result = await solveGuestMathWithGemini({
-                userMessage: guestUserMessage,
-                userId,
+                const result = await solveGuestMathWithGemini({
+                  userMessage: guestUserMessage,
+                  userId,
                 recentMessages: guestMathContext.recentMessages,
                 fileReferences: guestMathContext.fileReferences,
                 imageAttachments: guestMathContext.imageAttachments,
                 conversationSummary: guestMathContext.conversationSummary,
-                priorConversationEvidence: guestMathContext.priorConversationEvidence,
-                isExplicitRecallQuery: guestMathContext.isExplicitRecallQuery,
-              });
+                  priorConversationEvidence: guestMathContext.priorConversationEvidence,
+                  isExplicitRecallQuery: guestMathContext.isExplicitRecallQuery,
+                  modelOverride: guestMathReservation.adapterModelOverride,
+                });
               guestMathStreamReply = result.reply;
               await streamBufferedAnswer(result.reply, undefined, false, streamMetrics);
             }
@@ -3387,6 +3586,7 @@ app.post(
                 conversationSummary: guestMathContext.conversationSummary,
                 priorConversationEvidence: guestMathContext.priorConversationEvidence,
                 isExplicitRecallQuery: guestMathContext.isExplicitRecallQuery,
+                modelOverride: guestMathReservation.adapterModelOverride,
               });
               guestMathStreamReply = assertUsableAssistantText(result.reply, {
                 route: "guest.math",
@@ -3397,8 +3597,19 @@ app.post(
             }
 
             if (!clientDisconnected) {
+              await commitTextBilling(guestMathReservation, "guest.math.stream");
+              guestMathCommitted = true;
               await writeSseEvent("[DONE]");
               logStreamMetrics(streamMetrics, "complete");
+            } else {
+              await releaseBillingReservation(guestMathReservation);
+              guestMathCommitted = true;
+            }
+            } catch (error) {
+              if (!guestMathCommitted) {
+                await releaseBillingReservation(guestMathReservation);
+              }
+              throw error;
             }
             return;
           }
@@ -3410,11 +3621,22 @@ app.post(
             image_attachments: parsed.data.context?.image_attachments,
             web_search_mode: webSearchMode,
             userMessage: guestUserMessage,
+            billingIdentity,
+            billingRequestId,
           };
           const guestReasoningContext = executionProfile.context.compressConversation
             ? await buildContext(guestReasoningRawContext, undefined, userId, { profile: executionProfile })
             : await buildContextFast(guestReasoningRawContext, undefined, userId, { profile: executionProfile });
 
+          const guestReasoningReservation = await reserveAdvancedBilling({
+            identity: billingIdentity,
+            requestId: `${billingRequestId}:guest-reasoning-stream`,
+            conversationId: requestedConversationId,
+            clientRequestId: parsed.data.clientRequestId,
+            route: "guest.reasoning.stream",
+          });
+          let guestReasoningCommitted = false;
+          try {
           const result = await handleChat({
             userMessage: guestUserMessage,
             recentMessages: guestReasoningContext.recentMessages,
@@ -3424,7 +3646,7 @@ app.post(
             conversationSummary: guestReasoningContext.conversationSummary,
             priorConversationEvidence: guestReasoningContext.priorConversationEvidence,
             isExplicitRecallQuery: guestReasoningContext.isExplicitRecallQuery,
-            modelOverride: GUEST_MODEL_OVERRIDE,
+            modelOverride: guestReasoningReservation.adapterModelOverride,
             userId,
             reasoningMode: true,
             reasoningEffort: executionProfile.model.reasoningEffort,
@@ -3448,7 +3670,7 @@ app.post(
                   conversationSummary: guestReasoningContext.conversationSummary,
                   priorConversationEvidence: guestReasoningContext.priorConversationEvidence,
                   isExplicitRecallQuery: guestReasoningContext.isExplicitRecallQuery,
-                  modelOverride: GUEST_MODEL_OVERRIDE,
+                  modelOverride: guestReasoningReservation.adapterModelOverride,
                   userId,
                   reasoningMode: true,
                   reasoningEffort: executionProfile.model.reasoningEffort,
@@ -3458,8 +3680,19 @@ app.post(
             }
             const thinking = unavailableReason ? undefined : gateThinking(result.thinking, { isReasoning: true });
             await streamBufferedAnswer(reply, thinking, !unavailableReason, streamMetrics);
+            await commitTextBilling(guestReasoningReservation, "guest.reasoning.stream");
+            guestReasoningCommitted = true;
             await writeSseEvent("[DONE]");
             logStreamMetrics(streamMetrics, "complete");
+          } else {
+            await releaseBillingReservation(guestReasoningReservation);
+            guestReasoningCommitted = true;
+          }
+          } catch (error) {
+            if (!guestReasoningCommitted) {
+              await releaseBillingReservation(guestReasoningReservation);
+            }
+            throw error;
           }
         } catch (err) {
           await sendStreamError(err, streamMetrics);
@@ -3468,12 +3701,6 @@ app.post(
         }
         return;
       }
-
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      res.setHeader("X-Accel-Buffering", "no");
-      res.flushHeaders();
 
       const fileRefs = parsed.data.context?.file_references;
       const guestCtx = await buildContextFast({
@@ -3489,15 +3716,25 @@ app.post(
         && effectiveUserMessage.length <= 280
         && !detectCodeQuery(effectiveUserMessage)
         && !isMathQuery(effectiveUserMessage);
-      const guestGeneralModelOverride =
-        (guestCtx.fileReferences?.length ?? 0) > 0 || (guestCtx.imageAttachments?.length ?? 0) > 0
-          ? GUEST_MODEL_OVERRIDE
-          : GUEST_TEXT_MODEL_OVERRIDE;
+      const guestGeneralReservation = await reserveTextBilling({
+        identity: billingIdentity,
+        requestId: `${billingRequestId}:guest-general-stream`,
+        conversationId: requestedConversationId,
+        clientRequestId: parsed.data.clientRequestId,
+        route: "guest.general.stream",
+      });
+      const guestGeneralModelOverride = guestGeneralReservation.adapterModelOverride;
       const streamMetrics = createStreamMetrics(
         "chat.stream.guest.general",
         requestStart,
         { model: guestGeneralModelOverride, fastPath: guestFastPath },
       );
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
 
       console.log(`[Latency] guest buffered response request started (+${Date.now() - requestStart}ms)`);
       console.log(`[Stream] guest model=${guestGeneralModelOverride} hasFiles=${guestCtx.hasFileContext} msgLen=${parsed.data.message.length}`);
@@ -3516,11 +3753,15 @@ app.post(
             conversationSummary: guestCtx.conversationSummary,
             priorConversationEvidence: guestCtx.priorConversationEvidence,
             isExplicitRecallQuery: guestCtx.isExplicitRecallQuery,
+            modelOverride: guestGeneralModelOverride,
           });
           if (!clientDisconnected) {
             await streamBufferedAnswer(result.reply, undefined, false, streamMetrics);
+            await commitTextBilling(guestGeneralReservation, "guest.general.math-buffered");
             await writeSseEvent("[DONE]");
             logStreamMetrics(streamMetrics, "complete");
+          } else {
+            await releaseBillingReservation(guestGeneralReservation);
           }
           console.log(`[Stream] guest math buffered response completed in ${Date.now() - streamStart}ms`);
           return;
@@ -3570,7 +3811,14 @@ app.post(
             timeoutMs: 90_000,
             signal: requestAbortController.signal,
           });
+          fullReply = fallbackText;
           await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
+        }
+
+        if (fullReply && !clientDisconnected) {
+          await commitTextBilling(guestGeneralReservation, "guest.general.stream");
+        } else if (clientDisconnected) {
+          await releaseBillingReservation(guestGeneralReservation);
         }
 
         if (!clientDisconnected) {
@@ -3590,6 +3838,7 @@ app.post(
               signal: requestAbortController.signal,
             });
             await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
+            await commitTextBilling(guestGeneralReservation, "guest.general.stream.fallback");
             await writeSseEvent("[DONE]");
             logStreamMetrics(streamMetrics, "fallback");
             return;
@@ -3597,9 +3846,15 @@ app.post(
             console.error(
               `[StreamRecovery] route=guest.general fallback_failed=${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
             );
+            await releaseBillingReservation(guestGeneralReservation);
             await sendStreamError(fallbackErr, streamMetrics);
             return;
           }
+        }
+        if (streamMetrics.chunkCount > 0) {
+          await commitTextBilling(guestGeneralReservation, "guest.general.stream.partial");
+        } else {
+          await releaseBillingReservation(guestGeneralReservation);
         }
         await sendStreamError(err, streamMetrics);
       } finally {
@@ -3834,12 +4089,22 @@ app.post(
         web_search_mode: webSearchMode,
         userMessage: effectiveUserMessage,
         conversationId: requestedConversationId || undefined,
+        billingIdentity,
+        billingRequestId,
       };
       let fastStreamMetrics: StreamMetrics | null = null;
       let fastCallForRecovery: LLMAdapterCall | null = null;
       let fastModelForRecovery = "unknown";
+      let fastReservation: UsageReservation | null = null;
 
       try {
+        fastReservation = await reserveTextBilling({
+          identity: billingIdentity,
+          requestId: `${billingRequestId}:fast-stream`,
+          conversationId: requestedConversationId,
+          clientRequestId: parsed.data.clientRequestId,
+          route: "stream.fast",
+        });
         const [fastCtx, routedModel] = await Promise.all([
           buildContextFast(fastRawContext, undefined, userId, { profile: executionProfile }),
           selectModelForPromptWithMaster({
@@ -3851,7 +4116,7 @@ app.post(
             signal: requestAbortController.signal,
           }),
         ]);
-        const modelOverride = routedModel.model;
+        const modelOverride = fastReservation.adapterModelOverride;
         fastModelForRecovery = modelOverride;
         const streamMetrics = createStreamMetrics(
           "chat.stream.fast",
@@ -3910,7 +4175,10 @@ app.post(
 
         let streamSync = createDeferredFastSync();
         if (fullReply && !clientDisconnected) {
+          await commitTextBilling(fastReservation, "stream.fast");
           streamSync = await persistFastAssistantMessage(fullReply);
+        } else if (clientDisconnected) {
+          await releaseBillingReservation(fastReservation);
         }
 
         if (!clientDisconnected) {
@@ -3931,6 +4199,9 @@ app.post(
               timeoutMs: fastModelForRecovery === "openai-large" ? 180_000 : 90_000,
               signal: requestAbortController.signal,
             });
+            if (fastReservation) {
+              await commitTextBilling(fastReservation, "stream.fast.fallback");
+            }
             const streamSync = await persistFastAssistantMessage(fallbackText);
             const finalizedSync = finalizeSyncStatus(streamSync);
             await streamBufferedAnswer(fallbackText, undefined, false, fastStreamMetrics);
@@ -3942,9 +4213,15 @@ app.post(
             console.error(
               `[StreamRecovery] route=stream.fast fallback_failed=${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
             );
+            await releaseBillingReservation(fastReservation);
             await sendStreamError(fallbackErr, fastStreamMetrics);
             return;
           }
+        }
+        if (fastReservation && fastStreamMetrics && fastStreamMetrics.chunkCount > 0) {
+          await commitTextBilling(fastReservation, "stream.fast.partial");
+        } else {
+          await releaseBillingReservation(fastReservation);
         }
         await sendStreamError(err);
       } finally {
@@ -4260,6 +4537,8 @@ app.post(
             conversationId: activeConversationId || undefined,
             userDb,
             userId,
+            billingIdentity,
+            billingRequestId,
           },
         });
         await persistStoredMemory(result.memory);
@@ -4309,6 +4588,8 @@ app.post(
             conversationId: activeConversationId || undefined,
             userDb,
             userId,
+            billingIdentity,
+            billingRequestId,
           },
         });
         await persistStoredMemory(result.memory);
@@ -4410,6 +4691,8 @@ app.post(
             conversationId: activeConversationId || undefined,
             userDb,
             userId,
+            billingIdentity,
+            billingRequestId,
           },
         });
         await persistStoredMemory(result.memory);
@@ -4462,6 +4745,8 @@ app.post(
             conversationId: activeConversationId || undefined,
             userDb,
             userId,
+            billingIdentity,
+            billingRequestId,
           },
         });
         if (result.reply) {
@@ -4544,6 +4829,15 @@ app.post(
         if (isMathReasoningQuery) {
           await writeSseJson({ type: "route", route: "math_reasoning" });
           let mathStreamReply = "";
+          const mathReservation = await reserveAdvancedBilling({
+            identity: billingIdentity,
+            requestId: `${billingRequestId}:math-stream`,
+            conversationId: activeConversationId,
+            clientRequestId: parsed.data.clientRequestId,
+            route: "reasoning.math.stream",
+          });
+          let mathReservationCompleted = false;
+          try {
           const mathRawContext = {
             recent_messages: normalizedRecentMessages,
             memories: parsed.data.context?.memories,
@@ -4553,6 +4847,8 @@ app.post(
             web_search_mode: webSearchMode,
             userMessage: effectiveUserMessage,
             conversationId: activeConversationId || undefined,
+            billingIdentity,
+            billingRequestId,
           };
           const mathContext = executionProfile.context.compressConversation
             ? await buildContext(mathRawContext, userDb, userId, { profile: executionProfile })
@@ -4561,7 +4857,7 @@ app.post(
           try {
             const mathStream = await streamMathModelRaw({
               userMessage: effectiveUserMessage,
-              modelOverride: "openai-large",
+              modelOverride: mathReservation.adapterModelOverride,
               userId,
               recentMessages: mathContext.recentMessages,
               memories: mathContext.memories,
@@ -4597,7 +4893,7 @@ app.post(
             );
             const fallback = await callMathModelRaw({
               userMessage: effectiveUserMessage,
-              modelOverride: "openai-large",
+              modelOverride: mathReservation.adapterModelOverride,
               userId,
               recentMessages: mathContext.recentMessages,
               memories: mathContext.memories,
@@ -4615,7 +4911,7 @@ app.post(
             console.warn(`[StreamRecovery] route=reasoning.math.stream model=openai-large reason=empty_stream attempt=buffered_math`);
             const fallback = await callMathModelRaw({
               userMessage: effectiveUserMessage,
-              modelOverride: "openai-large",
+              modelOverride: mathReservation.adapterModelOverride,
               userId,
               recentMessages: mathContext.recentMessages,
               memories: mathContext.memories,
@@ -4634,12 +4930,23 @@ app.post(
           }
 
           if (mathStreamReply && !clientDisconnected) {
+            await commitTextBilling(mathReservation, "reasoning.math.stream");
+            mathReservationCompleted = true;
             await persistAssistantMessage(mathStreamReply);
+          } else if (clientDisconnected) {
+            await releaseBillingReservation(mathReservation);
+            mathReservationCompleted = true;
           }
           reportStreamMessageGap(Boolean(mathStreamReply), "reasoning.math.stream");
           if (!clientDisconnected) {
             await writeSseEvent("[DONE]");
             logStreamMetrics(streamMetrics, "complete");
+          }
+          } catch (error) {
+            if (!mathReservationCompleted) {
+              await releaseBillingReservation(mathReservation);
+            }
+            throw error;
           }
           return;
         }
@@ -4653,12 +4960,24 @@ app.post(
           web_search_mode: webSearchMode,
           userMessage: effectiveUserMessage,
           conversationId: activeConversationId || undefined,
+          billingIdentity,
+          billingRequestId,
         };
         const reasoningContext = executionProfile.context.compressConversation
           ? await buildContext(reasoningRawContext, userDb, userId, { profile: executionProfile })
           : await buildContextFast(reasoningRawContext, userDb, userId, { profile: executionProfile });
 
-        const result = await handleChat({
+        const reasoningReservation = await reserveAdvancedBilling({
+          identity: billingIdentity,
+          requestId: `${billingRequestId}:reasoning-stream`,
+          conversationId: activeConversationId,
+          clientRequestId: parsed.data.clientRequestId,
+          route: "reasoning.stream",
+        });
+        let reasoningReservationCompleted = false;
+        let result: Awaited<ReturnType<typeof handleChat>>;
+        try {
+        result = await handleChat({
           userMessage: effectiveUserMessage,
           recentMessages: reasoningContext.recentMessages,
           memories: reasoningContext.memories,
@@ -4668,6 +4987,7 @@ app.post(
           priorConversationEvidence: reasoningContext.priorConversationEvidence,
           isExplicitRecallQuery: reasoningContext.isExplicitRecallQuery,
           trustedProfile: reasoningContext.trustedProfile,
+          modelOverride: reasoningReservation.adapterModelOverride,
           userId,
           reasoningMode: true,
           reasoningEffort: executionProfile.model.reasoningEffort,
@@ -4690,6 +5010,7 @@ app.post(
               priorConversationEvidence: reasoningContext.priorConversationEvidence,
               isExplicitRecallQuery: reasoningContext.isExplicitRecallQuery,
               trustedProfile: reasoningContext.trustedProfile,
+              modelOverride: reasoningReservation.adapterModelOverride,
               userId,
               reasoningMode: true,
               reasoningEffort: executionProfile.model.reasoningEffort,
@@ -4698,7 +5019,12 @@ app.post(
           });
         }
         if (reply) {
+          await commitTextBilling(reasoningReservation, "reasoning.stream");
+          reasoningReservationCompleted = true;
           await persistAssistantMessage(reply);
+        } else if (clientDisconnected) {
+          await releaseBillingReservation(reasoningReservation);
+          reasoningReservationCompleted = true;
         }
         reportStreamMessageGap(Boolean(reply), "reasoning");
         if (!clientDisconnected && reply) {
@@ -4707,6 +5033,16 @@ app.post(
           await writeSseEvent("[DONE]");
           logStreamMetrics(streamMetrics, "complete");
           return;
+        }
+        } catch (error) {
+          if (!reasoningReservationCompleted) {
+            await releaseBillingReservation(reasoningReservation);
+          }
+          throw error;
+        }
+        if (!reasoningReservationCompleted) {
+          await releaseBillingReservation(reasoningReservation);
+          reasoningReservationCompleted = true;
         }
         throw new Error(STREAM_RECOVERY_USER_ERROR);
       } catch (err) {
@@ -4751,13 +5087,6 @@ app.post(
     const requestStart = Date.now();
     console.log(`[Latency] user query received`);
 
-    // Set SSE headers IMMEDIATELY - start streaming as fast as possible
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders();
-
     // Always include file_references when present — the frontend only sends
     // the current session file (scoped correctly), so no backend gating needed.
     const fileRefs = parsed.data.context?.file_references;
@@ -4792,7 +5121,14 @@ app.post(
       isGuest,
       signal: requestAbortController.signal,
     });
-    const modelOverride = routedModel.model;
+    const directReservation = await reserveTextBilling({
+      identity: billingIdentity,
+      requestId: `${billingRequestId}:direct-stream`,
+      conversationId: activeConversationId,
+      clientRequestId: parsed.data.clientRequestId,
+      route: "stream",
+    });
+    const modelOverride = directReservation.adapterModelOverride;
     if (routedModel.source === "deterministic" && routedModel.fallback_reason) {
       console.log(`[MasterRouter] stream deterministic fallback=${routedModel.fallback_reason}`);
     }
@@ -4820,6 +5156,8 @@ app.post(
       web_search_mode: webSearchMode,
       userMessage: effectiveUserMessage,
       conversationId: activeConversationId || undefined,
+      billingIdentity,
+      billingRequestId,
     };
     const ctx = executionProfile.context.compressConversation
       ? await buildContext(directRawContext, userDb, userId, { profile: executionProfile })
@@ -4834,6 +5172,13 @@ app.post(
       requestStart,
       { model: modelOverride, fastPath: fastPathEligible },
     );
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
     let stopHeartbeat = () => {};
     const call = buildChatPrompt({
       userMessage: effectiveUserMessage,
@@ -4896,7 +5241,10 @@ app.post(
       }
 
       if (fullReply && !clientDisconnected) {
+        await commitTextBilling(directReservation, "stream");
         await persistAssistantMessage(fullReply);
+      } else if (clientDisconnected) {
+        await releaseBillingReservation(directReservation);
       }
       if (!clientDisconnected) {
         reportStreamMessageGap(Boolean(fullReply), "stream");
@@ -4918,6 +5266,7 @@ app.post(
             timeoutMs: modelOverride === "openai-large" ? 180_000 : 90_000,
             signal: requestAbortController.signal,
           });
+          await commitTextBilling(directReservation, "stream.fallback");
           await persistAssistantMessage(fallbackText);
           reportStreamMessageGap(Boolean(fallbackText), "stream.fallback");
           await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
@@ -4931,9 +5280,15 @@ app.post(
           console.error(
             `[StreamRecovery] route=stream fallback_failed=${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
           );
+          await releaseBillingReservation(directReservation);
           await sendStreamError(fallbackErr, streamMetrics);
           return;
         }
+      }
+      if (streamMetrics.chunkCount > 0) {
+        await commitTextBilling(directReservation, "stream.partial");
+      } else {
+        await releaseBillingReservation(directReservation);
       }
       await sendStreamError(err, streamMetrics);
     } finally {
@@ -5466,34 +5821,8 @@ app.get(
   asyncHandler(async (req, res) => {
     const localInfo = getQuotaInfo(getImageQuotaKey(req));
     const requestUser = getRequestUser(req);
-    if (requestUser.isGuest) {
-      res.json(localInfo);
-      return;
-    }
-
-    const userDb = await resolveUserDatabaseOrThrow(requestUser.sub, "images.quota");
-    await initializeUserSessionOrThrow(userDb, requestUser.sub, "images.quota");
-    let centralInfo;
-    try {
-      centralInfo = await getCentralImageQuotaInfo(userDb, requestUser.sub);
-    } catch (error) {
-      if (error instanceof ImageQuotaError) {
-        res.status(error.statusCode).json({
-          error: error.message,
-          type: error.type,
-          remaining: error.remaining,
-          limit: error.limit,
-          resetMs: error.resetMs,
-        });
-        return;
-      }
-      throw error;
-    }
-    res.json({
-      ...centralInfo,
-      cooldownActive: localInfo.cooldownActive,
-      cooldownResetMs: localInfo.cooldownActive ? 5_000 : 0,
-    });
+    const billingIdentity = buildBillingIdentity(req, requestUser);
+    res.json(await getImageQuotaDisplay(billingIdentity, localInfo));
   }),
 );
 
@@ -5502,11 +5831,14 @@ app.get(
 // ===============================
 app.post(
   "/api/images/generate",
-  verifyJWT({ allowGuest: false }),
+  verifyJWT({ allowGuest: true }),
   aiRateLimiter,
   imageQuotaMiddleware,
   asyncHandler(async (req, res) => {
-    const userId = await getVerifiedUserId(req);
+    const requestUser = getRequestUser(req);
+    const userId = requestUser.sub;
+    const isGuest = requestUser.isGuest;
+    const billingIdentity = buildBillingIdentity(req, requestUser);
     const parsed = ImageGenerateRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
@@ -5519,7 +5851,10 @@ app.post(
       return;
     }
 
-    let conversationId = getOptionalUuid(parsed.data.conversationId, "conversationId") || "";
+    let conversationId = getOptionalUuid(parsed.data.conversationId, "conversationId", { ignoreInvalid: isGuest }) || "";
+    if (isGuest) {
+      conversationId = "";
+    }
     const clientRequestId = parsed.data.clientRequestId?.trim() || "";
     const imageContextRecentMessages = collapseAdjacentDuplicateMessages(
       parsed.data.context?.recent_messages ?? [],
@@ -5557,9 +5892,12 @@ app.post(
         `candidates=${promptResolution.candidates.join(" | ")}`,
       );
     }
-    let userDb: any = await resolveUserDatabaseOrThrow(userId, "images.generate");
-    await initializeUserSessionOrThrow(userDb, userId, "images.generate");
-    if (conversationId) {
+    let userDb: any = null;
+    if (!isGuest) {
+      userDb = await resolveUserDatabaseOrThrow(userId, "images.generate");
+      await initializeUserSessionOrThrow(userDb, userId, "images.generate");
+    }
+    if (userDb && conversationId) {
       await ensureNamedWorkspaceProfile(userId, "images.generate", userDb);
       const resolvedImageConversation = await resolveConversationIdThroughAlias(userDb, userId, conversationId, "images.generate");
       conversationId = resolvedImageConversation.conversationId;
@@ -5572,7 +5910,7 @@ app.post(
       );
       if (existingAssistantImage?.image_url) {
         const localQuota = getQuotaInfo(getImageQuotaKey(req));
-        const quota = await getCentralImageQuotaInfo(userDb, userId);
+        const quota = await getImageQuotaDisplay(billingIdentity, localQuota);
         res.json({
           type: "image",
           url: existingAssistantImage.image_url,
@@ -5604,35 +5942,30 @@ app.post(
         "images.generate",
         { clientRequestId },
       );
-    } else {
+    } else if (userDb) {
       await ensureNamedWorkspaceProfile(userId, "images.generate", userDb);
     }
 
-    let imageQuotaReserved = false;
-    try {
-      await reserveCentralImageQuota(userDb, userId);
-      imageQuotaReserved = true;
-    } catch (error) {
-      if (error instanceof ImageQuotaError) {
-        res.status(error.statusCode).json({
-          error: error.message,
-          type: error.type,
-          remaining: error.remaining,
-          limit: error.limit,
-          resetMs: error.resetMs,
-          retryAfterMs: error.retryAfterMs,
-        });
-        return;
-      }
-      throw error;
-    }
-
-    const preferredModel = await selectImageModelPreferenceWithMaster({
-      prompt: providerPrompt,
-      executionMode: parsed.data.executionMode,
-      userId,
-      isGuest: false,
+    const initialImageRoute = getImageModelForPlan("free", providerPrompt);
+    const imageReservation = await billingQuotaService.reserveFeature({
+      identity: billingIdentity,
+      feature: "image_generation",
+      requestId: buildBillingRequestId("image", userId, clientRequestId || undefined),
+      route: initialImageRoute,
+      conversationId: conversationId || null,
+      clientRequestId: clientRequestId || null,
+      metadata: { endpoint: "images.generate" },
     });
+    const entitledImageRoute = getImageModelForPlan(imageReservation.planCode, providerPrompt);
+    const committedImageReservation: UsageReservation = {
+      ...imageReservation,
+      provider: entitledImageRoute.provider,
+      model: entitledImageRoute.model,
+      adapterModelOverride: entitledImageRoute.adapterModelOverride,
+      safeModelLabel: entitledImageRoute.safeModelLabel,
+      route: entitledImageRoute.route,
+    };
+    const preferredModel = entitledImageRoute.adapterModelOverride as any;
 
     let result: Awaited<ReturnType<typeof routeImageGeneration>>;
     try {
@@ -5643,18 +5976,12 @@ app.post(
         preferredModel,
       });
     } catch (error) {
-      if (imageQuotaReserved) {
-        await releaseCentralImageQuota(userDb, userId);
-        imageQuotaReserved = false;
-      }
+      await releaseBillingReservation(committedImageReservation);
       throw error;
     }
 
     if (!result.success) {
-      if (imageQuotaReserved) {
-        await releaseCentralImageQuota(userDb, userId);
-        imageQuotaReserved = false;
-      }
+      await releaseBillingReservation(committedImageReservation);
       console.log(`[IMAGE] endpoint failed prompt="${providerPrompt.slice(0, 40)}..." error="${result.error}"`);
       res.status(502).json({ error: "Image generation could not finish. Please try again.", code: "image_generation_failed" });
       return;
@@ -5668,21 +5995,20 @@ app.post(
     let fileSizeBytes: number | undefined;
 
     if (!imageUrl && !imageBase64) {
-      if (imageQuotaReserved) {
-        await releaseCentralImageQuota(userDb, userId);
-        imageQuotaReserved = false;
-      }
+      await releaseBillingReservation(committedImageReservation);
       res.status(502).json({ error: "Image generation could not finish. Please try again.", code: "image_generation_failed" });
       return;
     }
 
+    await billingQuotaService.commit(committedImageReservation, {
+      endpoint: "images.generate",
+      route: "image_generation",
+    });
+
     if (userDb && conversationId) {
       const imageDataForPersistence = result.image_base64 || result.image_url || "";
       if (!imageDataForPersistence) {
-        if (imageQuotaReserved) {
-          await releaseCentralImageQuota(userDb, userId);
-          imageQuotaReserved = false;
-        }
+        await releaseBillingReservation(committedImageReservation);
         res.status(502).json({ error: "Image generation could not finish. Please try again.", code: "image_generation_failed" });
         return;
       }
@@ -5710,7 +6036,7 @@ app.post(
           `[IMAGE] persistence failed conversationId=${conversationId} clientRequestId=${clientRequestId || "none"} error="${message}"`,
         );
         commitImageQuotaSuccess(getImageQuotaKey(req));
-        const quota = await getCentralImageQuotaInfo(userDb, userId);
+        const quota = await getImageQuotaDisplay(billingIdentity, getQuotaInfo(getImageQuotaKey(req)));
         res.json({
           type: "image",
           url: imageUrl,
@@ -5724,6 +6050,10 @@ app.post(
           warning: "Image was generated, but couldn't be saved to your conversation.",
           remaining: quota.remaining,
           limit: quota.limit,
+          reset_at: quota.reset_at,
+          plan_code: quota.plan_code,
+          cooldownActive: quota.cooldownActive,
+          cooldownResetMs: quota.cooldownResetMs,
           image_url: imageUrl,
           image_base64: imageBase64,
           conversation_id: conversationId || undefined,
@@ -5733,7 +6063,7 @@ app.post(
     }
 
     commitImageQuotaSuccess(getImageQuotaKey(req));
-    const quota = await getCentralImageQuotaInfo(userDb, userId);
+    const quota = await getImageQuotaDisplay(billingIdentity, getQuotaInfo(getImageQuotaKey(req)));
 
     console.log(`[IMAGE] provider=${result.provider_used} success prompt="${parsed.data.prompt.slice(0, 40)}..." remaining=${quota.remaining}`);
 
@@ -5753,6 +6083,10 @@ app.post(
       success: true,
       remaining: quota.remaining,
       limit: quota.limit,
+      reset_at: quota.reset_at,
+      plan_code: quota.plan_code,
+      cooldownActive: quota.cooldownActive,
+      cooldownResetMs: quota.cooldownResetMs,
       // Keep legacy fields for frontend compatibility
       image_url: imageUrl,
       image_base64: imageBase64,
@@ -5940,7 +6274,7 @@ app.post(
 );
 
 // ===============================
-// POST /api/chat/selection — "Ask SentIQGPT" text selection context endpoint
+// POST /api/chat/selection — "Ask SentIQ Chat" text selection context endpoint
 // Accepts a selection context payload (selected_text + surrounding lines) and
 // routes it through the AI orchestrator as a standard chat message.
 // ===============================
@@ -6266,23 +6600,31 @@ app.get(
 // ===============================
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof AuthError) {
-    console.warn(`[SentIQGPT] Auth error: ${err.code}`);
+    console.warn(`${LOG_PREFIX} Auth error: ${err.code}`);
     if (!res.headersSent && !res.writableEnded) {
       res.status(err.status).json({ error: err.message });
     }
     return;
   }
 
+  if (err instanceof BillingQuotaError) {
+    console.warn(`${LOG_PREFIX} Billing quota error: ${err.code} feature=${err.feature}`);
+    if (!res.headersSent && !res.writableEnded) {
+      res.status(err.statusCode).json(quotaErrorToPublicResponse(err));
+    }
+    return;
+  }
+
   // Handle multer errors (file too large, etc.) with clear messages
   if (err && (err as any).code === "LIMIT_FILE_SIZE") {
-    console.warn(`[SentIQGPT] File upload rejected: file too large`);
+    console.warn(`${LOG_PREFIX} File upload rejected: file too large`);
     if (!res.headersSent && !res.writableEnded) {
       res.status(413).json({ error: "File too large. Maximum size is 10MB." });
     }
     return;
   }
   if (err && err.message && err.message.includes("Multipart")) {
-    console.warn(`[SentIQGPT] Multer error: ${err.message}`);
+    console.warn(`${LOG_PREFIX} Multer error: ${err.message}`);
     if (!res.headersSent && !res.writableEnded) {
       res.status(400).json({ error: "Invalid file upload. Please try again." });
     }
@@ -6291,7 +6633,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
   const { statusCode, headers, body } = buildHttpErrorResponse(err);
   const logMethod = statusCode >= 500 ? console.error : console.warn;
-  logMethod("[SentIQGPT] Unhandled error:", err.message);
+  logMethod(`${LOG_PREFIX} Unhandled error:`, err.message);
   if (res.headersSent || res.writableEnded) {
     if (!res.writableEnded) {
       res.end();
@@ -6315,20 +6657,20 @@ function shutdownProcess(reason: string, exitCode: number, error?: unknown): voi
   shutdownStarted = true;
 
   if (error) {
-    console.error(`[SentIQGPT] ${reason}:`, error);
+    console.error(`${LOG_PREFIX} ${reason}:`, error);
   } else {
-    console.log(`[SentIQGPT] ${reason} received - shutting down gracefully`);
+    console.log(`${LOG_PREFIX} ${reason} received - shutting down gracefully`);
   }
 
   const forceExitTimer = setTimeout(() => {
-    console.error(`[SentIQGPT] forced shutdown after ${SHUTDOWN_GRACE_MS}ms active_requests=${activeRequests}`);
+    console.error(`${LOG_PREFIX} forced shutdown after ${SHUTDOWN_GRACE_MS}ms active_requests=${activeRequests}`);
     process.exit(exitCode);
   }, SHUTDOWN_GRACE_MS);
   forceExitTimer.unref();
 
   const finish = () => {
     clearTimeout(forceExitTimer);
-    console.log(`[SentIQGPT] HTTP server closed active_requests=${activeRequests}`);
+    console.log(`${LOG_PREFIX} HTTP server closed active_requests=${activeRequests}`);
     process.exit(exitCode);
   };
 
@@ -6339,7 +6681,7 @@ function shutdownProcess(reason: string, exitCode: number, error?: unknown): voi
 
   httpServer.close((closeError?: Error) => {
     if (closeError) {
-      console.error(`[SentIQGPT] HTTP server close failed: ${closeError.message}`);
+      console.error(`${LOG_PREFIX} HTTP server close failed: ${closeError.message}`);
       process.exit(exitCode || 1);
       return;
     }
@@ -6347,27 +6689,29 @@ function shutdownProcess(reason: string, exitCode: number, error?: unknown): voi
   });
 }
 
+validateInternalGatewayConfiguration();
+
 verifyShardMigrations().then(() => {
   httpServer = app.listen(PORT, () => {
-    console.log(`[SentIQGPT v2] Server running on port ${PORT}`);
-    console.log(`[SentIQGPT v2] Architecture: Orchestrated Dual-Model (Gemini + Groq)`);
-    console.log(`[SentIQGPT v2] LLM Service expected on port ${process.env.LLM_SERVICE_PORT || "3002"}`);
+    console.log(`${LOG_PREFIX} Server running on port ${PORT}`);
+    console.log(`${LOG_PREFIX} Architecture: Orchestrated Dual-Model (Gemini + Groq)`);
+    console.log(`${LOG_PREFIX} LLM Service expected on port ${process.env.LLM_SERVICE_PORT || "3002"}`);
 
     const jwtSecret = process.env.SUPABASE_JWT_SECRET?.trim();
     if (!jwtSecret) {
-      console.warn("[SentIQGPT v2] WARNING: SUPABASE_JWT_SECRET is not set; auth will fall back to Supabase and add latency.");
+      console.warn(`${LOG_PREFIX} WARNING: SUPABASE_JWT_SECRET is not set; auth will fall back to Supabase and add latency.`);
     }
 
     // Log Tavily availability for debugging
     const tavilyStatus = isTavilyAvailable();
-    console.log(`[SentIQGPT v2] Tavily Web Search: ${tavilyStatus ? "ENABLED" : "DISABLED (set TAVILY_KEYS in env)"}`);
+    console.log(`${LOG_PREFIX} Tavily Web Search: ${tavilyStatus ? "ENABLED" : "DISABLED (set TAVILY_KEYS in env)"}`);
   });
 
   process.on("SIGTERM", () => shutdownProcess("SIGTERM", 0));
   process.on("SIGINT", () => shutdownProcess("SIGINT", 0));
 }).catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`[SentIQGPT] FATAL: startup migration verification failed: ${message}`);
+  console.error(`${LOG_PREFIX} FATAL: startup migration verification failed: ${message}`);
   process.exit(1);
 });
 process.on("uncaughtException", (err) => {

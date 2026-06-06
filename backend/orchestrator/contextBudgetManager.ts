@@ -1,4 +1,4 @@
-// SentIQGPT — Context Budget Manager
+// SentIQ Chat — Context Budget Manager
 //
 // Defines safe character limits for each prompt section and provides
 // truncation utilities.  Prevents uncontrolled prompt growth that

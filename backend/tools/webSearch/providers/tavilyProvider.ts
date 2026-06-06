@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Tavily Search Provider
+// SentIQ Chat v2 — Tavily Search Provider
 //
 // Production-grade Tavily integration with:
 //   - Multi-key round-robin rotation

@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Deterministic Query Classifier
+// SentIQ Chat v2 — Deterministic Query Classifier
 //
 // Runs BEFORE the LLM planner to detect when web search is clearly
 // required.  Uses keyword / pattern matching — zero LLM cost, < 1ms.

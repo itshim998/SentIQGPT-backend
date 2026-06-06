@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { normalizeExecutionMode } from "../orchestrator/executionProfile";
 
-// SentIQGPT v1 — Input Validation Schemas (Zod)
+// SentIQ Chat v1 — Input Validation Schemas (Zod)
 //
 // Validates all incoming API payloads before they reach handlers.
 
@@ -145,7 +145,7 @@ export const GeneratedFileUpdateRequestSchema = z.object({
   version: z.number().int().min(1).optional(),
 });
 
-// --- Chat Selection (Ask SentIQGPT text selection tool) ---
+// --- Chat Selection (Ask SentIQ Chat text selection tool) ---
 
 export const SelectionContextSchema = z.object({
   selected_text: z

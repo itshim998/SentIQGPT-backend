@@ -5,6 +5,7 @@ import {
 } from "./PromptBuilders";
 import type { ChatContext, ImageAttachment } from "./PromptBuilders";
 import { extractUserFacingAnswer, finalizeStructuredReply } from "./replyGuard";
+import { PRODUCT_DISCLAIMER } from "../branding";
 
 const REASONING_MAX_OUTPUT_TOKENS = 2600;
 const CONTINUATION_MAX_OUTPUT_TOKENS = 1800;
@@ -146,14 +147,14 @@ export async function handleChat(args: {
       answer: finalAnswer,
       reply: finalAnswer,
       thinking: undefined,
-      disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+      disclaimer: PRODUCT_DISCLAIMER,
       model_used,
       fallback,
       sanitize_bypass: bypassSanitization,
     };
   }
 
-  let disclaimer = "SentIQGPT is an AI assistant. Verify important information independently.";
+  let disclaimer = PRODUCT_DISCLAIMER;
   if (!bypassSanitization) {
     const extracted = extractUserFacingAnswer(raw, { adapterError });
     if (typeof extracted.disclaimer === "string" && extracted.disclaimer.trim()) {

@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Context Builder (with Compression + Semantic Retrieval)
+// SentIQ Chat v2 — Context Builder (with Compression + Semantic Retrieval)
 //
 // Assembles the context window before sending to the reasoning model.
 // Combines: recent messages + relevant memories + smart file chunks
@@ -28,6 +28,7 @@ import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 import { getPriorConversationUserMessages } from "../services/conversationService";
 import { collapseAdjacentDuplicateMessages } from "./messageDeduper";
 import { FAST_PROFILE, INTUITIVE_PROFILE, type ExecutionProfile } from "../orchestrator/executionProfile";
+import type { BillingIdentity } from "../billing/entitlementTypes";
 
 export interface RawMessageContext {
   readonly recent_messages?: readonly { role: string; content: string }[];
@@ -52,6 +53,8 @@ export interface RawMessageContext {
   readonly userDb?: SupabaseClient;
   readonly userId?: string;
   readonly conversationId?: string;
+  readonly billingIdentity?: BillingIdentity;
+  readonly billingRequestId?: string;
 }
 
 export interface ImageAttachmentContext {
@@ -82,6 +85,8 @@ export interface BuiltContext {
   readonly userId?: string;
   readonly userDb?: SupabaseClient;
   readonly conversationId?: string;
+  readonly billingIdentity?: BillingIdentity;
+  readonly billingRequestId?: string;
   readonly trustedProfile?: {
     displayName: string;
   };
@@ -480,6 +485,8 @@ export async function buildContext(
     userId: normalizedUserId,
     userDb: raw.userDb,
     conversationId: raw.conversationId,
+    billingIdentity: raw.billingIdentity,
+    billingRequestId: raw.billingRequestId,
     trustedProfile: raw.trustedProfile,
     priorConversationEvidence,
     isExplicitRecallQuery,
@@ -582,6 +589,8 @@ export async function buildContextFast(
     userId: normalizedUserId,
     userDb: raw.userDb,
     conversationId: raw.conversationId,
+    billingIdentity: raw.billingIdentity,
+    billingRequestId: raw.billingRequestId,
     trustedProfile: raw.trustedProfile,
     priorConversationEvidence,
     isExplicitRecallQuery,

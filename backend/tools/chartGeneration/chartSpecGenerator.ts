@@ -1,4 +1,4 @@
-// SentIQGPT — Chart Specification Generator
+// SentIQ Chat — Chart Specification Generator
 //
 // Converts a ChartIntent into a fully-specified ChartSpec that contains
 // all parameters required by a renderer.

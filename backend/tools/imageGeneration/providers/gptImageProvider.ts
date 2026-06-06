@@ -1,4 +1,4 @@
-// SentIQGPT v2 - GPTImage Provider
+// SentIQ Chat v2 - GPTImage Provider
 //
 // wan-image model via Pollinations.
 // Used for complex prompts requiring spatial reasoning, text rendering,
@@ -11,7 +11,11 @@ import { buildPollinationsUrl, fetchPollinationsImage, getPollinationsApiKey } f
 const GPTIMAGE_TIMEOUT_MS = 60_000;
 
 export class GptImageProvider implements ImageProvider {
-  readonly name = "wan-image";
+  readonly name: string;
+
+  constructor(private readonly modelName = readTextImageModel()) {
+    this.name = modelName;
+  }
 
   isAvailable(): boolean {
     return Boolean(getPollinationsApiKey());
@@ -19,8 +23,14 @@ export class GptImageProvider implements ImageProvider {
 
   async generate(prompt: string, size?: string): Promise<ImageProviderResult> {
     // Keep complex prompts unchanged so the model receives the full instruction verbatim.
-    const imageUrl = buildPollinationsUrl(prompt, "wan-image", size);
+    const imageUrl = buildPollinationsUrl(prompt, this.modelName, size);
     const base64 = await fetchPollinationsImage(imageUrl, GPTIMAGE_TIMEOUT_MS);
     return { base64 };
   }
+}
+
+function readTextImageModel(): string {
+  const raw = process.env.SENTIQ_IMAGE_MODEL_TEXT_CORE?.trim() || "pollinations:gptimage";
+  const parts = raw.split(":");
+  return (parts[parts.length - 1] || "gptimage").trim();
 }

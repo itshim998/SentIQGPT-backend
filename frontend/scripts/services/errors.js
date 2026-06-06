@@ -1,11 +1,13 @@
 // ================================================================
 // Public error messages
 // ================================================================
+import { PRODUCT_NAME } from "../shared/brand.js";
+
 const ERROR_MESSAGES = {
-  network_unavailable: "SentIQGPT could not reach the network. Check your connection and try again.",
+  network_unavailable: `${PRODUCT_NAME} could not reach the network. Check your connection and try again.`,
   request_timed_out: "That request took too long. Please try again.",
   response_interrupted: "The response was interrupted. Your partial answer has been preserved.",
-  backend_unavailable: "SentIQGPT is temporarily unavailable. Please try again shortly.",
+  backend_unavailable: `${PRODUCT_NAME} is temporarily unavailable. Please try again shortly.`,
   auth_required: "Please log in to continue.",
   profile_setup_required: "Add your display name to continue.",
   file_too_large: "That file is too large to process.",
@@ -15,7 +17,7 @@ const ERROR_MESSAGES = {
   browser_feature_blocked: "A browser feature required for that action is blocked.",
   storage_unavailable: "Browser storage is unavailable. This session will use temporary storage.",
   rate_limit: "You have reached a temporary usage limit. Please try again later.",
-  unknown_recoverable: "SentIQGPT could not finish that action. Please try again.",
+  unknown_recoverable: `${PRODUCT_NAME} could not finish that action. Please try again.`,
 };
 
 function inferCategory(error, context = {}) {

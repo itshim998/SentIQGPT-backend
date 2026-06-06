@@ -1,5 +1,5 @@
 /* ============================================================
-   SentIQGPT v3 — Liquid Glass Design System
+   SentIQ Chat v3 — Liquid Glass Design System
    Inspired by HealthIQ's glassmorphism, gradient lighting,
    and animation philosophy.
    ============================================================ */
@@ -136,4 +136,3 @@ body::after {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.25); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(139,92,246,0.40); }
-

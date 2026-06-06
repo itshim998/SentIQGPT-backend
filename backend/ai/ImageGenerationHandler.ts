@@ -1,6 +1,6 @@
 import { URL } from "url";
 
-// SentIQGPT v1 — Image Generation Handler
+// SentIQ Chat v1 — Image Generation Handler
 //
 // Multi-provider image generation with automatic fallback.
 // Providers: Pollinations AI → HuggingFace Inference API → fallback

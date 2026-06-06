@@ -1,4 +1,4 @@
-// SentIQGPT v3 — Z-Image Provider (PRIMARY)
+// SentIQ Chat v3 — Z-Image Provider (PRIMARY)
 //
 // Z-Image model via Pollinations.
 // Primary image generation provider for standard/simple prompts.

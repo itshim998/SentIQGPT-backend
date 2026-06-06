@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Memory Type Definitions
+// SentIQ Chat v2 — Memory Type Definitions
 //
 // Canonical type definitions for the memory system.
 // Used across all memory pipeline modules.

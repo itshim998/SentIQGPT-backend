@@ -6,6 +6,25 @@ export LLM_SERVICE_PORT="${LLM_SERVICE_PORT:-3002}"
 export LLM_SERVICE_HOST="${LLM_SERVICE_HOST:-127.0.0.1}"
 export LLM_SERVICE_URL="${LLM_SERVICE_URL:-http://127.0.0.1:${LLM_SERVICE_PORT}}"
 
+if [[ "${NODE_ENV:-}" == "production" ]]; then
+  if [[ -z "${SENTIQ_INTERNAL_SERVICE_TOKEN:-}" ]]; then
+    echo "[startup] SENTIQ_INTERNAL_SERVICE_TOKEN is required in production"
+    exit 1
+  fi
+  if [[ "${SENTIQ_ENABLE_UNSAFE_INTERNAL_ENDPOINTS:-false}" == "true" ]]; then
+    echo "[startup] Unsafe internal endpoints cannot be enabled in production"
+    exit 1
+  fi
+  if [[ "${LLM_SERVICE_HOST}" != "127.0.0.1" && "${LLM_SERVICE_HOST}" != "localhost" && "${LLM_SERVICE_HOST}" != "::1" ]]; then
+    echo "[startup] LLM_SERVICE_HOST must remain bound to 127.0.0.1 in production"
+    exit 1
+  fi
+  if [[ "${LLM_SERVICE_URL}" != http://127.0.0.1:* && "${LLM_SERVICE_URL}" != http://localhost:* && "${LLM_SERVICE_URL}" != http://[::1]:* ]]; then
+    echo "[startup] LLM_SERVICE_URL must remain on the internal loopback service in production"
+    exit 1
+  fi
+fi
+
 python_pid=""
 node_pid=""
 

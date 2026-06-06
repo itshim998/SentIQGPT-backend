@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Tavily Search Pipeline
+// SentIQ Chat v2 — Tavily Search Pipeline
 //
 // Full web search pipeline that behaves like a research system:
 //
@@ -28,6 +28,7 @@ import { expandQuery } from "./queryExpander";
 import { aggregateResults, formatResultsForLLM, extractSourceReferences } from "./resultsAggregator";
 import { extractContent } from "./contentExtractor";
 import type { SearchResult } from "./types";
+import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../../internalGateway";
 
 // ==============================
 // Configuration
@@ -36,7 +37,6 @@ import type { SearchResult } from "./types";
 const MAX_RESULTS_PER_QUERY = 5;
 const TOTAL_MAX_RESULTS = 8;
 const MAX_CONTENT_EXTRACT = 5;
-const LLM_SERVICE_URL = process.env.LLM_SERVICE_URL ?? "http://127.0.0.1:3002";
 
 // ==============================
 // Types
@@ -100,9 +100,9 @@ async function synthesizeWithLLM(
     .replace("{context}", context);
 
   try {
-    const response = await fetch(`${LLM_SERVICE_URL}/llm/invoke`, {
+    const response = await fetch(getInternalGatewayUrl("/llm/invoke"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getInternalGatewayHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         prompt,
         task: "web_search_synthesis",

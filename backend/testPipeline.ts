@@ -1,4 +1,4 @@
-// SentIQGPT — Integration Test Pipeline
+// SentIQ Chat — Integration Test Pipeline
 //
 // Validates the full intelligence pipeline: orchestrator routing,
 // tool detection, memory storage/retrieval, and image generation.
@@ -246,7 +246,7 @@ async function testChartGeneration(): Promise<void> {
 }
 
 async function run(): Promise<void> {
-  console.log("\n🔬 SentIQGPT Integration Test Pipeline");
+  console.log("\n🔬 SentIQ Chat Integration Test Pipeline");
   console.log("────────────────────────────────────────");
 
   const start = Date.now();

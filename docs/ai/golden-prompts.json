@@ -1,5 +1,5 @@
 {
-  "name": "SentIQGPT Student Builder Golden Prompts",
+  "name": "SentIQ Chat Student Builder Golden Prompts",
   "version": 2,
   "cases": [
     {
@@ -129,7 +129,7 @@
       "success_criteria": [
         "Does not silently store a durable memory",
         "May answer naturally using the current message",
-        "Only stores if the user explicitly asks SentIQGPT to remember it"
+        "Only stores if the user explicitly asks SentIQ Chat to remember it"
       ]
     }
   ]

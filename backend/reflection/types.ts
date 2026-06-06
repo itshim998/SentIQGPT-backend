@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Self-Reflection Types
+// SentIQ Chat v2 — Self-Reflection Types
 //
 // Shared interfaces for the answer critic and improver.
 

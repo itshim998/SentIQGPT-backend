@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Query Expander
+// SentIQ Chat v2 — Query Expander
 //
 // Generates 3-5 variations of a user query to improve search coverage.
 // Variations include:

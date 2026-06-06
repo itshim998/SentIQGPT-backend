@@ -1,4 +1,4 @@
-// SentIQGPT v2 — DuckDuckGo Instant Answer API Provider
+// SentIQ Chat v2 — DuckDuckGo Instant Answer API Provider
 //
 // Uses the free DuckDuckGo Instant Answer API.
 // Returns structured results from the Abstract, Related Topics,
@@ -7,6 +7,7 @@
 // API docs: https://api.duckduckgo.com/api
 
 import type { WebSearchProvider, SearchResult } from "../types";
+import { SERVICE_USER_AGENT } from "../../../branding";
 
 export class DuckDuckGoApiProvider implements WebSearchProvider {
   readonly name = "DuckDuckGo Instant";
@@ -20,7 +21,7 @@ export class DuckDuckGoApiProvider implements WebSearchProvider {
     const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
 
     const res = await fetch(url, {
-      headers: { "User-Agent": "SentIQGPT/2.0" },
+      headers: { "User-Agent": SERVICE_USER_AGENT },
       signal: AbortSignal.timeout(8000),
     });
 

@@ -1,4 +1,4 @@
-// SentIQGPT v3 - Mathematical Reasoning Direct Solver
+// SentIQ Chat v3 - Mathematical Reasoning Direct Solver
 //
 // Single-model math pipeline for mathematical/numerical queries.
 // Uses openai-large directly via the shared LLM adapter.
@@ -410,13 +410,14 @@ export async function solveMathDirect(
   userMessage: string,
   userId?: string,
   imageAttachments?: readonly ImageAttachment[],
+  options: { modelOverride?: string } = {},
 ): Promise<{ answer: string; thinking?: string; model_used?: string; fallback?: boolean }> {
   const intent = classifyMathIntent(userMessage);
   console.log(`[MathPipeline] intent=${intent}`);
 
   return callMathModelRaw({
     userMessage,
-    modelOverride: PRIMARY_MODEL,
+    modelOverride: options.modelOverride ?? PRIMARY_MODEL,
     userId,
     imageAttachments,
     maxOutputTokens: getMaxOutputTokensForIntent(intent),

@@ -3,6 +3,7 @@ export const SENTIQ_SUPABASE_ANON_KEY = window.SENTIQ_SUPABASE_ANON_KEY || "eyJh
 export const SENTIQ_API_BASE = window.SENTIQ_API_BASE ||
   (location.hostname === "localhost" || location.hostname === "127.0.0.1"
     ? "http://localhost:3001"
+    // Azure backend resource identifier remains unchanged until a verified replacement exists.
     : "https://sentiqgpt-backend.ashygrass-913d190e.centralindia.azurecontainerapps.io");
 export const SENTIQ_SUPPORT_EMAIL = window.SENTIQ_SUPPORT_EMAIL || "support@sentiqlabs.com";
 

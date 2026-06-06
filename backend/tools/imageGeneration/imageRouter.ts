@@ -1,4 +1,4 @@
-// SentIQGPT v3 - Image Router
+// SentIQ Chat v3 - Image Router
 //
 // Sequential fallback router with per-provider cooldowns, retry, and queue.
 // Tries each provider in priority order; returns as soon as one succeeds.
@@ -88,7 +88,7 @@ export function detectPromptComplexity(prompt: string): boolean {
   return matchCount >= 1;
 }
 
-export type ImageModelPreference = "zimage" | "wan-image";
+export type ImageModelPreference = "zimage" | "wan-image" | "gptimage" | "gptimage-large";
 
 export function selectImageProviderMode(
   prompt: string,
@@ -97,7 +97,23 @@ export function selectImageProviderMode(
   if (detectPromptComplexity(prompt)) {
     return "complex";
   }
-  return preferredModel === "wan-image" ? "complex" : "standard";
+  return preferredModel === "wan-image" || preferredModel === "gptimage" || preferredModel === "gptimage-large"
+    ? "complex"
+    : "standard";
+}
+
+function getProvidersForMode(mode: "standard" | "complex", preferredModel?: ImageModelPreference): readonly ImageProvider[] {
+  if (mode === "standard") return standardProviders;
+  if (preferredModel === "gptimage" || preferredModel === "gptimage-large" || preferredModel === "wan-image") {
+    return [
+      new GptImageProvider(preferredModel),
+      new ZimageProvider(),
+      new FluxDevProvider(),
+      new HuggingFaceProvider(),
+      new PollinationsProvider(),
+    ];
+  }
+  return complexProviders;
 }
 
 // ==============================
@@ -341,7 +357,7 @@ async function executeImageGeneration(args: {
   const errors: string[] = [];
   const startTime = Date.now();
   const providerMode = selectImageProviderMode(args.prompt, args.preferredModel);
-  const selectedProviders = providerMode === "complex" ? complexProviders : standardProviders;
+  const selectedProviders = getProvidersForMode(providerMode, args.preferredModel);
   console.log(
     `[IMAGE] routing prompt="${args.prompt.slice(0, 60)}..." mode=${providerMode} preferred=${args.preferredModel ?? "none"} primary=${selectedProviders[0]?.name ?? "none"} providers=${selectedProviders.length}`,
   );

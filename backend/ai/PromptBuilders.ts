@@ -3,8 +3,10 @@ import { existsSync, readFileSync } from "fs";
 import { resolve as pathResolve } from "path";
 import { composeContext } from "../orchestrator/contextComposer";
 import { MATH_RESPONSE_SYSTEM_PROMPT } from "./mathPrompt";
+import { PRODUCT_DISCLAIMER, PRODUCT_NAME } from "../branding";
+import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../internalGateway";
 
-// SentIQGPT v1 — Prompt Builders & LLM Adapter Bridge
+// SentIQ Chat v1 — Prompt Builders & LLM Adapter Bridge
 //
 // Builds deterministic, task-specific prompts.
 // Provides the canonical way to invoke the LLM gateway from TypeScript.
@@ -105,8 +107,6 @@ export interface LLMAdapterResult {
 // LLM Adapter invocation (via HTTP to FastAPI service)
 // ==============================
 
-const LLM_SERVICE_URL = process.env.LLM_SERVICE_URL || `http://localhost:${process.env.LLM_SERVICE_PORT || "3002"}`;
-
 function createAdapterAbortSignal(parentSignal: AbortSignal | undefined, timeoutMs: number): {
   readonly signal: AbortSignal;
   readonly cleanup: () => void;
@@ -135,14 +135,14 @@ function createAdapterAbortSignal(parentSignal: AbortSignal | undefined, timeout
 }
 
 export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMAdapterResult> {
-  const url = `${LLM_SERVICE_URL}/llm/invoke`;
+  const url = getInternalGatewayUrl("/llm/invoke");
   const abort = createAdapterAbortSignal(call.signal, call.timeout_ms ?? 90_000);
 
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getInternalGatewayHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         prompt: call.prompt,
         task: call.task,
@@ -234,14 +234,14 @@ export async function callLLMAdapter(call: LLMAdapterCall): Promise<string> {
 export async function callLLMAdapterStream(
   call: LLMAdapterCall,
 ): Promise<ReadableStream<string>> {
-  const url = `${LLM_SERVICE_URL}/llm/stream`;
+  const url = getInternalGatewayUrl("/llm/stream");
   const abort = createAdapterAbortSignal(call.signal, call.timeout_ms ?? 120_000);
 
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getInternalGatewayHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         prompt: call.prompt,
         task: call.task,
@@ -494,7 +494,7 @@ function stableJsonStringify(value: unknown): string {
 
 // Conversational system prompt for general text chat on friendly Pollinations models
 const MISTRAL_CONVERSATIONAL_SYSTEM_PROMPT =
-  "SYSTEM: You are SentIQGPT, a warm and engaging AI companion.\n\n" +
+  `SYSTEM: You are ${PRODUCT_NAME}, a warm and engaging AI companion.\n\n` +
   "ENGAGEMENT:\n" +
   "- Be friendly, conversational, and personable.\n" +
   "SAFETY RULES (always observe these):\n" +
@@ -505,7 +505,7 @@ const MISTRAL_CONVERSATIONAL_SYSTEM_PROMPT =
 
 // Default system prompt for file analysis and other models
 const DEFAULT_SYSTEM_PROMPT =
-  "SYSTEM: You are SentIQGPT, a knowledgeable and helpful AI assistant.\n" +
+  `SYSTEM: You are ${PRODUCT_NAME}, a knowledgeable and helpful AI assistant.\n` +
   "SAFETY RULES:\n" +
   "- Never generate harmful, illegal, or dangerous content.\n" +
   "- Never impersonate real people or authorities.\n" +
@@ -802,7 +802,7 @@ export function getDemoFallbackResponse(task: TaskName): string {
     case "chat":
       return JSON.stringify({
         reply: "I'm currently unable to process your request. Please try again shortly.",
-        disclaimer: "SentIQGPT is an AI assistant. Verify important information independently.",
+        disclaimer: PRODUCT_DISCLAIMER,
       });
     case "memory_classify":
       return JSON.stringify({ should_store: false, type: null, reason: "fallback" });

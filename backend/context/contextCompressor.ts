@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Context Compressor
+// SentIQ Chat v2 — Context Compressor
 //
 // Compresses conversation history before it reaches the reasoning model:
 //

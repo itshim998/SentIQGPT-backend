@@ -1,3 +1,4 @@
+import "./shared/brand.js";
 import "./config.js";
 import "./services/errors.js";
 import "./rendering/rich-text-renderer.js";
@@ -8,4 +9,5 @@ import "./features/chat-controller.js";
 import "./panels/memory-panel.js";
 import "./panels/file-panel.js";
 import "./panels/settings-panel.js";
+import "./panels/billing-panel.js";
 import "./panels/trust-panel.js";

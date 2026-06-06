@@ -1,4 +1,4 @@
-// SentIQGPT v2 — DuckDuckGo HTML Search Provider
+// SentIQ Chat v2 — DuckDuckGo HTML Search Provider
 //
 // Fallback provider that fetches DuckDuckGo's lite HTML search page
 // and extracts result links/snippets via simple text parsing.
@@ -8,6 +8,7 @@
 // No API key required.
 
 import type { WebSearchProvider, SearchResult } from "../types";
+import { SERVICE_USER_AGENT } from "../../../branding";
 
 export class DuckDuckGoHtmlProvider implements WebSearchProvider {
   readonly name = "DuckDuckGo HTML";
@@ -22,7 +23,7 @@ export class DuckDuckGoHtmlProvider implements WebSearchProvider {
 
     const res = await fetch(url, {
       headers: {
-        "User-Agent": "SentIQGPT/2.0 (text browser)",
+        "User-Agent": `${SERVICE_USER_AGENT} (text browser)`,
         "Accept": "text/html",
       },
       signal: AbortSignal.timeout(10000),

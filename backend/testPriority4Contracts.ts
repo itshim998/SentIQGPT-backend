@@ -9,6 +9,7 @@ const server = read("backend/server.ts");
 const apiClient = read("frontend/scripts/services/api.js");
 const chatController = read("frontend/scripts/features/chat-controller.js");
 const schemas = read("backend/validation/schemas.ts");
+// Historical internal report filename retained as a static test fixture reference.
 const report = read("SentIQGPT_Problems.txt");
 
 function sourceBlock(source: string, startNeedle: string, endNeedle: string): string {

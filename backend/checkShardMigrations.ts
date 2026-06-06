@@ -17,9 +17,9 @@ if (resolvedEnvPath) {
 (async () => {
   const { verifyShardMigrations } = await import("./dbRouter");
   await verifyShardMigrations();
-  console.log("[SentIQGPT] Shard migration verification passed.");
+  console.log("[SentIQ Chat] Shard migration verification passed.");
 })().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`[SentIQGPT] Shard migration verification failed: ${message}`);
+  console.error(`[SentIQ Chat] Shard migration verification failed: ${message}`);
   process.exit(1);
 });

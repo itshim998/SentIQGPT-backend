@@ -1,5 +1,5 @@
 """
-SentIQGPT v1 — LLM Gateway (FastAPI Service)
+SentIQ Chat v1 — LLM Gateway (FastAPI Service)
 
 Persistent HTTP service wrapping the dual-model llm_adapter.
 Eliminates process startup overhead.
@@ -18,7 +18,7 @@ import time
 from datetime import date
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import Any, Optional
@@ -61,8 +61,10 @@ from llm_adapter import (
     SAFETY_BUFFER_SIZE,
 )
 
+PRODUCT_NAME = "SentIQ Chat"
+
 # --- Logger ---
-logger = logging.getLogger("sentiqgpt.llm_service")
+logger = logging.getLogger("sentiq_chat.llm_service")
 if not logger.handlers:
     h = logging.StreamHandler()
     h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
@@ -71,7 +73,9 @@ logger.setLevel(logging.INFO)
 
 LLM_SERVICE_HOST = os.getenv("LLM_SERVICE_HOST", "0.0.0.0")
 LLM_SERVICE_PORT = int(os.getenv("LLM_SERVICE_PORT", "3002"))
+RUNTIME_ENV = os.getenv("NODE_ENV", os.getenv("RUNTIME_ENV", "development")).strip().lower()
 REQUESTS_PER_DAY = 50
+PYTHON_LLM_QUOTA_ENFORCEMENT = os.getenv("SENTIQ_PYTHON_LLM_QUOTA_ENFORCEMENT", "false").strip().lower() == "true"
 SUPABASE_REST_TIMEOUT_SECONDS = 15
 SUPABASE_ERROR_BODY_LIMIT = 400
 CONTROL_DB_NUMBER = 1
@@ -195,17 +199,96 @@ def check_output_safety(text: str, user_id: str, endpoint: str) -> tuple[bool, s
 # FastAPI Application
 # ============================
 
-app = FastAPI(title="SentIQGPT LLM Service", version="1.0.0")
+def is_production_runtime(runtime_env: Optional[str] = None) -> bool:
+    return (runtime_env or RUNTIME_ENV).strip().lower() == "production"
 
 
-def require_internal_service_token(token: Optional[str]) -> None:
-    if not INTERNAL_SERVICE_TOKEN:
-        if UNSAFE_INTERNAL_ENDPOINTS_ENABLED:
-            logger.warning("[internal] unsafe internal endpoint access enabled without token")
+def validate_internal_service_configuration(
+    *,
+    runtime_env: Optional[str] = None,
+    internal_service_token: Optional[str] = None,
+    unsafe_internal_endpoints_enabled: Optional[bool] = None,
+    llm_service_host: Optional[str] = None,
+) -> None:
+    if not is_production_runtime(runtime_env):
+        return
+
+    token = INTERNAL_SERVICE_TOKEN if internal_service_token is None else internal_service_token
+    unsafe_enabled = (
+        UNSAFE_INTERNAL_ENDPOINTS_ENABLED
+        if unsafe_internal_endpoints_enabled is None
+        else unsafe_internal_endpoints_enabled
+    )
+    host = LLM_SERVICE_HOST if llm_service_host is None else llm_service_host
+
+    if not token:
+        raise RuntimeError("SENTIQ_INTERNAL_SERVICE_TOKEN is required in production")
+    if unsafe_enabled:
+        raise RuntimeError("SENTIQ_ENABLE_UNSAFE_INTERNAL_ENDPOINTS cannot be enabled in production")
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        raise RuntimeError("LLM_SERVICE_HOST must remain bound to 127.0.0.1 in production")
+
+
+validate_internal_service_configuration()
+
+app = FastAPI(
+    title=f"{PRODUCT_NAME} LLM Service",
+    version="1.0.0",
+    docs_url=None if is_production_runtime() else "/docs",
+    redoc_url=None if is_production_runtime() else "/redoc",
+    openapi_url=None if is_production_runtime() else "/openapi.json",
+)
+
+
+def require_internal_service_token(
+    token: Optional[str],
+    *,
+    runtime_env: Optional[str] = None,
+    internal_service_token: Optional[str] = None,
+    unsafe_internal_endpoints_enabled: Optional[bool] = None,
+) -> None:
+    configured_token = INTERNAL_SERVICE_TOKEN if internal_service_token is None else internal_service_token
+    unsafe_enabled = (
+        UNSAFE_INTERNAL_ENDPOINTS_ENABLED
+        if unsafe_internal_endpoints_enabled is None
+        else unsafe_internal_endpoints_enabled
+    )
+    production = is_production_runtime(runtime_env)
+
+    if not configured_token:
+        if not production:
+            if unsafe_enabled:
+                logger.warning("[internal] unsafe internal endpoint access enabled without token")
             return
         raise HTTPException(status_code=404, detail="Not found")
-    if token != INTERNAL_SERVICE_TOKEN:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    if token != configured_token:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+class InternalGatewayAuthMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or scope.get("path") == "/llm/health":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {
+            name.decode("latin1").lower(): value.decode("latin1")
+            for name, value in scope.get("headers", [])
+        }
+        try:
+            require_internal_service_token(headers.get("x-sentiq-internal-token"))
+        except HTTPException:
+            response = JSONResponse({"detail": "Not found"}, status_code=404)
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(InternalGatewayAuthMiddleware)
 
 
 class LLMInvokeRequest(BaseModel):
@@ -585,9 +668,14 @@ def reserve_llm_request_slot(user_id: str) -> int:
 
 @app.get("/llm/health")
 async def health_check():
+    return {"status": "ok"}
+
+
+@app.get("/llm/health/details")
+async def health_details():
     return {
         "status": "ok",
-        "system": "SentIQGPT",
+        "system": PRODUCT_NAME,
         "gemini_keys_configured": len(GEMINI_API_KEYS),
         "groq_keys_configured": len(GROQ_API_KEYS),
         "gemini_model": GEMINI_MODEL,
@@ -634,9 +722,15 @@ async def invoke_llm(request: LLMInvokeRequest):
             assigned_db = None
         else:
             user_id = require_user_id(request.user_id)
-            assigned_db = await run_in_threadpool(reserve_llm_request_slot, user_id)
+            assigned_db = await run_in_threadpool(reserve_llm_request_slot, user_id) if PYTHON_LLM_QUOTA_ENFORCEMENT else None
             effective_model_override = request.model_override
-            logger.info("[invoke] quota_reserved user_id=%s db=%s task=%s", user_id, assigned_db, request.task)
+            logger.info(
+                "[invoke] quota_%s user_id=%s db=%s task=%s",
+                "reserved" if PYTHON_LLM_QUOTA_ENFORCEMENT else "delegated_to_billing",
+                user_id,
+                assigned_db,
+                request.task,
+            )
         result = await run_in_threadpool(
             call_llm_router,
             request.prompt,
@@ -659,7 +753,7 @@ async def invoke_llm(request: LLMInvokeRequest):
         raise
     except Exception as e:
         logger.error("LLM invocation failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="LLM invocation failed")
 
 
 class StreamingSafetyMonitor:
@@ -763,9 +857,15 @@ async def stream_llm(request: LLMInvokeRequest):
                 assigned_db = None
             else:
                 user_id = require_user_id(request.user_id)
-                assigned_db = reserve_llm_request_slot(user_id)
+                assigned_db = reserve_llm_request_slot(user_id) if PYTHON_LLM_QUOTA_ENFORCEMENT else None
                 effective_model_override = request.model_override
-                logger.info("[stream] quota_reserved user_id=%s db=%s task=%s", user_id, assigned_db, request.task)
+                logger.info(
+                    "[stream] quota_%s user_id=%s db=%s task=%s",
+                    "reserved" if PYTHON_LLM_QUOTA_ENFORCEMENT else "delegated_to_billing",
+                    user_id,
+                    assigned_db,
+                    request.task,
+                )
             
             # ── OUTPUT SAFETY MONITOR ──
             # Skip for chart generation to prevent false positives on code/data
@@ -808,7 +908,7 @@ async def stream_llm(request: LLMInvokeRequest):
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error("Streaming failed: %s", e)
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'error': 'LLM stream failed'})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -846,8 +946,13 @@ async def vision_llm(request: VisionRequest):
     if len(request.image_base64) > 28_000_000:
         raise HTTPException(status_code=400, detail="Image too large (max ~20MB)")
     try:
-        assigned_db = reserve_llm_request_slot(user_id)
-        logger.info("[vision] quota_reserved user_id=%s db=%s", user_id, assigned_db)
+        assigned_db = reserve_llm_request_slot(user_id) if PYTHON_LLM_QUOTA_ENFORCEMENT else None
+        logger.info(
+            "[vision] quota_%s user_id=%s db=%s",
+            "reserved" if PYTHON_LLM_QUOTA_ENFORCEMENT else "delegated_to_billing",
+            user_id,
+            assigned_db,
+        )
         from llm_adapter import _invoke_gemini_vision
         result = _invoke_gemini_vision(
             prompt=request.prompt,
@@ -858,7 +963,7 @@ async def vision_llm(request: VisionRequest):
         return {"result": result, "provider": "gemini-vision"}
     except Exception as e:
         logger.error("Vision invocation failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Vision invocation failed")
 
 
 # ============================
@@ -999,7 +1104,7 @@ async def render_chart(
         return {"preview": None, "error": "render timed out"}
     except Exception as e:
         logger.error("Chart render error: %s", e)
-        return {"preview": None, "error": str(e)}
+        return {"preview": None, "error": "render failed"}
 
 
 # ============================
@@ -1024,19 +1129,17 @@ async def safety_health():
     """Check if the safety model is accessible."""
     try:
         # Quick test call with innocuous input
-        classification, raw = call_safety_model("Hello, how are you?", timeout=5, check_type="input")
+        call_safety_model("Hello, how are you?", timeout=5, check_type="input")
         return {
             "status": "ok",
-            "safety_model": "qwen-safety",
-            "test_classification": classification,
-            "test_response_preview": raw[:50] if raw else None,
+            "available": True,
+            "fail_closed": True,
         }
-    except Exception as e:
+    except Exception:
         return {
             "status": "degraded",
-            "safety_model": "qwen-safety",
-            "error": str(e),
-            "note": "Safety checks will default to SAFE on failure",
+            "available": False,
+            "fail_closed": True,
         }
 
 

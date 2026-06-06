@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Cache Manager
+// SentIQ Chat v2 — Cache Manager
 //
 // High-level API for the three cache categories:
 //   1. LLM Answer Cache   — caches Gemini conversation replies

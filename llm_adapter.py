@@ -1,6 +1,6 @@
 # llm_adapter.py
 """
-SentIQGPT v1 — Unified Dual-Model LLM Gateway (Production)
+SentIQ Chat v1 — Unified Dual-Model LLM Gateway (Production)
 
 Providers:
   1. Google Gemini (3-key rotation) → reasoning, conversation, knowledge
@@ -95,12 +95,13 @@ GENERAL_CHAT_MODEL = os.getenv("SMART_MODEL_GENERAL_CHAT", "gemini-2.5-flash-lit
 SEARCH_MODEL = os.getenv("SMART_MODEL_SEARCH", "gemini-2.5-flash-lite")
 
 GPT_OSS_LOGICAL_MODELS = {"gpt-oss-120b", "openai/gpt-oss-120b"}
+PRODUCT_NAME = "SentIQ Chat"
 GPT_OSS_SYSTEM_PROMPT = (
-    "You are SentIQGPT, a grounded AI assistant. "
+    f"You are {PRODUCT_NAME}, a grounded AI assistant. "
     "Provide accurate, concise, well-structured answers."
 )
 MASTER_ROUTER_SYSTEM_PROMPT = (
-    "You are the Master Routing AI for SentIQGPT. "
+    f"You are the Master Routing AI for {PRODUCT_NAME}. "
     "Your task is not to answer user prompts. "
     "Determine the minimum sufficient specialized model while minimizing unnecessary cost. "
     "Output strict JSON only."
@@ -158,7 +159,7 @@ UNHEALTHY_KEY_TTL = 60  # seconds to skip an unhealthy key
 # ==============================
 # Logger
 # ==============================
-logger = logging.getLogger("sentiqgpt.llm")
+logger = logging.getLogger("sentiq_chat.llm")
 if not logger.handlers:
     h = logging.StreamHandler()
     h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
@@ -455,14 +456,29 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     if not model_override:
         return default_provider, None
 
-    logical = model_override.strip().lower()
+    raw_override = model_override.strip()
+    logical = raw_override.lower()
+
+    if ":" in logical:
+        provider_prefix, raw_model = raw_override.split(":", 1)
+        provider = provider_prefix.strip().lower()
+        concrete_model = raw_model.strip()
+        concrete_logical = concrete_model.lower()
+        if provider == "groq":
+            if concrete_logical in GPT_OSS_LOGICAL_MODELS:
+                return "groq", GROQ_CHAT_MODEL
+            return "groq", concrete_model
+        if provider == "pollinations":
+            return "pollinations", concrete_model
+        if provider == "gemini":
+            return "gemini", concrete_model
 
     # --- Pollinations routes (preferred) ---
     if logical in {"qwen-coder", "qwen3-coder-30b", "qwen3-coder"}:
         return "pollinations", CODING_MODEL
 
-    if logical == "openai-large":
-        return "pollinations", "openai-large"
+    if logical in {"openai-large", "llama-scout", "scout", "gptimage", "gptimage-large", "zimage"}:
+        return "pollinations", logical
 
     if logical == "minimax":
         return "pollinations", "minimax"

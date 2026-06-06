@@ -502,7 +502,13 @@
 
 if (typeof window !== "undefined" && !window.SentIQRenderer?.renderRichText) {
   try {
-    if (window.SENTIQ_DEBUG || localStorage.getItem("sentiq_debug") === "1") {
+    const debugKey = window.SentIQBrand?.STORAGE_KEYS?.debug || "sentiq-chat:debug";
+    const legacyDebugKey = window.SentIQBrand?.LEGACY_STORAGE_KEYS?.debug || "sentiq_debug";
+    if (
+      window.SENTIQ_DEBUG ||
+      localStorage.getItem(debugKey) === "1" ||
+      localStorage.getItem(legacyDebugKey) === "1"
+    ) {
       console.warn("[SentIQRenderer] Inline renderer failed to initialize; Markdown-only fallback will be used.");
     }
   } catch (_) {}

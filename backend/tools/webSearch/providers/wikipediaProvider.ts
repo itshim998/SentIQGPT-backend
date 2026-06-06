@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Wikipedia Search Provider
+// SentIQ Chat v2 — Wikipedia Search Provider
 //
 // Uses the free Wikipedia REST API to fetch article summaries
 // and search results. Two strategies:
@@ -8,6 +8,7 @@
 // API docs: https://en.wikipedia.org/api/rest_v1/
 
 import type { WebSearchProvider, SearchResult } from "../types";
+import { SERVICE_USER_AGENT } from "../../../branding";
 
 interface WikiSearchHit {
   title: string;
@@ -28,7 +29,7 @@ export class WikipediaProvider implements WebSearchProvider {
     const searchUrl = `https://en.wikipedia.org/w/rest.php/v1/search/page?q=${encodeURIComponent(query)}&limit=${maxResults}`;
 
     const res = await fetch(searchUrl, {
-      headers: { "User-Agent": "SentIQGPT/2.0" },
+      headers: { "User-Agent": SERVICE_USER_AGENT },
       signal: AbortSignal.timeout(8000),
     });
 
@@ -67,7 +68,7 @@ export class WikipediaProvider implements WebSearchProvider {
     const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(titleKey)}`;
 
     const res = await fetch(url, {
-      headers: { "User-Agent": "SentIQGPT/2.0" },
+      headers: { "User-Agent": SERVICE_USER_AGENT },
       signal: AbortSignal.timeout(6000),
     });
 

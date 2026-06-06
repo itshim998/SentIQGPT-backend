@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Server-Side Memory Store
+// SentIQ Chat v2 — Server-Side Memory Store
 //
 // In-memory store for the current server session.
 // Primary storage is IndexedDB on the client. This module provides:

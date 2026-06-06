@@ -11,6 +11,7 @@ import {
 } from "../tools/fileGeneration/fileDetector";
 import { detectCodeQuery, isBufferedReasoningQuery, isMathQuery, selectModelForPrompt } from "./modelRouter";
 import { classifyQueryType } from "./queryClassifier";
+import { PRODUCT_NAME } from "../branding";
 
 export interface ClarificationOption {
   readonly id: string;
@@ -679,7 +680,7 @@ function buildIntentClarifyPrompt(
     : "- deterministic_gate: uncertain; decide from the policy.";
   return [
     "TASK: Intent Clarification",
-    "ROLE: Decide whether SentIQGPT should ask a follow-up question before answering.",
+    `ROLE: Decide whether ${PRODUCT_NAME} should ask a follow-up question before answering.`,
     "",
     "BALANCED POLICY:",
     "- Ask only when ambiguity would materially change the final answer.",
@@ -690,7 +691,7 @@ function buildIntentClarifyPrompt(
     "- Otherwise provide 2 to 4 meaningful options.",
     "- Always allow the user to enter a custom answer in the message bar.",
     "- If a deterministic gate says ask, write a better user-facing version of that clarification.",
-    "- Return zero options only when SentIQGPT cannot safely guess the answer, such as a missing name.",
+    `- Return zero options only when ${PRODUCT_NAME} cannot safely guess the answer, such as a missing name.`,
     "- Never ask generic answer-style questions such as concise vs detailed unless the user's request is specifically about response style.",
     "- For coding, website, and portfolio flows, ask about the project/task details instead of answer length or explanation depth.",
     "- If the user selected a portfolio and the name is missing, ask only whose name should be in the portfolio with zero options.",

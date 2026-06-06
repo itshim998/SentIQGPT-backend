@@ -26,6 +26,7 @@ function run(): void {
   assert.match(dbPutBlock, /tx\.oncomplete/, "IndexedDB writes wait for transaction completion");
   assert.match(dbPutBlock, /tx\.onabort/, "IndexedDB writes reject transaction aborts");
 
+  // Historical internal report filename retained as a static test fixture reference.
   const report = readFileSync(resolve(__dirname, "../SentIQGPT_Problems.txt"), "utf8");
   assert.doesNotMatch(report, /Priority 2 - Protect quota, persistence, and recovery correctness/, "Priority 2 roadmap section was removed after completion");
 

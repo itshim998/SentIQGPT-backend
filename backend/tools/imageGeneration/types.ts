@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Image Generation Types
+// SentIQ Chat v2 — Image Generation Types
 //
 // Shared interface for all image providers and the router.
 

@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Content Extractor
+// SentIQ Chat v2 — Content Extractor
 //
 // Lightweight HTML-to-text extraction for web search results.
 // Fetches a URL and strips scripts, styles, nav, ads, and other
@@ -9,6 +9,7 @@
 import type { SearchResult } from "./types";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { SERVICE_USER_AGENT } from "../../branding";
 
 const MAX_BODY_CHARS = 1500;
 const FETCH_TIMEOUT_MS = 8000;
@@ -126,7 +127,7 @@ async function fetchValidated(url: string, redirectCount = 0): Promise<Response>
   const parsed = await assertPublicHttpUrl(url);
   const res = await fetch(parsed.toString(), {
     headers: {
-      "User-Agent": "SentIQGPT/2.0 (content extractor)",
+      "User-Agent": `${SERVICE_USER_AGENT} (content extractor)`,
       "Accept": "text/html",
     },
     redirect: "manual",

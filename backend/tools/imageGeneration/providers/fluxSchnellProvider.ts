@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Flux Schnell Image Provider (PRIMARY)
+// SentIQ Chat v2 — Flux Schnell Image Provider (PRIMARY)
 //
 // Flux Schnell model via Pollinations.
 // Primary image generation provider — fastest FLUX model available.

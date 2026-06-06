@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Answer Critic (Self-Reflection)
+// SentIQ Chat v2 — Answer Critic (Self-Reflection)
 //
 // Evaluates an initial AI answer on four dimensions:
 //   accuracy, clarity, completeness, relevance

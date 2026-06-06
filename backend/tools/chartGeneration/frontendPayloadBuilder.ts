@@ -1,4 +1,4 @@
-// SentIQGPT - Frontend Chart Payload Builder
+// SentIQ Chat - Frontend Chart Payload Builder
 //
 // Builds deterministic, JSON-serializable payloads for frontend chart
 // renderers so the UI can render Plotly and Chart.js charts directly

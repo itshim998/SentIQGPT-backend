@@ -421,12 +421,12 @@ export async function getOrAssignUserDatabase(userId: string): Promise<SupabaseC
 
 export async function verifyShardMigrations(): Promise<void> {
   const dummyId = randomUUID();
-  console.log(`[SentIQGPT] Running startup migration verification checks...`);
+  console.log(`[SentIQ Chat] Running startup migration verification checks...`);
   const shardIds: DatabaseId[] = [2, 3, 4];
   let failed = false;
 
   const markFailure = (dbId: DatabaseId, message: string): void => {
-    console.error(`[SentIQGPT] FATAL: Shard DB ${dbId} ${message}`);
+    console.error(`[SentIQ Chat] FATAL: Shard DB ${dbId} ${message}`);
     failed = true;
   };
 
@@ -612,7 +612,7 @@ export async function verifyShardMigrations(): Promise<void> {
   }
 
   if (failed) {
-    console.error(`[SentIQGPT] Migration check failed! Exiting.`);
+    console.error(`[SentIQ Chat] Migration check failed! Exiting.`);
     process.exit(1);
   }
 }

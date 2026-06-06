@@ -1,7 +1,10 @@
 // ================================================================
 // 1. Storage Manager — IndexedDB
 // ================================================================
-const DB_NAME = "SentIQGPT";
+import { LEGACY_PRODUCT_NAME, PRODUCT_NAME, STORAGE_NAMESPACE } from "../shared/brand.js";
+
+// Keep the legacy IndexedDB name hidden for compatibility with existing local data.
+const DB_NAME = LEGACY_PRODUCT_NAME;
 const DB_VERSION = 5;
 
 const STORES = {
@@ -149,7 +152,7 @@ function openDB() {
       useVolatileStorage(request.error);
     };
     request.onblocked = () => {
-      useVolatileStorage(new Error("SentIQGPT storage is blocked by another open tab."));
+      useVolatileStorage(new Error(`${PRODUCT_NAME} storage is blocked by another open tab.`));
     };
   });
   return dbOpenPromise;
@@ -264,7 +267,11 @@ function clearSentIqWebStorage(storageName) {
     const keysToRemove = [];
     for (let index = 0; index < storage.length; index += 1) {
       const key = storage.key(index);
-      if (key?.startsWith("sentiq_") || key?.startsWith("sentiq:")) keysToRemove.push(key);
+      if (
+        key?.startsWith(`${STORAGE_NAMESPACE}:`) ||
+        key?.startsWith("sentiq_") ||
+        key?.startsWith("sentiq:")
+      ) keysToRemove.push(key);
     }
     keysToRemove.forEach((key) => storage.removeItem(key));
   } catch {

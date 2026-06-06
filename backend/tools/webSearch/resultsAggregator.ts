@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Results Aggregator
+// SentIQ Chat v2 — Results Aggregator
 //
 // Intelligently combines search results from multiple queries:
 //   - Merges results from all expanded queries

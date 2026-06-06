@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Stability AI Image Provider
+// SentIQ Chat v2 — Stability AI Image Provider
 //
 // Uses the Stability AI REST API (v1 generation endpoint).
 // Requires STABILITY_API_KEY in environment.

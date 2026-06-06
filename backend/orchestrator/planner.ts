@@ -1,4 +1,4 @@
-// SentIQGPT v2 - Task Planner
+// SentIQ Chat v2 - Task Planner
 //
 // Analyzes a user query and produces a structured execution plan
 // of 1-3 steps. Uses Groq (route_classify) for fast classification.

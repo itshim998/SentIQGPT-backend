@@ -1,4 +1,4 @@
-// SentIQGPT v2 - File Chunking Utility
+// SentIQ Chat v2 - File Chunking Utility
 //
 // Splits large extracted text into overlapping chunks for
 // efficient context window usage. During conversation, only

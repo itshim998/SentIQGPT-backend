@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
--- SentIQGPT Chat Images Metadata Table
+-- SentIQ Chat Chat Images Metadata Table
 -- 
 -- Stores ONLY metadata (URLs) for images stored in Supabase Storage.
 -- Actual image files are stored in the configured image storage project

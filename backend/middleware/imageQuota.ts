@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Image Quota & Cooldown Middleware
+// SentIQ Chat v2 — Image Quota & Cooldown Middleware
 //
 // Enforces:
 //   • 30 image generations per IP per 24 hours

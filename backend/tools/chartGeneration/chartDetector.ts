@@ -1,4 +1,4 @@
-// SentIQGPT — Chart Intent Detector
+// SentIQ Chat — Chart Intent Detector
 //
 // Detects when a user message is requesting a chart or data visualization
 // using keyword matching. Returns a structured ChartIntent for downstream

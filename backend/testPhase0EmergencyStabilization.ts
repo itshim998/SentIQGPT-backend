@@ -44,7 +44,9 @@ assert(api.includes("canStreamResponses"), "API client must expose streaming cap
 assert(api.includes('terminalError.code = "response_interrupted"'), "transport interruption must retain a stable error code");
 assert(controller.includes("appendResponseRecoveryRow"), "partial answers must render a recovery action");
 assert(controller.includes("CONTINUE_RESPONSE_PROMPT"), "partial answers must support linked continuation");
-assert(controller.includes("sentiq_guest_recovery_draft"), "guest recovery must be tab-scoped");
+assert(controller.includes("STORAGE_KEYS.guestRecoveryDraft"), "guest recovery must write the current tab-scoped key");
+assert(controller.includes("LEGACY_STORAGE_KEYS.guestRecoveryDraft"), "guest recovery must retain legacy draft reads during migration");
+assert(controller.includes("readSessionStorageWithLegacy"), "guest recovery must fall back to legacy session storage");
 
 assert(html.includes("privacy-data-btn"), "sidebar must expose privacy and data controls");
 assert(html.includes("support@sentiqlabs.com"), "support email fallback must be visible");

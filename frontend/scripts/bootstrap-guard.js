@@ -1,6 +1,7 @@
 (function initializeSentIqBootstrapGuard() {
   "use strict";
 
+  const PRODUCT_NAME = "SentIQ Chat";
   const limitedReasons = new Map();
   let isReady = false;
   let didFail = false;
@@ -45,13 +46,13 @@
 
     if (didFail) {
       banner.hidden = false;
-      message.textContent = "SentIQGPT could not finish starting. A browser, network, or storage setting may be blocking required functionality.";
+      message.textContent = `${PRODUCT_NAME} could not finish starting. A browser, network, or storage setting may be blocking required functionality.`;
       return;
     }
 
     if (!isReady) {
       banner.hidden = false;
-      message.textContent = "Starting SentIQGPT...";
+      message.textContent = `Starting ${PRODUCT_NAME}...`;
       return;
     }
 

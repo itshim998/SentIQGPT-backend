@@ -1,4 +1,4 @@
-// SentIQGPT v2 — FLUX.2 Dev Image Provider (FALLBACK)
+// SentIQ Chat v2 — FLUX.2 Dev Image Provider (FALLBACK)
 //
 // FLUX.2 Dev model via Pollinations.
 // Higher quality, slightly slower.

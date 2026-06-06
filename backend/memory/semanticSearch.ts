@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Semantic Memory Search
+// SentIQ Chat v2 — Semantic Memory Search
 //
 // Retrieves the most relevant memories for a user query using
 // cosine similarity between vector embeddings.

@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Pollinations Shared Utilities
+// SentIQ Chat v2 — Pollinations Shared Utilities
 //
 // Common helpers for all Pollinations-based image providers.
 // Handles prompt enhancement, URL construction, and authenticated image fetching.

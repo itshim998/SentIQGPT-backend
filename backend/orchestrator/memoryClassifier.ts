@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Memory Classifier (Orchestrator Layer)
+// SentIQ Chat v2 — Memory Classifier (Orchestrator Layer)
 //
 // Thin orchestrator wrapper around MemoryProcessor.classifyMemory().
 // Translates the v1 result into canonical MemoryClassificationResult types.

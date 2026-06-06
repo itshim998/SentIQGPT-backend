@@ -1,7 +1,8 @@
 import { callLLMAdapter, strictParseJsonObject, getDemoFallbackResponse } from "./PromptBuilders";
 import type { LLMAdapterCall } from "./PromptBuilders";
+import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../internalGateway";
 
-// SentIQGPT v1 — File Ingestion Handler
+// SentIQ Chat v1 — File Ingestion Handler
 //
 // Processes uploaded files (PDF, TXT, images) and extracts usable content.
 // Returns structured metadata + extracted text for client-side IndexedDB storage.
@@ -264,8 +265,6 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
  * Analyze an image using Gemini Vision (multimodal).
  * Sends the image as base64 to the Python LLM gateway's /llm/vision endpoint.
  */
-const LLM_SERVICE_URL = process.env.LLM_SERVICE_URL || `http://localhost:${process.env.LLM_SERVICE_PORT || "3002"}`;
-
 async function analyzeImageWithVision(
   buffer: Buffer,
   filename: string,
@@ -289,9 +288,9 @@ async function analyzeImageWithVision(
     `Filename: ${filename}`;
 
   try {
-    const response = await fetch(`${LLM_SERVICE_URL}/llm/vision`, {
+    const response = await fetch(getInternalGatewayUrl("/llm/vision"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getInternalGatewayHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         prompt,
         image_base64: base64,

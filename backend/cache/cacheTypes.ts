@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Knowledge Cache Types
+// SentIQ Chat v2 — Knowledge Cache Types
 //
 // Shared interfaces for the in-memory cache layer.
 

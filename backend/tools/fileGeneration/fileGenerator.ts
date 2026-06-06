@@ -27,6 +27,7 @@ import type {
   GeneratedFilePreview,
   GeneratedFileResult,
 } from "./types";
+import { PRODUCT_NAME } from "../../branding";
 
 const PRIMARY_MODEL = "minimax";
 const FALLBACK_MODEL = "openai-large";
@@ -716,7 +717,7 @@ function normalizeSheetRows(sheet: GeneratedSheet): string[][] {
 
 async function renderXlsx(spec: GeneratedFileSpec): Promise<RenderedFile> {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "SentIQGPT";
+  workbook.creator = PRODUCT_NAME;
   workbook.created = new Date();
 
   const sheets = getArray(spec.sheets) as readonly GeneratedSheet[];
@@ -858,10 +859,10 @@ async function renderPptx(spec: GeneratedFileSpec): Promise<RenderedFile> {
   if (slides.length === 0) throw new Error("PPTX requires at least one slide");
 
   const deck = new pptxgen();
-  deck.author = "SentIQGPT";
+  deck.author = PRODUCT_NAME;
   deck.subject = normalizeString(spec.title, "Generated presentation");
   deck.title = normalizeString(spec.title, "Generated presentation");
-  deck.company = "SentIQGPT";
+  deck.company = PRODUCT_NAME;
   deck.layout = "LAYOUT_WIDE";
 
   for (const slideSpec of slides) {

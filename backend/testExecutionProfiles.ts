@@ -60,7 +60,7 @@ assert.equal(FAST_PROFILE.model.reasoningEffort, "low", "fast profile requests l
 assert.equal(INTUITIVE_PROFILE.model.reasoningEffort, undefined, "intuitive profile keeps model effort automatic");
 
 const fastGroqChatCall = buildChatPrompt({
-  userMessage: "Explain SentIQGPT briefly.",
+  userMessage: "Explain SentIQ Chat briefly.",
   modelOverride: "gpt-oss-120b",
   reasoningEffort: FAST_PROFILE.model.reasoningEffort,
 });

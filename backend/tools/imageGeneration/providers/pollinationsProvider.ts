@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Z-Image Turbo Provider (SECONDARY FALLBACK)
+// SentIQ Chat v2 — Z-Image Turbo Provider (SECONDARY FALLBACK)
 //
 // Z-Image Turbo model via Pollinations.
 // Requires POLLINATIONS_API_KEY (or legacy FLUX_API_KEY) in environment.

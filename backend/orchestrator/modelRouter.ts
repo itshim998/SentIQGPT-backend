@@ -1,4 +1,4 @@
-// SentIQGPT v3 - Capability-Aware Model Router
+// SentIQ Chat v3 - Capability-Aware Model Router
 //
 // Deterministically selects the best model for a prompt based on
 // detected capabilities. Regex-only - no LLM calls.

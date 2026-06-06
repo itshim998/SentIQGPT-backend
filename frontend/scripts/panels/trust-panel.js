@@ -1,6 +1,8 @@
 // ================================================================
 // Privacy, support, and local data controls
 // ================================================================
+import { PRODUCT_NAME } from "../shared/brand.js";
+
 (function initializeTrustPanel() {
   const modal = document.getElementById("trust-modal");
   const closeButton = document.getElementById("close-trust-btn");
@@ -73,13 +75,13 @@
   });
 
   clearButton?.addEventListener("click", async () => {
-    if (!window.confirm("Clear SentIQGPT data stored in this browser? Your sign-in session will remain active.")) return;
+    if (!window.confirm(`Clear ${PRODUCT_NAME} data stored in this browser? Your sign-in session will remain active.`)) return;
     clearButton.disabled = true;
     if (status) status.textContent = "Clearing local data...";
     try {
       await window.SentIQAPI?.clearFileSession?.().catch(() => null);
       await window.SentIQStorage?.clearLocalData?.();
-      if (status) status.textContent = "Local SentIQGPT data was cleared. Reloading...";
+      if (status) status.textContent = `Local ${PRODUCT_NAME} data was cleared. Reloading...`;
       window.setTimeout(() => window.location.reload(), 500);
     } catch (error) {
       if (status) status.textContent = window.SentIQErrors?.getSafeErrorMessage?.(error) || "Local data could not be cleared.";

@@ -21,6 +21,7 @@ export type VerifiedRequestUser = {
   sub: string;
   isGuest: boolean;
   verificationMethod: VerificationMethod;
+  email?: string | null;
 };
 
 type AuthResolutionCacheKey = "allow_guest" | "require_user";
@@ -178,11 +179,13 @@ async function verifyLocally(token: string): Promise<VerifiedRequestUser> {
   if (!sub) {
     throw new AuthError("Invalid token.", "invalid_token");
   }
+  const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : null;
 
   return {
     sub,
     isGuest: false,
     verificationMethod: "local",
+    email,
   };
 }
 
@@ -212,16 +215,18 @@ async function verifyWithSupabase(token: string): Promise<VerifiedRequestUser> {
     throw new AuthError("Invalid token.", "invalid_token");
   }
 
-  const verifiedUser = await response.json() as { id?: string };
+  const verifiedUser = await response.json() as { id?: string; email?: string };
   const sub = typeof verifiedUser.id === "string" ? verifiedUser.id.trim() : "";
   if (!sub) {
     throw new AuthError("Invalid token.", "invalid_token");
   }
+  const email = typeof verifiedUser.email === "string" ? verifiedUser.email.trim().toLowerCase() : null;
 
   return {
     sub,
     isGuest: false,
     verificationMethod: "fallback",
+    email,
   };
 }
 

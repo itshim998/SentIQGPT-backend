@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Tool Detector (Orchestrator Layer)
+// SentIQ Chat v2 — Tool Detector (Orchestrator Layer)
 //
 // Uses Groq (via route_classify task) to detect the user's intent
 // and route to the appropriate handler.

@@ -1,4 +1,4 @@
-// SentIQGPT v2 — Tool Executor
+// SentIQ Chat v2 — Tool Executor
 //
 // Executes a structured plan produced by the Task Planner.
 // Runs each step sequentially, routing to the correct capability:
@@ -19,6 +19,7 @@
 //   • Each step has an independent timeout (inherits from LLM call)
 
 import { handleChat } from "../ai/ChatHandler";
+import { createHash, randomUUID } from "crypto";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
 import { routeFileGeneration } from "../tools/fileGeneration/fileGenerator";
@@ -33,6 +34,9 @@ import { detectCodeQuery, detectImageMathPrompt, isMathQuery } from "./modelRout
 import { selectImageModelPreferenceWithMaster, selectModelForPromptWithMaster } from "./masterRouter";
 import type { SearchResult } from "../tools/webSearch/types";
 import { INTUITIVE_PROFILE, type ExecutionProfile } from "./executionProfile";
+import { BillingQuotaError, BillingQuotaService } from "../billing/quotaService";
+import { getImageModelForPlan } from "../billing/modelEntitlementRouter";
+import type { UsageReservation } from "../billing/entitlementTypes";
 
 // ==============================
 // Types
@@ -143,6 +147,20 @@ const VALID_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
 ]);
 
 const MAX_EXEC_STEPS = 3;
+const billingQuotaService = new BillingQuotaService();
+
+function createBillingStepRequestId(ctx: BuiltContext, tool: PlanTool, input: string): string {
+  const base = ctx.billingRequestId || `orchestrator:${ctx.userId || "guest"}:${randomUUID()}`;
+  const inputHash = createHash("sha256").update(input).digest("hex").slice(0, 16);
+  return `${base}:${tool}:${inputHash}`;
+}
+
+async function releaseBillingReservation(reservation: UsageReservation | null | undefined): Promise<void> {
+  if (!reservation) return;
+  await billingQuotaService.release(reservation).catch((error) => {
+    console.warn(`[Billing] failed to release reservation ${reservation.requestId}: ${error instanceof Error ? error.message : error}`);
+  });
+}
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
@@ -174,7 +192,30 @@ async function execConversation(
     detectImageMathPrompt(input);
   if (!detectCodeQuery(input) && (isMathQuery(input) || hasImageMathPrompt)) {
     console.log(`[MathPipeline] math query detected — routing to direct openai-large solver`);
-    const mathResult = await solveMathDirect(augmentedInput, ctx.userId, ctx.imageAttachments);
+    const reservation = ctx.billingIdentity
+      ? await billingQuotaService.reserveAdvancedReasoning({
+          identity: ctx.billingIdentity,
+          requestId: createBillingStepRequestId(ctx, "conversation", augmentedInput),
+          conversationId: ctx.conversationId,
+          clientRequestId: ctx.billingRequestId,
+          metadata: { endpoint: "orchestrator", tool: "conversation", route: "math_reasoning" },
+        })
+      : null;
+    let mathResult: Awaited<ReturnType<typeof solveMathDirect>>;
+    try {
+      mathResult = await solveMathDirect(
+        augmentedInput,
+        ctx.userId,
+        ctx.imageAttachments,
+        reservation ? { modelOverride: reservation.adapterModelOverride } : {},
+      );
+      if (reservation) {
+        await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "conversation", route: "math_reasoning" });
+      }
+    } catch (error) {
+      await releaseBillingReservation(reservation);
+      throw error;
+    }
     console.log(
       `[MathPipeline] solved using openai-large`,
     );
@@ -210,27 +251,45 @@ async function execConversation(
     isGuest: ctx.userId === "guest",
     signal,
   });
-  const modelOverride = routedModel.model;
+  const reservation = ctx.billingIdentity
+    ? await billingQuotaService.reserveTextRoute({
+        identity: ctx.billingIdentity,
+        requestId: createBillingStepRequestId(ctx, "conversation", augmentedInput),
+        conversationId: ctx.conversationId,
+        clientRequestId: ctx.billingRequestId,
+        metadata: { endpoint: "orchestrator", tool: "conversation", routed_model: routedModel.model },
+      })
+    : null;
+  const modelOverride = reservation?.adapterModelOverride ?? routedModel.model;
 
   if (routedModel.source === "deterministic" && routedModel.fallback_reason) {
     console.log(`[MasterRouter] conversation deterministic fallback=${routedModel.fallback_reason}`);
   }
   
-  const result = await handleChat({
-    userMessage: augmentedInput,
-    recentMessages: ctx.recentMessages,
-    memories: ctx.memories,
-    fileReferences: ctx.fileReferences,
-    imageAttachments: ctx.imageAttachments,
-    conversationSummary: ctx.conversationSummary,
-    priorConversationEvidence: ctx.priorConversationEvidence,
-    isExplicitRecallQuery: ctx.isExplicitRecallQuery,
-    trustedProfile: ctx.trustedProfile,
-    modelOverride,
-    userId: ctx.userId,
-    reasoningEffort: profile.model.reasoningEffort,
-    signal,
-  });
+  let result: Awaited<ReturnType<typeof handleChat>>;
+  try {
+    result = await handleChat({
+      userMessage: augmentedInput,
+      recentMessages: ctx.recentMessages,
+      memories: ctx.memories,
+      fileReferences: ctx.fileReferences,
+      imageAttachments: ctx.imageAttachments,
+      conversationSummary: ctx.conversationSummary,
+      priorConversationEvidence: ctx.priorConversationEvidence,
+      isExplicitRecallQuery: ctx.isExplicitRecallQuery,
+      trustedProfile: ctx.trustedProfile,
+      modelOverride,
+      userId: ctx.userId,
+      reasoningEffort: profile.model.reasoningEffort,
+      signal,
+    });
+    if (reservation) {
+      await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "conversation" });
+    }
+  } catch (error) {
+    await releaseBillingReservation(reservation);
+    throw error;
+  }
 
   return {
     step: 0,
@@ -249,14 +308,53 @@ async function execImageGeneration(
   profile: ExecutionProfile,
   signal?: AbortSignal,
 ): Promise<StepResult> {
-  const preferredModel = await selectImageModelPreferenceWithMaster({
-    prompt: input,
-    executionMode: profile.mode,
-    userId: ctx.userId,
-    isGuest: ctx.userId === "guest",
-    signal,
-  });
-  const result = await routeImageGeneration({ prompt: input, userId: ctx.userId, signal, preferredModel });
+  let reservation: UsageReservation | null = null;
+  let committedReservation: UsageReservation | null = null;
+  let preferredModel: string | undefined;
+
+  if (ctx.billingIdentity) {
+    const initialRoute = getImageModelForPlan("free", input);
+    reservation = await billingQuotaService.reserveFeature({
+      identity: ctx.billingIdentity,
+      feature: "image_generation",
+      requestId: createBillingStepRequestId(ctx, "image_generation", input),
+      route: initialRoute,
+      conversationId: ctx.conversationId,
+      clientRequestId: ctx.billingRequestId,
+      metadata: { endpoint: "orchestrator", tool: "image_generation" },
+    });
+    const entitledRoute = getImageModelForPlan(reservation.planCode, input);
+    preferredModel = entitledRoute.adapterModelOverride;
+    committedReservation = {
+      ...reservation,
+      provider: entitledRoute.provider,
+      model: entitledRoute.model,
+      adapterModelOverride: entitledRoute.adapterModelOverride,
+      safeModelLabel: entitledRoute.safeModelLabel,
+      route: entitledRoute.route,
+    };
+  } else {
+    preferredModel = await selectImageModelPreferenceWithMaster({
+      prompt: input,
+      executionMode: profile.mode,
+      userId: ctx.userId,
+      isGuest: ctx.userId === "guest",
+      signal,
+    });
+  }
+
+  let result: Awaited<ReturnType<typeof routeImageGeneration>>;
+  try {
+    result = await routeImageGeneration({ prompt: input, userId: ctx.userId, signal, preferredModel: preferredModel as any });
+    if (result.success && committedReservation) {
+      await billingQuotaService.commit(committedReservation, { endpoint: "orchestrator", tool: "image_generation" });
+    } else if (!result.success) {
+      await releaseBillingReservation(committedReservation ?? reservation);
+    }
+  } catch (error) {
+    await releaseBillingReservation(committedReservation ?? reservation);
+    throw error;
+  }
 
   return {
     step: 0,
@@ -279,6 +377,10 @@ async function execFileAnalysis(
   profile: ExecutionProfile,
   signal?: AbortSignal,
 ): Promise<StepResult> {
+  const augmentedInput = priorContext
+    ? `${input}\n\n[Previous step context]: ${priorContext}`
+    : input;
+
   // Pass file context to router for coding PDF detection
   const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
   const hasImages = ctx.imageAttachments && ctx.imageAttachments.length > 0;
@@ -298,31 +400,45 @@ async function execFileAnalysis(
     isGuest: ctx.userId === "guest",
     signal,
   });
-  const modelOverride = routedModel.model;
+  const reservation = ctx.billingIdentity
+    ? await billingQuotaService.reserveTextRoute({
+        identity: ctx.billingIdentity,
+        requestId: createBillingStepRequestId(ctx, "file_analysis", augmentedInput),
+        conversationId: ctx.conversationId,
+        clientRequestId: ctx.billingRequestId,
+        metadata: { endpoint: "orchestrator", tool: "file_analysis", routed_model: routedModel.model },
+      })
+    : null;
+  const modelOverride = reservation?.adapterModelOverride ?? routedModel.model;
 
   if (routedModel.source === "deterministic" && routedModel.fallback_reason) {
     console.log(`[MasterRouter] file_analysis deterministic fallback=${routedModel.fallback_reason}`);
   }
   
-  const augmentedInput = priorContext
-    ? `${input}\n\n[Previous step context]: ${priorContext}`
-    : input;
-
-  const result = await handleChat({
-    userMessage: augmentedInput,
-    recentMessages: ctx.recentMessages,
-    memories: ctx.memories,
-    fileReferences: ctx.fileReferences,
-    imageAttachments: ctx.imageAttachments,
-    conversationSummary: ctx.conversationSummary,
-    priorConversationEvidence: ctx.priorConversationEvidence,
-    isExplicitRecallQuery: ctx.isExplicitRecallQuery,
-    trustedProfile: ctx.trustedProfile,
-    modelOverride,
-    userId: ctx.userId,
-    reasoningEffort: profile.model.reasoningEffort,
-    signal,
-  });
+  let result: Awaited<ReturnType<typeof handleChat>>;
+  try {
+    result = await handleChat({
+      userMessage: augmentedInput,
+      recentMessages: ctx.recentMessages,
+      memories: ctx.memories,
+      fileReferences: ctx.fileReferences,
+      imageAttachments: ctx.imageAttachments,
+      conversationSummary: ctx.conversationSummary,
+      priorConversationEvidence: ctx.priorConversationEvidence,
+      isExplicitRecallQuery: ctx.isExplicitRecallQuery,
+      trustedProfile: ctx.trustedProfile,
+      modelOverride,
+      userId: ctx.userId,
+      reasoningEffort: profile.model.reasoningEffort,
+      signal,
+    });
+    if (reservation) {
+      await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "file_analysis" });
+    }
+  } catch (error) {
+    await releaseBillingReservation(reservation);
+    throw error;
+  }
 
   return {
     step: 0,
@@ -481,6 +597,9 @@ async function execWebSearch(
   } catch (err) {
     if (signal?.aborted) {
       throwIfAborted(signal);
+    }
+    if (err instanceof BillingQuotaError) {
+      throw err;
     }
     const message = err instanceof Error ? err.message : String(err);
     console.log(`[WebSearch] error: ${message}`);

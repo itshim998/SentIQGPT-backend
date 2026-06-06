@@ -299,7 +299,7 @@
   white-space: pre;
 }
 
-/* Syntax highlighting tokens — dark theme matching SentIQGPT palette */
+/* Syntax highlighting tokens — dark theme matching the SentIQ Chat palette */
 .sh-kw  { color: #c4b5fd; font-weight: 500; }  /* keywords — purple-300 */
 .sh-bi  { color: #a78bfa; }                     /* built-ins — purple-400 */
 .sh-fn  { color: #7dd3fc; }                     /* functions — sky-300 */
@@ -312,4 +312,3 @@
 .sh-at  { color: #fca5a5; }                     /* attributes/decorators — red-300 */
 .sh-tg  { color: #f87171; }                     /* HTML tags — red-400 */
 .sh-key { color: #7dd3fc; }                     /* JSON keys — sky-300 */
-

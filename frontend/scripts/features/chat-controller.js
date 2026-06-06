@@ -8,6 +8,7 @@ import {
   SYNC_JOB_TYPES,
   WELCOME_GREETINGS,
   WELCOME_GREETING_STORAGE_PREFIX,
+  LEGACY_WELCOME_GREETING_STORAGE_PREFIX,
 } from "./chat/constants.js";
 import { getChatDomRefs } from "./chat/dom-refs.js";
 import {
@@ -30,6 +31,7 @@ import {
   collapseAdjacentDuplicateChatMessages,
   normalizeMemoryScope,
 } from "../services/storage.js";
+import { PRODUCT_NAME, STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "../shared/brand.js";
 import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
 // ================================================================
@@ -297,6 +299,17 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
   }
 
+  function readLocalStorageWithLegacy(key, legacyKey, fallback = null) {
+    const current = readLocalStorage(key, null);
+    if (current !== null) return current;
+    const legacy = readLocalStorage(legacyKey, null);
+    if (legacy !== null) {
+      writeLocalStorage(key, legacy);
+      return legacy;
+    }
+    return fallback;
+  }
+
   function writeLocalStorage(key, value) {
     try {
       window.localStorage?.setItem(key, value);
@@ -319,6 +332,17 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
   }
 
+  function readSessionStorageWithLegacy(key, legacyKey, fallback = null) {
+    const current = readSessionStorage(key, null);
+    if (current !== null) return current;
+    const legacy = readSessionStorage(legacyKey, null);
+    if (legacy !== null) {
+      writeSessionStorage(key, legacy);
+      return legacy;
+    }
+    return fallback;
+  }
+
   function writeSessionStorage(key, value) {
     try {
       window.sessionStorage?.setItem(key, value);
@@ -333,6 +357,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     } catch { /* optional recovery storage */ }
   }
 
+  function removeSessionStorageWithLegacy(key, legacyKey) {
+    removeSessionStorage(key);
+    removeSessionStorage(legacyKey);
+  }
+
   function createAbortController() {
     if (typeof AbortController === "function") return new AbortController();
     window.SentIQBootstrap?.addLimitedReason?.("abort-controller", "Request cancellation is unavailable in this browser session.");
@@ -341,7 +370,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   const SENTIQ_DEBUG = (() => {
     try {
-      return Boolean(window.SENTIQ_DEBUG || readLocalStorage("sentiq_debug") === "1");
+      return Boolean(window.SENTIQ_DEBUG || readLocalStorageWithLegacy(STORAGE_KEYS.debug, LEGACY_STORAGE_KEYS.debug) === "1");
     } catch {
       return Boolean(window.SENTIQ_DEBUG);
     }
@@ -349,9 +378,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   const RECENT_CHAT_WARM_LIMIT = 5;
   const RECENT_CHAT_WARM_CONCURRENCY = 2;
   const LAST_ACTIVE_CHAT_CONFIG_PREFIX = "last_active_chat_id:";
-  const SIDEBAR_COLLAPSED_STORAGE_KEY = "sentiq_sidebar_collapsed";
+  const SIDEBAR_COLLAPSED_STORAGE_KEY = STORAGE_KEYS.sidebarCollapsed;
+  const LEGACY_SIDEBAR_COLLAPSED_STORAGE_KEY = LEGACY_STORAGE_KEYS.sidebarCollapsed;
   const AUTH_GOOGLE_DEFAULT_LABEL = "Continue with Google";
-  const GUEST_RECOVERY_DRAFT_KEY = "sentiq_guest_recovery_draft";
+  const GUEST_RECOVERY_DRAFT_KEY = STORAGE_KEYS.guestRecoveryDraft;
+  const LEGACY_GUEST_RECOVERY_DRAFT_KEY = LEGACY_STORAGE_KEYS.guestRecoveryDraft;
 
   function debugLog(...args) {
     if (SENTIQ_DEBUG) console.log(...args);
@@ -363,7 +394,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function getSafeErrorMessage(error, context = {}) {
     return window.SentIQErrors?.getSafeErrorMessage?.(error, context)
-      || "SentIQGPT could not finish that action. Please try again.";
+      || `${PRODUCT_NAME} could not finish that action. Please try again.`;
   }
 
   function isConversationNotFoundError(error) {
@@ -423,7 +454,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   function readSidebarCollapsedPreference() {
-    return readLocalStorage(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
+    return readLocalStorageWithLegacy(SIDEBAR_COLLAPSED_STORAGE_KEY, LEGACY_SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
   }
 
   function writeSidebarCollapsedPreference(collapsed) {
@@ -766,7 +797,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         }))
         .then((result) => {
           if (!isAuthenticatedSession()) {
-            if (final && meta.responseStatus === "complete") removeSessionStorage(GUEST_RECOVERY_DRAFT_KEY);
+            if (final && meta.responseStatus === "complete") removeSessionStorageWithLegacy(GUEST_RECOVERY_DRAFT_KEY, LEGACY_GUEST_RECOVERY_DRAFT_KEY);
             else persistGuestRecoveryDraft(chatId);
           }
           return result;
@@ -799,12 +830,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   function restoreGuestRecoveryDraft() {
-    const raw = readSessionStorage(GUEST_RECOVERY_DRAFT_KEY);
+    const raw = readSessionStorageWithLegacy(GUEST_RECOVERY_DRAFT_KEY, LEGACY_GUEST_RECOVERY_DRAFT_KEY);
     if (!raw || isAuthenticatedSession()) return false;
     try {
       const snapshot = JSON.parse(raw);
       if (!snapshot?.chat?.id || !Array.isArray(snapshot.chat.messages) || Date.now() - Number(snapshot.savedAt || 0) > 24 * 60 * 60 * 1000) {
-        removeSessionStorage(GUEST_RECOVERY_DRAFT_KEY);
+        removeSessionStorageWithLegacy(GUEST_RECOVERY_DRAFT_KEY, LEGACY_GUEST_RECOVERY_DRAFT_KEY);
         return false;
       }
       const lastAssistant = [...snapshot.chat.messages].reverse().find((message) => message.role === "assistant");
@@ -817,7 +848,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       showToast("Restored an interrupted guest response from this browser tab.", "info", 3600);
       return true;
     } catch {
-      removeSessionStorage(GUEST_RECOVERY_DRAFT_KEY);
+      removeSessionStorageWithLegacy(GUEST_RECOVERY_DRAFT_KEY, LEGACY_GUEST_RECOVERY_DRAFT_KEY);
       return false;
     }
   }
@@ -1149,9 +1180,14 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return `${WELCOME_GREETING_STORAGE_PREFIX}${scope}`;
   }
 
+  function getLegacyGreetingStorageKey() {
+    const scope = getActiveAuthUserId() || "guest";
+    return `${LEGACY_WELCOME_GREETING_STORAGE_PREFIX}${scope}`;
+  }
+
   function readGreetingIndex() {
     try {
-      const raw = readLocalStorage(getGreetingStorageKey());
+      const raw = readLocalStorageWithLegacy(getGreetingStorageKey(), getLegacyGreetingStorageKey());
       const parsed = Number.parseInt(raw || "0", 10);
       if (!Number.isFinite(parsed) || parsed < 0) return 0;
       return parsed % WELCOME_GREETINGS.length;
@@ -1206,7 +1242,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (getPendingClarification()) return "Enter your custom answer...";
     if (imageMode) return "Describe the image you want to generate...";
     if (webSearchModeOverride) return "Ask about something current on the web...";
-    return composerHintIntroConsumed ? "Message SentIQGPT" : "";
+    return composerHintIntroConsumed ? `Message ${PRODUCT_NAME}` : "";
   }
 
   function shouldShowComposerHint() {
@@ -2504,7 +2540,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           ? "Reset your password"
           : isRecovery
             ? "Set a new password"
-            : "Log in to SentIQGPT";
+            : `Log in to ${PRODUCT_NAME}`;
     }
     if (authModalHeading) {
       authModalHeading.textContent = isSignup
@@ -2521,7 +2557,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         : isResetRequest
           ? "Enter your email and we'll send you a password reset link."
           : isRecovery
-            ? "Choose a new password for your SentIQGPT account."
+            ? `Choose a new password for your ${PRODUCT_NAME} account.`
             : "Continue with your email and password to unlock the full chat experience.";
     }
     if (authSubmitBtn) {
@@ -2538,7 +2574,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         ? "Already have an account?"
         : (isResetRequest || isRecovery)
           ? "Remembered your password?"
-          : "New to SentIQGPT?";
+          : `New to ${PRODUCT_NAME}?`;
     }
     if (authSwitchBtn) {
       authSwitchBtn.textContent = isSignup
@@ -2621,7 +2657,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
     if (authWelcomeNote) {
       authWelcomeNote.textContent = requiresName
-        ? "Add your name to personalize SentIQGPT and continue."
+        ? `Add your name to personalize ${PRODUCT_NAME} and continue.`
         : "Guest chats are temporary. Sign in to sync conversations and use image generation.";
       authWelcomeNote.style.display = (!signedIn || requiresName) ? "block" : "none";
     }
@@ -3015,8 +3051,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   // ---- Image Quota & Cooldown (localStorage-backed) ----
-  const IMAGE_QUOTA_KEY = "sentiq_image_quota";
-  const IMAGE_COOLDOWN_KEY = "sentiq_image_cooldown";
+  const IMAGE_QUOTA_KEY = STORAGE_KEYS.imageQuota;
+  const LEGACY_IMAGE_QUOTA_KEY = LEGACY_STORAGE_KEYS.imageQuota;
+  const IMAGE_COOLDOWN_KEY = STORAGE_KEYS.imageCooldown;
+  const LEGACY_IMAGE_COOLDOWN_KEY = LEGACY_STORAGE_KEYS.imageCooldown;
   const IMAGE_QUOTA_LIMIT = 30;
   const IMAGE_COOLDOWN_MS = 5000;
   const IMAGE_QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -3024,7 +3062,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   // Migrate legacy quota formats on startup
   (function migrateImageQuota() {
     try {
-      const raw = readLocalStorage(IMAGE_QUOTA_KEY);
+      const raw = readLocalStorageWithLegacy(IMAGE_QUOTA_KEY, LEGACY_IMAGE_QUOTA_KEY);
       if (!raw) return;
       const data = JSON.parse(raw);
       // Legacy format: { imageCount, lastReset }
@@ -3044,12 +3082,15 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       if (!Array.isArray(data.timestamps)) {
         writeLocalStorage(IMAGE_QUOTA_KEY, JSON.stringify({ timestamps: [] }));
       }
-    } catch { removeLocalStorage(IMAGE_QUOTA_KEY); }
+    } catch {
+      removeLocalStorage(IMAGE_QUOTA_KEY);
+      removeLocalStorage(LEGACY_IMAGE_QUOTA_KEY);
+    }
   })();
 
   function getImageQuotaData() {
     try {
-      const raw = readLocalStorage(IMAGE_QUOTA_KEY);
+      const raw = readLocalStorageWithLegacy(IMAGE_QUOTA_KEY, LEGACY_IMAGE_QUOTA_KEY);
       if (!raw) return { timestamps: [] };
       const data = JSON.parse(raw);
       const now = Date.now();
@@ -3085,11 +3126,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       timestamps: Array.from({ length: used }, () => now),
     }));
     updateImageButtonState();
+    window.SentIQBilling?.refresh?.(true);
   }
 
   function checkImageCooldown() {
     try {
-      const last = parseInt(readLocalStorage(IMAGE_COOLDOWN_KEY, "0") || "0", 10);
+      const last = parseInt(readLocalStorageWithLegacy(IMAGE_COOLDOWN_KEY, LEGACY_IMAGE_COOLDOWN_KEY, "0") || "0", 10);
       const elapsed = Date.now() - last;
       return { active: elapsed < IMAGE_COOLDOWN_MS, waitMs: Math.max(0, IMAGE_COOLDOWN_MS - elapsed) };
     } catch { return { active: false, waitMs: 0 }; }
@@ -3118,9 +3160,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       hideImageButton();
       return;
     }
-    const quota = checkImageQuota();
-    if (quota.exhausted) hideImageButton();
-    else showImageButton();
+    showImageButton();
   }
 
   function getThemeColor(variableName, fallback) {
@@ -4292,7 +4332,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     selectionButton.id = SELECTION_BUTTON_ID;
     selectionButton.className = "selection-ask-button";
     selectionButton.type = "button";
-    selectionButton.textContent = "Ask SentIQGPT";
+    selectionButton.textContent = `Ask ${PRODUCT_NAME}`;
     selectionButton.addEventListener("mousedown", (event) => event.preventDefault());
     selectionButton.addEventListener("click", async () => {
       const payload = pendingSelectionPayload;
@@ -4394,7 +4434,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   async function init() {
-    debugLog("[UI] init: SentIQGPT Chat UI starting");
+    debugLog(`[UI] init: ${PRODUCT_NAME} UI starting`);
     const stopInitMeasure = startPerf("ui.init");
     setAuthView("login");
     setPasswordVisibility(false);
@@ -5630,7 +5670,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     avatar.textContent = role === "user" ? "Y" : "S";
     const sender = document.createElement("div");
     sender.className = "message-sender";
-    sender.textContent = role === "user" ? "You" : "SentIQGPT";
+    sender.textContent = role === "user" ? "You" : PRODUCT_NAME;
     header.appendChild(avatar);
     header.appendChild(sender);
     bubble.appendChild(header);
@@ -5688,13 +5728,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       const downloadBtn = document.createElement("a");
       downloadBtn.className = "image-download-btn";
       downloadBtn.href = meta.imageUrl;
-      downloadBtn.download = `sentiqgpt-${Date.now()}.png`;
+      downloadBtn.download = `sentiq-chat-${Date.now()}.png`;
       downloadBtn.rel = "noopener";
       downloadBtn.textContent = "Download";
       downloadBtn.addEventListener("click", async (event) => {
         event.preventDefault();
         try {
-          await downloadImageDirect(meta.imageUrl, `sentiqgpt-${Date.now()}.png`, {
+          await downloadImageDirect(meta.imageUrl, `sentiq-chat-${Date.now()}.png`, {
             fallbackToNewTab: true,
           });
         } catch (error) {
@@ -6358,7 +6398,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const { fallbackToNewTab = false } = options || {};
     const safeName = filename && String(filename).trim()
       ? String(filename).trim()
-      : `sentiqgpt-${Date.now()}.png`;
+      : `sentiq-chat-${Date.now()}.png`;
     try {
       const blob = await resolveImageBlob(imageUrl);
       const blobUrl = URL.createObjectURL(blob);
@@ -7391,7 +7431,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     avatar.textContent = "S";
     const sender = document.createElement("div");
     sender.className = "message-sender";
-    sender.textContent = "SentIQGPT";
+    sender.textContent = PRODUCT_NAME;
     header.appendChild(avatar);
     header.appendChild(sender);
     bubble.appendChild(header);
@@ -7578,7 +7618,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     avatar.textContent = "S";
     const sender = document.createElement("div");
     sender.className = "message-sender";
-    sender.textContent = "SentIQGPT";
+    sender.textContent = PRODUCT_NAME;
     header.appendChild(avatar);
     header.appendChild(sender);
     bubble.appendChild(header);
@@ -8428,13 +8468,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   function toggleImageMode() {
-    if (!imageMode) {
-      const quota = checkImageQuota();
-      if (quota.exhausted) {
-        showQuotaWarning("Image generation quota reached. Please try again after 24 hours.");
-        return;
-      }
-    }
     setImageMode(!imageMode);
   }
 
@@ -8570,14 +8603,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (!session) return;
     hideSelectionButton();
     pendingSelectionPayload = null;
-
-    // Enforce client-side quota
-    const quota = checkImageQuota();
-    if (quota.exhausted) {
-      showQuotaWarning("Image generation quota reached. Please try again after 24 hours.");
-      hideImageButton();
-      return;
-    }
 
     // Enforce client-side cooldown
     const cooldown = checkImageCooldown();
@@ -8733,7 +8758,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       else if (await maybeHandleProfileNameRequiredError(err, "image.generate")) {
         return;
       }
-      else if (err.message && (err.message.includes("Daily image limit") || err.message.includes("Please wait"))) {
+      else if (err.code === "quota_exceeded" || err.details?.type === "quota_exceeded") {
+        showQuotaWarning(err.message || "Image generation limit reached. Review Billing for reset and upgrade options.");
+        window.SentIQBilling?.refresh?.(true);
+      } else if (err.message && (err.message.includes("Daily image limit") || err.message.includes("Please wait"))) {
         showQuotaWarning(err.message);
       } else if (err.message && err.message.includes("queue is full")) {
         showQuotaWarning("The image generation server is busy. Please try again in a moment.");
@@ -9307,7 +9335,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   function updateHtmlTitle(chatTitle) {
-    document.title = chatTitle ? `${chatTitle} — SentIQGPT` : "SentIQGPT";
+    document.title = chatTitle ? `${chatTitle} - ${PRODUCT_NAME}` : PRODUCT_NAME;
   }
 
   function typeChatTitle(chatId, title) {
@@ -9399,8 +9427,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       .then(() => window.SentIQBootstrap?.markReady?.())
       .catch((error) => {
         window.SentIQBootstrap?.fail?.();
-        debugWarn(`[UI] SentIQGPT Chat UI failed to start: ${getSafeErrorMessage(error)}`, error);
-        showToast("SentIQGPT couldn't finish starting. Please refresh the page.", "error", 6000);
+        debugWarn(`[UI] ${PRODUCT_NAME} UI failed to start: ${getSafeErrorMessage(error)}`, error);
+        showToast(`${PRODUCT_NAME} couldn't finish starting. Please refresh the page.`, "error", 6000);
       });
   }
 

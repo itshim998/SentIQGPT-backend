@@ -1,6 +1,7 @@
 // ================================================================
 // 4. Memory Panel
 // ================================================================
+import { PRODUCT_NAME } from "../shared/brand.js";
 import { normalizeMemoryScope } from "../services/storage.js";
 
 (function () {
@@ -30,7 +31,7 @@ import { normalizeMemoryScope } from "../services/storage.js";
     if (memoryCount) memoryCount.textContent = `${memories.length} memories`;
 
     if (memories.length === 0) {
-      memoryList.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem; padding: 12px 0;">No memories stored yet. Memories appear when you explicitly ask SentIQGPT to remember something.</p>';
+      memoryList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; padding: 12px 0;">No memories stored yet. Memories appear when you explicitly ask ${PRODUCT_NAME} to remember something.</p>`;
       return;
     }
     const groups = {};
@@ -79,7 +80,7 @@ import { normalizeMemoryScope } from "../services/storage.js";
     if (memoryCount) memoryCount.textContent = `${memories.length} memories`;
 
     if (memories.length === 0) {
-      memoryList.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem; padding: 12px 0;">No memories stored yet. Memories appear when you explicitly ask SentIQGPT to remember something.</p>';
+      memoryList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; padding: 12px 0;">No memories stored yet. Memories appear when you explicitly ask ${PRODUCT_NAME} to remember something.</p>`;
       return;
     }
 

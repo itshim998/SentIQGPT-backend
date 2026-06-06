@@ -123,8 +123,9 @@ function testImageRouteSourceGuards(): void {
   const routeStart = server.indexOf('"/api/images/generate"');
   assert(routeStart >= 0, "image generation route exists");
   const routeBlock = server.slice(routeStart, routeStart + 9500);
-  assert(routeBlock.includes("reserveCentralImageQuota"), "image route reserves central quota before provider generation");
-  assert(routeBlock.includes("releaseCentralImageQuota"), "image route releases quota when provider generation fails");
+  assert(routeBlock.includes('feature: "image_generation"'), "image route reserves billing image quota before provider generation");
+  assert(routeBlock.includes("releaseBillingReservation(committedImageReservation)"), "image route releases billing quota when provider generation fails");
+  assert(routeBlock.includes("billingQuotaService.commit(committedImageReservation"), "image route commits billing quota after provider success");
   assert(routeBlock.includes("commitImageQuotaSuccess"), "image route updates local cooldown/quota only after successful generation");
   assert(routeBlock.includes('persisted: false'), "image route returns recoverable unpersisted image results");
   assert(routeBlock.includes('code: "image_persistence_failed"'), "image route labels persistence-only failures");

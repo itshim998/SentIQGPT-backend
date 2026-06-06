@@ -1,4 +1,4 @@
-// SentIQGPT — Chart Generation Types
+// SentIQ Chat — Chart Generation Types
 //
 // Shared type definitions for the deterministic chart generation system.
 // Charts are always rendered with real plotting libraries (matplotlib, plotly,

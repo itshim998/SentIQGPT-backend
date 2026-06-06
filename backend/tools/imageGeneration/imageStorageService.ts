@@ -1,4 +1,4 @@
-// SentIQGPT v3 — Image Storage Service
+// SentIQ Chat v3 — Image Storage Service
 //
 // Handles image upload to Supabase Storage and metadata persistence.
 // Follows clean architecture: Storage → files, Database → metadata only.
