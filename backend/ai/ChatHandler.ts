@@ -10,7 +10,7 @@ import { PRODUCT_DISCLAIMER } from "../branding";
 const REASONING_MAX_OUTPUT_TOKENS = 2600;
 const CONTINUATION_MAX_OUTPUT_TOKENS = 1800;
 const RAW_REASONING_FALLBACK =
-  "I'm currently unable to process your request. Please try again shortly.";
+  "I couldn't complete that response. Please retry in a moment.";
 const GENERIC_CHAT_FALLBACK_PATTERN =
   /\bcurrently unable to process your request\b|\bplease try again shortly\b/i;
 

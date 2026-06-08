@@ -77,6 +77,7 @@ export interface LLMAdapterCall {
   readonly model_override?: string;
   readonly use_simulation?: boolean;
   readonly user_id?: string;
+  readonly safety_mode?: "low_risk_text";
   readonly timeout_ms?: number;
   readonly signal?: AbortSignal;
   readonly max_output_tokens?: number;
@@ -150,6 +151,7 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
         prefer: call.prefer,
         model_override: call.model_override,
         user_id: call.user_id,
+        safety_mode: call.safety_mode,
         max_output_tokens: call.max_output_tokens,
         reasoning_effort: call.reasoning_effort,
         skip_wrappers: call.skip_wrappers,
@@ -249,6 +251,7 @@ export async function callLLMAdapterStream(
         prefer: call.prefer,
         model_override: call.model_override,
         user_id: call.user_id,
+        safety_mode: call.safety_mode,
         max_output_tokens: call.max_output_tokens,
         reasoning_effort: call.reasoning_effort,
         skip_wrappers: call.skip_wrappers,
@@ -661,6 +664,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   const groqReasoningEffort = isGroqChat
     ? ctx.reasoningEffort ?? selectGroqReasoningEffortForMessage(ctx.userMessage)
     : undefined;
+  const safetyMode = !hasFiles && !hasImages ? "low_risk_text" : undefined;
 
   return {
     task: "chat",
@@ -668,6 +672,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     prefer: isGroqChat ? "groq" : isPollinations ? undefined : "gemini",
     model_override: ctx.modelOverride,
     user_id: ctx.userId,
+    safety_mode: safetyMode,
     reasoning_effort: groqReasoningEffort,
     skip_wrappers: ctx.reasoningMode ?? false,
     image_attachments: ctx.imageAttachments,
@@ -788,6 +793,7 @@ export function buildTitleGeneratePrompt(args: {
     prompt,
     prefer: "groq",
     user_id: args.userId || args.conversationId,
+    safety_mode: "low_risk_text",
     max_output_tokens: 80,
     skip_wrappers: true,
   };
@@ -801,7 +807,7 @@ export function getDemoFallbackResponse(task: TaskName): string {
   switch (task) {
     case "chat":
       return JSON.stringify({
-        reply: "I'm currently unable to process your request. Please try again shortly.",
+        reply: "I couldn't complete that response. Please retry in a moment.",
         disclaimer: PRODUCT_DISCLAIMER,
       });
     case "memory_classify":

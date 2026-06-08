@@ -117,6 +117,15 @@ class SafetyAuditEntry:
         self.endpoint = endpoint
 
 MAX_SAFETY_AUDIT_ENTRIES = 500
+SAFETY_MODE_STRICT = "strict"
+SAFETY_MODE_LOW_RISK_TEXT = "low_risk_text"
+SAFE_INPUT_CLASSIFICATIONS = {SafetyResult.SAFE, SafetyResult.CONTROVERSIAL}
+EXPLICIT_BLOCKED_CLASSIFICATIONS = {SafetyResult.UNSAFE, "BLOCKED"}
+DEGRADED_SAFETY_CLASSIFICATIONS = {
+    SafetyResult.TIMEOUT,
+    SafetyResult.ERROR,
+    SafetyResult.DEGRADED,
+}
 _safety_audit_entries: list[SafetyAuditEntry] = []
 _safety_audit_lock = threading.Lock()
 
@@ -154,6 +163,29 @@ def log_safety_violation(
     )
 
 
+def log_safety_event(
+    event_name: str,
+    *,
+    check_type: str,
+    classification: str,
+    user_id: str,
+    endpoint: str,
+    task: str,
+    safety_mode: str,
+) -> None:
+    """Emit structured safety telemetry without prompt or response content."""
+    logger.warning(
+        "[SafetyEvent] event=%s check=%s classification=%s user=%s endpoint=%s task=%s safety_mode=%s",
+        event_name,
+        check_type,
+        classification,
+        user_id,
+        endpoint,
+        task,
+        safety_mode,
+    )
+
+
 def get_safety_audit_entries(limit: int = 50) -> list[dict]:
     """Get recent safety audit entries."""
     with _safety_audit_lock:
@@ -171,28 +203,85 @@ def get_safety_audit_entries(limit: int = 50) -> list[dict]:
     ]
 
 
-def check_input_safety(prompt: str, user_id: str, endpoint: str) -> tuple[bool, str, str]:
+def normalize_safety_mode(value: Optional[str]) -> str:
+    return SAFETY_MODE_LOW_RISK_TEXT if value == SAFETY_MODE_LOW_RISK_TEXT else SAFETY_MODE_STRICT
+
+
+def check_input_safety(
+    prompt: str,
+    user_id: str,
+    endpoint: str,
+    task: str = "general",
+    safety_mode: Optional[str] = None,
+) -> tuple[bool, str, str]:
     """Check if input is safe. Returns (is_safe, classification, raw_response)."""
+    normalized_mode = normalize_safety_mode(safety_mode)
     classification, raw_response = call_safety_model(prompt, check_type="input")
-    
-    # Log blocked or degraded safety decisions for review.
-    if classification not in {SafetyResult.SAFE, SafetyResult.CONTROVERSIAL}:
-        log_safety_violation("input", classification, user_id, prompt, raw_response, endpoint)
-    
-    is_safe = classification in {SafetyResult.SAFE, SafetyResult.CONTROVERSIAL}
-    return is_safe, classification, raw_response
+
+    if classification in SAFE_INPUT_CLASSIFICATIONS:
+        return True, classification, raw_response
+
+    if classification in EXPLICIT_BLOCKED_CLASSIFICATIONS:
+        log_safety_event(
+            "safety.input.blocked.explicit",
+            check_type="input",
+            classification=classification,
+            user_id=user_id,
+            endpoint=endpoint,
+            task=task,
+            safety_mode=normalized_mode,
+        )
+        log_safety_violation("input", classification, user_id, "", raw_response, endpoint)
+        return False, classification, raw_response
+
+    if normalized_mode == SAFETY_MODE_LOW_RISK_TEXT and classification in DEGRADED_SAFETY_CLASSIFICATIONS:
+        log_safety_event(
+            "safety.input.timeout.allow_degraded"
+            if classification == SafetyResult.TIMEOUT
+            else "safety.input.unavailable.allow_degraded",
+            check_type="input",
+            classification=classification,
+            user_id=user_id,
+            endpoint=endpoint,
+            task=task,
+            safety_mode=normalized_mode,
+        )
+        return True, classification, raw_response
+
+    log_safety_violation("input", classification, user_id, "", raw_response, endpoint)
+    return False, classification, raw_response
 
 
-def check_output_safety(text: str, user_id: str, endpoint: str) -> tuple[bool, str, str]:
+def check_output_safety(text: str, user_id: str, endpoint: str, task: str = "chat") -> tuple[bool, str, str]:
     """Check final model output. Returns (is_safe, classification, raw_response)."""
     classification, raw_response = call_safety_model(
         text,
         timeout=SAFETY_OUTPUT_TIMEOUT,
         check_type="output",
     )
-    if classification not in {SafetyResult.SAFE, SafetyResult.CONTROVERSIAL}:
-        log_safety_violation("output", classification, user_id, text, raw_response, endpoint)
-    return classification in {SafetyResult.SAFE, SafetyResult.CONTROVERSIAL}, classification, raw_response
+    if classification in SAFE_INPUT_CLASSIFICATIONS:
+        return True, classification, raw_response
+
+    if classification in EXPLICIT_BLOCKED_CLASSIFICATIONS:
+        log_safety_violation("output", classification, user_id, "", raw_response, endpoint)
+        return False, classification, raw_response
+
+    if classification in DEGRADED_SAFETY_CLASSIFICATIONS:
+        log_safety_event(
+            "safety.output.timeout.degraded"
+            if classification == SafetyResult.TIMEOUT
+            else "safety.output.unavailable.degraded",
+            check_type="output",
+            classification=classification,
+            user_id=user_id,
+            endpoint=endpoint,
+            task=task,
+            safety_mode=SAFETY_MODE_STRICT,
+        )
+        return True, classification, raw_response
+
+    log_safety_violation("output", classification, user_id, "", raw_response, endpoint)
+    return False, classification, raw_response
 
 
 # ============================
@@ -298,6 +387,7 @@ class LLMInvokeRequest(BaseModel):
     prefer: Optional[str] = None
     model_override: Optional[str] = None
     user_id: Optional[str] = None
+    safety_mode: Optional[str] = None
     max_output_tokens: Optional[int] = None
     reasoning_effort: Optional[str] = None
     skip_wrappers: Optional[bool] = None
@@ -703,10 +793,12 @@ async def invoke_llm(request: LLMInvokeRequest):
             request.prompt,
             user_id_for_safety,
             "/llm/invoke",
+            request.task,
+            request.safety_mode,
         )
         if not is_safe:
             logger.warning("[Safety] Input blocked for user=%s classification=%s", user_id_for_safety, classification)
-            reason = "safety_violation" if classification == SafetyResult.UNSAFE else "safety_degraded"
+            reason = "safety_violation" if classification in EXPLICIT_BLOCKED_CLASSIFICATIONS else "safety_degraded"
             raise HTTPException(
                 status_code=400,
                 detail={"status": "blocked", "reason": reason},
@@ -762,8 +854,9 @@ class StreamingSafetyMonitor:
     Designed to be non-blocking: checks happen in a background thread and
     only terminate the stream if UNSAFE content is detected.
     """
-    def __init__(self, user_id: str, buffer_size: int = SAFETY_BUFFER_SIZE):
+    def __init__(self, user_id: str, task: str = "chat", buffer_size: int = SAFETY_BUFFER_SIZE):
         self.user_id = user_id
+        self.task = task
         self.buffer_size = buffer_size
         self.accumulated_text = ""
         self.token_count = 0
@@ -800,13 +893,25 @@ class StreamingSafetyMonitor:
                     timeout=SAFETY_OUTPUT_TIMEOUT,
                     check_type="output",
                 )
-                if classification == SafetyResult.UNSAFE:
+                if classification in EXPLICIT_BLOCKED_CLASSIFICATIONS:
                     with self._lock:
                         self.violation_detected = True
                         self.violation_reason = f"Output safety violation: {classification}"
                     log_safety_violation(
                         "output", classification, self.user_id,
-                        text_to_check, raw, "/llm/stream"
+                        "", raw, "/llm/stream"
+                    )
+                elif classification in DEGRADED_SAFETY_CLASSIFICATIONS:
+                    log_safety_event(
+                        "safety.output.timeout.degraded"
+                        if classification == SafetyResult.TIMEOUT
+                        else "safety.output.unavailable.degraded",
+                        check_type="output",
+                        classification=classification,
+                        user_id=self.user_id,
+                        endpoint="/llm/stream",
+                        task=self.task,
+                        safety_mode=SAFETY_MODE_STRICT,
                     )
             except Exception as e:
                 logger.warning("[SafetyMonitor] Background check failed: %s", e)
@@ -833,10 +938,12 @@ async def stream_llm(request: LLMInvokeRequest):
         request.prompt,
         user_id_for_safety,
         "/llm/stream",
+        request.task,
+        request.safety_mode,
     )
     if not is_safe:
         logger.warning("[Safety] Stream input blocked for user=%s classification=%s", user_id_for_safety, classification)
-        reason = "safety_violation" if classification == SafetyResult.UNSAFE else "safety_degraded"
+        reason = "safety_violation" if classification in EXPLICIT_BLOCKED_CLASSIFICATIONS else "safety_degraded"
         raise HTTPException(
             status_code=400,
             detail={"status": "blocked", "reason": reason},
@@ -869,7 +976,7 @@ async def stream_llm(request: LLMInvokeRequest):
             
             # ── OUTPUT SAFETY MONITOR ──
             # Skip for chart generation to prevent false positives on code/data
-            safety_monitor = None if is_chart_task else StreamingSafetyMonitor(user_id)
+            safety_monitor = None if is_chart_task else StreamingSafetyMonitor(user_id, request.task)
             full_output_parts: list[str] = []
             
             for chunk in stream_llm_router(
@@ -895,9 +1002,9 @@ async def stream_llm(request: LLMInvokeRequest):
             if safety_monitor:
                 final_output = "".join(full_output_parts).strip()
                 if final_output:
-                    output_safe, output_classification, _ = check_output_safety(final_output, user_id, "/llm/stream")
+                    output_safe, output_classification, _ = check_output_safety(final_output, user_id, "/llm/stream", request.task)
                     if not output_safe:
-                        code = "safety_violation" if output_classification == SafetyResult.UNSAFE else "safety_degraded"
+                        code = "safety_violation" if output_classification in EXPLICIT_BLOCKED_CLASSIFICATIONS else "safety_degraded"
                         logger.warning(
                             "[Safety] Final stream output blocked user=%s classification=%s",
                             user_id,
