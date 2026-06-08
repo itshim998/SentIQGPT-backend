@@ -23,10 +23,6 @@
   <script src="vendor/supabase/supabase.js"></script>
 </head>
 <body>
-  <div id="compatibility-banner" class="compatibility-banner" role="status" aria-live="polite">
-    <span id="compatibility-banner-loader" class="compatibility-banner-loader" aria-hidden="true"></span>
-    <span id="compatibility-banner-message" class="sr-only">Starting</span>
-  </div>
   <div class="app-container">
 
     <!-- Sidebar -->
@@ -156,14 +152,6 @@
       <div class="chat-scroll-region" style="position:relative;flex:1;display:flex;flex-direction:column;min-height:0;">
         <div id="chat-messages" class="chat-messages" aria-live="polite" aria-relevant="additions text"></div>
         <button id="scroll-anchor-pill" class="scroll-anchor-pill" type="button" aria-label="Jump to latest message">↓</button>
-      </div>
-
-      <!-- Typing indicator -->
-      <div id="typing-indicator" class="typing-indicator" style="display: none;" role="status" aria-live="polite">
-        <div class="typing-dots">
-          <span></span><span></span><span></span>
-        </div>
-        <span class="typing-text-shimmer" id="typing-text">Thinking</span>
       </div>
 
       <!-- Input area -->

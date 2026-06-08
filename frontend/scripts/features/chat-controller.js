@@ -180,7 +180,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     newChatBtn,
     chatList,
     chatSearchInput,
-    typingIndicator,
     welcomeScreen,
     welcomeHeading,
     welcomeSubtitle,
@@ -213,7 +212,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     sidebar,
     scrollAnchorPill,
     toastContainer,
-    typingTextEl,
     appContainer,
     authActions,
     authLoginBtn,
@@ -2897,79 +2895,26 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     file_generation: "loader-generic",
     chart_generation: "loader-chart",
   };
-  const ACTIVITY_TIMER_MODES = new Set(["thinking", "web_search", "image_generation", "file_generation", "chart_generation"]);
-
   function getActivityBaseText(mode = "thinking") {
     return ACTIVITY_BASE_TEXT[mode] || ACTIVITY_BASE_TEXT.thinking;
   }
 
-  function ensureTypingDotMatrix() {
-    if (!typingIndicator) return;
-    const dots = typingIndicator.querySelector(".typing-dots");
-    if (!dots || dots.dataset.matrixReady === "1") return;
-    dots.innerHTML = "";
-    const total = 3;
-    for (let index = 0; index < total; index += 1) {
-      const dot = document.createElement("span");
-      dot.className = "typing-dot";
-      dot.style.setProperty("--dot-delay", String(index));
-      dots.appendChild(dot);
-    }
-    dots.dataset.matrixReady = "1";
-  }
-
-  function applyActivityIndicatorMode(mode = "thinking", loaderKind = ACTIVITY_LOADER_KIND.thinking) {
-    if (!typingIndicator) return;
-    ensureTypingDotMatrix();
-    typingIndicator.classList.remove("mode-thinking", "mode-web-search", "mode-reasoning", "mode-file-generation", "mode-chart-generation");
-    typingIndicator.classList.add(`mode-${mode}`);
-    typingIndicator.classList.remove("loader-text", "loader-image", "loader-chart", "loader-generic");
-    typingIndicator.classList.add(loaderKind || ACTIVITY_LOADER_KIND[mode] || ACTIVITY_LOADER_KIND.thinking);
-    typingIndicator.dataset.loaderKind = loaderKind || ACTIVITY_LOADER_KIND[mode] || ACTIVITY_LOADER_KIND.thinking;
-    if (typingTextEl) typingTextEl.textContent = getActivityBaseText(mode);
-  }
-
-  // ---- Thinking indicator elapsed timer ----
-  let _thinkingTimer = null;
-  function startThinkingTimer(mode = "thinking", loaderKind = ACTIVITY_LOADER_KIND.thinking) {
-    const start = Date.now();
-    applyActivityIndicatorMode(mode, loaderKind);
-    clearInterval(_thinkingTimer);
-    if (!ACTIVITY_TIMER_MODES.has(mode)) return;
-    _thinkingTimer = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - start) / 1000);
-      if (elapsed >= 5 && typingTextEl) typingTextEl.textContent = `${getActivityBaseText(mode)} ${elapsed}s`;
-    }, 1000);
-  }
-  function stopThinkingTimer(resetMode = "thinking", loaderKind = ACTIVITY_LOADER_KIND.thinking) {
-    clearInterval(_thinkingTimer);
-    _thinkingTimer = null;
-    if (typingTextEl) typingTextEl.textContent = getActivityBaseText(resetMode);
-    applyActivityIndicatorMode(resetMode, loaderKind);
+  function persistActivityState(chatId, mode = "thinking", loaderKind = ACTIVITY_LOADER_KIND.thinking) {
+    if (!chatId) return;
+    const state = getChatState(chatId);
+    if (!state) return;
+    state.activityMode = mode;
+    state.activityLoaderKind = loaderKind || ACTIVITY_LOADER_KIND[mode] || ACTIVITY_LOADER_KIND.thinking;
   }
 
   function showActivityIndicator(mode = "thinking", options = {}) {
     const {
       chatId = currentChatId,
-      withTimer = ACTIVITY_TIMER_MODES.has(mode),
       persist = true,
       loaderKind = ACTIVITY_LOADER_KIND[mode] || ACTIVITY_LOADER_KIND.thinking,
     } = options;
     if (persist && chatId) {
-      const state = getChatState(chatId);
-      if (state) {
-        state.activityMode = mode;
-        state.activityLoaderKind = loaderKind;
-      }
-    }
-    if (typingIndicator) {
-      typingIndicator.style.display = "flex";
-      requestAnimationFrame(() => typingIndicator.classList.add("is-visible"));
-    }
-    if (withTimer) startThinkingTimer(mode, loaderKind);
-    else {
-      stopThinkingTimer(mode, loaderKind);
-      applyActivityIndicatorMode(mode, loaderKind);
+      persistActivityState(chatId, mode, loaderKind);
     }
   }
 
@@ -2995,30 +2940,17 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           : normalized === "image_generation" || normalized === "image"
             ? "loader-image"
           : ACTIVITY_LOADER_KIND[mode] || ACTIVITY_LOADER_KIND.thinking;
+    const finalLoaderKind = options.loaderKind || inferredLoaderKind;
     showActivityIndicator(mode, {
       ...options,
-      withTimer: options.withTimer ?? ACTIVITY_TIMER_MODES.has(mode),
-      loaderKind: options.loaderKind || inferredLoaderKind,
+      loaderKind: finalLoaderKind,
     });
+    return finalLoaderKind;
   }
 
   function hideActivityIndicator(chatId = currentChatId) {
-    stopThinkingTimer("thinking", ACTIVITY_LOADER_KIND.thinking);
-    applyActivityIndicatorMode("thinking", ACTIVITY_LOADER_KIND.thinking);
     if (chatId) {
-      const state = getChatState(chatId);
-      if (state) {
-        state.activityMode = "thinking";
-        state.activityLoaderKind = "loader-text";
-      }
-    }
-    if (typingIndicator) {
-      typingIndicator.classList.remove("is-visible");
-      setTimeout(() => {
-        if (!typingIndicator.classList.contains("is-visible")) {
-          typingIndicator.style.display = "none";
-        }
-      }, 170);
+      persistActivityState(chatId, "thinking", "loader-text");
     }
   }
 
@@ -3036,8 +2968,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       return loaderKind;
     },
     showForRoute(routeOrMode, options = {}) {
-      updateActivityIndicator(routeOrMode, options);
-      return typingIndicator?.dataset?.loaderKind || "loader-text";
+      return updateActivityIndicator(routeOrMode, options) || "loader-text";
     },
     hide(chatId = currentChatId) {
       hideActivityIndicator(chatId);
@@ -7898,6 +7829,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const state = getChatState(targetChatId);
     state.isThinking = true;
     state.activityMode = requestActivityMode;
+    state.activityLoaderKind = requestLoaderKind;
     const ac = createAbortController();
     state.abortController = ac;
     await upsertChatMessageSyncJob(requestId, {
@@ -7922,23 +7854,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         id: `user-${requestId}`,
         clientRequestId: requestId,
       });
-    }
-    if (targetChatId === currentChatId && typingIndicator) {
-      const shouldPreferWebSurfIndicator = Boolean(preliminaryWebSearchMode) && !authenticatedFileGenerationRequired;
-      if (shouldPreferWebSurfIndicator) {
-        SentIQLoaderEngine.showForRoute("web_search", { chatId: targetChatId, withTimer: true });
-      } else if (authenticatedFileGenerationRequired) {
-        SentIQLoaderEngine.showForRoute("file_generation", { chatId: targetChatId, withTimer: true });
-      } else if (chartResponseRequired) {
-        SentIQLoaderEngine.showForRoute("chart_generation", { chatId: targetChatId, withTimer: true });
-      } else if (bufferedReasoningRequired) {
-        SentIQLoaderEngine.showForRoute("reasoning", { chatId: targetChatId, withTimer: true });
-      } else {
-          SentIQLoaderEngine.showForPrompt(apiMessage, {
-          chatId: targetChatId,
-          structured: chartResponseRequired,
-        });
-      }
     }
     _userScrolledUp = false;
     if (scrollAnchorPill) scrollAnchorPill.classList.remove("visible");
@@ -8447,6 +8362,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const state = getChatState(targetChatId);
     state.isThinking = true;
     state.activityMode = "thinking";
+    state.activityLoaderKind = ACTIVITY_LOADER_KIND.reasoning;
     const ac = createAbortController();
     state.abortController = ac;
     setStopMode();
@@ -8458,9 +8374,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       clientRequestId: requestId,
     });
 
-    if (targetChatId === currentChatId && typingIndicator) {
-      SentIQLoaderEngine.showForRoute("math_reasoning", { chatId: targetChatId, withTimer: true });
-    }
     _userScrolledUp = false;
     if (scrollAnchorPill) scrollAnchorPill.classList.remove("visible");
     scrollToBottom();
@@ -8687,6 +8600,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const state = getChatState(targetChatId);
     state.isThinking = true;
     state.activityMode = "image_generation";
+    state.activityLoaderKind = "loader-image";
     let imageContextData = { recentMessages: [], memories: [] };
     try {
       imageContextData = await getChatContextData(targetChatId);
@@ -8699,31 +8613,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       id: `user-${requestId}`,
       clientRequestId: requestId,
     });
-    if (targetChatId === currentChatId && typingIndicator) {
-      updateActivityIndicator("image_generation", {
-        chatId: targetChatId,
-        withTimer: true,
-        loaderKind: "loader-image",
-      });
-    }
     scrollToBottom();
-
-    // Slow-inference hint: if generation takes over 8s, update typing indicator text
-    // For complex prompts (text/spatial/multi-element), show a different message sooner
-    let slowHintTimer = null;
-    const isComplexPrompt = /\b(?:text|sign|say(?:s|ing)?|word|letter|holding|wear(?:ing)?|in front of|behind|next to|multiple|several|group of|pointing at|looking at)\b/i.test(prompt);
-    if (typingIndicator) {
-      const hintDelay = isComplexPrompt ? 3000 : 8000;
-      const hintText = isComplexPrompt
-        ? '<span class="slow-hint">Using higher-quality model for this prompt... </span>'
-        : '<span class="slow-hint">Your image is being generated... </span>';
-      slowHintTimer = setTimeout(() => {
-        if (state.isThinking && targetChatId === currentChatId) {
-          const dots = typingIndicator.querySelector(".typing-dots");
-          if (dots) dots.insertAdjacentHTML("beforebegin", hintText);
-        }
-      }, hintDelay);
-    }
 
     const ac = createAbortController();
     state.abortController = ac;
@@ -8831,12 +8721,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         debugWarn(`[UI] Image generation error: ${getSafeErrorMessage(err)}`);
       }
     } finally {
-      if (slowHintTimer) clearTimeout(slowHintTimer);
-      // Clean up slow-hint text if it was added
-      if (typingIndicator) {
-        const hint = typingIndicator.querySelector(".slow-hint");
-        if (hint) hint.remove();
-      }
       settleImageGenerationUi(targetChatId, state);
       scheduleChatListRefresh();
     }

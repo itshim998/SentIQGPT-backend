@@ -400,18 +400,6 @@ body::after,
   -webkit-backdrop-filter: none;
 }
 
-.typing-indicator {
-  background: rgba(15,20,30,0.94);
-  border: 1px solid rgba(255,255,255,0.10);
-  box-shadow: var(--shadow-md);
-}
-
-.typing-text-shimmer {
-  color: #a8afbf;
-  background: none;
-  -webkit-text-fill-color: currentColor;
-}
-
 .scroll-anchor-pill {
   background: #171d2b;
   border: 1px solid rgba(139,92,246,0.28);

@@ -11,6 +11,19 @@
     return document.getElementById("compatibility-banner");
   }
 
+  function ensureErrorBanner() {
+    let banner = getBanner();
+    if (banner) return banner;
+    banner = document.createElement("div");
+    banner.id = "compatibility-banner";
+    banner.className = "compatibility-banner";
+    banner.setAttribute("role", "alert");
+    banner.setAttribute("aria-live", "assertive");
+    banner.innerHTML = '<span id="compatibility-banner-message"></span>';
+    document.body?.prepend(banner);
+    return banner;
+  }
+
   function canUseStorage(storageName) {
     try {
       const storage = window[storageName];
@@ -38,37 +51,20 @@
   });
 
   function render() {
-    const banner = getBanner();
+    const banner = didFail ? ensureErrorBanner() : getBanner();
     if (!banner) return;
     const message = document.getElementById("compatibility-banner-message");
     banner.classList.toggle("is-error", didFail);
-    banner.classList.toggle("is-limited", !didFail && limitedReasons.size > 0);
     banner.classList.remove("has-message");
-    message?.classList.add("sr-only");
 
     if (didFail) {
       banner.hidden = false;
       banner.classList.add("has-message");
-      message?.classList.remove("sr-only");
       if (message) message.textContent = `${PRODUCT_NAME} could not finish starting. A browser, network, or storage setting may be blocking required functionality.`;
       return;
     }
 
-    if (!isReady) {
-      banner.hidden = false;
-      if (message) message.textContent = "Starting";
-      return;
-    }
-
-    if (limitedReasons.size) {
-      banner.hidden = false;
-      banner.classList.add("has-message");
-      message?.classList.remove("sr-only");
-      if (message) message.textContent = Array.from(limitedReasons.values()).join(" ");
-      return;
-    }
-
-    banner.hidden = true;
+    banner.remove();
   }
 
   function disablePrimaryActions() {

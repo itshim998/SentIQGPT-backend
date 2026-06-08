@@ -190,17 +190,6 @@
 }
 
 /* ==============================
-   GPU-accelerated shimmer for thinking
-   ============================== */
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-.typing-indicator {
-  will-change: transform;
-}
-
-/* ==============================
    Performance: touch & tap
    ============================== */
 button, .tool-btn, .btn-send, .chat-list-item, .btn-settings, .sidebar-toggle {
@@ -332,20 +321,6 @@ button, .tool-btn, .btn-send, .chat-list-item, .btn-settings, .sidebar-toggle {
 @keyframes rippleFade {
   0% { opacity: 1; transform: scale(0.5); }
   100% { opacity: 0; transform: scale(2.5); }
-}
-
-/* ==============================
-   Enhanced thinking indicator shimmer
-   ============================== */
-.typing-text-shimmer {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  background: linear-gradient(90deg, var(--text-muted) 0%, var(--purple-300) 50%, var(--text-muted) 100%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  animation: shimmer 2s ease-in-out infinite;
 }
 
 /* content-visibility for older messages */

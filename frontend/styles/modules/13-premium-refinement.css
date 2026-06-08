@@ -967,20 +967,6 @@ body::after {
   box-shadow: 0 0 0 3px rgba(149, 123, 232, 0.085);
 }
 
-.typing-indicator {
-  background: rgba(13, 17, 26, 0.92);
-  backdrop-filter: blur(16px) saturate(110%);
-  -webkit-backdrop-filter: blur(16px) saturate(110%);
-  border-color: rgba(255, 255, 255, 0.07);
-  box-shadow: var(--shadow-md);
-}
-
-.typing-text-shimmer {
-  color: #aab1bf;
-  background: none;
-  -webkit-text-fill-color: currentColor;
-}
-
 .scroll-anchor-pill {
   min-height: 31px;
   border-radius: 999px;
