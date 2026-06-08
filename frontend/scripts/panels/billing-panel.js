@@ -6,13 +6,13 @@ import { PRODUCT_NAME } from "../shared/brand.js";
 (function () {
   const API = window.SentIQAPI;
   const panel = document.getElementById("billing-panel");
-  const quotaChip = document.getElementById("composer-quota-chip");
   const accountBillingBtn = document.getElementById("auth-menu-billing-btn");
   const settingsModal = document.getElementById("settings-modal");
 
   let plansState = null;
   let billingState = null;
   let loadingPromise = null;
+  let billingVisible = false;
 
   function formatPrice(plan) {
     const price = Number(plan?.price_paise || 0);
@@ -64,28 +64,6 @@ import { PRODUCT_NAME } from "../shared/brand.js";
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
-  }
-
-  function updateQuotaChip() {
-    if (!quotaChip || !billingState?.summary) return;
-    const summary = billingState.summary;
-    const standard = normalizeQuota(summary, "premium_text");
-    const lite = normalizeQuota(summary, "lite_text");
-    const currentPlan = planName(summary.plan_code);
-    let text = `${currentPlan}: ${usageText(standard)}`;
-    let state = "standard";
-
-    if (standard.remaining <= 0 && lite.limit > 0 && lite.remaining > 0) {
-      text = `Lite: ${usageText(lite)}`;
-      state = "lite";
-    } else if (standard.remaining <= 0 && lite.remaining <= 0) {
-      text = summary.plan_code === "free" ? "Free limit reached" : "Limit reached";
-      state = "exhausted";
-    }
-
-    quotaChip.textContent = text;
-    quotaChip.dataset.state = state;
-    quotaChip.style.display = "inline-flex";
   }
 
   function renderPanel() {
@@ -141,7 +119,50 @@ import { PRODUCT_NAME } from "../shared/brand.js";
     });
   }
 
+  function activateSettingsTab(tabName = "general") {
+    if (!settingsModal) return;
+    settingsModal.querySelectorAll(".settings-tab").forEach((tab) => {
+      tab.classList.toggle("active", tab.getAttribute("data-tab") === tabName);
+    });
+    settingsModal.querySelectorAll(".settings-tab-content").forEach((content) => {
+      content.classList.toggle("active", content.id === `settings-tab-${tabName}`);
+    });
+  }
+
+  function setBillingVisibility(visible) {
+    billingVisible = Boolean(visible);
+    const billingTab = settingsModal?.querySelector('[data-tab="billing"]');
+    const billingContent = document.getElementById("settings-tab-billing");
+    if (billingTab) billingTab.style.display = billingVisible ? "" : "none";
+    if (billingContent) billingContent.style.display = billingVisible ? "" : "none";
+    if (accountBillingBtn) accountBillingBtn.style.display = billingVisible ? "" : "none";
+    if (!billingVisible && billingTab?.classList.contains("active")) {
+      activateSettingsTab("general");
+    }
+  }
+
+  async function hasAuthenticatedBillingSession() {
+    try {
+      const session = await window.SentIQAuth?.getSession?.();
+      return Boolean(session);
+    } catch {
+      return false;
+    }
+  }
+
+  function clearBillingPanel() {
+    plansState = null;
+    billingState = null;
+    if (panel) panel.innerHTML = "";
+  }
+
   async function refreshBilling(force = false) {
+    const signedIn = await hasAuthenticatedBillingSession();
+    setBillingVisibility(signedIn);
+    if (!signedIn) {
+      clearBillingPanel();
+      return null;
+    }
     if (!API || (!force && loadingPromise)) return loadingPromise;
     loadingPromise = Promise.all([
       API.getBillingPlans(),
@@ -150,7 +171,6 @@ import { PRODUCT_NAME } from "../shared/brand.js";
       plansState = plans;
       billingState = me;
       renderPanel();
-      updateQuotaChip();
     }).catch((error) => {
       if (panel) panel.innerHTML = `<div class="billing-panel-status error">${escapeHtml(error?.message || "Billing details are unavailable.")}</div>`;
     }).finally(() => {
@@ -214,21 +234,25 @@ import { PRODUCT_NAME } from "../shared/brand.js";
 
   function activateBillingTab() {
     if (!settingsModal) return;
-    settingsModal.querySelectorAll(".settings-tab").forEach((tab) => tab.classList.remove("active"));
-    settingsModal.querySelectorAll(".settings-tab-content").forEach((content) => content.classList.remove("active"));
-    settingsModal.querySelector('[data-tab="billing"]')?.classList.add("active");
-    document.getElementById("settings-tab-billing")?.classList.add("active");
+    activateSettingsTab("billing");
   }
 
-  function openBilling() {
+  async function openBilling() {
+    const signedIn = await hasAuthenticatedBillingSession();
+    setBillingVisibility(signedIn);
+    if (!signedIn) return;
     window.SentIQChat?.openSettings?.();
     activateBillingTab();
     refreshBilling(true);
   }
 
   accountBillingBtn?.addEventListener("click", openBilling);
-  quotaChip?.addEventListener("click", openBilling);
-  document.addEventListener("sentiq-auth-changed", () => refreshBilling(true));
+  document.addEventListener("sentiq-auth-changed", (event) => {
+    const signedIn = Boolean(event?.detail?.session);
+    setBillingVisibility(signedIn);
+    if (signedIn) refreshBilling(true);
+    else clearBillingPanel();
+  });
   window.addEventListener("sentiq-billing-refresh", () => refreshBilling(true));
 
   window.SentIQBilling = {

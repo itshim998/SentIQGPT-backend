@@ -400,19 +400,25 @@ body::after {
 .welcome-screen {
   max-width: min(900px, calc(100vw - 72px));
   gap: 10px;
-  padding: 46px 28px 112px;
+  padding: 46px 28px 48px;
 }
 
 .main-content.is-empty-chat .welcome-screen {
-  position: absolute;
-  left: 50%;
-  top: clamp(92px, 17vh, 168px);
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  left: auto;
+  top: auto;
   width: min(900px, calc(100vw - 80px));
   max-width: none;
-  flex: none;
-  transform: translateX(-50%);
-  padding: 0;
+  transform: none;
+  padding: clamp(72px, 11vh, 128px) 0 clamp(22px, 5vh, 42px);
+  overflow: auto;
   z-index: 2;
+}
+
+.main-content.is-empty-chat .chat-scroll-region {
+  display: none !important;
 }
 
 .welcome-eyebrow {
@@ -498,11 +504,13 @@ body::after {
 .auth-welcome-note {
   color: #778092;
   font-size: 0.8rem;
+  line-height: 1.6;
   margin-top: 5px;
+  max-width: min(640px, 100%);
 }
 
 .main-content.is-empty-chat .auth-welcome-note {
-  display: none;
+  display: block;
 }
 
 /* Messages */
@@ -642,13 +650,13 @@ body::after {
 }
 
 .main-content.is-empty-chat .chat-input-wrapper {
-  position: absolute;
-  left: 50%;
-  top: clamp(370px, 54vh, 540px);
+  position: relative;
+  left: auto;
+  top: auto;
   width: min(880px, calc(100vw - 96px));
   max-width: none;
-  transform: translate(-50%, -50%);
-  padding: 0;
+  transform: none;
+  padding: 0 0 max(25px, env(safe-area-inset-bottom));
 }
 
 .chat-input-wrapper::before {
@@ -1059,13 +1067,14 @@ textarea:focus-visible {
   .welcome-screen {
     max-width: calc(100vw - 34px);
     justify-content: flex-start;
-    padding: max(88px, calc(env(safe-area-inset-top) + 82px)) 17px 32px;
+    padding: max(76px, calc(env(safe-area-inset-top) + 70px)) 17px 24px;
     gap: 10px;
   }
 
   .main-content.is-empty-chat .welcome-screen {
-    top: max(76px, calc(env(safe-area-inset-top) + 68px));
+    top: auto;
     width: calc(100vw - 34px);
+    padding: max(76px, calc(env(safe-area-inset-top) + 70px)) 0 20px;
   }
 
   .welcome-eyebrow {
@@ -1125,9 +1134,10 @@ textarea:focus-visible {
 
   .main-content.is-empty-chat .chat-input-wrapper {
     top: auto;
-    bottom: max(18px, env(safe-area-inset-bottom));
+    bottom: auto;
     width: calc(100vw - 24px);
-    transform: translateX(-50%);
+    transform: none;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
   }
 
   .chat-input-wrapper::before {
@@ -1202,8 +1212,9 @@ textarea:focus-visible {
   }
 
   .main-content.is-empty-chat .welcome-screen {
-    top: max(70px, calc(env(safe-area-inset-top) + 62px));
+    top: auto;
     width: calc(100vw - 28px);
+    padding-top: max(70px, calc(env(safe-area-inset-top) + 62px));
   }
 
   .welcome-screen h2 {

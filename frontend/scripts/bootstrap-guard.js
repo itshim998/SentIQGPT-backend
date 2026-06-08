@@ -43,22 +43,28 @@
     const message = document.getElementById("compatibility-banner-message");
     banner.classList.toggle("is-error", didFail);
     banner.classList.toggle("is-limited", !didFail && limitedReasons.size > 0);
+    banner.classList.remove("has-message");
+    message?.classList.add("sr-only");
 
     if (didFail) {
       banner.hidden = false;
-      message.textContent = `${PRODUCT_NAME} could not finish starting. A browser, network, or storage setting may be blocking required functionality.`;
+      banner.classList.add("has-message");
+      message?.classList.remove("sr-only");
+      if (message) message.textContent = `${PRODUCT_NAME} could not finish starting. A browser, network, or storage setting may be blocking required functionality.`;
       return;
     }
 
     if (!isReady) {
       banner.hidden = false;
-      message.textContent = `Starting ${PRODUCT_NAME}...`;
+      if (message) message.textContent = "Starting";
       return;
     }
 
     if (limitedReasons.size) {
       banner.hidden = false;
-      message.textContent = Array.from(limitedReasons.values()).join(" ");
+      banner.classList.add("has-message");
+      message?.classList.remove("sr-only");
+      if (message) message.textContent = Array.from(limitedReasons.values()).join(" ");
       return;
     }
 

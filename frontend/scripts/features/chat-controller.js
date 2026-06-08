@@ -2640,6 +2640,29 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     updateOverlayLocks();
   }
 
+  function activateSettingsTab(tabName = "general") {
+    if (!settingsModal) return;
+    settingsModal.querySelectorAll(".settings-tab").forEach((tab) => {
+      tab.classList.toggle("active", tab.getAttribute("data-tab") === tabName);
+    });
+    settingsModal.querySelectorAll(".settings-tab-content").forEach((content) => {
+      content.classList.toggle("active", content.id === `settings-tab-${tabName}`);
+    });
+  }
+
+  function syncSettingsAccessVisibility(signedIn, requiresName = false) {
+    const accountReady = Boolean(signedIn && !requiresName);
+    const billingTab = settingsModal?.querySelector('.settings-tab[data-tab="billing"]');
+    const billingContent = document.getElementById("settings-tab-billing");
+    const accountBillingBtn = document.getElementById("auth-menu-billing-btn");
+    if (billingTab) billingTab.style.display = accountReady ? "" : "none";
+    if (billingContent) billingContent.style.display = accountReady ? "" : "none";
+    if (accountBillingBtn) accountBillingBtn.style.display = accountReady ? "" : "none";
+    if (!accountReady && billingTab?.classList.contains("active")) {
+      activateSettingsTab("general");
+    }
+  }
+
   function setChatAccess(enabled) {
     const signedIn = !!enabled;
     const requiresName = signedIn && isNameCaptureRequired();
@@ -2665,6 +2688,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       const node = el;
       node.style.display = signedIn && !requiresName ? "" : "none";
     });
+    syncSettingsAccessVisibility(signedIn, requiresName);
     syncComposerHint();
     refreshWelcomeCopy();
   }
@@ -2858,11 +2882,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   const ACTIVITY_BASE_TEXT = {
-    thinking: "Thinking...",
-    web_search: "Surfing the web",
-    reasoning: "Thinking a bit longer...",
-    image_generation: "Generating image...",
-    file_generation: "Analysing...",
+    thinking: "Thinking",
+    web_search: "Searching the web",
+    reasoning: "Thinking",
+    image_generation: "Generating image",
+    file_generation: "Reading file",
+    chart_generation: "Preparing chart",
   };
   const ACTIVITY_LOADER_KIND = {
     thinking: "loader-text",
@@ -2870,8 +2895,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     reasoning: "loader-generic",
     image_generation: "loader-image",
     file_generation: "loader-generic",
+    chart_generation: "loader-chart",
   };
-  const ACTIVITY_TIMER_MODES = new Set(["thinking", "web_search", "image_generation", "file_generation"]);
+  const ACTIVITY_TIMER_MODES = new Set(["thinking", "web_search", "image_generation", "file_generation", "chart_generation"]);
 
   function getActivityBaseText(mode = "thinking") {
     return ACTIVITY_BASE_TEXT[mode] || ACTIVITY_BASE_TEXT.thinking;
@@ -2895,7 +2921,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   function applyActivityIndicatorMode(mode = "thinking", loaderKind = ACTIVITY_LOADER_KIND.thinking) {
     if (!typingIndicator) return;
     ensureTypingDotMatrix();
-    typingIndicator.classList.remove("mode-thinking", "mode-web-search", "mode-reasoning", "mode-file-generation");
+    typingIndicator.classList.remove("mode-thinking", "mode-web-search", "mode-reasoning", "mode-file-generation", "mode-chart-generation");
     typingIndicator.classList.add(`mode-${mode}`);
     typingIndicator.classList.remove("loader-text", "loader-image", "loader-chart", "loader-generic");
     typingIndicator.classList.add(loaderKind || ACTIVITY_LOADER_KIND[mode] || ACTIVITY_LOADER_KIND.thinking);
@@ -2955,6 +2981,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         ? "image_generation"
       : normalized === "file_generation"
         ? "file_generation"
+      : normalized === "chart_generation"
+        ? "chart_generation"
       : normalized === "math_reasoning" || normalized === "reasoning"
         ? "reasoning"
         : "thinking";
@@ -4768,10 +4796,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     settingsModal?.querySelectorAll(".settings-tab").forEach((tab) => {
       tab.addEventListener("click", () => {
         const tabName = tab.getAttribute("data-tab");
-        settingsModal.querySelectorAll(".settings-tab").forEach((t) => t.classList.remove("active"));
-        settingsModal.querySelectorAll(".settings-tab-content").forEach((c) => c.classList.remove("active"));
-        tab.classList.add("active");
-        document.getElementById("settings-tab-" + tabName)?.classList.add("active");
+        if (!tabName || tab.style.display === "none") return;
+        activateSettingsTab(tabName);
       });
     });
 
@@ -4924,7 +4950,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         chatCacheLoaderEl.className = "chat-cache-loader";
         chatCacheLoaderEl.setAttribute("role", "status");
         chatCacheLoaderEl.setAttribute("aria-live", "polite");
-        chatCacheLoaderEl.innerHTML = '<span class="chat-cache-spinner" aria-hidden="true"></span><span>Loading chat...</span>';
+        chatCacheLoaderEl.innerHTML = '<span class="chat-cache-spinner" aria-hidden="true"></span><span class="sr-only">Loading chat</span>';
       }
       if (!chatCacheLoaderEl.parentNode) chatMessages.appendChild(chatCacheLoaderEl);
       return;
@@ -5618,7 +5644,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       '<button type="button" class="image-lightbox-btn" data-lightbox-action="zoom-out" aria-label="Zoom out" title="Zoom out">-</button>',
       '<button type="button" class="image-lightbox-btn" data-lightbox-action="reset" aria-label="Reset zoom" title="Reset zoom">1:1</button>',
       '<button type="button" class="image-lightbox-btn" data-lightbox-action="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>',
-      '<button type="button" class="image-lightbox-btn" data-lightbox-action="close" aria-label="Close image preview" title="Close">&times;</button>',
+      '<button type="button" class="image-lightbox-btn" data-lightbox-action="close" aria-label="Close image preview" title="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"></path><path d="M6 6l12 12"></path></svg></button>',
       '</div>',
       '<div class="image-lightbox-stage">',
       '<img class="image-lightbox-img" alt="">',
@@ -7442,7 +7468,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     inlineLoader.className = "response-inline-loader";
     inlineLoader.setAttribute("role", "status");
     inlineLoader.setAttribute("aria-live", "polite");
-    inlineLoader.innerHTML = '<span class="response-inline-spinner" aria-hidden="true"></span><span>Preparing response</span>';
+    const loaderText = options.loaderText || getActivityBaseText(options.activityMode || "thinking");
+    inlineLoader.innerHTML = '<span class="response-inline-spinner" aria-hidden="true"></span><span></span>';
+    const loaderCopy = inlineLoader.querySelector("span:last-child");
+    if (loaderCopy) loaderCopy.textContent = loaderText;
     const renderedDiv = document.createElement("div");
     renderedDiv.className = "streaming-rendered";
     const tailDiv = document.createElement("div");
@@ -7830,6 +7859,16 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       reasoning: bufferedReasoningRequired,
       file: authenticatedFileGenerationRequired,
     });
+    const requestActivityMode = preliminaryWebSearchMode && !authenticatedFileGenerationRequired
+      ? "web_search"
+      : authenticatedFileGenerationRequired
+        ? "file_generation"
+        : chartResponseRequired
+          ? "chart_generation"
+          : bufferedReasoningRequired
+            ? "reasoning"
+            : "thinking";
+    const requestLoaderText = getActivityBaseText(requestActivityMode);
 
     if (!isClarificationAnswer && !webSearchModeOverride && imageAttachmentsForRequest.length === 0 && !chartResponseRequired && !bufferedReasoningRequired && !authenticatedFileGenerationRequired && apiMessage && (intentRoute === "image_generation" || (!routeIntent && isImageRequest(apiMessage)))) {
       await handleImageGeneration(apiMessage);
@@ -7858,7 +7897,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const conversationIdForRequest = getCanonicalConversationIdForRequest(targetChatId);
     const state = getChatState(targetChatId);
     state.isThinking = true;
-    state.activityMode = authenticatedFileGenerationRequired ? "file_generation" : "thinking";
+    state.activityMode = requestActivityMode;
     const ac = createAbortController();
     state.abortController = ac;
     await upsertChatMessageSyncJob(requestId, {
@@ -7885,11 +7924,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       });
     }
     if (targetChatId === currentChatId && typingIndicator) {
-      const shouldPreferWebSurfIndicator = Boolean(webSearchModeOverride) && !authenticatedFileGenerationRequired;
+      const shouldPreferWebSurfIndicator = Boolean(preliminaryWebSearchMode) && !authenticatedFileGenerationRequired;
       if (shouldPreferWebSurfIndicator) {
         SentIQLoaderEngine.showForRoute("web_search", { chatId: targetChatId, withTimer: true });
       } else if (authenticatedFileGenerationRequired) {
         SentIQLoaderEngine.showForRoute("file_generation", { chatId: targetChatId, withTimer: true });
+      } else if (chartResponseRequired) {
+        SentIQLoaderEngine.showForRoute("chart_generation", { chatId: targetChatId, withTimer: true });
       } else if (bufferedReasoningRequired) {
         SentIQLoaderEngine.showForRoute("reasoning", { chatId: targetChatId, withTimer: true });
       } else {
@@ -7959,8 +8000,16 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           streamBubble = (targetChatId === currentChatId && API.canStreamResponses?.() !== false)
             ? (htmlFileGenerationRequired
               ? createFileGenerationStreamingBubble({ chatId: targetChatId, requestId, format: requestedFileFormat || "html" })
-              : createStreamingBubble({ loaderKind: requestLoaderKind, chatId: targetChatId, requestId }))
+              : createStreamingBubble({ loaderKind: requestLoaderKind, activityMode: requestActivityMode, loaderText: requestLoaderText, chatId: targetChatId, requestId }))
             : null;
+          if (streamBubble) {
+            hideActivityIndicator(targetChatId);
+            const activeState = getChatState(targetChatId);
+            if (activeState) {
+              activeState.activityMode = requestActivityMode;
+              activeState.activityLoaderKind = requestLoaderKind;
+            }
+          }
           const ensureFileGenerationStreamBubble = (format = "html") => {
             if (streamBubble?.setArtifact && streamBubble?.appendToken) return streamBubble;
             const existing = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"]`);
@@ -8963,8 +9012,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       const removeBtn = document.createElement("button");
       removeBtn.className = "file-chip-remove";
       removeBtn.type = "button";
-      removeBtn.textContent = "✕";
-      removeBtn.textContent = "x";
+      removeBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"></path><path d="M6 6l12 12"></path></svg>';
       removeBtn.setAttribute("aria-label", `Remove ${file.name}`);
       removeBtn.addEventListener("click", () => { pendingFiles.splice(index, 1); pendingFileStatusByFile.delete(file); renderFilePreview(); });
       chip.appendChild(icon);

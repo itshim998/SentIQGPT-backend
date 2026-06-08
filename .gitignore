@@ -55,3 +55,10 @@ All_About_SentIQGPT.txt
 backup_monolithic_index.html
 
 Prompt.txt
+
+.github/copilot-instructions.md
+.github/instructions/
+.github/prompts/
+AGENTS.md
+GEMINI.md
+SENTIQGPT_FULL_CODEBASE_CONTEXT.md
