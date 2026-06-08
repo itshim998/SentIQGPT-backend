@@ -103,8 +103,7 @@ body::after,
 
 .chat-search-input,
 .chat-rename-input,
-.auth-field input,
-.setting-row input {
+.auth-field input {
   background: #0f141e;
   border-color: rgba(255,255,255,0.10);
 }
@@ -239,8 +238,6 @@ body::after,
 .message-chart-container,
 .clarification-panel,
 .memory-item,
-.setting-group,
-.storage-stats,
 .auth-menu-panel,
 .composer-action-menu {
   background: #10151f;

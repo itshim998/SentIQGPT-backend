@@ -333,52 +333,24 @@
       </div>
 
       <div class="modal-body">
-        <div class="settings-tabs">
-          <button class="settings-tab active" data-tab="general">General</button>
-          <button class="settings-tab" data-tab="billing">Billing</button>
-          <button class="settings-tab" data-tab="memory">Memory Manager</button>
-          <button class="settings-tab" data-tab="storage">Storage</button>
-        </div>
-
-        <!-- General Settings -->
-        <div id="settings-tab-general" class="settings-tab-content active">
-          <div class="setting-group">
-            <h3>Storage Limits</h3>
-            <div class="setting-row">
-              <label for="setting-chat-limit">Max Conversations</label>
-              <input type="number" id="setting-chat-limit" min="1" max="1000" value="100">
-            </div>
-            <div class="setting-row">
-              <label for="setting-memory-limit">Max Memories</label>
-              <input type="number" id="setting-memory-limit" min="1" max="5000" value="500">
-            </div>
-            <div class="setting-row">
-              <label for="setting-file-limit">File Storage Limit (MB)</label>
-              <input type="number" id="setting-file-limit" min="1" max="1000" value="100">
-            </div>
-          </div>
-          <button id="save-settings-btn" class="btn btn-primary">Save Settings</button>
+        <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+          <button id="settings-tab-button-billing" class="settings-tab active" type="button" data-tab="billing" role="tab" aria-selected="true" aria-controls="settings-tab-billing">Billing</button>
+          <button id="settings-tab-button-memory" class="settings-tab" type="button" data-tab="memory" role="tab" aria-selected="false" aria-controls="settings-tab-memory">Memory Manager</button>
         </div>
 
         <!-- Billing -->
-        <div id="settings-tab-billing" class="settings-tab-content">
+        <div id="settings-tab-billing" class="settings-tab-content active" role="tabpanel" aria-labelledby="settings-tab-button-billing">
           <div id="billing-panel" class="billing-panel" aria-live="polite">
             <div class="billing-panel-status">Loading billing details...</div>
           </div>
         </div>
 
         <!-- Memory Manager -->
-        <div id="settings-tab-memory" class="settings-tab-content">
+        <div id="settings-tab-memory" class="settings-tab-content" role="tabpanel" aria-labelledby="settings-tab-button-memory">
           <div class="memory-manager-header">
             <span id="memory-count" class="badge">0 memories</span>
           </div>
           <div id="memory-list" class="memory-list"></div>
-        </div>
-
-        <!-- Storage Stats -->
-        <div id="settings-tab-storage" class="settings-tab-content">
-          <div id="storage-stats" class="storage-stats"></div>
-          <button id="open-data-controls-btn" class="btn btn-secondary" type="button">Open data controls</button>
         </div>
       </div>
     </div>

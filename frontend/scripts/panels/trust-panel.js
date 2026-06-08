@@ -49,7 +49,6 @@ import { PRODUCT_NAME } from "../shared/brand.js";
       else selectTab(tabName);
     });
   });
-  document.getElementById("open-data-controls-btn")?.addEventListener("click", () => open("controls"));
   closeButton?.addEventListener("click", close);
   modal.addEventListener("click", (event) => {
     if (event.target === modal) close();

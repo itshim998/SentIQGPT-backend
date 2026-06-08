@@ -2638,13 +2638,29 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     updateOverlayLocks();
   }
 
-  function activateSettingsTab(tabName = "general") {
+  function getVisibleSettingsTabs() {
+    if (!settingsModal) return [];
+    return Array.from(settingsModal.querySelectorAll(".settings-tab[data-tab]"))
+      .filter((tab) => tab.style.display !== "none");
+  }
+
+  function activateSettingsTab(tabName) {
     if (!settingsModal) return;
-    settingsModal.querySelectorAll(".settings-tab").forEach((tab) => {
-      tab.classList.toggle("active", tab.getAttribute("data-tab") === tabName);
+    const visibleTabs = getVisibleSettingsTabs();
+    const requestedTab = visibleTabs.find((tab) => tab.getAttribute("data-tab") === tabName);
+    const activeTab = requestedTab || visibleTabs[0] || null;
+    const activeTabName = activeTab?.getAttribute("data-tab") || "";
+
+    settingsModal.querySelectorAll(".settings-tab[data-tab]").forEach((tab) => {
+      const isActive = tab === activeTab;
+      tab.classList.toggle("active", isActive);
+      tab.setAttribute("aria-selected", String(isActive));
+      tab.setAttribute("tabindex", isActive ? "0" : "-1");
     });
     settingsModal.querySelectorAll(".settings-tab-content").forEach((content) => {
-      content.classList.toggle("active", content.id === `settings-tab-${tabName}`);
+      const isActive = content.id === `settings-tab-${activeTabName}`;
+      content.classList.toggle("active", isActive);
+      content.toggleAttribute("hidden", !isActive);
     });
   }
 
@@ -2657,7 +2673,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (billingContent) billingContent.style.display = accountReady ? "" : "none";
     if (accountBillingBtn) accountBillingBtn.style.display = accountReady ? "" : "none";
     if (!accountReady && billingTab?.classList.contains("active")) {
-      activateSettingsTab("general");
+      activateSettingsTab();
     }
   }
 
@@ -4729,6 +4745,19 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         const tabName = tab.getAttribute("data-tab");
         if (!tabName || tab.style.display === "none") return;
         activateSettingsTab(tabName);
+      });
+      tab.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+        const visibleTabs = getVisibleSettingsTabs();
+        const currentIndex = visibleTabs.indexOf(tab);
+        if (currentIndex < 0) return;
+        event.preventDefault();
+        const offset = event.key === "ArrowRight" ? 1 : -1;
+        const nextTab = visibleTabs[(currentIndex + offset + visibleTabs.length) % visibleTabs.length];
+        const nextTabName = nextTab?.getAttribute("data-tab");
+        if (!nextTabName) return;
+        activateSettingsTab(nextTabName);
+        nextTab.focus();
       });
     });
 
@@ -9163,6 +9192,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function openSettings() {
     if (settingsModal) {
+      activateSettingsTab(settingsModal.querySelector(".settings-tab.active")?.getAttribute("data-tab"));
       settingsModal.style.display = "flex";
       settingsModal.setAttribute("aria-hidden", "false");
     }

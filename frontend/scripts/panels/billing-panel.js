@@ -119,13 +119,29 @@ import { PRODUCT_NAME } from "../shared/brand.js";
     });
   }
 
-  function activateSettingsTab(tabName = "general") {
+  function getVisibleSettingsTabs() {
+    if (!settingsModal) return [];
+    return Array.from(settingsModal.querySelectorAll(".settings-tab[data-tab]"))
+      .filter((tab) => tab.style.display !== "none");
+  }
+
+  function activateSettingsTab(tabName) {
     if (!settingsModal) return;
-    settingsModal.querySelectorAll(".settings-tab").forEach((tab) => {
-      tab.classList.toggle("active", tab.getAttribute("data-tab") === tabName);
+    const visibleTabs = getVisibleSettingsTabs();
+    const requestedTab = visibleTabs.find((tab) => tab.getAttribute("data-tab") === tabName);
+    const activeTab = requestedTab || visibleTabs[0] || null;
+    const activeTabName = activeTab?.getAttribute("data-tab") || "";
+
+    settingsModal.querySelectorAll(".settings-tab[data-tab]").forEach((tab) => {
+      const isActive = tab === activeTab;
+      tab.classList.toggle("active", isActive);
+      tab.setAttribute("aria-selected", String(isActive));
+      tab.setAttribute("tabindex", isActive ? "0" : "-1");
     });
     settingsModal.querySelectorAll(".settings-tab-content").forEach((content) => {
-      content.classList.toggle("active", content.id === `settings-tab-${tabName}`);
+      const isActive = content.id === `settings-tab-${activeTabName}`;
+      content.classList.toggle("active", isActive);
+      content.toggleAttribute("hidden", !isActive);
     });
   }
 
@@ -137,7 +153,7 @@ import { PRODUCT_NAME } from "../shared/brand.js";
     if (billingContent) billingContent.style.display = billingVisible ? "" : "none";
     if (accountBillingBtn) accountBillingBtn.style.display = billingVisible ? "" : "none";
     if (!billingVisible && billingTab?.classList.contains("active")) {
-      activateSettingsTab("general");
+      activateSettingsTab();
     }
   }
 

@@ -620,8 +620,6 @@ body::after {
 .message-chart-container,
 .clarification-panel,
 .memory-item,
-.setting-group,
-.storage-stats,
 .auth-menu-panel,
 .composer-action-menu,
 .execution-mode-menu {
@@ -955,14 +953,12 @@ body::after {
 }
 
 .auth-google-btn,
-.auth-field input,
-.setting-row input {
+.auth-field input {
   background: rgba(255, 255, 255, 0.038);
   border-color: rgba(255, 255, 255, 0.07);
 }
 
-.auth-field input:focus,
-.setting-row input[type="number"]:focus {
+.auth-field input:focus {
   border-color: rgba(210, 197, 255, 0.22);
   box-shadow: 0 0 0 3px rgba(149, 123, 232, 0.085);
 }
