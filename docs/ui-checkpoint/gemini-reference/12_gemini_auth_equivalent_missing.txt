@@ -1,0 +1,1 @@
+Gemini does not show a comparable custom login/auth modal in this screenshot set. Gemini uses Google account authentication surfaces outside the product UI. Compare this conceptually against SentIQ Chat’s custom auth modal.

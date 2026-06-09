@@ -6,6 +6,9 @@
    
 
 :root {
+  /* Existing legacy-compatible tokens.
+     Current modules still consume these names directly; keep them stable. */
+
   /* Typography */
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -76,6 +79,61 @@
   --content-max-width: 860px;
   --content-padding: 24px;
   --message-indent: 38px;
+
+  /* Gemini-checkpoint foundation tokens.
+     These semantic aliases prepare later shell/composer/message/sidebar/panel passes
+     without changing current selectors, markup, or behavior in Phase 1. */
+
+  /* Canvas backgrounds and ambient gradients */
+  --sentiq-canvas-bg: var(--bg-primary);
+  --sentiq-canvas-bg-subtle: var(--bg-secondary);
+  --sentiq-canvas-bg-muted: var(--bg-tertiary);
+  --sentiq-canvas-ambient-primary: radial-gradient(circle at 50% 0%, var(--accent-glow) 0%, transparent 62%);
+  --sentiq-canvas-ambient-secondary: radial-gradient(circle at 84% 12%, var(--accent-cool-glow) 0%, transparent 58%);
+  --sentiq-canvas-ambient-blend: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-primary) 100%);
+
+  /* Elevated and floating surfaces */
+  --sentiq-surface-elevated: var(--bg-glass);
+  --sentiq-surface-elevated-hover: var(--bg-glass-hover);
+  --sentiq-surface-floating: var(--bg-input);
+  --sentiq-surface-floating-hover: var(--bg-hover);
+  --sentiq-surface-panel: var(--glass-bg);
+
+  /* Subtle borders and low-contrast interaction states */
+  --sentiq-border-subtle: var(--border);
+  --sentiq-border-muted: var(--glass-border);
+  --sentiq-border-focus: var(--border-light);
+  --sentiq-state-hover-low: var(--bg-hover);
+  --sentiq-state-focus-low: var(--accent-glow);
+  --sentiq-state-active-low: var(--accent-glow-strong);
+
+  /* Text hierarchy */
+  --sentiq-text-primary: var(--text-primary);
+  --sentiq-text-secondary: var(--text-secondary);
+  --sentiq-text-muted: var(--text-muted);
+  --sentiq-text-heading: var(--text-heading);
+  --sentiq-text-link: var(--purple-400);
+
+  /* Later composer/message/sidebar/panel passes */
+  --sentiq-composer-radius: 32px;
+  --sentiq-composer-max-width: 720px;
+  --sentiq-document-stream-max-width: 760px;
+  --sentiq-user-message-max-width: 70%;
+  --sentiq-sidebar-rail-width: 64px;
+  --sentiq-panel-radius: var(--radius-lg);
+  --sentiq-panel-radius-contextual: 12px;
+
+  /* Mobile safe spacing and touch targets */
+  --sentiq-mobile-safe-spacing: max(16px, env(safe-area-inset-bottom));
+  --sentiq-mobile-composer-gap: 12px;
+  --sentiq-touch-target-min: 44px;
+
+  /* Motion duration and easing */
+  --sentiq-motion-duration-fast: 0.16s;
+  --sentiq-motion-duration-standard: 0.24s;
+  --sentiq-motion-duration-slow: 0.35s;
+  --sentiq-motion-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --sentiq-motion-ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* ==============================
