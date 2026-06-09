@@ -2,9 +2,9 @@
    Input Area — Glass Container
    ============================== */
 .chat-input-wrapper {
-  padding: 14px var(--content-padding) 24px;
-  padding-bottom: max(24px, env(safe-area-inset-bottom));
-  max-width: var(--content-max-width);
+  padding: 18px var(--content-padding) 28px;
+  padding-bottom: max(28px, env(safe-area-inset-bottom));
+  max-width: min(calc(var(--sentiq-composer-max-width) + (var(--content-padding) * 2)), 100%);
   margin: 0 auto;
   width: 100%;
   position: relative;
@@ -16,7 +16,12 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 8px 4px;
+  margin: 0 14px -2px;
+  padding: 10px 12px 11px;
+  background: var(--sentiq-surface-elevated);
+  border: 1px solid var(--sentiq-border-hairline);
+  border-bottom-color: transparent;
+  border-radius: 18px 18px 14px 14px;
 }
 
 .file-chip {
@@ -72,13 +77,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 14px;
-  background: var(--accent-glow);
-  border: 1px solid rgba(139,92,246,0.2);
-  border-radius: var(--radius-sm);
+  min-height: 38px;
+  margin: 0 14px 8px;
+  padding: 7px 12px 7px 14px;
+  background: var(--sentiq-chip-surface);
+  border: 1px solid var(--sentiq-border-chip);
+  border-radius: 999px;
   font-size: 0.8rem;
-  color: var(--purple-400);
-  margin-bottom: 8px;
+  color: var(--sentiq-text-soft);
   animation: emptyFadeIn 0.2s ease;
 }
 
@@ -86,14 +92,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   background: none;
   border: none;
-  color: var(--purple-400);
+  color: var(--sentiq-text-secondary);
   cursor: pointer;
   padding: 0;
-  border-radius: 4px;
+  border-radius: 999px;
   transition:
     background-color var(--transition),
     color var(--transition);
@@ -107,36 +113,46 @@
   stroke-linecap: round;
 }
 .image-mode-cancel:hover {
-  background: rgba(139,92,246,0.2);
+  background: var(--sentiq-state-hover-low);
+  color: var(--sentiq-text-primary);
 }
 
 .chat-input-area {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 10px;
   position: relative;
   overflow: visible;
-  background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03));
+  min-height: 64px;
+  background:
+    linear-gradient(180deg, var(--sentiq-surface-floating-hover), var(--sentiq-surface-floating));
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: var(--radius-lg);
-  padding: 10px 14px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
-  transition: border-color var(--transition-slow), box-shadow var(--transition-slow), transform var(--transition-slow);
+  border: 1px solid var(--sentiq-border-subtle);
+  border-radius: var(--sentiq-composer-radius);
+  padding: 10px 12px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.045),
+    0 18px 42px rgba(0,0,0,0.26);
+  transition:
+    border-color var(--sentiq-motion-duration-standard) var(--sentiq-motion-ease-standard),
+    box-shadow var(--sentiq-motion-duration-standard) var(--sentiq-motion-ease-standard),
+    transform var(--sentiq-motion-duration-standard) var(--sentiq-motion-ease-standard);
 }
 
 .chat-input-area.is-response-locked {
-  background: linear-gradient(180deg, rgba(40,44,55,0.84), rgba(24,28,38,0.86));
-  border-color: rgba(148,163,184,0.22);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 22px rgba(0,0,0,0.22);
+  background: var(--sentiq-surface-floating);
+  border-color: var(--sentiq-border-focus);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.04),
+    0 18px 38px rgba(0,0,0,0.26);
 }
 
 .chat-input-area.is-response-locked::before {
   content: "";
   position: absolute;
   inset: -1px;
-  border-radius: calc(var(--radius-lg) + 1px);
+  border-radius: calc(var(--sentiq-composer-radius) + 1px);
   padding: 1px;
   background: linear-gradient(115deg, rgba(124,58,237,0.3), rgba(167,139,250,0.82), rgba(109,40,217,0.34));
   background-size: 180% 180%;
@@ -184,8 +200,11 @@
 }
 
 .chat-input-area:focus-within {
-  border-color: rgba(255,255,255,0.18);
-  box-shadow: 0 14px 28px rgba(0,0,0,0.28), 0 0 12px rgba(139,92,246,0.08);
+  border-color: var(--sentiq-border-focus);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.05),
+    0 0 0 1px var(--sentiq-state-focus-low),
+    0 22px 52px rgba(0,0,0,0.3);
 }
 
 .chat-input-area textarea:focus-visible {
@@ -195,8 +214,8 @@
 
 .chat-input-area .composer-drop-overlay {
   position: absolute;
-  inset: 6px;
-  border-radius: calc(var(--radius-lg) - 4px);
+  inset: 7px;
+  border-radius: calc(var(--sentiq-composer-radius) - 8px);
   border: 1px dashed rgba(125,211,252,0.3);
   background:
     radial-gradient(circle at 20% 20%, rgba(125,211,252,0.18), transparent 55%),
@@ -278,24 +297,25 @@
 .input-tools {
   display: flex;
   gap: 2px;
-  padding-bottom: 2px;
+  padding-bottom: 0;
 }
 
 .composer-plus-btn {
-  width: 36px;
-  height: 36px;
+  width: var(--sentiq-touch-target-min);
+  height: var(--sentiq-touch-target-min);
   padding: 0;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08);
-  color: var(--text-secondary);
+  background: var(--sentiq-chip-surface);
+  border: 1px solid var(--sentiq-border-chip);
+  border-radius: 999px;
+  color: var(--sentiq-text-secondary);
   font-size: 1.2rem;
   font-weight: 500;
 }
 
 .composer-plus-btn:hover {
-  background: rgba(255,255,255,0.08);
-  color: var(--text-primary);
-  transform: scale(1.05);
+  background: var(--sentiq-chip-surface-hover);
+  color: var(--sentiq-text-primary);
+  transform: none;
 }
 
 .composer-plus-btn:active {
@@ -303,9 +323,9 @@
 }
 
 .composer-plus-btn.active {
-  color: var(--text-primary);
-  background: var(--accent-glow);
-  border-color: rgba(139,92,246,0.28);
+  color: var(--sentiq-text-primary);
+  background: var(--sentiq-state-active-low);
+  border-color: var(--sentiq-border-focus);
 }
 
 .composer-action-menu {
@@ -411,16 +431,16 @@
 
 .execution-mode-toggle {
   min-width: 86px;
-  height: 36px;
+  height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   padding: 0 10px;
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: var(--radius-sm);
-  background: rgba(255,255,255,0.045);
-  color: var(--text-secondary);
+  border: 1px solid var(--sentiq-border-chip);
+  border-radius: 999px;
+  background: var(--sentiq-chip-surface);
+  color: var(--sentiq-text-secondary);
   font: inherit;
   font-size: 0.78rem;
   font-weight: 600;
@@ -431,9 +451,9 @@
 .execution-mode-toggle:hover,
 .execution-mode-toggle:focus-visible,
 .execution-mode-control.open .execution-mode-toggle {
-  background: rgba(255,255,255,0.08);
-  border-color: rgba(255,255,255,0.16);
-  color: var(--text-primary);
+  background: var(--sentiq-chip-surface-hover);
+  border-color: var(--sentiq-border-focus);
+  color: var(--sentiq-text-primary);
 }
 
 .execution-mode-toggle:focus-visible {
@@ -533,6 +553,7 @@
   display: flex;
   align-items: flex-end;
   position: relative;
+  min-width: 0;
 }
 
 .input-field-wrapper textarea {
@@ -544,10 +565,11 @@
   font-family: inherit;
   resize: none;
   outline: none;
-  padding: 6px 4px;
-  min-height: 44px;
+  padding: 8px 4px;
+  min-height: 42px;
   max-height: 150px;
   line-height: 1.55;
+  overflow-y: auto;
 }
 .input-field-wrapper textarea::placeholder {
   color: var(--text-muted);
@@ -591,10 +613,10 @@
   border: none;
   color: white;
   cursor: pointer;
-  width: 38px;
-  height: 38px;
-  padding: 8px;
-  border-radius: var(--radius-sm);
+  width: var(--sentiq-touch-target-min);
+  height: var(--sentiq-touch-target-min);
+  padding: 9px;
+  border-radius: 999px;
   transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, opacity 0.18s ease;
   display: flex;
   align-items: center;

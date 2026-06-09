@@ -658,9 +658,9 @@ body::after {
 
 /* Composer */
 .chat-input-wrapper {
-  max-width: min(900px, calc(100vw - 56px));
-  padding-top: 12px;
-  padding-bottom: max(25px, env(safe-area-inset-bottom));
+  max-width: min(860px, calc(100vw - 56px));
+  padding-top: 16px;
+  padding-bottom: max(34px, calc(env(safe-area-inset-bottom) + 22px));
   z-index: 3;
 }
 
@@ -668,38 +668,38 @@ body::after {
   position: relative;
   left: auto;
   top: auto;
-  width: min(880px, calc(100vw - 96px));
+  width: min(860px, calc(100vw - 96px));
   max-width: none;
   transform: none;
-  padding: 0 0 max(25px, env(safe-area-inset-bottom));
+  padding: 0 0 max(34px, calc(env(safe-area-inset-bottom) + 22px));
 }
 
 .chat-input-wrapper::before {
   content: "";
   position: absolute;
-  left: 36px;
-  right: 36px;
-  bottom: max(16px, env(safe-area-inset-bottom));
-  height: 70px;
+  left: 58px;
+  right: 58px;
+  bottom: max(22px, calc(env(safe-area-inset-bottom) + 10px));
+  height: 78px;
   border-radius: 999px;
   background:
-    radial-gradient(ellipse at center, rgba(149, 123, 232, 0.115), rgba(149, 123, 232, 0.052) 42%, transparent 72%);
-  filter: blur(28px);
-  opacity: 0.66;
+    radial-gradient(ellipse at center, var(--sentiq-state-active-low), transparent 70%);
+  filter: blur(30px);
+  opacity: 0.58;
   pointer-events: none;
   z-index: -1;
   transition: opacity var(--transition-slow), transform var(--transition-slow);
 }
 
 .main-content.is-empty-chat .chat-input-wrapper::before {
-  left: 26px;
-  right: 26px;
-  bottom: -20px;
-  height: 116px;
+  left: 46px;
+  right: 46px;
+  bottom: -12px;
+  height: 104px;
   background:
-    radial-gradient(ellipse at center, rgba(149, 123, 232, 0.16), rgba(149, 123, 232, 0.068) 40%, transparent 73%);
-  filter: blur(34px);
-  opacity: 0.76;
+    radial-gradient(ellipse at center, var(--sentiq-state-active-low), transparent 72%);
+  filter: blur(36px);
+  opacity: 0.72;
 }
 
 .chat-input-wrapper:focus-within::before {
@@ -708,31 +708,31 @@ body::after {
 }
 
 .chat-input-area {
-  gap: 10px;
-  min-height: 68px;
-  padding: 10px 13px;
+  gap: 11px;
+  min-height: 66px;
+  padding: 10px 12px;
   background:
-    linear-gradient(180deg, rgba(18, 22, 32, 0.82), rgba(9, 12, 19, 0.9));
+    linear-gradient(180deg, var(--sentiq-surface-floating-hover), var(--sentiq-surface-floating));
   backdrop-filter: blur(18px) saturate(112%);
   -webkit-backdrop-filter: blur(18px) saturate(112%);
-  border-color: rgba(255, 255, 255, 0.076);
-  border-radius: 20px;
+  border-color: var(--sentiq-border-subtle);
+  border-radius: var(--sentiq-composer-radius);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.035) inset,
-    0 18px 46px rgba(0, 0, 0, 0.28);
+    0 20px 54px rgba(0, 0, 0, 0.3);
 }
 
 .chat-input-area:focus-within {
-  border-color: rgba(210, 197, 255, 0.18);
+  border-color: var(--sentiq-border-focus);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.05) inset,
-    0 0 0 1px rgba(149, 123, 232, 0.08),
-    0 22px 58px rgba(0, 0, 0, 0.32);
+    0 0 0 1px var(--sentiq-state-focus-low),
+    0 24px 62px rgba(0, 0, 0, 0.34);
 }
 
 .chat-input-area.is-response-locked {
-  background: rgba(16, 20, 29, 0.92);
-  border-color: rgba(210, 197, 255, 0.13);
+  background: var(--sentiq-surface-floating);
+  border-color: var(--sentiq-border-focus);
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
 }
 
@@ -743,16 +743,16 @@ body::after {
 
 .input-tools,
 .execution-mode-control {
-  padding-bottom: 4px;
+  padding-bottom: 1px;
 }
 
 .tool-btn,
 .composer-plus-btn,
 .execution-mode-toggle {
-  border-radius: 11px;
-  background: rgba(255, 255, 255, 0.038);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  color: #a2abbc;
+  border-radius: 999px;
+  background: var(--sentiq-chip-surface);
+  border: 1px solid var(--sentiq-border-chip);
+  color: var(--sentiq-text-secondary);
   box-shadow: none;
 }
 
@@ -761,29 +761,29 @@ body::after {
 .execution-mode-toggle:hover,
 .execution-mode-toggle:focus-visible,
 .execution-mode-control.open .execution-mode-toggle {
-  background: rgba(255, 255, 255, 0.064);
-  border-color: rgba(210, 197, 255, 0.12);
-  color: #f1f3f8;
+  background: var(--sentiq-chip-surface-hover);
+  border-color: var(--sentiq-border-focus);
+  color: var(--sentiq-text-primary);
   transform: none;
 }
 
 .composer-plus-btn.active,
 .tool-btn.active {
-  background: rgba(149, 123, 232, 0.1);
-  border-color: rgba(210, 197, 255, 0.16);
-  color: #eee9ff;
+  background: var(--sentiq-state-active-low);
+  border-color: var(--sentiq-border-focus);
+  color: var(--sentiq-text-heading);
 }
 
 .input-field-wrapper textarea {
-  min-height: 46px;
-  padding: 7px 4px;
-  color: #f3f5fa;
+  min-height: 42px;
+  padding: 8px 4px;
+  color: var(--sentiq-text-primary);
   font-size: 0.98rem;
   line-height: 1.55;
 }
 
 .input-field-wrapper textarea::placeholder {
-  color: #788193;
+  color: var(--sentiq-text-faint);
 }
 
 .composer-hint-overlay {
@@ -796,9 +796,9 @@ body::after {
 }
 
 .btn-send {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
+  width: var(--sentiq-touch-target-min);
+  height: var(--sentiq-touch-target-min);
+  border-radius: 999px;
   background:
     linear-gradient(180deg, rgba(170, 151, 238, 0.96), rgba(118, 92, 205, 0.96));
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -820,8 +820,8 @@ body::after {
 
 .execution-mode-toggle {
   min-width: 88px;
-  height: 40px;
-  color: #c0c7d4;
+  height: 42px;
+  color: var(--sentiq-text-secondary);
 }
 
 .composer-action-menu,
@@ -837,7 +837,7 @@ body::after {
 .composer-action-menu {
   width: min(238px, calc(100vw - 48px));
   padding: 7px;
-  border-radius: 14px;
+  border-radius: 16px;
 }
 
 .composer-action-option {
@@ -858,7 +858,7 @@ body::after {
 
 .execution-mode-menu {
   width: 150px;
-  border-radius: 12px;
+  border-radius: 14px;
 }
 
 .execution-mode-option {
@@ -872,24 +872,51 @@ body::after {
 }
 
 .file-preview-area {
-  padding: 9px 4px 10px;
+  margin: 0 16px -3px;
+  padding: 10px 12px 12px;
+  background: var(--sentiq-surface-elevated);
+  border-color: var(--sentiq-border-hairline);
+  border-bottom-color: transparent;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.16);
 }
 
 .file-chip {
-  min-height: 40px;
-  border-radius: 12px;
+  min-height: 38px;
+  max-width: min(100%, 320px);
+  border-radius: 999px;
+  background: var(--sentiq-chip-surface);
+  border-color: var(--sentiq-border-chip);
 }
 
 .image-mode-bar,
 .auth-gate-message {
-  background: rgba(149, 123, 232, 0.075);
-  border-color: rgba(210, 197, 255, 0.14);
-  color: #e7e0ff;
+  min-height: 38px;
+  margin-inline: 16px;
+  background: var(--sentiq-chip-surface);
+  border-color: var(--sentiq-border-chip);
+  color: var(--sentiq-text-soft);
+  border-radius: 999px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.13);
+}
+
+.auth-gate-message {
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.image-mode-cancel {
+  color: var(--sentiq-text-secondary);
+}
+
+.image-mode-cancel:hover,
+.image-mode-cancel:focus-visible {
+  background: var(--sentiq-state-hover-low);
+  color: var(--sentiq-text-primary);
 }
 
 .chat-input-area .composer-drop-overlay {
   inset: 7px;
-  border-radius: 15px;
+  border-radius: calc(var(--sentiq-composer-radius) - 8px);
   background: rgba(10, 14, 22, 0.94);
   border-color: rgba(139, 207, 241, 0.24);
   backdrop-filter: blur(14px) saturate(112%);
@@ -902,7 +929,7 @@ body::after {
 }
 
 .composer-drop-text::before {
-  border-radius: 10px;
+  border-radius: 999px;
   background: rgba(139, 207, 241, 0.06);
   border-color: rgba(139, 207, 241, 0.22);
 }
@@ -1128,7 +1155,7 @@ textarea:focus-visible {
 
   .chat-input-wrapper {
     max-width: 100%;
-    padding: 10px 12px max(14px, env(safe-area-inset-bottom));
+    padding: 10px 12px max(18px, calc(env(safe-area-inset-bottom) + var(--sentiq-mobile-composer-gap)));
   }
 
   .main-content.is-empty-chat .chat-input-wrapper {
@@ -1136,13 +1163,13 @@ textarea:focus-visible {
     bottom: auto;
     width: calc(100vw - 24px);
     transform: none;
-    padding-bottom: max(14px, env(safe-area-inset-bottom));
+    padding-bottom: max(18px, calc(env(safe-area-inset-bottom) + var(--sentiq-mobile-composer-gap)));
   }
 
   .chat-input-wrapper::before {
     left: 20px;
     right: 20px;
-    bottom: max(8px, env(safe-area-inset-bottom));
+    bottom: max(10px, env(safe-area-inset-bottom));
     height: 62px;
   }
 
@@ -1158,32 +1185,32 @@ textarea:focus-visible {
     min-height: 60px;
     gap: 7px;
     padding: 8px 9px;
-    border-radius: 17px;
+    border-radius: 30px;
   }
 
   .composer-plus-btn,
   .tool-btn,
   .btn-send {
-    width: 38px;
-    height: 38px;
+    width: 42px;
+    height: 42px;
   }
 
   .btn-send {
-    border-radius: 11px;
+    border-radius: 999px;
   }
 
   .execution-mode-toggle {
-    min-width: 70px;
-    height: 38px;
+    min-width: 72px;
+    height: 40px;
     padding: 0 8px;
     font-size: 0.73rem;
   }
 
   .input-field-wrapper textarea {
     min-height: 40px;
-    padding: 6px 2px;
+    padding: 7px 2px;
     font-size: 0.93rem;
-    line-height: 1.44;
+    line-height: 1.5;
   }
 
   .composer-hint-overlay {
@@ -1191,7 +1218,7 @@ textarea:focus-visible {
   }
 
   .composer-action-menu {
-    left: 8px;
+    left: 10px;
     width: min(252px, calc(100vw - 32px));
   }
 
@@ -1252,19 +1279,21 @@ textarea:focus-visible {
   .chat-input-area {
     gap: 6px;
     padding: 8px;
+    border-radius: 28px;
   }
 
   .composer-plus-btn,
   .tool-btn,
   .btn-send {
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
   }
 
   .execution-mode-toggle {
-    min-width: 62px;
-    width: 62px;
-    height: 36px;
+    min-width: 64px;
+    width: 64px;
+    height: 38px;
+    padding: 0 7px;
   }
 
   .execution-mode-toggle svg {
@@ -1273,8 +1302,16 @@ textarea:focus-visible {
   }
 
   .input-field-wrapper textarea {
-    min-height: 38px;
+    min-height: 40px;
+    padding-block: 7px;
     font-size: 0.91rem;
+    line-height: 1.5;
+  }
+
+  .file-preview-area,
+  .image-mode-bar,
+  .auth-gate-message {
+    margin-inline: 10px;
   }
 
   .auth-modal-body,
@@ -1296,8 +1333,20 @@ textarea:focus-visible {
   }
 
   .execution-mode-toggle {
-    min-width: 56px;
-    width: 56px;
+    min-width: 58px;
+    width: 58px;
     font-size: 0.68rem;
+  }
+
+  .chat-input-area {
+    gap: 5px;
+    padding-inline: 7px;
+  }
+
+  .composer-plus-btn,
+  .tool-btn,
+  .btn-send {
+    width: 38px;
+    height: 38px;
   }
 }
