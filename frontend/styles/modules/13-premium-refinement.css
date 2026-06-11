@@ -397,6 +397,10 @@ body::after {
 }
 
 /* Empty chat composition */
+.main-content.is-empty-chat {
+  justify-content: center;
+}
+
 .welcome-screen {
   max-width: min(900px, calc(100vw - 72px));
   gap: 12px;
@@ -404,16 +408,16 @@ body::after {
 }
 
 .main-content.is-empty-chat .welcome-screen {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 0 0 auto;
+  min-height: auto;
   position: relative;
   left: auto;
   top: auto;
-  width: min(880px, calc(100vw - 80px));
+  width: min(860px, calc(100vw - 80px));
   max-width: none;
   transform: none;
-  padding: clamp(78px, 12vh, 134px) 0 clamp(24px, 5vh, 44px);
-  overflow: auto;
+  padding: clamp(24px, 5vh, 64px) 0 14px;
+  overflow: visible;
   z-index: 2;
 }
 
@@ -460,28 +464,29 @@ body::after {
 }
 
 .starter-actions {
-  width: min(700px, 100%);
+  width: min(560px, 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 20px;
+  gap: 7px;
+  margin-top: 14px;
+  opacity: 0.88;
 }
 
 .starter-action-btn {
-  min-height: var(--sentiq-touch-target-min);
+  min-height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 9px;
+  gap: 7px;
   flex: 0 1 auto;
-  padding: 8px 14px 8px 10px;
+  padding: 6px 11px 6px 8px;
   border-radius: 999px;
   background: var(--sentiq-chip-surface);
   border-color: var(--sentiq-border-chip);
   color: var(--sentiq-text-soft);
-  font-size: 0.8rem;
+  font-size: 0.74rem;
   font-weight: 640;
   box-shadow: none;
   white-space: nowrap;
@@ -501,8 +506,8 @@ body::after {
 }
 
 .starter-action-icon {
-  width: 25px;
-  height: 25px;
+  width: 21px;
+  height: 21px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -514,8 +519,8 @@ body::after {
 }
 
 .starter-action-icon svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
 }
 
 .auth-welcome-note {
@@ -671,7 +676,7 @@ body::after {
   width: min(860px, calc(100vw - 96px));
   max-width: none;
   transform: none;
-  padding: 0 0 max(34px, calc(env(safe-area-inset-bottom) + 22px));
+  padding: 0 0 clamp(40px, 6vh, 78px);
 }
 
 .chat-input-wrapper::before {
@@ -1069,38 +1074,47 @@ textarea:focus-visible {
   }
 
   .sidebar-toggle {
-    width: 42px;
-    height: 42px;
+    width: 40px;
+    height: 40px;
     padding: 0;
-    border-radius: 12px;
+    border-radius: 14px;
   }
 
   .auth-actions {
     top: max(12px, env(safe-area-inset-top));
     right: max(12px, env(safe-area-inset-right));
+    gap: 7px;
   }
 
   .auth-btn {
-    min-height: 40px;
-    padding: 0 13px;
+    min-height: 38px;
+    padding: 0 12px;
   }
 
   .auth-menu-toggle {
-    width: 42px;
-    height: 42px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .main-content.is-empty-chat {
+    justify-content: flex-start;
   }
 
   .welcome-screen {
     max-width: calc(100vw - 34px);
     justify-content: flex-start;
-    padding: max(76px, calc(env(safe-area-inset-top) + 70px)) 17px 24px;
+    padding: max(68px, calc(env(safe-area-inset-top) + 62px)) 17px 16px;
     gap: 10px;
   }
 
   .main-content.is-empty-chat .welcome-screen {
+    flex: 1 1 auto;
+    min-height: 0;
     top: auto;
     width: calc(100vw - 34px);
-    padding: max(76px, calc(env(safe-area-inset-top) + 70px)) 0 22px;
+    max-width: calc(100vw - 34px);
+    padding: max(68px, calc(env(safe-area-inset-top) + 62px)) 0 14px;
+    overflow: auto hidden;
   }
 
   .welcome-eyebrow {
@@ -1108,33 +1122,56 @@ textarea:focus-visible {
   }
 
   .welcome-screen h2 {
-    font-size: clamp(1.92rem, 10vw, 2.6rem);
+    max-width: 100%;
+    font-size: clamp(1.72rem, 7.2vw, 2.26rem);
     line-height: 1.07;
+    overflow-wrap: anywhere;
+    text-wrap: balance;
   }
 
   .welcome-subtitle {
+    max-width: min(34rem, 100%);
+    padding-inline: 2px;
+    text-wrap: balance;
+  }
+
+  .main-content.is-empty-chat .auth-welcome-note {
     max-width: 34rem;
+    padding-inline: 2px;
+    text-wrap: balance;
+  }
+
+  .welcome-subtitle {
     font-size: 0.94rem;
     line-height: 1.5;
   }
 
   .starter-actions {
-    width: 100%;
-    justify-content: center;
-    gap: 8px;
-    margin-top: 16px;
+    width: min(100%, 520px);
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 0 2px 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .starter-actions::-webkit-scrollbar {
+    display: none;
   }
 
   .starter-action-btn {
-    min-height: 42px;
-    padding: 7px 12px 7px 9px;
-    font-size: 0.78rem;
+    min-height: 34px;
+    flex: 0 0 auto;
+    padding: 6px 10px 6px 8px;
+    font-size: 0.72rem;
     border-radius: 999px;
   }
 
   .starter-action-icon {
-    width: 23px;
-    height: 23px;
+    width: 20px;
+    height: 20px;
   }
 
   .chat-messages {
@@ -1162,8 +1199,9 @@ textarea:focus-visible {
     top: auto;
     bottom: auto;
     width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
     transform: none;
-    padding-bottom: max(18px, calc(env(safe-area-inset-bottom) + var(--sentiq-mobile-composer-gap)));
+    padding-bottom: max(22px, calc(env(safe-area-inset-bottom) + var(--sentiq-mobile-composer-gap)));
   }
 
   .chat-input-wrapper::before {
@@ -1232,6 +1270,12 @@ textarea:focus-visible {
   }
 }
 
+@media (max-width: 600px) {
+  .main-content.is-empty-chat .starter-actions {
+    display: none;
+  }
+}
+
 @media (max-width: 480px) {
   :root {
     --message-indent: 0px;
@@ -1240,30 +1284,21 @@ textarea:focus-visible {
   .main-content.is-empty-chat .welcome-screen {
     top: auto;
     width: calc(100vw - 28px);
-    padding-top: max(70px, calc(env(safe-area-inset-top) + 62px));
+    max-width: calc(100vw - 28px);
+    padding-top: max(64px, calc(env(safe-area-inset-top) + 58px));
+    padding-bottom: 10px;
   }
 
   .welcome-screen h2 {
-    font-size: clamp(1.86rem, 10.5vw, 2.36rem);
+    font-size: clamp(1.58rem, 8.4vw, 1.96rem);
   }
 
   .welcome-subtitle {
-    font-size: 0.9rem;
+    font-size: 0.88rem;
   }
 
-  .starter-actions {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 8px;
-    margin-inline: auto;
-    width: min(320px, 100%);
-  }
-
-  .starter-action-btn {
-    justify-content: flex-start;
-    min-height: var(--sentiq-touch-target-min);
-    width: 100%;
-    padding: 8px 12px;
+  .main-content.is-empty-chat .starter-actions {
+    display: none;
   }
 
   .message-header {
