@@ -154,7 +154,6 @@ import type { BillingIdentity, UsageReservation } from "./billing/entitlementTyp
 import { getImageModelForPlan } from "./billing/modelEntitlementRouter";
 import {
   CANONICAL_FRONTEND_ORIGIN,
-  LEGACY_FRONTEND_ORIGINS,
   LOG_PREFIX,
   PRODUCT_DISCLAIMER,
   PRODUCT_NAME,
@@ -186,8 +185,6 @@ function getExplicitWebSearchMode(value: unknown): "basic" | undefined {
 // ---- CORS ----
 const DEFAULT_ORIGINS = [
   CANONICAL_FRONTEND_ORIGIN,
-  // Legacy frontend origins remain temporarily for old sessions, OAuth redirects, and cached deployed clients.
-  ...LEGACY_FRONTEND_ORIGINS,
   "http://localhost:5500",
   "http://127.0.0.1:5500",
   "http://localhost:3000",

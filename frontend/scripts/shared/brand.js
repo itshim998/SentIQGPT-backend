@@ -5,11 +5,8 @@ export const PRODUCT_SHORT_NAME = PRODUCT_NAME;
 export const LEGACY_PRODUCT_NAME = "SentIQGPT";
 
 export const CANONICAL_FRONTEND_ORIGIN = "https://sentiqchat.sentiqlabs.com";
-// Keep legacy origins temporarily for old sessions, OAuth redirects, cached clients, and the Cloudflare 301 migration.
-export const LEGACY_FRONTEND_ORIGINS = [
-  "https://sentiqgpt.sentiqlabs.com",
-  "https://www.sentiqgpt.sentiqlabs.com",
-];
+// Exported for compatibility. Old frontend domains are handled by Cloudflare 301 redirects and are not allowed by default.
+export const LEGACY_FRONTEND_ORIGINS = [];
 
 export const STORAGE_NAMESPACE = "sentiq-chat";
 export const LEGACY_STORAGE_NAMESPACE = "sentiq";
