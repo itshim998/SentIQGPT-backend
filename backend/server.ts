@@ -118,7 +118,7 @@ import {
 
 import { detectCodeQuery, detectImageMathPrompt, isBufferedReasoningQuery, isMathQuery } from "./orchestrator/modelRouter";
 import { selectModelForPromptWithMaster } from "./orchestrator/masterRouter";
-import { detectExplicitMemoryWriteIntent } from "./orchestrator/queryClassifier";
+import { detectExplicitMemoryWriteIntent, shouldAutoUseWebSurf } from "./orchestrator/queryClassifier";
 import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 import { isWebSearchMode, normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
 import { resolveExecutionProfile } from "./orchestrator/executionProfile";
@@ -236,6 +236,10 @@ const PUBLIC_PRIVATE_RESPONSE_KEYS = new Set([
   "modelUsed",
   "provider",
   "provider_used",
+  "fallback_reason",
+  "fallbackReason",
+  "error_detail",
+  "errorDetail",
   "storage_bucket",
   "storageBucket",
   "storage_path",
@@ -2052,9 +2056,14 @@ app.post(
     const fileFormat = detectGeneratedFileFormat(effectiveUserMessage);
     const chartRequest = !fileGeneration && isChartRequest(effectiveUserMessage);
     const imageRequest = !fileGeneration && !chartRequest && !hasImageAttachments && isImageRequest(effectiveUserMessage);
+    const autoWebSearchRequest =
+      !fileGeneration &&
+      !chartRequest &&
+      !imageRequest &&
+      shouldAutoUseWebSurf(effectiveUserMessage);
     const webSearchRequest =
       !fileGeneration &&
-      hasExplicitWebSearchMode;
+      (hasExplicitWebSearchMode || autoWebSearchRequest);
 
     let route: string = "normal_chat";
     if (isGuest && fileGeneration) route = "normal_chat";
@@ -2082,8 +2091,8 @@ app.post(
         ? {
             mode: webSearchMode || "basic",
             explicit: hasExplicitWebSearchMode,
-            matched_rule: "manual_websurf",
-            category: "manual",
+            matched_rule: hasExplicitWebSearchMode ? "manual_websurf" : "auto_current_live",
+            category: hasExplicitWebSearchMode ? "manual" : "real_time_information",
           }
         : null,
       reasoning: isBufferedReasoning
@@ -2612,6 +2621,15 @@ app.post(
     });
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
+    const autoWebSearchMode =
+      !hasExplicitWebSearchMode &&
+      !isFileGenerationRequest(effectiveUserMessage) &&
+      !isChartRequest(effectiveUserMessage) &&
+      shouldAutoUseWebSurf(effectiveUserMessage)
+        ? "basic"
+        : undefined;
+    const effectiveWebSearchMode = webSearchMode ?? autoWebSearchMode;
+    const hasEffectiveWebSearchMode = Boolean(effectiveWebSearchMode);
     const isReasoningQuery = false;
     const isMathReasoningQuery = false;
     const isLogicReasoningQuery = isReasoningQuery && !isMathReasoningQuery;
@@ -2637,7 +2655,7 @@ app.post(
       console.log(`[Image] orchestrator: ${orcImageAttachments.length} image attachment(s) included in context`);
     }
 
-    if (isGuest && hasExplicitWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
+    if (isGuest && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
         executionMode: parsed.data.executionMode,
@@ -2647,7 +2665,7 @@ app.post(
           memories: [],
           file_references: orcFileRefs,
           image_attachments: orcImageAttachments,
-          web_search_mode: webSearchMode,
+          web_search_mode: effectiveWebSearchMode,
           userId,
           billingIdentity,
           billingRequestId,
@@ -2679,7 +2697,7 @@ app.post(
         memories: [],
         file_references: orcFileRefs,
         image_attachments: orcImageAttachments,
-        web_search_mode: webSearchMode,
+        web_search_mode: effectiveWebSearchMode,
         userMessage: guestUserMessage,
         billingIdentity,
         billingRequestId,
@@ -2929,7 +2947,7 @@ app.post(
         file_references: orcFileRefs,
         image_attachments: orcImageAttachments,
         trustedProfile,
-        web_search_mode: webSearchMode,
+        web_search_mode: effectiveWebSearchMode,
         userMessage: effectiveUserMessage,
         conversationId: activeConversationId || undefined,
         billingIdentity,
@@ -3049,7 +3067,7 @@ app.post(
         file_references: orcFileRefs,
         image_attachments: orcImageAttachments,
         trustedProfile,
-        web_search_mode: webSearchMode,
+        web_search_mode: effectiveWebSearchMode,
         userDb,
         userId,
         conversationId: activeConversationId || undefined,
@@ -3407,12 +3425,21 @@ app.post(
     });
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
+    const autoWebSearchMode =
+      !hasExplicitWebSearchMode &&
+      !isFileGenerationRequest(effectiveUserMessage) &&
+      !isChartRequest(effectiveUserMessage) &&
+      shouldAutoUseWebSurf(effectiveUserMessage)
+        ? "basic"
+        : undefined;
+    const effectiveWebSearchMode = webSearchMode ?? autoWebSearchMode;
+    const hasEffectiveWebSearchMode = Boolean(effectiveWebSearchMode);
     const isBufferedReasoning = false;
     const isMathReasoningQuery = false;
     const guestUserMessage = isGuest && isFileGenerationRequest(effectiveUserMessage)
       ? getFileGenerationGuestInstruction(effectiveUserMessage)
       : effectiveUserMessage;
-    if (isGuest && hasExplicitWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
+    if (isGuest && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
         executionMode: parsed.data.executionMode,
@@ -3423,7 +3450,7 @@ app.post(
           memories: [],
           file_references: parsed.data.context?.file_references,
           image_attachments: parsed.data.context?.image_attachments,
-          web_search_mode: webSearchMode,
+          web_search_mode: effectiveWebSearchMode,
           userId,
           billingIdentity,
           billingRequestId,
@@ -3501,7 +3528,7 @@ app.post(
               memories: [],
               file_references: parsed.data.context?.file_references,
               image_attachments: parsed.data.context?.image_attachments,
-              web_search_mode: webSearchMode,
+              web_search_mode: effectiveWebSearchMode,
               userMessage: guestUserMessage,
               billingIdentity,
               billingRequestId,
@@ -3607,7 +3634,7 @@ app.post(
             memories: [],
             file_references: parsed.data.context?.file_references,
             image_attachments: parsed.data.context?.image_attachments,
-            web_search_mode: webSearchMode,
+            web_search_mode: effectiveWebSearchMode,
             userMessage: guestUserMessage,
             billingIdentity,
             billingRequestId,
@@ -3696,7 +3723,7 @@ app.post(
         memories: [],
         file_references: fileRefs,
         image_attachments: parsed.data.context?.image_attachments,
-        web_search_mode: webSearchMode,
+        web_search_mode: effectiveWebSearchMode,
         userMessage: guestUserMessage,
       }, undefined, userId, { profile: executionProfile });
 
@@ -3854,10 +3881,11 @@ app.post(
     const fastHasImageContext = (parsed.data.context?.image_attachments?.length ?? 0) > 0;
     const fastPlainChatEligible =
       executionProfile.mode === "fast" &&
-      !hasExplicitWebSearchMode &&
+      !hasEffectiveWebSearchMode &&
       !fastHasFileContext &&
       !fastHasImageContext &&
       !isFileGenerationRequest(effectiveUserMessage) &&
+      !isImageRequest(effectiveUserMessage) &&
       !detectExplicitMemoryWriteIntent(effectiveUserMessage) &&
       !isChartRequest(effectiveUserMessage) &&
       !isBufferedReasoning;
@@ -4073,7 +4101,7 @@ app.post(
         recent_messages: normalizedRecentMessages,
         memories: parsed.data.context?.memories,
         trustedProfile: cachedTrustedProfile,
-        web_search_mode: webSearchMode,
+        web_search_mode: effectiveWebSearchMode,
         userMessage: effectiveUserMessage,
         conversationId: requestedConversationId || undefined,
         billingIdentity,
@@ -4506,8 +4534,12 @@ app.post(
       degraded: buildDegradedStatus(sync),
     });
 
-    if (hasExplicitWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
-      console.log(`[Stream] explicit WebSurf mode=${webSearchMode} - redirecting to orchestrator`);
+    if (hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
+      console.log(
+        hasExplicitWebSearchMode
+          ? `[Stream] explicit WebSurf mode=${effectiveWebSearchMode} - redirecting to orchestrator`
+          : `[Stream] current/live query detected - redirecting to WebSurf`,
+      );
       try {
         const result = await orchestrate({
           userMessage: parsed.data.message,
@@ -4520,7 +4552,7 @@ app.post(
             file_references: parsed.data.context?.file_references,
             image_attachments: parsed.data.context?.image_attachments,
             trustedProfile,
-            web_search_mode: webSearchMode,
+            web_search_mode: effectiveWebSearchMode,
             conversationId: activeConversationId || undefined,
             userDb,
             userId,
@@ -4571,7 +4603,7 @@ app.post(
             file_references: parsed.data.context?.file_references,
             image_attachments: parsed.data.context?.image_attachments,
             trustedProfile,
-            web_search_mode: webSearchMode,
+            web_search_mode: effectiveWebSearchMode,
             conversationId: activeConversationId || undefined,
             userDb,
             userId,
@@ -4674,7 +4706,7 @@ app.post(
             file_references: parsed.data.context?.file_references,
             image_attachments: parsed.data.context?.image_attachments,
             trustedProfile,
-            web_search_mode: webSearchMode,
+            web_search_mode: effectiveWebSearchMode,
             conversationId: activeConversationId || undefined,
             userDb,
             userId,
@@ -4728,7 +4760,7 @@ app.post(
             file_references: parsed.data.context?.file_references,
             image_attachments: parsed.data.context?.image_attachments,
             trustedProfile,
-            web_search_mode: webSearchMode,
+            web_search_mode: effectiveWebSearchMode,
             conversationId: activeConversationId || undefined,
             userDb,
             userId,
@@ -4759,6 +4791,56 @@ app.post(
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[Stream] chart orchestration failed: ${message}`);
+        await sendStreamError(err);
+      }
+      return;
+    }
+
+    if (!isGuest && !fastHasImageContext && isImageRequest(effectiveUserMessage)) {
+      console.log(`[Stream] image request detected - redirecting to orchestrator`);
+      try {
+        const result = await orchestrate({
+          userMessage: parsed.data.message,
+          executionMode: parsed.data.executionMode,
+          clarificationResponse: parsed.data.clarification_response,
+          signal: requestAbortController.signal,
+          context: {
+            recent_messages: normalizedRecentMessages,
+            memories: parsed.data.context?.memories,
+            file_references: parsed.data.context?.file_references,
+            image_attachments: parsed.data.context?.image_attachments,
+            trustedProfile,
+            web_search_mode: effectiveWebSearchMode,
+            conversationId: activeConversationId || undefined,
+            userDb,
+            userId,
+            billingIdentity,
+            billingRequestId,
+          },
+        });
+        if (result.reply) {
+          await persistAssistantMessage(result.reply);
+        }
+        await persistStoredMemory(result.memory);
+        reportStreamMessageGap(Boolean(result.reply), "orchestrator.image_generation");
+        await writeStructuredResponse(buildStreamStructuredPayload({
+          route: result.route,
+          answer: result.answer ?? result.reply,
+          reply: result.reply,
+          thinking: gateThinking(result.thinking, { route: result.route }),
+          disclaimer: result.disclaimer,
+          image: result.image,
+          chart: result.chart,
+          memory: result.memory,
+          web_search: result.web_search,
+          clarification: result.clarification,
+          confidence: result.confidence,
+          model_used: result.model_used,
+          searched: result.searched === true,
+        }));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Stream] image generation orchestration failed: ${message}`);
         await sendStreamError(err);
       }
       return;
@@ -4831,7 +4913,7 @@ app.post(
             file_references: parsed.data.context?.file_references,
             image_attachments: parsed.data.context?.image_attachments,
             trustedProfile,
-            web_search_mode: webSearchMode,
+            web_search_mode: effectiveWebSearchMode,
             userMessage: effectiveUserMessage,
             conversationId: activeConversationId || undefined,
             billingIdentity,
@@ -4944,7 +5026,7 @@ app.post(
           file_references: parsed.data.context?.file_references,
           image_attachments: parsed.data.context?.image_attachments,
           trustedProfile,
-          web_search_mode: webSearchMode,
+          web_search_mode: effectiveWebSearchMode,
           userMessage: effectiveUserMessage,
           conversationId: activeConversationId || undefined,
           billingIdentity,
@@ -5139,7 +5221,7 @@ app.post(
       file_references: fileRefs,
       image_attachments: parsed.data.context?.image_attachments,
       trustedProfile,
-      web_search_mode: webSearchMode,
+      web_search_mode: effectiveWebSearchMode,
       userMessage: effectiveUserMessage,
       conversationId: activeConversationId || undefined,
       billingIdentity,

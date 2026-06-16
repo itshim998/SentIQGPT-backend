@@ -60,6 +60,8 @@ const NO_SEARCH_PATTERNS: readonly RegExp[] = [
 
 /** Time-sensitive / current-events patterns — require a real-world signal */
 const REALTIME_PATTERNS: readonly RegExp[] = [
+  /\b(?:today|latest|recent|current)\s+(?:news|updates?|results?|scores?)\b/i,
+  /\b(?:news|updates?|results?|scores?)\s+(?:today|latest|recent|current)\b/i,
   // Current events — require an entity or topic alongside the time signal
   /\b(?:latest|recent|current)\s+(?:\w+\s+){0,3}(?:announcements?|news|updates?|releases?|launches?)\b/i,
   /\b(?:announcements?|news|updates?)\s+(?:from|on|about|by)\s+/i,
@@ -152,10 +154,22 @@ const PROJECT_MEMORY_PATTERNS: readonly RegExp[] = [
 ];
 
 /** Image generation patterns */
+const IMAGE_PROMPT_WRITING_PATTERNS: readonly RegExp[] = [
+  /\b(?:write|create|craft|draft|make|generate)\s+(?:me\s+)?(?:an?\s+)?prompt\b/i,
+  /\bprompt\s+(?:to|for)\s+(?:generate|create|make|draw|render|paint|illustrate)\b/i,
+  /\b(?:image|picture|photo|illustration|artwork)\s+prompt\b/i,
+];
+
 const IMAGE_PATTERNS: readonly RegExp[] = [
   /\b(?:generate|create|draw|make|design|paint|sketch|render|illustrate)\s+(?:an?\s+)?(?:image|picture|photo|illustration|artwork|art|logo|icon|graphic|poster)/i,
   /\b(?:image|picture|photo|illustration)\s+of\b/i,
+  /^\s*(?:please\s+)?show\s+me\s+(?:an?\s+|the\s+)?(?!how\b|why\b|what\b|steps?\b|code\b|example\b|prompt\b)[\w\s-]{0,80}\b(?:bird|goose|animal|cat|dog|horse|flower|rose|car|house|person|portrait|scene|landscape|object)\b/i,
 ];
+
+export function isImagePromptWritingRequest(query: string): boolean {
+  const trimmed = query.trim();
+  return Boolean(trimmed) && IMAGE_PROMPT_WRITING_PATTERNS.some((pat) => pat.test(trimmed));
+}
 
 // ==============================
 // Classifier
@@ -174,6 +188,10 @@ export function classifyQueryType(query: string): QueryClassification {
   }
 
   // 0. Image generation (highest priority — explicit user intent)
+  if (isImagePromptWritingRequest(trimmed)) {
+    return { category: "general_knowledge", needsWebSearch: false, matchedRule: "image_prompt_writing" };
+  }
+
   for (const pat of IMAGE_PATTERNS) {
     if (pat.test(trimmed)) {
       return { category: "image_generation", needsWebSearch: false, matchedRule: `image:${pat.source.slice(0, 40)}` };

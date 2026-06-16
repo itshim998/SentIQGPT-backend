@@ -67,6 +67,14 @@ function looksLikeCodingBuildRequest(message: string): boolean {
   return hits >= 2;
 }
 
+function extractInlineStaticValues(message: string): number[] | null {
+  const candidate = message.match(/\b(?:comparing|compare|values?|data|with|of|for)\b([\s\S]{0,140})/i)?.[1] ?? message;
+  const values = [...candidate.matchAll(/[-+]?\d+(?:\.\d+)?/g)]
+    .map((match) => Number(match[0]))
+    .filter((value) => Number.isFinite(value));
+  return values.length >= 2 && values.length <= 20 ? values : null;
+}
+
 // ==============================
 // Public API
 // ==============================
@@ -135,6 +143,14 @@ export function detectChartIntent(message: string): ChartIntent {
         .split(",")
         .map((c) => c.trim().replace(/['"]/g, ""))
         .filter(Boolean);
+    }
+
+    const staticValues = extractInlineStaticValues(message);
+    if (staticValues) {
+      parameters.values = staticValues;
+      if (!parameters.categories) {
+        parameters.categories = staticValues.map((_, index) => `Item ${index + 1}`);
+      }
     }
   }
 

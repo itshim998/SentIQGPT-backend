@@ -19,6 +19,7 @@ import {
   isChartRequest,
   isImageRequest,
   isLikelyBufferedReasoningPrompt,
+  isLikelyCurrentInfoRequest,
   isLikelyFileGenerationRequest,
 } from "./chat/intent-detection.js";
 import {
@@ -7672,6 +7673,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       && imageAttachments.length === 0
       && !isLikelyFileGenerationRequest(text)
       && !isChartRequest(text)
+      && !isLikelyCurrentInfoRequest(text)
       && !isLikelyBufferedReasoningPrompt(text)
       && !isImageRequest(text);
   }
@@ -7819,6 +7821,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     });
     const requestActivityMode = preliminaryWebSearchMode && !authenticatedFileGenerationRequired
       ? "web_search"
+      : intentRoute === "web_search"
+        ? "web_search"
       : authenticatedFileGenerationRequired
         ? "file_generation"
         : chartResponseRequired

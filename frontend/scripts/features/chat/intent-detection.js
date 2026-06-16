@@ -6,12 +6,22 @@ import {
 } from "./constants.js";
 
 /** Keyword-based detection of image generation requests. */
+export function isImagePromptWritingRequest(text) {
+  const normalized = String(text || "").trim();
+  if (!normalized) return false;
+  return /\b(?:write|create|craft|draft|make|generate)\s+(?:me\s+)?(?:an?\s+)?prompt\b/i.test(normalized)
+    || /\bprompt\s+(?:to|for)\s+(?:generate|create|make|draw|render|paint|illustrate)\b/i.test(normalized)
+    || /\b(?:image|picture|photo|illustration|artwork)\s+prompt\b/i.test(normalized);
+}
+
 export function isImageRequest(text) {
   if (isChartRequest(text)) return false;
   if (isLikelyFileGenerationRequest(text)) return false;
+  if (isImagePromptWritingRequest(text)) return false;
   const patterns = [
     /\b(generate|create|make|draw|paint|render|design|sketch|produce)\b.*\b(image|picture|photo|art|illustration|artwork|portrait|landscape|wallpaper|icon|logo|poster|banner)\b/i,
     /\b(image|picture|photo|art|illustration|artwork)\b.*\b(of|for|with|showing|depicting|featuring)\b/i,
+    /^\s*(?:please\s+)?show\s+me\s+(?:an?\s+|the\s+)?(?!how\b|why\b|what\b|steps?\b|code\b|example\b|prompt\b)[\w\s-]{0,80}\b(?:bird|goose|animal|cat|dog|horse|flower|rose|car|house|person|portrait|scene|landscape|object)\b/i,
     /\bgenerate\s+(an?\s+)?image\b/i,
     /\bcreate\s+(an?\s+)?image\b/i,
     /\bdraw\s+(me\s+)?(an?\s+)?(image|picture|art|portrait|landscape|sketch|cartoon|character|scene|logo|icon)\b/i,
@@ -22,6 +32,17 @@ export function isImageRequest(text) {
     /\bpicture\s+of\b/i,
   ];
   return patterns.some((pattern) => pattern.test(text));
+}
+
+export function isLikelyCurrentInfoRequest(text) {
+  const normalized = String(text || "").trim();
+  if (!normalized) return false;
+  if (/\b(?:calculate|compute|solve|simplify|evaluate|derivative|integral)\b/i.test(normalized)) return false;
+  return /\b(?:latest|recent|current|today|breaking)\b[\s\S]{0,80}\b(?:news|updates?|results?|scores?|announcements?|releases?|launches?)\b/i.test(normalized)
+    || /\b(?:latest|recent|current|today|breaking)\s+(?:news|updates?|results?|scores?)\s+(?:about|on|for|of)\b/i.test(normalized)
+    || /\b(?:news|updates?|announcements?|results?|scores?)\s+(?:about|on|for|of)\b[\s\S]{0,80}\b(?:latest|recent|current|today|breaking)?/i.test(normalized)
+    || /\b(?:who\s+won|score\s+of|results?\s+of|live\s+score|stock\s+price|share\s+price|weather\s+(?:in|for|today|forecast))\b/i.test(normalized)
+    || /\b(?:ipl|world\s+cup|olympics|super\s+bowl)\b[\s\S]{0,80}\b(?:latest|results?|scores?|today|current)\b/i.test(normalized);
 }
 
 export function looksLikeCodingBuildRequest(text) {
@@ -42,6 +63,24 @@ export function isChartRequest(text) {
 
 export function detectRequestedFileFormat(text) {
   const normalized = String(text || "");
+  const exact = detectExactRequestedFileFormat(normalized);
+  if (exact) return exact;
+
+  const aliasMatch = FILE_FORMAT_ALIASES.find(([, pattern]) => pattern.test(normalized));
+  return aliasMatch ? aliasMatch[0] : null;
+}
+
+const FILE_FORMAT_ALIASES = [
+  ["xlsx", /\b(?:excel\s+(?:file|sheet|workbook|spreadsheet)|spreadsheet|workbook)\b/i],
+  ["pptx", /\b(?:ppt|powerpoint|presentation|slide\s*deck|deck|slides?)\b/i],
+  ["docx", /\b(?:word\s+(?:file|document|doc)|ms\s*word)\b/i],
+  ["pdf", /\b(?:pdf\s+(?:file|document)|printable\s+pdf)\b/i],
+  ["html", /\b(?:html\s+(?:file|page|document)|web\s*page|webpage)\b/i],
+  ["txt", /\b(?:plain\s+text\s+file|text\s+file)\b/i],
+];
+
+function detectExactRequestedFileFormat(text) {
+  const normalized = String(text || "");
   const checks = [
     ["xlsx", /(?:^|[\s(["'])\.?xlsx\b/i],
     ["pptx", /(?:^|[\s(["'])\.?pptx\b/i],
@@ -59,10 +98,12 @@ export function isLikelyFileGenerationRequest(text) {
   if (!normalized) return false;
   const format = detectRequestedFileFormat(normalized);
   if (!format) return false;
+  const exactFormat = detectExactRequestedFileFormat(normalized);
   const hasVerb = /\b(?:generate|create|make|build|write|prepare|draft|produce|export|turn\s+.*\s+into|convert\s+.*\s+to)\b/i.test(normalized);
   const hasFileHint = /\b(?:downloadable|file|document|workbook|spreadsheet|presentation|slides?|deck|pdf|docx|pptx|xlsx|html|txt)\b/i.test(normalized);
-  return (hasVerb && hasFileHint)
-    || /\b(?:as|to)\s+(?:a\s+)?(?:pdf|docx|pptx|xlsx|html|txt|spreadsheet|presentation|word\s+document)\b/i.test(normalized);
+  const hasAsFormat = /\b(?:as|to)\s+(?:a\s+)?(?:pdf|docx|pptx|xlsx|html|txt|spreadsheet|presentation|word\s+document)\b/i.test(normalized);
+  if (exactFormat) return (hasVerb && hasFileHint) || hasAsFormat;
+  return (/\bdownloadable\b/i.test(normalized) || hasAsFormat) && ((hasVerb && hasFileHint) || hasAsFormat);
 }
 
 export function detectClarificationDownloadFormat(clarificationResponse) {

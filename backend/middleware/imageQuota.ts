@@ -9,6 +9,7 @@
 
 import type { Request, Response, NextFunction } from "express";
 import type { AuthenticatedRequest } from "./auth";
+import { isImagePromptWritingRequest } from "../orchestrator/queryClassifier";
 
 // ==============================
 // Configuration
@@ -130,6 +131,7 @@ export function imageQuotaMiddleware(
 const IMAGE_KEYWORDS = [
   /\b(generate|create|make|draw|paint|render|design|sketch|produce)\b.*\b(image|picture|photo|art|illustration|artwork|portrait|landscape|wallpaper|icon|logo|poster|banner)\b/i,
   /\b(image|picture|photo|art|illustration|artwork|portrait|landscape|wallpaper|icon|logo|poster|banner)\b.*\b(of|for|with|showing|depicting|featuring)\b/i,
+  /^\s*(?:please\s+)?show\s+me\s+(?:an?\s+|the\s+)?(?!how\b|why\b|what\b|steps?\b|code\b|example\b|prompt\b)[\w\s-]{0,80}\b(?:bird|goose|animal|cat|dog|horse|flower|rose|car|house|person|portrait|scene|landscape|object)\b/i,
   /\bgenerate\s+(an?\s+)?image\b/i,
   /\bcreate\s+(an?\s+)?image\b/i,
   /\bdraw\s+(me\s+)?(an?\s+)?/i,
@@ -148,6 +150,7 @@ const IMAGE_KEYWORDS = [
  * Uses keyword pattern matching — no LLM call needed.
  */
 export function isImageRequest(text: string): boolean {
+  if (isImagePromptWritingRequest(text)) return false;
   return IMAGE_KEYWORDS.some((pattern) => pattern.test(text));
 }
 

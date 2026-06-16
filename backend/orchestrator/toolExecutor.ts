@@ -160,6 +160,25 @@ async function releaseBillingReservation(reservation: UsageReservation | null | 
   });
 }
 
+function safeImageGenerationFailureMessage(): string {
+  return "Image generation could not finish. Please try again.";
+}
+
+function safeChartGenerationFailureMessage(): string {
+  return "Chart generation could not finish. Please try again.";
+}
+
+function safeFileGenerationFailureMessage(): string {
+  return "Sorry, I couldn't generate that file. Please try again.";
+}
+
+function safeWebSearchFailureMessage(error?: string): string {
+  if (error && /no results found/i.test(error)) {
+    return "I couldn't find current web results for that. Please try again with a more specific query.";
+  }
+  return "Web search is temporarily unavailable. Please try again later.";
+}
+
 function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
   throw signal.reason instanceof Error
@@ -310,13 +329,16 @@ async function execImageGeneration(
   return {
     step: 0,
     tool: "image_generation",
+    reply: result.success
+      ? "Generated image."
+      : safeImageGenerationFailureMessage(),
     image: {
       success: result.success,
       image_url: result.image_url,
       image_base64: result.image_base64,
       provider_used: result.provider_used,
       prompt: result.prompt,
-      error: result.error,
+      error: result.success ? undefined : safeImageGenerationFailureMessage(),
     },
   };
 }
@@ -442,6 +464,9 @@ async function execChartGeneration(
   return {
     step: 0,
     tool: "chart_generation",
+    reply: result.success
+      ? "Generated chart."
+      : safeChartGenerationFailureMessage(),
     chart: {
       type: result.type,
       success: result.success,
@@ -453,7 +478,7 @@ async function execChartGeneration(
       image_url: result.image_url,
       plotly_json: result.plotly_json as Record<string, unknown> | undefined,
       chartjs_config: result.chartjs_config as Record<string, unknown> | undefined,
-      error: result.error,
+      error: result.success ? undefined : safeChartGenerationFailureMessage(),
     },
   };
 }
@@ -474,7 +499,7 @@ async function execFileGeneration(
     tool: "file_generation",
     reply: result.success
       ? `Generated ${result.file_name}.`
-      : (result.error || "Sorry, I couldn't generate that file. Please try again."),
+      : safeFileGenerationFailureMessage(),
     model_used: result.model_used,
     fallback: result.fallback,
     file: {
@@ -496,7 +521,7 @@ async function execFileGeneration(
       model_used: result.model_used,
       fallback: result.fallback,
       fallback_reason: result.fallback_reason,
-      error: result.error,
+      error: result.success ? undefined : safeFileGenerationFailureMessage(),
     },
   };
 }
@@ -523,7 +548,7 @@ async function execWebSearch(
       return {
         step: 0,
         tool: "web_search",
-        reply: result.error ?? "Web search failed. Please try again.",
+        reply: safeWebSearchFailureMessage(result.error),
         fallback: true,
       };
     }

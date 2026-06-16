@@ -45,6 +45,14 @@ function stripClarificationOptionCatalog(message: string): string {
   return message.replace(/\nAvailable options:\n[^\n]*(?:\n|$)/i, "\n");
 }
 
+function hasChatOnlyClarificationSelection(message: string): boolean {
+  if (!/\nUser clarification\(s\):\n/i.test(message)) return false;
+  if (/\nSelected option id:\n(?:text_outline|text_document|markdown_table|text_answer|code_in_chat)\b/i.test(message)) {
+    return true;
+  }
+  return /\nLatest clarification answer:\n[^\n]*\b(?:in chat|chat only|text outline|text document|html code)\b/i.test(message);
+}
+
 export function resolveFileGenerationIntent(message: string): FileGenerationIntent {
   const normalized = stripClarificationOptionCatalog(String(message || "")).trim();
   if (!normalized) return { strength: "none", format: null };
@@ -71,11 +79,20 @@ export function detectGeneratedFileFormat(message: string): GeneratedFileFormat 
 export function isFileGenerationRequest(message: string): boolean {
   const normalized = String(message || "").trim();
   if (!normalized) return false;
+  if (hasChatOnlyClarificationSelection(normalized)) return false;
 
   const intent = resolveFileGenerationIntent(normalized);
   if (!intent.format) return false;
 
   if (intent.strength === "exact" && (hasGenerationIntent(normalized) || hasAsFormatIntent(normalized))) {
+    return true;
+  }
+
+  if (
+    intent.strength === "implied" &&
+    (/\bdownloadable\b/i.test(normalized) || hasAsFormatIntent(normalized)) &&
+    (hasGenerationIntent(normalized) || hasAsFormatIntent(normalized))
+  ) {
     return true;
   }
 

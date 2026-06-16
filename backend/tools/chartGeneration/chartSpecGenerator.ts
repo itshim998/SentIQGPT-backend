@@ -82,10 +82,12 @@ function lineSpec(): { data: DataGenSpec; axes: AxesSpec; style: StyleSpec } {
   };
 }
 
-function barSpec(categories: ReadonlyArray<string>): {
+function barSpec(categories: ReadonlyArray<string>, requestedValues?: ReadonlyArray<number>): {
   data: DataGenSpec; axes: AxesSpec; style: StyleSpec;
 } {
-  const values = DEFAULT_VALUES.slice(0, categories.length);
+  const values = requestedValues?.length
+    ? requestedValues.slice(0, categories.length)
+    : DEFAULT_VALUES.slice(0, categories.length);
   return {
     data: { method: "static_values", categories, values },
     axes: { x_label: "Category", y_label: "Value" },
@@ -180,10 +182,12 @@ function clusteringSpec(numPoints: number): {
   };
 }
 
-function pieSpec(categories: ReadonlyArray<string>): {
+function pieSpec(categories: ReadonlyArray<string>, requestedValues?: ReadonlyArray<number>): {
   data: DataGenSpec; axes: AxesSpec; style: StyleSpec;
 } {
-  const values = DEFAULT_VALUES.slice(0, categories.length);
+  const values = requestedValues?.length
+    ? requestedValues.slice(0, categories.length)
+    : DEFAULT_VALUES.slice(0, categories.length);
   return {
     data: { method: "static_values", categories, values },
     axes: {},
@@ -232,6 +236,9 @@ export function generateChartSpec(intent: ChartIntent, message: string): ChartSp
   const userCategories = Array.isArray(parameters.categories)
     ? (parameters.categories as string[]).filter((c) => typeof c === "string")
     : null;
+  const userValues = Array.isArray(parameters.values)
+    ? (parameters.values as number[]).filter((value) => typeof value === "number" && Number.isFinite(value))
+    : null;
 
   let data: DataGenSpec;
   let axes: AxesSpec;
@@ -240,14 +247,14 @@ export function generateChartSpec(intent: ChartIntent, message: string): ChartSp
   const chartTypeMap: Record<ChartType, () => { data: DataGenSpec; axes: AxesSpec; style: StyleSpec }> = {
     scatter:     () => scatterSpec(xMean, xStd, numPoints),
     line:        () => lineSpec(),
-    bar:         () => barSpec(userCategories ?? DEFAULT_CATEGORIES),
+    bar:         () => barSpec(userCategories ?? DEFAULT_CATEGORIES, userValues ?? undefined),
     histogram:   () => histogramSpec(xMean, xStd, numPoints),
     heatmap:     () => heatmapSpec(),
     time_series: () => timeSeriesSpec(),
     regression:  () => regressionSpec(xMean, xStd, numPoints),
     pca:         () => pcaSpec(numPoints),
     clustering:  () => clusteringSpec(numPoints),
-    pie:         () => pieSpec(userCategories ?? DEFAULT_CATEGORIES),
+    pie:         () => pieSpec(userCategories ?? DEFAULT_CATEGORIES, userValues ?? undefined),
     box:         () => boxSpec(xMean, xStd),
   };
 
