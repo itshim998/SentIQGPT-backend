@@ -283,6 +283,32 @@ export function shouldForceWebSearch(query: string): boolean {
   return entityWords.length >= 1 && hasYearSearchIntent;
 }
 
+/**
+ * Narrow gate for automatic WebSurf tool use.
+ *
+ * This intentionally excludes broad factual lookup patterns. Automatic search
+ * should trigger only for clearly live/current prompts; explicit WebSurf mode
+ * remains the path for everything else.
+ */
+export function shouldAutoUseWebSurf(query: string): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return false;
+
+  for (const pat of NO_SEARCH_PATTERNS) {
+    if (pat.test(trimmed)) return false;
+  }
+
+  for (const pat of EXPLICIT_WEB_SEARCH_PATTERNS) {
+    if (pat.test(trimmed)) return true;
+  }
+
+  for (const pat of REALTIME_PATTERNS) {
+    if (pat.test(trimmed)) return true;
+  }
+
+  return shouldForceWebSearch(trimmed);
+}
+
 // ==============================
 // Search query builder
 // ==============================

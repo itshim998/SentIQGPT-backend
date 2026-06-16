@@ -7810,9 +7810,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const chartResponseRequired = !authenticatedFileGenerationRequired && (
       intentRoute === "chart_generation" || (!routeIntent && isChartRequest(apiMessage))
     );
-    const bufferedReasoningRequired = !authenticatedFileGenerationRequired && (
-      intentRoute === "reasoning" || intentRoute === "math_reasoning" || (!routeIntent && isLikelyBufferedReasoningPrompt(apiMessage))
-    );
+    const bufferedReasoningRequired = false;
     const structuredResponseRequired = false;
     const requestLoaderKind = routeIntent?.loader || SentIQLoaderEngine.resolveKind(apiMessage, {
       structured: chartResponseRequired,

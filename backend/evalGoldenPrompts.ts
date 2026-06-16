@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { detectExplicitMemoryWriteIntent } from "./orchestrator/queryClassifier";
 import { isChartRequest } from "./tools/chartGeneration/chartDetector";
-import { isMathQuery } from "./orchestrator/modelRouter";
 
 type GoldenCase = {
   id: string;
@@ -25,7 +24,6 @@ function inferOfflineRoute(testCase: GoldenCase): string {
   if (testCase.expected_route === "image_generation") return "image_generation";
   if (detectExplicitMemoryWriteIntent(testCase.prompt)) return "memory_update";
   if (isChartRequest(testCase.prompt)) return "chart_generation";
-  if (isMathQuery(testCase.prompt)) return "math_reasoning";
   return "normal_chat";
 }
 

@@ -88,20 +88,13 @@ export function buildGuestFileGenerationInstruction(message, format) {
 }
 
 export function isLikelyMathReasoningPrompt(text) {
-  const normalized = String(text || "").trim();
-  if (!normalized) return false;
-  return /\b(solve|calculate|derive|integrate|differentiate|equation|algebra|matrix|theorem|proof|probability|statistics|geometry|trigonometry|logarithm|factorial)\b/i.test(normalized)
-    || /\d\s*[+\-*/=^]\s*\d/.test(normalized)
-    || /\b\d{1,4}\s*(?:x|\*)\s*\d{1,4}\b/i.test(normalized);
+  void text;
+  return false;
 }
 
 export function isLikelyLogicReasoningPrompt(text) {
-  const normalized = String(text || "").trim();
-  if (!normalized) return false;
-  return /\b(?:logic(?:al)?\s+(?:puzzle|problem|question|reasoning)|riddle|syllogism|truth table|propositional logic|predicate logic|modus ponens|modus tollens|contradiction|contrapositive)\b/i.test(normalized)
-    || /\b(?:prove(?:\s+or\s+disprove)?|show that|which conclusion|which statement|must be true|necessarily follows|does it follow that|can you deduce)\b/i.test(normalized)
-    || ((normalized.match(/\b(?:if|then|therefore|assume|implies|conclude)\b/gi) || []).length >= 2
-      && (normalized.match(/\b(?:must|always|never|valid|invalid|consistent|inconsistent)\b/gi) || []).length >= 1);
+  void text;
+  return false;
 }
 
 export function isLikelyBufferedReasoningPrompt(text) {

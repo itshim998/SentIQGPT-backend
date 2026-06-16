@@ -138,6 +138,7 @@ async function main(): Promise<void> {
     });
     assert.equal(routed.source, "deterministic");
     assert.equal(routed.model, "qwen-coder");
+    assert.equal(routed.fallback_reason, "model_owned_tool_selection");
 
     const malformed = await selectModelForPromptWithMaster({
       query: "Tell me a short story.",
@@ -148,6 +149,7 @@ async function main(): Promise<void> {
     });
     assert.equal(malformed.source, "deterministic");
     assert.equal(malformed.model, "gpt-oss-120b");
+    assert.equal(malformed.fallback_reason, "model_owned_tool_selection");
 
     const failed = await selectModelForPromptWithMaster({
       query: "Tell me a short story.",
@@ -160,6 +162,22 @@ async function main(): Promise<void> {
     });
     assert.equal(failed.source, "deterministic");
     assert.equal(failed.model, "gpt-oss-120b");
+    assert.equal(failed.fallback_reason, "model_owned_tool_selection");
+
+    const fuzzyLogicAcademic = await selectModelForPromptWithMaster({
+      query: "Detail the core difference between regular probability and fuzzy logic. How do they handle uncertainty differently? 4 marks",
+      executionMode: "intuitive",
+      isGuest: false,
+    }, {
+      callModel: async () => result(JSON.stringify({
+        selected_model: "reasoning_specialist",
+        confidence: 0.99,
+        reason: "academic comparison",
+      })),
+    });
+    assert.equal(fuzzyLogicAcademic.source, "deterministic");
+    assert.equal(fuzzyLogicAcademic.model, "gpt-oss-120b");
+    assert.equal(fuzzyLogicAcademic.fallback_reason, "model_owned_tool_selection");
 
     let fastCalls = 0;
     const fast = await selectModelForPromptWithMaster({
@@ -174,7 +192,7 @@ async function main(): Promise<void> {
     });
     assert.equal(fast.source, "deterministic");
     assert.equal(fast.model, "qwen-coder");
-    assert.equal(fast.fallback_reason, "master_router_fast_mode");
+    assert.equal(fast.fallback_reason, "model_owned_tool_selection");
     assert.equal(fastCalls, 0, "fast mode must not invoke the Master Router model");
 
     let defaultCalls = 0;
@@ -189,7 +207,7 @@ async function main(): Promise<void> {
     });
     assert.equal(defaultMode.source, "deterministic");
     assert.equal(defaultMode.model, "qwen-coder");
-    assert.equal(defaultMode.fallback_reason, "master_router_fast_mode");
+    assert.equal(defaultMode.fallback_reason, "model_owned_tool_selection");
     assert.equal(defaultCalls, 0, "missing mode must default to fast and skip Master Router");
 
     let guestCalls = 0;
@@ -205,7 +223,7 @@ async function main(): Promise<void> {
     });
     assert.equal(guest.source, "deterministic");
     assert.equal(guest.model, "gpt-oss-120b");
-    assert.equal(guest.fallback_reason, "master_router_guest");
+    assert.equal(guest.fallback_reason, "model_owned_tool_selection");
     assert.equal(guestCalls, 0, "guest intuitive mode must not invoke the Master Router model");
 
     let imageFastCalls = 0;
@@ -251,8 +269,8 @@ async function main(): Promise<void> {
         }));
       },
     });
-    assert.equal(intuitiveImagePreference, "wan-image");
-    assert.equal(intuitiveImageCalls, 1, "signed-in intuitive image generation can invoke Master Router");
+    assert.equal(intuitiveImagePreference, undefined);
+    assert.equal(intuitiveImageCalls, 0, "signed-in intuitive image generation must not invoke Master Router");
   });
 
   await withEnv("MASTER_ROUTER_ENABLED", "false", async () => {
@@ -267,7 +285,7 @@ async function main(): Promise<void> {
     });
     assert.equal(disabled.source, "deterministic");
     assert.equal(disabled.model, "qwen-coder");
-    assert.equal(disabled.fallback_reason, "master_router_disabled");
+    assert.equal(disabled.fallback_reason, "model_owned_tool_selection");
   });
 
   console.log("Master router tests passed.");

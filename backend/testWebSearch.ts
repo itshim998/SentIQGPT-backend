@@ -37,7 +37,13 @@ async function main(): Promise<void> {
     userMessage: "latest NVIDIA announcements in 2026",
     hasWebSearch: true,
   });
-  assert(automaticSearchPlan === null, "current-events queries do not auto-route to WebSurf without explicit mode");
+  assert(automaticSearchPlan?.steps[0]?.tool === "web_search", "clearly current/live queries auto-route to web_surf via web_search");
+
+  const academicPlan = resolveHardRoutedPlan({
+    userMessage: "Detail the core difference between regular probability and fuzzy logic.",
+    hasWebSearch: true,
+  });
+  assert(academicPlan === null, "academic prompts do not auto-route to WebSurf");
 
   const capturedBodies: Array<Record<string, unknown>> = [];
   const originalFetch = globalThis.fetch;

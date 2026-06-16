@@ -21,12 +21,10 @@
 //   6. Knowledge Cache Layer
 //        └── LLM answer cache (check before pipeline, store after reflection)
 
-import { solveMathDirect } from "../ai/mathVerifier";
 import { finalizeUserFacingReply } from "../ai/replyGuard";
 import { buildContext, buildContextFast } from "../context/contextBuilder";
 import { planTask } from "./planner";
 import { executePlan } from "./toolExecutor";
-import { detectCodeQuery, detectImageMathPrompt, isMathQuery } from "./modelRouter";
 import { detectExplicitMemoryWriteIntent } from "./queryClassifier";
 import {
   DEFAULT_MAX_CLARIFICATION_TURNS,
@@ -46,8 +44,6 @@ import type { PlanTool } from "./planner";
 import type { StepResult } from "./toolExecutor";
 import type { SearchResult } from "../tools/webSearch/types";
 import { resolveExecutionProfile, type ExecutionMode, type ExecutionProfile } from "./executionProfile";
-import { BillingQuotaService } from "../billing/quotaService";
-import type { UsageReservation } from "../billing/entitlementTypes";
 
 // ==============================
 // Types
@@ -165,15 +161,6 @@ type InternalMergedResponse = Omit<OrchestratorResponse, "confidence"> & {
   _fallback?: boolean;
   _sanitize_bypass?: boolean;
 };
-
-const billingQuotaService = new BillingQuotaService();
-
-async function releaseBillingReservation(reservation: UsageReservation | null | undefined): Promise<void> {
-  if (!reservation) return;
-  await billingQuotaService.release(reservation).catch((error) => {
-    console.warn(`[Billing] failed to release reservation ${reservation.requestId}: ${error instanceof Error ? error.message : error}`);
-  });
-}
 
 // ==============================
 // Helpers
@@ -563,64 +550,6 @@ async function _orchestrateInner(
     }
   }
   throwIfAborted(signal);
-
-  const isCodingQuery = detectCodeQuery(userMessage);
-
-  const hasImageMathPrompt =
-    (rawContext?.image_attachments?.length ?? 0) > 0 &&
-    detectImageMathPrompt(userMessage);
-
-  if (!isCodingQuery && (isMathQuery(userMessage) || hasImageMathPrompt)) {
-    console.log(`[MathPipeline] math query detected on raw input — bypassing planner`);
-    console.log(`[MathPipeline] solving with openai-large`);
-
-    const reservation = rawContext?.billingIdentity
-      ? await billingQuotaService.reserveAdvancedReasoning({
-          identity: rawContext.billingIdentity,
-          requestId: `${rawContext.billingRequestId ?? "orchestrator"}:math`,
-          conversationId: rawContext.conversationId,
-          clientRequestId: rawContext.billingRequestId,
-          metadata: { endpoint: "orchestrator", route: "math_reasoning" },
-        })
-      : null;
-    let mathResult: Awaited<ReturnType<typeof solveMathDirect>>;
-    try {
-      mathResult = await solveMathDirect(
-        userMessage,
-        rawContext?.userId,
-        rawContext?.image_attachments,
-        reservation ? { modelOverride: reservation.adapterModelOverride } : {},
-      );
-      if (reservation) {
-        await billingQuotaService.commit(reservation, { endpoint: "orchestrator", route: "math_reasoning" });
-      }
-    } catch (error) {
-      await releaseBillingReservation(reservation);
-      throw error;
-    }
-
-    console.log(
-      `[MathPipeline] solved using openai-large`,
-    );
-    console.log(`[MathPipeline] reflection skipped — math query handled by direct math pipeline`);
-    console.log(`[MathPipeline] returning result`);
-
-    const finalReply = mathResult.answer;
-    const computedConfidence = computeConfidence(
-      mathResult.model_used,
-      mathResult.fallback,
-      finalReply,
-    );
-
-    return {
-      route: "math_reasoning" as DetectedTool,
-      answer: finalReply,
-      reply: finalReply,
-      disclaimer: PRODUCT_DISCLAIMER,
-      memory: { stored: false },
-      confidence: computedConfidence,
-    };
-  }
 
   // 1. Build context + run planner in PARALLEL (both are independent)
   //    Memory pipeline is deferred to background — never blocks the LLM response.

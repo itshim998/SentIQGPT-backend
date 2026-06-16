@@ -26,11 +26,9 @@ import { routeFileGeneration } from "../tools/fileGeneration/fileGenerator";
 import { executeTavilySearchPipeline } from "../tools/webSearch/tavilySearchPipeline";
 import { normalizeWebSearchMode } from "../tools/webSearch/webSearchMode";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
-import { solveMathDirect } from "../ai/mathVerifier";
 import { resolveContextReferences } from "../context/referenceResolver";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
-import { detectCodeQuery, detectImageMathPrompt, isMathQuery } from "./modelRouter";
 import { selectImageModelPreferenceWithMaster, selectModelForPromptWithMaster } from "./masterRouter";
 import type { SearchResult } from "../tools/webSearch/types";
 import { INTUITIVE_PROFILE, type ExecutionProfile } from "./executionProfile";
@@ -183,53 +181,6 @@ async function execConversation(
   const augmentedInput = priorContext
     ? `${input}\n\n[Previous step context]: ${priorContext}`
     : input;
-
-  // Math path
-  // If the query is mathematical, route through the direct openai-large math solver
-  // instead of the standard single-model chat handler.
-  const hasImageMathPrompt =
-    (ctx.imageAttachments?.length ?? 0) > 0 &&
-    detectImageMathPrompt(input);
-  if (!detectCodeQuery(input) && (isMathQuery(input) || hasImageMathPrompt)) {
-    console.log(`[MathPipeline] math query detected — routing to direct openai-large solver`);
-    const reservation = ctx.billingIdentity
-      ? await billingQuotaService.reserveAdvancedReasoning({
-          identity: ctx.billingIdentity,
-          requestId: createBillingStepRequestId(ctx, "conversation", augmentedInput),
-          conversationId: ctx.conversationId,
-          clientRequestId: ctx.billingRequestId,
-          metadata: { endpoint: "orchestrator", tool: "conversation", route: "math_reasoning" },
-        })
-      : null;
-    let mathResult: Awaited<ReturnType<typeof solveMathDirect>>;
-    try {
-      mathResult = await solveMathDirect(
-        augmentedInput,
-        ctx.userId,
-        ctx.imageAttachments,
-        reservation ? { modelOverride: reservation.adapterModelOverride } : {},
-      );
-      if (reservation) {
-        await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "conversation", route: "math_reasoning" });
-      }
-    } catch (error) {
-      await releaseBillingReservation(reservation);
-      throw error;
-    }
-    console.log(
-      `[MathPipeline] solved using openai-large`,
-    );
-    return {
-      step: 0,
-      tool: "conversation",
-      isMathResult: true,
-      sanitize_bypass: true,
-      reply: mathResult.answer,
-      thinking: mathResult.thinking,
-      model_used: mathResult.model_used,
-      fallback: mathResult.fallback,
-    };
-  }
 
   // ── Standard conversation path ──
   // Pass file context to router for coding PDF detection

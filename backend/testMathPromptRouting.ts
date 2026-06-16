@@ -129,15 +129,13 @@ async function main(): Promise<void> {
     assert(isMathQuery("Solve 3x + 7 = 19"), "equation solve prompt is math");
     assert(!isMathQuery(puzzle), "Missionaries and Cannibals is not math");
     assert(detectLogicReasoning(puzzle), "Missionaries and Cannibals is logic reasoning");
-    assert(selectModelForPrompt(puzzle) === "gemini-search", "logic puzzle keeps guest/default chat model");
+    assert(selectModelForPrompt(puzzle) === "gpt-oss-120b", "logic puzzle stays on normal chat model");
 
     const serverSource = readFileSync(pathResolve(__dirname, "server.ts"), "utf8");
-    const mathRouteEvents = [...serverSource.matchAll(/writeSseJson\(\{ type: "route", route: "math_reasoning" \}\)/g)];
-    const mathStreamCalls = [...serverSource.matchAll(/streamMathModelRaw\(/g)];
-    assert(mathRouteEvents.length >= 2, "chat stream emits math route events for guest and signed-in math");
-    assert(mathStreamCalls.length >= 2, "chat stream uses live math streaming for guest and signed-in math");
+    assert(/const isBufferedReasoning = false;/.test(serverSource), "chat stream disables automatic buffered reasoning route gates");
+    assert(/const isMathReasoningQuery = false;/.test(serverSource), "chat stream disables automatic math_reasoning route gates");
 
-    console.log("\nMath prompt/routing regression validation passed.");
+    console.log("\nMath prompt/verifier regression validation passed.");
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));

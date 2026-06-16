@@ -9,7 +9,7 @@ import {
   isImpliedFileGenerationRequest,
   resolveFileGenerationIntent,
 } from "../tools/fileGeneration/fileDetector";
-import { detectCodeQuery, isBufferedReasoningQuery, isMathQuery, selectModelForPrompt } from "./modelRouter";
+import { detectCodeQuery, isMathQuery, selectModelForPrompt } from "./modelRouter";
 import { classifyQueryType } from "./queryClassifier";
 import { PRODUCT_NAME } from "../branding";
 
@@ -628,7 +628,6 @@ function shouldAskModel(args: ClarificationContext): boolean {
   if (args.webSearch && isLatestNewsWithoutScope(message)) return true;
   if (/\b(?:complex|not sure|anything|something|best|better|recommend)\b/i.test(message) && wordCount <= 18) return true;
   if (detectCodeQuery(message) && /\b(?:app|website|page|component|api|program)\b/i.test(message) && wordCount <= 14) return true;
-  if (isBufferedReasoningQuery(message) && !/\b(?:step\s*by\s*step|prove|solve|calculate|compute)\b/i.test(message)) return true;
   return false;
 }
 
@@ -642,9 +641,6 @@ export function selectClarificationModel(args: ClarificationContext): string {
   }
   if (isCodingClarificationRequest(message)) {
     return "qwen-coder";
-  }
-  if (!detectCodeQuery(message) && isBufferedReasoningQuery(message)) {
-    return "openai-large";
   }
   const selected = selectModelForPrompt(message, undefined, {
     hasFile: args.hasFile,

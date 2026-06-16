@@ -219,8 +219,8 @@ async function main(): Promise<void> {
   );
   assert.equal(
     selectClarificationModel({ userMessage: "Solve the probability puzzle." }),
-    "openai-large",
-    "math/reasoning clarification uses openai-large",
+    "gemini-search",
+    "math/reasoning clarification avoids provider-specialized routing",
   );
   assert.equal(
     selectClarificationModel({ userMessage: "Latest news about cricket.", webSearch: true }),

@@ -227,6 +227,7 @@ function isCompatibleChatModel(
   deterministicModel: string,
   mappedModel: string,
   options?: RouterOptions,
+  query?: string,
 ): boolean {
   if (!CHAT_COMPATIBLE_MODELS.has(mappedModel)) {
     return false;
@@ -248,6 +249,11 @@ function isCompatibleChatModel(
     return mappedModel === "qwen-coder";
   }
 
+  if (deterministicModel === "gpt-oss-120b" && mappedModel === "openai-large") {
+    void query;
+    return false;
+  }
+
   if (deterministicModel === "gemini-search") {
     return mappedModel === "openai-large";
   }
@@ -259,9 +265,10 @@ export function applyMasterChatRoutingPolicy(args: {
   readonly deterministicModel: string;
   readonly decision: MasterRoutingDecision;
   readonly options?: RouterOptions;
+  readonly query?: string;
 }): MasterRoutingResult {
   const mappedModel = MASTER_MODEL_TO_EXECUTION_MODEL[args.decision.selected_model];
-  const compatible = isCompatibleChatModel(args.deterministicModel, mappedModel, args.options);
+  const compatible = isCompatibleChatModel(args.deterministicModel, mappedModel, args.options, args.query);
 
   if (isHighConfidence(args.decision) && compatible) {
     return {
@@ -297,45 +304,13 @@ export async function selectModelForPromptWithMaster(
   args: MasterSelectionArgs,
   dependencies: MasterRouterDependencies = {},
 ): Promise<MasterRoutingResult> {
+  void dependencies;
   const deterministicModel = selectModelForPrompt(args.query, args.classification, args.options);
-
-  const disabledReason = getMasterRouterDisabledReason(args);
-  if (disabledReason) {
-    return {
-      model: deterministicModel,
-      source: "deterministic",
-      fallback_reason: disabledReason,
-    };
-  }
-
-  try {
-    const decision = await requestMasterDecision({
-      prompt: args.query,
-      executionContext: "chat_or_file_analysis",
-      hasFile: args.options?.hasFile,
-      hasImage: args.options?.hasImage,
-      userId: args.userId,
-      signal: args.signal,
-    }, dependencies);
-    const routed = applyMasterChatRoutingPolicy({
-      deterministicModel,
-      decision,
-      options: args.options,
-    });
-    console.log(
-      `[MasterRouter] chat source=${routed.source} model=${routed.model} ` +
-      `master=${decision.selected_model} confidence=${decision.confidence.toFixed(2)} ` +
-      `fallback=${routed.fallback_reason ?? "none"}`,
-    );
-    return routed;
-  } catch (error) {
-    console.log(`[MasterRouter] chat fallback: ${error instanceof Error ? error.message : String(error)}`);
-    return {
-      model: deterministicModel,
-      source: "deterministic",
-      fallback_reason: "master_router_failed",
-    };
-  }
+  return {
+    model: deterministicModel,
+    source: "deterministic",
+    fallback_reason: "model_owned_tool_selection",
+  };
 }
 
 export function applyMasterImageRoutingPolicy(args: {
@@ -365,27 +340,8 @@ export async function selectImageModelPreferenceWithMaster(
   args: ImageSelectionArgs,
   dependencies: MasterRouterDependencies = {},
 ): Promise<ImageModelPreference | undefined> {
-  const disabledReason = getMasterRouterDisabledReason(args);
-  if (disabledReason) {
-    console.log(`[MasterRouter] image deterministic fallback=${disabledReason}`);
-    return undefined;
-  }
-
-  try {
-    const decision = await requestMasterDecision({
-      prompt: args.prompt,
-      executionContext: "image_generation",
-      userId: args.userId,
-      signal: args.signal,
-    }, dependencies);
-    const preference = applyMasterImageRoutingPolicy({ prompt: args.prompt, decision });
-    console.log(
-      `[MasterRouter] image preference=${preference ?? "deterministic"} ` +
-      `master=${decision.selected_model} confidence=${decision.confidence.toFixed(2)}`,
-    );
-    return preference ?? undefined;
-  } catch (error) {
-    console.log(`[MasterRouter] image fallback: ${error instanceof Error ? error.message : String(error)}`);
-    return undefined;
-  }
+  void args;
+  void dependencies;
+  console.log("[MasterRouter] image preference disabled: model_owned_tool_selection");
+  return undefined;
 }

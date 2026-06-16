@@ -2049,9 +2049,8 @@ app.post(
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
     const hasImageAttachments = (parsed.data.context?.image_attachments?.length ?? 0) > 0;
-    const hasImageMathPrompt = hasImageAttachments && detectImageMathPrompt(effectiveUserMessage);
-    const isBufferedReasoning = isBufferedReasoningQuery(effectiveUserMessage) || hasImageMathPrompt;
-    const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && (isMathQuery(effectiveUserMessage) || hasImageMathPrompt);
+    const isBufferedReasoning = false;
+    const isMathReasoningQuery = false;
     const fileGeneration = isFileGenerationRequest(effectiveUserMessage);
     const fileFormat = detectGeneratedFileFormat(effectiveUserMessage);
     const chartRequest = !fileGeneration && isChartRequest(effectiveUserMessage);
@@ -2065,8 +2064,6 @@ app.post(
     else if (fileGeneration) route = "file_generation";
     else if (chartRequest) route = "chart_generation";
     else if (webSearchRequest) route = "web_search";
-    else if (isMathReasoningQuery) route = "math_reasoning";
-    else if (isBufferedReasoning) route = "reasoning";
     else if (imageRequest && !isGuest) route = "image_generation";
 
     res.json({
@@ -2618,11 +2615,8 @@ app.post(
     });
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
-    const hasImageMathPrompt =
-      (parsed.data.context?.image_attachments?.length ?? 0) > 0 &&
-      detectImageMathPrompt(effectiveUserMessage);
-    const isReasoningQuery = isBufferedReasoningQuery(effectiveUserMessage) || hasImageMathPrompt;
-    const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && (isMathQuery(effectiveUserMessage) || hasImageMathPrompt);
+    const isReasoningQuery = false;
+    const isMathReasoningQuery = false;
     const isLogicReasoningQuery = isReasoningQuery && !isMathReasoningQuery;
     const guestUserMessage = isGuest && isFileGenerationRequest(effectiveUserMessage)
       ? getFileGenerationGuestInstruction(effectiveUserMessage)
@@ -3416,11 +3410,8 @@ app.post(
     });
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
-    const hasImageMathPrompt =
-      (parsed.data.context?.image_attachments?.length ?? 0) > 0 &&
-      detectImageMathPrompt(effectiveUserMessage);
-    const isBufferedReasoning = isBufferedReasoningQuery(effectiveUserMessage) || hasImageMathPrompt;
-    const isMathReasoningQuery = !detectCodeQuery(effectiveUserMessage) && (isMathQuery(effectiveUserMessage) || hasImageMathPrompt);
+    const isBufferedReasoning = false;
+    const isMathReasoningQuery = false;
     const guestUserMessage = isGuest && isFileGenerationRequest(effectiveUserMessage)
       ? getFileGenerationGuestInstruction(effectiveUserMessage)
       : effectiveUserMessage;
@@ -3714,8 +3705,7 @@ app.post(
 
       const guestFastPath = !guestCtx.hasFileContext
         && effectiveUserMessage.length <= 280
-        && !detectCodeQuery(effectiveUserMessage)
-        && !isMathQuery(effectiveUserMessage);
+        && !detectCodeQuery(effectiveUserMessage);
       const guestGeneralReservation = await reserveTextBilling({
         identity: billingIdentity,
         requestId: `${billingRequestId}:guest-general-stream`,
@@ -5101,8 +5091,7 @@ app.post(
     const lowComplexity =
       effectiveUserMessage.length <= 280 &&
       recentMessageCount <= 6 &&
-      !detectCodeQuery(effectiveUserMessage) &&
-      !isMathQuery(effectiveUserMessage);
+      !detectCodeQuery(effectiveUserMessage);
 
     // Extract file names and content for coding PDF detection
     const fileNames = hasFile ? fileRefs.map((f: { filename?: string }) => f.filename || "") : undefined;

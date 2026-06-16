@@ -5,13 +5,14 @@
 //
 // Detection priority (first match wins):
 //   1. image + coding      -> qwen-coder (vision/OCR preprocessed)
-//   2. image + math        -> openai-large (native image input)
-//   3. vision              -> gemini-search (native image input)
-//   4. file (coding PDF)   -> qwen-coder (Pollinations) - coding PDFs get code model
-//   5. file (non-coding)   -> gemini-search (Pollinations) - preserve file pipeline
-//   6. coding              -> qwen-coder (Pollinations)
-//   7. math_reasoning      -> openai-large (Pollinations)
-//   8. general_chat        -> gpt-oss-120b (Groq) - plain text conversations
+//   2. vision              -> gemini-search (native image input)
+//   3. file (coding PDF)   -> qwen-coder (Pollinations) - coding PDFs get code model
+//   4. file (non-coding)   -> gemini-search (Pollinations) - preserve file pipeline
+//   5. coding              -> qwen-coder (Pollinations)
+//   6. general_chat        -> gpt-oss-120b (Groq) - plain text conversations
+//
+// Math/logic keywords are intentionally not provider-routing signals. They are
+// handled as ordinary chat unless an explicit non-chat tool applies.
 //
 // Gemini direct API is NEVER selected by the router.
 // It is a last-resort fallback handled by the Python gateway.
@@ -23,7 +24,6 @@ export const PLAIN_CHAT_MODEL = "gpt-oss-120b";
 export type PromptModelCategory =
   | "coding"
   | "vision"
-  | "math_reasoning"
   | "general_chat"
   | "file_coding"
   | "file_general";
@@ -112,10 +112,10 @@ const FRONTEND_STACK_PATTERNS: readonly RegExp[] = [
 const MATH_PATTERNS: readonly RegExp[] = [
   /\d+\s*[+\-*/^]\s*\d+/,
   /\b\d*[A-Za-z]\s*(?:[+\-*/^]\s*[-+]?\d+(?:\.\d+)?)?\s*=\s*[-+]?\d+(?:\.\d+)?\b/,
-  /\balgebra(?:ic)?\b/i,
-  /\bequation(?:s)?\b/i,
   /\bsolve\s+for\s+[A-Za-z]\b/i,
   /\bsolve\b[\s\S]{0,80}\b(?:equation|system|matrix|integral|derivative|polynomial|quadratic|linear|root|inequality|algebra|calculus)\b/i,
+  /\b(?:solve|calculate|compute|find|what\s+is)\b[\s\S]{0,80}\b(?:equation|probabilit(?:y|ies)|standard\s+deviation|variance|mean|median|determinant|eigenvalue|eigenvector)\b/i,
+  /\b(?:equation|system)\b[\s\S]{0,80}\b(?:solve|solution|root|x|y|z)\b/i,
   /\b(?:gauss|gaussian)\s+elimination\b/i,
   /\bfalse\s+position\s+method\b/i,
   /\bfactor(?:ize|ise)?\b/i,
@@ -123,24 +123,12 @@ const MATH_PATTERNS: readonly RegExp[] = [
   /\bpolynomial\b/i,
   /\bquadratic\b/i,
   /\blinear\s+(?:equation|system|algebra)\b/i,
-  /\bcalculus\b/i,
   /\bintegral(?:s)?\b/i,
   /\bintegrat(?:e|ion)\b/i,
   /\bderivativ(?:e|es)\b/i,
   /\bdifferentiat(?:e|ion)\b/i,
   /\blimit\s+(?:of|as)\b/i,
   /\bseries\s+(?:expansion|convergence)\b/i,
-  /\bprobabilit(?:y|ies)\b/i,
-  /\bstatistic(?:s|al)\b/i,
-  /\bstandard\s+deviation\b/i,
-  /\bvariance\b/i,
-  /\bmean\s+(?:of|value)\b/i,
-  /\bmedian\b/i,
-  /\bcorrelation\b/i,
-  /\bregression\b/i,
-  /\bbinomial\b/i,
-  /\bnormal\s+distribution\b/i,
-  /\bBayes(?:ian)?\b/i,
   /\bmatr(?:ix|ices)\b/i,
   /\bdeterminant\b/i,
   /\beigenvalue\b/i,
@@ -161,10 +149,8 @@ const MATH_PATTERNS: readonly RegExp[] = [
   /\bgreatest\s+common\b/i,
   /\bleast\s+common\b/i,
   /\bmodular\s+arithmetic\b/i,
-  /\bmath(?:ematic(?:s|al))?\b/i,
   /\bnumerical(?:ly)?\b/i,
   /\barithmetic\b/i,
-  /\bgeometr(?:y|ic)\b/i,
   /\btrigonometr(?:y|ic)\b/i,
 ];
 
@@ -385,7 +371,8 @@ export function detectLogicReasoning(query: string): boolean {
 }
 
 export function isBufferedReasoningQuery(query: string): boolean {
-  return isMathQuery(query) || detectLogicReasoning(query);
+  void query;
+  return false;
 }
 
 const VISION_PATTERNS: readonly RegExp[] = [
@@ -510,9 +497,6 @@ function detectPromptCategory(
     if (detectCodeQuery(query)) {
       return "coding";
     }
-    if (isMathQuery(query) || detectImageMathPrompt(query)) {
-      return "math_reasoning";
-    }
     return "vision";
   }
 
@@ -539,12 +523,7 @@ function detectPromptCategory(
     return "coding";
   }
 
-  // Priority 5: Math queries
-  if (isMathQuery(query)) {
-    return "math_reasoning";
-  }
-
-  // Priority 6: General chat (default) -> Groq GPT-OSS for plain text conversations
+  // Priority 5: General chat (default) -> Groq GPT-OSS for plain text conversations
   return "general_chat";
 }
 
@@ -573,19 +552,10 @@ export function selectModelForPrompt(
       model = "qwen-coder";
       console.log("[Router] category=coding -> qwen-coder");
       break;
-    case "math_reasoning":
-      model = "openai-large";
-      console.log("[Router] category=math_reasoning -> openai-large");
-      break;
     case "general_chat":
     default:
-      if (isBufferedReasoningQuery(query)) {
-        model = "gemini-search";
-        console.log("[Router] category=general_chat buffered_reasoning -> gemini-search");
-      } else {
-        model = PLAIN_CHAT_MODEL;
-        console.log(`[Router] category=general_chat -> ${PLAIN_CHAT_MODEL}`);
-      }
+      model = PLAIN_CHAT_MODEL;
+      console.log(`[Router] category=general_chat -> ${PLAIN_CHAT_MODEL}`);
       break;
   }
 

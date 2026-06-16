@@ -25,7 +25,8 @@ import { isFileGenerationRequest, isImpliedFileGenerationRequest } from "../tool
 import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 import { isTavilyAvailable } from "../tools/webSearch/providers/tavilyProvider";
 import { normalizeExecutionMode, type ExecutionMode } from "./executionProfile";
-import { classifyQueryType } from "./queryClassifier";
+import { classifyQueryType, shouldAutoUseWebSurf } from "./queryClassifier";
+import { getAllowedModelOwnedTools } from "./toolContract";
 
 // ==============================
 // Types
@@ -108,7 +109,7 @@ function buildPlannerPrompt(
     "- Only choose file_analysis if uploaded files exist in context.\n" +
     "- Only choose memory_update when the user explicitly asks you to remember, save, store, or keep something in mind.\n" +
     (hasWebSearch
-      ? '- Choose "web_search" for questions about current events, recent news, real-time data (stock prices, weather, scores), facts that may have changed since training data cutoff (e.g., "best AI models in 2026"), or when the user asks to "search" or "look up".\n'
+      ? '- Choose "web_search" only for explicit search/look-up requests or clearly live/current prompts such as latest news, weather, scores, market prices, breaking updates, or current-year rankings.\n'
       : "") +
     "- Default truly ambiguous requests to a single conversation step.\n" +
     "- Steps run in order. Later steps may use results of earlier ones.\n\n" +
@@ -191,6 +192,11 @@ export function resolveHardRoutedPlan(args: {
     return createSingleStepPlan("web_search", args.userMessage);
   }
 
+  if (args.hasWebSearch && shouldAutoUseWebSurf(args.userMessage)) {
+    console.log("[PLANNER] live/current query detected - routing web_surf contract through web_search");
+    return createSingleStepPlan("web_search", args.userMessage);
+  }
+
   if (isChartRequest(args.userMessage)) {
     console.log("[PLANNER] chart keywords detected - hard-routing to chart_generation");
     return createSingleStepPlan("chart_generation", args.userMessage);
@@ -222,7 +228,9 @@ export async function planTask(args: {
   readonly explicitWebSearchMode?: WebSearchMode;
   readonly executionMode?: ExecutionMode;
 }): Promise<ExecutionPlan> {
-  const hasWebSearch = Boolean(args.explicitWebSearchMode) && isTavilyAvailable();
+  const allowedModelOwnedTools = getAllowedModelOwnedTools(args.executionMode);
+  const hasWebSearch = isTavilyAvailable()
+    && (Boolean(args.explicitWebSearchMode) || allowedModelOwnedTools.includes("web_surf"));
   const hardRoutedPlan = resolveHardRoutedPlan({
     userMessage: args.userMessage,
     hasWebSearch,
