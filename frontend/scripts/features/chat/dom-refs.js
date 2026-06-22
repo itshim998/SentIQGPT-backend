@@ -78,5 +78,14 @@ export function getChatDomRefs(doc = document) {
     nameStatus: doc.getElementById("name-status"),
     nameSubmitBtn: doc.getElementById("name-submit-btn"),
     nameLogoutBtn: doc.getElementById("name-logout-btn"),
+    accountBtn: doc.getElementById("account-btn"),
+    accountBtnName: doc.getElementById("account-btn-name"),
+    accountPanel: doc.getElementById("account-panel"),
+    accountPanelName: doc.getElementById("account-panel-name"),
+    accountPanelEmail: doc.getElementById("account-panel-email"),
+    accountUpgradeBtn: doc.getElementById("account-upgrade-btn"),
+    accountPersonalizationBtn: doc.getElementById("account-personalization-btn"),
+    accountSupportBtn: doc.getElementById("account-support-btn"),
+    accountSignoutBtn: doc.getElementById("account-signout-btn"),
   };
 }

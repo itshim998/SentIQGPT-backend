@@ -550,6 +550,7 @@ button:focus-visible,
 .message-action-btn:focus-visible,
 .chat-list-item:focus-visible,
 .btn-settings:focus-visible,
+.account-btn:focus-visible,
 .sidebar-toggle:focus-visible,
 .settings-tab:focus-visible,
 .code-copy-btn:focus-visible,
@@ -563,6 +564,7 @@ textarea:focus-visible {
 
 .btn-new-chat,
 .btn-settings,
+.account-btn,
 .auth-btn,
 .auth-google-btn,
 .settings-tab,
@@ -578,6 +580,7 @@ textarea:focus-visible {
 
 .btn-new-chat:active,
 .btn-settings:active,
+.account-btn:active,
 .auth-btn:active,
 .auth-google-btn:active,
 .settings-tab:active,

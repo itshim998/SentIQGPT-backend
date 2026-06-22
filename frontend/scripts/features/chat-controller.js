@@ -253,6 +253,15 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     nameStatus,
     nameSubmitBtn,
     nameLogoutBtn,
+    accountBtn,
+    accountBtnName,
+    accountPanel,
+    accountPanelName,
+    accountPanelEmail,
+    accountUpgradeBtn,
+    accountPersonalizationBtn,
+    accountSupportBtn,
+    accountSignoutBtn,
   } = getChatDomRefs();
 
   let authView = "login";
@@ -277,6 +286,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   let sidebarBackdrop = null;
   let sidebarTouchSession = null;
   let authMenuOpen = false;
+  let accountPanelOpen = false;
   let authGooglePending = false;
   let syncQueuePromise = null;
   let memorySyncPromise = null;
@@ -598,9 +608,38 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     else openAuthMenu();
   }
 
+  function closeAccountPanel() {
+    accountPanelOpen = false;
+    if (accountBtn) {
+      accountBtn.setAttribute("aria-expanded", "false");
+    }
+    if (accountPanel) {
+      accountPanel.classList.remove("visible");
+      accountPanel.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  function openAccountPanel() {
+    if (!authSessionState) return;
+    accountPanelOpen = true;
+    if (accountBtn) {
+      accountBtn.setAttribute("aria-expanded", "true");
+    }
+    if (accountPanel) {
+      accountPanel.classList.add("visible");
+      accountPanel.setAttribute("aria-hidden", "false");
+    }
+  }
+
+  function toggleAccountPanel() {
+    if (accountPanelOpen) closeAccountPanel();
+    else openAccountPanel();
+  }
+
   function openSidebar() {
     if (!sidebar || !isMobileSidebarViewport()) return;
     closeAuthMenu();
+    closeAccountPanel();
     sidebar.classList.add("open");
     sidebarToggle?.setAttribute("aria-expanded", "true");
     updateOverlayLocks();
@@ -608,6 +647,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function closeSidebar() {
     if (!sidebar) return;
+    closeAccountPanel();
     sidebar.classList.remove("open");
     sidebarToggle?.setAttribute("aria-expanded", "false");
     updateOverlayLocks();
@@ -2757,9 +2797,13 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         }
       } finally {
         if (profileRefreshUserId === userId) {
-          if (authUserEmail) authUserEmail.textContent = getPreferredAccountLabel() || "Signed in";
-          if (authMenuName) authMenuName.textContent = getPreferredAccountLabel() || "Signed in";
+          const preferredLabel = getPreferredAccountLabel() || "Signed in";
+          if (authUserEmail) authUserEmail.textContent = preferredLabel;
+          if (authMenuName) authMenuName.textContent = preferredLabel;
           if (authMenuEmail) authMenuEmail.textContent = authSessionState?.user?.email || "";
+          if (accountBtnName) accountBtnName.textContent = preferredLabel;
+          if (accountPanelName) accountPanelName.textContent = preferredLabel;
+          if (accountPanelEmail) accountPanelEmail.textContent = authSessionState?.user?.email || "";
           setChatAccess(Boolean(authSessionState));
         }
       }
@@ -2794,7 +2838,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const initialAccountLabel = signedIn
       ? (cachedProfile?.displayName || (cachedProfile?.fetchFailed ? email : "Signed in"))
       : "";
-    if (authActions) authActions.dataset.state = signedIn ? "signed-in" : "signed-out";
+    if (authActions) {
+      authActions.dataset.state = signedIn ? "signed-in" : "signed-out";
+      authActions.style.display = signedIn ? "none" : "";
+    }
     if (authLoginBtn) authLoginBtn.style.display = signedIn ? "none" : "";
     if (authSignupBtn) authSignupBtn.style.display = signedIn ? "none" : "";
     if (authUserChip) authUserChip.style.display = signedIn ? "inline-flex" : "none";
@@ -2808,6 +2855,20 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (authMenuEmail) authMenuEmail.textContent = signedIn ? email : "";
     if (authMenuToggle) authMenuToggle.style.display = signedIn ? "" : "none";
     closeAuthMenu();
+
+    // Toggle sidebar buttons: show accountBtn when signedIn, settingsBtn when signedOut
+    if (accountBtn) accountBtn.style.display = signedIn ? "" : "none";
+    if (settingsBtn) settingsBtn.style.display = signedIn ? "none" : "";
+
+    if (signedIn) {
+      const preferredLabel = getPreferredAccountLabel() || "Signed in";
+      if (accountBtnName) accountBtnName.textContent = preferredLabel;
+      if (accountPanelName) accountPanelName.textContent = preferredLabel;
+      if (accountPanelEmail) accountPanelEmail.textContent = email;
+    } else {
+      closeAccountPanel();
+    }
+
     if (signedIn) {
       closeAuthModal();
       setChatAccess(true);
@@ -4741,6 +4802,32 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     closeSettingsBtn?.addEventListener("click", closeSettings);
     settingsModal?.addEventListener("click", (e) => { if (e.target === settingsModal) closeSettings(); });
 
+    accountBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleAccountPanel();
+    });
+
+    accountUpgradeBtn?.addEventListener("click", () => {
+      closeAccountPanel();
+      openSettings();
+      activateSettingsTab("billing");
+    });
+
+    accountPersonalizationBtn?.addEventListener("click", () => {
+      closeAccountPanel();
+      openSettings();
+      activateSettingsTab("memory");
+    });
+
+    accountSupportBtn?.addEventListener("click", () => {
+      closeAccountPanel();
+    });
+
+    accountSignoutBtn?.addEventListener("click", async () => {
+      closeAccountPanel();
+      await handleLogout();
+    });
+
     settingsModal?.querySelectorAll(".settings-tab").forEach((tab) => {
       tab.addEventListener("click", () => {
         const tabName = tab.getAttribute("data-tab");
@@ -4780,6 +4867,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         executionModeToggle?.focus();
         return;
       }
+      if (accountPanelOpen) {
+        closeAccountPanel();
+        accountBtn?.focus();
+        return;
+      }
       if (authMenuOpen) {
         closeAuthMenu();
         return;
@@ -4802,6 +4894,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     window.addEventListener("resize", () => {
       closeComposerMenu();
       setExecutionModeMenuOpen(false);
+      closeAccountPanel();
       if (!isMobileAuthMenuViewport()) closeAuthMenu();
       if (!isMobileSidebarViewport()) {
         closeSidebar();
@@ -4840,6 +4933,16 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         !executionModeControl.contains(event.target)
       ) {
         setExecutionModeMenuOpen(false);
+      }
+      if (
+        accountPanelOpen &&
+        accountPanel &&
+        accountBtn &&
+        event.target instanceof Node &&
+        !accountPanel.contains(event.target) &&
+        !accountBtn.contains(event.target)
+      ) {
+        closeAccountPanel();
       }
       if (!authMenuOpen || !authActions) return;
       if (!(event.target instanceof Node) || !authActions.contains(event.target)) {
@@ -8487,7 +8590,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       webSearchModeOverride = null;
       clearPendingFiles();
     }
-    if (imageModeBar) imageModeBar.style.display = imageMode ? "inline-flex" : "none";
+    if (imageModeBar) imageModeBar.style.display = imageMode ? "flex" : "none";
     if (webSearchModeBar) webSearchModeBar.style.display = "none";
     updateComposerActionSelection();
     if (chatInput && !composerResponseLocked) {
@@ -8542,10 +8645,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   function updateWebSearchButtons() {
     const isActive = webSearchModeOverride === "basic";
     if (webSearchModeBar) {
-      webSearchModeBar.style.display = isActive ? "inline-flex" : "none";
+      webSearchModeBar.style.display = isActive ? "flex" : "none";
     }
     if (webSearchModeLabel) {
-      webSearchModeLabel.textContent = "WebSurf";
+      webSearchModeLabel.textContent = isActive ? "WebSurf active" : "WebSurf";
     }
     updateComposerActionSelection();
   }

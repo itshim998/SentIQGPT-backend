@@ -192,7 +192,7 @@
 /* ==============================
    Performance: touch & tap
    ============================== */
-button, .tool-btn, .btn-send, .chat-list-item, .btn-settings, .sidebar-toggle {
+button, .tool-btn, .btn-send, .chat-list-item, .btn-settings, .account-btn, .sidebar-toggle {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }

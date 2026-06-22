@@ -354,6 +354,37 @@ body::after {
   color: var(--sentiq-text-heading);
 }
 
+.account-btn {
+  min-height: 40px;
+  color: var(--sentiq-text-secondary);
+}
+
+.account-btn:hover,
+.account-btn:focus-visible {
+  background: var(--sentiq-chip-surface-hover);
+  color: var(--sentiq-text-heading);
+}
+
+.account-panel {
+  background: var(--sentiq-surface-elevated, rgba(15,15,25,0.94));
+  border-color: var(--sentiq-border-chip);
+  box-shadow: 0 -12px 40px rgba(0,0,0,0.28), 0 0 0 1px rgba(139,92,246,0.04) inset;
+}
+
+.account-panel-header {
+  border-bottom-color: var(--sentiq-border-chip);
+}
+
+.account-panel-name {
+  color: var(--sentiq-text-heading);
+}
+
+.account-panel-item:hover {
+  background: var(--sentiq-chip-surface-hover);
+  color: var(--sentiq-text-heading);
+}
+
+
 /* Main atmosphere */
 .main-content {
   background:
@@ -1037,6 +1068,7 @@ button:focus-visible,
 .message-action-btn:focus-visible,
 .chat-list-item:focus-visible,
 .btn-settings:focus-visible,
+.account-btn:focus-visible,
 .sidebar-toggle:focus-visible,
 .settings-tab:focus-visible,
 .code-copy-btn:focus-visible,
