@@ -46,7 +46,7 @@ export function getPremiumTextRoute(): ModelRoute {
 }
 
 export function getLiteTextRoute(): ModelRoute {
-  const model = readModel("SENTIQ_MODEL_LITE_TEXT", "pollinations:llama-scout");
+  const model = readModel("SENTIQ_MODEL_LITE_TEXT", "gemini:gemini-lite");
   return {
     feature: "lite_text",
     provider: model.provider || "pollinations",
@@ -58,7 +58,7 @@ export function getLiteTextRoute(): ModelRoute {
 }
 
 export function getAdvancedReasoningRoute(): ModelRoute {
-  const model = readModel("SENTIQ_MODEL_ADVANCED_REASONING", "pollinations:openai-large");
+  const model = readModel("SENTIQ_MODEL_ADVANCED_REASONING", "groq:gpt-oss-120b");
   return {
     feature: "advanced_reasoning",
     provider: model.provider || "pollinations",

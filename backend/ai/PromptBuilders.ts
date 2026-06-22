@@ -68,6 +68,7 @@ export type TaskName =
   | "file_extract"
   | "file_generate"
   | "image_generate"
+  | "web_search_synthesis"
   | "general";
 
 export interface LLMAdapterCall {
@@ -580,7 +581,12 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     SYSTEM_PROMPT = MATH_RESPONSE_SYSTEM_PROMPT;
   } else if (ctx.reasoningMode) {
     SYSTEM_PROMPT = "";
-  } else if ((ctx.modelOverride === "mistral" || ctx.modelOverride === "gemini-search" || ctx.modelOverride === "gpt-oss-120b") && !hasFiles) {
+  } else if ((
+    ctx.modelOverride === "mistral" ||
+    ctx.modelOverride === "gemini-search" ||
+    ctx.modelOverride === "gemini-lite" ||
+    ctx.modelOverride === "gpt-oss-120b"
+  ) && !hasFiles) {
     // General text chat stays warm and conversational after the default model switch.
     SYSTEM_PROMPT = MISTRAL_CONVERSATIONAL_SYSTEM_PROMPT;
   } else {

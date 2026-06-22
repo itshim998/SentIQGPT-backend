@@ -1,7 +1,7 @@
 // SentIQ Chat v3 - Mathematical Reasoning Direct Solver
 //
 // Single-model math pipeline for mathematical/numerical queries.
-// Uses openai-large directly via the shared LLM adapter.
+// Uses the advanced-reasoning route via the shared LLM adapter.
 
 import { buildChatPrompt, callLLMAdapterDetailed, callLLMAdapterStream } from "./PromptBuilders";
 import type { ImageAttachment } from "./PromptBuilders";
@@ -11,7 +11,7 @@ import { isProviderFailurePayload } from "./replyGuard";
 // Constants
 // ==============================
 
-const PRIMARY_MODEL = "openai-large";
+const PRIMARY_MODEL = "gpt-oss-120b";
 const SOLVER_MAX_OUTPUT_TOKENS = 6000;
 const GENERATION_MAX_OUTPUT_TOKENS = 6000;
 const EXAMPLE_MAX_OUTPUT_TOKENS = 6000;

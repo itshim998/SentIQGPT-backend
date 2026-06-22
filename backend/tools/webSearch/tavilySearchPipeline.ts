@@ -12,7 +12,7 @@
 //       ↓
 //   Content Preparation (clean context)
 //       ↓
-//   LLM Synthesis (gemini-search)
+//   LLM Synthesis (Groq -> Gemini/Gemma web fallback chain)
 //       ↓
 //   Final Answer (with source references)
 //
@@ -106,7 +106,8 @@ async function synthesizeWithLLM(
       body: JSON.stringify({
         prompt,
         task: "web_search_synthesis",
-        model_override: "gemini-search",
+        prefer: "groq",
+        model_override: "gpt-oss-120b",
         user_id: "system",
       }),
       signal: signal ?? AbortSignal.timeout(60_000),

@@ -4847,8 +4847,8 @@ app.post(
     }
 
     // ── Safety gate: math queries use the direct math pipeline via orchestrator ──
-    // Math queries need the direct openai-large pipeline, which
-    // is only available through the orchestrator.  Redirect like chart requests.
+    // Math queries use the advanced-reasoning reservation path, which is only
+    // available through the orchestrator. Redirect like chart requests.
     const reasoningClarification = isBufferedReasoning && executionProfile.clarification.enabled
       ? await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
@@ -4890,7 +4890,7 @@ app.post(
       const streamMetrics = createStreamMetrics(
         "chat.stream.reasoning",
         Date.now(),
-        { model: "openai-large" },
+        { model: "advanced_reasoning" },
       );
       const stopHeartbeat = startStreamHeartbeat(10_000, "reasoning");
 
@@ -4977,7 +4977,7 @@ app.post(
           }
 
           if (!mathStreamReply.trim() && !clientDisconnected) {
-            console.warn(`[StreamRecovery] route=reasoning.math.stream model=openai-large reason=empty_stream attempt=buffered_math`);
+            console.warn(`[StreamRecovery] route=reasoning.math.stream model=${mathReservation.adapterModelOverride} reason=empty_stream attempt=buffered_math`);
             const fallback = await callMathModelRaw({
               userMessage: effectiveUserMessage,
               modelOverride: mathReservation.adapterModelOverride,
@@ -4992,7 +4992,7 @@ app.post(
             });
             mathStreamReply = assertUsableAssistantText(fallback.answer, {
               route: "reasoning.math.stream",
-              model: "openai-large",
+              model: mathReservation.adapterModelOverride,
               reason: "empty_stream",
             });
             await streamBufferedAnswer(mathStreamReply, undefined, false, streamMetrics);

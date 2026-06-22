@@ -3,14 +3,17 @@
 SentIQ Chat v1 — Unified Dual-Model LLM Gateway (Production)
 
 Providers:
-  1. Google Gemini (3-key rotation) → reasoning, conversation, knowledge
-  2. Groq (3-key rotation) → memory classification, summarization, routing
+  1. Groq → primary standard chat, reasoning, routing, and synthesis
+  2. Google Gemini/Gemma → pooled free-tier fallback and lite routing
+  3. Pollinations → preserved final fallback and existing file/image paths
 
 Design goals:
-  - Dual-model architecture: reasoning (Gemini) + cognition (Groq)
+  - Production fallback order: Groq, then Gemini/Gemma, then Pollinations last
+  - Six-slot Gemini/Gemma key pool with per-key/model health tracking
   - Strict JSON where required
   - Task-aware routing to correct provider
   - Automatic key rotation on failure per provider
+  - Provider diagnostics without exposing raw API keys
   - Token bucket rate limiting per provider
   - Disk cache (shelve) for deduplication
   - Simulation mode for dev/testing
@@ -27,6 +30,9 @@ import hashlib
 import threading
 import logging
 import importlib
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from dataclasses import dataclass
+from collections import OrderedDict
 from typing import Any, Optional
 
 import requests as _requests_lib
@@ -35,6 +41,8 @@ import requests as _requests_lib
 # Optional SDK imports
 # ==============================
 GENAI_MODULE = None
+GOOGLE_GENAI_MODULE = None
+GOOGLE_GENAI_TYPES_MODULE = None
 GROQ_MODULE = None
 
 for name in ["google.generativeai", "google.genai", "genai"]:
@@ -45,6 +53,17 @@ for name in ["google.generativeai", "google.genai", "genai"]:
             break
     except Exception:
         pass
+
+try:
+    spec = importlib.util.find_spec("google.genai")
+    if spec:
+        GOOGLE_GENAI_MODULE = importlib.import_module("google.genai")
+        try:
+            GOOGLE_GENAI_TYPES_MODULE = importlib.import_module("google.genai.types")
+        except Exception:
+            GOOGLE_GENAI_TYPES_MODULE = None
+except Exception:
+    pass
 
 try:
     spec = importlib.util.find_spec("groq")
@@ -61,14 +80,92 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 from dotenv import load_dotenv
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
+
+def _parse_bool_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    try:
+        parsed = int(os.getenv(name, "").strip())
+        return parsed if parsed > 0 else default
+    except Exception:
+        return default
+
+
+@dataclass(frozen=True)
+class GeminiKeyRecord:
+    index: int
+    env_name: str
+    key: str
+
+
+def _read_gemini_key_records() -> list[GeminiKeyRecord]:
+    records: list[GeminiKeyRecord] = []
+    seen: set[str] = set()
+
+    first_key = (os.getenv("GEMINI_API_KEY_1") or "").strip()
+    legacy_primary = (os.getenv("GEMINI_API_KEY") or "").strip()
+    if first_key:
+        records.append(GeminiKeyRecord(1, "GEMINI_API_KEY_1", first_key))
+        seen.add(first_key)
+    elif legacy_primary:
+        records.append(GeminiKeyRecord(1, "GEMINI_API_KEY", legacy_primary))
+        seen.add(legacy_primary)
+
+    for index in range(2, 7):
+        env_name = f"GEMINI_API_KEY_{index}"
+        key = (os.getenv(env_name) or "").strip()
+        if key and key not in seen:
+            records.append(GeminiKeyRecord(index, env_name, key))
+            seen.add(key)
+
+    return records
+
 # --- Gemini keys ---
-GEMINI_API_KEYS = [
-    os.getenv("GEMINI_API_KEY", ""),
-    os.getenv("GEMINI_API_KEY_2", ""),
-    os.getenv("GEMINI_API_KEY_3", ""),
-]
-GEMINI_API_KEYS = [k for k in GEMINI_API_KEYS if k]
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_KEY_RECORDS = _read_gemini_key_records()
+GEMINI_API_KEYS = [record.key for record in GEMINI_KEY_RECORDS]
+GEMINI_STANDARD_MODEL = os.getenv("GEMINI_STANDARD_MODEL") or os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+GEMINI_LITE_MODEL = os.getenv("GEMINI_LITE_MODEL", GEMINI_STANDARD_MODEL)
+GEMMA_PRIMARY_MODEL = os.getenv("GEMMA_PRIMARY_MODEL", "gemma-4-31b-it")
+GEMMA_SECONDARY_MODEL = os.getenv("GEMMA_SECONDARY_MODEL", "gemma-4-26b-a4b-it")
+GEMINI_REASONING_MODEL = os.getenv("GEMINI_REASONING_MODEL", "gemini-3.5-flash")
+GEMINI_REASONING_BACKUP_MODEL = os.getenv("GEMINI_REASONING_BACKUP_MODEL", "gemini-3-flash")
+GEMINI_WEB_MODEL = os.getenv("GEMINI_WEB_MODEL", "gemini-2.5-flash-lite")
+GEMINI_WEB_BACKUP_MODEL = os.getenv("GEMINI_WEB_BACKUP_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", GEMINI_STANDARD_MODEL)
+GEMINI_GOOGLE_SEARCH_ENABLED = _parse_bool_env("GEMINI_GOOGLE_SEARCH_ENABLED", False)
+GEMINI_TIMEOUT_MS = _parse_int_env("GEMINI_TIMEOUT_MS", 45_000)
+GEMINI_KEY_COOLDOWN_MS = _parse_int_env("GEMINI_KEY_COOLDOWN_MS", 60_000)
+GEMINI_429_COOLDOWN_MS = _parse_int_env("GEMINI_429_COOLDOWN_MS", 180_000)
+GEMINI_INVALID_KEY_DISABLE = _parse_bool_env("GEMINI_INVALID_KEY_DISABLE", True)
+GEMINI_HIGH_THINKING_BUDGET = _parse_int_env("GEMINI_HIGH_THINKING_BUDGET", 8_192)
+_GEMINI_TIMEOUT_SECONDS = max(GEMINI_TIMEOUT_MS / 1000.0, 0.001)
+_GEMINI_STREAM_END = object()
+
+
+def _run_gemini_with_timeout(operation, label: str) -> Any:
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gemini-timeout")
+    future = executor.submit(operation)
+    timed_out = False
+    try:
+        return future.result(timeout=_GEMINI_TIMEOUT_SECONDS)
+    except FutureTimeoutError:
+        timed_out = True
+        future.cancel()
+        raise TimeoutError(f"{label} timed out after {GEMINI_TIMEOUT_MS}ms")
+    finally:
+        executor.shutdown(wait=not timed_out, cancel_futures=True)
+
+
+def _next_gemini_stream_chunk(iterator) -> Any:
+    try:
+        return next(iterator)
+    except StopIteration:
+        return _GEMINI_STREAM_END
 
 # --- Groq keys ---
 GROQ_API_KEYS = [
@@ -87,12 +184,13 @@ MASTER_ROUTER_MODEL = os.getenv(
 )
 
 # --- Smart model routing aliases (resolved to provider-native model IDs) ---
-GEMINI_FAST_MODEL = os.getenv("SMART_MODEL_GEMINI_FAST", "gemini-2.5-flash-lite")
+GEMINI_FAST_MODEL = os.getenv("SMART_MODEL_GEMINI_FAST", GEMINI_STANDARD_MODEL)
 GEMINI_SEARCH_MODEL = os.getenv("SMART_MODEL_GEMINI_SEARCH", GEMINI_FAST_MODEL)
 GEMINI_VISION_MODEL = os.getenv("SMART_MODEL_GEMINI_VISION", "gemini-2.5-flash")
 CODING_MODEL = os.getenv("SMART_MODEL_CODING", "qwen-coder")
 GENERAL_CHAT_MODEL = os.getenv("SMART_MODEL_GENERAL_CHAT", "gemini-2.5-flash-lite")
 SEARCH_MODEL = os.getenv("SMART_MODEL_SEARCH", "gemini-2.5-flash-lite")
+POLLINATIONS_LITE_MODEL = os.getenv("POLLINATIONS_LITE_MODEL", "llama-scout")
 
 GPT_OSS_LOGICAL_MODELS = {"gpt-oss-120b", "openai/gpt-oss-120b"}
 PRODUCT_NAME = "SentIQ Chat"
@@ -234,10 +332,172 @@ def _get_round_robin_groq_keys() -> list[str]:
         _groq_key_rotation_index = (_groq_key_rotation_index + 1) % len(keys)
     return keys[start:] + keys[:start]
 
+
 # ==============================
-# In-Memory LRU Cache (fast layer)
+# Gemini/Gemma Key Health Tracking
 # ==============================
-from collections import OrderedDict
+GEMINI_PROVIDER = "gemini"
+GEMINI_LITE_ALIAS = "gemini-lite"
+GEMINI_REASONING_ALIAS = "gemini-reasoning"
+GEMINI_WEB_ALIAS = "gemini-web"
+GEMINI_STANDARD_ALIAS = "gemini-standard"
+GEMINI_FALLBACK_ALIAS = "gemini-fallback"
+GEMINI_GROUNDED_ALIAS = "gemini-grounded"
+
+_gemini_key_state_lock = threading.Lock()
+_gemini_key_state: dict[tuple[int, str], dict[str, Any]] = {}
+_gemini_key_rotation_lock = threading.Lock()
+_gemini_key_rotation_index = 0
+
+
+def _normalize_model_id(model: Optional[str]) -> str:
+    return (model or "").strip()
+
+
+def _redact_secrets(text: Any) -> str:
+    redacted = str(text)
+    for key in list(GEMINI_API_KEYS) + list(GROQ_API_KEYS) + ([POLLINATIONS_API_KEY] if POLLINATIONS_API_KEY else []):
+        if key:
+            redacted = redacted.replace(key, "[REDACTED]")
+    redacted = re.sub(r"AIza[0-9A-Za-z_\-]{20,}", "[REDACTED]", redacted)
+    return redacted[:500]
+
+
+def _gemini_state_key(record: GeminiKeyRecord, model: Optional[str]) -> tuple[int, str]:
+    return (record.index, _normalize_model_id(model).lower())
+
+
+def _gemini_state_snapshot(record: GeminiKeyRecord, model: Optional[str]) -> dict[str, Any]:
+    with _gemini_key_state_lock:
+        return dict(_gemini_key_state.get(_gemini_state_key(record, model), {}))
+
+
+def get_gemini_key_health_snapshot() -> list[dict[str, Any]]:
+    now = time.time()
+    with _gemini_key_state_lock:
+        state_copy = dict(_gemini_key_state)
+
+    snapshots: list[dict[str, Any]] = []
+    for record in GEMINI_KEY_RECORDS:
+        model_states = [
+            {
+                "model": model,
+                "disabled": bool(state.get("disabled")),
+                "cooldown_remaining_ms": max(0, int((float(state.get("cooldown_until", 0)) - now) * 1000)),
+                "last_status": state.get("last_status"),
+                "last_error": state.get("last_error"),
+            }
+            for (index, model), state in state_copy.items()
+            if index == record.index
+        ]
+        snapshots.append({
+            "index": record.index,
+            "env": record.env_name,
+            "configured": True,
+            "models": model_states,
+        })
+    return snapshots
+
+
+def _get_round_robin_gemini_records(model: Optional[str]) -> list[GeminiKeyRecord]:
+    global _gemini_key_rotation_index
+    if not GEMINI_KEY_RECORDS:
+        return []
+
+    now = time.time()
+    available: list[GeminiKeyRecord] = []
+    cooldown_records: list[GeminiKeyRecord] = []
+    for record in GEMINI_KEY_RECORDS:
+        state = _gemini_state_snapshot(record, model)
+        if state.get("disabled"):
+            continue
+        cooldown_until = float(state.get("cooldown_until", 0) or 0)
+        if cooldown_until > now:
+            cooldown_records.append(record)
+            continue
+        available.append(record)
+
+    candidates = available or cooldown_records
+    if not candidates:
+        return []
+
+    with _gemini_key_rotation_lock:
+        start = _gemini_key_rotation_index % len(candidates)
+        _gemini_key_rotation_index = (_gemini_key_rotation_index + 1) % len(candidates)
+    return candidates[start:] + candidates[:start]
+
+
+def _status_code_from_error(error: Exception) -> Optional[int]:
+    for attr in ("status_code", "code"):
+        value = getattr(error, attr, None)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None)
+    if isinstance(status, int):
+        return status
+    match = re.search(r"\b(400|401|403|404|408|409|429|500|502|503|504)\b", str(error))
+    return int(match.group(1)) if match else None
+
+
+def _classify_gemini_error(error: Exception) -> str:
+    status = _status_code_from_error(error)
+    message = str(error).lower()
+    if status in {401, 403}:
+        return "invalid_key"
+    if status == 429 or "quota" in message or "rate limit" in message or "resource exhausted" in message:
+        return "rate_limited"
+    if status == 404 or "not found" in message or "not supported" in message:
+        return "model_unavailable"
+    if status in {408, 500, 502, 503, 504} or isinstance(error, TimeoutError) or "timeout" in message or "timed out" in message:
+        return "transient"
+    return "failed"
+
+
+def _record_gemini_success(record: GeminiKeyRecord, model: Optional[str]) -> None:
+    with _gemini_key_state_lock:
+        _gemini_key_state.pop(_gemini_state_key(record, model), None)
+
+
+def _record_gemini_failure(record: GeminiKeyRecord, model: Optional[str], error: Exception) -> str:
+    classification = _classify_gemini_error(error)
+    status = _status_code_from_error(error)
+    now = time.time()
+    cooldown_ms = 0
+    disabled = False
+
+    if classification == "invalid_key" and GEMINI_INVALID_KEY_DISABLE:
+        disabled = True
+    elif classification == "rate_limited":
+        cooldown_ms = GEMINI_429_COOLDOWN_MS
+    elif classification == "transient":
+        cooldown_ms = GEMINI_KEY_COOLDOWN_MS
+
+    with _gemini_key_state_lock:
+        state = _gemini_key_state.setdefault(_gemini_state_key(record, model), {})
+        state["last_status"] = classification
+        state["last_error"] = _redact_secrets(error)
+        if status is not None:
+            state["status_code"] = status
+        if disabled:
+            state["disabled"] = True
+        if cooldown_ms > 0:
+            state["cooldown_until"] = now + (cooldown_ms / 1000)
+
+    logger.warning(
+        "Gemini key #%d model=%s failed class=%s status=%s",
+        record.index,
+        model or GEMINI_MODEL,
+        classification,
+        status if status is not None else "unknown",
+    )
+    return classification
+
+
+def _is_model_unavailable_error(error: Exception) -> bool:
+    return _classify_gemini_error(error) == "model_unavailable"
 
 class LRUCache:
     """Thread-safe in-memory LRU cache for fast lookups before disk I/O."""
@@ -435,7 +695,7 @@ def _default_model_for_provider(provider: str) -> str:
         return GROQ_MODEL
     if provider == "pollinations":
         return GENERAL_CHAT_MODEL
-    return GEMINI_MODEL
+    return GEMINI_STANDARD_MODEL
 
 
 def resolve_model_override(model_override: Optional[str], default_provider: str) -> tuple[str, Optional[str]]:
@@ -471,6 +731,14 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
         if provider == "pollinations":
             return "pollinations", concrete_model
         if provider == "gemini":
+            if concrete_logical == GEMINI_LITE_ALIAS:
+                return "gemini", GEMINI_LITE_MODEL
+            if concrete_logical == GEMINI_REASONING_ALIAS:
+                return "gemini", GEMINI_REASONING_MODEL
+            if concrete_logical == GEMINI_WEB_ALIAS:
+                return "gemini", GEMINI_WEB_MODEL
+            if concrete_logical == GEMINI_STANDARD_ALIAS:
+                return "gemini", GEMINI_STANDARD_MODEL
             return "gemini", concrete_model
 
     # --- Pollinations routes (preferred) ---
@@ -492,6 +760,28 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
     # --- Groq chat route ---
     if logical in GPT_OSS_LOGICAL_MODELS:
         return "groq", GROQ_CHAT_MODEL
+
+    # --- Gemini/Gemma direct aliases ---
+    if logical == GEMINI_LITE_ALIAS:
+        return "gemini", GEMINI_LITE_MODEL
+
+    if logical == GEMINI_REASONING_ALIAS:
+        return "gemini", GEMINI_REASONING_MODEL
+
+    if logical == GEMINI_WEB_ALIAS:
+        return "gemini", GEMINI_WEB_MODEL
+
+    if logical == GEMINI_STANDARD_ALIAS:
+        return "gemini", GEMINI_STANDARD_MODEL
+
+    if logical in {"gemma-primary", "gemma-4-31b", "gemma-31b"}:
+        return "gemini", GEMMA_PRIMARY_MODEL
+
+    if logical in {"gemma-secondary", "gemma-4-26b", "gemma-26b"}:
+        return "gemini", GEMMA_SECONDARY_MODEL
+
+    if logical.startswith("gemma"):
+        return "gemini", model_override
 
     # --- Gemini direct routes (vision, explicit gemini models) ---
     if logical == "gemini-vision":
@@ -635,64 +925,367 @@ def _should_request_worked_explanation(
 # ==============================
 _gemini_configure_lock = threading.Lock()
 
-def _call_gemini(prompt: str, api_key: str, model: Optional[str] = None) -> str:
-    if not GENAI_MODULE:
-        raise RuntimeError("Gemini SDK not installed")
+@dataclass(frozen=True)
+class GeminiAttempt:
+    model: str
+    google_search: bool = False
+    high_thinking: bool = False
+
+
+def _is_gemma_model(model: Optional[str]) -> bool:
+    return (model or "").strip().lower().startswith("gemma")
+
+
+def _get_google_genai_client(api_key: str):
+    if not GOOGLE_GENAI_MODULE:
+        raise RuntimeError("Google GenAI SDK not installed")
+    if GOOGLE_GENAI_TYPES_MODULE and hasattr(GOOGLE_GENAI_TYPES_MODULE, "HttpOptions"):
+        try:
+            return GOOGLE_GENAI_MODULE.Client(
+                api_key=api_key,
+                http_options=GOOGLE_GENAI_TYPES_MODULE.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+            )
+        except (TypeError, ValueError):
+            pass
+    return GOOGLE_GENAI_MODULE.Client(api_key=api_key)
+
+
+def _build_google_genai_config(
+    *,
+    google_search: bool = False,
+    high_thinking: bool = False,
+) -> Any:
+    if not GOOGLE_GENAI_TYPES_MODULE:
+        return None
+
+    kwargs: dict[str, Any] = {}
+    if google_search:
+        kwargs["tools"] = [
+            GOOGLE_GENAI_TYPES_MODULE.Tool(
+                google_search=GOOGLE_GENAI_TYPES_MODULE.GoogleSearch(),
+            )
+        ]
+    if high_thinking and hasattr(GOOGLE_GENAI_TYPES_MODULE, "ThinkingConfig"):
+        kwargs["thinking_config"] = GOOGLE_GENAI_TYPES_MODULE.ThinkingConfig(
+            thinking_budget=GEMINI_HIGH_THINKING_BUDGET,
+        )
+
+    if not kwargs:
+        return None
+
+    try:
+        return GOOGLE_GENAI_TYPES_MODULE.GenerateContentConfig(**kwargs)
+    except TypeError:
+        kwargs.pop("thinking_config", None)
+        return GOOGLE_GENAI_TYPES_MODULE.GenerateContentConfig(**kwargs) if kwargs else None
+
+
+def _call_gemini(
+    prompt: str,
+    api_key: str,
+    model: Optional[str] = None,
+    *,
+    google_search: bool = False,
+    high_thinking: bool = False,
+) -> str:
+    resolved_model = model or GEMINI_STANDARD_MODEL
     if not api_key:
         raise RuntimeError("Gemini API key is empty")
     if not gemini_bucket.consume():
         raise RuntimeError("Gemini rate limit exceeded")
 
+    if GOOGLE_GENAI_MODULE:
+        client = _get_google_genai_client(api_key)
+        config = _build_google_genai_config(
+            google_search=google_search,
+            high_thinking=high_thinking,
+        )
+        kwargs: dict[str, Any] = {"model": resolved_model, "contents": prompt}
+        if config is not None:
+            kwargs["config"] = config
+        resp = _run_gemini_with_timeout(
+            lambda: client.models.generate_content(**kwargs),
+            f"Gemini generate_content model={resolved_model}",
+        )
+        return getattr(resp, "text", str(resp))
+
+    if google_search or _is_gemma_model(resolved_model):
+        raise RuntimeError("Google GenAI SDK is required for Gemma and google_search")
+    if not GENAI_MODULE:
+        raise RuntimeError("Gemini SDK not installed")
+
     with _gemini_configure_lock:
         if hasattr(GENAI_MODULE, "configure"):
             GENAI_MODULE.configure(api_key=api_key)
-        model_obj = GENAI_MODULE.GenerativeModel(model or GEMINI_MODEL)
+        model_obj = GENAI_MODULE.GenerativeModel(resolved_model)
 
-    resp = model_obj.generate_content(prompt)
+    def _generate_legacy_content():
+        try:
+            return model_obj.generate_content(
+                prompt,
+                request_options={"timeout": _GEMINI_TIMEOUT_SECONDS},
+            )
+        except TypeError:
+            return model_obj.generate_content(prompt)
+
+    resp = _run_gemini_with_timeout(
+        _generate_legacy_content,
+        f"Gemini legacy generate_content model={resolved_model}",
+    )
     return getattr(resp, "text", str(resp))
 
 
-def _call_gemini_stream(prompt: str, api_key: str, model: Optional[str] = None):
-    """Streaming variant — yields text chunks."""
-    if not GENAI_MODULE:
-        raise RuntimeError("Gemini SDK not installed")
+def _call_gemini_stream(
+    prompt: str,
+    api_key: str,
+    model: Optional[str] = None,
+    *,
+    google_search: bool = False,
+    high_thinking: bool = False,
+):
+    """Streaming variant - yields text chunks."""
+    resolved_model = model or GEMINI_STANDARD_MODEL
     if not api_key:
         raise RuntimeError("Gemini API key is empty")
     if not gemini_bucket.consume():
         raise RuntimeError("Gemini rate limit exceeded")
 
+    if GOOGLE_GENAI_MODULE:
+        client = _get_google_genai_client(api_key)
+        config = _build_google_genai_config(
+            google_search=google_search,
+            high_thinking=high_thinking,
+        )
+        kwargs: dict[str, Any] = {"model": resolved_model, "contents": prompt}
+        if config is not None:
+            kwargs["config"] = config
+        response = _run_gemini_with_timeout(
+            lambda: client.models.generate_content_stream(**kwargs),
+            f"Gemini stream start model={resolved_model}",
+        )
+        iterator = iter(response)
+        while True:
+            chunk = _run_gemini_with_timeout(
+                lambda: _next_gemini_stream_chunk(iterator),
+                f"Gemini stream chunk model={resolved_model}",
+            )
+            if chunk is _GEMINI_STREAM_END:
+                break
+            text = getattr(chunk, "text", "")
+            if text:
+                yield text
+        return
+
+    if google_search or _is_gemma_model(resolved_model):
+        raise RuntimeError("Google GenAI SDK is required for Gemma and google_search")
+    if not GENAI_MODULE:
+        raise RuntimeError("Gemini SDK not installed")
+
     with _gemini_configure_lock:
         if hasattr(GENAI_MODULE, "configure"):
             GENAI_MODULE.configure(api_key=api_key)
-        model_obj = GENAI_MODULE.GenerativeModel(model or GEMINI_MODEL)
+        model_obj = GENAI_MODULE.GenerativeModel(resolved_model)
 
-    response = model_obj.generate_content(prompt, stream=True)
-    for chunk in response:
+    def _generate_legacy_stream():
+        try:
+            return model_obj.generate_content(
+                prompt,
+                stream=True,
+                request_options={"timeout": _GEMINI_TIMEOUT_SECONDS},
+            )
+        except TypeError:
+            return model_obj.generate_content(prompt, stream=True)
+
+    response = _run_gemini_with_timeout(
+        _generate_legacy_stream,
+        f"Gemini legacy stream start model={resolved_model}",
+    )
+    iterator = iter(response)
+    while True:
+        chunk = _run_gemini_with_timeout(
+            lambda: _next_gemini_stream_chunk(iterator),
+            f"Gemini legacy stream chunk model={resolved_model}",
+        )
+        if chunk is _GEMINI_STREAM_END:
+            break
         text = getattr(chunk, "text", "")
         if text:
             yield text
 
-def _invoke_gemini(prompt: str, model_override: Optional[str] = None) -> str:
-    """Try Gemini keys with smart rotation (skip recently failed keys)."""
-    if not GEMINI_API_KEYS:
+
+def _invoke_gemini(
+    prompt: str,
+    model_override: Optional[str] = None,
+    *,
+    google_search: bool = False,
+    high_thinking: bool = False,
+) -> str:
+    """Try Gemini/Gemma keys with rotation, cooldown, and invalid-key disable."""
+    if not GEMINI_KEY_RECORDS:
         raise RuntimeError("No Gemini API keys configured")
 
-    # Prefer healthy keys first
-    keys_to_try = _get_healthy_keys(GEMINI_API_KEYS)
-    
-    last_error = None
-    for idx, api_key in enumerate(keys_to_try, 1):
+    resolved_model = model_override or GEMINI_STANDARD_MODEL
+    records_to_try = _get_round_robin_gemini_records(resolved_model)
+    if not records_to_try:
+        raise RuntimeError(f"No usable Gemini keys for model {resolved_model}")
+
+    last_error: Optional[Exception] = None
+    for record in records_to_try:
         try:
-            result = _call_gemini(prompt, api_key, model_override)
-            logger.info("Gemini key #%d succeeded", idx)
+            result = _call_gemini(
+                prompt,
+                record.key,
+                resolved_model,
+                google_search=google_search,
+                high_thinking=high_thinking,
+            )
+            _record_gemini_success(record, resolved_model)
+            logger.info(
+                "Gemini key #%d model=%s succeeded google_search=%s",
+                record.index,
+                resolved_model,
+                "true" if google_search else "false",
+            )
             return result
         except Exception as e:
             last_error = e
-            logger.warning("Gemini key #%d failed: %s", idx, e)
-            # Mark key as unhealthy for fast-fail on subsequent requests
-            _mark_key_unhealthy(api_key)
+            classification = _record_gemini_failure(record, resolved_model, e)
+            if classification == "model_unavailable":
+                break
 
-    raise RuntimeError(f"All {len(keys_to_try)} Gemini keys failed: {last_error}")
+    raise RuntimeError(
+        f"All usable Gemini keys failed for model {resolved_model}: {_redact_secrets(last_error)}"
+    )
+
+
+def _invoke_gemini_attempt_chain(prompt: str, attempts: list[GeminiAttempt]) -> tuple[str, str]:
+    last_error: Optional[Exception] = None
+    for attempt in attempts:
+        try:
+            result = _invoke_gemini(
+                prompt,
+                attempt.model,
+                google_search=attempt.google_search,
+                high_thinking=attempt.high_thinking,
+            )
+            return result, attempt.model
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                "[Fallback] Gemini/Gemma attempt failed model=%s google_search=%s class=%s error=%s",
+                attempt.model,
+                "true" if attempt.google_search else "false",
+                _classify_gemini_error(e),
+                _redact_secrets(e),
+            )
+
+    raise RuntimeError(f"All Gemini/Gemma attempts failed: {_redact_secrets(last_error)}")
+
+
+def _stream_gemini_attempt_chain(prompt: str, attempts: list[GeminiAttempt]):
+    last_error: Optional[Exception] = None
+    for attempt in attempts:
+        emitted_text = False
+        records_to_try = _get_round_robin_gemini_records(attempt.model)
+        for record in records_to_try:
+            try:
+                for chunk in _call_gemini_stream(
+                    prompt,
+                    record.key,
+                    attempt.model,
+                    google_search=attempt.google_search,
+                    high_thinking=attempt.high_thinking,
+                ):
+                    if chunk:
+                        emitted_text = True
+                    yield chunk
+                _record_gemini_success(record, attempt.model)
+                logger.info("Gemini stream key #%d model=%s succeeded", record.index, attempt.model)
+                return
+            except Exception as e:
+                last_error = e
+                classification = _record_gemini_failure(record, attempt.model, e)
+                if emitted_text:
+                    raise
+                if classification == "model_unavailable":
+                    break
+
+    raise RuntimeError(f"All Gemini/Gemma stream attempts failed: {_redact_secrets(last_error)}")
+
+
+def _dedupe_gemini_attempts(attempts: list[GeminiAttempt]) -> list[GeminiAttempt]:
+    deduped: list[GeminiAttempt] = []
+    seen: set[tuple[str, bool, bool]] = set()
+    for attempt in attempts:
+        key = (attempt.model, attempt.google_search, attempt.high_thinking)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(attempt)
+    return deduped
+
+
+def _standard_gemini_attempts() -> list[GeminiAttempt]:
+    return _dedupe_gemini_attempts([
+        GeminiAttempt(GEMINI_STANDARD_MODEL),
+        GeminiAttempt(GEMMA_PRIMARY_MODEL),
+        GeminiAttempt(GEMMA_SECONDARY_MODEL),
+    ])
+
+
+def _lite_gemini_attempts() -> list[GeminiAttempt]:
+    return _dedupe_gemini_attempts([
+        GeminiAttempt(GEMINI_LITE_MODEL),
+        GeminiAttempt(GEMMA_PRIMARY_MODEL),
+        GeminiAttempt(GEMMA_SECONDARY_MODEL),
+    ])
+
+
+def _reasoning_gemini_attempts() -> list[GeminiAttempt]:
+    return _dedupe_gemini_attempts([
+        GeminiAttempt(GEMINI_REASONING_MODEL),
+        GeminiAttempt(GEMINI_REASONING_BACKUP_MODEL),
+        GeminiAttempt(GEMMA_PRIMARY_MODEL, high_thinking=True),
+        GeminiAttempt(GEMMA_SECONDARY_MODEL, high_thinking=True),
+    ])
+
+
+def _web_gemini_attempts() -> list[GeminiAttempt]:
+    attempts: list[GeminiAttempt] = []
+    if GEMINI_GOOGLE_SEARCH_ENABLED:
+        attempts.extend([
+            GeminiAttempt(GEMINI_WEB_MODEL, google_search=True),
+            GeminiAttempt(GEMINI_WEB_BACKUP_MODEL, google_search=True),
+        ])
+    attempts.extend([
+        GeminiAttempt(GEMINI_WEB_MODEL),
+        GeminiAttempt(GEMINI_WEB_BACKUP_MODEL),
+        GeminiAttempt(GEMINI_STANDARD_MODEL),
+        GeminiAttempt(GEMMA_PRIMARY_MODEL),
+        GeminiAttempt(GEMMA_SECONDARY_MODEL),
+    ])
+    return _dedupe_gemini_attempts(attempts)
+
+
+def _is_reasoning_request(task: str, provider: str, model: Optional[str], skip_wrappers: bool) -> bool:
+    return task in CHATLIKE_TASKS and provider == "groq" and _is_gpt_oss_model(model) and bool(skip_wrappers)
+
+
+def _is_lite_model(model: Optional[str], model_override: Optional[str]) -> bool:
+    values = {
+        (model or "").strip().lower(),
+        (model_override or "").strip().lower(),
+    }
+    return GEMINI_LITE_ALIAS in values or GEMINI_LITE_MODEL.lower() in values
+
+
+def _should_use_google_search_for_gemini(task: str, model: Optional[str]) -> bool:
+    if task != "web_search_synthesis" or not GEMINI_GOOGLE_SEARCH_ENABLED:
+        return False
+    return (model or "").strip().lower() in {
+        GEMINI_WEB_MODEL.lower(),
+        GEMINI_WEB_BACKUP_MODEL.lower(),
+    }
 
 
 def _call_gemini_vision(prompt: str, image_base64: str, mime_type: str, api_key: str, model: Optional[str] = None) -> str:
@@ -722,26 +1315,41 @@ def _call_gemini_vision(prompt: str, image_base64: str, mime_type: str, api_key:
         prompt,
         {"inline_data": {"mime_type": mime_type, "data": image_base64}},
     ]
-    resp = model_obj.generate_content(content_parts)
+
+    def _generate_vision_content():
+        try:
+            return model_obj.generate_content(
+                content_parts,
+                request_options={"timeout": _GEMINI_TIMEOUT_SECONDS},
+            )
+        except TypeError:
+            return model_obj.generate_content(content_parts)
+
+    resp = _run_gemini_with_timeout(
+        _generate_vision_content,
+        f"Gemini vision generate_content model={model or GEMINI_VISION_MODEL}",
+    )
     return getattr(resp, "text", str(resp))
 
 
 def _invoke_gemini_vision(prompt: str, image_base64: str, mime_type: str, model_override: Optional[str] = None) -> str:
     """Try all Gemini keys for a vision request."""
-    if not GEMINI_API_KEYS:
+    if not GEMINI_KEY_RECORDS:
         raise RuntimeError("No Gemini API keys configured")
 
     last_error = None
-    for idx, api_key in enumerate(GEMINI_API_KEYS, 1):
+    model = model_override or GEMINI_VISION_MODEL
+    for record in _get_round_robin_gemini_records(model):
         try:
-            result = _call_gemini_vision(prompt, image_base64, mime_type, api_key, model_override)
-            logger.info("Gemini Vision key #%d succeeded", idx)
+            result = _call_gemini_vision(prompt, image_base64, mime_type, record.key, model)
+            _record_gemini_success(record, model)
+            logger.info("Gemini Vision key #%d succeeded", record.index)
             return result
         except Exception as e:
             last_error = e
-            logger.warning("Gemini Vision key #%d failed: %s", idx, e)
+            _record_gemini_failure(record, model, e)
 
-    raise RuntimeError(f"All {len(GEMINI_API_KEYS)} Gemini Vision keys failed: {last_error}")
+    raise RuntimeError(f"All Gemini Vision keys failed: {_redact_secrets(last_error)}")
 
 # ==============================
 # Groq invocation (key rotation with client pooling)
@@ -1457,6 +2065,39 @@ def call_llm_router(
                 "No markdown. No explanations.\n\n" + prompt
             )
 
+    def _fallback_to_gemini_chain(
+        attempts: list[GeminiAttempt],
+        reason: str,
+    ) -> dict[str, Any]:
+        nonlocal actual_model_used, fallback_triggered, fallback_reason, finish_reason, truncated
+        fallback_triggered = True
+        fallback_reason = reason
+        finish_reason = None
+        truncated = False
+        fallback_result, used_model = _invoke_gemini_attempt_chain(effective_prompt, attempts)
+        actual_model_used = used_model
+        payload = _build_response_payload(fallback_result)
+        _cache_set(key, payload)
+        return payload
+
+    def _fallback_to_pollinations(
+        pollinations_model: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        nonlocal actual_model_used, fallback_triggered, fallback_reason, finish_reason, truncated
+        fallback_triggered = True
+        fallback_reason = reason
+        actual_model_used = pollinations_model
+        fallback_result, finish_reason, truncated = _call_pollinations(
+            effective_prompt,
+            pollinations_model,
+            max_output_tokens=max_output_tokens,
+            image_attachments=image_attachments,
+        )
+        payload = _build_response_payload(fallback_result)
+        _cache_set(key, payload)
+        return payload
+
     # Invoke the correct provider
     try:
         if provider == "pollinations":
@@ -1475,7 +2116,12 @@ def call_llm_router(
                 response_format_json=task == "master_route",
             )
         else:
-            result = _invoke_gemini(effective_prompt, resolved_override)
+            result = _invoke_gemini(
+                effective_prompt,
+                resolved_override,
+                google_search=_should_use_google_search_for_gemini(task, resolved_override or model),
+                high_thinking=_is_gemma_model(resolved_override or model) and bool(skip_wrappers),
+            )
 
         if _looks_like_provider_error_payload(result):
             raise RuntimeError("Provider returned an internal error payload instead of an answer")
@@ -1585,23 +2231,62 @@ def call_llm_router(
             except Exception as fallback_error:
                 logger.error("Fallback Gemini path failed for task=%s: %s", task, fallback_error)
 
-        elif provider != "gemini":
-            # Non-Pollinations, non-Gemini provider (e.g., groq) failed — try Gemini
+        if provider not in {"gemini", "pollinations"}:
+            if task == "web_search_synthesis":
+                try:
+                    logger.info("[Fallback] %s failed - trying Gemini/Gemma web synthesis chain", provider)
+                    return _fallback_to_gemini_chain(_web_gemini_attempts(), f"{provider}_failed")
+                except Exception as fallback_error:
+                    logger.error("Gemini/Gemma web synthesis chain failed: %s", _redact_secrets(fallback_error))
+                    try:
+                        return _fallback_to_pollinations(SEARCH_MODEL, f"{provider}_and_gemini_web_failed")
+                    except Exception as pollinations_error:
+                        logger.error("Pollinations web fallback failed: %s", _redact_secrets(pollinations_error))
+            elif _is_reasoning_request(task, provider, model, skip_wrappers):
+                try:
+                    logger.info("[Fallback] Groq reasoning failed - trying Gemini/Gemma reasoning chain")
+                    return _fallback_to_gemini_chain(_reasoning_gemini_attempts(), f"{provider}_reasoning_failed")
+                except Exception as fallback_error:
+                    logger.error("Gemini/Gemma reasoning chain failed: %s", _redact_secrets(fallback_error))
+                    try:
+                        return _fallback_to_pollinations("openai-large", f"{provider}_and_gemini_reasoning_failed")
+                    except Exception as pollinations_error:
+                        logger.error("Pollinations reasoning fallback failed: %s", _redact_secrets(pollinations_error))
+            else:
+                try:
+                    logger.info("[Fallback] %s failed - trying Gemini/Gemma standard chain", provider)
+                    return _fallback_to_gemini_chain(_standard_gemini_attempts(), f"{provider}_failed")
+                except Exception as fallback_error:
+                    logger.error("Gemini/Gemma standard chain failed: %s", _redact_secrets(fallback_error))
+                    try:
+                        return _fallback_to_pollinations(GENERAL_CHAT_MODEL, f"{provider}_and_gemini_standard_failed")
+                    except Exception as pollinations_error:
+                        logger.error("Pollinations standard fallback failed: %s", _redact_secrets(pollinations_error))
+
+        if provider == "gemini" and _is_lite_model(model, model_override):
             try:
-                logger.info("[Fallback] %s failed — switching to Gemini (%s)", provider, GEMINI_FAST_MODEL)
-                logger.info("[Router] fallback provider=gemini")
-                fallback_triggered = True
-                fallback_reason = f"{provider}_failed"
-                actual_model_used = GEMINI_FAST_MODEL
-                finish_reason = None
-                truncated = False
-                fallback_result = _invoke_gemini(effective_prompt, GEMINI_FAST_MODEL)
-                payload = _build_response_payload(fallback_result)
-                _cache_set(key, payload)
-                logger.info("Fallback Gemini path succeeded for task=%s", task)
-                return payload
+                logger.info("[Fallback] Gemini lite failed - trying Gemma lite backups")
+                return _fallback_to_gemini_chain([
+                    GeminiAttempt(GEMMA_PRIMARY_MODEL),
+                    GeminiAttempt(GEMMA_SECONDARY_MODEL),
+                ], "gemini_lite_failed")
             except Exception as fallback_error:
-                logger.error("Fallback Gemini path failed for task=%s: %s", task, fallback_error)
+                logger.error("Gemma lite backups failed: %s", _redact_secrets(fallback_error))
+                try:
+                    return _fallback_to_pollinations(POLLINATIONS_LITE_MODEL, "gemini_lite_and_gemma_failed")
+                except Exception as pollinations_error:
+                    logger.error("Pollinations lite fallback failed: %s", _redact_secrets(pollinations_error))
+
+        if provider == "gemini" and task == "web_search_synthesis":
+            try:
+                logger.info("[Fallback] Gemini web synthesis failed - trying remaining Gemini/Gemma web chain")
+                return _fallback_to_gemini_chain(_web_gemini_attempts(), "gemini_web_failed")
+            except Exception as fallback_error:
+                logger.error("Gemini/Gemma web fallback chain failed: %s", _redact_secrets(fallback_error))
+                try:
+                    return _fallback_to_pollinations(SEARCH_MODEL, "gemini_web_chain_failed")
+                except Exception as pollinations_error:
+                    logger.error("Pollinations web fallback failed: %s", _redact_secrets(pollinations_error))
 
         return _build_response_payload(
             "",
@@ -1638,6 +2323,7 @@ def stream_llm_router(
     image_attachments: Optional[list[dict[str, Any]]] = None,
     max_output_tokens: Optional[int] = None,
     reasoning_effort: Optional[str] = None,
+    skip_wrappers: bool = False,
 ):
     """
     Streaming variant — yields text chunks.
@@ -1646,6 +2332,8 @@ def stream_llm_router(
     """
     provider, resolved_override = resolve_model_override(model_override, "pollinations")
     model = resolved_override or _default_model_for_provider(provider)
+    gemini_stream_attempts: Optional[list[GeminiAttempt]] = None
+    stream_reasoning_request = _is_reasoning_request(task, provider, model, skip_wrappers)
     
     logger.info(
         "[Router] model=%s provider=%s task=%s override=%s stream=true prompt_chars=%d",
@@ -1685,9 +2373,15 @@ def stream_llm_router(
         logger.warning(
             "[Fallback] Groq GPT-OSS stream failed before first text: %s - switching to Gemini (%s)",
             last_error,
-            GEMINI_FAST_MODEL,
+            GEMINI_REASONING_MODEL if stream_reasoning_request else GEMINI_STANDARD_MODEL,
         )
-        model = GEMINI_FAST_MODEL
+        gemini_stream_attempts = (
+            _reasoning_gemini_attempts()
+            if stream_reasoning_request
+            else _standard_gemini_attempts()
+        )
+        provider = "gemini"
+        model = gemini_stream_attempts[0].model
 
     # --- Pollinations streaming path ---
     if provider == "pollinations":
@@ -1757,23 +2451,46 @@ def stream_llm_router(
                     f"{primary_model or 'pollinations_primary'}_failed_then_{alt_pollinations_model}_failed_before_first_text",
                 )
                 # Fall through to Gemini below
+                gemini_stream_attempts = [GeminiAttempt(GEMINI_FAST_MODEL)]
                 model = GEMINI_FAST_MODEL
 
     # --- Gemini streaming path ---
-    if not GEMINI_API_KEYS:
+    if not GEMINI_KEY_RECORDS:
         raise RuntimeError("No Gemini API keys configured")
 
-    last_error = None
-    for idx, api_key in enumerate(GEMINI_API_KEYS, 1):
-        try:
-            yield from _call_gemini_stream(prompt, api_key, model)
-            logger.info("Gemini stream key #%d succeeded", idx)
-            return
-        except Exception as e:
-            last_error = e
-            logger.warning("Gemini stream key #%d failed: %s", idx, e)
+    if gemini_stream_attempts is None:
+        if _is_lite_model(model, model_override):
+            gemini_stream_attempts = _lite_gemini_attempts()
+        else:
+            gemini_stream_attempts = [
+                GeminiAttempt(
+                    model,
+                    google_search=_should_use_google_search_for_gemini(task, model),
+                    high_thinking=_is_gemma_model(model) and bool(skip_wrappers),
+                )
+            ]
 
-    raise RuntimeError(f"All Gemini keys failed for streaming: {last_error}")
+    try:
+        yield from _stream_gemini_attempt_chain(prompt, gemini_stream_attempts)
+        return
+    except Exception as gemini_stream_error:
+        logger.warning("Gemini/Gemma stream chain failed before first text: %s", _redact_secrets(gemini_stream_error))
+        pollinations_model = (
+            "openai-large"
+            if stream_reasoning_request
+            else POLLINATIONS_LITE_MODEL
+            if _is_lite_model(model, model_override)
+            else SEARCH_MODEL
+            if task == "web_search_synthesis"
+            else GENERAL_CHAT_MODEL
+        )
+        yield from _call_pollinations_stream(
+            prompt,
+            pollinations_model,
+            image_attachments=image_attachments,
+            max_output_tokens=max_output_tokens,
+        )
+        return
 
 
 # ==============================
