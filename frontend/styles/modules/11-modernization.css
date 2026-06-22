@@ -34,11 +34,7 @@
   --content-max-width: 900px;
 }
 
-*,
-*::before,
-*::after {
-  letter-spacing: 0 !important;
-}
+/* letter-spacing override removed — controlled per-element in premium layer */
 
 body {
   background:
