@@ -1192,24 +1192,24 @@ textarea:focus-visible {
   }
 
   .main-content.is-empty-chat {
-    justify-content: flex-start;
+    justify-content: center;
   }
 
   .welcome-screen {
     max-width: calc(100vw - 34px);
-    justify-content: flex-start;
-    padding: max(68px, calc(env(safe-area-inset-top) + 62px)) 17px 16px;
+    justify-content: center;
+    padding: 24px 17px 16px;
     gap: 10px;
   }
 
   .main-content.is-empty-chat .welcome-screen {
-    flex: 1 1 auto;
-    min-height: 0;
+    flex: 0 0 auto;
+    min-height: auto;
     top: auto;
     width: calc(100vw - 34px);
     max-width: calc(100vw - 34px);
-    padding: max(68px, calc(env(safe-area-inset-top) + 62px)) 0 14px;
-    overflow: auto hidden;
+    padding: 24px 0 14px;
+    overflow: visible;
   }
 
   .welcome-eyebrow {
@@ -1380,7 +1380,7 @@ textarea:focus-visible {
     top: auto;
     width: calc(100vw - 28px);
     max-width: calc(100vw - 28px);
-    padding-top: max(64px, calc(env(safe-area-inset-top) + 58px));
+    padding-top: 20px;
     padding-bottom: 10px;
   }
 
