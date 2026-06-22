@@ -287,6 +287,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   let sidebarTouchSession = null;
   let authMenuOpen = false;
   let accountPanelOpen = false;
+  let isChatListExpanded = readLocalStorage("sentiq_chat_list_expanded", "0") === "1";
   let authGooglePending = false;
   let syncQueuePromise = null;
   let memorySyncPromise = null;
@@ -4520,6 +4521,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const handleLogout = async () => {
       try {
         closeAuthMenu();
+        isChatListExpanded = false;
+        writeLocalStorage("sentiq_chat_list_expanded", "0");
         await window.SentIQAuth?.signOut?.();
         await refreshAuthUI(null);
         await syncConversationStateForAuth(false);
@@ -5129,7 +5132,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       ? sidebarChats.filter((chat) => String(chat.title || "New Chat").toLowerCase().includes(searchTerm))
       : sidebarChats;
     chatList.innerHTML = "";
-    for (const chat of visibleChats) {
+
+    function createChatItem(chat) {
       const item = document.createElement("div");
       item.className = "chat-list-item" + (chat.id === currentChatId ? " active" : "");
       item.setAttribute("data-id", chat.id);
@@ -5260,7 +5264,79 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         await loadChatList(true);
       });
       item.appendChild(deleteBtn);
-      chatList.appendChild(item);
+      return item;
+    }
+
+    const shouldCollapse = !searchTerm && visibleChats.length > 5 && !isChatListExpanded;
+    if (shouldCollapse) {
+      const topChats = [];
+      const remainingChats = [];
+      const activeIdx = visibleChats.findIndex((c) => c.id === currentChatId);
+
+      if (activeIdx !== -1 && activeIdx >= 5) {
+        topChats.push(...visibleChats.slice(0, 4));
+        topChats.push(visibleChats[activeIdx]);
+        for (let i = 0; i < visibleChats.length; i++) {
+          if (i >= 4 && i !== activeIdx) {
+            remainingChats.push(visibleChats[i]);
+          }
+        }
+      } else {
+        topChats.push(...visibleChats.slice(0, 5));
+        remainingChats.push(...visibleChats.slice(5));
+      }
+
+      // Append top 5 to container
+      for (const chat of topChats) {
+        chatList.appendChild(createChatItem(chat));
+      }
+
+      // Create collapsed wrapper container
+      const collapsedWrapper = document.createElement("div");
+      collapsedWrapper.className = "chat-list-collapsed-wrapper";
+      for (const chat of remainingChats) {
+        collapsedWrapper.appendChild(createChatItem(chat));
+      }
+      chatList.appendChild(collapsedWrapper);
+
+      // Create More button
+      const moreBtn = document.createElement("button");
+      moreBtn.className = "btn-chat-list-more";
+      moreBtn.type = "button";
+      moreBtn.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m6 9 6 6 6-6"/>
+        </svg>
+        <span>More</span>
+      `;
+      moreBtn.addEventListener("click", () => {
+        isChatListExpanded = true;
+        writeLocalStorage("sentiq_chat_list_expanded", "1");
+        const wrapperHeight = collapsedWrapper.scrollHeight;
+        
+        collapsedWrapper.classList.add("expanded");
+        collapsedWrapper.style.maxHeight = wrapperHeight + "px";
+
+        moreBtn.style.opacity = "0";
+        moreBtn.style.height = "0";
+        moreBtn.style.minHeight = "0";
+        moreBtn.style.paddingTop = "0";
+        moreBtn.style.paddingBottom = "0";
+        moreBtn.style.marginTop = "0";
+        moreBtn.style.marginBottom = "0";
+        moreBtn.style.border = "none";
+
+        setTimeout(() => {
+          moreBtn.remove();
+          collapsedWrapper.style.maxHeight = "none";
+          collapsedWrapper.style.overflow = "visible";
+        }, 300);
+      });
+      chatList.appendChild(moreBtn);
+    } else {
+      for (const chat of visibleChats) {
+        chatList.appendChild(createChatItem(chat));
+      }
     }
     syncActiveChatItem();
     stopMeasure("ok", { chat_count: visibleChats.length });

@@ -339,6 +339,66 @@ body::after {
   color: #f2f4f8;
 }
 
+/* Collapsible Sidebar Chat History (Iteration 3) */
+.btn-chat-list-more {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 40px;
+  padding: 9px 11px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: #737b8b;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.83rem;
+  width: 100%;
+  text-align: left;
+  transition:
+    background-color var(--transition),
+    color var(--transition),
+    border-color var(--transition),
+    opacity 0.2s ease,
+    height 0.25s ease,
+    padding 0.25s ease,
+    margin 0.25s ease;
+}
+
+.btn-chat-list-more:hover {
+  background: rgba(255, 255, 255, 0.038);
+  color: #edf0f6;
+}
+
+.btn-chat-list-more svg {
+  color: #737b8b;
+  transition: color var(--transition), transform var(--transition);
+  flex-shrink: 0;
+}
+
+.btn-chat-list-more:hover svg {
+  color: #edf0f6;
+}
+
+.chat-list-collapsed-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  margin-bottom: -3px; /* offsets flex gap when collapsed */
+  transition:
+    max-height 0.28s cubic-bezier(0.25, 1, 0.5, 1),
+    opacity 0.25s ease,
+    margin-bottom 0.28s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.chat-list-collapsed-wrapper.expanded {
+  opacity: 1;
+  margin-bottom: 0;
+}
+
 .sidebar-footer {
   padding: 12px 10px;
 }
