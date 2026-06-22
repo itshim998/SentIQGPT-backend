@@ -34,7 +34,11 @@
   --content-max-width: 900px;
 }
 
-/* letter-spacing override removed — controlled per-element in premium layer */
+*,
+*::before,
+*::after {
+  letter-spacing: 0 !important;
+}
 
 body {
   background:
@@ -295,7 +299,7 @@ body::after,
   border-color: rgba(255,255,255,0.08);
 }
 
-.image-mode-bar {
+.composer-mode-pill {
   background: #111827;
   border-color: rgba(139,92,246,0.32);
   color: #ddd6fe;

@@ -8487,7 +8487,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       webSearchModeOverride = null;
       clearPendingFiles();
     }
-    if (imageModeBar) imageModeBar.style.display = imageMode ? "flex" : "none";
+    if (imageModeBar) imageModeBar.style.display = imageMode ? "inline-flex" : "none";
     if (webSearchModeBar) webSearchModeBar.style.display = "none";
     updateComposerActionSelection();
     if (chatInput && !composerResponseLocked) {
@@ -8542,10 +8542,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   function updateWebSearchButtons() {
     const isActive = webSearchModeOverride === "basic";
     if (webSearchModeBar) {
-      webSearchModeBar.style.display = isActive ? "flex" : "none";
+      webSearchModeBar.style.display = isActive ? "inline-flex" : "none";
     }
     if (webSearchModeLabel) {
-      webSearchModeLabel.textContent = isActive ? "WebSurf active" : "WebSurf";
+      webSearchModeLabel.textContent = "WebSurf";
     }
     updateComposerActionSelection();
   }

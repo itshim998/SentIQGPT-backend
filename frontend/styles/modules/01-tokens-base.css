@@ -14,13 +14,13 @@
   --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
 
-  /* Purple palette — desaturated for calm aesthetic */
-  --purple-300: #d0cbe0;
-  --purple-400: #a9a0c4;
-  --purple-500: #8578a8;
-  --purple-600: #6e6290;
-  --purple-700: #564d72;
-  --purple-800: #3e3854;
+  /* Purple palette */
+  --purple-300: #c4b5fd;
+  --purple-400: #a78bfa;
+  --purple-500: #8b5cf6;
+  --purple-600: #7c3aed;
+  --purple-700: #6d28d9;
+  --purple-800: #5b21b6;
 
   /* Backgrounds */
   --bg-primary: #09090f;
@@ -37,13 +37,13 @@
   --text-muted: #5a5a72;
   --text-heading: #f5f3ff;
 
-  /* Accent — muted, desaturated */
+  /* Accent */
   --accent: var(--purple-500);
   --accent-hover: var(--purple-600);
-  --accent-glow: rgba(133,120,168,0.08);
-  --accent-glow-strong: rgba(133,120,168,0.12);
-  --accent-cool: #8bb8d4;
-  --accent-cool-glow: rgba(139,184,212,0.10);
+  --accent-glow: rgba(139,92,246,0.10);
+  --accent-glow-strong: rgba(139,92,246,0.18);
+  --accent-cool: #7dd3fc;
+  --accent-cool-glow: rgba(125,211,252,0.22);
 
   /* Semantic */
   --danger: #ef4444;
@@ -53,21 +53,21 @@
   --border: rgba(255,255,255,0.08);
   --border-light: rgba(255,255,255,0.12);
 
-  /* Radii — reduced for cleaner look */
-  --radius: 8px;
-  --radius-sm: 6px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  /* Radii */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
 
   /* Transitions */
   --transition: 0.2s ease;
   --transition-slow: 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Shadows */
-  --shadow-sm: 0 2px 8px rgba(0,0,0,0.3);
-  --shadow-md: 0 4px 20px rgba(0,0,0,0.35);
-  --shadow-lg: 0 8px 40px rgba(0,0,0,0.45);
-  --shadow-glow: 0 0 16px rgba(133,120,168,0.06);
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 20px rgba(0,0,0,0.5);
+  --shadow-lg: 0 8px 40px rgba(0,0,0,0.6);
+  --shadow-glow: 0 0 24px rgba(139,92,246,0.10);
 
   /* Glass */
   --glass-blur: blur(16px) saturate(120%);
@@ -88,14 +88,14 @@
   --sentiq-canvas-bg: var(--bg-primary);
   --sentiq-canvas-bg-subtle: var(--bg-secondary);
   --sentiq-canvas-bg-muted: var(--bg-tertiary);
-  --sentiq-canvas-ambient-primary: none;
-  --sentiq-canvas-ambient-secondary: none;
-  --sentiq-canvas-ambient-blend: none;
-  --sentiq-canvas-open: transparent;
-  --sentiq-canvas-vignette: none;
-  --sentiq-canvas-home-glow: none;
-  --sentiq-canvas-depth-wash: none;
-  --sentiq-canvas-edge-fade: none;
+  --sentiq-canvas-ambient-primary: radial-gradient(circle at 50% 0%, var(--accent-glow) 0%, transparent 62%);
+  --sentiq-canvas-ambient-secondary: radial-gradient(circle at 84% 12%, var(--accent-cool-glow) 0%, transparent 58%);
+  --sentiq-canvas-ambient-blend: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-primary) 100%);
+  --sentiq-canvas-open: linear-gradient(180deg, rgba(255,255,255,0.012), transparent 30%), rgba(5,7,12,0.52);
+  --sentiq-canvas-vignette: linear-gradient(90deg, rgba(0,0,0,0.08), transparent 18%, transparent 82%, rgba(0,0,0,0.1));
+  --sentiq-canvas-home-glow: radial-gradient(ellipse at 50% 28%, rgba(139,92,246,0.11), rgba(139,92,246,0.036) 34%, transparent 66%);
+  --sentiq-canvas-depth-wash: linear-gradient(180deg, rgba(255,255,255,0.012), transparent 40%, rgba(4,6,11,0.14) 100%);
+  --sentiq-canvas-edge-fade: radial-gradient(ellipse at 50% 62%, transparent 0%, rgba(0,0,0,0.22) 100%);
 
   /* Elevated and floating surfaces */
   --sentiq-surface-elevated: var(--bg-glass);
@@ -126,7 +126,7 @@
   --sentiq-text-link: var(--purple-400);
   --sentiq-text-soft: rgba(236,236,241,0.76);
   --sentiq-text-faint: rgba(236,236,241,0.48);
-  --sentiq-welcome-heading-gradient: linear-gradient(135deg, #f0eff4 0%, #ddd8e8 55%, #c8c3d4 120%);
+  --sentiq-welcome-heading-gradient: linear-gradient(135deg, var(--text-heading) 0%, var(--purple-300) 52%, var(--accent-cool) 118%);
 
   /* Later composer/message/sidebar/panel passes */
   --sentiq-composer-radius: 32px;
@@ -175,16 +175,36 @@ body.body-modal-open {
   overscroll-behavior: none;
 }
 
-/* Ambient glows — removed for clean canvas */
+/* Restrained background glow */
 body::before {
-  display: none;
+  content: '';
+  position: fixed;
+  top: -160px;
+  left: -180px;
+  width: 420px;
+  height: 420px;
+  background: radial-gradient(circle, rgba(139,92,246,0.08) 0%, transparent 72%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.9;
 }
 body::after {
-  display: none;
+  content: '';
+  position: fixed;
+  right: -140px;
+  bottom: -180px;
+  width: 380px;
+  height: 380px;
+  background: radial-gradient(circle, rgba(125,211,252,0.12) 0%, transparent 72%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.75;
 }
 
-/* Scrollbar — subtle purple tint */
-::-webkit-scrollbar { width: 6px; }
+/* Scrollbar — thin purple tint */
+::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(133,120,168,0.22); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(133,120,168,0.35); }
+::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.25); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(139,92,246,0.40); }
