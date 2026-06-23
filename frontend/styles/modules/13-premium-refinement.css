@@ -171,20 +171,32 @@ body::after {
   color: transparent;
 }
 
-.sidebar-collapse-btn,
-.sidebar-toggle {
+.sidebar-collapse-btn {
   background: var(--sentiq-chip-surface);
   border-color: var(--sentiq-border-chip);
   color: var(--sentiq-text-faint);
   box-shadow: none;
 }
 
+.sidebar-toggle {
+  background: transparent;
+  border-color: transparent;
+  color: var(--sentiq-text-faint);
+  box-shadow: none;
+}
+
 .sidebar-collapse-btn:hover,
-.sidebar-collapse-btn:focus-visible,
+.sidebar-collapse-btn:focus-visible {
+  background: var(--sentiq-chip-surface-hover);
+  border-color: var(--sentiq-border-focus);
+  color: var(--sentiq-text-heading);
+  transform: none;
+}
+
 .sidebar-toggle:hover,
 .sidebar-toggle:focus-visible {
   background: var(--sentiq-chip-surface-hover);
-  border-color: var(--sentiq-border-focus);
+  border-color: transparent;
   color: var(--sentiq-text-heading);
   transform: none;
 }
@@ -547,6 +559,7 @@ body::after {
 }
 
 .welcome-subtitle {
+  display: none !important;
   max-width: 620px;
   margin-top: 2px;
   color: var(--sentiq-text-secondary);
@@ -842,9 +855,7 @@ body::after {
   padding-bottom: 1px;
 }
 
-.tool-btn,
-.composer-plus-btn,
-.execution-mode-toggle {
+.tool-btn {
   border-radius: 999px;
   background: var(--sentiq-chip-surface);
   border: 1px solid var(--sentiq-border-chip);
@@ -852,21 +863,42 @@ body::after {
   box-shadow: none;
 }
 
-.tool-btn:hover,
-.composer-plus-btn:hover,
-.execution-mode-toggle:hover,
-.execution-mode-toggle:focus-visible,
-.execution-mode-control.open .execution-mode-toggle {
+.composer-plus-btn,
+.execution-mode-toggle {
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--sentiq-text-secondary);
+  box-shadow: none;
+}
+
+.tool-btn:hover {
   background: var(--sentiq-chip-surface-hover);
   border-color: var(--sentiq-border-focus);
   color: var(--sentiq-text-primary);
   transform: none;
 }
 
-.composer-plus-btn.active,
+.composer-plus-btn:hover,
+.composer-plus-btn:focus-visible,
+.execution-mode-toggle:hover,
+.execution-mode-toggle:focus-visible,
+.execution-mode-control.open .execution-mode-toggle {
+  background: var(--sentiq-chip-surface-hover);
+  border-color: transparent;
+  color: var(--sentiq-text-primary);
+  transform: none;
+}
+
 .tool-btn.active {
   background: var(--sentiq-state-active-low);
   border-color: var(--sentiq-border-focus);
+  color: var(--sentiq-text-heading);
+}
+
+.composer-plus-btn.active {
+  background: var(--sentiq-state-active-low);
+  border-color: transparent;
   color: var(--sentiq-text-heading);
 }
 
