@@ -1332,6 +1332,7 @@ textarea:focus-visible {
     border-radius: 999px;
   }
 
+
   .execution-mode-toggle {
     min-width: 72px;
     height: 40px;
@@ -1355,8 +1356,24 @@ textarea:focus-visible {
     width: min(252px, calc(100vw - 32px));
   }
 
+  #execution-mode-control {
+    position: fixed !important;
+    z-index: 95 !important;
+    padding-bottom: 0 !important;
+    top: max(12px, env(safe-area-inset-top)) !important;
+    right: max(12px, env(safe-area-inset-right)) !important;
+  }
+
   .execution-mode-menu {
     width: 138px;
+    bottom: auto;
+    top: calc(100% + 8px);
+    transform-origin: top right;
+    transform: translateY(-6px) scale(0.96);
+  }
+
+  .execution-mode-control.open .execution-mode-menu {
+    transform: translateY(0) scale(1);
   }
 
   .modal-container {

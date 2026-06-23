@@ -2843,6 +2843,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       authActions.dataset.state = signedIn ? "signed-in" : "signed-out";
       authActions.style.display = signedIn ? "none" : "";
     }
+    if (executionModeControl) {
+      executionModeControl.style.display = signedIn ? "" : "none";
+    }
     if (authLoginBtn) authLoginBtn.style.display = signedIn ? "none" : "";
     if (authSignupBtn) authSignupBtn.style.display = signedIn ? "none" : "";
     if (authUserChip) authUserChip.style.display = signedIn ? "inline-flex" : "none";
@@ -9563,6 +9566,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     syncJobTypes: SYNC_JOB_TYPES,
     showToast,
     debugWarn,
+    refreshAuthUI,
   };
 
   function startChatUi() {
