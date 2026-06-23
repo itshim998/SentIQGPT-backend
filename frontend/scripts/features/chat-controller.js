@@ -1073,6 +1073,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
     chatInputArea?.classList.toggle("is-response-locked", locked);
     chatInputArea?.setAttribute("aria-busy", locked ? "true" : "false");
+    executionModeControl?.classList.toggle("is-response-locked", locked);
   }
 
   function setComposerResponseLocked(locked) {
@@ -4910,6 +4911,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         updateOverlayLocks();
       }
       syncComposerHint();
+      syncExecutionModeDomPlacement();
     }, { passive: true });
     window.addEventListener("online", () => {
       processSyncQueue().catch((error) => {
@@ -4985,6 +4987,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
 
     try {
+      syncExecutionModeDomPlacement();
       await refreshAuthUI();
       await handleAuthReturnFlow();
       await syncConversationStateForAuth(isAuthenticatedSession());
@@ -8704,6 +8707,20 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       option.classList.toggle("active", active);
       option.setAttribute("aria-selected", active ? "true" : "false");
     });
+  }
+
+  function syncExecutionModeDomPlacement() {
+    if (!executionModeControl) return;
+    const isMobile = isMobileSidebarViewport();
+    if (isMobile) {
+      if (executionModeControl.parentElement !== document.body) {
+        document.body.appendChild(executionModeControl);
+      }
+    } else {
+      if (chatInputArea && sendBtn && executionModeControl.parentElement !== chatInputArea) {
+        chatInputArea.insertBefore(executionModeControl, sendBtn);
+      }
+    }
   }
 
   async function setExecutionMode(mode, options = {}) {

@@ -1364,6 +1364,12 @@ textarea:focus-visible {
     right: max(12px, env(safe-area-inset-right)) !important;
   }
 
+  .execution-mode-control.is-response-locked {
+    opacity: 0.46 !important;
+    filter: grayscale(0.35) !important;
+    pointer-events: none !important;
+  }
+
   .execution-mode-menu {
     width: 138px;
     bottom: auto;
