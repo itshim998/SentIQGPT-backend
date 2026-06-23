@@ -1323,12 +1323,14 @@ textarea:focus-visible {
   }
 
   .main-content.is-empty-chat .chat-input-wrapper {
-    top: auto;
+    position: relative;
+    top: 35px;
     bottom: auto;
     width: calc(100vw - 24px);
     max-width: calc(100vw - 24px);
     transform: none;
     padding-bottom: max(22px, calc(env(safe-area-inset-bottom) + var(--sentiq-mobile-composer-gap)));
+    transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1);
   }
 
   .chat-input-wrapper::before {
@@ -1418,6 +1420,77 @@ textarea:focus-visible {
     width: min(94vw, 560px);
     border-radius: 18px;
   }
+
+  /* When pill is active in empty/new chat, translate downward to animate lower boundary going down */
+  .main-content.is-empty-chat .chat-input-wrapper.has-active-pill {
+    transform: translateY(20px);
+  }
+
+  /* Grid layout for composer when pill is active or general on mobile */
+  .chat-input-area {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    grid-template-rows: auto auto;
+    align-items: end;
+    column-gap: 6px;
+    row-gap: 0;
+    transition: row-gap 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+  }
+
+  .chat-input-wrapper.has-active-pill .chat-input-area {
+    row-gap: 8px;
+  }
+
+  /* Position children in the grid */
+  .composer-mode-pill {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    justify-self: start;
+    margin-left: 4px;
+    animation: none; /* override default animation */
+  }
+
+  .input-tools {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .input-field-wrapper {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .execution-mode-control {
+    grid-column: 3;
+    grid-row: 2;
+  }
+
+  .btn-send {
+    grid-column: 4;
+    grid-row: 2;
+  }
+
+  /* Animation for the pill entrance */
+  @keyframes expandPill {
+    from {
+      max-height: 0;
+      opacity: 0;
+      margin-bottom: 0;
+      transform: translateY(-6px);
+    }
+    to {
+      max-height: 32px;
+      opacity: 1;
+      margin-bottom: 4px;
+      transform: translateY(0);
+    }
+  }
+
+  /* Apply entrance animation to active pill */
+  .chat-input-wrapper.has-active-pill .composer-mode-pill[style*="display: flex"] {
+    animation: expandPill 0.25s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+    overflow: hidden;
+  }
 }
 
 @media (max-width: 600px) {
@@ -1502,6 +1575,15 @@ textarea:focus-visible {
   .name-modal-body {
     padding: 24px 18px 21px;
   }
+
+  .chat-input-area {
+    column-gap: 6px;
+    row-gap: 0;
+  }
+
+  .chat-input-wrapper.has-active-pill .chat-input-area {
+    row-gap: 8px;
+  }
 }
 
 @media (max-width: 370px) {
@@ -1523,8 +1605,13 @@ textarea:focus-visible {
   }
 
   .chat-input-area {
-    gap: 5px;
+    column-gap: 5px;
+    row-gap: 0;
     padding-inline: 7px;
+  }
+
+  .chat-input-wrapper.has-active-pill .chat-input-area {
+    row-gap: 6px;
   }
 
   .composer-plus-btn,

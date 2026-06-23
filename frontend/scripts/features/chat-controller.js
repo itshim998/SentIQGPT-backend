@@ -8666,6 +8666,14 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     syncComposerHint();
   }
 
+  function syncComposerExpandedState() {
+    const hasPill = Boolean(imageMode) || (webSearchModeOverride === "basic");
+    if (chatInputArea) {
+      chatInputArea.classList.toggle("has-active-pill", hasPill);
+      chatInputArea.parentElement?.classList.toggle("has-active-pill", hasPill);
+    }
+  }
+
   function setImageMode(active) {
     imageMode = Boolean(active);
     if (imageMode) {
@@ -8674,6 +8682,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     }
     if (imageModeBar) imageModeBar.style.display = imageMode ? "flex" : "none";
     if (webSearchModeBar) webSearchModeBar.style.display = "none";
+    syncComposerExpandedState();
     updateComposerActionSelection();
     if (chatInput && !composerResponseLocked) {
       chatInput.focus();
@@ -8746,6 +8755,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (webSearchModeLabel) {
       webSearchModeLabel.textContent = isActive ? "WebSurf active" : "WebSurf";
     }
+    syncComposerExpandedState();
     updateComposerActionSelection();
   }
 
@@ -9026,6 +9036,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     webSearchModeOverride = null;
     if (imageModeBar) imageModeBar.style.display = "none";
     if (webSearchModeBar) webSearchModeBar.style.display = "none";
+    syncComposerExpandedState();
     const { accepted } = addPendingFiles(files);
     renderFilePreview();
     syncComposerHint();
@@ -9047,6 +9058,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     webSearchModeOverride = null;
     if (imageModeBar) imageModeBar.style.display = "none";
     if (webSearchModeBar) webSearchModeBar.style.display = "none";
+    syncComposerExpandedState();
     addPendingFiles(files);
     renderFilePreview();
     if (fileInput) fileInput.value = "";
@@ -9084,6 +9096,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     webSearchModeOverride = null;
     if (imageModeBar) imageModeBar.style.display = "none";
     if (webSearchModeBar) webSearchModeBar.style.display = "none";
+    syncComposerExpandedState();
     addPendingFiles(pastedFiles);
     renderFilePreview();
     syncComposerHint();
