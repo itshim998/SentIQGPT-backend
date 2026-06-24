@@ -48,6 +48,7 @@
         autoRefreshToken: true,
         persistSession: true,
         detectSessionInUrl: true,
+        flowType: "pkce",
         storage: resolveAuthStorage(),
       },
     })
@@ -69,6 +70,16 @@
     try {
       if (window.SentIQNative?.isNative) return true;
       return typeof window.Capacitor?.isNativePlatform === "function" && window.Capacitor.isNativePlatform();
+    } catch {
+      return false;
+    }
+  }
+
+  function isNativeAndroidPlatform() {
+    try {
+      const platform = window.SentIQNative?.platform
+        || (typeof window.Capacitor?.getPlatform === "function" ? window.Capacitor.getPlatform() : "");
+      return isNativePlatform() && platform === "android";
     } catch {
       return false;
     }
@@ -121,7 +132,7 @@
   }
 
   function buildOAuthRedirectUrl() {
-    if (isNativePlatform()) return buildAuthReturnUrl(AUTH_RETURN_LOGIN_MODE);
+    if (isNativeAndroidPlatform()) return NATIVE_AUTH_CALLBACK_URL;
     return window.location.origin;
   }
 
@@ -211,11 +222,12 @@
   async function signInWithGoogle() {
     if (!client) throw configError || new Error("Supabase auth is not configured.");
     const redirectTo = buildOAuthRedirectUrl();
-    const useNativeBrowser = isNativePlatform();
+    const useNativeBrowser = isNativeAndroidPlatform();
     const { data, error } = await client.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo,
+        ...(useNativeBrowser ? { queryParams: { prompt: "select_account" } } : {}),
         ...(useNativeBrowser ? { skipBrowserRedirect: true } : {}),
       },
     });

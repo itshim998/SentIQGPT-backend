@@ -143,6 +143,7 @@ The Android shell includes native redirect readiness for signup confirmation, pa
 
 - `com.sentiqlabs.sentiqchat://auth-callback?auth_mode=signin`
 - `com.sentiqlabs.sentiqchat://auth-callback?auth_mode=recovery`
+- `com.sentiqlabs.sentiqchat://auth-callback`
 
 Supabase dashboard work is required before native OAuth/password-reset verification:
 
@@ -150,8 +151,10 @@ Supabase dashboard work is required before native OAuth/password-reset verificat
 - Keep the web redirect URL(s), including `https://sentiqchat.sentiqlabs.com/`.
 - Add `com.sentiqlabs.sentiqchat://auth-callback` to Supabase Auth redirect URLs.
 - Add `com.sentiqlabs.sentiqchat://auth-callback/` to Supabase Auth redirect URLs.
-- Confirm Google OAuth accepts the Supabase callback URL already configured by Supabase.
+- In Supabase Auth Providers > Google, keep Google enabled with the Google Cloud client ID and client secret configured.
+- In Google Cloud Console, the OAuth client authorized redirect URI must be the Supabase callback URL shown by Supabase for Google, normally `https://<project-ref>.supabase.co/auth/v1/callback`. Do not put the Android custom scheme in Google Cloud; Google returns to Supabase first, then Supabase redirects to the app custom scheme.
 - Test both email confirmation and password recovery links on an Android device.
+- Test Google OAuth on Android: tap Continue with Google, choose an account in the browser/custom tab, confirm the app reopens, the auth modal closes, and the signed-in account UI appears.
 
 Do not remove existing web redirect URLs for `https://sentiqchat.sentiqlabs.com` or local development.
 

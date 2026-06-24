@@ -110,8 +110,8 @@ assert.match(
 );
 assert.match(
   authService,
-  /createClient\([\s\S]*auth:\s*\{[\s\S]*autoRefreshToken:\s*true[\s\S]*persistSession:\s*true[\s\S]*storage:\s*resolveAuthStorage\(\)/,
-  "Supabase auth should explicitly persist sessions through the resolved WebView/browser storage",
+  /createClient\([\s\S]*auth:\s*\{[\s\S]*autoRefreshToken:\s*true[\s\S]*persistSession:\s*true[\s\S]*flowType:\s*["']pkce["'][\s\S]*storage:\s*resolveAuthStorage\(\)/,
+  "Supabase auth should explicitly persist sessions and PKCE state through the resolved WebView/browser storage",
 );
 const passwordSignInStart = authService.indexOf("async function signInWithPassword");
 const passwordSignInEnd = authService.indexOf("async function signInWithGoogle", passwordSignInStart);
@@ -139,8 +139,8 @@ assert.match(
 );
 assert.match(
   authService,
-  /async function signInWithGoogle[\s\S]*client\.auth\.signInWithOAuth/,
-  "Google auth should remain on the OAuth path",
+  /async function signInWithGoogle[\s\S]*client\.auth\.signInWithOAuth[\s\S]*skipBrowserRedirect:\s*true/,
+  "Google auth should remain on the OAuth path and native browser redirect should be suppressed in WebView",
 );
 assert.match(
   authService,
@@ -223,13 +223,23 @@ const fakeSession = {
   refresh_token: "test-refresh-token",
   user: { id: "user-1", email: "person@example.test" }
 };
+const fakeOAuthSession = {
+  access_token: "oauth-access-token",
+  refresh_token: "oauth-refresh-token",
+  user: { id: "oauth-user-1", email: "oauth@example.test" }
+};
 const supabaseCalls = {
   clientOptions: null,
   passwordSignIn: [],
-  oauth: 0,
-  recovery: 0
+  oauth: [],
+  recovery: 0,
+  exchangeCodeForSession: [],
+  setSession: []
 };
 let fakeCurrentSession = null;
+const nativeOpenedUrls = [];
+const nativeClosedBrowsers = [];
+const appListeners = new Map();
 
 class FakeClassList {
   add() {}
@@ -349,6 +359,7 @@ const windowObj = {
   addEventListener() {},
   removeEventListener() {},
   dispatchEvent() {},
+  open(url) { nativeOpenedUrls.push(url); },
   matchMedia() { return { matches: false, addEventListener() {}, removeEventListener() {} }; },
   requestAnimationFrame(fn) { return setTimeout(fn, 0); },
   cancelAnimationFrame(id) { clearTimeout(id); },
@@ -365,6 +376,27 @@ const windowObj = {
   katex: { renderToString: (value) => value },
   SENTIQ_SUPABASE_URL: "https://example.supabase.co",
   SENTIQ_SUPABASE_ANON_KEY: "anon-key",
+  Capacitor: {
+    isNativePlatform() { return true; },
+    getPlatform() { return "android"; },
+    Plugins: {
+      Browser: {
+        async open({ url }) {
+          nativeOpenedUrls.push(url);
+        },
+        async close() {
+          nativeClosedBrowsers.push(true);
+        }
+      },
+      App: {
+        async addListener(name, callback) {
+          appListeners.set(name, callback);
+          return { remove() {} };
+        },
+        exitApp() {}
+      }
+    }
+  },
   supabase: {
     createClient(_url, _key, options) {
       supabaseCalls.clientOptions = options;
@@ -381,9 +413,19 @@ const windowObj = {
             fakeCurrentSession = fakeSession;
             return { data: { session: fakeSession, user: fakeSession.user }, error: null };
           },
-          async signInWithOAuth() {
-            supabaseCalls.oauth += 1;
+          async signInWithOAuth(options) {
+            supabaseCalls.oauth.push(options);
             return { data: { url: "https://oauth.example.test" }, error: null };
+          },
+          async exchangeCodeForSession(code) {
+            supabaseCalls.exchangeCodeForSession.push(code);
+            fakeCurrentSession = fakeOAuthSession;
+            return { data: { session: fakeOAuthSession }, error: null };
+          },
+          async setSession(session) {
+            supabaseCalls.setSession.push(session);
+            fakeCurrentSession = fakeOAuthSession;
+            return { data: { session: fakeOAuthSession }, error: null };
           },
           async signUp() {
             return { data: { session: null, user: null }, error: null };
@@ -527,12 +569,16 @@ if (supabaseCalls.passwordSignIn[0]?.email !== "person@example.test" || supabase
   console.error("Password login did not pass credentials through to signInWithPassword.");
   process.exit(1);
 }
-if (supabaseCalls.oauth !== 0 || supabaseCalls.recovery !== 0) {
+if (supabaseCalls.oauth.length !== 0 || supabaseCalls.recovery !== 0) {
   console.error("Password login touched OAuth or recovery redirect flow.");
   process.exit(1);
 }
 if (supabaseCalls.clientOptions?.auth?.persistSession !== true || supabaseCalls.clientOptions?.auth?.autoRefreshToken !== true) {
   console.error("Supabase auth persistence options were not configured.");
+  process.exit(1);
+}
+if (supabaseCalls.clientOptions?.auth?.flowType !== "pkce") {
+  console.error("Supabase auth PKCE flow was not configured for native OAuth callbacks.");
   process.exit(1);
 }
 if (!supabaseCalls.clientOptions?.auth?.storage || typeof supabaseCalls.clientOptions.auth.storage.setItem !== "function") {
@@ -557,6 +603,78 @@ if (passwordAccessToken !== fakeSession.access_token) {
   process.exit(1);
 }
 console.log("AUTH_PASSWORD_COMMIT_OK");
+
+await window.SentIQAuth?.signInWithGoogle?.();
+if (supabaseCalls.oauth.length !== 1) {
+  console.error("Google login did not call Supabase signInWithOAuth exactly once.");
+  process.exit(1);
+}
+const googleOptions = supabaseCalls.oauth[0]?.options || {};
+if (supabaseCalls.oauth[0]?.provider !== "google") {
+  console.error("Google login did not use the Google provider.");
+  process.exit(1);
+}
+if (googleOptions.redirectTo !== "com.sentiqlabs.sentiqchat://auth-callback") {
+  console.error("Native Google login did not use the native auth callback redirect.");
+  process.exit(1);
+}
+if (googleOptions.skipBrowserRedirect !== true) {
+  console.error("Native Google login did not request skipBrowserRedirect.");
+  process.exit(1);
+}
+if (googleOptions.queryParams?.prompt !== "select_account") {
+  console.error("Native Google login did not request explicit account selection.");
+  process.exit(1);
+}
+if (nativeOpenedUrls.at(-1) !== "https://oauth.example.test") {
+  console.error("Native Google login did not open the OAuth URL through the native browser bridge.");
+  process.exit(1);
+}
+if (typeof appListeners.get("appUrlOpen") !== "function") {
+  console.error("Capacitor appUrlOpen listener was not registered.");
+  process.exit(1);
+}
+console.log("AUTH_GOOGLE_NATIVE_URL_OK");
+
+let nativeReturnEvent = null;
+document.addEventListener("sentiq-native-auth-return", (event) => {
+  nativeReturnEvent = event.detail;
+});
+await appListeners.get("appUrlOpen")({
+  url: "com.sentiqlabs.sentiqchat://auth-callback?auth_mode=signin&code=oauth-code"
+});
+if (supabaseCalls.exchangeCodeForSession[0] !== "oauth-code") {
+  console.error("Native OAuth code return did not exchange the code for a session.");
+  process.exit(1);
+}
+if (nativeReturnEvent?.session !== fakeOAuthSession || nativeReturnEvent?.mode !== "signin") {
+  console.error("Native OAuth code return did not publish the session return event.");
+  process.exit(1);
+}
+if (nativeClosedBrowsers.length < 1) {
+  console.error("Native OAuth code return did not close the browser.");
+  process.exit(1);
+}
+const oauthCodeAccessToken = await window.SentIQAuth?.getAccessToken?.();
+if (oauthCodeAccessToken !== fakeOAuthSession.access_token) {
+  console.error("Native OAuth code return did not update the active access token.");
+  process.exit(1);
+}
+console.log("AUTH_GOOGLE_CODE_RETURN_OK");
+
+nativeReturnEvent = null;
+await window.SentIQAuth?.handleNativeAuthRedirect?.(
+  "com.sentiqlabs.sentiqchat://auth-callback#access_token=hash-access-token&refresh_token=hash-refresh-token&type=signup"
+);
+if (supabaseCalls.setSession.length !== 1) {
+  console.error("Native OAuth hash return did not set the returned session tokens.");
+  process.exit(1);
+}
+if (nativeReturnEvent?.session !== fakeOAuthSession || nativeReturnEvent?.type !== "signup") {
+  console.error("Native OAuth hash return did not publish the session return event.");
+  process.exit(1);
+}
+console.log("AUTH_GOOGLE_HASH_RETURN_OK");
 process.exit(0);
 `;
 
@@ -582,5 +700,8 @@ for (const id of [
 assert.match(output, /DEDUPE_OK/, "chat-message dedupe helper should satisfy production behavior");
 assert.match(output, /NEW_CHAT_CLICK_OK/, "new chat click should not crash after bootstrap");
 assert.match(output, /AUTH_PASSWORD_COMMIT_OK/, "password login should commit a session and publish auth state");
+assert.match(output, /AUTH_GOOGLE_NATIVE_URL_OK/, "native Google OAuth should use the custom callback and native browser flow");
+assert.match(output, /AUTH_GOOGLE_CODE_RETURN_OK/, "native Google OAuth code return should exchange and commit a session");
+assert.match(output, /AUTH_GOOGLE_HASH_RETURN_OK/, "native Google OAuth token return should set and commit a session");
 
 console.log("PASS | Frontend bootstrap regression checks passed.");
