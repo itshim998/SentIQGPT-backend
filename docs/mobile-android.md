@@ -16,6 +16,27 @@ The Android project is configured for:
 
 The current Azure backend resource URL still contains `sentiqgpt-backend`. That is a deployed backend identifier, not user-facing app branding, and should not be renamed without a verified backend replacement.
 
+## API Origin And CORS
+
+Capacitor serves the bundled Android WebView from `https://localhost`. That origin is separate from the deployed backend URL and must be allowed by the Azure backend CORS configuration for guest chat, streaming chat, and other API calls to work on Android.
+
+The frontend API-base resolver intentionally sends native Android to the deployed HTTPS backend unless `window.SENTIQ_API_BASE` is explicitly set. Local browser development on `http://localhost` and `http://127.0.0.1` still uses `http://localhost:3001`.
+
+To update the live Azure Container App allowlist, preserve any existing approved origins and include `https://localhost`:
+
+```powershell
+$env:RESOURCE_GROUP = "rg-sentiqgpt-prod"
+$env:CONTAINER_APP_NAME = "sentiqgpt-backend"
+$env:CORS_ORIGINS = "https://sentiqchat.sentiqlabs.com,https://localhost"
+
+az containerapp update `
+  --name $env:CONTAINER_APP_NAME `
+  --resource-group $env:RESOURCE_GROUP `
+  --set-env-vars CORS_ORIGINS=$env:CORS_ORIGINS
+```
+
+No Supabase setting is required for guest chat CORS. Supabase redirect allowlist work is still only needed for native auth redirects in the section below.
+
 ## Prerequisites
 
 - Node.js 22+ and npm for Capacitor 8 commands
