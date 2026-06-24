@@ -39,6 +39,8 @@
     "billing:verify-razorpay-config": "ts-node --project tsconfig.backend.json backend/billing/verifyRazorpayConfig.ts"
   },
   "dependencies": {
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/browser": "^8.0.3",
     "@capacitor/core": "^8.4.1",
     "@supabase/supabase-js": "^2.100.0",
     "@types/pdfkit": "^0.17.6",

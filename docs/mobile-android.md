@@ -1,16 +1,18 @@
 # SentIQ Chat Android Foundation
 
-This repository now includes a Capacitor Android foundation for packaging the existing static SentIQ Chat frontend as a native Android app.
+This repository includes a Capacitor Android foundation for packaging the existing static SentIQ Chat frontend as a native Android app.
 
 ## Scope
 
-This is Phase 2 foundation work only. The Android project is configured for:
+The Android project is configured for:
 
 - App ID: `com.sentiqlabs.sentiqchat`
 - App name: `SentIQ Chat`
 - Web asset root: `frontend`
 - Bundled app API behavior: uses the deployed backend unless `window.SENTIQ_API_BASE` is explicitly set
 - Local browser development: `http://localhost` and `http://127.0.0.1` still use `http://localhost:3001`
+- Android native auth callback scheme: `com.sentiqlabs.sentiqchat://auth-callback`
+- Android target SDK: API 36
 
 The current Azure backend resource URL still contains `sentiqgpt-backend`. That is a deployed backend identifier, not user-facing app branding, and should not be renamed without a verified backend replacement.
 
@@ -81,7 +83,51 @@ cd android
 .\gradlew.bat assembleDebug
 ```
 
-This does not validate runtime behavior on a device. Device and emulator installs are deferred to the next mobile validation pass.
+Expected debug output:
+
+```text
+android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+This validates that the Android project compiles. It does not validate runtime behavior on a device.
+
+## Device Testing
+
+Check connected devices:
+
+```powershell
+adb devices
+```
+
+Install the debug APK only after confirming an authorized device or emulator is listed:
+
+```powershell
+cd android
+.\gradlew.bat installDebug
+```
+
+Or install the built APK directly:
+
+```powershell
+adb install -r app\build\outputs\apk\debug\app-debug.apk
+```
+
+If Android Emulator startup reports an AEHD or hypervisor acceleration issue, fix that in Android Studio Device Manager / SDK Manager first. Common checks are: install the latest Android Emulator package, enable Windows Hypervisor Platform or the Android Emulator Hypervisor Driver as appropriate for the machine, reboot after driver changes, then recreate the emulator if the old AVD remains unstable.
+
+## Native Auth Redirects
+
+Email/password auth remains the same in the web app. The Android shell includes native redirect readiness for signup confirmation, password reset, and Google OAuth through:
+
+- `com.sentiqlabs.sentiqchat://auth-callback?auth_mode=signin`
+- `com.sentiqlabs.sentiqchat://auth-callback?auth_mode=recovery`
+
+Supabase dashboard work is required before native OAuth/password-reset verification:
+
+- Add `com.sentiqlabs.sentiqchat://auth-callback` to Supabase Auth redirect URLs.
+- Confirm Google OAuth accepts the Supabase callback URL already configured by Supabase.
+- Test both email confirmation and password recovery links on an Android device.
+
+Do not remove existing web redirect URLs for `https://sentiqchat.sentiqlabs.com` or local development.
 
 ## Future Release AAB
 
@@ -112,13 +158,33 @@ TODO for a later branding pass:
 
 ## Deferred Work
 
-Do not treat this foundation pass as full mobile readiness. The following remain intentionally deferred:
+The following remain intentionally deferred for production readiness:
 
 - Keyboard and composer behavior testing on real Android screens.
-- Android back button behavior.
+- Android back button behavior validation on device.
 - Supabase OAuth redirect verification for the native Android package.
-- File picker, upload, generated-file preview, and download testing.
-- WebSurf and image generation mobile runtime verification.
+- File picker, upload, generated-file preview, and download testing on device.
+- WebSurf and image generation mobile runtime verification on device.
 - Push notifications or other native plugins.
 - Privacy policy, account deletion flow, and Play Store Data Safety review.
 - Release signing, Play App Signing, and Play Store compliance flow.
+- Final adaptive icon and splash artwork.
+- Play Store screenshots, feature graphic, listing copy, and support contact review.
+
+## Manual Test Checklist
+
+Run this checklist on an authorized Android device or emulator after `installDebug`:
+
+- Launch: app opens to SentIQ Chat without a blank WebView.
+- API base: chat requests go to the deployed backend, not Android WebView `localhost`.
+- Login: email/password login succeeds.
+- Signup: email signup sends confirmation and the confirmation redirect returns to the app after Supabase allowlist setup.
+- Password reset: reset email opens the app and shows the new-password form after Supabase allowlist setup.
+- Google OAuth: Google sign-in opens externally and returns to the app after Supabase/Google redirect setup.
+- Chat streaming: send, streaming response, stop button, and interrupted response recovery work.
+- Sidebar/back: Android back closes image lightbox, composer menu, account menu, settings/trust/auth modal, and mobile sidebar before exiting.
+- File upload: Android file picker attaches supported documents/images and rejected files show safe copy.
+- Generated files: preview, edit/save for HTML, and download/open behavior work.
+- Images: image generation displays result, opens lightbox, and external image open/download path is usable.
+- WebSurf: external source links open outside the WebView.
+- Modals: settings, billing, memory, trust/support, and auth modals fit narrow screens without horizontal overflow.

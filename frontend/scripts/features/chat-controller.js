@@ -508,6 +508,52 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return null;
   }
 
+  function handleTransientBackNavigation(options = {}) {
+    const { restoreFocus = false } = options;
+    if (imageLightbox?.classList.contains("visible")) {
+      closeImageLightbox();
+      return true;
+    }
+    if (composerActionMenu?.classList.contains("open")) {
+      closeComposerMenu();
+      return true;
+    }
+    if (executionModeControl?.classList.contains("open")) {
+      setExecutionModeMenuOpen(false);
+      if (restoreFocus) executionModeToggle?.focus();
+      return true;
+    }
+    if (accountPanelOpen) {
+      closeAccountPanel();
+      if (restoreFocus) accountBtn?.focus();
+      return true;
+    }
+    if (authMenuOpen) {
+      closeAuthMenu();
+      return true;
+    }
+    if (window.SentIQTrustPanel?.isOpen?.()) {
+      window.SentIQTrustPanel.close();
+      return true;
+    }
+    if (isModalVisible(settingsModal)) {
+      closeSettings();
+      return true;
+    }
+    if (isModalVisible(nameModal)) {
+      return true;
+    }
+    if (isModalVisible(authModal)) {
+      closeAuthModal();
+      return true;
+    }
+    if (isMobileSidebarViewport() && sidebar?.classList.contains("open")) {
+      closeSidebar();
+      return true;
+    }
+    return false;
+  }
+
   function trapFocusInModal(event) {
     if (event.key !== "Tab") return false;
     const activeModal = getActiveModal();
@@ -4859,43 +4905,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     sidebarToggle?.addEventListener("click", toggleSidebar);
     sidebarCollapseBtn?.addEventListener("click", toggleSidebarCollapsed);
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && imageLightbox?.classList.contains("visible")) {
-        closeImageLightbox();
-        return;
-      }
       if (trapFocusInModal(e)) return;
       if (e.key !== "Escape") return;
-      if (composerActionMenu?.classList.contains("open")) {
-        closeComposerMenu();
-        return;
-      }
-      if (executionModeControl?.classList.contains("open")) {
-        setExecutionModeMenuOpen(false);
-        executionModeToggle?.focus();
-        return;
-      }
-      if (accountPanelOpen) {
-        closeAccountPanel();
-        accountBtn?.focus();
-        return;
-      }
-      if (authMenuOpen) {
-        closeAuthMenu();
-        return;
-      }
-      if (isModalVisible(settingsModal)) {
-        closeSettings();
-        return;
-      }
-      if (isModalVisible(nameModal)) {
-        return;
-      }
-      if (isModalVisible(authModal)) {
-        closeAuthModal();
-        return;
-      }
-      if (isMobileSidebarViewport() && sidebar?.classList.contains("open")) {
-        closeSidebar();
+      if (handleTransientBackNavigation({ restoreFocus: true })) {
+        e.preventDefault();
+        e.stopPropagation();
       }
     });
     window.addEventListener("resize", () => {
@@ -4985,6 +4999,44 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         });
       });
     }
+
+    document.addEventListener("sentiq-native-auth-return", async (event) => {
+      const detail = event.detail || {};
+      const recoveryMode = window.SentIQAuth?.AUTH_RETURN_RECOVERY_MODE || "recovery";
+      try {
+        if (detail.session) {
+          await refreshAuthUI(detail.session);
+          await syncConversationStateForAuth(true);
+        } else {
+          await refreshAuthUI();
+        }
+        if (detail.mode === recoveryMode) {
+          openAuthModal("password-recovery");
+          setAuthStatus("Set a new password to finish resetting your account.", "success");
+          return;
+        }
+        if (detail.session) {
+          showToast("Logged in successfully.", "success");
+          chatInput?.focus();
+          return;
+        }
+        openAuthModal("login");
+        setAuthStatus("Sign-in returned to SentIQ Chat. Continue with your email if needed.", "success");
+      } catch (error) {
+        debugWarn("[Auth] Native return handling failed:", getSafeErrorMessage(error));
+        openAuthModal("login");
+        setAuthStatus(getSafeErrorMessage(error), "error");
+      }
+    });
+
+    document.addEventListener("sentiq-native-auth-error", (event) => {
+      openAuthModal("login");
+      setAuthStatus(event.detail?.message || "Sign-in could not be completed.", "error");
+    });
+
+    window.SentIQNativeNavigation = {
+      handleBack: () => handleTransientBackNavigation({ restoreFocus: false }),
+    };
 
     try {
       syncExecutionModeDomPlacement();
@@ -6571,6 +6623,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const safeName = filename && String(filename).trim()
       ? String(filename).trim()
       : `sentiq-chat-${Date.now()}.png`;
+    if (window.SentIQNative?.isNative && /^https?:\/\//i.test(String(imageUrl || ""))) {
+      await window.SentIQNative.openExternalUrl(imageUrl);
+      return { mode: "native-browser" };
+    }
     try {
       const blob = await resolveImageBlob(imageUrl);
       const blobUrl = URL.createObjectURL(blob);
@@ -6585,7 +6641,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       return { mode: "blob" };
     } catch (error) {
       if (fallbackToNewTab) {
-        window.open(String(imageUrl), "_blank", "noopener");
+        if (window.SentIQNative?.openExternalUrl) await window.SentIQNative.openExternalUrl(String(imageUrl));
+        else window.open(String(imageUrl), "_blank", "noopener");
         return { mode: "tab", error };
       }
       throw error;
@@ -6803,6 +6860,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (normalized.file_url || normalized.file_id || normalized.storage_path) {
       const href = await resolveGeneratedFileAccessUrl(normalized, "download");
       if (!href) throw new Error("Generated file is not available for download.");
+      if (window.SentIQNative?.isNative && /^https?:\/\//i.test(String(href))) {
+        await window.SentIQNative.openExternalUrl(href);
+        return;
+      }
       const link = document.createElement("a");
       link.href = href;
       link.download = filename;

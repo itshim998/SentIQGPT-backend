@@ -37,6 +37,10 @@ import { PRODUCT_NAME } from "../shared/brand.js";
     modal.setAttribute("aria-hidden", "true");
   }
 
+  function isOpen() {
+    return modal.style.display !== "none";
+  }
+
   if (supportLink) {
     supportLink.href = `mailto:${supportEmail}`;
     supportLink.textContent = `Email ${supportEmail}`;
@@ -100,4 +104,10 @@ import { PRODUCT_NAME } from "../shared/brand.js";
       clearSourceFilesButton.disabled = false;
     }
   });
+
+  window.SentIQTrustPanel = {
+    open,
+    close,
+    isOpen,
+  };
 })();

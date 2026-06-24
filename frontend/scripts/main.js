@@ -11,3 +11,4 @@ import "./panels/file-panel.js";
 import "./panels/settings-panel.js";
 import "./panels/billing-panel.js";
 import "./panels/trust-panel.js";
+import "./native/capacitor-bridge.js";
