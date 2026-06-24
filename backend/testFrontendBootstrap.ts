@@ -7,6 +7,7 @@ const root = resolve(__dirname, "..");
 const frontend = readFrontendSources(root);
 const chatController = frontend.scripts["scripts/features/chat-controller.js"] || "";
 const apiClient = frontend.scripts["scripts/services/api.js"] || "";
+const authService = frontend.scripts["scripts/services/auth.js"] || "";
 const storageService = frontend.scripts["scripts/services/storage.js"] || "";
 const memoryPanel = frontend.scripts["scripts/panels/memory-panel.js"] || "";
 
@@ -108,6 +109,45 @@ assert.match(
   "API client should serialize cached trusted profile context",
 );
 assert.match(
+  authService,
+  /createClient\([\s\S]*auth:\s*\{[\s\S]*autoRefreshToken:\s*true[\s\S]*persistSession:\s*true[\s\S]*storage:\s*resolveAuthStorage\(\)/,
+  "Supabase auth should explicitly persist sessions through the resolved WebView/browser storage",
+);
+const passwordSignInStart = authService.indexOf("async function signInWithPassword");
+const passwordSignInEnd = authService.indexOf("async function signInWithGoogle", passwordSignInStart);
+assert(passwordSignInStart > 0 && passwordSignInEnd > passwordSignInStart, "auth service should expose a password sign-in boundary");
+const passwordSignInBlock = authService.slice(passwordSignInStart, passwordSignInEnd);
+assert.match(
+  passwordSignInBlock,
+  /client\.auth\.signInWithPassword\(\{\s*email,\s*password\s*\}\)/,
+  "email/password login should use Supabase signInWithPassword in-app",
+);
+assert.match(
+  passwordSignInBlock,
+  /commitAuthSession\(session,\s*["']password["']\)/,
+  "email/password login should commit and publish the returned session",
+);
+assert.doesNotMatch(
+  passwordSignInBlock,
+  /signInWithOAuth|openNativeAuthBrowser|buildAuthReturnUrl|window\.location\.href/,
+  "email/password login should not use OAuth, browser, or native callback redirect flow",
+);
+assert.match(
+  authService,
+  /document\.dispatchEvent\(new CustomEvent\(["']sentiq-auth-changed["']/,
+  "auth service should dispatch the existing auth-changed event when sessions change",
+);
+assert.match(
+  authService,
+  /async function signInWithGoogle[\s\S]*client\.auth\.signInWithOAuth/,
+  "Google auth should remain on the OAuth path",
+);
+assert.match(
+  authService,
+  /async function resetPasswordForEmail[\s\S]*buildRecoveryRedirectUrl\(\)/,
+  "password recovery should remain on the recovery redirect path",
+);
+assert.match(
   chatController,
   /authGateMessage\.classList\.toggle\(["']visible["'],\s*requiresName\)/,
   "guest mode should not show the lower auth gate above the composer",
@@ -177,6 +217,19 @@ assert(startupIndex > globalsIndex, "SentIQChat should be exposed before chat st
 const harness = String.raw`
 const ids = new Map();
 const domListeners = new Map();
+const authStateListeners = [];
+const fakeSession = {
+  access_token: "test-access-token",
+  refresh_token: "test-refresh-token",
+  user: { id: "user-1", email: "person@example.test" }
+};
+const supabaseCalls = {
+  clientOptions: null,
+  passwordSignIn: [],
+  oauth: 0,
+  recovery: 0
+};
+let fakeCurrentSession = null;
 
 class FakeClassList {
   add() {}
@@ -250,6 +303,10 @@ const document = {
     if (!domListeners.has(type)) domListeners.set(type, []);
     domListeners.get(type).push(fn);
   },
+  dispatchEvent(event) {
+    (domListeners.get(event.type) || []).forEach((fn) => fn(event));
+    return true;
+  },
   removeEventListener() {},
   getElementById: getEl,
   querySelector() { return new FakeElement(); },
@@ -306,6 +363,51 @@ const windowObj = {
   fetch: async () => ({ ok: false, status: 500, json: async () => ({}), text: async () => "" }),
   marked: { parse: (value) => value, setOptions() {}, Renderer: class {} },
   katex: { renderToString: (value) => value },
+  SENTIQ_SUPABASE_URL: "https://example.supabase.co",
+  SENTIQ_SUPABASE_ANON_KEY: "anon-key",
+  supabase: {
+    createClient(_url, _key, options) {
+      supabaseCalls.clientOptions = options;
+      return {
+        auth: {
+          async getSession() {
+            return { data: { session: fakeCurrentSession }, error: null };
+          },
+          async getUser() {
+            return { data: { user: fakeCurrentSession?.user || null }, error: null };
+          },
+          async signInWithPassword(credentials) {
+            supabaseCalls.passwordSignIn.push(credentials);
+            fakeCurrentSession = fakeSession;
+            return { data: { session: fakeSession, user: fakeSession.user }, error: null };
+          },
+          async signInWithOAuth() {
+            supabaseCalls.oauth += 1;
+            return { data: { url: "https://oauth.example.test" }, error: null };
+          },
+          async signUp() {
+            return { data: { session: null, user: null }, error: null };
+          },
+          async resetPasswordForEmail() {
+            supabaseCalls.recovery += 1;
+            return { data: {}, error: null };
+          },
+          async updateUser() {
+            return { data: { user: fakeCurrentSession?.user || fakeSession.user }, error: null };
+          },
+          async signOut() {
+            fakeCurrentSession = null;
+            authStateListeners.forEach((listener) => listener("SIGNED_OUT", null));
+            return { error: null };
+          },
+          onAuthStateChange(listener) {
+            authStateListeners.push(listener);
+            return { data: { subscription: { unsubscribe() {} } } };
+          }
+        }
+      };
+    }
+  },
   getComputedStyle() { return { getPropertyValue: () => "" }; },
   MutationObserver: FakeMutationObserver
 };
@@ -407,6 +509,54 @@ try {
   console.error("New chat click crashed after bootstrap:", error);
   process.exit(1);
 }
+
+let passwordAuthEvent = null;
+const passwordCallbackSessions = [];
+document.addEventListener("sentiq-auth-changed", (event) => {
+  if (event.detail?.source === "password") passwordAuthEvent = event.detail;
+});
+window.SentIQAuth?.subscribeAuthChanges?.((session) => {
+  passwordCallbackSessions.push(session);
+});
+const passwordResult = await window.SentIQAuth?.signInWithPassword?.("person@example.test", "correct-password");
+if (supabaseCalls.passwordSignIn.length !== 1) {
+  console.error("Password login did not call Supabase signInWithPassword exactly once.");
+  process.exit(1);
+}
+if (supabaseCalls.passwordSignIn[0]?.email !== "person@example.test" || supabaseCalls.passwordSignIn[0]?.password !== "correct-password") {
+  console.error("Password login did not pass credentials through to signInWithPassword.");
+  process.exit(1);
+}
+if (supabaseCalls.oauth !== 0 || supabaseCalls.recovery !== 0) {
+  console.error("Password login touched OAuth or recovery redirect flow.");
+  process.exit(1);
+}
+if (supabaseCalls.clientOptions?.auth?.persistSession !== true || supabaseCalls.clientOptions?.auth?.autoRefreshToken !== true) {
+  console.error("Supabase auth persistence options were not configured.");
+  process.exit(1);
+}
+if (!supabaseCalls.clientOptions?.auth?.storage || typeof supabaseCalls.clientOptions.auth.storage.setItem !== "function") {
+  console.error("Supabase auth storage was not configured.");
+  process.exit(1);
+}
+if (passwordResult?.session !== fakeSession) {
+  console.error("Password login did not return the committed session.");
+  process.exit(1);
+}
+if (passwordAuthEvent?.session !== fakeSession) {
+  console.error("Password login did not dispatch sentiq-auth-changed with the session.");
+  process.exit(1);
+}
+if (passwordCallbackSessions.at(-1) !== fakeSession) {
+  console.error("Password login did not notify subscribed auth refresh callbacks.");
+  process.exit(1);
+}
+const passwordAccessToken = await window.SentIQAuth?.getAccessToken?.();
+if (passwordAccessToken !== fakeSession.access_token) {
+  console.error("Password login did not update the active access token.");
+  process.exit(1);
+}
+console.log("AUTH_PASSWORD_COMMIT_OK");
 process.exit(0);
 `;
 
@@ -431,5 +581,6 @@ for (const id of [
 }
 assert.match(output, /DEDUPE_OK/, "chat-message dedupe helper should satisfy production behavior");
 assert.match(output, /NEW_CHAT_CLICK_OK/, "new chat click should not crash after bootstrap");
+assert.match(output, /AUTH_PASSWORD_COMMIT_OK/, "password login should commit a session and publish auth state");
 
 console.log("PASS | Frontend bootstrap regression checks passed.");

@@ -2,6 +2,33 @@
 // 2. Supabase Auth
 // ================================================================
 (function () {
+  function createMemoryAuthStorage() {
+    const store = new Map();
+    return {
+      getItem(key) {
+        return store.has(key) ? store.get(key) : null;
+      },
+      setItem(key, value) {
+        store.set(key, String(value));
+      },
+      removeItem(key) {
+        store.delete(key);
+      },
+    };
+  }
+
+  function resolveAuthStorage() {
+    try {
+      const storage = window.localStorage;
+      const probeKey = "__sentiq_auth_storage_probe__";
+      storage.setItem(probeKey, "1");
+      storage.removeItem(probeKey);
+      return storage;
+    } catch {
+      return createMemoryAuthStorage();
+    }
+  }
+
   let configError = null;
   try {
     if (!window.supabase) {
@@ -16,11 +43,19 @@
 
   const configured = !configError;
   const client = configured
-    ? window.supabase.createClient(window.SENTIQ_SUPABASE_URL, window.SENTIQ_SUPABASE_ANON_KEY)
+    ? window.supabase.createClient(window.SENTIQ_SUPABASE_URL, window.SENTIQ_SUPABASE_ANON_KEY, {
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true,
+        storage: resolveAuthStorage(),
+      },
+    })
     : null;
 
   let currentSession = null;
   let authSubscription = null;
+  const authChangeCallbacks = new Set();
   const AUTH_RETURN_MODE_PARAM = "auth_mode";
   const AUTH_RETURN_LOGIN_MODE = "signin";
   const AUTH_RETURN_RECOVERY_MODE = "recovery";
@@ -37,6 +72,36 @@
     } catch {
       return false;
     }
+  }
+
+  function assignCurrentSession(session) {
+    currentSession = session || null;
+    return currentSession;
+  }
+
+  function notifyAuthChanged(source) {
+    authChangeCallbacks.forEach((callback) => {
+      try {
+        const result = callback(currentSession);
+        if (result && typeof result.catch === "function") {
+          result.catch(() => {});
+        }
+      } catch { /* auth refresh callback failures should not block session commit */ }
+    });
+    document.dispatchEvent(new CustomEvent("sentiq-auth-changed", {
+      detail: { session: currentSession, source },
+    }));
+  }
+
+  function commitAuthSession(session, source) {
+    assignCurrentSession(session);
+    notifyAuthChanged(source);
+    return currentSession;
+  }
+
+  async function getSessionFromAuthResult(data) {
+    if (data?.session) return data.session;
+    return getSession().catch(() => null);
   }
 
   function buildAuthReturnUrl(mode) {
@@ -108,7 +173,7 @@
       session = await getSession().catch(() => null);
     }
 
-    if (session) currentSession = session;
+    if (session) commitAuthSession(session, "native-auth-return");
     await window.SentIQNative?.closeBrowser?.();
     document.dispatchEvent(new CustomEvent("sentiq-native-auth-return", {
       detail: {
@@ -124,7 +189,7 @@
     if (!client) throw configError || new Error("Supabase auth is not configured.");
     const { data, error } = await client.auth.getSession();
     if (error) throw error;
-    currentSession = data?.session || null;
+    assignCurrentSession(data?.session || null);
     return currentSession;
   }
 
@@ -137,8 +202,10 @@
     if (!client) throw configError || new Error("Supabase auth is not configured.");
     const { data, error } = await client.auth.signInWithPassword({ email, password });
     if (error) throw error;
-    currentSession = data?.session || null;
-    return data;
+    const session = await getSessionFromAuthResult(data);
+    if (!session) throw new Error("Sign-in completed, but no session was returned.");
+    commitAuthSession(session, "password");
+    return { ...data, session };
   }
 
   async function signInWithGoogle() {
@@ -168,7 +235,8 @@
       options: emailRedirectTo ? { emailRedirectTo } : undefined,
     });
     if (error) throw error;
-    currentSession = data?.session || null;
+    if (data?.session) commitAuthSession(data.session, "signup");
+    else assignCurrentSession(null);
     return data;
   }
 
@@ -188,7 +256,7 @@
     const { data, error } = await client.auth.updateUser({ password });
     if (error) throw error;
     const session = await getSession().catch(() => currentSession);
-    currentSession = session || currentSession;
+    if (session) commitAuthSession(session, "password-update");
     return data;
   }
 
@@ -196,15 +264,15 @@
     if (!client) return;
     const { error } = await client.auth.signOut();
     if (error) throw error;
-    currentSession = null;
+    commitAuthSession(null, "signout");
   }
 
   function subscribeAuthChanges(callback) {
+    if (typeof callback === "function") authChangeCallbacks.add(callback);
     if (!client || authSubscription) return;
     const { data } = client.auth.onAuthStateChange((_event, session) => {
-      currentSession = session || null;
-      if (typeof callback === "function") callback(currentSession);
-      document.dispatchEvent(new CustomEvent("sentiq-auth-changed", { detail: { session: currentSession } }));
+      assignCurrentSession(session || null);
+      notifyAuthChanged("supabase");
     });
     authSubscription = data?.subscription || null;
   }

@@ -137,14 +137,19 @@ If Android Emulator startup reports an AEHD or hypervisor acceleration issue, fi
 
 ## Native Auth Redirects
 
-Email/password auth remains the same in the web app. The Android shell includes native redirect readiness for signup confirmation, password reset, and Google OAuth through:
+Email/password auth remains an in-app WebView flow. It should call Supabase `signInWithPassword`, receive a session, update the app auth state, and close the auth modal without opening the hosted web app or a native browser tab.
+
+The Android shell includes native redirect readiness for signup confirmation, password reset, and Google OAuth through:
 
 - `com.sentiqlabs.sentiqchat://auth-callback?auth_mode=signin`
 - `com.sentiqlabs.sentiqchat://auth-callback?auth_mode=recovery`
 
 Supabase dashboard work is required before native OAuth/password-reset verification:
 
+- Set Site URL to `https://sentiqchat.sentiqlabs.com/`.
+- Keep the web redirect URL(s), including `https://sentiqchat.sentiqlabs.com/`.
 - Add `com.sentiqlabs.sentiqchat://auth-callback` to Supabase Auth redirect URLs.
+- Add `com.sentiqlabs.sentiqchat://auth-callback/` to Supabase Auth redirect URLs.
 - Confirm Google OAuth accepts the Supabase callback URL already configured by Supabase.
 - Test both email confirmation and password recovery links on an Android device.
 
