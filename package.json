@@ -9,6 +9,10 @@
     "check:migrations": "ts-node --project tsconfig.backend.json backend/checkShardMigrations.ts",
     "llm-service": "python backend/llm_service.py",
     "dev:all": "concurrently \"npm run dev\" \"npm run llm-service\"",
+    "android:sync": "npx cap sync android",
+    "android:open": "npx cap open android",
+    "android:build": "cd android && gradlew assembleDebug",
+    "android:build:aab": "cd android && gradlew bundleRelease",
     "test:pass1": "ts-node --project tsconfig.backend.json backend/testPass1ShardRouter.ts && ts-node --project tsconfig.backend.json backend/testPass1HttpErrors.ts",
     "test:pass2": "ts-node --project tsconfig.backend.json backend/testPass2Auth.ts",
     "test:profile": "ts-node --project tsconfig.backend.json backend/testProfileFlow.ts",
@@ -35,6 +39,7 @@
     "billing:verify-razorpay-config": "ts-node --project tsconfig.backend.json backend/billing/verifyRazorpayConfig.ts"
   },
   "dependencies": {
+    "@capacitor/core": "^8.4.1",
     "@supabase/supabase-js": "^2.100.0",
     "@types/pdfkit": "^0.17.6",
     "cors": "^2.8.5",
@@ -44,8 +49,8 @@
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
     "helmet": "^8.1.0",
-    "jszip": "^3.10.1",
     "jose": "^6.2.2",
+    "jszip": "^3.10.1",
     "multer": "^1.4.5-lts.1",
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.18.0",
@@ -55,6 +60,8 @@
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/cli": "^8.4.1",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/helmet": "^0.0.48",

@@ -1,0 +1,9 @@
+{
+  "appId": "com.sentiqlabs.sentiqchat",
+  "appName": "SentIQ Chat",
+  "webDir": "frontend",
+  "backgroundColor": "#080B11",
+  "server": {
+    "androidScheme": "https"
+  }
+}

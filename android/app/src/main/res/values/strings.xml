@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SentIQ Chat</string>
+    <string name="title_activity_main">SentIQ Chat</string>
+    <string name="package_name">com.sentiqlabs.sentiqchat</string>
+    <string name="custom_url_scheme">com.sentiqlabs.sentiqchat</string>
+</resources>
