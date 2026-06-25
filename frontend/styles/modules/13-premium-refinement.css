@@ -1315,6 +1315,7 @@ textarea:focus-visible {
   .message-content {
     font-size: 0.96rem;
     line-height: 1.68;
+    min-width: 0;
   }
 
   .chat-input-wrapper {
@@ -1418,7 +1419,81 @@ textarea:focus-visible {
 
   .modal-container {
     width: min(94vw, 560px);
+    max-height: calc(100dvh - max(24px, env(safe-area-inset-top)) - max(24px, env(safe-area-inset-bottom)));
     border-radius: 18px;
+  }
+
+  html,
+  body,
+  .app-container,
+  .main-content {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  .modal-overlay {
+    align-items: flex-start;
+    min-height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-top: max(12px, calc(env(safe-area-inset-top) + 8px));
+    padding-bottom: max(12px, calc(env(safe-area-inset-bottom) + 8px));
+  }
+
+  .chat-scroll-region,
+  .message-content,
+  .web-search-panel,
+  .message-chart-container,
+  .generated-file-panel,
+  .generated-html-layout,
+  .generated-html-code-pane,
+  .generated-html-preview-pane,
+  .generated-sheet-shell,
+  .generated-slide-list {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .message-content table,
+  .code-block-wrap pre,
+  .message-content .math-display-shell,
+  .generated-html-code-pane pre,
+  .generated-text-preview,
+  .generated-sheet-preview {
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  .message-chart-frame {
+    min-height: 220px;
+    height: clamp(220px, 68vw, 340px);
+  }
+
+  .generated-file-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .generated-file-action,
+  .image-download-btn,
+  .web-search-summary,
+  .web-search-source-link,
+  .generated-sheet-tab {
+    min-height: var(--sentiq-touch-target-min);
+  }
+
+  .image-lightbox {
+    padding:
+      max(72px, calc(env(safe-area-inset-top) + 56px))
+      max(14px, env(safe-area-inset-right))
+      max(20px, calc(env(safe-area-inset-bottom) + 14px))
+      max(14px, env(safe-area-inset-left));
+  }
+
+  .image-lightbox-img {
+    max-width: 96vw;
+    max-height: calc(100dvh - 122px);
   }
 
   /* When pill is active in empty/new chat, translate downward to animate lower boundary going down */
@@ -1569,6 +1644,18 @@ textarea:focus-visible {
   .file-preview-area,
   .auth-gate-message {
     margin-inline: 10px;
+  }
+
+  .generated-file-action {
+    flex: 1 1 calc(50% - 4px);
+    justify-content: center;
+  }
+
+  .generated-slide-preview {
+    width: 100%;
+    min-height: 190px;
+    height: auto;
+    aspect-ratio: auto;
   }
 
   .auth-modal-body,

@@ -3,12 +3,9 @@
 // ================================================================
 import { PRODUCT_NAME, STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "../shared/brand.js";
 import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
+import { SENTIQ_API_BASE } from "../config.js";
 
-const API_BASE = window.SENTIQ_API_BASE ||
-  (location.hostname === "localhost" || location.hostname === "127.0.0.1"
-    ? "http://localhost:3001"
-    // Azure backend resource identifier remains unchanged until a verified replacement exists.
-    : "https://sentiqgpt-backend.ashygrass-913d190e.centralindia.azurecontainerapps.io");
+const API_BASE = SENTIQ_API_BASE;
 const ANONYMOUS_ID_KEY = STORAGE_KEYS.anonymousQuotaId;
 const LEGACY_ANONYMOUS_ID_KEY = LEGACY_STORAGE_KEYS.anonymousQuotaId;
 
