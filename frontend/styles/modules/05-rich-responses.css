@@ -882,3 +882,195 @@
   background: currentColor;
   box-shadow: 0 0 10px currentColor;
 }
+
+/* ==============================
+   Redesigned Image Gen Card
+   ============================== */
+.image-generation-card {
+  max-width: min(512px, 100%);
+  width: 100%;
+  animation: canvasDrawOpen 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transform-origin: top left;
+  margin: 12px 0 4px;
+}
+
+.image-generation-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #141416;
+  box-shadow: var(--shadow-md);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.image-generation-pending-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  transition: opacity 0.4s ease;
+}
+
+.landscape-animation-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.landscape-sky {
+  fill: #141416;
+  animation: skyCycle 6s infinite ease-in-out;
+}
+
+.landscape-sun {
+  fill: #8e8e93;
+  animation: sunCycle 6s infinite ease-in-out;
+  transform-origin: center;
+}
+
+.landscape-moon {
+  fill: #5c5c60;
+  animation: moonCycle 6s infinite ease-in-out;
+  transform-origin: center;
+}
+
+.landscape-hill-back {
+  fill: #1c1c1f;
+}
+
+.landscape-hill-front {
+  fill: #27272a;
+}
+
+.image-generation-frame .message-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  z-index: 2;
+  margin: 0;
+  transition: none; /* override old transition */
+}
+
+.image-generation-frame.loaded .image-generation-pending-layer {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.image-generation-frame.loaded .message-image {
+  opacity: 1;
+  animation: imageReveal 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Top-right Icon-only Download Button */
+.image-frame-download-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(18, 20, 31, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #a1a1aa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease, background 0.2s ease, transform 0.2s ease, color 0.2s ease;
+  z-index: 3;
+  padding: 0;
+}
+
+.image-frame-download-btn:hover {
+  background: rgba(18, 20, 31, 0.95);
+  color: #ffffff;
+  transform: scale(1.05);
+}
+
+.image-generation-frame.loaded .image-frame-download-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@keyframes canvasDrawOpen {
+  0% {
+    clip-path: inset(0 100% 100% 0);
+    transform: scale(0.96);
+    opacity: 0;
+  }
+  100% {
+    clip-path: inset(0 0 0 0);
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes imageReveal {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: scale(1);
+  }
+}
+
+@keyframes skyCycle {
+  0%, 100% { fill: #141416; }
+  25%, 35% { fill: #202024; }
+  50% { fill: #141416; }
+}
+
+@keyframes sunCycle {
+  0% { transform: translate(40px, 180px); opacity: 0; }
+  12.5% { transform: translate(65px, 120px); opacity: 1; }
+  25% { transform: translate(100px, 80px); opacity: 1; }
+  37.5% { transform: translate(135px, 120px); opacity: 1; }
+  50%, 100% { transform: translate(160px, 180px); opacity: 0; }
+}
+
+@keyframes moonCycle {
+  0%, 50% { transform: translate(40px, 180px); opacity: 0; }
+  62.5% { transform: translate(65px, 120px); opacity: 1; }
+  75% { transform: translate(100px, 80px); opacity: 1; }
+  87.5% { transform: translate(135px, 120px); opacity: 1; }
+  100% { transform: translate(160px, 180px); opacity: 0; }
+}
+
+/* prefers-reduced-motion media query */
+@media (prefers-reduced-motion: reduce) {
+  .image-generation-card {
+    animation: none !important;
+  }
+  .landscape-sky, .landscape-sun, .landscape-moon {
+    animation: none !important;
+  }
+  .landscape-sky {
+    fill: #1c1c1f;
+  }
+  .landscape-sun {
+    transform: translate(100px, 90px) !important;
+    opacity: 0.8 !important;
+  }
+  .landscape-moon {
+    display: none !important;
+  }
+  .image-generation-frame.loaded .message-image {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}
+

@@ -2861,9 +2861,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     if (authMenuToggle) authMenuToggle.style.display = signedIn ? "" : "none";
     closeAuthMenu();
 
-    // Toggle sidebar buttons: show accountBtn when signedIn, settingsBtn when signedOut
+    // Toggle sidebar buttons: show accountBtn when signedIn, settingsBtn when signedOut (always hide settingsBtn for guest mode)
     if (accountBtn) accountBtn.style.display = signedIn ? "" : "none";
-    if (settingsBtn) settingsBtn.style.display = signedIn ? "none" : "";
+    if (settingsBtn) settingsBtn.style.display = "none";
 
     if (signedIn) {
       const preferredLabel = getPreferredAccountLabel() || "Signed in";
@@ -5832,6 +5832,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
   function appendMessageBubble(role, content, meta, renderOptions = {}, ephemeral = {}) {
     if (!chatMessages) return;
+    if (role === "user" && typeof content === "string" && content.startsWith("Generate image: ")) {
+      content = content.slice("Generate image: ".length);
+    }
     const bubble = document.createElement("div");
     bubble.className = `message ${role}`;
 
@@ -5856,17 +5859,28 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       contentDiv.classList.remove("is-visible");
     }
 
-    if (meta?.type === "image" && meta.imageUrl) {
-      const label = document.createElement("div");
-      label.className = "image-gen-label";
-      label.innerHTML = "🎨 Generated Image";
-      contentDiv.appendChild(label);
+    if (meta?.type === "image") {
+      const card = document.createElement("div");
+      card.className = "image-generation-card";
 
-      const imgContainer = document.createElement("div");
-      imgContainer.className = "message-image-container";
-      const skeleton = document.createElement("div");
-      skeleton.className = "image-skeleton";
-      imgContainer.appendChild(skeleton);
+      const frame = document.createElement("div");
+      frame.className = "image-generation-frame";
+
+      // A. Create pending animated landscape layer
+      const pendingLayer = document.createElement("div");
+      pendingLayer.className = "image-generation-pending-layer";
+      pendingLayer.innerHTML = `
+        <svg class="landscape-animation-svg" viewBox="0 0 200 200" preserveAspectRatio="none">
+          <rect class="landscape-sky" width="200" height="200" />
+          <circle class="landscape-sun" cx="0" cy="0" r="14" />
+          <path class="landscape-moon" d="M -6 -10 A 10 10 0 1 0 10 6 A 8 8 0 1 1 -6 -10 Z" />
+          <path class="landscape-hill-back" d="M -20 200 Q 50 110 120 150 T 220 200 Z" />
+          <path class="landscape-hill-front" d="M -20 200 Q 120 120 220 200 Z" />
+        </svg>
+      `;
+      frame.appendChild(pendingLayer);
+
+      // B. Create generated img layer
       const img = document.createElement("img");
       img.className = "message-image";
       img.alt = meta.prompt || "Generated image";
@@ -5874,37 +5888,48 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       img.tabIndex = 0;
       img.setAttribute("role", "button");
       img.title = "Zoom image";
-      img.addEventListener("load", () => {
-        skeleton.remove();
+
+      // C. Create top-right icon-only download button
+      const downloadBtn = document.createElement("button");
+      downloadBtn.className = "image-frame-download-btn";
+      downloadBtn.type = "button";
+      downloadBtn.title = "Download image";
+      downloadBtn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+      `;
+
+      const handleLoad = () => {
+        frame.classList.add("loaded");
         img.classList.add("loaded");
-      });
+      };
+
+      img.addEventListener("load", handleLoad);
       img.addEventListener("error", () => {
-        skeleton.remove();
+        pendingLayer.style.display = "none";
         img.style.display = "none";
         const fallback = document.createElement("p");
         fallback.className = "image-load-error";
         fallback.textContent = "Image failed to load.";
-        imgContainer.appendChild(fallback);
+        frame.appendChild(fallback);
       });
-      img.addEventListener("click", () => openImageLightbox(meta.imageUrl, img.alt));
+
+      img.addEventListener("click", () => {
+        if (meta.imageUrl) openImageLightbox(meta.imageUrl, img.alt);
+      });
       img.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
-        openImageLightbox(meta.imageUrl, img.alt);
+        if (meta.imageUrl) openImageLightbox(meta.imageUrl, img.alt);
       });
-      img.src = meta.imageUrl;
-      imgContainer.appendChild(img);
 
-      const actions = document.createElement("div");
-      actions.className = "image-actions";
-      const downloadBtn = document.createElement("a");
-      downloadBtn.className = "image-download-btn";
-      downloadBtn.href = meta.imageUrl;
-      downloadBtn.download = `sentiq-chat-${Date.now()}.png`;
-      downloadBtn.rel = "noopener";
-      downloadBtn.textContent = "Download";
       downloadBtn.addEventListener("click", async (event) => {
         event.preventDefault();
+        event.stopPropagation();
+        if (!meta.imageUrl) return;
         try {
           await downloadImageDirect(meta.imageUrl, `sentiq-chat-${Date.now()}.png`, {
             fallbackToNewTab: true,
@@ -5914,11 +5939,24 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           showToast("Couldn't download that image.", "error");
         }
       });
-      actions.appendChild(downloadBtn);
+
+      frame.appendChild(img);
+      frame.appendChild(downloadBtn);
+      card.appendChild(frame);
+      contentDiv.appendChild(card);
+
+      if (meta.imageUrl) {
+        img.src = meta.imageUrl;
+        if (img.complete) {
+          handleLoad();
+        }
+      }
 
       if (isAuthenticatedSession() && (meta.imageId || meta.storagePath)) {
+        const actions = document.createElement("div");
+        actions.className = "image-actions";
         const removeBtn = document.createElement("button");
-        removeBtn.className = "image-download-btn";
+        removeBtn.className = "image-download-btn image-remove-btn";
         removeBtn.type = "button";
         removeBtn.textContent = "Remove";
         removeBtn.addEventListener("click", async () => {
@@ -5939,7 +5977,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
             }
             if (!imageId) throw new Error("Stored image metadata is unavailable.");
             await API.deleteImage(imageId);
-            imgContainer.innerHTML = '<p class="message-status">Generated image removed.</p>';
+            frame.innerHTML = '<p class="message-status">Generated image removed.</p>';
             showToast("Generated image removed.", "success", 2400);
           } catch (error) {
             debugWarn(`[UI] Image removal failed: ${getSafeErrorMessage(error)}`);
@@ -5948,10 +5986,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           }
         });
         actions.appendChild(removeBtn);
+        contentDiv.appendChild(actions);
       }
-
-      imgContainer.appendChild(actions);
-      contentDiv.appendChild(imgContainer);
 
       if (content) {
         const caption = document.createElement("p");
@@ -8848,12 +8884,16 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       debugWarn(`[UI] Image context unavailable: ${getSafeErrorMessage(error)}`);
     }
 
-    appendMessageBubble("user", `Generate image: ${prompt}`);
-    await safelyAddImageMessage(targetChatId, "user", `Generate image: ${prompt}`, null, "image prompt", {
+    appendMessageBubble("user", prompt);
+    await safelyAddImageMessage(targetChatId, "user", prompt, null, "image prompt", {
       id: `user-${requestId}`,
       clientRequestId: requestId,
     });
     scrollToBottom();
+
+    // Create the assistant placeholder immediately!
+    const pendingMeta = { type: "image", isPending: true, prompt };
+    const pendingBubbleResult = appendMessageBubble("assistant", "", pendingMeta, {}, { animateReveal: true });
 
     const ac = createAbortController();
     state.abortController = ac;
@@ -8871,6 +8911,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       });
       syncImageQuotaFromServer(result);
       if (isRequestStale(targetChatId, requestId)) {
+        if (pendingBubbleResult?.bubble) {
+          pendingBubbleResult.bubble.remove();
+        }
         if (result.success) {
           if (isAuthenticatedSession() && targetChatId) {
             refreshCanonicalChatAfterImageGeneration(targetChatId)
@@ -8897,22 +8940,94 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         if (result.image_url) imageUrl = result.image_url;
         else if (result.url) imageUrl = result.url;
 
-        const meta = imageUrl ? {
-          type: "image",
-          imageUrl,
-          prompt,
-          provider: result.provider_used || "",
-          storagePath: result.storage_path || "",
-          fileSizeBytes: result.file_size_bytes || null,
-        } : null;
-        if (meta) {
+        if (imageUrl && pendingBubbleResult) {
+          // Update placeholder metadata
+          pendingMeta.imageUrl = imageUrl;
+          pendingMeta.provider = result.provider_used || "";
+          pendingMeta.storagePath = result.storage_path || "";
+          pendingMeta.fileSizeBytes = result.file_size_bytes || null;
+          pendingMeta.isPending = false;
+
+          const contentDiv = pendingBubbleResult.contentDiv;
+          const imgEl = contentDiv?.querySelector(".message-image");
+          if (imgEl) {
+            imgEl.src = imageUrl;
+            if (imgEl.complete) {
+              const frame = contentDiv.querySelector(".image-generation-frame");
+              if (frame) frame.classList.add("loaded");
+              imgEl.classList.add("loaded");
+            }
+          }
+
+          // Render Remove button if authenticated and metadata is complete
+          if (isAuthenticatedSession() && (pendingMeta.imageId || pendingMeta.storagePath)) {
+            let actions = contentDiv.querySelector(".image-actions");
+            if (!actions) {
+              actions = document.createElement("div");
+              actions.className = "image-actions";
+              contentDiv.appendChild(actions);
+            }
+            if (!actions.querySelector(".image-remove-btn")) {
+              const removeBtn = document.createElement("button");
+              removeBtn.className = "image-download-btn image-remove-btn";
+              removeBtn.type = "button";
+              removeBtn.textContent = "Remove";
+              removeBtn.addEventListener("click", async () => {
+                if (!window.confirm("Remove this generated image from your account?")) return;
+                removeBtn.disabled = true;
+                try {
+                  let imageId = pendingMeta.imageId || "";
+                  if (!imageId && currentChatId && API.getChatImages) {
+                    const chatId = getCanonicalConversationIdForRequest(currentChatId) || currentChatId;
+                    const response = await API.getChatImages(chatId);
+                    const images = Array.isArray(response?.images) ? response.images : [];
+                    const match = images.find((image) => (
+                      image.storagePath === pendingMeta.storagePath ||
+                      image.storage_path === pendingMeta.storagePath ||
+                      image.imageUrl === pendingMeta.imageUrl
+                    ));
+                    imageId = match?.id || "";
+                  }
+                  if (!imageId) throw new Error("Stored image metadata is unavailable.");
+                  await API.deleteImage(imageId);
+                  const imgContainer = contentDiv.querySelector(".image-generation-frame") || contentDiv;
+                  imgContainer.innerHTML = '<p class="message-status">Generated image removed.</p>';
+                  showToast("Generated image removed.", "success", 2400);
+                } catch (error) {
+                  debugWarn(`[UI] Image removal failed: ${getSafeErrorMessage(error)}`);
+                  showToast("Couldn't remove that image. Please try again.", "error");
+                  removeBtn.disabled = false;
+                }
+              });
+              actions.appendChild(removeBtn);
+            }
+          }
+
+          // Refresh copy button action bar
+          pendingBubbleResult.bubble?._assistantActionBar?.refresh();
+
+          await safelyAddImageMessage(targetChatId, "assistant", "", pendingMeta, "generated image", {
+            id: `assistant-${requestId}`,
+            clientRequestId: requestId,
+          });
+        } else if (imageUrl) {
+          // Fallback if placeholder did not exist
+          const meta = {
+            type: "image",
+            imageUrl,
+            prompt,
+            provider: result.provider_used || "",
+            storagePath: result.storage_path || "",
+            fileSizeBytes: result.file_size_bytes || null,
+          };
           appendMessageBubble("assistant", "", meta, {}, { animateReveal: true });
           await safelyAddImageMessage(targetChatId, "assistant", "", meta, "generated image", {
             id: `assistant-${requestId}`,
             clientRequestId: requestId,
           });
         }
-        maybeGenerateTitle(`Generate image: ${prompt}`, "Generated an image.", targetChatId);
+
+        maybeGenerateTitle(prompt, "Generated an image.", targetChatId);
         if (result.persisted === false) {
           showToast(result.warning || "Image generated, but it could not be synced to this chat yet.", "error", 6000);
         }
@@ -8923,16 +9038,17 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
             .catch((error) => logAuthenticatedConversationError("image.refresh", error));
         }
       } else {
-        const friendlyErr = "Sorry, I couldn\u2019t generate that image. Please try again.";
-        const { contentDiv: imgErrDiv } = appendMessageBubble("assistant", "");
-        typeMessage(friendlyErr, imgErrDiv);
-        await safelyAddImageMessage(targetChatId, "assistant", friendlyErr, null, "image failure message", {
-          id: `assistant-${requestId}`,
-          clientRequestId: requestId,
-        });
+        if (pendingBubbleResult?.bubble) {
+          pendingBubbleResult.bubble.remove();
+        }
+        const friendlyErr = "Sorry, I couldn't generate that image. Please try again.";
+        showToast(friendlyErr, "error");
       }
     } catch (err) {
       if (isRequestStale(targetChatId, requestId)) return;
+      if (pendingBubbleResult?.bubble) {
+        pendingBubbleResult.bubble.remove();
+      }
       if (err.name === "AbortError") { /* user-initiated stop */ }
       else if (await maybeHandleProfileNameRequiredError(err, "image.generate")) {
         return;
@@ -8956,8 +9072,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         const userFacingError = err.message && err.message.includes("couldn't be saved to your conversation")
           ? err.message
           : "Sorry, something went wrong generating that image. Please try again.";
-        const { contentDiv: genErrDiv } = appendMessageBubble("assistant", "");
-        typeMessage(userFacingError, genErrDiv);
+        showToast(userFacingError, "error");
         debugWarn(`[UI] Image generation error: ${getSafeErrorMessage(err)}`);
       }
     } finally {
@@ -9405,6 +9520,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   function openSettings() {
+    if (!isAuthenticatedSession()) return;
     if (settingsModal) {
       activateSettingsTab(settingsModal.querySelector(".settings-tab.active")?.getAttribute("data-tab"));
       settingsModal.style.display = "flex";
