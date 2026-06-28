@@ -44,7 +44,7 @@ import { isChartRequest } from "../chartGeneration/chartDetector";
 const standardProviders: readonly ImageProvider[] = [
   new ZimageProvider(),          // 1. zimage (primary)
   new HuggingFaceProvider(),     // 2. HuggingFace SDXL (fast fallback with API key)
-  new FluxDevProvider(),          // 3. Pollinations FLUX.2 Dev
+  new FluxDevProvider(),          // 3. Pollinations FLUX
   new PollinationsProvider(),     // 4. Pollinations Z-Image Turbo
 ];
 
@@ -52,7 +52,7 @@ const standardProviders: readonly ImageProvider[] = [
 const complexProviders: readonly ImageProvider[] = [
   new GptImageProvider(),         // 1. wan-image (complex prompt primary)
   new ZimageProvider(),           // 2. zimage (fallback)
-  new FluxDevProvider(),          // 3. FLUX.2 Dev (fallback)
+  new FluxDevProvider(),          // 3. FLUX (fallback)
   new HuggingFaceProvider(),      // 4. HuggingFace SDXL (fallback)
   new PollinationsProvider(),     // 5. Z-Image Turbo (fallback)
 ];

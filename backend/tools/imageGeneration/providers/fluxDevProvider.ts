@@ -10,7 +10,7 @@ import { enhancePrompt, buildPollinationsUrl, fetchPollinationsImage, getPollina
 const FLUX_DEV_TIMEOUT_MS = 45_000;
 
 export class FluxDevProvider implements ImageProvider {
-  readonly name = "flux-2-dev";
+  readonly name = "flux";
 
   isAvailable(): boolean {
     return Boolean(getPollinationsApiKey());
@@ -18,7 +18,7 @@ export class FluxDevProvider implements ImageProvider {
 
   async generate(prompt: string, size?: string): Promise<ImageProviderResult> {
     const enhanced = enhancePrompt(prompt);
-    const imageUrl = buildPollinationsUrl(enhanced, "flux-2-dev", size);
+    const imageUrl = buildPollinationsUrl(enhanced, "flux", size);
     const base64 = await fetchPollinationsImage(imageUrl, FLUX_DEV_TIMEOUT_MS);
     return { base64 };
   }
