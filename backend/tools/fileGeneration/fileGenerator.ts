@@ -1,4 +1,4 @@
-﻿import ExcelJS from "exceljs";
+import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import PDFDocument from "pdfkit";
 import pptxgen from "pptxgenjs";
@@ -60,7 +60,7 @@ type GeneratedSheet = {
   readonly rows?: readonly (readonly unknown[] | Record<string, unknown>)[];
 };
 
-type GeneratedFileSpec = {
+export type GeneratedFileSpec = {
   readonly title?: string;
   readonly format?: string;
   readonly html?: string;
@@ -72,7 +72,7 @@ type GeneratedFileSpec = {
   readonly rows?: readonly (readonly unknown[] | Record<string, unknown>)[];
 };
 
-type RenderedFile = {
+export type RenderedFile = {
   readonly buffer: Buffer;
   readonly preview: GeneratedFilePreview;
   readonly html?: string;
@@ -512,7 +512,7 @@ function limitSpecForFormat(spec: GeneratedFileSpec, format: GeneratedFileFormat
   return spec;
 }
 
-function repairSpecForFormat(spec: GeneratedFileSpec, format: GeneratedFileFormat): GeneratedFileSpec {
+export function repairSpecForFormat(spec: GeneratedFileSpec, format: GeneratedFileFormat): GeneratedFileSpec {
   const normalized: GeneratedFileSpec = { ...spec, format };
   let repaired: GeneratedFileSpec;
   switch (format) {
@@ -587,7 +587,7 @@ async function renderTxt(spec: GeneratedFileSpec): Promise<RenderedFile> {
   };
 }
 
-async function renderDocx(spec: GeneratedFileSpec): Promise<RenderedFile> {
+export async function renderDocx(spec: GeneratedFileSpec): Promise<RenderedFile> {
   const title = normalizeString(spec.title, "Document");
   const children: Paragraph[] = [
     new Paragraph({ text: title, heading: HeadingLevel.TITLE }),
@@ -634,7 +634,7 @@ async function renderDocx(spec: GeneratedFileSpec): Promise<RenderedFile> {
   };
 }
 
-async function renderPdf(spec: GeneratedFileSpec): Promise<RenderedFile> {
+export async function renderPdf(spec: GeneratedFileSpec): Promise<RenderedFile> {
   const lines = collectDocumentLines(spec);
   const buffer = await new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];

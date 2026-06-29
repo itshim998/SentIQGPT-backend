@@ -23,8 +23,12 @@ import { PRODUCT_NAME } from "../shared/brand.js";
 
   function normalizeQuota(summary, feature) {
     const quota = summary?.quotas?.[feature] || {};
+    let label = quota.label || feature.replace(/_/g, " ");
+    if (feature === "deep_research") {
+      label = "Deep Researches";
+    }
     return {
-      label: quota.label || feature.replace(/_/g, " "),
+      label: label,
       used: Number(quota.used || 0),
       reserved: Number(quota.reserved || 0),
       remaining: Number(quota.remaining || 0),
@@ -78,6 +82,7 @@ import { PRODUCT_NAME } from "../shared/brand.js";
     const lite = normalizeQuota(summary, "lite_text");
     const image = normalizeQuota(summary, "image_generation");
     const advanced = normalizeQuota(summary, "advanced_reasoning");
+    const deepResearch = normalizeQuota(summary, "deep_research");
     const currentPlan = planName(summary.plan_code);
     const status = summary.status === "active" ? "Active" : summary.status === "canceling" ? "Cancels at renewal" : "Available";
 
@@ -95,6 +100,7 @@ import { PRODUCT_NAME } from "../shared/brand.js";
         ${renderMeter("lite_text", lite)}
         ${renderMeter("image_generation", image)}
         ${renderMeter("advanced_reasoning", advanced)}
+        ${renderMeter("deep_research", deepResearch)}
       </div>
       <div class="billing-plan-grid">
         ${(plansState.plans || []).map((plan) => `

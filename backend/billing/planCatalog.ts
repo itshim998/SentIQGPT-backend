@@ -35,6 +35,7 @@ const baseFeatureKeys: readonly BillableFeature[] = [
   "file_analysis",
   "web_search",
   "generated_file",
+  "deep_research",
 ];
 
 function buildQuotas(values: {
@@ -42,12 +43,14 @@ function buildQuotas(values: {
   readonly liteText: FeatureQuota;
   readonly imageGeneration: FeatureQuota;
   readonly advancedReasoning: FeatureQuota;
+  readonly deepResearch: FeatureQuota;
 }): Record<BillableFeature, FeatureQuota> {
   return {
     premium_text: values.premiumText,
     lite_text: values.liteText,
     image_generation: values.imageGeneration,
     advanced_reasoning: values.advancedReasoning,
+    deep_research: values.deepResearch,
     file_analysis: quota(Number.MAX_SAFE_INTEGER, 86_400, "File analysis"),
     web_search: quota(Number.MAX_SAFE_INTEGER, 86_400, "Web search"),
     generated_file: quota(Number.MAX_SAFE_INTEGER, 86_400, "Generated files"),
@@ -82,6 +85,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
           liteText: quota(40, 24 * 60 * 60, "Lite messages"),
           imageGeneration: quota(2, 24 * 60 * 60, "Images"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_FREE_DAILY", 0), 24 * 60 * 60, "Advanced reasoning"),
+          deepResearch: quota(7, 2592000, "Deep Researches"),
         }),
       },
     },
@@ -103,6 +107,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
           liteText: quota(160, 24 * 60 * 60, "Lite messages"),
           imageGeneration: quota(4, 12 * 60 * 60, "Images"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_STUDENT_CORE_DAILY", 3), 24 * 60 * 60, "Advanced reasoning"),
+          deepResearch: quota(15, 2592000, "Deep Researches"),
         }),
       },
     },
@@ -124,6 +129,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
           liteText: quota(260, 24 * 60 * 60, "Lite messages"),
           imageGeneration: quota(8, 12 * 60 * 60, "Images"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_PREMIUM_DAILY", 8), 24 * 60 * 60, "Advanced reasoning"),
+          deepResearch: quota(30, 2592000, "Deep Researches"),
         }),
       },
     },
@@ -145,6 +151,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
           liteText: quota(400, 24 * 60 * 60, "Lite messages"),
           imageGeneration: quota(12, 12 * 60 * 60, "Images"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_PRO_DAILY", 20), 24 * 60 * 60, "Advanced reasoning"),
+          deepResearch: quota(50, 2592000, "Deep Researches"),
         }),
       },
     },

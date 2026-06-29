@@ -138,6 +138,12 @@
   width: 100%;
 }
 
+@media (min-width: 721px) {
+  .billing-meter[data-feature="deep_research"] {
+    grid-column: span 2;
+  }
+}
+
 @media (max-width: 720px) {
   .billing-usage-grid,
   .billing-plan-grid {

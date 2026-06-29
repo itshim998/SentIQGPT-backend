@@ -9,7 +9,8 @@ export type BillableFeature =
   | "advanced_reasoning"
   | "file_analysis"
   | "web_search"
-  | "generated_file";
+  | "generated_file"
+  | "deep_research";
 
 export interface FeatureQuota {
   readonly limit: number;
@@ -65,7 +66,7 @@ export interface UsageReservation {
   readonly provider: string;
   readonly model: string;
   readonly adapterModelOverride: string;
-  readonly route: "standard" | "lite" | "advanced_reasoning" | "image";
+  readonly route: "standard" | "lite" | "advanced_reasoning" | "image" | "deep_research";
   readonly remaining: number;
   readonly limit: number;
   readonly resetAt: string | null;

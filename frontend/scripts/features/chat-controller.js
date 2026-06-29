@@ -54,6 +54,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   let selectionButton = null;
   let pendingSelectionPayload = null;
   let webSearchModeOverride = null;
+  let deepResearchMode = false;
   let currentExecutionMode = "fast";
   const externalScriptPromises = new Map();
   const conversationAliasCache = new Map();
@@ -202,6 +203,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     webSearchModeBar,
     webSearchModeLabel,
     cancelWebSearchMode,
+    deepResearchBtn,
+    deepResearchModeBar,
+    cancelDeepResearchMode,
     filePreviewArea,
     chatInputArea,
     mainContent,
@@ -1592,6 +1596,20 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         mime_type: message.mime_type || message.mimeType || preview.mime_type || "",
         analysis_id: preview.analysis_id || "",
         analysis_status: preview.analysis_status || "complete",
+      };
+    }
+    if (!meta && messageType === "deep_research") {
+      const deepResearchStatus = ["running", "completed", "cancelled", "failed"].includes(preview.status)
+        ? preview.status
+        : message.content === "Initializing Deep Research report..."
+          ? "running"
+          : "completed";
+      meta = {
+        type: "deep-research",
+        reportId: preview.report_id || "",
+        status: deepResearchStatus,
+        title: preview.title || message.title || "",
+        sources: message.sources || preview.sources || [],
       };
     }
     if (!meta && messageType === "text" && preview.response_status) {
@@ -4819,6 +4837,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       setWebSearchModeOverride(webSearchModeOverride === "basic" ? null : "basic");
       closeComposerMenu();
     });
+    deepResearchBtn?.addEventListener("click", () => {
+      closeComposerMenu();
+      toggleDeepResearchMode();
+    });
     executionModeMenu?.addEventListener("click", (event) => {
       const option = event.target instanceof Element
         ? event.target.closest("[data-execution-mode]")
@@ -4853,6 +4875,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     });
     cancelImageMode?.addEventListener("click", () => setImageMode(false));
     cancelWebSearchMode?.addEventListener("click", () => setWebSearchModeOverride(null));
+    cancelDeepResearchMode?.addEventListener("click", () => setDeepResearchMode(false));
     settingsBtn?.addEventListener("click", openSettings);
     closeSettingsBtn?.addEventListener("click", closeSettings);
     settingsModal?.addEventListener("click", (e) => { if (e.target === settingsModal) closeSettings(); });
@@ -6051,6 +6074,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       }
     } else if (meta?.type === "generated-file") {
       renderGeneratedFileContent(contentDiv, meta);
+    } else if (meta?.type === "deep-research") {
+      renderSavedDeepResearchCard(contentDiv, meta, content);
     } else if (meta?.type === "chart") {
       if (content) {
         const textWrap = document.createElement("div");
@@ -7688,6 +7713,610 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return { render, reset };
   }
 
+  async function handleDeepResearchSend(message) {
+    if (!isAuthenticatedSession()) {
+      requireAuthAccess("Log in to use Deep Research.");
+      return;
+    }
+    if (composerResponseLocked) return;
+
+    if (!currentChatId) {
+      await startNewChat();
+      if (!currentChatId) return;
+    }
+
+    hideWelcome();
+    if (chatMessages) chatMessages.classList.add("has-messages");
+    markComposerHintIntroConsumed();
+    
+    if (chatInput) {
+      chatInput.value = "";
+      chatInput.style.height = "auto";
+    }
+
+    appendMessageBubble("user", message);
+    if (chatMessages) chatMessages.classList.add("has-messages");
+    const requestId = newRequestId(currentChatId);
+    
+    await persistChatMessage(currentChatId, "user", message, null, {
+      id: `user-${requestId}`,
+      clientRequestId: requestId,
+    });
+    
+    _userScrolledUp = false;
+    if (scrollAnchorPill) scrollAnchorPill.classList.remove("visible");
+    scrollToBottom();
+
+    setStopMode();
+
+    const runningCard = createDeepResearchRunningCard({
+      chatId: currentChatId,
+      requestId,
+      prompt: message,
+    });
+
+    const ac = createAbortController();
+    const state = getChatState(currentChatId);
+    if (state) {
+      state.abortController = ac;
+      state.isThinking = true;
+    }
+
+    setDeepResearchMode(false);
+
+    try {
+      const conversationIdForRequest = getCanonicalConversationIdForRequest(currentChatId);
+      let reportId = null;
+
+      await API.sendDeepResearchStream(
+        message,
+        {
+          conversationId: conversationIdForRequest,
+          clientRequestId: requestId,
+        },
+        {
+          onInit(data) {
+            reportId = data.report_id;
+            runningCard.updateReportId(reportId);
+          },
+          onProgress(data) {
+            runningCard.updateProgress(data);
+          },
+          onSources(sources) {
+            runningCard.updateSources(sources);
+          },
+          onContent(text) {
+            runningCard.updateContent(text);
+          },
+          onDone() {
+            runningCard.finish();
+            if (state) {
+              state.isThinking = false;
+              state.abortController = null;
+            }
+            setSendMode();
+            scheduleChatListRefresh();
+          },
+          onError(err) {
+            runningCard.fail(err.message || "Deep Research failed.");
+            if (state) {
+              state.isThinking = false;
+              state.abortController = null;
+            }
+            setSendMode();
+            scheduleChatListRefresh();
+          }
+        },
+        ac.signal
+      );
+    } catch (err) {
+      if (err.name === "AbortError") {
+        runningCard.cancel();
+      } else {
+        runningCard.fail(err.message || "Deep Research failed to start.");
+      }
+      if (state) {
+        state.isThinking = false;
+        state.abortController = null;
+      }
+      setSendMode();
+      scheduleChatListRefresh();
+    }
+  }
+
+  function createDeepResearchRunningCard(options = {}) {
+    if (!chatMessages) return null;
+
+    const bubble = document.createElement("div");
+    bubble.className = "message assistant";
+    if (options.chatId) bubble.dataset.chatId = options.chatId;
+    if (options.requestId) bubble.dataset.requestId = options.requestId;
+
+    const header = document.createElement("div");
+    header.className = "message-header";
+    const avatar = document.createElement("div");
+    avatar.className = "message-avatar";
+    avatar.textContent = "S";
+    const sender = document.createElement("div");
+    sender.className = "message-sender";
+    sender.textContent = PRODUCT_NAME;
+    header.appendChild(avatar);
+    header.appendChild(sender);
+    bubble.appendChild(header);
+
+    const contentDiv = document.createElement("div");
+    contentDiv.className = "message-content sentiq-reveal-target is-visible";
+    bubble.appendChild(contentDiv);
+
+    const card = document.createElement("div");
+    card.className = "deep-research-card running";
+    contentDiv.appendChild(card);
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "deep-research-report-title";
+    titleEl.textContent = `Researching: "${options.prompt}"`;
+    card.appendChild(titleEl);
+
+    const checklist = document.createElement("div");
+    checklist.className = "deep-research-checklist";
+    card.appendChild(checklist);
+
+    const steps = [
+      { id: "plan", text: "Planning research path" },
+      { id: "search", text: "Searching the web" },
+      { id: "synthesize", text: "Synthesizing report" }
+    ];
+
+    const stepElements = {};
+    steps.forEach((step, idx) => {
+      const item = document.createElement("div");
+      item.className = `deep-research-item ${idx === 0 ? "active" : "pending"}`;
+      item.dataset.stepId = step.id;
+
+      const icon = document.createElement("div");
+      icon.className = "deep-research-item-icon";
+      icon.innerHTML = getStepIconHtml(idx === 0 ? "active" : "pending");
+
+      const label = document.createElement("div");
+      label.className = "deep-research-item-label";
+      label.textContent = step.text;
+
+      item.appendChild(icon);
+      item.appendChild(label);
+      checklist.appendChild(item);
+
+      stepElements[step.id] = { el: item, iconEl: icon, labelEl: label };
+    });
+
+    const progressContainer = document.createElement("div");
+    progressContainer.className = "deep-research-progress-container";
+    
+    const progressBar = document.createElement("div");
+    progressBar.className = "deep-research-progress-bar";
+    const progressFill = document.createElement("div");
+    progressFill.className = "deep-research-progress-fill";
+    progressBar.appendChild(progressFill);
+    progressContainer.appendChild(progressBar);
+
+    const statusText = document.createElement("div");
+    statusText.className = "deep-research-status-text";
+    statusText.textContent = "Initializing report...";
+    progressContainer.appendChild(statusText);
+
+    card.appendChild(progressContainer);
+
+    const footer = document.createElement("div");
+    footer.className = "deep-research-footer";
+    card.appendChild(footer);
+
+    const cancelWrapper = document.createElement("div");
+    cancelWrapper.className = "deep-research-cancel-wrapper";
+    cancelWrapper.innerHTML = `
+      <svg class="deep-research-spinner" width="36" height="36" viewBox="0 0 36 36">
+        <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="2.5"></circle>
+        <circle cx="18" cy="18" r="15" fill="none" stroke="#8e8e93" stroke-width="2.5" stroke-dasharray="94" stroke-dashoffset="40"></circle>
+      </svg>
+      <button class="deep-research-cancel-btn" title="Cancel research" type="button">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    `;
+    footer.appendChild(cancelWrapper);
+
+    const cancelBtn = cancelWrapper.querySelector(".deep-research-cancel-btn");
+    cancelBtn.addEventListener("click", () => {
+      const state = getChatState(options.chatId);
+      if (state?.abortController) {
+        state.abortController.abort();
+      }
+    });
+
+    chatMessages.appendChild(bubble);
+    scrollToBottom(true);
+
+    let reportId = null;
+    let sources = [];
+    let contentText = "";
+    let searchQueries = [];
+    let currentStep = "plan";
+    let isFinished = false;
+
+    function getStepIconHtml(state) {
+      if (state === "completed") {
+        return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+      }
+      if (state === "active") {
+        return `<svg class="response-inline-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8e8e93" stroke-width="3" style="animation: spin 1s linear infinite;"><circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.1)"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>`;
+      }
+      return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2.5"><circle cx="12" cy="12" r="4"></circle></svg>`;
+    }
+
+    function setStepState(stepId, state) {
+      const item = stepElements[stepId];
+      if (!item) return;
+      item.el.className = `deep-research-item ${state}`;
+      item.iconEl.innerHTML = getStepIconHtml(state);
+    }
+
+    return {
+      updateReportId(id) {
+        reportId = id;
+        bubble.dataset.reportId = id;
+      },
+      updateProgress(data) {
+        if (isFinished) return;
+
+        if (data.step === "plan") {
+          currentStep = "plan";
+          setStepState("plan", "active");
+          setStepState("search", "pending");
+          setStepState("synthesize", "pending");
+          progressFill.style.width = "15%";
+          statusText.textContent = "Planning research path...";
+        } else if (data.step === "search") {
+          currentStep = "search";
+          setStepState("plan", "completed");
+          setStepState("search", "active");
+          setStepState("synthesize", "pending");
+
+          progressFill.style.width = "40%";
+          statusText.textContent = data.query ? `Searching: "${data.query}"` : "Searching the web...";
+
+          if (data.query && !searchQueries.includes(data.query)) {
+            searchQueries.push(data.query);
+            let queryEl = stepElements.search.el.querySelector(".deep-research-item-query");
+            if (!queryEl) {
+              queryEl = document.createElement("div");
+              queryEl.className = "deep-research-item-query";
+              stepElements.search.el.appendChild(queryEl);
+            }
+            queryEl.textContent = `Latest: ${data.query}`;
+          }
+        } else if (data.step === "synthesize") {
+          currentStep = "synthesize";
+          setStepState("plan", "completed");
+          setStepState("search", "completed");
+          setStepState("synthesize", "active");
+
+          progressFill.style.width = "75%";
+          statusText.textContent = "Synthesizing report...";
+        }
+      },
+      updateSources(newSources) {
+        if (isFinished) return;
+        sources = newSources;
+        statusText.textContent = `Found ${sources.length} sources...`;
+      },
+      updateContent(text) {
+        if (isFinished) return;
+        contentText += text;
+        
+        currentStep = "synthesize";
+        setStepState("plan", "completed");
+        setStepState("search", "completed");
+        setStepState("synthesize", "active");
+
+        progressFill.style.width = "90%";
+        statusText.textContent = "Writing final report sections...";
+      },
+      finish() {
+        if (isFinished) return;
+        isFinished = true;
+
+        card.className = "deep-research-card completed";
+        setStepState("plan", "completed");
+        setStepState("search", "completed");
+        setStepState("synthesize", "completed");
+
+        progressFill.style.width = "100%";
+        statusText.textContent = "Research complete.";
+        
+        cancelWrapper.remove();
+
+        renderCompletedReportCard(card, {
+          reportId,
+          title: options.prompt,
+          content: contentText,
+          sources,
+        }, options.chatId, options.requestId);
+      },
+      cancel() {
+        if (isFinished) return;
+        isFinished = true;
+
+        card.className = "deep-research-card cancelled";
+        setStepState(currentStep, "pending");
+        
+        progressFill.style.width = "0%";
+        statusText.textContent = "Research cancelled.";
+        
+        cancelWrapper.remove();
+
+        persistChatMessage(options.chatId, "assistant", contentText || "Research session cancelled.", {
+          report_id: reportId,
+          status: "cancelled",
+          title: options.prompt,
+        }, {
+          id: `assistant-${options.requestId}`,
+          clientRequestId: options.requestId,
+        }).catch(() => null);
+      },
+      fail(errorMsg) {
+        if (isFinished) return;
+        isFinished = true;
+
+        card.className = "deep-research-card failed";
+        setStepState(currentStep, "pending");
+
+        progressFill.style.background = "var(--danger)";
+        statusText.textContent = `Failed: ${errorMsg}`;
+        statusText.style.color = "var(--danger)";
+        
+        cancelWrapper.remove();
+
+        persistChatMessage(options.chatId, "assistant", "Research session failed. Please try again shortly.", {
+          report_id: reportId,
+          status: "failed",
+          title: options.prompt,
+        }, {
+          id: `assistant-${options.requestId}`,
+          clientRequestId: options.requestId,
+        }).catch(() => null);
+      }
+    };
+  }
+
+  function renderCompletedReportCard(card, report, chatId, requestId) {
+    card.innerHTML = "";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "deep-research-report-title";
+    titleEl.textContent = report.title || "Deep Research Report";
+    card.appendChild(titleEl);
+
+    const actionsEl = document.createElement("div");
+    actionsEl.className = "deep-research-report-actions";
+    card.appendChild(actionsEl);
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "deep-research-action-btn";
+    copyBtn.title = "Copy report";
+    copyBtn.type = "button";
+    copyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(report.content || "").then(() => {
+        showToast("Copied to clipboard!", "success");
+      }).catch(() => {
+        showToast("Failed to copy", "error");
+      });
+    });
+    actionsEl.appendChild(copyBtn);
+
+    const dropdownContainer = document.createElement("div");
+    dropdownContainer.className = "deep-research-export-dropdown-container";
+    actionsEl.appendChild(dropdownContainer);
+
+    const exportBtn = document.createElement("button");
+    exportBtn.className = "deep-research-action-btn";
+    exportBtn.title = "Export report";
+    exportBtn.type = "button";
+    exportBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+    dropdownContainer.appendChild(exportBtn);
+
+    const exportMenu = document.createElement("div");
+    exportMenu.className = "deep-research-export-menu";
+    exportMenu.innerHTML = `
+      <button class="deep-research-export-item" data-format="md" type="button">Markdown</button>
+      <button class="deep-research-export-item" data-format="docx" type="button">Word (.docx)</button>
+      <button class="deep-research-export-item" data-format="pdf" type="button">PDF (.pdf)</button>
+    `;
+    dropdownContainer.appendChild(exportMenu);
+
+    exportBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      exportMenu.classList.toggle("show");
+    });
+
+    document.addEventListener("click", () => {
+      exportMenu.classList.remove("show");
+    });
+
+    exportMenu.querySelectorAll(".deep-research-export-item").forEach(item => {
+      item.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        exportMenu.classList.remove("show");
+        const format = item.dataset.format;
+        const repId = report.reportId || report.id;
+        if (!repId) {
+          showToast("Report ID not available.", "error");
+          return;
+        }
+        try {
+          showToast(`Exporting as ${format.toUpperCase()}...`, "info");
+          const blob = await API.exportDeepResearchReport(repId, format);
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = `report-${repId}.${format}`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(blobUrl);
+          showToast("Export completed successfully.", "success");
+        } catch (err) {
+          showToast("Failed to export report.", "error");
+        }
+      });
+    });
+
+    const previewContainer = document.createElement("div");
+    previewContainer.className = "deep-research-report-preview-container";
+    card.appendChild(previewContainer);
+
+    const previewText = document.createElement("div");
+    previewText.className = "deep-research-report-preview-text markdown-content";
+    previewText.innerHTML = renderRichText(report.content || "");
+    previewContainer.appendChild(previewText);
+
+    const fadeOverlay = document.createElement("div");
+    fadeOverlay.className = "deep-research-report-fade";
+    previewContainer.appendChild(fadeOverlay);
+
+    const expandBtn = document.createElement("button");
+    expandBtn.className = "deep-research-expand-btn";
+    expandBtn.type = "button";
+    expandBtn.innerHTML = `Read Full Report <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+    card.appendChild(expandBtn);
+
+    expandBtn.addEventListener("click", () => {
+      const isExpanded = previewContainer.classList.toggle("expanded");
+      if (isExpanded) {
+        expandBtn.innerHTML = `Collapse Report <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"></polyline></svg>`;
+      } else {
+        expandBtn.innerHTML = `Read Full Report <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+      }
+    });
+
+    if (chatId && requestId) {
+      persistChatMessage(chatId, "assistant", report.content || "", {
+        report_id: report.reportId || report.id,
+        status: "completed",
+        title: report.title,
+        sources: report.sources,
+      }, {
+        id: `assistant-${requestId}`,
+        clientRequestId: requestId,
+      }).catch(() => null);
+    }
+  }
+
+  function renderSavedDeepResearchCard(contentDiv, meta, content) {
+    const card = document.createElement("div");
+    card.className = `deep-research-card ${meta.status || "completed"}`;
+    contentDiv.appendChild(card);
+
+    const titleText = meta.title || "Deep Research Report";
+    const reportId = meta.reportId || meta.report_id || "";
+
+    const hydrateTerminalReport = (statusElement = null) => {
+      if (!reportId || typeof API.getDeepResearchReport !== "function") return;
+      API.getDeepResearchReport(reportId).then((report) => {
+        if (!card.parentElement || !report) return;
+        if (report.status === "running") {
+          if (statusElement?.parentElement) statusElement.textContent = "Research is still being finalized.";
+          return;
+        }
+        if (!["completed", "cancelled", "failed"].includes(report.status)) return;
+        const hydratedContent = typeof report.content === "string" ? report.content : content || "";
+        if (report.status === "completed" && !hydratedContent.trim()) return;
+        card.remove();
+        renderSavedDeepResearchCard(contentDiv, {
+          reportId,
+          status: report.status,
+          title: report.title || titleText,
+          sources: Array.isArray(report.sources) ? report.sources : meta.sources || [],
+        }, hydratedContent);
+      }).catch(() => {
+        if (statusElement?.parentElement) {
+          statusElement.textContent = "Research status is temporarily unavailable.";
+        }
+      });
+    };
+    
+    if (meta.status === "completed") {
+      renderCompletedReportCard(card, {
+        reportId,
+        title: titleText,
+        content: content || "",
+        sources: meta.sources || [],
+      });
+      if (!content) hydrateTerminalReport();
+    } else if (meta.status === "running") {
+      const titleEl = document.createElement("div");
+      titleEl.className = "deep-research-report-title";
+      titleEl.textContent = `Research: "${titleText}"`;
+      card.appendChild(titleEl);
+
+      const statusText = document.createElement("div");
+      statusText.className = "deep-research-status-text";
+      statusText.textContent = "Checking the saved research status...";
+      card.appendChild(statusText);
+      hydrateTerminalReport(statusText);
+    } else if (meta.status === "cancelled") {
+      const titleEl = document.createElement("div");
+      titleEl.className = "deep-research-report-title";
+      titleEl.textContent = `Research: "${titleText}"`;
+      card.appendChild(titleEl);
+
+      const statusText = document.createElement("div");
+      statusText.className = "deep-research-status-text";
+      statusText.textContent = "Research cancelled.";
+      card.appendChild(statusText);
+
+      if (content) {
+        const previewContainer = document.createElement("div");
+        previewContainer.className = "deep-research-report-preview-container";
+        card.appendChild(previewContainer);
+
+        const previewText = document.createElement("div");
+        previewText.className = "deep-research-report-preview-text markdown-content";
+        previewText.innerHTML = renderRichText(content);
+        previewContainer.appendChild(previewText);
+
+        const fadeOverlay = document.createElement("div");
+        fadeOverlay.className = "deep-research-report-fade";
+        previewContainer.appendChild(fadeOverlay);
+
+        const expandBtn = document.createElement("button");
+        expandBtn.className = "deep-research-expand-btn";
+        expandBtn.type = "button";
+        expandBtn.innerHTML = `Read Partial Report <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+        card.appendChild(expandBtn);
+
+        expandBtn.addEventListener("click", () => {
+          const isExpanded = previewContainer.classList.toggle("expanded");
+          if (isExpanded) {
+            expandBtn.innerHTML = `Collapse Report <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"></polyline></svg>`;
+          } else {
+            expandBtn.innerHTML = `Read Partial Report <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+          }
+        });
+      }
+    } else {
+      const titleEl = document.createElement("div");
+      titleEl.className = "deep-research-report-title";
+      titleEl.textContent = `Research: "${titleText}"`;
+      card.appendChild(titleEl);
+
+      const statusText = document.createElement("div");
+      statusText.className = "deep-research-status-text";
+      statusText.style.color = "var(--danger)";
+      statusText.textContent = meta.status === "failed" && content
+        ? content
+        : "Research session failed. Please try again shortly.";
+      card.appendChild(statusText);
+    }
+  }
+
   function createStreamingBubble(options = {}) {
     debugLog("[UI] createStreamingBubble");
     if (!chatMessages) return null;
@@ -8033,6 +8662,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
     if (!isClarificationAnswer && pendingFiles.length > 0 && !options.skipPendingFileProcessing) {
       await processPendingFiles(message);
+      return;
+    }
+    if (!isClarificationAnswer && deepResearchMode && message) {
+      setDeepResearchMode(false);
+      await handleDeepResearchSend(message);
       return;
     }
     if (!isClarificationAnswer && imageMode && message) { setImageMode(false); await handleImageGeneration(message); return; }
@@ -8749,6 +9383,34 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     setImageMode(!imageMode);
   }
 
+  function toggleDeepResearchMode() {
+    setDeepResearchMode(!deepResearchMode);
+  }
+
+  function setDeepResearchMode(active) {
+    if (active && !isAuthenticatedSession()) {
+      requireAuthAccess("Log in to use Deep Research.");
+      return;
+    }
+    deepResearchMode = Boolean(active);
+    if (deepResearchMode) {
+      imageMode = false;
+      webSearchModeOverride = null;
+      if (imageModeBar) imageModeBar.style.display = "none";
+      if (webSearchModeBar) webSearchModeBar.style.display = "none";
+      clearPendingFiles();
+    }
+    if (deepResearchModeBar) {
+      deepResearchModeBar.style.display = deepResearchMode ? "flex" : "none";
+    }
+    syncComposerExpandedState();
+    updateComposerActionSelection();
+    if (chatInput && !composerResponseLocked) {
+      chatInput.focus();
+    }
+    syncComposerHint();
+  }
+
   function updateComposerActionSelection() {
     const hasFiles = pendingFiles.length > 0;
     fileAttachBtn?.classList.toggle("active", hasFiles);
@@ -8757,6 +9419,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     imageGenBtn?.setAttribute("aria-pressed", Boolean(imageMode).toString());
     webSurfBasicBtn?.classList.toggle("active", webSearchModeOverride === "basic");
     webSurfBasicBtn?.setAttribute("aria-pressed", (webSearchModeOverride === "basic").toString());
+    deepResearchBtn?.classList.toggle("active", Boolean(deepResearchMode));
+    deepResearchBtn?.setAttribute("aria-pressed", Boolean(deepResearchMode).toString());
   }
 
   function clearPendingFiles() {
@@ -8767,7 +9431,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   function syncComposerExpandedState() {
-    const hasPill = Boolean(imageMode) || (webSearchModeOverride === "basic");
+    const hasPill = Boolean(imageMode) || (webSearchModeOverride === "basic") || Boolean(deepResearchMode);
     if (chatInputArea) {
       chatInputArea.classList.toggle("has-active-pill", hasPill);
       chatInputArea.parentElement?.classList.toggle("has-active-pill", hasPill);
@@ -8778,6 +9442,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     imageMode = Boolean(active);
     if (imageMode) {
       webSearchModeOverride = null;
+      deepResearchMode = false;
+      if (deepResearchModeBar) deepResearchModeBar.style.display = "none";
       clearPendingFiles();
     }
     if (imageModeBar) imageModeBar.style.display = imageMode ? "flex" : "none";
@@ -8864,7 +9530,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     webSearchModeOverride = normalized === "basic" ? "basic" : null;
     if (webSearchModeOverride) {
       imageMode = false;
+      deepResearchMode = false;
       if (imageModeBar) imageModeBar.style.display = "none";
+      if (deepResearchModeBar) deepResearchModeBar.style.display = "none";
       clearPendingFiles();
     }
     updateWebSearchButtons();
@@ -9213,9 +9881,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     const { showToastMessage = true } = options;
     imageMode = false;
     webSearchModeOverride = null;
+    deepResearchMode = false;
     if (imageModeBar) imageModeBar.style.display = "none";
     if (webSearchModeBar) webSearchModeBar.style.display = "none";
+    if (deepResearchModeBar) deepResearchModeBar.style.display = "none";
     syncComposerExpandedState();
+    updateComposerActionSelection();
     const { accepted } = addPendingFiles(files);
     renderFilePreview();
     syncComposerHint();
@@ -9235,9 +9906,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     closeComposerMenu();
     imageMode = false;
     webSearchModeOverride = null;
+    deepResearchMode = false;
     if (imageModeBar) imageModeBar.style.display = "none";
     if (webSearchModeBar) webSearchModeBar.style.display = "none";
+    if (deepResearchModeBar) deepResearchModeBar.style.display = "none";
     syncComposerExpandedState();
+    updateComposerActionSelection();
     addPendingFiles(files);
     renderFilePreview();
     if (fileInput) fileInput.value = "";

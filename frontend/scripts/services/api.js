@@ -569,6 +569,167 @@ async function generateTitle(userMessage, assistantReply, conversationId) {
 async function getHealth() { return apiRequest("/api/health"); }
 async function getConfigAPI() { return apiRequest("/api/config"); }
 
+async function sendDeepResearchStream(input, context = {}, callbacks = {}, signal = null) {
+  const url = `${API_BASE}/api/deep-research/stream`;
+  const headers = await buildAuthHeaders({ "Content-Type": "application/json" });
+  const conversationId = typeof context.conversationId === "string" && context.conversationId.trim()
+    ? context.conversationId.trim()
+    : undefined;
+  const clientRequestId = typeof context.clientRequestId === "string" && context.clientRequestId.trim()
+    ? context.clientRequestId.trim()
+    : undefined;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      prompt: input,
+      conversationId,
+      clientRequestId,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    throw createApiError(response, errorData, `Deep Research request failed: ${response.status}`);
+  }
+
+  if (!response.body?.getReader || typeof TextDecoder !== "function") {
+    const error = new Error("Streaming response support is unavailable.");
+    error.code = "browser_feature_blocked";
+    throw error;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let eventName = "";
+  let dataLines = [];
+  let terminalReceived = false;
+  let streamEnded = false;
+
+  function dispatchSseRecord() {
+    if (terminalReceived || (!eventName && dataLines.length === 0)) return terminalReceived;
+    const currentEvent = eventName || "message";
+    const payload = dataLines.join("\n").trim();
+    eventName = "";
+    dataLines = [];
+
+    if (currentEvent === "done" || payload === "[DONE]") {
+      terminalReceived = true;
+      callbacks.onDone?.();
+      return true;
+    }
+    if (!payload) return false;
+
+    let parsed;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      const error = new Error("Deep Research returned malformed stream data.");
+      error.code = "stream_protocol_error";
+      throw error;
+    }
+
+    if (parsed.type === "init") {
+      callbacks.onInit?.(parsed);
+    } else if (parsed.type === "progress") {
+      callbacks.onProgress?.(parsed);
+    } else if (parsed.type === "sources") {
+      callbacks.onSources?.(Array.isArray(parsed.sources) ? parsed.sources : []);
+    } else if (parsed.type === "content") {
+      callbacks.onContent?.(typeof parsed.text === "string" ? parsed.text : "");
+    } else if (parsed.type === "done") {
+      terminalReceived = true;
+      callbacks.onDone?.();
+    } else if (parsed.type === "error") {
+      terminalReceived = true;
+      const error = new Error(parsed.error || "Deep Research failed");
+      error.code = parsed.code || "research_failed";
+      callbacks.onError?.(error);
+    }
+    return terminalReceived;
+  }
+
+  function processSseLine(rawLine) {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    if (line === "") return dispatchSseRecord();
+    if (line.startsWith(":")) return false;
+    const colonIndex = line.indexOf(":");
+    const field = colonIndex >= 0 ? line.slice(0, colonIndex) : line;
+    let value = colonIndex >= 0 ? line.slice(colonIndex + 1) : "";
+    if (value.startsWith(" ")) value = value.slice(1);
+    if (field === "event") eventName = value;
+    else if (field === "data") dataLines.push(value);
+    return false;
+  }
+
+  function processBufferedLines(flush = false) {
+    const lines = buffer.split("\n");
+    const tail = lines.pop() || "";
+    buffer = flush ? "" : tail;
+    for (const line of lines) {
+      if (processSseLine(line)) return true;
+    }
+    if (flush && tail) {
+      if (processSseLine(tail)) return true;
+    }
+    return flush ? dispatchSseRecord() : false;
+  }
+
+  try {
+    while (!terminalReceived) {
+      const { done, value } = await reader.read();
+      if (done) {
+        streamEnded = true;
+        buffer += decoder.decode();
+        processBufferedLines(true);
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      processBufferedLines(false);
+    }
+
+    if (!terminalReceived) {
+      const error = new Error("Deep Research response did not complete. Please retry.");
+      error.code = "stream_incomplete";
+      throw error;
+    }
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    if (callbacks.onError) callbacks.onError(error);
+    throw error;
+  } finally {
+    if (terminalReceived && !streamEnded) {
+      await reader.cancel().catch(() => null);
+    }
+    reader.releaseLock();
+  }
+}
+
+async function getDeepResearchQuota() {
+  return apiRequest("/api/deep-research/quota", { method: "GET" });
+}
+
+async function getDeepResearchReport(reportId) {
+  return apiRequest(`/api/deep-research/${encodeURIComponent(reportId)}`, { method: "GET" });
+}
+
+async function exportDeepResearchReport(reportId, format) {
+  const url = `${API_BASE}/api/deep-research/${encodeURIComponent(reportId)}/export?format=${encodeURIComponent(format)}`;
+  const headers = await buildAuthHeaders();
+  const response = await fetch(url, {
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    throw createApiError(response, errorData, `Export failed: ${response.status}`);
+  }
+  return response.blob();
+}
+
 window.SentIQAPI = {
   sendMessage, sendMessageStream, canStreamResponses, getChatIntent, classifyMemory, compressMemories,
   sendSelectionMessage, uploadFile, subscribeFileUpdates, clearFileSession, generateImage, storeImage, getChatImages, getImageQuota, deleteImage, generateTitle,
@@ -577,4 +738,5 @@ window.SentIQAPI = {
   getConversations, createConversation, getConversationMessages, deleteConversation, updateConversationTitle, syncChatMessages,
   getMemories, deleteMemory: deleteMemoryAPI, getProfile, updateProfile,
   getHealth, getConfig: getConfigAPI,
+  sendDeepResearchStream, getDeepResearchQuota, getDeepResearchReport, exportDeepResearchReport,
 };

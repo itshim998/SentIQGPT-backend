@@ -15,20 +15,14 @@ import {
   normalizeWebSearchMode,
   type WebSearchMode,
 } from "../webSearchMode";
+import { keyManager } from "./tavilyKeyManager";
 
 // ==============================
 // Configuration
 // ==============================
 
 const TAVILY_API_ENDPOINT = "https://api.tavily.com/search";
-const COOLDOWN_MS = 60_000; // 60 seconds cooldown for failed keys
 const REQUEST_TIMEOUT_MS = 15_000;
-
-interface KeyState {
-  key: string;
-  cooldownUntil: number; // timestamp when key can be used again
-  failCount: number;
-}
 
 // ==============================
 // Tavily API Types
@@ -56,109 +50,6 @@ function normalizeStringArray(value: unknown): string[] {
     .map((item) => String(item || "").trim())
     .filter((item) => item.length > 0);
 }
-
-// ==============================
-// Key Manager (Round-Robin with Cooldown)
-// ==============================
-
-class TavilyKeyManager {
-  private keys: KeyState[] = [];
-  private currentIndex = 0;
-
-  constructor() {
-    this.loadKeys();
-  }
-
-  private loadKeys(): void {
-    const keysEnv = process.env.TAVILY_KEYS ?? "";
-    const rawKeys = keysEnv
-      .split(",")
-      .map((k) => k.trim())
-      .filter((k) => k.length > 0);
-
-    this.keys = rawKeys.map((key) => ({
-      key,
-      cooldownUntil: 0,
-      failCount: 0,
-    }));
-
-    if (this.keys.length > 0) {
-      console.log(`[Tavily] loaded ${this.keys.length} API key(s)`);
-    }
-  }
-
-  hasKeys(): boolean {
-    return this.keys.length > 0;
-  }
-
-  /**
-   * Get the next available key using round-robin.
-   * Skips keys that are in cooldown.
-   * Returns null if all keys are unavailable.
-   */
-  getNextKey(): string | null {
-    if (this.keys.length === 0) return null;
-
-    const now = Date.now();
-    const startIndex = this.currentIndex;
-
-    // Try each key starting from current index
-    for (let i = 0; i < this.keys.length; i++) {
-      const idx = (startIndex + i) % this.keys.length;
-      const keyState = this.keys[idx];
-
-      if (keyState.cooldownUntil <= now) {
-        this.currentIndex = (idx + 1) % this.keys.length;
-        return keyState.key;
-      }
-    }
-
-    // All keys are in cooldown
-    return null;
-  }
-
-  /**
-   * Mark a key as failed and apply cooldown.
-   */
-  markFailed(key: string, isRateLimit: boolean): void {
-    const keyState = this.keys.find((k) => k.key === key);
-    if (!keyState) return;
-
-    keyState.failCount++;
-    // Apply longer cooldown for rate limits, shorter for other failures
-    const cooldown = isRateLimit ? COOLDOWN_MS * 2 : COOLDOWN_MS;
-    keyState.cooldownUntil = Date.now() + cooldown;
-
-    console.log(
-      `[Tavily] key ${key.slice(0, 8)}... marked failed (count: ${keyState.failCount}, cooldown: ${cooldown / 1000}s)`
-    );
-  }
-
-  /**
-   * Mark a key as successful (reset fail count).
-   */
-  markSuccess(key: string): void {
-    const keyState = this.keys.find((k) => k.key === key);
-    if (keyState) {
-      keyState.failCount = 0;
-    }
-  }
-
-  /**
-   * Get count of available keys (not in cooldown).
-   */
-  getAvailableCount(): number {
-    const now = Date.now();
-    return this.keys.filter((k) => k.cooldownUntil <= now).length;
-  }
-
-  getTotalCount(): number {
-    return this.keys.length;
-  }
-}
-
-// Singleton key manager
-const keyManager = new TavilyKeyManager();
 
 // ==============================
 // Tavily Provider

@@ -6,7 +6,7 @@ export interface ModelRoute {
   readonly model: string;
   readonly adapterModelOverride: string;
   readonly safeModelLabel: string;
-  readonly route: "standard" | "lite" | "advanced_reasoning" | "image";
+  readonly route: "standard" | "lite" | "advanced_reasoning" | "image" | "deep_research";
 }
 
 const TEXT_RENDERING_PATTERNS: readonly RegExp[] = [
@@ -99,5 +99,16 @@ export function getImageModelForPlan(planCode: BillingPlanCode, prompt: string):
     adapterModelOverride: model.adapterModelOverride,
     safeModelLabel: "Precision Image",
     route: "image",
+  };
+}
+
+export function getDeepResearchRoute(): ModelRoute {
+  return {
+    feature: "deep_research",
+    provider: "tavily",
+    model: "pro",
+    adapterModelOverride: "pro",
+    safeModelLabel: "Deep Research",
+    route: "deep_research",
   };
 }

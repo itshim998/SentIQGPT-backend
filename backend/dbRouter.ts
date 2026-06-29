@@ -604,6 +604,21 @@ export async function verifyShardMigrations(): Promise<void> {
           `is missing repair_user_memory_usage RPC (migration 20260522130000). code=${repairMemoryUsageFnError.code ?? "unknown"} message=${repairMemoryUsageFnError.message}`,
         );
       }
+
+      // Check: 20260628140000_add_deep_research_reports.sql
+      const { error: deepResearchReportsError } = await client
+        .from("deep_research_reports")
+        .select("id,user_id,conversation_id,message_id,status,content,sources,request_metadata,search_count,citation_count", {
+          head: true,
+          count: "exact",
+        })
+        .limit(1);
+      if (deepResearchReportsError) {
+        markFailure(
+          id,
+          `is missing deep_research_reports schema objects (migration 20260628140000). code=${deepResearchReportsError.code ?? "unknown"} message=${deepResearchReportsError.message}`,
+        );
+      }
     } finally {
       // Best-effort cleanup for probe records.
       await client.from("usage_logs").delete().eq("user_id", dummyId);

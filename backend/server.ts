@@ -6614,6 +6614,464 @@ app.get("/api/search/status", (_req, res) => {
   res.json({ available: status.available });
 });
 
+// =========================================================================
+// Deep Research Endpoints (Phase 2 - Backend Only)
+// =========================================================================
+
+import { DeepResearchService } from "./tools/deepResearch/deepResearchService";
+import {
+  TavilyDeepResearchClient,
+  TavilyDeepResearchError,
+} from "./tools/deepResearch/tavilyDeepResearchClient";
+import { DeepResearchQuotaLifecycle } from "./tools/deepResearch/deepResearchQuotaLifecycle";
+import { getDeepResearchRoute } from "./billing/modelEntitlementRouter";
+import {
+  repairSpecForFormat,
+  renderDocx,
+  renderPdf
+} from "./tools/fileGeneration/fileGenerator";
+
+const deepResearchService = new DeepResearchService();
+const tavilyDeepResearchClient = new TavilyDeepResearchClient();
+
+type DeepResearchMessageStatus = "running" | "completed" | "failed" | "cancelled";
+
+async function updateDeepResearchMessage(args: {
+  userDb: any;
+  messageId: string | null;
+  conversationId: string;
+  reportId: string;
+  status: DeepResearchMessageStatus;
+  title: string;
+  content: string;
+  sources?: Array<{ title: string; url: string }>;
+}): Promise<void> {
+  if (!args.messageId) return;
+  const { error } = await args.userDb
+    .from("messages")
+    .update({
+      content: args.content,
+      preview_json: {
+        report_id: args.reportId,
+        status: args.status,
+        title: args.title,
+        sources: args.sources ?? [],
+      },
+    })
+    .eq("id", args.messageId)
+    .eq("conversation_id", args.conversationId)
+    .eq("message_type", "deep_research");
+
+  if (error) {
+    console.error("[Deep Research] Failed to update persisted message metadata.");
+  }
+}
+
+async function settleDeepResearchQuota(
+  lifecycle: DeepResearchQuotaLifecycle,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await lifecycle.settle(metadata);
+  } catch {
+    // The lifecycle marks itself settled before attempting a commit so a
+    // post-acceptance billing failure can never release consumed usage.
+    console.error("[Deep Research] Failed to settle the quota reservation.");
+  }
+}
+
+/**
+ * POST /api/deep-research/stream
+ * Connects to Tavily Research stream, writes report updates, and manages sharded DB lifecycle & billing.
+ */
+app.post(
+  "/api/deep-research/stream",
+  verifyJWT({ allowGuest: false }),
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const { prompt, conversationId: conversationIdCandidate, clientRequestId } = req.body;
+
+    if (typeof prompt !== "string" || !prompt.trim()) {
+      res.status(400).json({ error: "Prompt is required." });
+      return;
+    }
+
+    const normalizedPrompt = prompt.trim();
+    const conversationId = getOptionalUuid(conversationIdCandidate, "conversationId");
+    if (!conversationId) {
+      res.status(400).json({ error: "Valid conversationId is required." });
+      return;
+    }
+
+    const requestUser = getRequestUser(req);
+    const userId = requestUser.sub;
+    const billingIdentity = buildBillingIdentity(req, requestUser);
+
+    const userDb = await resolveUserDatabaseOrThrow(userId, "deep-research.stream");
+    await initializeUserSessionOrThrow(userDb, userId, "deep-research.stream");
+    await ensureNamedWorkspaceProfile(userId, "deep-research.stream", userDb);
+    
+    // Resolve or create the conversation record first to ensure DB persistence matches client-side ID
+    const resolvedConversation = await resolveOrCreateConversationForRequest(
+      userDb,
+      userId,
+      "deep-research.stream",
+      conversationId,
+      normalizedPrompt.slice(0, 50) || "New Chat",
+      { clientRequestId: clientRequestId || undefined },
+    );
+    const activeConversationId = resolvedConversation.conversation.id;
+
+    // 1. Quota Check & Reservation
+    const deepResearchRoute = getDeepResearchRoute();
+    const reservation = await billingQuotaService.reserveFeature({
+      identity: billingIdentity,
+      feature: "deep_research",
+      requestId: buildBillingRequestId("deep-research", userId, clientRequestId || undefined),
+      route: deepResearchRoute,
+      conversationId: activeConversationId,
+      clientRequestId: clientRequestId || null,
+      metadata: { endpoint: "deep-research.stream" },
+    });
+    const quotaLifecycle = new DeepResearchQuotaLifecycle(billingQuotaService, reservation);
+
+    let reportId: string | null = null;
+    let messageId: string | null = null;
+    let sseWriter: any = null;
+    let partialContent = "";
+    const discoveredSources = new Set<string>();
+    const sourceList: Array<{ title: string; url: string }> = [];
+    let searchCount = 0;
+    let clientDisconnected = false;
+
+    const abortController = new AbortController();
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        clientDisconnected = true;
+        abortController.abort();
+      }
+    });
+
+    try {
+      // 2. Create the running report row
+      reportId = await deepResearchService.createReport({
+        userDb,
+        userId,
+        conversationId: activeConversationId,
+        title: normalizedPrompt.slice(0, 150),
+        requestMetadata: { prompt: normalizedPrompt },
+      });
+
+      // 3. Insert placeholder assistant message mapping the report ID
+      const messageInsertResult = await insertConversationMessage(userDb, {
+        conversationId: activeConversationId,
+        role: "assistant",
+        content: "Initializing Deep Research report...",
+        clientRequestId: clientRequestId || undefined,
+        messageType: "deep_research",
+        previewJson: {
+          report_id: reportId,
+          status: "running",
+          title: normalizedPrompt.slice(0, 150),
+          sources: [],
+        },
+      });
+
+      if (messageInsertResult.error) {
+        throw new Error(`Failed to insert report message: ${messageInsertResult.error.message}`);
+      }
+      messageId = messageInsertResult.data?.id || null;
+
+      if (messageId) {
+        await deepResearchService.updateReportMessageId({
+          userDb,
+          userId,
+          reportId,
+          messageId,
+        });
+      }
+
+      // 4. Initialize SSE connection
+      if (abortController.signal.aborted) {
+        const abortError = new Error("Deep Research request cancelled.");
+        abortError.name = "AbortError";
+        throw abortError;
+      }
+      res.status(200);
+      res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+      sseWriter = createSseWriter(res, { maxBufferedBytes: 512 * 1024 });
+      await sseWriter.write(JSON.stringify({ type: "init", report_id: reportId }));
+
+      // 5. Connect and stream from Tavily
+      await tavilyDeepResearchClient.streamResearch(
+        normalizedPrompt,
+        async (event) => {
+          if (abortController.signal.aborted) return;
+
+          if (event.type === "progress") {
+            if (event.step === "search") searchCount++;
+            await sseWriter.write(JSON.stringify(event));
+          } else if (event.type === "sources" && event.sources) {
+            for (const src of event.sources) {
+              if (!discoveredSources.has(src.url)) {
+                discoveredSources.add(src.url);
+                sourceList.push(src);
+              }
+            }
+            await sseWriter.write(JSON.stringify({ type: "sources", sources: sourceList }));
+          } else if (event.type === "content" && event.text) {
+            partialContent += event.text;
+            await sseWriter.write(JSON.stringify(event));
+          } // done and error are finalized exactly once by this route.
+        },
+        abortController.signal,
+        {
+          onAccepted: () => quotaLifecycle.markProviderAccepted(),
+        },
+      );
+
+      if (abortController.signal.aborted) {
+        const abortError = new Error("Deep Research request cancelled.");
+        abortError.name = "AbortError";
+        throw abortError;
+      }
+      if (!partialContent.trim()) {
+        throw new Error("Deep Research returned no report content.");
+      }
+
+      // 6. Complete execution
+      if (reportId) {
+        await deepResearchService.completeReport({
+          userDb,
+          userId,
+          reportId,
+          content: partialContent,
+          sources: sourceList,
+          searchCount,
+        });
+
+        await updateDeepResearchMessage({
+          userDb,
+          messageId,
+          conversationId: activeConversationId,
+          reportId,
+          status: "completed",
+          title: normalizedPrompt.slice(0, 150),
+          content: partialContent,
+          sources: sourceList,
+        });
+      }
+
+      await settleDeepResearchQuota(quotaLifecycle, {
+        report_id: reportId ?? "",
+        outcome: "completed",
+      });
+      if (!clientDisconnected) {
+        await sseWriter.write(JSON.stringify({ type: "done" }));
+        sseWriter.close();
+      }
+    } catch (err: unknown) {
+      const isAbort = abortController.signal.aborted || (err instanceof Error && err.name === "AbortError");
+      const safeCode = err instanceof TavilyDeepResearchError ? err.code : "research_failed";
+      console.error(`[Deep Research] stream failed code=${safeCode}`);
+
+      if (isAbort) {
+        if (reportId) {
+          try {
+            await deepResearchService.cancelReport({
+              userDb,
+              userId,
+              reportId,
+              partialContent,
+              sources: sourceList,
+              searchCount,
+            });
+          } catch {
+            console.error("[Deep Research] Failed to persist cancelled report status.");
+          }
+
+          await updateDeepResearchMessage({
+            userDb,
+            messageId,
+            conversationId: activeConversationId,
+            reportId,
+            status: "cancelled",
+            title: normalizedPrompt.slice(0, 150),
+            content: partialContent || "Research session cancelled.",
+            sources: sourceList,
+          });
+        }
+      } else {
+        if (reportId) {
+          try {
+            await deepResearchService.failReport({ userDb, userId, reportId });
+          } catch {
+            console.error("[Deep Research] Failed to persist failed report status.");
+          }
+
+          await updateDeepResearchMessage({
+            userDb,
+            messageId,
+            conversationId: activeConversationId,
+            reportId,
+            status: "failed",
+            title: normalizedPrompt.slice(0, 150),
+            content: "Research session failed. Please try again shortly.",
+            sources: sourceList,
+          });
+        }
+      }
+
+      await settleDeepResearchQuota(quotaLifecycle, {
+        report_id: reportId ?? "",
+        outcome: isAbort ? "cancelled" : "failed",
+      });
+
+      if (!isAbort && !clientDisconnected) {
+        if (sseWriter && !res.writableEnded) {
+          await sseWriter.write(JSON.stringify({
+            type: "error",
+            error: "Deep Research session failed. Please try again.",
+            code: safeCode,
+          }));
+          sseWriter.close();
+        } else if (!res.headersSent) {
+          res.status(500).json({ error: "Deep Research session failed to start." });
+        }
+      }
+    }
+  }),
+);
+
+/**
+ * GET /api/deep-research/quota
+ * Returns remaining and total quota configuration for Deep Research feature.
+ */
+app.get(
+  "/api/deep-research/quota",
+  verifyJWT({ allowGuest: false }),
+  asyncHandler(async (req, res) => {
+    const requestUser = getRequestUser(req);
+    const billingIdentity = buildBillingIdentity(req, requestUser);
+    const summary = await billingQuotaService.getUsageSummary(billingIdentity);
+    const quota = summary?.quotas?.deep_research;
+    res.json({
+      remaining: typeof quota?.remaining === "number" ? quota.remaining : 0,
+      limit: typeof quota?.limit === "number" ? quota.limit : 0,
+      reset_at: typeof quota?.reset_at === "string" ? quota.reset_at : null,
+      plan_code: typeof summary?.plan_code === "string" ? summary.plan_code : "free",
+    });
+  }),
+);
+
+/**
+ * GET /api/deep-research/:reportId
+ * Load report from metadata tables.
+ */
+app.get(
+  "/api/deep-research/:reportId",
+  verifyJWT({ allowGuest: false }),
+  asyncHandler(async (req, res) => {
+    const { reportId } = req.params;
+    const requestUser = getRequestUser(req);
+    const userId = requestUser.sub;
+
+    const userDb = await resolveUserDatabaseOrThrow(userId, "deep-research.get");
+    try {
+      const report = await deepResearchService.getReport({
+        userDb,
+        userId,
+        reportId,
+      });
+      res.json(report);
+    } catch (err: any) {
+      throw new HttpError(404, "Report not found.", { code: "report_not_found" });
+    }
+  }),
+);
+
+/**
+ * GET /api/deep-research/:reportId/export
+ * Downloads the report in Markdown format or placeholder formats.
+ */
+app.get(
+  "/api/deep-research/:reportId/export",
+  verifyJWT({ allowGuest: false }),
+  asyncHandler(async (req, res) => {
+    const { reportId } = req.params;
+    const format = typeof req.query.format === "string" ? req.query.format.toLowerCase() : "md";
+    const requestUser = getRequestUser(req);
+    const userId = requestUser.sub;
+
+    if (format !== "md" && format !== "docx" && format !== "pdf") {
+      res.status(400).json({ error: "Invalid format. Supported formats: md, docx, pdf." });
+      return;
+    }
+
+    const userDb = await resolveUserDatabaseOrThrow(userId, "deep-research.export");
+    let report;
+    try {
+      report = await deepResearchService.getReport({
+        userDb,
+        userId,
+        reportId,
+      });
+    } catch (err: any) {
+      throw new HttpError(404, "Report not found.", { code: "report_not_found" });
+    }
+
+    if (report.status !== "completed" || typeof report.content !== "string" || !report.content.trim()) {
+      res.status(409).json({
+        error: "The report is not ready for export.",
+        code: "report_not_ready",
+      });
+      return;
+    }
+
+    if (format === "md") {
+      res.setHeader("Content-Type", "text/markdown");
+      res.setHeader("Content-Disposition", `attachment; filename="report-${reportId}.md"`);
+      res.send(report.content);
+    } else if (format === "docx") {
+      try {
+        const spec = {
+          title: report.title,
+          text: report.content ?? undefined,
+          format: "docx" as const,
+        };
+        const repaired = repairSpecForFormat(spec, "docx");
+        const rendered = await renderDocx(repaired);
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        res.setHeader("Content-Disposition", `attachment; filename="report-${reportId}.docx"`);
+        res.send(rendered.buffer);
+      } catch (err: any) {
+        console.error(`[Deep Research] Export docx failed: ${err.message}`);
+        res.status(500).json({ error: "Failed to generate Word document." });
+      }
+    } else if (format === "pdf") {
+      try {
+        const spec = {
+          title: report.title,
+          text: report.content ?? undefined,
+          format: "pdf" as const,
+        };
+        const repaired = repairSpecForFormat(spec, "pdf");
+        const rendered = await renderPdf(repaired);
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `attachment; filename="report-${reportId}.pdf"`);
+        res.send(rendered.buffer);
+      } catch (err: any) {
+        console.error(`[Deep Research] Export pdf failed: ${err.message}`);
+        res.status(500).json({ error: "Failed to generate PDF document." });
+      }
+    }
+  }),
+);
+
 // ===============================
 // GET /api/config — Server capabilities
 // ===============================

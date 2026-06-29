@@ -1,0 +1,298 @@
+/* Deep Research Card styling */
+.deep-research-card {
+  background: var(--bg-glass);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  margin-top: 12px;
+  position: relative;
+  overflow: hidden;
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-md);
+}
+
+.deep-research-card.running {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.deep-research-card.completed {
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.deep-research-card.failed {
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.deep-research-card.cancelled {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Checklist / TODO rows */
+.deep-research-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.deep-research-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  transition: color var(--transition);
+}
+
+.deep-research-item.active {
+  color: var(--text-primary);
+}
+
+.deep-research-item.completed {
+  color: var(--text-primary);
+}
+
+.deep-research-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.deep-research-item-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.deep-research-item-query {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+/* Progress bar container */
+.deep-research-progress-container {
+  margin-bottom: 16px;
+}
+
+.deep-research-progress-bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.deep-research-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #8e8e93;
+  border-radius: 2px;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.deep-research-status-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Cancel Button centered inside spiral animation at bottom right */
+.deep-research-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: relative;
+  min-height: 40px;
+}
+
+.deep-research-cancel-wrapper {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.deep-research-spinner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  animation: deep-research-spin 1.5s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes deep-research-spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.deep-research-spinner circle {
+  transform-origin: center;
+}
+
+.deep-research-cancel-btn {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+  padding: 0;
+  z-index: 2;
+}
+
+.deep-research-cancel-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Report Card (completed state) styling */
+.deep-research-report-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+  padding-right: 70px; /* Space for export/copy buttons */
+}
+
+.deep-research-report-actions {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.deep-research-action-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}
+
+.deep-research-action-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Export dropdown styles */
+.deep-research-export-dropdown-container {
+  position: relative;
+}
+
+.deep-research-export-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  display: none;
+  flex-direction: column;
+  z-index: 10;
+  min-width: 100px;
+  overflow: hidden;
+  backdrop-filter: var(--glass-blur);
+}
+
+.deep-research-export-menu.show {
+  display: flex;
+}
+
+.deep-research-export-item {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  transition: all var(--transition);
+}
+
+.deep-research-export-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Report content preview styling with bottom fade-out */
+.deep-research-report-preview-container {
+  position: relative;
+  max-height: 200px;
+  overflow: hidden;
+  transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  margin-top: 12px;
+}
+
+.deep-research-report-preview-container.expanded {
+  max-height: none;
+}
+
+.deep-research-report-preview-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.deep-research-report-fade {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 80px;
+  background: linear-gradient(to bottom, transparent, var(--bg-primary));
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.deep-research-report-preview-container.expanded .deep-research-report-fade {
+  opacity: 0;
+}
+
+.deep-research-expand-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 8px 0;
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: color var(--transition);
+}
+
+.deep-research-expand-btn:hover {
+  color: var(--accent-hover);
+}

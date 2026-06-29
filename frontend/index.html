@@ -226,6 +226,15 @@
                 <span class="composer-action-subtitle">Search the web</span>
               </span>
             </button>
+            <button id="deep-research-btn" class="composer-action-option" title="Deep Research" aria-label="Use Deep Research" type="button" aria-pressed="false">
+              <span class="composer-action-icon" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              </span>
+              <span class="composer-action-copy">
+                <span class="composer-action-title">Deep Research</span>
+                <span class="composer-action-subtitle">Multi-source research report</span>
+              </span>
+            </button>
           </div>
           <div class="input-tools">
             <button id="composer-plus-btn" class="tool-btn composer-plus-btn" title="More actions" type="button" aria-expanded="false" aria-controls="composer-action-menu">
@@ -233,7 +242,7 @@
             </button>
           </div>
 
-          <!-- Inline mode pills (Visualize / WebSurf) -->
+          <!-- Inline mode pills (Visualize / WebSurf / Deep Research) -->
           <div id="image-mode-bar" class="composer-mode-pill" style="display: none;" role="status">
             <svg class="composer-mode-pill-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             <span class="composer-mode-pill-label">Visualize</span>
@@ -245,6 +254,13 @@
             <svg class="composer-mode-pill-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20a15 15 0 0 1 0-20"/></svg>
             <span id="web-search-mode-label" class="composer-mode-pill-label">WebSurf</span>
             <button id="cancel-web-search-mode" class="composer-mode-pill-dismiss" title="Cancel WebSurf mode" aria-label="Cancel WebSurf mode" type="button">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div id="deep-research-mode-bar" class="composer-mode-pill" style="display: none;" role="status">
+            <svg class="composer-mode-pill-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            <span class="composer-mode-pill-label">Deep Research active</span>
+            <button id="cancel-deep-research-mode" class="composer-mode-pill-dismiss" title="Cancel Deep Research mode" aria-label="Cancel Deep Research mode" type="button">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
             </button>
           </div>
