@@ -393,10 +393,90 @@ const spacedDuplicates = collapse([
   { role: "user", content: "Still separate", timestamp: new Date(baseTime).toISOString() },
   { role: "user", content: "Still separate", timestamp: new Date(baseTime + 180000).toISOString() },
 ]);
-if (adjacentDuplicates.length !== 2 || imageDuplicates.length !== 2 || spacedDuplicates.length !== 2) {
+const deepResearchReloadDuplicates = collapse([
+  {
+    id: "assistant-local-request-1",
+    role: "assistant",
+    content: "# Completed report",
+    timestamp: new Date(baseTime).toISOString(),
+    clientRequestId: "request-1"
+  },
+  {
+    id: "server-deep-report-1",
+    role: "assistant",
+    content: "# Completed report",
+    timestamp: new Date(baseTime + 10 * 60 * 1000).toISOString(),
+    clientRequestId: "request-1",
+    meta: { type: "deep-research", reportId: "report-1", status: "completed" }
+  }
+]);
+const cancelledDeepResearchReloadDuplicates = collapse([
+  {
+    id: "assistant-local-request-2",
+    role: "assistant",
+    content: "Research session cancelled.",
+    timestamp: new Date(baseTime).toISOString(),
+    clientRequestId: "request-2"
+  },
+  {
+    id: "server-deep-report-2",
+    role: "assistant",
+    content: "Research session cancelled.",
+    timestamp: new Date(baseTime + 10 * 60 * 1000).toISOString(),
+    clientRequestId: "request-2",
+    meta: { type: "deep-research", reportId: "report-2", status: "cancelled" }
+  }
+]);
+const failedDeepResearchReloadDuplicates = collapse([
+  {
+    id: "assistant-local-request-3",
+    role: "assistant",
+    content: "Research session failed. Please try again shortly.",
+    timestamp: new Date(baseTime).toISOString(),
+    clientRequestId: "request-3"
+  },
+  {
+    id: "server-deep-report-3",
+    role: "assistant",
+    content: "Research session failed. Please try again shortly.",
+    timestamp: new Date(baseTime + 10 * 60 * 1000).toISOString(),
+    clientRequestId: "request-3",
+    meta: { type: "deep-research", reportId: "report-3", status: "failed" }
+  }
+]);
+const normalAssistantMessages = collapse([
+  {
+    id: "normal-assistant-1",
+    role: "assistant",
+    content: "First normal response",
+    timestamp: new Date(baseTime).toISOString(),
+    clientRequestId: "normal-request"
+  },
+  {
+    id: "normal-assistant-2",
+    role: "assistant",
+    content: "Second normal response",
+    timestamp: new Date(baseTime + 1000).toISOString(),
+    clientRequestId: "normal-request"
+  }
+]);
+if (
+  adjacentDuplicates.length !== 2
+  || imageDuplicates.length !== 2
+  || spacedDuplicates.length !== 2
+  || deepResearchReloadDuplicates.length !== 1
+  || deepResearchReloadDuplicates[0]?.meta?.type !== "deep-research"
+  || deepResearchReloadDuplicates[0]?.meta?.status !== "completed"
+  || cancelledDeepResearchReloadDuplicates.length !== 1
+  || cancelledDeepResearchReloadDuplicates[0]?.meta?.status !== "cancelled"
+  || failedDeepResearchReloadDuplicates.length !== 1
+  || failedDeepResearchReloadDuplicates[0]?.meta?.status !== "failed"
+  || normalAssistantMessages.length !== 2
+) {
   console.error("Chat-message dedupe behavior regressed.");
   process.exit(1);
 }
+console.log("DEEP_RESEARCH_RELOAD_DEDUPE_OK");
 console.log("DEDUPE_OK");
 
 try {
@@ -430,6 +510,7 @@ for (const id of [
   assert.match(output, new RegExp(`LISTENER ${id} [1-9]`), `${id} should have a click listener after bootstrap`);
 }
 assert.match(output, /DEDUPE_OK/, "chat-message dedupe helper should satisfy production behavior");
+assert.match(output, /DEEP_RESEARCH_RELOAD_DEDUPE_OK/, "Deep Research reload should retain only the canonical card message");
 assert.match(output, /NEW_CHAT_CLICK_OK/, "new chat click should not crash after bootstrap");
 
 console.log("PASS | Frontend bootstrap regression checks passed.");

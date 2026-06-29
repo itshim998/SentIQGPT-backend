@@ -8037,7 +8037,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
           title: options.prompt,
           content: contentText,
           sources,
-        }, options.chatId, options.requestId);
+        });
       },
       cancel() {
         if (isFinished) return;
@@ -8051,14 +8051,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         
         cancelWrapper.remove();
 
-        persistChatMessage(options.chatId, "assistant", contentText || "Research session cancelled.", {
-          report_id: reportId,
-          status: "cancelled",
-          title: options.prompt,
-        }, {
-          id: `assistant-${options.requestId}`,
-          clientRequestId: options.requestId,
-        }).catch(() => null);
       },
       fail(errorMsg) {
         if (isFinished) return;
@@ -8073,19 +8065,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         
         cancelWrapper.remove();
 
-        persistChatMessage(options.chatId, "assistant", "Research session failed. Please try again shortly.", {
-          report_id: reportId,
-          status: "failed",
-          title: options.prompt,
-        }, {
-          id: `assistant-${options.requestId}`,
-          clientRequestId: options.requestId,
-        }).catch(() => null);
       }
     };
   }
 
-  function renderCompletedReportCard(card, report, chatId, requestId) {
+  function renderCompletedReportCard(card, report) {
     card.innerHTML = "";
 
     const titleEl = document.createElement("div");
@@ -8196,17 +8180,6 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       }
     });
 
-    if (chatId && requestId) {
-      persistChatMessage(chatId, "assistant", report.content || "", {
-        report_id: report.reportId || report.id,
-        status: "completed",
-        title: report.title,
-        sources: report.sources,
-      }, {
-        id: `assistant-${requestId}`,
-        clientRequestId: requestId,
-      }).catch(() => null);
-    }
   }
 
   function renderSavedDeepResearchCard(contentDiv, meta, content) {

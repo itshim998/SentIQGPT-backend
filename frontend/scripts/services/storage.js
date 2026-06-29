@@ -516,6 +516,21 @@ export function collapseAdjacentDuplicateChatMessages(messages, duplicateWindowM
     const previous = collapsed[collapsed.length - 1];
     const sameRole = previous?.role === message.role;
     const sameContent = normalizeMessageContentForDedup(previous?.content) === normalizeMessageContentForDedup(message.content);
+    const previousRequestId = getClientRequestId(previous);
+    const currentRequestId = getClientRequestId(message);
+    const sameRequest = Boolean(previousRequestId && currentRequestId && previousRequestId === currentRequestId);
+    const previousIsDeepResearch = previous?.meta?.type === "deep-research";
+    const currentIsDeepResearch = message?.meta?.type === "deep-research";
+    if (
+      previous
+      && sameRole
+      && previous.role === "assistant"
+      && sameRequest
+      && (previousIsDeepResearch || currentIsDeepResearch)
+    ) {
+      collapsed[collapsed.length - 1] = currentIsDeepResearch ? message : previous;
+      continue;
+    }
     const isImage = previous?.meta?.type === "image" || message?.meta?.type === "image";
     if (isImage) {
       collapsed.push(message);

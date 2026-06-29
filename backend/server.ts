@@ -6624,12 +6624,12 @@ import {
   TavilyDeepResearchError,
 } from "./tools/deepResearch/tavilyDeepResearchClient";
 import { DeepResearchQuotaLifecycle } from "./tools/deepResearch/deepResearchQuotaLifecycle";
-import { getDeepResearchRoute } from "./billing/modelEntitlementRouter";
 import {
-  repairSpecForFormat,
-  renderDocx,
-  renderPdf
-} from "./tools/fileGeneration/fileGenerator";
+  renderDeepResearchDocx,
+  renderDeepResearchPdf,
+  sanitizeDeepResearchExportText,
+} from "./tools/deepResearch/deepResearchExport";
+import { getDeepResearchRoute } from "./billing/modelEntitlementRouter";
 
 const deepResearchService = new DeepResearchService();
 const tavilyDeepResearchClient = new TavilyDeepResearchClient();
@@ -7031,39 +7031,35 @@ app.get(
       });
       return;
     }
+    const sanitizedTitle = sanitizeDeepResearchExportText(report.title) || "Deep Research Report";
+    const sanitizedContent = sanitizeDeepResearchExportText(report.content);
 
     if (format === "md") {
       res.setHeader("Content-Type", "text/markdown");
       res.setHeader("Content-Disposition", `attachment; filename="report-${reportId}.md"`);
-      res.send(report.content);
+      res.send(sanitizedContent);
     } else if (format === "docx") {
       try {
-        const spec = {
-          title: report.title,
-          text: report.content ?? undefined,
-          format: "docx" as const,
-        };
-        const repaired = repairSpecForFormat(spec, "docx");
-        const rendered = await renderDocx(repaired);
+        const buffer = await renderDeepResearchDocx({
+          title: sanitizedTitle,
+          content: sanitizedContent,
+        });
         res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
         res.setHeader("Content-Disposition", `attachment; filename="report-${reportId}.docx"`);
-        res.send(rendered.buffer);
+        res.send(buffer);
       } catch (err: any) {
         console.error(`[Deep Research] Export docx failed: ${err.message}`);
         res.status(500).json({ error: "Failed to generate Word document." });
       }
     } else if (format === "pdf") {
       try {
-        const spec = {
-          title: report.title,
-          text: report.content ?? undefined,
-          format: "pdf" as const,
-        };
-        const repaired = repairSpecForFormat(spec, "pdf");
-        const rendered = await renderPdf(repaired);
+        const buffer = await renderDeepResearchPdf({
+          title: sanitizedTitle,
+          content: sanitizedContent,
+        });
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader("Content-Disposition", `attachment; filename="report-${reportId}.pdf"`);
-        res.send(rendered.buffer);
+        res.send(buffer);
       } catch (err: any) {
         console.error(`[Deep Research] Export pdf failed: ${err.message}`);
         res.status(500).json({ error: "Failed to generate PDF document." });
