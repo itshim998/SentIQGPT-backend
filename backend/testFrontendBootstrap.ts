@@ -332,6 +332,43 @@ for (const [key, value] of Object.entries({
 }
 windowObj.window = windowObj;
 
+const deepResearchStateUrl = new URL("frontend/scripts/features/deep-research-state.js", "file:///" + process.cwd().replace(/\\/g, "/") + "/");
+const { resolveDeepResearchCardState } = await import(deepResearchStateUrl.href + "?stateTest=" + Date.now());
+const runningResearchState = resolveDeepResearchCardState(
+  { type: "deep-research", reportId: "report-running", status: "running" },
+  "",
+  {
+    report_id: "report-running",
+    status: "running",
+    progress_percent: 55,
+    progress_phase: "search",
+    latest_status_text: "Searching saved progress...",
+    partial_content: "Persisted partial report"
+  }
+);
+const completedResearchState = resolveDeepResearchCardState(
+  { type: "deep-research", reportId: "report-complete", status: "running" },
+  "",
+  {
+    report_id: "report-complete",
+    status: "completed",
+    progress_percent: 100,
+    content: "Completed persisted report"
+  }
+);
+if (
+  !runningResearchState.shouldMonitor
+  || runningResearchState.progressPercent !== 55
+  || runningResearchState.partialContent !== "Persisted partial report"
+  || completedResearchState.shouldMonitor
+  || completedResearchState.status !== "completed"
+  || completedResearchState.content !== "Completed persisted report"
+) {
+  console.error("Deep Research reload state hydration regressed.");
+  process.exit(1);
+}
+console.log("DEEP_RESEARCH_RELOAD_STATE_OK");
+
 const moduleUrl = new URL("frontend/scripts/main.js", "file:///" + process.cwd().replace(/\\/g, "/") + "/");
 await import(moduleUrl.href + "?bootstrapTest=" + Date.now());
 
@@ -511,6 +548,7 @@ for (const id of [
 }
 assert.match(output, /DEDUPE_OK/, "chat-message dedupe helper should satisfy production behavior");
 assert.match(output, /DEEP_RESEARCH_RELOAD_DEDUPE_OK/, "Deep Research reload should retain only the canonical card message");
+assert.match(output, /DEEP_RESEARCH_RELOAD_STATE_OK/, "running and completed Deep Research reload states should hydrate correctly");
 assert.match(output, /NEW_CHAT_CLICK_OK/, "new chat click should not crash after bootstrap");
 
 console.log("PASS | Frontend bootstrap regression checks passed.");

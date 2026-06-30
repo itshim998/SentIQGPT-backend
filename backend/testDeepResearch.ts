@@ -236,6 +236,173 @@ async function testQuotaLifecycle(): Promise<void> {
   assert.deepEqual(failedCommitCalls, ["commit"], "a failed post-acceptance commit must never release quota");
 }
 
+async function testDurableTaskCoordinator(): Promise<void> {
+  const { DeepResearchTaskCoordinator } = await import("./tools/deepResearch/deepResearchTaskCoordinator");
+
+  const disconnectCoordinator = new DeepResearchTaskCoordinator();
+  let disconnectReportStatus = "running";
+  let releaseDisconnectTask!: () => void;
+  let isDisconnectTaskAborted = () => true;
+  let markDisconnectReady!: () => void;
+  const disconnectReady = new Promise<void>((resolveReady) => { markDisconnectReady = resolveReady; });
+  const disconnectGate = new Promise<void>((resolveGate) => { releaseDisconnectTask = resolveGate; });
+  assert(disconnectCoordinator.start("disconnect-report", async (context) => {
+    isDisconnectTaskAborted = () => context.signal.aborted;
+    markDisconnectReady();
+    await disconnectGate;
+    disconnectReportStatus = "completed";
+  }));
+  await disconnectReady;
+  const disconnectEvents: string[] = [];
+  const unsubscribe = disconnectCoordinator.subscribe("disconnect-report", (event) => {
+    disconnectEvents.push(event.type);
+  });
+  await disconnectCoordinator.publish("disconnect-report", { type: "progress", step: "plan" });
+  unsubscribe();
+  assert.equal(disconnectCoordinator.getSubscriberCount("disconnect-report"), 0);
+  assert.equal(isDisconnectTaskAborted(), false, "subscriber disconnect must not abort the backend task");
+  assert.equal(disconnectReportStatus, "running", "subscriber disconnect must not mark the report cancelled");
+  assert.deepEqual(disconnectEvents, ["progress"]);
+  releaseDisconnectTask();
+  assert.equal(await disconnectCoordinator.waitForIdle("disconnect-report"), true);
+  assert.equal(disconnectReportStatus, "completed");
+
+  const cancelCoordinator = new DeepResearchTaskCoordinator();
+  let explicitAbortObserved = false;
+  let markCancelReady!: () => void;
+  const cancelReady = new Promise<void>((resolveReady) => { markCancelReady = resolveReady; });
+  assert(cancelCoordinator.start("cancel-report", async ({ signal, wasExplicitlyCancelled }) => {
+    markCancelReady();
+    await new Promise<void>((resolveAbort) => {
+      signal.addEventListener("abort", () => {
+        explicitAbortObserved = wasExplicitlyCancelled();
+        resolveAbort();
+      }, { once: true });
+    });
+  }));
+  await cancelReady;
+  assert.equal(cancelCoordinator.cancel("cancel-report"), true);
+  assert.equal(await cancelCoordinator.waitForIdle("cancel-report"), true);
+  assert.equal(explicitAbortObserved, true, "explicit cancel must abort the backend task");
+
+  const attachCoordinator = new DeepResearchTaskCoordinator();
+  let publishFromTask!: (event: any) => Promise<void>;
+  let releaseAttachTask!: () => void;
+  let markAttachReady!: () => void;
+  const attachReady = new Promise<void>((resolveReady) => { markAttachReady = resolveReady; });
+  const attachGate = new Promise<void>((resolveGate) => { releaseAttachTask = resolveGate; });
+  attachCoordinator.start("running-report", async (context) => {
+    publishFromTask = context.publish;
+    markAttachReady();
+    await attachGate;
+  });
+  await attachReady;
+  const attachedEvents: string[] = [];
+  const detach = attachCoordinator.subscribe("running-report", (event) => {
+    attachedEvents.push(event.type);
+  });
+  await publishFromTask({ type: "progress", step: "search", query: "resume test" });
+  assert.deepEqual(attachedEvents, ["progress"], "a subscriber can attach to an existing running report");
+  detach();
+  releaseAttachTask();
+  await attachCoordinator.waitForIdle("running-report");
+
+  const quotaCalls: string[] = [];
+  const reservation = {
+    requestId: "disconnect-quota",
+    feature: "deep_research",
+    planCode: "free",
+    safeModelLabel: "Deep Research",
+    provider: "tavily",
+    model: "pro",
+    route: "deep_research",
+    remaining: 6,
+    limit: 7,
+    resetAt: null,
+  } as any;
+  const { DeepResearchQuotaLifecycle } = await import("./tools/deepResearch/deepResearchQuotaLifecycle");
+  const quotaLifecycle = new DeepResearchQuotaLifecycle({
+    commit: async () => { quotaCalls.push("commit"); },
+    release: async () => { quotaCalls.push("release"); },
+  }, reservation);
+  const quotaCoordinator = new DeepResearchTaskCoordinator();
+  let releaseQuotaTask!: () => void;
+  let markQuotaReady!: () => void;
+  const quotaReady = new Promise<void>((resolveReady) => { markQuotaReady = resolveReady; });
+  const quotaGate = new Promise<void>((resolveGate) => { releaseQuotaTask = resolveGate; });
+  quotaCoordinator.start("quota-report", async () => {
+    markQuotaReady();
+    await quotaGate;
+    quotaLifecycle.markProviderAccepted();
+    await quotaLifecycle.settle({ outcome: "completed" });
+  });
+  await quotaReady;
+  quotaCoordinator.subscribe("quota-report", () => undefined)();
+  assert.deepEqual(quotaCalls, [], "subscriber disconnect must not settle quota");
+  releaseQuotaTask();
+  await quotaCoordinator.waitForIdle("quota-report");
+  assert.deepEqual(quotaCalls, ["commit"]);
+}
+
+async function testStatusSnapshots(): Promise<void> {
+  const {
+    buildDeepResearchStatusSnapshot,
+    isDeepResearchHeartbeatStale,
+  } = await import("./tools/deepResearch/deepResearchService");
+  const runningReport = {
+    id: "report-status",
+    user_id: "user-status",
+    conversation_id: "conversation-status",
+    message_id: "message-status",
+    title: "Durable research",
+    content: "Partial persisted report",
+    sources: [{ title: "Source", url: "https://example.com" }],
+    status: "running",
+    request_metadata: {
+      progress_percent: 55,
+      progress_phase: "search",
+      latest_status_text: "Searching durable tasks...",
+      cancellation_requested: false,
+      started_at: "2026-06-29T00:00:00.000Z",
+      heartbeat_at: "2026-06-29T00:00:30.000Z",
+    },
+    search_count: 3,
+    citation_count: 1,
+    created_at: "2026-06-29T00:00:00.000Z",
+    updated_at: "2026-06-29T00:01:00.000Z",
+  } as const;
+  const running = buildDeepResearchStatusSnapshot(runningReport as any);
+  assert.equal(running.status, "running");
+  assert.equal(running.progress_percent, 55);
+  assert.equal(running.progress_phase, "search");
+  assert.equal(running.partial_content, "Partial persisted report");
+  assert.equal(running.content, "", "running status must expose partial content without claiming final content");
+  assert.equal(running.sources.length, 1);
+  assert.equal(
+    isDeepResearchHeartbeatStale(runningReport as any, Date.parse("2026-06-29T00:00:45.000Z"), 30_000),
+    false,
+  );
+  assert.equal(
+    isDeepResearchHeartbeatStale(runningReport as any, Date.parse("2026-06-29T00:02:00.000Z"), 30_000),
+    true,
+    "a restarted backend must recognize a stale running task",
+  );
+
+  const completed = buildDeepResearchStatusSnapshot({
+    ...running,
+    id: running.report_id,
+    user_id: "user-status",
+    conversation_id: running.conversation_id,
+    message_id: running.message_id,
+    status: "completed",
+    content: "Final report",
+    request_metadata: { progress_percent: 100, progress_phase: "synthesize" },
+    created_at: running.started_at,
+  } as any);
+  assert.equal(completed.content, "Final report");
+  assert.equal(completed.progress_percent, 100);
+}
+
 class FakeUpdateQuery {
   readonly filters: Array<[string, unknown]> = [];
   updatePayload: Record<string, unknown> | null = null;
@@ -266,6 +433,13 @@ async function testPersistenceTransitionGuards(): Promise<void> {
   };
   const common = { userDb, userId: "offline-user", reportId: "offline-report" };
   await service.updateReportMessageId({ ...common, messageId: "offline-message" });
+  await service.updateProgress({
+    ...common,
+    partialContent: "partial",
+    sources: [],
+    searchCount: 1,
+    runtimeMetadata: { progress_percent: 50, progress_phase: "search" },
+  });
   await service.completeReport({ ...common, content: "report", sources: [], searchCount: 1 });
   await service.cancelReport({ ...common, partialContent: "partial", sources: [], searchCount: 1 });
   await service.failReport(common);
@@ -274,6 +448,8 @@ async function testPersistenceTransitionGuards(): Promise<void> {
     assert(query.filters.some(([column, value]) => column === "user_id" && value === "offline-user"));
     assert(query.filters.some(([column, value]) => column === "status" && value === "running"));
   }
+  assert.equal(queries.at(-2)?.updatePayload?.status, "cancelled", "explicit cancel must persist cancelled status");
+  assert.equal(queries.at(-1)?.updatePayload?.status, "failed", "task failure must persist failed status");
   assert(!Object.prototype.hasOwnProperty.call(queries.at(-1)?.updatePayload || {}, "request_metadata"), "failure must preserve request metadata");
 }
 
@@ -382,23 +558,37 @@ function testStaticContracts(): void {
   const server = read("backend/server.ts");
   const client = read("backend/tools/deepResearch/tavilyDeepResearchClient.ts");
   const reportService = read("backend/tools/deepResearch/deepResearchService.ts");
+  const taskCoordinator = read("backend/tools/deepResearch/deepResearchTaskCoordinator.ts");
   const api = read("frontend/scripts/services/api.js");
   const controller = read("frontend/scripts/features/chat-controller.js");
   const shardMigration = read("supabase/migrations/20260628140000_add_deep_research_reports.sql");
   const controlMigration = read("supabase/migrations/20260629120000_fix_deep_research_control_scope.sql");
   const dbRouter = read("backend/dbRouter.ts");
 
+  const startRoute = server.indexOf('"/api/deep-research/start"');
   const streamRoute = server.indexOf('"/api/deep-research/stream"');
   const quotaRoute = server.indexOf('"/api/deep-research/quota"');
+  const statusRoute = server.indexOf('"/api/deep-research/:reportId/status"');
+  const eventsRoute = server.indexOf('"/api/deep-research/:reportId/events"');
+  const cancelRoute = server.indexOf('"/api/deep-research/:reportId/cancel"');
   const reportRoute = server.indexOf('"/api/deep-research/:reportId"');
   const exportRoute = server.indexOf('"/api/deep-research/:reportId/export"');
   const errorHandler = server.indexOf("// Global error handler");
-  assert(streamRoute > 0 && quotaRoute > streamRoute && reportRoute > quotaRoute && exportRoute > reportRoute);
+  assert(startRoute > 0 && streamRoute > startRoute && quotaRoute > streamRoute);
+  assert(statusRoute > quotaRoute && eventsRoute > statusRoute && cancelRoute > eventsRoute);
+  assert(reportRoute > cancelRoute && exportRoute > reportRoute);
   assert(exportRoute < errorHandler, "Deep Research routes must precede the global error handler");
   assert.match(server.slice(streamRoute, quotaRoute), /verifyJWT\(\{ allowGuest: false \}\)/);
   assert.match(server, /tavilyDeepResearchClient\.streamResearch/);
   assert.doesNotMatch(server, /deepResearchService as any/);
-  assert.match(server, /onAccepted: \(\) => quotaLifecycle\.markProviderAccepted\(\)/);
+  assert.match(server, /args\.quotaLifecycle\.markProviderAccepted\(\)/);
+  assert.match(server, /res\.on\("close", cleanup\)/);
+  assert.match(server, /research_interrupted/);
+  assert.doesNotMatch(
+    server.slice(startRoute, quotaRoute),
+    /res\.on\("close"[\s\S]{0,180}abortController\.abort/,
+    "browser disconnect must not abort Deep Research",
+  );
   assert.match(server, /report\.status !== "completed"/);
   assert.match(server, /code: "report_not_ready"/);
   assert.match(server, /renderDeepResearchDocx/);
@@ -410,8 +600,15 @@ function testStaticContracts(): void {
   assert.match(client, /record\.event\.toLowerCase\(\) === "done"/);
   assert.match(reportService, /\.eq\("user_id", args\.userId\)/);
   assert.match(reportService, /\.eq\("status", "running"\)/);
+  assert.match(reportService, /partial_content: partialContentPreview/);
+  assert.match(taskCoordinator, /Removing an SSE subscriber never aborts the task/);
+  assert.match(taskCoordinator, /task\.abortController\.abort\(\)/);
 
   assert.match(api, /\/api\/deep-research\/stream/);
+  assert.match(api, /\/api\/deep-research\/start/);
+  assert.match(api, /\/api\/deep-research\/\$\{encodeURIComponent\(reportId\)\}\/status/);
+  assert.match(api, /\/api\/deep-research\/\$\{encodeURIComponent\(reportId\)\}\/events/);
+  assert.match(api, /\/api\/deep-research\/\$\{encodeURIComponent\(reportId\)\}\/cancel/);
   assert.match(api, /\/api\/deep-research\/quota/);
   assert.match(api, /eventName/);
   assert.match(api, /stream_incomplete/);
@@ -423,7 +620,9 @@ function testStaticContracts(): void {
   assert.doesNotMatch(exportClient, /body\s*:/, "frontend export must not send report content");
 
   assert.match(controller, /data\.step === "plan"/);
-  assert.match(controller, /hydrateTerminalReport/);
+  assert.match(controller, /monitorDeepResearchReport/);
+  assert.match(controller, /API\.startDeepResearch/);
+  assert.match(controller, /API\.cancelDeepResearchReport/);
   const runningCardStart = controller.indexOf("function createDeepResearchRunningCard");
   const streamingBubbleStart = controller.indexOf("function createStreamingBubble", runningCardStart);
   const runningCard = controller.slice(runningCardStart, streamingBubbleStart);
@@ -454,6 +653,8 @@ async function main(): Promise<void> {
   await testProviderErrorAndKeyRotation();
   await testKeyManagerWithoutLeakage();
   await testQuotaLifecycle();
+  await testDurableTaskCoordinator();
+  await testStatusSnapshots();
   await testPersistenceTransitionGuards();
   await testUnauthenticatedRouteContract();
   await testExportRenderers();

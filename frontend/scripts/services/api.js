@@ -569,32 +569,7 @@ async function generateTitle(userMessage, assistantReply, conversationId) {
 async function getHealth() { return apiRequest("/api/health"); }
 async function getConfigAPI() { return apiRequest("/api/config"); }
 
-async function sendDeepResearchStream(input, context = {}, callbacks = {}, signal = null) {
-  const url = `${API_BASE}/api/deep-research/stream`;
-  const headers = await buildAuthHeaders({ "Content-Type": "application/json" });
-  const conversationId = typeof context.conversationId === "string" && context.conversationId.trim()
-    ? context.conversationId.trim()
-    : undefined;
-  const clientRequestId = typeof context.clientRequestId === "string" && context.clientRequestId.trim()
-    ? context.clientRequestId.trim()
-    : undefined;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      prompt: input,
-      conversationId,
-      clientRequestId,
-    }),
-    signal,
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-    throw createApiError(response, errorData, `Deep Research request failed: ${response.status}`);
-  }
-
+async function consumeDeepResearchEventStream(response, callbacks = {}) {
   if (!response.body?.getReader || typeof TextDecoder !== "function") {
     const error = new Error("Streaming response support is unavailable.");
     error.code = "browser_feature_blocked";
@@ -632,8 +607,11 @@ async function sendDeepResearchStream(input, context = {}, callbacks = {}, signa
       throw error;
     }
 
+    callbacks.onEvent?.(parsed);
     if (parsed.type === "init") {
       callbacks.onInit?.(parsed);
+    } else if (parsed.type === "snapshot") {
+      callbacks.onSnapshot?.(parsed.report || null);
     } else if (parsed.type === "progress") {
       callbacks.onProgress?.(parsed);
     } else if (parsed.type === "sources") {
@@ -642,12 +620,16 @@ async function sendDeepResearchStream(input, context = {}, callbacks = {}, signa
       callbacks.onContent?.(typeof parsed.text === "string" ? parsed.text : "");
     } else if (parsed.type === "done") {
       terminalReceived = true;
-      callbacks.onDone?.();
+      callbacks.onDone?.(parsed.report || null);
+    } else if (parsed.type === "cancelled") {
+      terminalReceived = true;
+      callbacks.onCancelled?.(parsed.report || null);
     } else if (parsed.type === "error") {
       terminalReceived = true;
       const error = new Error(parsed.error || "Deep Research failed");
       error.code = parsed.code || "research_failed";
-      callbacks.onError?.(error);
+      if (callbacks.onFailed) callbacks.onFailed(error, parsed.report || null);
+      else callbacks.onError?.(error);
     }
     return terminalReceived;
   }
@@ -690,22 +672,82 @@ async function sendDeepResearchStream(input, context = {}, callbacks = {}, signa
       buffer += decoder.decode(value, { stream: true });
       processBufferedLines(false);
     }
-
     if (!terminalReceived) {
-      const error = new Error("Deep Research response did not complete. Please retry.");
+      const error = new Error("Deep Research update connection ended before the task completed.");
       error.code = "stream_incomplete";
       throw error;
     }
+    return { terminalReceived: true };
   } catch (error) {
     if (error?.name === "AbortError") throw error;
-    if (callbacks.onError) callbacks.onError(error);
+    callbacks.onError?.(error);
     throw error;
   } finally {
-    if (terminalReceived && !streamEnded) {
-      await reader.cancel().catch(() => null);
-    }
+    if (terminalReceived && !streamEnded) await reader.cancel().catch(() => null);
     reader.releaseLock();
   }
+}
+
+async function sendDeepResearchStream(input, context = {}, callbacks = {}, signal = null) {
+  const url = `${API_BASE}/api/deep-research/stream`;
+  const headers = await buildAuthHeaders({ "Content-Type": "application/json" });
+  const conversationId = typeof context.conversationId === "string" && context.conversationId.trim()
+    ? context.conversationId.trim()
+    : undefined;
+  const clientRequestId = typeof context.clientRequestId === "string" && context.clientRequestId.trim()
+    ? context.clientRequestId.trim()
+    : undefined;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      prompt: input,
+      conversationId,
+      clientRequestId,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    throw createApiError(response, errorData, `Deep Research request failed: ${response.status}`);
+  }
+
+  return consumeDeepResearchEventStream(response, callbacks);
+}
+
+async function startDeepResearch(input, context = {}) {
+  return apiRequest("/api/deep-research/start", {
+    method: "POST",
+    body: JSON.stringify({
+      prompt: input,
+      conversationId: typeof context.conversationId === "string" ? context.conversationId : undefined,
+      clientRequestId: typeof context.clientRequestId === "string" ? context.clientRequestId : undefined,
+    }),
+  });
+}
+
+async function getDeepResearchStatus(reportId) {
+  return apiRequest(`/api/deep-research/${encodeURIComponent(reportId)}/status`, { method: "GET" });
+}
+
+async function subscribeDeepResearchEvents(reportId, callbacks = {}, signal = null) {
+  const headers = await buildAuthHeaders();
+  const response = await fetch(`${API_BASE}/api/deep-research/${encodeURIComponent(reportId)}/events`, {
+    method: "GET",
+    headers,
+    signal,
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    throw createApiError(response, errorData, `Deep Research subscription failed: ${response.status}`);
+  }
+  return consumeDeepResearchEventStream(response, callbacks);
+}
+
+async function cancelDeepResearchReport(reportId) {
+  return apiRequest(`/api/deep-research/${encodeURIComponent(reportId)}/cancel`, { method: "POST" });
 }
 
 async function getDeepResearchQuota() {
@@ -738,5 +780,6 @@ window.SentIQAPI = {
   getConversations, createConversation, getConversationMessages, deleteConversation, updateConversationTitle, syncChatMessages,
   getMemories, deleteMemory: deleteMemoryAPI, getProfile, updateProfile,
   getHealth, getConfig: getConfigAPI,
-  sendDeepResearchStream, getDeepResearchQuota, getDeepResearchReport, exportDeepResearchReport,
+  sendDeepResearchStream, startDeepResearch, getDeepResearchStatus, subscribeDeepResearchEvents,
+  cancelDeepResearchReport, getDeepResearchQuota, getDeepResearchReport, exportDeepResearchReport,
 };

@@ -6615,15 +6615,26 @@ app.get("/api/search/status", (_req, res) => {
 });
 
 // =========================================================================
-// Deep Research Endpoints (Phase 2 - Backend Only)
+// Deep Research Endpoints (Durable Background Tasks)
 // =========================================================================
 
-import { DeepResearchService } from "./tools/deepResearch/deepResearchService";
+import {
+  buildDeepResearchStatusSnapshot,
+  DeepResearchService,
+  isDeepResearchHeartbeatStale,
+} from "./tools/deepResearch/deepResearchService";
 import {
   TavilyDeepResearchClient,
   TavilyDeepResearchError,
 } from "./tools/deepResearch/tavilyDeepResearchClient";
 import { DeepResearchQuotaLifecycle } from "./tools/deepResearch/deepResearchQuotaLifecycle";
+import { DeepResearchTaskCoordinator } from "./tools/deepResearch/deepResearchTaskCoordinator";
+import type {
+  DeepResearchEvent,
+  DeepResearchReport,
+  DeepResearchRuntimeMetadata,
+  DeepResearchSource,
+} from "./tools/deepResearch/deepResearchTypes";
 import {
   renderDeepResearchDocx,
   renderDeepResearchPdf,
@@ -6633,6 +6644,13 @@ import { getDeepResearchRoute } from "./billing/modelEntitlementRouter";
 
 const deepResearchService = new DeepResearchService();
 const tavilyDeepResearchClient = new TavilyDeepResearchClient();
+const deepResearchTaskCoordinator = new DeepResearchTaskCoordinator();
+const deepResearchWorkerId = randomUUID();
+const DEEP_RESEARCH_HEARTBEAT_MS = 15_000;
+const DEEP_RESEARCH_STALE_AFTER_MS = (() => {
+  const parsed = Number.parseInt(process.env.DEEP_RESEARCH_STALE_AFTER_MS || "90000", 10);
+  return Number.isFinite(parsed) && parsed >= 30_000 ? parsed : 90_000;
+})();
 
 type DeepResearchMessageStatus = "running" | "completed" | "failed" | "cancelled";
 
@@ -6680,270 +6698,497 @@ async function settleDeepResearchQuota(
   }
 }
 
-/**
- * POST /api/deep-research/stream
- * Connects to Tavily Research stream, writes report updates, and manages sharded DB lifecycle & billing.
- */
+function getDeepResearchRuntime(report: DeepResearchReport): DeepResearchRuntimeMetadata {
+  return report.request_metadata && typeof report.request_metadata === "object"
+    ? report.request_metadata as DeepResearchRuntimeMetadata
+    : {};
+}
+
+async function runDeepResearchTask(args: {
+  userDb: any;
+  userId: string;
+  reportId: string;
+  messageId: string | null;
+  conversationId: string;
+  title: string;
+  prompt: string;
+  quotaLifecycle: DeepResearchQuotaLifecycle;
+  initialRuntime: DeepResearchRuntimeMetadata;
+  signal: AbortSignal;
+  publish: (event: DeepResearchEvent) => Promise<void>;
+  wasExplicitlyCancelled: () => boolean;
+}): Promise<void> {
+  let partialContent = "";
+  const discoveredSources = new Set<string>();
+  const sourceList: DeepResearchSource[] = [];
+  let searchCount = 0;
+  let lastProgressWriteAt = 0;
+  let lastCancellationCheckAt = 0;
+  let progressWrite = Promise.resolve();
+  const runtime: DeepResearchRuntimeMetadata = { ...args.initialRuntime };
+
+  const persistProgress = async (force = false) => {
+    const nowMs = Date.now();
+    if (!force && nowMs - lastProgressWriteAt < 750) return progressWrite;
+    lastProgressWriteAt = nowMs;
+    runtime.heartbeat_at = new Date(nowMs).toISOString();
+    const metadataSnapshot = { ...runtime };
+    const contentSnapshot = partialContent;
+    const sourcesSnapshot = [...sourceList];
+    const searchCountSnapshot = searchCount;
+    progressWrite = progressWrite
+      .catch(() => undefined)
+      .then(() => deepResearchService.updateProgress({
+        userDb: args.userDb,
+        userId: args.userId,
+        reportId: args.reportId,
+        partialContent: contentSnapshot,
+        sources: sourcesSnapshot,
+        searchCount: searchCountSnapshot,
+        runtimeMetadata: metadataSnapshot,
+      }));
+    return progressWrite;
+  };
+
+  const heartbeat = setInterval(() => {
+    void persistProgress(true).catch(() => {
+      console.error("[Deep Research] Failed to persist background heartbeat.");
+    });
+  }, DEEP_RESEARCH_HEARTBEAT_MS);
+  heartbeat.unref?.();
+
+  try {
+    await args.publish({ type: "init", report_id: args.reportId });
+    await tavilyDeepResearchClient.streamResearch(
+      args.prompt,
+      async (event) => {
+        if (args.signal.aborted) return;
+        const nowMs = Date.now();
+        if (nowMs - lastCancellationCheckAt >= 2_000) {
+          lastCancellationCheckAt = nowMs;
+          const cancellationRequested = await deepResearchService.isCancellationRequested({
+            userDb: args.userDb,
+            userId: args.userId,
+            reportId: args.reportId,
+          });
+          if (cancellationRequested) {
+            deepResearchTaskCoordinator.cancel(args.reportId);
+            return;
+          }
+        }
+
+        if (event.type === "progress") {
+          if (event.step === "plan") {
+            runtime.progress_phase = "plan";
+            runtime.progress_percent = 15;
+            runtime.latest_status_text = "Planning research path...";
+          } else if (event.step === "search") {
+            searchCount += 1;
+            runtime.progress_phase = "search";
+            runtime.progress_percent = Math.min(70, 35 + searchCount * 5);
+            runtime.latest_status_text = event.query ? `Searching: ${event.query}` : "Searching the web...";
+          } else if (event.step === "synthesize") {
+            runtime.progress_phase = "synthesize";
+            runtime.progress_percent = 75;
+            runtime.latest_status_text = "Synthesizing report...";
+          }
+          await persistProgress();
+          await args.publish(event);
+        } else if (event.type === "sources" && event.sources) {
+          for (const source of event.sources) {
+            if (!discoveredSources.has(source.url)) {
+              discoveredSources.add(source.url);
+              sourceList.push(source);
+            }
+          }
+          runtime.latest_status_text = `Found ${sourceList.length} sources...`;
+          await persistProgress(true);
+          await args.publish({ type: "sources", sources: [...sourceList] });
+        } else if (event.type === "content" && event.text) {
+          partialContent += event.text;
+          runtime.progress_phase = "synthesize";
+          runtime.progress_percent = 90;
+          runtime.latest_status_text = "Writing final report sections...";
+          await persistProgress();
+          await args.publish(event);
+        }
+      },
+      args.signal,
+      {
+        onAccepted: () => {
+          args.quotaLifecycle.markProviderAccepted();
+          runtime.provider_accepted = true;
+          void persistProgress(true).catch(() => undefined);
+        },
+      },
+    );
+
+    if (args.signal.aborted) {
+      const abortError = new Error("Deep Research request cancelled.");
+      abortError.name = "AbortError";
+      throw abortError;
+    }
+    if (!partialContent.trim()) throw new Error("Deep Research returned no report content.");
+
+    await progressWrite.catch(() => undefined);
+    await deepResearchService.completeReport({
+      userDb: args.userDb,
+      userId: args.userId,
+      reportId: args.reportId,
+      content: partialContent,
+      sources: sourceList,
+      searchCount,
+      runtimeMetadata: runtime,
+    });
+    await updateDeepResearchMessage({
+      userDb: args.userDb,
+      messageId: args.messageId,
+      conversationId: args.conversationId,
+      reportId: args.reportId,
+      status: "completed",
+      title: args.title,
+      content: partialContent,
+      sources: sourceList,
+    });
+    const report = await deepResearchService.getReport({
+      userDb: args.userDb,
+      userId: args.userId,
+      reportId: args.reportId,
+    });
+    await settleDeepResearchQuota(args.quotaLifecycle, { report_id: args.reportId, outcome: "completed" });
+    await args.publish({ type: "done", report: buildDeepResearchStatusSnapshot(report) });
+  } catch (error: unknown) {
+    const explicitlyCancelled = args.wasExplicitlyCancelled()
+      || await deepResearchService.isCancellationRequested({
+        userDb: args.userDb,
+        userId: args.userId,
+        reportId: args.reportId,
+      });
+    const safeCode = error instanceof TavilyDeepResearchError ? error.code : "research_failed";
+
+    if (explicitlyCancelled) {
+      runtime.cancellation_requested = true;
+      try {
+        await deepResearchService.cancelReport({
+          userDb: args.userDb,
+          userId: args.userId,
+          reportId: args.reportId,
+          partialContent,
+          sources: sourceList,
+          searchCount,
+          runtimeMetadata: runtime,
+        });
+      } catch {
+        console.error("[Deep Research] Failed to persist cancelled report status.");
+      }
+      await updateDeepResearchMessage({
+        userDb: args.userDb,
+        messageId: args.messageId,
+        conversationId: args.conversationId,
+        reportId: args.reportId,
+        status: "cancelled",
+        title: args.title,
+        content: partialContent || "Research session cancelled.",
+        sources: sourceList,
+      });
+      const report = await deepResearchService.getReport({ userDb: args.userDb, userId: args.userId, reportId: args.reportId });
+      await settleDeepResearchQuota(args.quotaLifecycle, { report_id: args.reportId, outcome: "cancelled" });
+      await args.publish({ type: "cancelled", report: buildDeepResearchStatusSnapshot(report) });
+    } else {
+      const statusText = "Research could not be completed. Please try again.";
+      try {
+        await deepResearchService.failReport({
+          userDb: args.userDb,
+          userId: args.userId,
+          reportId: args.reportId,
+          partialContent,
+          sources: sourceList,
+          searchCount,
+          runtimeMetadata: runtime,
+          statusText,
+          errorCode: safeCode,
+        });
+      } catch {
+        console.error("[Deep Research] Failed to persist failed report status.");
+      }
+      await updateDeepResearchMessage({
+        userDb: args.userDb,
+        messageId: args.messageId,
+        conversationId: args.conversationId,
+        reportId: args.reportId,
+        status: "failed",
+        title: args.title,
+        content: statusText,
+        sources: sourceList,
+      });
+      const report = await deepResearchService.getReport({ userDb: args.userDb, userId: args.userId, reportId: args.reportId });
+      await settleDeepResearchQuota(args.quotaLifecycle, { report_id: args.reportId, outcome: "failed" });
+      await args.publish({
+        type: "error",
+        error: statusText,
+        code: safeCode,
+        report: buildDeepResearchStatusSnapshot(report),
+      });
+    }
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
+
+async function startDeepResearchForRequest(req: Request, endpoint: string) {
+  const { prompt, conversationId: conversationIdCandidate, clientRequestId } = req.body;
+  if (typeof prompt !== "string" || !prompt.trim()) throw new HttpError(400, "Prompt is required.");
+  const conversationId = getOptionalUuid(conversationIdCandidate, "conversationId");
+  if (!conversationId) throw new HttpError(400, "Valid conversationId is required.");
+
+  const normalizedPrompt = prompt.trim();
+  const requestUser = getRequestUser(req);
+  const userId = requestUser.sub;
+  const billingIdentity = buildBillingIdentity(req, requestUser);
+  const userDb = await resolveUserDatabaseOrThrow(userId, endpoint);
+  await initializeUserSessionOrThrow(userDb, userId, endpoint);
+  await ensureNamedWorkspaceProfile(userId, endpoint, userDb);
+  const resolvedConversation = await resolveOrCreateConversationForRequest(
+    userDb,
+    userId,
+    endpoint,
+    conversationId,
+    normalizedPrompt.slice(0, 50) || "New Chat",
+    { clientRequestId: clientRequestId || undefined },
+  );
+  const activeConversationId = resolvedConversation.conversation.id;
+  const normalizedClientRequestId = typeof clientRequestId === "string" ? clientRequestId.trim().slice(0, 120) : "";
+  if (normalizedClientRequestId) {
+    const existingReport = await deepResearchService.findByClientRequest({
+      userDb,
+      userId,
+      conversationId: activeConversationId,
+      clientRequestId: normalizedClientRequestId,
+    });
+    if (existingReport) {
+      const recoveredReport = await recoverInterruptedDeepResearch(userDb, userId, existingReport);
+      return {
+        userDb,
+        userId,
+        report: recoveredReport,
+        snapshot: buildDeepResearchStatusSnapshot(recoveredReport),
+      };
+    }
+  }
+  const reservation = await billingQuotaService.reserveFeature({
+    identity: billingIdentity,
+    feature: "deep_research",
+    requestId: buildBillingRequestId("deep-research", userId, clientRequestId || undefined),
+    route: getDeepResearchRoute(),
+    conversationId: activeConversationId,
+    clientRequestId: clientRequestId || null,
+    metadata: { endpoint },
+  });
+  const quotaLifecycle = new DeepResearchQuotaLifecycle(billingQuotaService, reservation);
+  const now = new Date().toISOString();
+  const runtime: DeepResearchRuntimeMetadata = {
+    prompt: normalizedPrompt,
+    client_request_id: normalizedClientRequestId || undefined,
+    progress_percent: 0,
+    progress_phase: "queued",
+    latest_status_text: "Queued for Deep Research.",
+    started_at: now,
+    heartbeat_at: now,
+    worker_id: deepResearchWorkerId,
+    cancellation_requested: false,
+    provider_accepted: false,
+  };
+  let reportId: string | null = null;
+  let messageId: string | null = null;
+
+  try {
+    reportId = await deepResearchService.createReport({
+      userDb,
+      userId,
+      conversationId: activeConversationId,
+      title: normalizedPrompt.slice(0, 150),
+      requestMetadata: { prompt: normalizedPrompt },
+      runtimeMetadata: runtime,
+    });
+    const messageInsertResult = await insertConversationMessage(userDb, {
+      conversationId: activeConversationId,
+      role: "assistant",
+      content: "Initializing Deep Research report...",
+      clientRequestId: clientRequestId || undefined,
+      messageType: "deep_research",
+      previewJson: {
+        report_id: reportId,
+        status: "running",
+        title: normalizedPrompt.slice(0, 150),
+        sources: [],
+        progress_percent: 0,
+        progress_phase: "queued",
+        latest_status_text: "Queued for Deep Research.",
+      },
+    });
+    if (messageInsertResult.error) throw new Error("Failed to persist the Deep Research message.");
+    messageId = messageInsertResult.data?.id || null;
+    if (messageId) {
+      await deepResearchService.updateReportMessageId({ userDb, userId, reportId, messageId });
+    }
+
+    const started = deepResearchTaskCoordinator.start(reportId, (context) => runDeepResearchTask({
+      userDb,
+      userId,
+      reportId: reportId as string,
+      messageId,
+      conversationId: activeConversationId,
+      title: normalizedPrompt.slice(0, 150),
+      prompt: normalizedPrompt,
+      quotaLifecycle,
+      initialRuntime: runtime,
+      ...context,
+    }));
+    if (!started) throw new Error("Deep Research task already exists.");
+  } catch (error) {
+    await settleDeepResearchQuota(quotaLifecycle, { report_id: reportId || "", outcome: "failed_to_start" });
+    if (reportId) {
+      await deepResearchService.failReport({
+        userDb,
+        userId,
+        reportId,
+        runtimeMetadata: runtime,
+        statusText: "Research could not be started. Please try again.",
+        errorCode: "research_start_failed",
+      }).catch(() => undefined);
+    }
+    throw new HttpError(500, "Deep Research could not be started.", { code: "research_start_failed" });
+  }
+
+  const report = await deepResearchService.getReport({ userDb, userId, reportId });
+  return { userDb, userId, report, snapshot: buildDeepResearchStatusSnapshot(report) };
+}
+
+async function recoverInterruptedDeepResearch(
+  userDb: any,
+  userId: string,
+  report: DeepResearchReport,
+): Promise<DeepResearchReport> {
+  if (report.status !== "running" || deepResearchTaskCoordinator.isActive(report.id)) return report;
+  const runtime = getDeepResearchRuntime(report);
+  if (!isDeepResearchHeartbeatStale(report, Date.now(), DEEP_RESEARCH_STALE_AFTER_MS)) return report;
+
+  const statusText = "Research was interrupted by a server restart. Please start it again.";
+  try {
+    await deepResearchService.failReport({
+      userDb,
+      userId,
+      reportId: report.id,
+      partialContent: report.content || "",
+      sources: report.sources || [],
+      searchCount: report.search_count || 0,
+      runtimeMetadata: runtime,
+      statusText,
+      errorCode: "research_interrupted",
+    });
+    await updateDeepResearchMessage({
+      userDb,
+      messageId: report.message_id,
+      conversationId: report.conversation_id,
+      reportId: report.id,
+      status: "failed",
+      title: report.title,
+      content: statusText,
+      sources: report.sources || [],
+    });
+  } catch {
+    // Another backend instance may have completed or recovered it concurrently.
+  }
+  return deepResearchService.getReport({ userDb, userId, reportId: report.id });
+}
+
+async function openDeepResearchEventStream(args: {
+  req: Request;
+  res: Response;
+  userDb: any;
+  userId: string;
+  report: DeepResearchReport;
+}): Promise<void> {
+  args.res.status(200);
+  args.res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  args.res.setHeader("Cache-Control", "no-cache, no-transform");
+  args.res.setHeader("Connection", "keep-alive");
+  args.res.setHeader("X-Accel-Buffering", "no");
+  args.res.flushHeaders();
+  const writer = createSseWriter(args.res, { maxBufferedBytes: 512 * 1024 });
+  let closed = false;
+  let interval: NodeJS.Timeout | null = null;
+  let lastSnapshotSignature = "";
+  let unsubscribe: () => void = () => undefined;
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    if (interval) clearInterval(interval);
+    unsubscribe();
+  };
+  const writeEvent = async (event: DeepResearchEvent) => {
+    if (closed) return;
+    await writer.write(JSON.stringify(event));
+    if (event.type === "done" || event.type === "cancelled" || event.type === "error") {
+      cleanup();
+      writer.close();
+    }
+  };
+  unsubscribe = deepResearchTaskCoordinator.subscribe(args.report.id, writeEvent);
+  args.res.on("close", cleanup);
+
+  const writeSnapshot = async () => {
+    if (closed) return;
+    let report = await deepResearchService.getReport({
+      userDb: args.userDb,
+      userId: args.userId,
+      reportId: args.report.id,
+    });
+    report = await recoverInterruptedDeepResearch(args.userDb, args.userId, report);
+    const snapshot = buildDeepResearchStatusSnapshot(report);
+    const signature = `${snapshot.status}:${snapshot.updated_at}:${snapshot.progress_percent}:${snapshot.search_count}`;
+    if (signature === lastSnapshotSignature) return;
+    lastSnapshotSignature = signature;
+    await writeEvent({ type: "snapshot", report: snapshot });
+    if (snapshot.status === "completed") await writeEvent({ type: "done", report: snapshot });
+    else if (snapshot.status === "cancelled") await writeEvent({ type: "cancelled", report: snapshot });
+    else if (snapshot.status === "failed") {
+      await writeEvent({ type: "error", error: snapshot.latest_status_text, code: "research_failed", report: snapshot });
+    }
+  };
+
+  await writeSnapshot();
+  if (!closed) {
+    interval = setInterval(() => {
+      void writeSnapshot().catch(() => {
+        cleanup();
+        writer.close();
+      });
+    }, 2_500);
+    interval.unref?.();
+  }
+}
+
+app.post(
+  "/api/deep-research/start",
+  verifyJWT({ allowGuest: false }),
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const started = await startDeepResearchForRequest(req, "deep-research.start");
+    res.status(202).json(started.snapshot);
+  }),
+);
+
+// Compatibility wrapper: starts a durable task and subscribes this response.
+// Closing this response removes only the subscriber; it never cancels the task.
 app.post(
   "/api/deep-research/stream",
   verifyJWT({ allowGuest: false }),
   aiRateLimiter,
   asyncHandler(async (req, res) => {
-    const { prompt, conversationId: conversationIdCandidate, clientRequestId } = req.body;
-
-    if (typeof prompt !== "string" || !prompt.trim()) {
-      res.status(400).json({ error: "Prompt is required." });
-      return;
-    }
-
-    const normalizedPrompt = prompt.trim();
-    const conversationId = getOptionalUuid(conversationIdCandidate, "conversationId");
-    if (!conversationId) {
-      res.status(400).json({ error: "Valid conversationId is required." });
-      return;
-    }
-
-    const requestUser = getRequestUser(req);
-    const userId = requestUser.sub;
-    const billingIdentity = buildBillingIdentity(req, requestUser);
-
-    const userDb = await resolveUserDatabaseOrThrow(userId, "deep-research.stream");
-    await initializeUserSessionOrThrow(userDb, userId, "deep-research.stream");
-    await ensureNamedWorkspaceProfile(userId, "deep-research.stream", userDb);
-    
-    // Resolve or create the conversation record first to ensure DB persistence matches client-side ID
-    const resolvedConversation = await resolveOrCreateConversationForRequest(
-      userDb,
-      userId,
-      "deep-research.stream",
-      conversationId,
-      normalizedPrompt.slice(0, 50) || "New Chat",
-      { clientRequestId: clientRequestId || undefined },
-    );
-    const activeConversationId = resolvedConversation.conversation.id;
-
-    // 1. Quota Check & Reservation
-    const deepResearchRoute = getDeepResearchRoute();
-    const reservation = await billingQuotaService.reserveFeature({
-      identity: billingIdentity,
-      feature: "deep_research",
-      requestId: buildBillingRequestId("deep-research", userId, clientRequestId || undefined),
-      route: deepResearchRoute,
-      conversationId: activeConversationId,
-      clientRequestId: clientRequestId || null,
-      metadata: { endpoint: "deep-research.stream" },
-    });
-    const quotaLifecycle = new DeepResearchQuotaLifecycle(billingQuotaService, reservation);
-
-    let reportId: string | null = null;
-    let messageId: string | null = null;
-    let sseWriter: any = null;
-    let partialContent = "";
-    const discoveredSources = new Set<string>();
-    const sourceList: Array<{ title: string; url: string }> = [];
-    let searchCount = 0;
-    let clientDisconnected = false;
-
-    const abortController = new AbortController();
-    res.on("close", () => {
-      if (!res.writableEnded) {
-        clientDisconnected = true;
-        abortController.abort();
-      }
-    });
-
-    try {
-      // 2. Create the running report row
-      reportId = await deepResearchService.createReport({
-        userDb,
-        userId,
-        conversationId: activeConversationId,
-        title: normalizedPrompt.slice(0, 150),
-        requestMetadata: { prompt: normalizedPrompt },
-      });
-
-      // 3. Insert placeholder assistant message mapping the report ID
-      const messageInsertResult = await insertConversationMessage(userDb, {
-        conversationId: activeConversationId,
-        role: "assistant",
-        content: "Initializing Deep Research report...",
-        clientRequestId: clientRequestId || undefined,
-        messageType: "deep_research",
-        previewJson: {
-          report_id: reportId,
-          status: "running",
-          title: normalizedPrompt.slice(0, 150),
-          sources: [],
-        },
-      });
-
-      if (messageInsertResult.error) {
-        throw new Error(`Failed to insert report message: ${messageInsertResult.error.message}`);
-      }
-      messageId = messageInsertResult.data?.id || null;
-
-      if (messageId) {
-        await deepResearchService.updateReportMessageId({
-          userDb,
-          userId,
-          reportId,
-          messageId,
-        });
-      }
-
-      // 4. Initialize SSE connection
-      if (abortController.signal.aborted) {
-        const abortError = new Error("Deep Research request cancelled.");
-        abortError.name = "AbortError";
-        throw abortError;
-      }
-      res.status(200);
-      res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-      res.setHeader("Cache-Control", "no-cache, no-transform");
-      res.setHeader("Connection", "keep-alive");
-      res.setHeader("X-Accel-Buffering", "no");
-      res.flushHeaders();
-      sseWriter = createSseWriter(res, { maxBufferedBytes: 512 * 1024 });
-      await sseWriter.write(JSON.stringify({ type: "init", report_id: reportId }));
-
-      // 5. Connect and stream from Tavily
-      await tavilyDeepResearchClient.streamResearch(
-        normalizedPrompt,
-        async (event) => {
-          if (abortController.signal.aborted) return;
-
-          if (event.type === "progress") {
-            if (event.step === "search") searchCount++;
-            await sseWriter.write(JSON.stringify(event));
-          } else if (event.type === "sources" && event.sources) {
-            for (const src of event.sources) {
-              if (!discoveredSources.has(src.url)) {
-                discoveredSources.add(src.url);
-                sourceList.push(src);
-              }
-            }
-            await sseWriter.write(JSON.stringify({ type: "sources", sources: sourceList }));
-          } else if (event.type === "content" && event.text) {
-            partialContent += event.text;
-            await sseWriter.write(JSON.stringify(event));
-          } // done and error are finalized exactly once by this route.
-        },
-        abortController.signal,
-        {
-          onAccepted: () => quotaLifecycle.markProviderAccepted(),
-        },
-      );
-
-      if (abortController.signal.aborted) {
-        const abortError = new Error("Deep Research request cancelled.");
-        abortError.name = "AbortError";
-        throw abortError;
-      }
-      if (!partialContent.trim()) {
-        throw new Error("Deep Research returned no report content.");
-      }
-
-      // 6. Complete execution
-      if (reportId) {
-        await deepResearchService.completeReport({
-          userDb,
-          userId,
-          reportId,
-          content: partialContent,
-          sources: sourceList,
-          searchCount,
-        });
-
-        await updateDeepResearchMessage({
-          userDb,
-          messageId,
-          conversationId: activeConversationId,
-          reportId,
-          status: "completed",
-          title: normalizedPrompt.slice(0, 150),
-          content: partialContent,
-          sources: sourceList,
-        });
-      }
-
-      await settleDeepResearchQuota(quotaLifecycle, {
-        report_id: reportId ?? "",
-        outcome: "completed",
-      });
-      if (!clientDisconnected) {
-        await sseWriter.write(JSON.stringify({ type: "done" }));
-        sseWriter.close();
-      }
-    } catch (err: unknown) {
-      const isAbort = abortController.signal.aborted || (err instanceof Error && err.name === "AbortError");
-      const safeCode = err instanceof TavilyDeepResearchError ? err.code : "research_failed";
-      console.error(`[Deep Research] stream failed code=${safeCode}`);
-
-      if (isAbort) {
-        if (reportId) {
-          try {
-            await deepResearchService.cancelReport({
-              userDb,
-              userId,
-              reportId,
-              partialContent,
-              sources: sourceList,
-              searchCount,
-            });
-          } catch {
-            console.error("[Deep Research] Failed to persist cancelled report status.");
-          }
-
-          await updateDeepResearchMessage({
-            userDb,
-            messageId,
-            conversationId: activeConversationId,
-            reportId,
-            status: "cancelled",
-            title: normalizedPrompt.slice(0, 150),
-            content: partialContent || "Research session cancelled.",
-            sources: sourceList,
-          });
-        }
-      } else {
-        if (reportId) {
-          try {
-            await deepResearchService.failReport({ userDb, userId, reportId });
-          } catch {
-            console.error("[Deep Research] Failed to persist failed report status.");
-          }
-
-          await updateDeepResearchMessage({
-            userDb,
-            messageId,
-            conversationId: activeConversationId,
-            reportId,
-            status: "failed",
-            title: normalizedPrompt.slice(0, 150),
-            content: "Research session failed. Please try again shortly.",
-            sources: sourceList,
-          });
-        }
-      }
-
-      await settleDeepResearchQuota(quotaLifecycle, {
-        report_id: reportId ?? "",
-        outcome: isAbort ? "cancelled" : "failed",
-      });
-
-      if (!isAbort && !clientDisconnected) {
-        if (sseWriter && !res.writableEnded) {
-          await sseWriter.write(JSON.stringify({
-            type: "error",
-            error: "Deep Research session failed. Please try again.",
-            code: safeCode,
-          }));
-          sseWriter.close();
-        } else if (!res.headersSent) {
-          res.status(500).json({ error: "Deep Research session failed to start." });
-        }
-      }
-    }
+    const started = await startDeepResearchForRequest(req, "deep-research.stream");
+    await openDeepResearchEventStream({ req, res, ...started });
   }),
 );
 
@@ -6968,6 +7213,81 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/deep-research/:reportId/status",
+  verifyJWT({ allowGuest: false }),
+  asyncHandler(async (req, res) => {
+    const requestUser = getRequestUser(req);
+    const userId = requestUser.sub;
+    const userDb = await resolveUserDatabaseOrThrow(userId, "deep-research.status");
+    let report = await deepResearchService.getReport({ userDb, userId, reportId: req.params.reportId })
+      .catch(() => { throw new HttpError(404, "Report not found.", { code: "report_not_found" }); });
+    report = await recoverInterruptedDeepResearch(userDb, userId, report);
+    res.json(buildDeepResearchStatusSnapshot(report));
+  }),
+);
+
+app.get(
+  "/api/deep-research/:reportId/events",
+  verifyJWT({ allowGuest: false }),
+  asyncHandler(async (req, res) => {
+    const requestUser = getRequestUser(req);
+    const userId = requestUser.sub;
+    const userDb = await resolveUserDatabaseOrThrow(userId, "deep-research.events");
+    const report = await deepResearchService.getReport({ userDb, userId, reportId: req.params.reportId })
+      .catch(() => { throw new HttpError(404, "Report not found.", { code: "report_not_found" }); });
+    await openDeepResearchEventStream({ req, res, userDb, userId, report });
+  }),
+);
+
+app.post(
+  "/api/deep-research/:reportId/cancel",
+  verifyJWT({ allowGuest: false }),
+  asyncHandler(async (req, res) => {
+    const requestUser = getRequestUser(req);
+    const userId = requestUser.sub;
+    const userDb = await resolveUserDatabaseOrThrow(userId, "deep-research.cancel");
+    let report = await deepResearchService.getReport({ userDb, userId, reportId: req.params.reportId })
+      .catch(() => { throw new HttpError(404, "Report not found.", { code: "report_not_found" }); });
+    if (report.status !== "running") {
+      res.json(buildDeepResearchStatusSnapshot(report));
+      return;
+    }
+
+    await deepResearchService.requestCancellation({ userDb, userId, report });
+    const cancelledActiveTask = deepResearchTaskCoordinator.cancel(report.id);
+    if (cancelledActiveTask) {
+      await deepResearchTaskCoordinator.waitForIdle(report.id, 2_000);
+      report = await deepResearchService.getReport({ userDb, userId, reportId: report.id });
+    }
+
+    if (report.status === "running") {
+      const runtime = { ...getDeepResearchRuntime(report), cancellation_requested: true };
+      await deepResearchService.cancelReport({
+        userDb,
+        userId,
+        reportId: report.id,
+        partialContent: report.content || "",
+        sources: report.sources || [],
+        searchCount: report.search_count || 0,
+        runtimeMetadata: runtime,
+      });
+      await updateDeepResearchMessage({
+        userDb,
+        messageId: report.message_id,
+        conversationId: report.conversation_id,
+        reportId: report.id,
+        status: "cancelled",
+        title: report.title,
+        content: report.content || "Research session cancelled.",
+        sources: report.sources || [],
+      });
+      report = await deepResearchService.getReport({ userDb, userId, reportId: report.id });
+    }
+    res.json(buildDeepResearchStatusSnapshot(report));
+  }),
+);
+
 /**
  * GET /api/deep-research/:reportId
  * Load report from metadata tables.
@@ -6982,12 +7302,13 @@ app.get(
 
     const userDb = await resolveUserDatabaseOrThrow(userId, "deep-research.get");
     try {
-      const report = await deepResearchService.getReport({
+      let report = await deepResearchService.getReport({
         userDb,
         userId,
         reportId,
       });
-      res.json(report);
+      report = await recoverInterruptedDeepResearch(userDb, userId, report);
+      res.json(buildDeepResearchStatusSnapshot(report));
     } catch (err: any) {
       throw new HttpError(404, "Report not found.", { code: "report_not_found" });
     }

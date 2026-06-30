@@ -11,6 +11,7 @@ import {
   LEGACY_WELCOME_GREETING_STORAGE_PREFIX,
 } from "./chat/constants.js";
 import { getChatDomRefs } from "./chat/dom-refs.js";
+import { resolveDeepResearchCardState } from "./deep-research-state.js";
 import {
   buildGuestFileGenerationInstruction,
   detectClarificationDownloadFormat,
@@ -1610,6 +1611,9 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         status: deepResearchStatus,
         title: preview.title || message.title || "",
         sources: message.sources || preview.sources || [],
+        progressPercent: Number(preview.progress_percent) || 0,
+        progressPhase: preview.progress_phase || "queued",
+        latestStatusText: preview.latest_status_text || "",
       };
     }
     if (!meta && messageType === "text" && preview.response_status) {
@@ -7713,6 +7717,66 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     return { render, reset };
   }
 
+  function waitForDeepResearchReconnect(delayMs, signal) {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        const error = new Error("Deep Research subscription closed.");
+        error.name = "AbortError";
+        reject(error);
+        return;
+      }
+      const onAbort = () => {
+        clearTimeout(timer);
+        const error = new Error("Deep Research subscription closed.");
+        error.name = "AbortError";
+        reject(error);
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, delayMs);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  async function monitorDeepResearchReport(reportId, callbacks = {}, signal = null) {
+    const dispatchSnapshot = (report) => {
+      if (!report) return false;
+      callbacks.onSnapshot?.(report);
+      if (report.status === "completed") callbacks.onCompleted?.(report);
+      else if (report.status === "cancelled") callbacks.onCancelled?.(report);
+      else if (report.status === "failed") callbacks.onFailed?.(report);
+      return report.status !== "running";
+    };
+
+    while (!signal?.aborted) {
+      try {
+        const latest = await API.getDeepResearchStatus(reportId);
+        if (dispatchSnapshot(latest)) return latest;
+        await API.subscribeDeepResearchEvents(reportId, {
+          onSnapshot: dispatchSnapshot,
+          onProgress: callbacks.onProgress,
+          onSources: callbacks.onSources,
+          onContent: callbacks.onContent,
+          onDone: (report) => dispatchSnapshot(report),
+          onCancelled: (report) => dispatchSnapshot(report),
+          onFailed: (_error, report) => dispatchSnapshot(report),
+          onError: callbacks.onConnectionError,
+        }, signal);
+        const terminal = await API.getDeepResearchStatus(reportId);
+        if (dispatchSnapshot(terminal)) return terminal;
+      } catch (error) {
+        if (error?.name === "AbortError") throw error;
+        callbacks.onConnectionError?.(error);
+      }
+      await waitForDeepResearchReconnect(1800, signal);
+    }
+
+    const error = new Error("Deep Research subscription closed.");
+    error.name = "AbortError";
+    throw error;
+  }
+
   async function handleDeepResearchSend(message) {
     if (!isAuthenticatedSession()) {
       requireAuthAccess("Log in to use Deep Research.");
@@ -7749,10 +7813,17 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
     setStopMode();
 
+    let reportId = null;
+    let explicitCancelRequested = false;
     const runningCard = createDeepResearchRunningCard({
       chatId: currentChatId,
       requestId,
       prompt: message,
+      async onCancel() {
+        explicitCancelRequested = true;
+        if (!reportId) return null;
+        return API.cancelDeepResearchReport(reportId);
+      },
     });
 
     const ac = createAbortController();
@@ -7766,62 +7837,47 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
     try {
       const conversationIdForRequest = getCanonicalConversationIdForRequest(currentChatId);
-      let reportId = null;
-
-      await API.sendDeepResearchStream(
+      const startedReport = await API.startDeepResearch(
         message,
         {
           conversationId: conversationIdForRequest,
           clientRequestId: requestId,
         },
-        {
-          onInit(data) {
-            reportId = data.report_id;
-            runningCard.updateReportId(reportId);
-          },
-          onProgress(data) {
-            runningCard.updateProgress(data);
-          },
-          onSources(sources) {
-            runningCard.updateSources(sources);
-          },
-          onContent(text) {
-            runningCard.updateContent(text);
-          },
-          onDone() {
-            runningCard.finish();
-            if (state) {
-              state.isThinking = false;
-              state.abortController = null;
-            }
-            setSendMode();
-            scheduleChatListRefresh();
-          },
-          onError(err) {
-            runningCard.fail(err.message || "Deep Research failed.");
-            if (state) {
-              state.isThinking = false;
-              state.abortController = null;
-            }
-            setSendMode();
-            scheduleChatListRefresh();
-          }
-        },
-        ac.signal
       );
+      reportId = startedReport.report_id;
+      runningCard.updateReportId(reportId);
+      runningCard.applySnapshot(startedReport);
+
+      if (explicitCancelRequested) {
+        const cancelledReport = await API.cancelDeepResearchReport(reportId);
+        runningCard.applySnapshot(cancelledReport);
+      } else {
+        await monitorDeepResearchReport(reportId, {
+          onSnapshot: (report) => runningCard.applySnapshot(report),
+          onProgress: (data) => runningCard.updateProgress(data),
+          onSources: (sources) => runningCard.updateSources(sources),
+          onContent: (text) => runningCard.updateContent(text),
+          onCompleted: (report) => runningCard.finish(report),
+          onCancelled: (report) => runningCard.cancel(report),
+          onFailed: (report) => runningCard.fail(report.latest_status_text, report),
+          onConnectionError: () => runningCard.subscriptionClosed(),
+        }, ac.signal);
+      }
     } catch (err) {
       if (err.name === "AbortError") {
-        runningCard.cancel();
+        runningCard.subscriptionClosed("Research continues in the background. Reopen this chat to reconnect.");
+      } else if (reportId) {
+        runningCard.subscriptionClosed();
       } else {
         runningCard.fail(err.message || "Deep Research failed to start.");
       }
-      if (state) {
-        state.isThinking = false;
-        state.abortController = null;
-      }
-      setSendMode();
-      scheduleChatListRefresh();
     }
+    if (state) {
+      state.isThinking = false;
+      state.abortController = null;
+    }
+    setSendMode();
+    scheduleChatListRefresh();
   }
 
   function createDeepResearchRunningCard(options = {}) {
@@ -7923,10 +7979,17 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     footer.appendChild(cancelWrapper);
 
     const cancelBtn = cancelWrapper.querySelector(".deep-research-cancel-btn");
-    cancelBtn.addEventListener("click", () => {
-      const state = getChatState(options.chatId);
-      if (state?.abortController) {
-        state.abortController.abort();
+    cancelBtn.disabled = true;
+    cancelBtn.addEventListener("click", async () => {
+      if (isFinished || cancelBtn.disabled) return;
+      cancelBtn.disabled = true;
+      statusText.textContent = "Cancelling research...";
+      try {
+        const report = await options.onCancel?.(reportId);
+        if (report) applySnapshot(report);
+      } catch {
+        statusText.textContent = "Could not cancel yet. Please try again.";
+        cancelBtn.disabled = false;
       }
     });
 
@@ -7957,10 +8020,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       item.iconEl.innerHTML = getStepIconHtml(state);
     }
 
-    return {
+    const cardController = {
       updateReportId(id) {
         reportId = id;
         bubble.dataset.reportId = id;
+        cancelBtn.disabled = false;
       },
       updateProgress(data) {
         if (isFinished) return;
@@ -8018,9 +8082,14 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         progressFill.style.width = "90%";
         statusText.textContent = "Writing final report sections...";
       },
-      finish() {
+      applySnapshot,
+      finish(report = null) {
         if (isFinished) return;
         isFinished = true;
+
+        if (Array.isArray(report?.sources)) sources = report.sources;
+        if (typeof report?.content === "string" && report.content) contentText = report.content;
+        else if (typeof report?.partial_content === "string") contentText = report.partial_content;
 
         card.className = "deep-research-card completed";
         setStepState("plan", "completed");
@@ -8034,12 +8103,12 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 
         renderCompletedReportCard(card, {
           reportId,
-          title: options.prompt,
+          title: report?.title || options.prompt,
           content: contentText,
           sources,
         });
       },
-      cancel() {
+      cancel(report = null) {
         if (isFinished) return;
         isFinished = true;
 
@@ -8052,7 +8121,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         cancelWrapper.remove();
 
       },
-      fail(errorMsg) {
+      fail(errorMsg, report = null) {
         if (isFinished) return;
         isFinished = true;
 
@@ -8065,8 +8134,42 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
         
         cancelWrapper.remove();
 
+      },
+      subscriptionClosed(message = "Research continues in the background. Reconnecting...") {
+        if (isFinished) return;
+        statusText.textContent = message;
       }
     };
+
+    function applySnapshot(report) {
+      if (!report || isFinished) return;
+      if (report.report_id) {
+        reportId = report.report_id;
+        bubble.dataset.reportId = reportId;
+        cancelBtn.disabled = false;
+      }
+      if (Array.isArray(report.sources)) sources = report.sources;
+      if (typeof report.partial_content === "string") contentText = report.partial_content;
+      if (report.status === "completed") {
+        return cardController.finish(report);
+      }
+      if (report.status === "cancelled") {
+        return cardController.cancel(report);
+      }
+      if (report.status === "failed") {
+        return cardController.fail(report.latest_status_text || "Research could not be completed.", report);
+      }
+      const percent = Number(report.progress_percent);
+      if (Number.isFinite(percent)) progressFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+      if (report.latest_status_text) statusText.textContent = report.latest_status_text;
+      if (report.progress_phase === "plan" || report.progress_phase === "search" || report.progress_phase === "synthesize") {
+        currentStep = report.progress_phase;
+        setStepState("plan", report.progress_phase === "plan" ? "active" : "completed");
+        setStepState("search", report.progress_phase === "search" ? "active" : report.progress_phase === "synthesize" ? "completed" : "pending");
+        setStepState("synthesize", report.progress_phase === "synthesize" ? "active" : "pending");
+      }
+    }
+    return cardController;
   }
 
   function renderCompletedReportCard(card, report) {
@@ -8183,6 +8286,18 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   function renderSavedDeepResearchCard(contentDiv, meta, content) {
+    const initialState = resolveDeepResearchCardState(meta, content);
+    meta = {
+      ...meta,
+      status: initialState.status,
+      reportId: initialState.reportId,
+      title: initialState.title,
+      sources: initialState.sources,
+      progressPercent: initialState.progressPercent,
+      progressPhase: initialState.progressPhase,
+      latestStatusText: initialState.latestStatusText,
+    };
+    content = initialState.content;
     const card = document.createElement("div");
     card.className = `deep-research-card ${meta.status || "completed"}`;
     contentDiv.appendChild(card);
@@ -8229,11 +8344,104 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       titleEl.textContent = `Research: "${titleText}"`;
       card.appendChild(titleEl);
 
+      const progressContainer = document.createElement("div");
+      progressContainer.className = "deep-research-progress-container";
+      const progressBar = document.createElement("div");
+      progressBar.className = "deep-research-progress-bar";
+      const progressFill = document.createElement("div");
+      progressFill.className = "deep-research-progress-fill";
+      progressFill.style.width = `${Math.max(0, Math.min(100, Number(meta.progressPercent) || 0))}%`;
+      progressBar.appendChild(progressFill);
+      progressContainer.appendChild(progressBar);
+
       const statusText = document.createElement("div");
       statusText.className = "deep-research-status-text";
-      statusText.textContent = "Checking the saved research status...";
-      card.appendChild(statusText);
-      hydrateTerminalReport(statusText);
+      statusText.textContent = meta.latestStatusText || "Checking the saved research status...";
+      progressContainer.appendChild(statusText);
+      card.appendChild(progressContainer);
+
+      const previewContainer = document.createElement("div");
+      previewContainer.className = "deep-research-report-preview-container";
+      previewContainer.hidden = true;
+      const previewText = document.createElement("div");
+      previewText.className = "deep-research-report-preview-text markdown-content";
+      previewContainer.appendChild(previewText);
+      card.appendChild(previewContainer);
+
+      const footer = document.createElement("div");
+      footer.className = "deep-research-footer";
+      const cancelWrapper = document.createElement("div");
+      cancelWrapper.className = "deep-research-cancel-wrapper";
+      cancelWrapper.innerHTML = `
+        <svg class="deep-research-spinner" width="36" height="36" viewBox="0 0 36 36" aria-hidden="true">
+          <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="2.5"></circle>
+          <circle cx="18" cy="18" r="15" fill="none" stroke="#8e8e93" stroke-width="2.5" stroke-dasharray="94" stroke-dashoffset="40"></circle>
+        </svg>
+        <button class="deep-research-cancel-btn" title="Cancel research" aria-label="Cancel research" type="button">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      `;
+      footer.appendChild(cancelWrapper);
+      card.appendChild(footer);
+      const cancelButton = cancelWrapper.querySelector(".deep-research-cancel-btn");
+
+      const monitorAbort = new AbortController();
+      const renderSnapshot = (report) => {
+        if (!report || !card.isConnected) {
+          if (!card.isConnected) monitorAbort.abort();
+          return;
+        }
+        const snapshotState = resolveDeepResearchCardState(meta, content, report);
+        if (snapshotState.status !== "running") {
+          monitorAbort.abort();
+          card.remove();
+          renderSavedDeepResearchCard(contentDiv, {
+            reportId,
+            status: snapshotState.status,
+            title: snapshotState.title,
+            sources: snapshotState.sources,
+            latestStatusText: snapshotState.latestStatusText,
+          }, snapshotState.content);
+          return;
+        }
+        progressFill.style.width = `${snapshotState.progressPercent}%`;
+        statusText.textContent = snapshotState.latestStatusText || "Research is running.";
+        if (snapshotState.partialContent.trim()) {
+          previewText.innerHTML = renderRichText(snapshotState.partialContent);
+          previewContainer.hidden = false;
+        }
+      };
+
+      cancelButton.addEventListener("click", async () => {
+        if (!reportId || cancelButton.disabled) return;
+        cancelButton.disabled = true;
+        statusText.textContent = "Cancelling research...";
+        try {
+          renderSnapshot(await API.cancelDeepResearchReport(reportId));
+        } catch {
+          statusText.textContent = "Could not cancel yet. Please try again.";
+          cancelButton.disabled = false;
+        }
+      });
+
+      if (reportId) {
+        monitorDeepResearchReport(reportId, {
+          onSnapshot: renderSnapshot,
+          onCompleted: renderSnapshot,
+          onCancelled: renderSnapshot,
+          onFailed: renderSnapshot,
+          onConnectionError: () => {
+            if (card.isConnected) statusText.textContent = "Research continues in the background. Reconnecting...";
+          },
+        }, monitorAbort.signal).catch((error) => {
+          if (error?.name !== "AbortError" && card.isConnected) {
+            statusText.textContent = "Research status is temporarily unavailable. Retrying...";
+          }
+        });
+      } else {
+        statusText.textContent = "Research status is temporarily unavailable.";
+        cancelButton.disabled = true;
+      }
     } else if (meta.status === "cancelled") {
       const titleEl = document.createElement("div");
       titleEl.className = "deep-research-report-title";
@@ -8283,9 +8491,8 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       const statusText = document.createElement("div");
       statusText.className = "deep-research-status-text";
       statusText.style.color = "var(--danger)";
-      statusText.textContent = meta.status === "failed" && content
-        ? content
-        : "Research session failed. Please try again shortly.";
+      statusText.textContent = meta.latestStatusText
+        || (meta.status === "failed" && content ? content : "Research session failed. Please try again shortly.");
       card.appendChild(statusText);
     }
   }

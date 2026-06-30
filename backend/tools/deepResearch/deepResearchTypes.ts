@@ -23,12 +23,56 @@ export interface DeepResearchReport {
   updated_at: string;
 }
 
+export type DeepResearchProgressPhase = "queued" | "plan" | "search" | "synthesize";
+
+export interface DeepResearchRuntimeMetadata {
+  prompt?: string;
+  client_request_id?: string;
+  progress_percent?: number;
+  progress_phase?: DeepResearchProgressPhase;
+  latest_status_text?: string;
+  tavily_request_id?: string | null;
+  started_at?: string;
+  completed_at?: string | null;
+  cancelled_at?: string | null;
+  failed_at?: string | null;
+  cancellation_requested?: boolean;
+  provider_accepted?: boolean;
+  heartbeat_at?: string | null;
+  worker_id?: string | null;
+  error_code?: string | null;
+}
+
+export interface DeepResearchStatusSnapshot {
+  report_id: string;
+  conversation_id: string;
+  message_id: string | null;
+  title: string;
+  status: DeepResearchStatus;
+  progress_percent: number;
+  progress_phase: DeepResearchProgressPhase;
+  latest_status_text: string;
+  partial_content: string;
+  content: string;
+  sources: DeepResearchSource[];
+  search_count: number;
+  citation_count: number;
+  cancellation_requested: boolean;
+  started_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  failed_at: string | null;
+}
+
 export type DeepResearchEventType =
   | "init"
   | "progress"
   | "sources"
   | "content"
+  | "snapshot"
   | "done"
+  | "cancelled"
   | "error";
 
 export interface DeepResearchEvent {
@@ -40,6 +84,7 @@ export interface DeepResearchEvent {
   text?: string;
   error?: string;
   code?: string;
+  report?: DeepResearchStatusSnapshot;
 }
 
 export type DeepResearchEventHandler = (
