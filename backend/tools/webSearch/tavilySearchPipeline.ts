@@ -28,7 +28,7 @@ import { expandQuery } from "./queryExpander";
 import { aggregateResults, formatResultsForLLM, extractSourceReferences } from "./resultsAggregator";
 import { extractContent } from "./contentExtractor";
 import type { SearchResult } from "./types";
-import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../../internalGateway";
+import { callLLMAdapterDetailed } from "../../ai/PromptBuilders";
 
 // ==============================
 // Configuration
@@ -100,35 +100,16 @@ async function synthesizeWithLLM(
     .replace("{context}", context);
 
   try {
-    const response = await fetch(getInternalGatewayUrl("/llm/invoke"), {
-      method: "POST",
-      headers: getInternalGatewayHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        prompt,
-        task: "web_search_synthesis",
-        prefer: "groq",
-        model_override: "gpt-oss-120b",
-        user_id: "system",
-      }),
-      signal: signal ?? AbortSignal.timeout(60_000),
+    const result = await callLLMAdapterDetailed({
+      prompt,
+      task: "web_search_synthesis",
+      prefer: "groq",
+      model_override: "gpt-oss-120b",
+      user_id: "system",
+      signal,
+      timeout_ms: 60_000,
     });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "Unknown error");
-      console.log(`[TavilyPipeline] LLM synthesis failed: HTTP ${response.status} - ${errorText}`);
-      return {
-        answer: "",
-        success: false,
-        error: `LLM service error: ${response.status}`,
-      };
-    }
-
-    const data = await response.json() as {
-      result?: string | { text?: string };
-    };
-    const answer = typeof data.result === "string"
-      ? data.result
-      : data.result?.text ?? "";
+    const answer = result.text;
 
     if (!answer || answer.trim().length < 10) {
       return {

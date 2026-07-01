@@ -97,13 +97,13 @@ async function main(): Promise<void> {
 
     assert(guestMath.answer === "\\[\\boxed{x = 4}\\]", "guest math returns raw prompt-shaped output");
     assert(capturedRequests[0].model_override === "gemini-search", "guest math uses gemini-search");
-    assert(capturedRequests[0].max_output_tokens === 6000, "guest math uses expanded token budget");
+    assert(capturedRequests[0].max_output_tokens === 2500, "guest math receives the Fast interactive cap");
     assert(capturedRequests[0].skip_wrappers === true, "guest math skips adapter wrappers");
     assert(capturedRequests[0].prompt?.includes(MATH_RESPONSE_SYSTEM_PROMPT.slice(0, 80)) ?? false, "guest math prompt includes math system prompt");
 
     const loggedInMath = await solveMathDirect("Solve 2x + 2 = 6");
     assert(loggedInMath.answer === "\\[\\boxed{x = 2}\\]", "logged-in math returns raw prompt-shaped output");
-    assert(capturedRequests[1].model_override === "openai-large", "logged-in math uses openai-large");
+    assert(capturedRequests[1].model_override === "gpt-oss-120b", "logged-in math keeps the current primary text route");
     assert(capturedRequests[1].prompt?.includes(MATH_RESPONSE_SYSTEM_PROMPT.slice(0, 80)) ?? false, "logged-in math prompt includes math system prompt");
 
     const mathStream = await streamMathModelRaw({
@@ -122,7 +122,7 @@ async function main(): Promise<void> {
     assert(streamed === "## Solution\n\\[\\boxed{x = 5}\\]", "math stream returns live SSE chunks");
     assert(capturedStreamRequests.length === 1, "math stream uses /llm/stream");
     assert(capturedStreamRequests[0].model_override === "openai-large", "math stream keeps requested model");
-    assert(capturedStreamRequests[0].max_output_tokens === 1234, "math stream forwards max token budget");
+    assert(capturedStreamRequests[0].max_output_tokens === 1234, "math stream preserves a lower explicit cap");
     assert(capturedStreamRequests[0].prompt?.includes(MATH_RESPONSE_SYSTEM_PROMPT.slice(0, 80)) ?? false, "math stream prompt includes math system prompt");
 
     const puzzle = "Solve this step by step: The Missionaries and Cannibals problem has 3 missionaries and 3 cannibals crossing a river in a boat.";

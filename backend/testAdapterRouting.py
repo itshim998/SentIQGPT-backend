@@ -105,12 +105,15 @@ def main() -> int:
             max_output_tokens=None,
             reasoning_effort=None,
             response_format_json=False,
+            **kwargs,
         ):
             captured_master_route.update({
                 "model_override": model_override,
                 "max_output_tokens": max_output_tokens,
                 "reasoning_effort": reasoning_effort,
                 "response_format_json": response_format_json,
+                "execution_mode": kwargs.get("execution_mode"),
+                "enable_builtin_tools": kwargs.get("enable_builtin_tools"),
             })
             return '{"selected_model":"general_model","confidence":0.9,"reason":"test"}'
 
@@ -147,9 +150,32 @@ def main() -> int:
     class FakeResponse:
         choices = [FakeChoice()]
 
+    class FakeRawResponse:
+        headers = {
+            "x-ratelimit-limit-tokens": "10000",
+            "x-ratelimit-remaining-tokens": "9000",
+            "x-ratelimit-reset-tokens": "7.5s",
+        }
+
+        def __init__(self, response):
+            self.response = response
+
+        def parse(self):
+            return self.response
+
+    class FakeRawCompletions:
+        def __init__(self, completions):
+            self.completions = completions
+
+        def create(self, **kwargs):
+            self.completions.calls.append(kwargs)
+            response = [FakeResponse()] if kwargs.get("stream") else FakeResponse()
+            return FakeRawResponse(response)
+
     class FakeCompletions:
         def __init__(self):
             self.calls = []
+            self.with_raw_response = FakeRawCompletions(self)
 
         def create(self, **kwargs):
             self.calls.append(kwargs)
@@ -174,8 +200,24 @@ def main() -> int:
         adapter.GROQ_MODULE = object()
         adapter._get_groq_client = lambda _api_key: fake_client
         adapter.groq_bucket.consume = lambda _n=1: True
-        adapter._call_groq("hello", "key", GROQ_CHAT_MODEL, reasoning_effort="low")
-        list(adapter._call_groq_stream("hello", "key", GROQ_CHAT_MODEL, reasoning_effort="medium"))
+        adapter._call_groq(
+            "Write down the algorithm of quick sort.",
+            "key",
+            GROQ_CHAT_MODEL,
+            max_output_tokens=2500,
+            reasoning_effort="low",
+            execution_mode="fast",
+            enable_builtin_tools=True,
+        )
+        list(adapter._call_groq_stream(
+            "Write down the algorithm of quick sort.",
+            "key",
+            GROQ_CHAT_MODEL,
+            max_output_tokens=3500,
+            reasoning_effort="medium",
+            execution_mode="intuitive",
+            enable_builtin_tools=True,
+        ))
         adapter._call_groq(
             "route this",
             "key",
@@ -193,6 +235,33 @@ def main() -> int:
         print("PASS | GPT-OSS helpers pass low and medium reasoning effort")
     else:
         print(f"FAIL | GPT-OSS helper efforts were {effort_calls}, expected ['low', 'medium']")
+        failures += 1
+
+    completion_caps = [call.get("max_completion_tokens") for call in fake_client.completions.calls[:2]]
+    if completion_caps == [2500, 3500]:
+        print("PASS | Fast and Intuitive completion caps reach Groq buffered and streaming calls")
+    else:
+        print(f"FAIL | Groq completion caps were {completion_caps}, expected [2500, 3500]")
+        failures += 1
+
+    expected_tools = [{"type": "browser_search"}, {"type": "code_interpreter"}]
+    tool_calls = [call.get("tools") for call in fake_client.completions.calls[:2]]
+    if tool_calls == [expected_tools, expected_tools]:
+        print("PASS | Groq interactive buffered and streaming calls offer supported built-in tools")
+    else:
+        print(f"FAIL | Groq built-in tool configuration was {tool_calls}")
+        failures += 1
+
+    system_prompts = [call.get("messages", [{}])[0].get("content", "") for call in fake_client.completions.calls[:2]]
+    if "live, recent, rapidly changing" in system_prompts[0] and "stable textbook, coding, or algorithm" in system_prompts[0]:
+        print("PASS | Fast Groq tool guidance is selective")
+    else:
+        print(f"FAIL | Fast Groq tool guidance was {system_prompts[0]!r}")
+        failures += 1
+    if "research, news, market, product, legal, medical" in system_prompts[1] and "stable textbook, coding, or algorithm" in system_prompts[1]:
+        print("PASS | Intuitive Groq tool guidance is selective")
+    else:
+        print(f"FAIL | Intuitive Groq tool guidance was {system_prompts[1]!r}")
         failures += 1
 
     master_call = fake_client.completions.calls[-1]

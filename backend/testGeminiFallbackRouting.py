@@ -2,6 +2,7 @@ import os
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -160,6 +161,8 @@ def test_groq_to_gemini_standard_fallback():
             task="chat",
             prefer="groq",
             model_override="gpt-oss-120b",
+            max_output_tokens=3500,
+            execution_mode="intuitive",
         )
 
     assert_equal(result.get("text"), f"gemini:{adapter.GEMINI_STANDARD_MODEL}", "standard fallback text")
@@ -167,6 +170,46 @@ def test_groq_to_gemini_standard_fallback():
     assert_true(result.get("fallback") is True, "standard fallback marked")
     assert_equal(len(pollinations_calls), 0, "Pollinations not used before Gemini standard fallback")
     assert_equal(gemini_calls[0][0], "fake-key-1", "Gemini fallback used configured key")
+    assert_equal(gemini_calls[0][2].get("max_output_tokens"), 3500, "Gemini fallback receives Intuitive cap")
+    assert_equal(gemini_calls[0][2].get("execution_mode"), "intuitive", "Gemini fallback receives execution mode")
+
+
+def test_gemini_execution_mode_config():
+    class FakeThinkingConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeGenerateContentConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    fake_types = SimpleNamespace(
+        ThinkingConfig=FakeThinkingConfig,
+        ThinkingLevel=SimpleNamespace(LOW="LOW", MEDIUM="MEDIUM"),
+        GenerateContentConfig=FakeGenerateContentConfig,
+    )
+    with patched(GOOGLE_GENAI_TYPES_MODULE=fake_types):
+        fast = adapter._build_google_genai_config(
+            model="gemini-3-flash",
+            execution_mode="fast",
+            max_output_tokens=2500,
+        )
+        intuitive = adapter._build_google_genai_config(
+            model="gemini-3-flash",
+            execution_mode="intuitive",
+            max_output_tokens=3500,
+        )
+        legacy = adapter._build_google_genai_config(
+            model="gemini-2.5-flash",
+            execution_mode="intuitive",
+            max_output_tokens=3500,
+        )
+
+    assert_equal(fast.max_output_tokens, 2500, "Gemini Fast output cap")
+    assert_equal(fast.thinking_config.thinking_level, "LOW", "Gemini Fast thinking level")
+    assert_equal(intuitive.max_output_tokens, 3500, "Gemini Intuitive output cap")
+    assert_equal(intuitive.thinking_config.thinking_level, "MEDIUM", "Gemini Intuitive thinking level")
+    assert_true(not hasattr(legacy, "thinking_config"), "older Gemini models do not receive unsupported thinking levels")
 
 
 def test_reasoning_fallback_order():
@@ -254,6 +297,7 @@ TESTS = [
     test_failure_health_state,
     test_redaction,
     test_groq_to_gemini_standard_fallback,
+    test_gemini_execution_mode_config,
     test_reasoning_fallback_order,
     test_gemini_lite_falls_to_pollinations_after_gemma_failures,
     test_web_attempts_google_search_gate,

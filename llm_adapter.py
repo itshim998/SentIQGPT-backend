@@ -206,6 +206,8 @@ MASTER_ROUTER_SYSTEM_PROMPT = (
 )
 GPT_OSS_DEFAULT_MAX_COMPLETION_TOKENS = 2000
 GPT_OSS_REASONING_EFFORTS = {"low", "medium"}
+EXECUTION_MODES = {"fast", "intuitive"}
+EXECUTION_MODE_OUTPUT_CAPS = {"fast": 2500, "intuitive": 3500}
 
 # --- Pollinations provider ---
 POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY", "")
@@ -577,12 +579,13 @@ def _cache_key(
     skip_wrappers: bool = False,
     image_attachments: Optional[list[dict[str, Any]]] = None,
     reasoning_effort: Optional[str] = None,
+    execution_mode: Optional[str] = None,
 ) -> str:
     h = hashlib.sha256()
     image_fingerprint = _image_attachment_fingerprint(image_attachments)
     h.update(
         f"{provider}|{task}|{model}|{user_id}|{max_output_tokens or ''}|"
-        f"{reasoning_effort or ''}|{int(skip_wrappers)}|{image_fingerprint}|{prompt}".encode()
+        f"{reasoning_effort or ''}|{execution_mode or ''}|{int(skip_wrappers)}|{image_fingerprint}|{prompt}".encode()
     )
     return h.hexdigest()
 
@@ -936,6 +939,28 @@ def _is_gemma_model(model: Optional[str]) -> bool:
     return (model or "").strip().lower().startswith("gemma")
 
 
+def _normalize_execution_mode(execution_mode: Optional[str]) -> str:
+    normalized = (execution_mode or "").strip().lower()
+    return normalized if normalized in EXECUTION_MODES else "fast"
+
+
+def _apply_execution_mode_output_cap(
+    task: str,
+    max_output_tokens: Optional[int],
+    execution_mode: str,
+) -> Optional[int]:
+    if task not in CHATLIKE_TASKS:
+        return max_output_tokens
+    mode_cap = EXECUTION_MODE_OUTPUT_CAPS[execution_mode]
+    if isinstance(max_output_tokens, int) and max_output_tokens > 0:
+        return min(max_output_tokens, mode_cap)
+    return mode_cap
+
+
+def _supports_gemini_thinking_level(model: Optional[str]) -> bool:
+    return (model or "").strip().lower().startswith("gemini-3")
+
+
 def _get_google_genai_client(api_key: str):
     if not GOOGLE_GENAI_MODULE:
         raise RuntimeError("Google GenAI SDK not installed")
@@ -952,13 +977,18 @@ def _get_google_genai_client(api_key: str):
 
 def _build_google_genai_config(
     *,
+    model: Optional[str] = None,
+    execution_mode: Optional[str] = None,
     google_search: bool = False,
     high_thinking: bool = False,
+    max_output_tokens: Optional[int] = None,
 ) -> Any:
     if not GOOGLE_GENAI_TYPES_MODULE:
         return None
 
     kwargs: dict[str, Any] = {}
+    if isinstance(max_output_tokens, int) and max_output_tokens > 0:
+        kwargs["max_output_tokens"] = max_output_tokens
     if google_search:
         kwargs["tools"] = [
             GOOGLE_GENAI_TYPES_MODULE.Tool(
@@ -966,8 +996,19 @@ def _build_google_genai_config(
             )
         ]
     if high_thinking and hasattr(GOOGLE_GENAI_TYPES_MODULE, "ThinkingConfig"):
+        thinking_budget = GEMINI_HIGH_THINKING_BUDGET
+        if isinstance(max_output_tokens, int) and max_output_tokens > 0:
+            thinking_budget = max(0, min(thinking_budget, max_output_tokens - 256))
         kwargs["thinking_config"] = GOOGLE_GENAI_TYPES_MODULE.ThinkingConfig(
-            thinking_budget=GEMINI_HIGH_THINKING_BUDGET,
+            thinking_budget=thinking_budget,
+        )
+    elif _supports_gemini_thinking_level(model) and hasattr(GOOGLE_GENAI_TYPES_MODULE, "ThinkingConfig"):
+        mode = _normalize_execution_mode(execution_mode)
+        thinking_level_name = "MEDIUM" if mode == "intuitive" else "LOW"
+        thinking_level_type = getattr(GOOGLE_GENAI_TYPES_MODULE, "ThinkingLevel", None)
+        thinking_level = getattr(thinking_level_type, thinking_level_name, thinking_level_name)
+        kwargs["thinking_config"] = GOOGLE_GENAI_TYPES_MODULE.ThinkingConfig(
+            thinking_level=thinking_level,
         )
 
     if not kwargs:
@@ -987,6 +1028,8 @@ def _call_gemini(
     *,
     google_search: bool = False,
     high_thinking: bool = False,
+    max_output_tokens: Optional[int] = None,
+    execution_mode: Optional[str] = None,
 ) -> str:
     resolved_model = model or GEMINI_STANDARD_MODEL
     if not api_key:
@@ -997,8 +1040,11 @@ def _call_gemini(
     if GOOGLE_GENAI_MODULE:
         client = _get_google_genai_client(api_key)
         config = _build_google_genai_config(
+            model=resolved_model,
+            execution_mode=execution_mode,
             google_search=google_search,
             high_thinking=high_thinking,
+            max_output_tokens=max_output_tokens,
         )
         kwargs: dict[str, Any] = {"model": resolved_model, "contents": prompt}
         if config is not None:
@@ -1021,10 +1067,10 @@ def _call_gemini(
 
     def _generate_legacy_content():
         try:
-            return model_obj.generate_content(
-                prompt,
-                request_options={"timeout": _GEMINI_TIMEOUT_SECONDS},
-            )
+            kwargs: dict[str, Any] = {"request_options": {"timeout": _GEMINI_TIMEOUT_SECONDS}}
+            if isinstance(max_output_tokens, int) and max_output_tokens > 0:
+                kwargs["generation_config"] = {"max_output_tokens": max_output_tokens}
+            return model_obj.generate_content(prompt, **kwargs)
         except TypeError:
             return model_obj.generate_content(prompt)
 
@@ -1042,6 +1088,8 @@ def _call_gemini_stream(
     *,
     google_search: bool = False,
     high_thinking: bool = False,
+    max_output_tokens: Optional[int] = None,
+    execution_mode: Optional[str] = None,
 ):
     """Streaming variant - yields text chunks."""
     resolved_model = model or GEMINI_STANDARD_MODEL
@@ -1053,8 +1101,11 @@ def _call_gemini_stream(
     if GOOGLE_GENAI_MODULE:
         client = _get_google_genai_client(api_key)
         config = _build_google_genai_config(
+            model=resolved_model,
+            execution_mode=execution_mode,
             google_search=google_search,
             high_thinking=high_thinking,
+            max_output_tokens=max_output_tokens,
         )
         kwargs: dict[str, Any] = {"model": resolved_model, "contents": prompt}
         if config is not None:
@@ -1088,11 +1139,13 @@ def _call_gemini_stream(
 
     def _generate_legacy_stream():
         try:
-            return model_obj.generate_content(
-                prompt,
-                stream=True,
-                request_options={"timeout": _GEMINI_TIMEOUT_SECONDS},
-            )
+            kwargs: dict[str, Any] = {
+                "stream": True,
+                "request_options": {"timeout": _GEMINI_TIMEOUT_SECONDS},
+            }
+            if isinstance(max_output_tokens, int) and max_output_tokens > 0:
+                kwargs["generation_config"] = {"max_output_tokens": max_output_tokens}
+            return model_obj.generate_content(prompt, **kwargs)
         except TypeError:
             return model_obj.generate_content(prompt, stream=True)
 
@@ -1119,6 +1172,8 @@ def _invoke_gemini(
     *,
     google_search: bool = False,
     high_thinking: bool = False,
+    max_output_tokens: Optional[int] = None,
+    execution_mode: Optional[str] = None,
 ) -> str:
     """Try Gemini/Gemma keys with rotation, cooldown, and invalid-key disable."""
     if not GEMINI_KEY_RECORDS:
@@ -1138,6 +1193,8 @@ def _invoke_gemini(
                 resolved_model,
                 google_search=google_search,
                 high_thinking=high_thinking,
+                max_output_tokens=max_output_tokens,
+                execution_mode=execution_mode,
             )
             _record_gemini_success(record, resolved_model)
             logger.info(
@@ -1158,7 +1215,12 @@ def _invoke_gemini(
     )
 
 
-def _invoke_gemini_attempt_chain(prompt: str, attempts: list[GeminiAttempt]) -> tuple[str, str]:
+def _invoke_gemini_attempt_chain(
+    prompt: str,
+    attempts: list[GeminiAttempt],
+    max_output_tokens: Optional[int] = None,
+    execution_mode: Optional[str] = None,
+) -> tuple[str, str]:
     last_error: Optional[Exception] = None
     for attempt in attempts:
         try:
@@ -1167,6 +1229,8 @@ def _invoke_gemini_attempt_chain(prompt: str, attempts: list[GeminiAttempt]) -> 
                 attempt.model,
                 google_search=attempt.google_search,
                 high_thinking=attempt.high_thinking,
+                max_output_tokens=max_output_tokens,
+                execution_mode=execution_mode,
             )
             return result, attempt.model
         except Exception as e:
@@ -1182,7 +1246,12 @@ def _invoke_gemini_attempt_chain(prompt: str, attempts: list[GeminiAttempt]) -> 
     raise RuntimeError(f"All Gemini/Gemma attempts failed: {_redact_secrets(last_error)}")
 
 
-def _stream_gemini_attempt_chain(prompt: str, attempts: list[GeminiAttempt]):
+def _stream_gemini_attempt_chain(
+    prompt: str,
+    attempts: list[GeminiAttempt],
+    max_output_tokens: Optional[int] = None,
+    execution_mode: Optional[str] = None,
+):
     last_error: Optional[Exception] = None
     for attempt in attempts:
         emitted_text = False
@@ -1195,6 +1264,8 @@ def _stream_gemini_attempt_chain(prompt: str, attempts: list[GeminiAttempt]):
                     attempt.model,
                     google_search=attempt.google_search,
                     high_thinking=attempt.high_thinking,
+                    max_output_tokens=max_output_tokens,
+                    execution_mode=execution_mode,
                 ):
                     if chunk:
                         emitted_text = True
@@ -1354,6 +1425,190 @@ def _invoke_gemini_vision(prompt: str, image_base64: str, mime_type: str, model_
 # ==============================
 # Groq invocation (key rotation with client pooling)
 # ==============================
+_groq_capacity_lock = threading.Lock()
+_groq_capacity_snapshot: Optional[dict[str, Any]] = None
+_groq_inflight_tokens = 0
+_groq_call_state = threading.local()
+
+
+class GroqCapacityDeferredError(RuntimeError):
+    pass
+
+
+def _parse_rate_limit_duration_ms(value: Any) -> Optional[int]:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return None
+    if re.fullmatch(r"\d+(?:\.\d+)?", raw):
+        return max(0, round(float(raw) * 1000))
+    total_seconds = 0.0
+    matched = False
+    for amount, unit in re.findall(r"(\d+(?:\.\d+)?)(ms|h|m|s)", raw):
+        matched = True
+        multiplier = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}[unit]
+        total_seconds += float(amount) * multiplier
+    return max(0, round(total_seconds * 1000)) if matched else None
+
+
+def _header_value(headers: Any, name: str) -> Optional[str]:
+    if headers is None:
+        return None
+    try:
+        value = headers.get(name)
+        return str(value).strip() if value is not None else None
+    except Exception:
+        return None
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    try:
+        return int(float(str(value).strip()))
+    except Exception:
+        return None
+
+
+def _capture_groq_telemetry(headers: Any, response: Any = None) -> dict[str, Any]:
+    global _groq_capacity_snapshot
+    limit_tokens = _safe_int(_header_value(headers, "x-ratelimit-limit-tokens"))
+    remaining_tokens = _safe_int(_header_value(headers, "x-ratelimit-remaining-tokens"))
+    reset_after_ms = _parse_rate_limit_duration_ms(_header_value(headers, "x-ratelimit-reset-tokens"))
+    retry_after_ms = _parse_rate_limit_duration_ms(_header_value(headers, "retry-after"))
+    capacity = None
+    if limit_tokens is not None and limit_tokens > 0 and remaining_tokens is not None:
+        capacity = {
+            "capacity_group": "default_org",
+            "limit_tokens": limit_tokens,
+            "remaining_tokens": max(0, remaining_tokens),
+            "reset_after_ms": reset_after_ms,
+            "retry_after_ms": retry_after_ms,
+            "observed_at_ms": round(time.time() * 1000),
+        }
+        with _groq_capacity_lock:
+            _groq_capacity_snapshot = capacity
+
+    usage_payload = None
+    usage = getattr(response, "usage", None) if response is not None else None
+    if usage is None and response is not None:
+        usage = getattr(getattr(response, "x_groq", None), "usage", None)
+    if usage is not None:
+        usage_payload = {
+            "prompt_tokens": _safe_int(getattr(usage, "prompt_tokens", None)),
+            "completion_tokens": _safe_int(getattr(usage, "completion_tokens", None)),
+            "total_tokens": _safe_int(getattr(usage, "total_tokens", None)),
+        }
+        prompt_details = getattr(usage, "prompt_tokens_details", None)
+        cached_tokens = _safe_int(getattr(prompt_details, "cached_tokens", None)) if prompt_details else None
+        if cached_tokens is not None:
+            usage_payload["cached_tokens"] = cached_tokens
+
+    telemetry = {"capacity": capacity, "usage": usage_payload}
+    _groq_call_state.telemetry = telemetry
+    logger.info("[ContextBudget] %s", json.dumps({
+        "event": "groq_capacity_observed",
+        "capacity_group": "default_org",
+        "limit_tokens": limit_tokens,
+        "remaining_tokens": remaining_tokens,
+        "reset_after_ms": reset_after_ms,
+        "retry_after_ms": retry_after_ms,
+        "usage": usage_payload,
+    }, separators=(",", ":")))
+    return telemetry
+
+
+def _capture_groq_error_telemetry(error: Exception) -> None:
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        _capture_groq_telemetry(headers)
+
+
+def get_groq_capacity_snapshot() -> Optional[dict[str, Any]]:
+    global _groq_capacity_snapshot
+    with _groq_capacity_lock:
+        if _groq_capacity_snapshot:
+            observed_at_ms = int(_groq_capacity_snapshot.get("observed_at_ms") or 0)
+            reset_after_ms = _groq_capacity_snapshot.get("reset_after_ms")
+            max_age_ms = min(15 * 60_000, int(reset_after_ms) + 1000) if reset_after_ms is not None else 15 * 60_000
+            if round(time.time() * 1000) - observed_at_ms > max_age_ms:
+                _groq_capacity_snapshot = None
+        return dict(_groq_capacity_snapshot) if _groq_capacity_snapshot else None
+
+
+def get_current_groq_call_telemetry() -> Optional[dict[str, Any]]:
+    telemetry = getattr(_groq_call_state, "telemetry", None)
+    if not isinstance(telemetry, dict):
+        return None
+    return telemetry
+
+
+def _select_groq_capacity_allocation(
+    max_output_tokens: Optional[int],
+    budget_policy: Optional[dict[str, Any]],
+) -> tuple[Optional[int], bool, int, str]:
+    global _groq_inflight_tokens, _groq_capacity_snapshot
+    if not isinstance(budget_policy, dict):
+        return max_output_tokens, False, 0, "unknown"
+    if budget_policy.get("budget_class") == "artifact":
+        return max_output_tokens, False, 0, "not_applicable"
+    selected = max(1, int(max_output_tokens or budget_policy.get("selected_output_tokens") or 256))
+    default_output = max(1, int(budget_policy.get("default_output_tokens") or selected))
+    estimated_input = max(0, int(budget_policy.get("estimated_input_tokens") or 0))
+    force_fallback = bool(budget_policy.get("force_fallback"))
+    capacity_band = "unknown"
+    reservation = 0
+    with _groq_capacity_lock:
+        snapshot = _groq_capacity_snapshot
+        if snapshot:
+            observed_at_ms = int(snapshot.get("observed_at_ms") or 0)
+            reset_after_ms = snapshot.get("reset_after_ms")
+            max_age_ms = min(15 * 60_000, int(reset_after_ms) + 1000) if reset_after_ms is not None else 15 * 60_000
+            if round(time.time() * 1000) - observed_at_ms > max_age_ms:
+                snapshot = None
+                _groq_capacity_snapshot = None
+        available = None
+        if snapshot:
+            limit_tokens = max(1, int(snapshot.get("limit_tokens") or 1))
+            available = max(0, int(snapshot.get("remaining_tokens") or 0) - _groq_inflight_tokens)
+            ratio = available / limit_tokens
+            if ratio >= 0.5:
+                capacity_band = "healthy"
+            elif ratio >= 0.25:
+                capacity_band = "guarded"
+                selected = min(selected, max(1, int(default_output * 0.85)))
+            elif ratio >= 0.1:
+                capacity_band = "constrained"
+                selected = min(selected, max(256, int(default_output * 0.6)))
+            else:
+                capacity_band = "critical"
+                selected = min(selected, 256)
+                force_fallback = True
+            if available < estimated_input + 256:
+                capacity_band = "critical"
+                selected = min(selected, 256)
+                force_fallback = True
+        if not force_fallback:
+            reservation = estimated_input + selected
+            _groq_inflight_tokens += reservation
+
+    logger.info("[ContextBudget] %s", json.dumps({
+        "event": "groq_capacity_allocation",
+        "capacity_group": "default_org",
+        "capacity_band": capacity_band,
+        "estimated_input_tokens": estimated_input,
+        "selected_output_tokens": selected,
+        "force_fallback": force_fallback,
+    }, separators=(",", ":")))
+    return selected, force_fallback, reservation, capacity_band
+
+
+def _release_groq_capacity_reservation(reservation: int) -> None:
+    global _groq_inflight_tokens
+    if reservation <= 0:
+        return
+    with _groq_capacity_lock:
+        _groq_inflight_tokens = max(0, _groq_inflight_tokens - reservation)
+
+
 def _is_gpt_oss_model(model: Optional[str]) -> bool:
     return (model or "").strip().lower() in GPT_OSS_LOGICAL_MODELS
 
@@ -1366,6 +1621,29 @@ def _normalize_gpt_oss_reasoning_effort(reasoning_effort: Optional[str]) -> str:
     normalized = (reasoning_effort or "").strip().lower()
     return normalized if normalized in GPT_OSS_REASONING_EFFORTS else "medium"
 
+
+def _gpt_oss_system_prompt(execution_mode: Optional[str], enable_builtin_tools: bool) -> str:
+    if not enable_builtin_tools:
+        return GPT_OSS_SYSTEM_PROMPT
+    if _normalize_execution_mode(execution_mode) == "intuitive":
+        tool_instruction = (
+            " Verify factual, current, or external-source claims with browser search when useful, especially for "
+            "recent, research, news, market, product, legal, medical, or other high-stakes queries. "
+            "Do not search for stable textbook, coding, or algorithm questions unless it materially improves accuracy."
+        )
+    else:
+        tool_instruction = (
+            " Use browser search whenever live, recent, rapidly changing, or externally verifiable information is required. "
+            "Do not search for stable textbook, coding, or algorithm questions unless it materially improves accuracy."
+        )
+    return GPT_OSS_SYSTEM_PROMPT + tool_instruction
+
+
+def _gpt_oss_builtin_tools(enable_builtin_tools: bool) -> Optional[list[dict[str, str]]]:
+    if not enable_builtin_tools:
+        return None
+    return [{"type": "browser_search"}, {"type": "code_interpreter"}]
+
 def _call_groq(
     prompt: str,
     api_key: str,
@@ -1373,6 +1651,8 @@ def _call_groq(
     max_output_tokens: Optional[int] = None,
     reasoning_effort: Optional[str] = None,
     response_format_json: bool = False,
+    execution_mode: Optional[str] = None,
+    enable_builtin_tools: bool = False,
 ) -> str:
     if not GROQ_MODULE:
         raise RuntimeError("Groq SDK not installed")
@@ -1385,7 +1665,7 @@ def _call_groq(
     client = _get_groq_client(api_key)
     resolved_model = model or GROQ_MODEL
     if response_format_json:
-        response = client.chat.completions.create(
+        raw_response = client.chat.completions.with_raw_response.create(
             model=resolved_model,
             messages=[
                 {"role": "system", "content": MASTER_ROUTER_SYSTEM_PROMPT},
@@ -1397,31 +1677,42 @@ def _call_groq(
             stream=False,
             response_format={"type": "json_object"},
         )
+        response = raw_response.parse()
+        _capture_groq_telemetry(raw_response.headers, response)
         return response.choices[0].message.content or ""
 
     if _is_gpt_oss_model(resolved_model):
-        response = client.chat.completions.create(
-            model=resolved_model,
-            messages=[
-                {"role": "system", "content": GPT_OSS_SYSTEM_PROMPT},
+        request_kwargs: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": [
+                {"role": "system", "content": _gpt_oss_system_prompt(execution_mode, enable_builtin_tools)},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.9,
-            max_completion_tokens=_gpt_oss_max_tokens(max_output_tokens),
-            top_p=1,
-            reasoning_effort=_normalize_gpt_oss_reasoning_effort(reasoning_effort),
-            stream=False,
-            stop=None,
-            tools=[{"type": "browser_search"}],
+            "temperature": 0.9,
+            "max_completion_tokens": _gpt_oss_max_tokens(max_output_tokens),
+            "top_p": 1,
+            "reasoning_effort": _normalize_gpt_oss_reasoning_effort(reasoning_effort),
+            "stream": False,
+            "stop": None,
+        }
+        builtin_tools = _gpt_oss_builtin_tools(enable_builtin_tools)
+        if builtin_tools:
+            request_kwargs["tools"] = builtin_tools
+        raw_response = client.chat.completions.with_raw_response.create(
+            **request_kwargs,
         )
+        response = raw_response.parse()
+        _capture_groq_telemetry(raw_response.headers, response)
         return response.choices[0].message.content or ""
 
-    response = client.chat.completions.create(
+    raw_response = client.chat.completions.with_raw_response.create(
         model=resolved_model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=2048,
+        max_tokens=max_output_tokens or 2048,
     )
+    response = raw_response.parse()
+    _capture_groq_telemetry(raw_response.headers, response)
     return response.choices[0].message.content or ""
 
 def _call_groq_stream(
@@ -1430,6 +1721,8 @@ def _call_groq_stream(
     model: Optional[str] = None,
     max_output_tokens: Optional[int] = None,
     reasoning_effort: Optional[str] = None,
+    execution_mode: Optional[str] = None,
+    enable_builtin_tools: bool = False,
 ):
     if not GROQ_MODULE:
         raise RuntimeError("Groq SDK not installed")
@@ -1443,21 +1736,29 @@ def _call_groq_stream(
         raise RuntimeError(f"Groq streaming is only configured for GPT-OSS chat models, got {resolved_model}")
 
     client = _get_groq_client(api_key)
-    completion = client.chat.completions.create(
-        model=resolved_model,
-        messages=[
-            {"role": "system", "content": GPT_OSS_SYSTEM_PROMPT},
+    request_kwargs: dict[str, Any] = {
+        "model": resolved_model,
+        "messages": [
+            {"role": "system", "content": _gpt_oss_system_prompt(execution_mode, enable_builtin_tools)},
             {"role": "user", "content": prompt},
         ],
-        temperature=0.9,
-        max_completion_tokens=_gpt_oss_max_tokens(max_output_tokens),
-        top_p=1,
-        reasoning_effort=_normalize_gpt_oss_reasoning_effort(reasoning_effort),
-        stream=True,
-        stop=None,
-        tools=[{"type": "browser_search"}],
-    )
+        "temperature": 0.9,
+        "max_completion_tokens": _gpt_oss_max_tokens(max_output_tokens),
+        "top_p": 1,
+        "reasoning_effort": _normalize_gpt_oss_reasoning_effort(reasoning_effort),
+        "stream": True,
+        "stop": None,
+    }
+    builtin_tools = _gpt_oss_builtin_tools(enable_builtin_tools)
+    if builtin_tools:
+        request_kwargs["tools"] = builtin_tools
+    raw_response = client.chat.completions.with_raw_response.create(**request_kwargs)
+    completion = raw_response.parse()
+    _capture_groq_telemetry(raw_response.headers)
     for chunk in completion:
+        chunk_usage = getattr(chunk, "usage", None) or getattr(getattr(chunk, "x_groq", None), "usage", None)
+        if chunk_usage is not None:
+            _capture_groq_telemetry(raw_response.headers, chunk)
         choices = getattr(chunk, "choices", None) or []
         if not choices:
             continue
@@ -1472,6 +1773,8 @@ def _invoke_groq(
     max_output_tokens: Optional[int] = None,
     reasoning_effort: Optional[str] = None,
     response_format_json: bool = False,
+    execution_mode: Optional[str] = None,
+    enable_builtin_tools: bool = False,
 ) -> str:
     """Try Groq keys with smart rotation (skip recently failed keys)."""
     if not GROQ_API_KEYS:
@@ -1489,14 +1792,26 @@ def _invoke_groq(
                 max_output_tokens,
                 reasoning_effort,
                 response_format_json=response_format_json,
+                execution_mode=execution_mode,
+                enable_builtin_tools=enable_builtin_tools,
             )
             logger.info("Groq key #%d succeeded", idx)
             return result
         except Exception as e:
             last_error = e
+            _capture_groq_error_telemetry(e)
             logger.warning("Groq key #%d failed: %s", idx, e)
             # Mark key as unhealthy for fast-fail on subsequent requests
             _mark_key_unhealthy(api_key)
+            snapshot = get_groq_capacity_snapshot()
+            shared_capacity_critical = bool(
+                snapshot
+                and int(snapshot.get("limit_tokens") or 0) > 0
+                and int(snapshot.get("remaining_tokens") or 0) / int(snapshot.get("limit_tokens") or 1) < 0.1
+            )
+            if _status_code_from_error(e) == 429 or shared_capacity_critical:
+                logger.info("[ContextBudget] shared Groq capacity exhausted; skipping remaining key slots")
+                break
 
     raise RuntimeError(f"All {len(keys_to_try)} Groq keys failed: {last_error}")
 
@@ -1960,6 +2275,8 @@ def call_llm_router(
     reasoning_effort: Optional[str] = None,
     skip_wrappers: bool = False,
     image_attachments: Optional[list[dict[str, Any]]] = None,
+    budget_policy: Optional[dict[str, Any]] = None,
+    execution_mode: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Route an LLM call to the correct provider based on task.
@@ -1975,6 +2292,13 @@ def call_llm_router(
     Returns:
         LLM response text.
     """
+    _groq_call_state.telemetry = None
+    policy_execution_mode = budget_policy.get("execution_mode") if isinstance(budget_policy, dict) else None
+    execution_mode = _normalize_execution_mode(execution_mode or policy_execution_mode)
+    max_output_tokens = _apply_execution_mode_output_cap(task, max_output_tokens, execution_mode)
+    effective_reasoning_effort = (
+        "medium" if execution_mode == "intuitive" else "low"
+    ) if task in CHATLIKE_TASKS else reasoning_effort
     # Determine provider
     default_provider = prefer or get_provider_for_task(task)
     provider, resolved_override = resolve_model_override(model_override, default_provider)
@@ -2001,6 +2325,10 @@ def call_llm_router(
             print(f"[FALLBACK] triggered: reason={fallback_reason} -> model={actual_model_used}")
         else:
             print(f"[MODEL_USED] {actual_model_used}")
+        telemetry = get_current_groq_call_telemetry()
+        capacity = get_groq_capacity_snapshot()
+        if telemetry is None and capacity is not None:
+            telemetry = {"capacity": capacity, "usage": None}
         return {
             "text": text,
             "model_used": actual_model_used,
@@ -2010,6 +2338,7 @@ def call_llm_router(
             "truncated": truncated,
             "error": error,
             "error_detail": error_detail,
+            "telemetry": telemetry,
         }
 
     if use_simulation:
@@ -2030,7 +2359,8 @@ def call_llm_router(
         max_output_tokens,
         skip_wrappers,
         image_attachments,
-        reasoning_effort,
+        effective_reasoning_effort,
+        execution_mode,
     )
     cached = _cache_get(key)
     if cached is not None:
@@ -2074,7 +2404,12 @@ def call_llm_router(
         fallback_reason = reason
         finish_reason = None
         truncated = False
-        fallback_result, used_model = _invoke_gemini_attempt_chain(effective_prompt, attempts)
+        fallback_result, used_model = _invoke_gemini_attempt_chain(
+            effective_prompt,
+            attempts,
+            max_output_tokens=max_output_tokens,
+            execution_mode=execution_mode,
+        )
         actual_model_used = used_model
         payload = _build_response_payload(fallback_result)
         _cache_set(key, payload)
@@ -2108,19 +2443,32 @@ def call_llm_router(
                 image_attachments=image_attachments,
             )
         elif provider == "groq":
-            result = _invoke_groq(
-                effective_prompt,
-                resolved_override,
+            max_output_tokens, force_capacity_fallback, reservation, _ = _select_groq_capacity_allocation(
                 max_output_tokens,
-                reasoning_effort,
-                response_format_json=task == "master_route",
+                budget_policy,
             )
+            if force_capacity_fallback:
+                raise GroqCapacityDeferredError("Groq capacity protected; use configured fallback")
+            try:
+                result = _invoke_groq(
+                    effective_prompt,
+                    resolved_override,
+                    max_output_tokens,
+                    effective_reasoning_effort,
+                    response_format_json=task == "master_route",
+                    execution_mode=execution_mode,
+                    enable_builtin_tools=task in CHATLIKE_TASKS,
+                )
+            finally:
+                _release_groq_capacity_reservation(reservation)
         else:
             result = _invoke_gemini(
                 effective_prompt,
                 resolved_override,
                 google_search=_should_use_google_search_for_gemini(task, resolved_override or model),
                 high_thinking=_is_gemma_model(resolved_override or model) and bool(skip_wrappers),
+                max_output_tokens=max_output_tokens,
+                execution_mode=execution_mode,
             )
 
         if _looks_like_provider_error_payload(result):
@@ -2223,7 +2571,12 @@ def call_llm_router(
                 actual_model_used = GEMINI_FAST_MODEL
                 finish_reason = None
                 truncated = False
-                fallback_result = _invoke_gemini(effective_prompt, GEMINI_FAST_MODEL)
+                fallback_result = _invoke_gemini(
+                    effective_prompt,
+                    GEMINI_FAST_MODEL,
+                    max_output_tokens=max_output_tokens,
+                    execution_mode=execution_mode,
+                )
                 payload = _build_response_payload(fallback_result)
                 _cache_set(key, payload)
                 logger.info("Fallback Gemini path succeeded for task=%s", task)
@@ -2324,12 +2677,21 @@ def stream_llm_router(
     max_output_tokens: Optional[int] = None,
     reasoning_effort: Optional[str] = None,
     skip_wrappers: bool = False,
+    budget_policy: Optional[dict[str, Any]] = None,
+    execution_mode: Optional[str] = None,
 ):
     """
     Streaming variant — yields text chunks.
     Routes to Pollinations or Gemini based on model_override.
     Prefers Pollinations; falls back to alternate Pollinations model, then Gemini.
     """
+    _groq_call_state.telemetry = None
+    policy_execution_mode = budget_policy.get("execution_mode") if isinstance(budget_policy, dict) else None
+    execution_mode = _normalize_execution_mode(execution_mode or policy_execution_mode)
+    max_output_tokens = _apply_execution_mode_output_cap(task, max_output_tokens, execution_mode)
+    effective_reasoning_effort = (
+        "medium" if execution_mode == "intuitive" else "low"
+    ) if task in CHATLIKE_TASKS else reasoning_effort
     provider, resolved_override = resolve_model_override(model_override, "pollinations")
     model = resolved_override or _default_model_for_provider(provider)
     gemini_stream_attempts: Optional[list[GeminiAttempt]] = None
@@ -2350,26 +2712,48 @@ def stream_llm_router(
     if provider == "groq" and _is_gpt_oss_model(model):
         emitted_groq_text = False
         last_error = None
-        for idx, api_key in enumerate(_get_round_robin_groq_keys(), 1):
-            try:
-                for chunk in _call_groq_stream(
-                    prompt,
-                    api_key,
-                    model,
-                    max_output_tokens=max_output_tokens,
-                    reasoning_effort=reasoning_effort,
-                ):
-                    if chunk:
-                        emitted_groq_text = True
-                    yield chunk
-                logger.info("Groq GPT-OSS stream key #%d succeeded", idx)
-                return
-            except Exception as e:
-                last_error = e
-                logger.warning("Groq GPT-OSS stream key #%d failed: %s", idx, e)
-                _mark_key_unhealthy(api_key)
-                if emitted_groq_text:
-                    raise
+        max_output_tokens, force_capacity_fallback, reservation, _ = _select_groq_capacity_allocation(
+            max_output_tokens,
+            budget_policy,
+        )
+        try:
+            if force_capacity_fallback:
+                last_error = GroqCapacityDeferredError("Groq capacity protected; use configured fallback")
+            else:
+                for idx, api_key in enumerate(_get_round_robin_groq_keys(), 1):
+                    try:
+                        for chunk in _call_groq_stream(
+                            prompt,
+                            api_key,
+                            model,
+                            max_output_tokens=max_output_tokens,
+                            reasoning_effort=effective_reasoning_effort,
+                            execution_mode=execution_mode,
+                            enable_builtin_tools=task in CHATLIKE_TASKS,
+                        ):
+                            if chunk:
+                                emitted_groq_text = True
+                            yield chunk
+                        logger.info("Groq GPT-OSS stream key #%d succeeded", idx)
+                        return
+                    except Exception as e:
+                        last_error = e
+                        _capture_groq_error_telemetry(e)
+                        logger.warning("Groq GPT-OSS stream key #%d failed: %s", idx, e)
+                        _mark_key_unhealthy(api_key)
+                        if emitted_groq_text:
+                            raise
+                        snapshot = get_groq_capacity_snapshot()
+                        shared_capacity_critical = bool(
+                            snapshot
+                            and int(snapshot.get("limit_tokens") or 0) > 0
+                            and int(snapshot.get("remaining_tokens") or 0) / int(snapshot.get("limit_tokens") or 1) < 0.1
+                        )
+                        if _status_code_from_error(e) == 429 or shared_capacity_critical:
+                            logger.info("[ContextBudget] shared Groq stream capacity exhausted; skipping remaining key slots")
+                            break
+        finally:
+            _release_groq_capacity_reservation(reservation)
         logger.warning(
             "[Fallback] Groq GPT-OSS stream failed before first text: %s - switching to Gemini (%s)",
             last_error,
@@ -2471,7 +2855,12 @@ def stream_llm_router(
             ]
 
     try:
-        yield from _stream_gemini_attempt_chain(prompt, gemini_stream_attempts)
+        yield from _stream_gemini_attempt_chain(
+            prompt,
+            gemini_stream_attempts,
+            max_output_tokens=max_output_tokens,
+            execution_mode=execution_mode,
+        )
         return
     except Exception as gemini_stream_error:
         logger.warning("Gemini/Gemma stream chain failed before first text: %s", _redact_secrets(gemini_stream_error))

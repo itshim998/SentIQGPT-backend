@@ -121,7 +121,7 @@ import { selectModelForPromptWithMaster } from "./orchestrator/masterRouter";
 import { detectExplicitMemoryWriteIntent, shouldAutoUseWebSurf } from "./orchestrator/queryClassifier";
 import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 import { isWebSearchMode, normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
-import { resolveExecutionProfile } from "./orchestrator/executionProfile";
+import { normalizeExecutionMode, resolveExecutionProfile } from "./orchestrator/executionProfile";
 
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
@@ -146,6 +146,7 @@ import { getOptionalUuid, getRequiredUuid } from "./validation/uuid";
 import { ZodError } from "zod";
 import { collapseAdjacentDuplicateMessages } from "./context/messageDeduper";
 import { resolveContextReferences } from "./context/referenceResolver";
+import { runWithRequestBudgetContext } from "./context/requestBudgetContext";
 import { callMathModelRaw, streamMathModelRaw } from "./ai/mathVerifier";
 import { registerBillingRoutes } from "./billing/billingRoutes";
 import { buildBillingIdentity, getAnonymousIdHeaderName } from "./billing/anonymousIdentity";
@@ -330,6 +331,47 @@ app.use(attachRateLimitIdentity);
 app.use(generalRateLimiter);
 app.use(auditMiddleware);
 registerBillingRoutes(app);
+
+const MODEL_BUDGET_PATHS = new Set([
+  "/api/chat",
+  "/api/chat/stream",
+  "/api/chat/intent",
+  "/api/chat/selection",
+  "/api/chat/title",
+  "/api/memory/classify",
+  "/api/memory/compress",
+  "/api/search",
+]);
+app.use(async (req, _res, next) => {
+  const budgetPath = req.path.length > 1 ? req.path.replace(/\/+$/, "") : req.path;
+  if (!MODEL_BUDGET_PATHS.has(budgetPath)) {
+    next();
+    return;
+  }
+
+  try {
+    const requestUser = getRequestUser(req);
+    const identity = buildBillingIdentity(req, requestUser);
+    const planCode = await billingQuotaService.resolvePlanCode(identity);
+    runWithRequestBudgetContext({
+      planCode,
+      executionMode: req.body?.executionMode ?? req.body?.execution_mode,
+      resolution: identity.isGuest ? "guest" : "billing",
+    }, next);
+  } catch (error) {
+    console.warn(JSON.stringify({
+      scope: "context_budget",
+      event: "request_context_resolution_failed",
+      fallback_plan: "free",
+      error_type: error instanceof Error ? error.name : "unknown",
+    }));
+    runWithRequestBudgetContext({
+      planCode: "free",
+      executionMode: normalizeExecutionMode(req.body?.executionMode ?? req.body?.execution_mode),
+      resolution: "fallback",
+    }, next);
+  }
+});
 
 // ---- Multer for file uploads ----
 const upload = multer({

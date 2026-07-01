@@ -64,6 +64,8 @@ export async function evaluateAnswer(
       prompt,
       prefer: "groq",
       user_id: userId,
+      budget_class: "auxiliary",
+      auxiliary_budget: "critic",
     });
   } catch (err) {
     console.log(`[REFLECTION] critic call failed: ${err instanceof Error ? err.message : err}`);

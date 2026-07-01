@@ -66,7 +66,9 @@ export const INTUITIVE_PROFILE: ExecutionProfile = {
   streaming: {
     preferDirectStream: false,
   },
-  model: {},
+  model: {
+    reasoningEffort: "medium",
+  },
 };
 
 export function normalizeExecutionMode(value: unknown): ExecutionMode {

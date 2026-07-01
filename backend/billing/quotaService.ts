@@ -35,7 +35,7 @@ export class BillingQuotaError extends Error {
   }
 }
 
-function normalizePlanCode(value: unknown): BillingPlanCode {
+export function normalizePlanCode(value: unknown): BillingPlanCode {
   const code = typeof value === "string" ? value : "free";
   if (code === "student_core" || code === "premium" || code === "pro") return code;
   return "free";
@@ -69,6 +69,22 @@ export class BillingQuotaService {
 
   async getUsageSummary(identity: BillingIdentity): Promise<any> {
     return this.repository.getUsageSummary(identity);
+  }
+
+  async resolvePlanCode(identity: BillingIdentity): Promise<BillingPlanCode> {
+    if (identity.isGuest || !identity.userId) return "free";
+    try {
+      const summary = await this.getUsageSummary(identity);
+      return normalizePlanCode(summary?.plan_code);
+    } catch (error) {
+      console.warn(JSON.stringify({
+        scope: "context_budget",
+        event: "plan_resolution_failed",
+        fallback_plan: "free",
+        error_type: error instanceof Error ? error.name : "unknown",
+      }));
+      return "free";
+    }
   }
 
   async reserveFeature(args: {

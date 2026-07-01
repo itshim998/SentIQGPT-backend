@@ -5,6 +5,17 @@ import { composeContext } from "../orchestrator/contextComposer";
 import { MATH_RESPONSE_SYSTEM_PROMPT } from "./mathPrompt";
 import { PRODUCT_DISCLAIMER, PRODUCT_NAME } from "../branding";
 import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../internalGateway";
+import { getRequestBudgetContext } from "../context/requestBudgetContext";
+import {
+  estimateInputTokens,
+  getGroqCapacitySnapshot,
+  recordGroqCapacitySnapshot,
+  resolveOutputBudget,
+  type AuxiliaryOutputKind,
+  type OutputBudgetClass,
+  type RequestComplexity,
+} from "../orchestrator/contextBudgetManager";
+import type { ExecutionMode } from "../orchestrator/executionProfile";
 
 // SentIQ Chat v1 — Prompt Builders & LLM Adapter Bridge
 //
@@ -83,8 +94,34 @@ export interface LLMAdapterCall {
   readonly signal?: AbortSignal;
   readonly max_output_tokens?: number;
   readonly reasoning_effort?: "low" | "medium";
+  readonly execution_mode?: ExecutionMode;
   readonly skip_wrappers?: boolean;
   readonly image_attachments?: readonly ImageAttachment[];
+  readonly budget_class?: OutputBudgetClass;
+  readonly auxiliary_budget?: AuxiliaryOutputKind;
+  readonly request_complexity?: RequestComplexity;
+  readonly message_count?: number;
+}
+
+interface InternalBudgetPolicy {
+  readonly plan_code: string;
+  readonly execution_mode: ExecutionMode;
+  readonly budget_class: OutputBudgetClass;
+  readonly auxiliary_kind?: AuxiliaryOutputKind;
+  readonly complexity: RequestComplexity;
+  readonly estimated_input_tokens: number;
+  readonly default_output_tokens: number;
+  readonly hard_output_tokens: number;
+  readonly selected_output_tokens: number;
+  readonly total_token_budget: number;
+  readonly normal_min_total_tokens: number;
+  readonly capacity_band: string;
+  readonly force_fallback: boolean;
+}
+
+interface PreparedAdapterCall {
+  readonly call: LLMAdapterCall;
+  readonly budgetPolicy: InternalBudgetPolicy;
 }
 
 export interface ImageAttachment {
@@ -136,7 +173,88 @@ function createAdapterAbortSignal(parentSignal: AbortSignal | undefined, timeout
   };
 }
 
+function inferBudgetClass(call: LLMAdapterCall): {
+  readonly budgetClass: OutputBudgetClass;
+  readonly auxiliaryKind?: AuxiliaryOutputKind;
+} {
+  if (call.budget_class) return { budgetClass: call.budget_class, auxiliaryKind: call.auxiliary_budget };
+  if (call.task === "file_generate") return { budgetClass: "artifact" };
+  if (call.task === "memory_classify") return { budgetClass: "auxiliary", auxiliaryKind: "routing" };
+  if (call.task === "memory_summarize" || call.task === "memory_compress" || call.task === "file_extract") {
+    return { budgetClass: "auxiliary", auxiliaryKind: "memory" };
+  }
+  if (call.task === "route_classify" || call.task === "master_route" || call.task === "image_generate") {
+    return { budgetClass: "auxiliary", auxiliaryKind: "routing" };
+  }
+  if (call.task === "intent_clarify") return { budgetClass: "auxiliary", auxiliaryKind: "clarification" };
+  return { budgetClass: "interactive" };
+}
+
+function isGroqPrimaryCall(call: LLMAdapterCall): boolean {
+  if (call.prefer === "groq" || call.task === "master_route") return true;
+  return call.model_override === "gpt-oss-120b" || call.model_override?.startsWith("groq:") === true;
+}
+
+function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
+  const context = getRequestBudgetContext();
+  const classification = inferBudgetClass(call);
+  const estimate = estimateInputTokens(call.prompt, call.message_count ?? 1);
+  const complexity = call.request_complexity ?? "normal";
+  const executionMode = call.execution_mode ?? context.executionMode;
+  const decision = resolveOutputBudget({
+    planCode: context.planCode,
+    executionMode,
+    budgetClass: classification.budgetClass,
+    auxiliaryKind: classification.auxiliaryKind,
+    requestedOutputTokens: call.max_output_tokens,
+    estimatedInputTokens: estimate.tokens,
+    complexity,
+    capacity: isGroqPrimaryCall(call) ? getGroqCapacitySnapshot() : undefined,
+  });
+  const budgetPolicy: InternalBudgetPolicy = {
+    plan_code: decision.planCode,
+    execution_mode: decision.executionMode,
+    budget_class: decision.budgetClass,
+    auxiliary_kind: decision.auxiliaryKind,
+    complexity,
+    estimated_input_tokens: estimate.tokens,
+    default_output_tokens: decision.defaultOutputTokens,
+    hard_output_tokens: decision.hardOutputTokens,
+    selected_output_tokens: decision.selectedOutputTokens,
+    total_token_budget: decision.totalTokenBudget,
+    normal_min_total_tokens: decision.normalMinTotalTokens,
+    capacity_band: decision.capacityBand,
+    force_fallback: decision.forceFallback,
+  };
+  console.info(JSON.stringify({
+    scope: "context_budget",
+    event: "output_policy_selected",
+    plan: decision.planCode,
+    execution_mode: decision.executionMode,
+    budget_class: decision.budgetClass,
+    auxiliary_kind: decision.auxiliaryKind ?? null,
+    estimated_input_tokens: estimate.tokens,
+    selected_output_tokens: decision.selectedOutputTokens,
+    hard_output_tokens: decision.hardOutputTokens,
+    capacity_band: decision.capacityBand,
+    force_fallback: decision.forceFallback,
+  }));
+  return {
+    call: {
+      ...call,
+      execution_mode: decision.executionMode,
+      max_output_tokens: decision.selectedOutputTokens,
+      reasoning_effort: decision.budgetClass === "interactive" && isGroqPrimaryCall(call)
+        ? decision.reasoningEffort
+        : call.reasoning_effort,
+    },
+    budgetPolicy,
+  };
+}
+
 export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMAdapterResult> {
+  const prepared = prepareBudgetedCall(call);
+  call = prepared.call;
   const url = getInternalGatewayUrl("/llm/invoke");
   const abort = createAdapterAbortSignal(call.signal, call.timeout_ms ?? 90_000);
 
@@ -155,8 +273,10 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
         safety_mode: call.safety_mode,
         max_output_tokens: call.max_output_tokens,
         reasoning_effort: call.reasoning_effort,
+        execution_mode: call.execution_mode,
         skip_wrappers: call.skip_wrappers,
         image_attachments: call.image_attachments,
+        budget_policy: prepared.budgetPolicy,
       }),
       signal: abort.signal,
     });
@@ -199,6 +319,7 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
           truncated?: boolean;
           error?: string | null;
           error_detail?: string | null;
+          telemetry?: { capacity?: unknown };
         };
   };
   if (typeof data.result === "string") {
@@ -213,6 +334,7 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
       error_detail: null,
     };
   }
+  recordGroqCapacitySnapshot(data.result.telemetry?.capacity);
   return {
     text: typeof data.result.text === "string" ? data.result.text : "",
     model_used: data.result.model_used,
@@ -237,6 +359,8 @@ export async function callLLMAdapter(call: LLMAdapterCall): Promise<string> {
 export async function callLLMAdapterStream(
   call: LLMAdapterCall,
 ): Promise<ReadableStream<string>> {
+  const prepared = prepareBudgetedCall(call);
+  call = prepared.call;
   const url = getInternalGatewayUrl("/llm/stream");
   const abort = createAdapterAbortSignal(call.signal, call.timeout_ms ?? 120_000);
 
@@ -255,8 +379,10 @@ export async function callLLMAdapterStream(
         safety_mode: call.safety_mode,
         max_output_tokens: call.max_output_tokens,
         reasoning_effort: call.reasoning_effort,
+        execution_mode: call.execution_mode,
         skip_wrappers: call.skip_wrappers,
         image_attachments: call.image_attachments,
+        budget_policy: prepared.budgetPolicy,
       }),
       signal: abort.signal,
     });
@@ -325,7 +451,12 @@ export async function callLLMAdapterStream(
     }
 
     try {
-      const parsed = JSON.parse(payload) as { text?: string; error?: string; message?: string };
+      const parsed = JSON.parse(payload) as { text?: string; error?: string; message?: string; capacity?: unknown };
+
+      if (eventType === "capacity") {
+        recordGroqCapacitySnapshot(parsed.capacity ?? parsed);
+        return;
+      }
       
       // Handle safety violation from output guard (event: error format)
       if (eventType === "error" || parsed.message?.includes("safety")) {
@@ -417,6 +548,8 @@ export async function callLLMAdapterStream(
 
 // Fallback: invoke via child process (v1 compatibility)
 export function callLLMAdapterSync(call: LLMAdapterCall): Promise<string> {
+  const prepared = prepareBudgetedCall(call);
+  call = prepared.call;
   return new Promise((resolve, reject) => {
     const adapterPath = pathResolve(PROJECT_ROOT, "llm_adapter.py");
     const child = spawn("python", [adapterPath, "--stdin"], {
@@ -451,7 +584,10 @@ export function callLLMAdapterSync(call: LLMAdapterCall): Promise<string> {
         model_override: call.model_override,
         user_id: call.user_id,
         reasoning_effort: call.reasoning_effort,
+        execution_mode: call.execution_mode,
         image_attachments: call.image_attachments,
+        max_output_tokens: call.max_output_tokens,
+        budget_policy: prepared.budgetPolicy,
       })
     );
     child.stdin.end();
@@ -682,6 +818,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     reasoning_effort: groqReasoningEffort,
     skip_wrappers: ctx.reasoningMode ?? false,
     image_attachments: ctx.imageAttachments,
+    message_count: (ctx.recentMessages?.length ?? 0) + 1,
   };
 }
 
@@ -801,6 +938,8 @@ export function buildTitleGeneratePrompt(args: {
     user_id: args.userId || args.conversationId,
     safety_mode: "low_risk_text",
     max_output_tokens: 80,
+    budget_class: "auxiliary",
+    auxiliary_budget: "title",
     skip_wrappers: true,
   };
 }

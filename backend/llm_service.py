@@ -37,6 +37,7 @@ sys.path.insert(0, PARENT_DIR)
 from llm_adapter import (
     call_llm_router,
     stream_llm_router,
+    get_current_groq_call_telemetry,
     get_provider_for_task,
     GEMINI_API_KEYS,
     GROQ_API_KEYS,
@@ -400,8 +401,10 @@ class LLMInvokeRequest(BaseModel):
     safety_mode: Optional[str] = None
     max_output_tokens: Optional[int] = None
     reasoning_effort: Optional[str] = None
+    execution_mode: Optional[str] = None
     skip_wrappers: Optional[bool] = None
     image_attachments: Optional[list[dict[str, Any]]] = None
+    budget_policy: Optional[dict[str, Any]] = None
 
 
 class LLMInvokeResponse(BaseModel):
@@ -855,6 +858,8 @@ async def invoke_llm(request: LLMInvokeRequest):
             request.reasoning_effort,
             bool(request.skip_wrappers),
             request.image_attachments or None,
+            request.budget_policy,
+            request.execution_mode,
         )
         # Resolve the actual provider (not just the prefer hint)
         from llm_adapter import resolve_model_override, get_provider_for_task
@@ -998,6 +1003,7 @@ async def stream_llm(request: LLMInvokeRequest):
             # Skip for chart generation to prevent false positives on code/data
             safety_monitor = None if is_chart_task else StreamingSafetyMonitor(user_id, request.task)
             full_output_parts: list[str] = []
+            capacity_event_sent = False
             
             for chunk in stream_llm_router(
                 prompt=request.prompt,
@@ -1007,8 +1013,15 @@ async def stream_llm(request: LLMInvokeRequest):
                 image_attachments=request.image_attachments or None,
                 max_output_tokens=request.max_output_tokens,
                 reasoning_effort=request.reasoning_effort,
+                execution_mode=request.execution_mode,
                 skip_wrappers=bool(request.skip_wrappers),
+                budget_policy=request.budget_policy,
             ):
+                if not capacity_event_sent:
+                    telemetry = get_current_groq_call_telemetry()
+                    if telemetry and telemetry.get("capacity"):
+                        yield f"event: capacity\ndata: {json.dumps({'capacity': telemetry['capacity']})}\n\n"
+                        capacity_event_sent = True
                 # Check output safety (if monitor active)
                 if safety_monitor:
                     full_output_parts.append(chunk)
@@ -1020,6 +1033,10 @@ async def stream_llm(request: LLMInvokeRequest):
                 
                 # SSE format: data: <text>\n\n
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
+            if not capacity_event_sent:
+                telemetry = get_current_groq_call_telemetry()
+                if telemetry and telemetry.get("capacity"):
+                    yield f"event: capacity\ndata: {json.dumps({'capacity': telemetry['capacity']})}\n\n"
             if safety_monitor:
                 final_output = "".join(full_output_parts).strip()
                 if final_output:

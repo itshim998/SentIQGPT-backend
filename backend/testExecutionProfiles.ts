@@ -57,7 +57,7 @@ for (const profile of [FAST_PROFILE, INTUITIVE_PROFILE]) {
   assert.doesNotMatch(serialized, /gemini|groq|openai|qwen|pollinations/i, "execution profiles must not name models");
 }
 assert.equal(FAST_PROFILE.model.reasoningEffort, "low", "fast profile requests low model effort");
-assert.equal(INTUITIVE_PROFILE.model.reasoningEffort, undefined, "intuitive profile keeps model effort automatic");
+assert.equal(INTUITIVE_PROFILE.model.reasoningEffort, "medium", "intuitive profile requests medium model effort");
 
 const fastGroqChatCall = buildChatPrompt({
   userMessage: "Explain SentIQ Chat briefly.",
@@ -71,7 +71,7 @@ const intuitiveGroqChatCall = buildChatPrompt({
   modelOverride: "gpt-oss-120b",
   reasoningEffort: INTUITIVE_PROFILE.model.reasoningEffort,
 });
-assert.equal(intuitiveGroqChatCall.reasoning_effort, "medium", "intuitive Groq chat keeps automatic effort selection");
+assert.equal(intuitiveGroqChatCall.reasoning_effort, "medium", "intuitive Groq chat requests medium reasoning effort");
 
 const nonGroqFastChatCall = buildChatPrompt({
   userMessage: "Hello.",
@@ -142,8 +142,8 @@ assert.match(
 const llmAdapterSource = readFileSync(resolve(process.cwd(), "llm_adapter.py"), "utf8");
 assert.match(
   llmAdapterSource,
-  /reasoning_effort=_normalize_gpt_oss_reasoning_effort\(reasoning_effort\),[\s\S]*tools=\[\{"type": "browser_search"\}\]/,
-  "Groq GPT-OSS calls should keep browser-search tools while accepting reasoning effort",
+  /\{"type": "browser_search"\}, \{"type": "code_interpreter"\}/,
+  "Groq GPT-OSS interactive calls should offer browser-search and code-interpreter tools",
 );
 
 async function main() {

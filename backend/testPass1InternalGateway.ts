@@ -45,7 +45,14 @@ async function verifyNodeBridge(): Promise<void> {
     });
     if (req.url === "/llm/stream") {
       res.writeHead(200, { "Content-Type": "text/event-stream" });
-      res.end(`data: ${JSON.stringify({ text: "stream-ok" })}\n\ndata: [DONE]\n\n`);
+      res.end(
+        `event: capacity\ndata: ${JSON.stringify({ capacity: {
+          limit_tokens: 10_000,
+          remaining_tokens: 9_000,
+          reset_after_ms: 10_000,
+        } })}\n\n` +
+        `data: ${JSON.stringify({ text: "stream-ok" })}\n\ndata: [DONE]\n\n`,
+      );
       return;
     }
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -71,7 +78,7 @@ async function verifyNodeBridge(): Promise<void> {
       if (done) break;
       streamed += value;
     }
-    assert.equal(streamed, "stream-ok", "Node stream bridge still returns gateway chunks");
+    assert.equal(streamed, "stream-ok", "internal capacity telemetry does not alter public stream chunks");
     assert.deepEqual(captured.map((request) => request.path), ["/llm/invoke", "/llm/stream"]);
     assert(captured.every((request) => request.token === "pass1-test-token"), "Node bridge forwards internal token");
     console.log("PASS | Node invoke and stream bridge forward internal token");
@@ -120,7 +127,6 @@ async function main(): Promise<void> {
     "backend/ai/PromptBuilders.ts",
     "backend/ai/FileIngestionHandler.ts",
     "backend/memory/memoryEmbedding.ts",
-    "backend/tools/webSearch/tavilySearchPipeline.ts",
     "backend/tools/chartGeneration/chartRouter.ts",
   ];
   for (const relativePath of callerFiles) {
@@ -128,6 +134,11 @@ async function main(): Promise<void> {
     assert.match(source, /getInternalGatewayUrl/, `${relativePath} must use shared internal URL helper`);
     assert.match(source, /getInternalGatewayHeaders/, `${relativePath} must use shared token header helper`);
   }
+  assert.match(
+    read("backend/tools/webSearch/tavilySearchPipeline.ts"),
+    /callLLMAdapterDetailed/,
+    "web synthesis must use the canonical budgeted Node-to-Python bridge",
+  );
   console.log("PASS | every Node-to-Python caller uses shared gateway helper");
 
   const python = read("backend/llm_service.py");
