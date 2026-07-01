@@ -189,6 +189,16 @@
 
       <!-- Input area -->
       <div class="chat-input-wrapper">
+        <div id="selected-context-bar" class="selected-context-bar" role="group" aria-label="Selected text context" aria-live="polite" aria-hidden="true" hidden>
+          <span class="selected-context-accent" aria-hidden="true"></span>
+          <div class="selected-context-copy">
+            <span class="selected-context-label">Selected text</span>
+            <p id="selected-context-text" class="selected-context-text"></p>
+          </div>
+          <button id="clear-selected-context" class="selected-context-remove" type="button" title="Remove selected text" aria-label="Remove selected text context">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+          </button>
+        </div>
         <div id="file-preview-area" class="file-preview-area" style="display: none;"></div>
         <div id="auth-gate-message" class="auth-gate-message" role="status" aria-live="polite">Log in to start chatting.</div>
 
