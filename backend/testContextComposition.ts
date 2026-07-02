@@ -20,10 +20,12 @@ async function main(): Promise<void> {
       const ordered = composeContextDetailed({
         systemPrompt: "SYSTEM POLICY MARKER",
         stableContext: "STABLE CONTEXT MARKER",
+        workspaceCapsule: "WORKSPACE CAPSULE MARKER",
         memories: [{ type: "preference", summary: "MEMORY MARKER", importance: 9 }],
         fileReferences: [{ filename: "notes.txt", extractedText: "FILE MARKER" }],
         routeEvidence: [{ content: "ROUTE EVIDENCE MARKER", required: true }],
         conversationSummary: "ROLLING SUMMARY MARKER",
+        conversationCapsule: "CONVERSATION CAPSULE MARKER",
         conversation: [{ role: "assistant", content: "RECENT TURN MARKER" }],
         userMessage: "CURRENT USER MARKER",
         tokenBudget: 10_000,
@@ -32,10 +34,12 @@ async function main(): Promise<void> {
         "SYSTEM POLICY MARKER",
         "CONTEXT HANDLING RULES",
         "STABLE CONTEXT MARKER",
+        "WORKSPACE CAPSULE MARKER",
         "MEMORY MARKER",
         "FILE MARKER",
         "ROUTE EVIDENCE MARKER",
         "ROLLING SUMMARY MARKER",
+        "CONVERSATION CAPSULE MARKER",
         "RECENT TURN MARKER",
         "CURRENT USER MARKER",
       ];
@@ -70,6 +74,32 @@ async function main(): Promise<void> {
       assert(longHistory.prompt.includes("CURRENT QUESTION MUST SURVIVE"), "long history cannot crowd out current question");
       assert(longHistory.prompt.trimEnd().endsWith("CURRENT QUESTION MUST SURVIVE"), "current question remains last after trimming");
 
+      const capsuleBackedHistory = composeContextDetailed({
+        systemPrompt: "SYSTEM",
+        userMessage: "What should we do next?",
+        workspaceCapsule: "WORKSPACE PROJECT: Atlas uses a staged rollout.",
+        conversationCapsule: "CONVERSATION DECISIONS: deploy the API before the client.",
+        conversation: Array.from({ length: 6 }, (_, index) => ({
+          role: index % 2 ? "assistant" : "user",
+          content: `RECENT-${index}: short recent turn`,
+        })),
+        tokenBudget: 1_000,
+      });
+      assert(capsuleBackedHistory.prompt.includes("WORKSPACE PROJECT: Atlas"), "workspace capsule is available across conversations");
+      assert(capsuleBackedHistory.prompt.includes("CONVERSATION DECISIONS"), "conversation capsule carries compact older context");
+      assert(capsuleBackedHistory.prompt.includes("RECENT-5"), "recent turns remain alongside the capsule");
+      assert(capsuleBackedHistory.prompt.trimEnd().endsWith("What should we do next?"), "current question stays protected with capsules");
+
+      const oversizedCapsules = composeContextDetailed({
+        systemPrompt: "SYSTEM",
+        userMessage: "CURRENT CAPSULE QUESTION",
+        workspaceCapsule: repeated("OLD-WORKSPACE-CONTEXT", 1_200),
+        conversationCapsule: repeated("OLD-CONVERSATION-CONTEXT", 1_200),
+        tokenBudget: 350,
+      });
+      assert(oversizedCapsules.telemetry.droppedCounts.summaries > 0, "capsules are degraded under budget pressure");
+      assert(oversizedCapsules.prompt.includes("CURRENT CAPSULE QUESTION"), "capsule trimming cannot displace the current question");
+
       const largeFileText = [
         repeated("opening", 3_000),
         "UNIQUE RELEVANT NEEDLE: quarterly margin improved to 42 percent.",
@@ -101,8 +131,12 @@ async function main(): Promise<void> {
         userMessage: "Use the file and remember my formatting preference.",
         modelOverride: "gpt-oss-120b",
         memories: [{ type: "preference", summary: "Use compact bullet points.", importance: 9 }],
+        workspaceCapsule: "The recurring workspace is Project Atlas.",
+        conversationCapsule: "The current conversation selected milestone three.",
         fileReferences: [{ filename: "brief.txt", extractedText: "The brief contains three milestones." }],
       });
+      assert(fileAwareCall.prompt.includes("Project Atlas"), "chat prompt carries workspace capsule context");
+      assert(fileAwareCall.prompt.includes("selected milestone three"), "chat prompt carries conversation capsule context");
       assert(fileAwareCall.prompt.includes("Use compact bullet points."), "file-aware chat keeps relevant memory when budget allows");
       assert(fileAwareCall.prompt.includes("The brief contains three milestones."), "file-aware chat keeps selected file content");
 

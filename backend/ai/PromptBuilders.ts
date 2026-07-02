@@ -691,6 +691,8 @@ export interface ChatContext {
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
   readonly imageAttachments?: readonly ImageAttachment[];
   readonly conversationSummary?: string;
+  readonly conversationCapsule?: string;
+  readonly workspaceCapsule?: string;
   readonly priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
   readonly routeEvidence?: readonly RouteEvidenceItem[];
   readonly isExplicitRecallQuery?: boolean;
@@ -777,6 +779,8 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     systemPrompt: SYSTEM_PROMPT,
     userMessage: ctx.userMessage,
     stableContext,
+    workspaceCapsule: ctx.workspaceCapsule,
+    conversationCapsule: ctx.conversationCapsule,
     conversation: ctx.recentMessages,
     conversationSummary: ctx.conversationSummary,
     recallEvidence: ctx.priorConversationEvidence,

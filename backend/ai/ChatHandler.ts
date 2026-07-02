@@ -78,6 +78,8 @@ export async function handleChat(args: {
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
   readonly imageAttachments?: readonly ImageAttachment[];
   readonly conversationSummary?: string;
+  readonly conversationCapsule?: string;
+  readonly workspaceCapsule?: string;
   readonly priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
   readonly routeEvidence?: readonly RouteEvidenceItem[];
   readonly isExplicitRecallQuery?: boolean;
@@ -99,6 +101,8 @@ export async function handleChat(args: {
     fileReferences: args.fileReferences,
     imageAttachments: args.imageAttachments,
     conversationSummary: args.conversationSummary,
+    conversationCapsule: args.conversationCapsule,
+    workspaceCapsule: args.workspaceCapsule,
     priorConversationEvidence: args.priorConversationEvidence,
     routeEvidence: args.routeEvidence,
     isExplicitRecallQuery: args.isExplicitRecallQuery,

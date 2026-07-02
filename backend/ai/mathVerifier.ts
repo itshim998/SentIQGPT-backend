@@ -291,6 +291,8 @@ export async function callMathModelRaw(args: {
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
   readonly imageAttachments?: readonly ImageAttachment[];
   readonly conversationSummary?: string;
+  readonly conversationCapsule?: string;
+  readonly workspaceCapsule?: string;
   readonly priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
   readonly isExplicitRecallQuery?: boolean;
   readonly maxOutputTokens?: number;
@@ -304,6 +306,8 @@ export async function callMathModelRaw(args: {
     fileReferences: args.fileReferences,
     imageAttachments: args.imageAttachments,
     conversationSummary: args.conversationSummary,
+    conversationCapsule: args.conversationCapsule,
+    workspaceCapsule: args.workspaceCapsule,
     priorConversationEvidence: args.priorConversationEvidence,
     isExplicitRecallQuery: args.isExplicitRecallQuery,
     modelOverride: args.modelOverride,
@@ -331,6 +335,8 @@ export async function callMathModelRaw(args: {
         fileReferences: args.fileReferences,
         imageAttachments: args.imageAttachments,
         conversationSummary: args.conversationSummary,
+        conversationCapsule: args.conversationCapsule,
+        workspaceCapsule: args.workspaceCapsule,
         priorConversationEvidence: args.priorConversationEvidence,
         isExplicitRecallQuery: args.isExplicitRecallQuery,
         modelOverride: args.modelOverride,
@@ -370,6 +376,8 @@ export async function streamMathModelRaw(args: {
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
   readonly imageAttachments?: readonly ImageAttachment[];
   readonly conversationSummary?: string;
+  readonly conversationCapsule?: string;
+  readonly workspaceCapsule?: string;
   readonly priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
   readonly isExplicitRecallQuery?: boolean;
   readonly maxOutputTokens?: number;
@@ -383,6 +391,8 @@ export async function streamMathModelRaw(args: {
     fileReferences: args.fileReferences,
     imageAttachments: args.imageAttachments,
     conversationSummary: args.conversationSummary,
+    conversationCapsule: args.conversationCapsule,
+    workspaceCapsule: args.workspaceCapsule,
     priorConversationEvidence: args.priorConversationEvidence,
     isExplicitRecallQuery: args.isExplicitRecallQuery,
     modelOverride: args.modelOverride,

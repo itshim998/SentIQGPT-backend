@@ -245,6 +245,8 @@ async function execConversation(
       fileReferences: ctx.fileReferences,
       imageAttachments: ctx.imageAttachments,
       conversationSummary: ctx.conversationSummary,
+      conversationCapsule: ctx.conversationCapsule,
+      workspaceCapsule: ctx.workspaceCapsule,
       priorConversationEvidence: ctx.priorConversationEvidence,
       routeEvidence: priorContext
         ? [{ content: priorContext, label: "previous step", required: true, relevance: 1 }]
@@ -400,6 +402,8 @@ async function execFileAnalysis(
       fileReferences: ctx.fileReferences,
       imageAttachments: ctx.imageAttachments,
       conversationSummary: ctx.conversationSummary,
+      conversationCapsule: ctx.conversationCapsule,
+      workspaceCapsule: ctx.workspaceCapsule,
       priorConversationEvidence: ctx.priorConversationEvidence,
       routeEvidence: priorContext
         ? [{ content: priorContext, label: "previous step", required: true, relevance: 1 }]

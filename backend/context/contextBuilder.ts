@@ -29,6 +29,7 @@ import { getPriorConversationUserMessages } from "../services/conversationServic
 import { collapseAdjacentDuplicateMessages } from "./messageDeduper";
 import { FAST_PROFILE, INTUITIVE_PROFILE, type ExecutionProfile } from "../orchestrator/executionProfile";
 import type { BillingIdentity } from "../billing/entitlementTypes";
+import { contextCapsuleService, type ContextCapsulePair } from "../services/contextCapsuleService";
 
 export interface RawMessageContext {
   readonly recent_messages?: readonly { role: string; content: string }[];
@@ -81,6 +82,8 @@ export interface BuiltContext {
   readonly imageAttachments: readonly ImageAttachmentContext[];
   readonly memoryPromptBlock: string;
   readonly conversationSummary?: string;
+  readonly conversationCapsule?: string;
+  readonly workspaceCapsule?: string;
   readonly hasFileContext: boolean;
   readonly webSearchMode?: WebSearchMode;
   readonly userId?: string;
@@ -413,6 +416,15 @@ export async function buildContext(
       currentConversationId: raw.conversationId,
     })
     : Promise.resolve([] as readonly ContextRecallEvidence[]);
+  const capsulePromise: Promise<ContextCapsulePair> = normalizedUserId && userDb
+    ? contextCapsuleService.readCapsules({
+        userDb,
+        ownerUserId: normalizedUserId,
+        conversationId: raw.conversationId,
+      })
+    : Promise.resolve(normalizedUserId
+        ? contextCapsuleService.peekCachedCapsules(normalizedUserId, raw.conversationId)
+        : {});
 
   const compressionPromise = profile.context.compressConversation
     ? compressConversation(allMessages, userId)
@@ -421,10 +433,11 @@ export async function buildContext(
         summary: undefined as string | undefined,
       });
 
-  const [compressionResult, cloudMemories, priorConversationEvidence] = await Promise.all([
+  const [compressionResult, cloudMemories, priorConversationEvidence, capsules] = await Promise.all([
     compressionPromise,
     cloudMemoryPromise,
     recallEvidencePromise,
+    capsulePromise,
   ]);
 
   const { recentMessages, summary } = compressionResult;
@@ -477,6 +490,7 @@ export async function buildContext(
   console.log(`[CONTEXT] messages included: ${recentMessages.length}`);
   console.log(`[CONTEXT] summary used: ${!!summary}`);
   console.log(`[CONTEXT] recall evidence selected: ${priorConversationEvidence.length}`);
+  console.log(`[CONTEXT] capsules selected: conversation=${capsules.conversation ? 1 : 0} workspace=${capsules.workspace ? 1 : 0}`);
   console.log(`[CONTEXT] buildContext profile=${profile.mode} completed in ${Date.now() - ctxStart}ms`);
 
   return {
@@ -486,6 +500,8 @@ export async function buildContext(
     imageAttachments,
     memoryPromptBlock,
     conversationSummary: summary,
+    conversationCapsule: capsules.conversation?.content,
+    workspaceCapsule: capsules.workspace?.content,
     hasFileContext: fileReferences.length > 0 || imageAttachments.length > 0,
     webSearchMode: raw.web_search_mode,
     userId: normalizedUserId,
@@ -550,14 +566,21 @@ export async function buildContextFast(
       currentConversationId: raw.conversationId,
     })
     : Promise.resolve([] as readonly ContextRecallEvidence[]);
+  // Keep the Fast path free of new shard reads so capsule support cannot add
+  // first-token latency. Normal context builds and background refreshes warm
+  // this process-local cache for subsequent Fast turns.
+  const capsulePromise: Promise<ContextCapsulePair> = Promise.resolve(normalizedUserId
+    ? contextCapsuleService.peekCachedCapsules(normalizedUserId, raw.conversationId)
+    : {});
 
   // Use fast keyword-based memory selection (synchronous)
   let memories: readonly ContextMemory[] = selectMemoriesForPrompt(rawMemories, query, 3, isExplicitRecallQuery);
 
   // Await cloud memories (started earlier, likely already resolved)
-  const [cloudMemories, priorConversationEvidence] = await Promise.all([
+  const [cloudMemories, priorConversationEvidence, capsules] = await Promise.all([
     cloudMemoryPromise,
     recallEvidencePromise,
+    capsulePromise,
   ]);
   if (cloudMemories.length > 0) {
     memories = selectMemoriesForPrompt(mergeMemoryCandidates(memories, cloudMemories), query, 6, isExplicitRecallQuery);
@@ -581,6 +604,7 @@ export async function buildContextFast(
   console.log(`[CONTEXT-FAST] memory selected: ${memories.length} (keyword)`);
   console.log(`[CONTEXT-FAST] messages included: ${recentMessages.length}`);
   console.log(`[CONTEXT-FAST] recall evidence selected: ${priorConversationEvidence.length}`);
+  console.log(`[CONTEXT-FAST] capsules selected: conversation=${capsules.conversation ? 1 : 0} workspace=${capsules.workspace ? 1 : 0}`);
   console.log(`[CONTEXT-FAST] profile=${profile.mode} buildContextFast completed in ${Date.now() - ctxStart}ms`);
 
   return {
@@ -590,6 +614,8 @@ export async function buildContextFast(
     imageAttachments,
     memoryPromptBlock,
     conversationSummary: undefined, // No compression = no summary
+    conversationCapsule: capsules.conversation?.content,
+    workspaceCapsule: capsules.workspace?.content,
     hasFileContext: fileReferences.length > 0 || imageAttachments.length > 0,
     webSearchMode: raw.web_search_mode,
     userId: normalizedUserId,

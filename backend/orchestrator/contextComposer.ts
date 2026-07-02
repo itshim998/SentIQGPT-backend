@@ -49,6 +49,8 @@ export interface ComposerInput {
   systemPrompt: string;
   userMessage: string;
   stableContext?: string;
+  workspaceCapsule?: string;
+  conversationCapsule?: string;
   conversation?: readonly { role: string; content: string }[];
   conversationSummary?: string;
   recallEvidence?: readonly { content: string; createdAt?: string }[];
@@ -247,6 +249,12 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
   let stableContext = input.stableContext
     ? trimTextToTokenBudget(characterGuard(input.stableContext, MAX_DYNAMIC_ITEM_CHARS), MAX_SUMMARY_TOKENS)
     : "";
+  let workspaceCapsule = input.workspaceCapsule
+    ? trimTextToTokenBudget(characterGuard(input.workspaceCapsule, MAX_DYNAMIC_ITEM_CHARS), MAX_SUMMARY_TOKENS)
+    : "";
+  let conversationCapsule = input.conversationCapsule
+    ? trimTextToTokenBudget(characterGuard(input.conversationCapsule, MAX_DYNAMIC_ITEM_CHARS), MAX_SUMMARY_TOKENS)
+    : "";
   let rollingSummary = input.conversationSummary
     ? trimTextToTokenBudget(characterGuard(input.conversationSummary, MAX_DYNAMIC_ITEM_CHARS), MAX_SUMMARY_TOKENS)
     : "";
@@ -258,7 +266,7 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
     executionMode: requestContext.executionMode,
     budgetClass: "interactive",
     estimatedInputTokens: estimateInputTokens(
-      [system, stableContext, rollingSummary, userMessage].filter(Boolean).join("\n\n"),
+      [system, stableContext, workspaceCapsule, conversationCapsule, rollingSummary, userMessage].filter(Boolean).join("\n\n"),
       (input.conversation?.length ?? 0) + 1,
     ).tokens,
     complexity,
@@ -286,6 +294,8 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
     file_chunks: Math.max(0, fileSelection.rawChunkCount - fileChunks.length),
     memories: 0,
     summaries: 0,
+    workspace_capsules: 0,
+    conversation_capsules: 0,
     recent_turns: 0,
   };
 
@@ -294,11 +304,13 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
       system,
       STABLE_CONTEXT_RULES,
       stableContext ? `STABLE USER CONTEXT:\n${stableContext}` : "",
+      workspaceCapsule ? `WORKSPACE CAPSULE:\n${workspaceCapsule}` : "",
       wrapSection("SAVED MEMORY CONTEXT", memories.map((item) => item.block)),
       wrapSection("PRIOR CONVERSATION EVIDENCE", recallEvidence.map((item) => item.block)),
       wrapSection("ATTACHED FILE OR SOURCE CONTEXT", fileChunks.map((item) => item.block)),
       wrapSection("ROUTE-REQUIRED WEB OR TOOL EVIDENCE", routeEvidence.map((item) => item.block)),
       rollingSummary ? `ROLLING CONVERSATION SUMMARY:\n${rollingSummary}` : "",
+      conversationCapsule ? `CONVERSATION CAPSULE:\n${conversationCapsule}` : "",
       wrapSection(
         "RECENT CHAT TURNS",
         recentTurns.map((turn) => `  ${turn.role}: ${turn.content}`),
@@ -351,15 +363,25 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
     estimatedTokens = estimateCurrent();
   }
 
-  // 4. Shrink optional summaries, rolling first and stable context second.
+  // 4. Shrink optional summaries/capsules. Preserve the current conversation
+  // capsule longer than rolling or cross-conversation context.
   const shrinkSummary = (value: string): string => {
     const tokens = estimateTextTokens(value);
     if (tokens <= 64) return "";
     return trimTextToTokenBudget(value, Math.max(64, Math.floor(tokens / 2)), "head_tail");
   };
-  while (estimatedTokens > tokenBudget && (rollingSummary || stableContext)) {
+  while (estimatedTokens > tokenBudget && (rollingSummary || workspaceCapsule || stableContext || conversationCapsule)) {
     if (rollingSummary) rollingSummary = shrinkSummary(rollingSummary);
-    else stableContext = shrinkSummary(stableContext);
+    else if (workspaceCapsule) {
+      const previous = workspaceCapsule;
+      workspaceCapsule = shrinkSummary(workspaceCapsule);
+      if (previous && !workspaceCapsule) droppedCounts.workspace_capsules += 1;
+    } else if (stableContext) stableContext = shrinkSummary(stableContext);
+    else {
+      const previous = conversationCapsule;
+      conversationCapsule = shrinkSummary(conversationCapsule);
+      if (previous && !conversationCapsule) droppedCounts.conversation_capsules += 1;
+    }
     droppedCounts.summaries += 1;
     estimatedTokens = estimateCurrent();
   }
@@ -397,17 +419,21 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
     required_route_evidence: routeEvidence.filter((item) => item.required).length,
     optional_route_evidence: routeEvidence.filter((item) => !item.required).length,
     summaries: Number(Boolean(stableContext)) + Number(Boolean(rollingSummary)),
+    workspace_capsules: Number(Boolean(workspaceCapsule)),
+    conversation_capsules: Number(Boolean(conversationCapsule)),
     recent_turns: recentTurns.length,
   };
   const selectedSections = [
     "system",
     "context_rules",
     stableContext && "stable_context",
+    workspaceCapsule && "workspace_capsule",
     memories.length > 0 && "memory",
     recallEvidence.length > 0 && "recall_evidence",
     fileChunks.length > 0 && "file_context",
     routeEvidence.length > 0 && "route_evidence",
     rollingSummary && "rolling_summary",
+    conversationCapsule && "conversation_capsule",
     recentTurns.length > 0 && "recent_chat",
     "current_user_message",
   ].filter((section): section is string => Boolean(section));

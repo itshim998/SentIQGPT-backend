@@ -99,6 +99,7 @@ import {
   saveMirroredUserProfile,
   validateDisplayName,
 } from "./services/profileService";
+import { contextCapsuleService } from "./services/contextCapsuleService";
 import {
   buildImagePromptMessageContent,
   findExistingAssistantImageMessage,
@@ -1555,6 +1556,13 @@ async function insertConversationMessageOrThrow(
     role,
     duplicate: duplicate === true ? "true" : "false",
   });
+  if (role === "assistant" && (options.messageType ?? "text") === "text") {
+    contextCapsuleService.scheduleRefresh({
+      userDb,
+      ownerUserId: userId,
+      conversationId,
+    });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2789,6 +2797,8 @@ app.post(
             fileReferences: guestContext.fileReferences,
             imageAttachments: guestContext.imageAttachments,
             conversationSummary: guestContext.conversationSummary,
+            conversationCapsule: guestContext.conversationCapsule,
+            workspaceCapsule: guestContext.workspaceCapsule,
             priorConversationEvidence: guestContext.priorConversationEvidence,
             isExplicitRecallQuery: guestContext.isExplicitRecallQuery,
             userId,
@@ -2833,6 +2843,8 @@ app.post(
           fileReferences: guestContext.fileReferences,
           imageAttachments: guestContext.imageAttachments,
           conversationSummary: guestContext.conversationSummary,
+          conversationCapsule: guestContext.conversationCapsule,
+          workspaceCapsule: guestContext.workspaceCapsule,
           priorConversationEvidence: guestContext.priorConversationEvidence,
           isExplicitRecallQuery: guestContext.isExplicitRecallQuery,
           modelOverride: guestChatModelOverride,
@@ -3015,6 +3027,8 @@ app.post(
           fileReferences: reasoningContext.fileReferences,
           imageAttachments: reasoningContext.imageAttachments,
           conversationSummary: reasoningContext.conversationSummary,
+          conversationCapsule: reasoningContext.conversationCapsule,
+          workspaceCapsule: reasoningContext.workspaceCapsule,
           priorConversationEvidence: reasoningContext.priorConversationEvidence,
           isExplicitRecallQuery: reasoningContext.isExplicitRecallQuery,
           trustedProfile: reasoningContext.trustedProfile,
@@ -3350,6 +3364,8 @@ app.post(
       fileReferences?: readonly { filename: string; extractedText: string }[];
       imageAttachments?: readonly ImageAttachment[];
       conversationSummary?: string;
+      conversationCapsule?: string;
+      workspaceCapsule?: string;
       priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
       isExplicitRecallQuery?: boolean;
       modelOverride?: string;
@@ -3362,6 +3378,8 @@ app.post(
         fileReferences: args.fileReferences,
         imageAttachments: args.imageAttachments,
         conversationSummary: args.conversationSummary,
+        conversationCapsule: args.conversationCapsule,
+        workspaceCapsule: args.workspaceCapsule,
         priorConversationEvidence: args.priorConversationEvidence,
         isExplicitRecallQuery: args.isExplicitRecallQuery,
         userId: args.userId,
@@ -3589,6 +3607,8 @@ app.post(
                 fileReferences: guestMathContext.fileReferences,
                 imageAttachments: guestMathContext.imageAttachments,
                 conversationSummary: guestMathContext.conversationSummary,
+                conversationCapsule: guestMathContext.conversationCapsule,
+                workspaceCapsule: guestMathContext.workspaceCapsule,
                 priorConversationEvidence: guestMathContext.priorConversationEvidence,
                 isExplicitRecallQuery: guestMathContext.isExplicitRecallQuery,
                 maxOutputTokens: GUEST_MATH_MAX_OUTPUT_TOKENS,
@@ -3624,9 +3644,11 @@ app.post(
                 fileReferences: guestMathContext.fileReferences,
                 imageAttachments: guestMathContext.imageAttachments,
                 conversationSummary: guestMathContext.conversationSummary,
-                  priorConversationEvidence: guestMathContext.priorConversationEvidence,
-                  isExplicitRecallQuery: guestMathContext.isExplicitRecallQuery,
-                  modelOverride: guestMathReservation.adapterModelOverride,
+                conversationCapsule: guestMathContext.conversationCapsule,
+                workspaceCapsule: guestMathContext.workspaceCapsule,
+                priorConversationEvidence: guestMathContext.priorConversationEvidence,
+                isExplicitRecallQuery: guestMathContext.isExplicitRecallQuery,
+                modelOverride: guestMathReservation.adapterModelOverride,
                 });
               guestMathStreamReply = result.reply;
               await streamBufferedAnswer(result.reply, undefined, false, streamMetrics);
@@ -3641,6 +3663,8 @@ app.post(
                 fileReferences: guestMathContext.fileReferences,
                 imageAttachments: guestMathContext.imageAttachments,
                 conversationSummary: guestMathContext.conversationSummary,
+                conversationCapsule: guestMathContext.conversationCapsule,
+                workspaceCapsule: guestMathContext.workspaceCapsule,
                 priorConversationEvidence: guestMathContext.priorConversationEvidence,
                 isExplicitRecallQuery: guestMathContext.isExplicitRecallQuery,
                 modelOverride: guestMathReservation.adapterModelOverride,
@@ -3701,6 +3725,8 @@ app.post(
             fileReferences: guestReasoningContext.fileReferences,
             imageAttachments: guestReasoningContext.imageAttachments,
             conversationSummary: guestReasoningContext.conversationSummary,
+            conversationCapsule: guestReasoningContext.conversationCapsule,
+            workspaceCapsule: guestReasoningContext.workspaceCapsule,
             priorConversationEvidence: guestReasoningContext.priorConversationEvidence,
             isExplicitRecallQuery: guestReasoningContext.isExplicitRecallQuery,
             modelOverride: guestReasoningReservation.adapterModelOverride,
@@ -3725,6 +3751,8 @@ app.post(
                   fileReferences: guestReasoningContext.fileReferences,
                   imageAttachments: guestReasoningContext.imageAttachments,
                   conversationSummary: guestReasoningContext.conversationSummary,
+                  conversationCapsule: guestReasoningContext.conversationCapsule,
+                  workspaceCapsule: guestReasoningContext.workspaceCapsule,
                   priorConversationEvidence: guestReasoningContext.priorConversationEvidence,
                   isExplicitRecallQuery: guestReasoningContext.isExplicitRecallQuery,
                   modelOverride: guestReasoningReservation.adapterModelOverride,
@@ -3807,6 +3835,8 @@ app.post(
             fileReferences: guestCtx.fileReferences,
             imageAttachments: guestCtx.imageAttachments,
             conversationSummary: guestCtx.conversationSummary,
+            conversationCapsule: guestCtx.conversationCapsule,
+            workspaceCapsule: guestCtx.workspaceCapsule,
             priorConversationEvidence: guestCtx.priorConversationEvidence,
             isExplicitRecallQuery: guestCtx.isExplicitRecallQuery,
             modelOverride: guestGeneralModelOverride,
@@ -3830,6 +3860,8 @@ app.post(
           fileReferences: guestCtx.fileReferences,
           imageAttachments: guestCtx.imageAttachments,
           conversationSummary: guestCtx.conversationSummary,
+          conversationCapsule: guestCtx.conversationCapsule,
+          workspaceCapsule: guestCtx.workspaceCapsule,
           priorConversationEvidence: guestCtx.priorConversationEvidence,
           isExplicitRecallQuery: guestCtx.isExplicitRecallQuery,
           modelOverride: guestGeneralModelOverride,
@@ -4186,6 +4218,8 @@ app.post(
           recentMessages: fastCtx.recentMessages,
           memories: fastCtx.memories,
           conversationSummary: fastCtx.conversationSummary,
+          conversationCapsule: fastCtx.conversationCapsule,
+          workspaceCapsule: fastCtx.workspaceCapsule,
           priorConversationEvidence: fastCtx.priorConversationEvidence,
           isExplicitRecallQuery: fastCtx.isExplicitRecallQuery,
           trustedProfile: fastCtx.trustedProfile,
@@ -4975,6 +5009,8 @@ app.post(
               fileReferences: mathContext.fileReferences,
               imageAttachments: mathContext.imageAttachments,
               conversationSummary: mathContext.conversationSummary,
+              conversationCapsule: mathContext.conversationCapsule,
+              workspaceCapsule: mathContext.workspaceCapsule,
               priorConversationEvidence: mathContext.priorConversationEvidence,
               isExplicitRecallQuery: mathContext.isExplicitRecallQuery,
               signal: requestAbortController.signal,
@@ -5011,6 +5047,8 @@ app.post(
               fileReferences: mathContext.fileReferences,
               imageAttachments: mathContext.imageAttachments,
               conversationSummary: mathContext.conversationSummary,
+              conversationCapsule: mathContext.conversationCapsule,
+              workspaceCapsule: mathContext.workspaceCapsule,
               priorConversationEvidence: mathContext.priorConversationEvidence,
               isExplicitRecallQuery: mathContext.isExplicitRecallQuery,
             });
@@ -5029,6 +5067,8 @@ app.post(
               fileReferences: mathContext.fileReferences,
               imageAttachments: mathContext.imageAttachments,
               conversationSummary: mathContext.conversationSummary,
+              conversationCapsule: mathContext.conversationCapsule,
+              workspaceCapsule: mathContext.workspaceCapsule,
               priorConversationEvidence: mathContext.priorConversationEvidence,
               isExplicitRecallQuery: mathContext.isExplicitRecallQuery,
             });
@@ -5095,6 +5135,8 @@ app.post(
           fileReferences: reasoningContext.fileReferences,
           imageAttachments: reasoningContext.imageAttachments,
           conversationSummary: reasoningContext.conversationSummary,
+          conversationCapsule: reasoningContext.conversationCapsule,
+          workspaceCapsule: reasoningContext.workspaceCapsule,
           priorConversationEvidence: reasoningContext.priorConversationEvidence,
           isExplicitRecallQuery: reasoningContext.isExplicitRecallQuery,
           trustedProfile: reasoningContext.trustedProfile,
@@ -5118,6 +5160,8 @@ app.post(
               fileReferences: reasoningContext.fileReferences,
               imageAttachments: reasoningContext.imageAttachments,
               conversationSummary: reasoningContext.conversationSummary,
+              conversationCapsule: reasoningContext.conversationCapsule,
+              workspaceCapsule: reasoningContext.workspaceCapsule,
               priorConversationEvidence: reasoningContext.priorConversationEvidence,
               isExplicitRecallQuery: reasoningContext.isExplicitRecallQuery,
               trustedProfile: reasoningContext.trustedProfile,
@@ -5297,6 +5341,8 @@ app.post(
       fileReferences: ctx.fileReferences,
       imageAttachments: ctx.imageAttachments,
       conversationSummary: ctx.conversationSummary,
+      conversationCapsule: ctx.conversationCapsule,
+      workspaceCapsule: ctx.workspaceCapsule,
       priorConversationEvidence: ctx.priorConversationEvidence,
       isExplicitRecallQuery: ctx.isExplicitRecallQuery,
       trustedProfile: ctx.trustedProfile,
