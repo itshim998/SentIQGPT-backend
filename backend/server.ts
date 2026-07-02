@@ -100,6 +100,7 @@ import {
   validateDisplayName,
 } from "./services/profileService";
 import { contextCapsuleService } from "./services/contextCapsuleService";
+import { sourceRetrievalService } from "./services/sourceRetrievalService";
 import {
   buildImagePromptMessageContent,
   findExistingAssistantImageMessage,
@@ -5623,6 +5624,38 @@ app.post(
       return;
     }
 
+    let persistedSource: Awaited<ReturnType<typeof sourceRetrievalService.persistUploadedSource>> | undefined;
+    if (!isGuest && (result.type === "pdf" || result.type === "txt")) {
+      try {
+        const userDb = await resolveUserDatabaseOrThrow(userId, "files.upload.source");
+        const requestedConversationId = typeof req.body?.conversationId === "string"
+          ? req.body.conversationId.trim()
+          : typeof req.body?.conversation_id === "string"
+            ? req.body.conversation_id.trim()
+            : "";
+        persistedSource = await sourceRetrievalService.persistUploadedSource({
+          userDb,
+          ownerUserId: userId,
+          conversationId: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedConversationId)
+            ? requestedConversationId
+            : undefined,
+          filename: result.filename,
+          mimeType: file.mimetype || "application/octet-stream",
+          extractionType: result.type,
+          extractedText: result.extracted_text,
+          sizeBytes: result.size_bytes,
+          analysisId,
+        });
+      } catch (error) {
+        console.warn(JSON.stringify({
+          scope: "source_retrieval",
+          event: "document_skipped",
+          reason: "upload_persistence_failed",
+          error_type: error instanceof Error ? error.name : "unknown",
+        }));
+      }
+    }
+
     emitFileAnalysisEvent(isGuest ? undefined : userId, {
       ...baseEvent,
       event: "update",
@@ -5632,7 +5665,10 @@ app.post(
 
     console.log(`[File Upload] ${result.filename} → type=${result.type}, extracted=${result.extracted_text.length} chars, size=${result.size_bytes}B`);
     if (result.type === "pdf") {
-      console.log(`[PDF] chunks created: 1, context length sent to LLM: ${result.extracted_text.length}`);
+      const createdChunks = persistedSource
+        ? persistedSource.parentChunksCreated + persistedSource.childChunksCreated
+        : 0;
+      console.log(`[PDF] persisted source chunks: ${createdChunks}, extracted chars: ${result.extracted_text.length}`);
     }
 
     // Update file session for this user or IP-scoped guest.
@@ -5655,6 +5691,11 @@ app.post(
       analysis_status: "complete",
       update_protocol: "sse",
       update_endpoint: "/api/files/updates",
+      document_id: persistedSource?.document?.id,
+      source_document_id: persistedSource?.document?.id,
+      source_chunks_created: persistedSource
+        ? persistedSource.parentChunksCreated + persistedSource.childChunksCreated
+        : undefined,
     });
   }),
 );

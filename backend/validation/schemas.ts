@@ -54,11 +54,18 @@ export const ChatRequestSchema = z.object({
     memories: z.array(ContextMemorySchema).max(100).optional(),
     file_references: z.array(z.object({
       filename: z.string(),
-      extractedText: z.string(),
+      extractedText: z.string().optional().default(""),
       analysis_id: z.string().optional(),
+      document_id: z.string().uuid().optional(),
+      source_document_id: z.string().uuid().optional(),
+      documentId: z.string().uuid().optional(),
+      sourceDocumentId: z.string().uuid().optional(),
       size_bytes: z.number().int().positive().optional(),
       mime_type: z.string().optional(),
-    })).max(10).optional(),
+    }).transform(({ document_id, source_document_id, documentId, sourceDocumentId, ...file }) => ({
+      ...file,
+      sourceDocumentId: sourceDocumentId ?? source_document_id ?? documentId ?? document_id,
+    }))).max(10).optional(),
     image_attachments: z.array(z.object({
       filename: z.string().min(1).max(255),
       mime_type: z.enum(["image/png", "image/jpeg", "image/webp"]),

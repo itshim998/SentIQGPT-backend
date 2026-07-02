@@ -595,6 +595,42 @@ export async function verifyShardMigrations(): Promise<void> {
         );
       }
 
+      // Check: 20260702160000_add_source_document_retrieval.sql
+      const { error: sourceDocumentsError } = await client
+        .from("source_documents")
+        .select("id,owner_user_id,conversation_id,content_hash,status,metadata", { head: true, count: "exact" })
+        .limit(1);
+      if (sourceDocumentsError) {
+        markFailure(
+          id,
+          `is missing source_documents retrieval schema (migration 20260702160000). code=${sourceDocumentsError.code ?? "unknown"} message=${sourceDocumentsError.message}`,
+        );
+      }
+
+      const { error: sourceChunksError } = await client
+        .from("source_chunks")
+        .select("id,document_id,parent_chunk_id,chunk_role,chunk_index,token_estimate,embedding_status,fts", { head: true, count: "exact" })
+        .limit(1);
+      if (sourceChunksError) {
+        markFailure(
+          id,
+          `is missing source_chunks retrieval schema (migration 20260702160000). code=${sourceChunksError.code ?? "unknown"} message=${sourceChunksError.message}`,
+        );
+      }
+
+      const { error: sourceSearchFnError } = await client.rpc("search_source_chunks", {
+        p_owner_user_id: dummyId,
+        p_document_ids: [],
+        p_query: "startup probe",
+        p_limit: 1,
+      });
+      if (sourceSearchFnError) {
+        markFailure(
+          id,
+          `is missing search_source_chunks RPC (migration 20260702160000). code=${sourceSearchFnError.code ?? "unknown"} message=${sourceSearchFnError.message}`,
+        );
+      }
+
       const { error: repairMemoryUsageFnError } = await client.rpc("repair_user_memory_usage", {
         p_user_id: dummyId,
       });

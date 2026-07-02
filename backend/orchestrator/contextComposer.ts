@@ -56,7 +56,13 @@ export interface ComposerInput {
   recallEvidence?: readonly { content: string; createdAt?: string }[];
   recallEvidenceRequired?: boolean;
   memories?: readonly { type: string; summary: string; importance?: number; relevance?: number }[];
-  fileReferences?: readonly { filename: string; extractedText: string }[];
+  fileReferences?: readonly {
+    filename: string;
+    extractedText: string;
+    retrieved?: boolean;
+    relevance?: number;
+    sourceChunkCount?: number;
+  }[];
   routeEvidence?: readonly RouteEvidenceItem[];
   budgetProfile?: ContextBudgetProfile;
   complexity?: RequestComplexity;
@@ -142,6 +148,21 @@ function selectFileChunks(
 
   sourceFiles.forEach((file, fileIndex) => {
     const guardedText = characterGuard(file.extractedText || "", MAX_RAW_FILE_CHARS);
+    if (file.retrieved) {
+      rawChunkCount += Math.max(1, file.sourceChunkCount ?? 1);
+      blocks.push({
+        id: blocks.length,
+        fileIndex,
+        chunkIndex: 0,
+        relevance: file.relevance ?? 1,
+        required: false,
+        block: [
+          `RETRIEVED SOURCE: ${file.filename}`,
+          trimTextToTokenBudget(guardedText, MAX_EVIDENCE_ITEM_TOKENS, "head_tail"),
+        ].join("\n"),
+      });
+      return;
+    }
     const allChunks = chunkText(
       guardedText,
       file.filename,

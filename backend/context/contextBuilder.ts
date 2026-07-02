@@ -30,6 +30,10 @@ import { collapseAdjacentDuplicateMessages } from "./messageDeduper";
 import { FAST_PROFILE, INTUITIVE_PROFILE, type ExecutionProfile } from "../orchestrator/executionProfile";
 import type { BillingIdentity } from "../billing/entitlementTypes";
 import { contextCapsuleService, type ContextCapsulePair } from "../services/contextCapsuleService";
+import {
+  sourceRetrievalService,
+  type PromptSourceReference,
+} from "../services/sourceRetrievalService";
 
 export interface RawMessageContext {
   readonly recent_messages?: readonly { role: string; content: string }[];
@@ -44,6 +48,11 @@ export interface RawMessageContext {
   readonly file_references?: readonly {
     filename: string;
     extractedText: string;
+    analysis_id?: string;
+    sourceDocumentId?: string;
+    document_id?: string;
+    source_document_id?: string;
+    mime_type?: string;
   }[];
   readonly image_attachments?: readonly ImageAttachmentContext[];
   readonly trustedProfile?: {
@@ -75,10 +84,7 @@ export interface BuiltContext {
     scope?: "global" | "chat";
     chat_id?: string | null;
   }[];
-  readonly fileReferences: readonly {
-    filename: string;
-    extractedText: string;
-  }[];
+  readonly fileReferences: readonly PromptSourceReference[];
   readonly imageAttachments: readonly ImageAttachmentContext[];
   readonly memoryPromptBlock: string;
   readonly conversationSummary?: string;
@@ -425,6 +431,12 @@ export async function buildContext(
     : Promise.resolve(normalizedUserId
         ? contextCapsuleService.peekCachedCapsules(normalizedUserId, raw.conversationId)
         : {});
+  const sourceRetrievalPromise = sourceRetrievalService.retrieveForPrompt({
+    userDb,
+    ownerUserId: normalizedUserId,
+    query,
+    fileReferences: raw.file_references ?? [],
+  });
 
   const compressionPromise = profile.context.compressConversation
     ? compressConversation(allMessages, userId)
@@ -433,11 +445,12 @@ export async function buildContext(
         summary: undefined as string | undefined,
       });
 
-  const [compressionResult, cloudMemories, priorConversationEvidence, capsules] = await Promise.all([
+  const [compressionResult, cloudMemories, priorConversationEvidence, capsules, sourceRetrieval] = await Promise.all([
     compressionPromise,
     cloudMemoryPromise,
     recallEvidencePromise,
     capsulePromise,
+    sourceRetrievalPromise,
   ]);
 
   const { recentMessages, summary } = compressionResult;
@@ -464,10 +477,7 @@ export async function buildContext(
   // 3. Keep extracted text internal until token-aware prompt composition.
   //    The token-aware Context Composer chunks, ranks, and trims this text
   //    before it is injected into a model prompt.
-  const fileReferences = (raw.file_references ?? []).map((f) => ({
-    filename: f.filename,
-    extractedText: f.extractedText,
-  }));
+  const fileReferences = sourceRetrieval.fileReferences;
   if (fileReferences.length > 0) {
     const totalChars = fileReferences.reduce((s, f) => s + f.extractedText.length, 0);
     console.log(`[CONTEXT] file inputs queued for token-aware composition: ${fileReferences.length} file(s), ${totalChars} total chars`);
@@ -491,6 +501,7 @@ export async function buildContext(
   console.log(`[CONTEXT] summary used: ${!!summary}`);
   console.log(`[CONTEXT] recall evidence selected: ${priorConversationEvidence.length}`);
   console.log(`[CONTEXT] capsules selected: conversation=${capsules.conversation ? 1 : 0} workspace=${capsules.workspace ? 1 : 0}`);
+  console.log(`[CONTEXT] source retrieval: mode=${sourceRetrieval.mode} selected=${sourceRetrieval.selectedChunks} dropped=${sourceRetrieval.droppedChunks}`);
   console.log(`[CONTEXT] buildContext profile=${profile.mode} completed in ${Date.now() - ctxStart}ms`);
 
   return {
@@ -572,25 +583,29 @@ export async function buildContextFast(
   const capsulePromise: Promise<ContextCapsulePair> = Promise.resolve(normalizedUserId
     ? contextCapsuleService.peekCachedCapsules(normalizedUserId, raw.conversationId)
     : {});
+  const sourceRetrievalPromise = sourceRetrievalService.retrieveForPrompt({
+    userDb,
+    ownerUserId: normalizedUserId,
+    query,
+    fileReferences: raw.file_references ?? [],
+  });
 
   // Use fast keyword-based memory selection (synchronous)
   let memories: readonly ContextMemory[] = selectMemoriesForPrompt(rawMemories, query, 3, isExplicitRecallQuery);
 
   // Await cloud memories (started earlier, likely already resolved)
-  const [cloudMemories, priorConversationEvidence, capsules] = await Promise.all([
+  const [cloudMemories, priorConversationEvidence, capsules, sourceRetrieval] = await Promise.all([
     cloudMemoryPromise,
     recallEvidencePromise,
     capsulePromise,
+    sourceRetrievalPromise,
   ]);
   if (cloudMemories.length > 0) {
     memories = selectMemoriesForPrompt(mergeMemoryCandidates(memories, cloudMemories), query, 6, isExplicitRecallQuery);
   }
 
   // Preserve extracted text internally; prompt composition performs chunk selection.
-  const fileReferences = (raw.file_references ?? []).map((f) => ({
-    filename: f.filename,
-    extractedText: f.extractedText,
-  }));
+  const fileReferences = sourceRetrieval.fileReferences;
   const imageAttachments = (raw.image_attachments ?? []).map((image) => ({
     filename: image.filename,
     mime_type: image.mime_type,
@@ -605,6 +620,7 @@ export async function buildContextFast(
   console.log(`[CONTEXT-FAST] messages included: ${recentMessages.length}`);
   console.log(`[CONTEXT-FAST] recall evidence selected: ${priorConversationEvidence.length}`);
   console.log(`[CONTEXT-FAST] capsules selected: conversation=${capsules.conversation ? 1 : 0} workspace=${capsules.workspace ? 1 : 0}`);
+  console.log(`[CONTEXT-FAST] source retrieval: mode=${sourceRetrieval.mode} selected=${sourceRetrieval.selectedChunks} dropped=${sourceRetrieval.droppedChunks}`);
   console.log(`[CONTEXT-FAST] profile=${profile.mode} buildContextFast completed in ${Date.now() - ctxStart}ms`);
 
   return {

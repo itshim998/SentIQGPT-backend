@@ -27,6 +27,7 @@
     "test:execution-profiles": "ts-node --project tsconfig.backend.json backend/testExecutionProfiles.ts",
     "test:context-budget": "ts-node --project tsconfig.backend.json backend/testContextBudgetManager.ts && ts-node --project tsconfig.backend.json backend/testContextComposition.ts",
     "test:context-capsules": "ts-node --project tsconfig.backend.json backend/testContextCapsules.ts",
+    "test:source-retrieval": "ts-node --project tsconfig.backend.json backend/testSourceRetrieval.ts",
     "test:groq-capacity": "python backend/testGroqCapacity.py",
     "test:file-generation": "ts-node --project tsconfig.backend.json backend/testFileGeneration.ts",
     "test:frontend-file-generation": "ts-node --project tsconfig.backend.json backend/testFrontendFileGeneration.ts",
