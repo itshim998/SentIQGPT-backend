@@ -16,6 +16,7 @@ export interface ScoredMemory {
   readonly type: string;
   readonly summary: string;
   readonly importance?: number;
+  readonly relevance?: number;
 }
 
 // ==============================
@@ -158,5 +159,8 @@ export function selectMemoriesForQuery(
 
   scored.sort((a, b) => b.score - a.score);
 
-  return scored.slice(0, limit).map((item) => item.memory);
+  return scored.slice(0, limit).map((item) => ({
+    ...item.memory,
+    relevance: item.score,
+  }));
 }

@@ -125,7 +125,7 @@ async function main(): Promise<void> {
 
     assert(!/SYSTEM:/i.test(reasoningPrompt.prompt), "reasoning prompt omits system prompt");
     assert(!/FILE ANALYSIS MODE/i.test(reasoningPrompt.prompt), "reasoning prompt omits file-analysis instructions");
-    assert(/USER:\s*Prove that the conclusion follows\./.test(reasoningPrompt.prompt), "reasoning prompt keeps the user question");
+    assert(/CURRENT USER MESSAGE:\s*Prove that the conclusion follows\./.test(reasoningPrompt.prompt), "reasoning prompt keeps the user question");
 
     const reasoningReply = await handleChat({
       userMessage: "Prove or disprove: all bloops are lazzies.",
@@ -146,7 +146,7 @@ async function main(): Promise<void> {
 
     assert(capturedRequests.length === 3, "math solver makes one raw continuation call when truncated");
     assert(capturedRequests[1].prompt?.includes(MATH_RESPONSE_SYSTEM_PROMPT.slice(0, 80)) ?? false, "math solver sends the math system prompt");
-    assert(/USER:\s*Solve 2x \+ 2 = 6 and explain the steps\./.test(capturedRequests[1].prompt ?? ""), "math solver keeps the original user prompt");
+    assert(/CURRENT USER MESSAGE:\s*Solve 2x \+ 2 = 6 and explain the steps\./.test(capturedRequests[1].prompt ?? ""), "math solver keeps the original user prompt");
     assert(capturedRequests[1].skip_wrappers === true, "math solver disables adapter wrappers");
     assert(capturedRequests[1].max_output_tokens === 2500, "math solver respects the Fast interactive cap");
     assert(capturedRequests[2].prompt?.includes("Continue the math answer only.") ?? false, "math continuation prompt asks only for continuation");
@@ -166,7 +166,7 @@ async function main(): Promise<void> {
     const imageMathReply = await solveMathDirect("Solve it.", "test-user", [imageAttachment]);
 
     assert(capturedRequests.length === 4, "image math solver makes a single native image LLM call");
-    assert(/USER:\s*Solve it\./.test(capturedRequests[3].prompt ?? ""), "image math solver keeps the original prompt");
+    assert(/CURRENT USER MESSAGE:\s*Solve it\./.test(capturedRequests[3].prompt ?? ""), "image math solver keeps the original prompt");
     assert(capturedRequests[3].model_override === "gpt-oss-120b", "image math solver keeps the current primary text route");
     assert(capturedRequests[3].image_attachments?.[0]?.filename === "problem.png", "image math solver forwards image attachments");
     assert(imageMathReply.answer === "The image shows a math problem. The answer is 42.", "image math solver preserves image answer");

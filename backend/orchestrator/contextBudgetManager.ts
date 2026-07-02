@@ -1,93 +1,12 @@
 // SentIQ Chat — Context Budget Manager
 //
-// Defines safe character limits for each prompt section and provides
-// truncation utilities.  Prevents uncontrolled prompt growth that
-// causes Node.js heap-limit crashes.
+// Defines conservative token estimates, input-context budgets, completion
+// policies, and character-only emergency guards used by the composer.
 
 import { normalizeExecutionMode, type ExecutionMode, type ModelReasoningEffort } from "./executionProfile";
 
-/** Standard budget for non-streaming requests (full context). */
-export const CONTEXT_BUDGET = {
-  /** Hard ceiling for the entire assembled prompt (chars). */
-  total: 64_000,
-  /** System instructions block. */
-  system: 2_000,
-  /** Conversation history (recent messages + summary). */
-  conversation: 8_000,
-  /** Retrieved memory entries. */
-  memory: 6_000,
-  /** Uploaded file content (combined). */
-  file: 40_000,
-  /** The current user message. */
-  user: 2_000,
-} as const;
-
-/** Optimized budget for streaming requests (faster, leaner context).
- *  Lower limits reduce tokens for faster time-to-first-token. */
-export const STREAMING_CONTEXT_BUDGET = {
-  total: 32_000,
-  system: 1_500,
-  conversation: 4_000,  // Reduced - streaming skips compression anyway
-  memory: 3_000,        // Reduced - less memory context for speed
-  file: 20_000,         // Reduced - still enough for most files
-  user: 2_000,          // Keep user message intact
-} as const;
-
-export type BudgetSlot = keyof typeof CONTEXT_BUDGET;
 export type ContextBudgetProfile = "standard" | "streaming";
-export interface ContextBudgetConfig {
-  readonly total: number;
-  readonly system: number;
-  readonly conversation: number;
-  readonly memory: number;
-  readonly file: number;
-  readonly user: number;
-}
-
-export interface ContextParts {
-  system: string;
-  conversation: string;
-  memory: string;
-  file: string;
-  user: string;
-}
-
-/**
- * Truncate a string to `maxChars`.
- * If the text exceeds the limit it is cut at the limit and a marker is
- * appended so the model knows content was removed.
- */
-export function truncateToBudget(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  if (maxChars <= 0) return "";
-  const marker = "\n[... truncated to fit context budget ...]";
-  return text.slice(0, maxChars - marker.length) + marker;
-}
-
-export function getContextBudget(profile: ContextBudgetProfile = "standard"): ContextBudgetConfig {
-  return profile === "streaming" ? STREAMING_CONTEXT_BUDGET : CONTEXT_BUDGET;
-}
-
-/**
- * Accept a bag of named context strings and enforce per-slot budgets.
- * Returns a new object where every slot is guaranteed to fit within
- * its budget.
- */
-export function allocateBudget(
-  parts: ContextParts,
-  budget: ContextBudgetConfig = CONTEXT_BUDGET,
-): ContextParts {
-  return {
-    system: truncateToBudget(parts.system, budget.system),
-    conversation: truncateToBudget(parts.conversation, budget.conversation),
-    memory: truncateToBudget(parts.memory, budget.memory),
-    file: truncateToBudget(parts.file, budget.file),
-    user: truncateToBudget(parts.user, budget.user),
-  };
-}
-
-// Phase 1 token and completion policy. Character-slot trimming above remains
-// unchanged until the context degradation work in Phase 2.
+// Canonical request, input-context, and completion policy registry.
 export type ContextPlanCode = "free" | "student_core" | "premium" | "pro";
 export type OutputBudgetClass = "interactive" | "artifact" | "auxiliary";
 export type AuxiliaryOutputKind = "title" | "routing" | "critic" | "memory" | "clarification";
@@ -147,6 +66,10 @@ export interface InputTokenEstimate {
   readonly messageCount: number;
 }
 
+export type TokenTrimMode = "head" | "head_tail";
+
+const TOKEN_TRIM_MARKER = "\n[... context trimmed to fit request budget ...]\n";
+
 export interface OutputBudgetDecision {
   readonly budgetClass: OutputBudgetClass;
   readonly auxiliaryKind?: AuxiliaryOutputKind;
@@ -182,6 +105,59 @@ export function estimateInputTokens(text: string, messageCount = 1): InputTokenE
     wordCount,
     messageCount: safeMessageCount,
   };
+}
+
+/** Conservative content-only estimate for allocating individual prompt sections. */
+export function estimateTextTokens(text: string): number {
+  if (!text) return 0;
+  const utf8Bytes = Buffer.byteLength(text, "utf8");
+  const wordCount = (text.match(/\S+/g) ?? []).length;
+  return Math.max(1, Math.ceil(Math.max(utf8Bytes / 3, wordCount * 1.5)));
+}
+
+/**
+ * Trim text using the same tokenizer-independent estimate used by the allocator.
+ * Character slicing remains only the mechanism for finding a token-safe boundary.
+ */
+export function trimTextToTokenBudget(
+  text: string,
+  maxTokens: number,
+  mode: TokenTrimMode = "head",
+): string {
+  const safeMaxTokens = Math.max(0, Math.floor(maxTokens));
+  if (!text || safeMaxTokens <= 0) return "";
+  if (estimateTextTokens(text) <= safeMaxTokens) return text;
+
+  const markerTokens = estimateTextTokens(TOKEN_TRIM_MARKER);
+  if (safeMaxTokens <= markerTokens + 2) {
+    let low = 0;
+    let high = text.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (estimateTextTokens(text.slice(0, mid)) <= safeMaxTokens) low = mid;
+      else high = mid - 1;
+    }
+    return text.slice(0, low);
+  }
+
+  let low = 0;
+  let high = text.length;
+  let best = "";
+  while (low <= high) {
+    const retainedChars = Math.floor((low + high) / 2);
+    const candidate = mode === "head_tail"
+      ? text.slice(0, Math.ceil(retainedChars / 2)) +
+        TOKEN_TRIM_MARKER +
+        text.slice(text.length - Math.floor(retainedChars / 2))
+      : text.slice(0, retainedChars).trimEnd() + TOKEN_TRIM_MARKER;
+    if (estimateTextTokens(candidate) <= safeMaxTokens) {
+      best = candidate;
+      low = retainedChars + 1;
+    } else {
+      high = retainedChars - 1;
+    }
+  }
+  return best || text.slice(0, Math.max(1, Math.floor(text.length * 0.1)));
 }
 
 export function recordGroqCapacitySnapshot(value: unknown): GroqCapacitySnapshot | undefined {

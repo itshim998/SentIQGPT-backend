@@ -11,6 +11,7 @@
 
 import { callLLMAdapter } from "../ai/PromptBuilders";
 import type { LLMAdapterCall } from "../ai/PromptBuilders";
+import { trimTextToTokenBudget } from "../orchestrator/contextBudgetManager";
 
 // ==============================
 // Configuration
@@ -69,8 +70,8 @@ export async function compressConversation(
   // Build a compact transcript of older messages
   const transcript = olderMessages
     .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
-    .join("\n")
-    .slice(0, 2000); // hard cap to keep the summarization prompt small
+    .join("\n");
+  const budgetedTranscript = trimTextToTokenBudget(transcript, 600, "head_tail");
 
   const call: LLMAdapterCall = {
     task: "memory_compress",
@@ -78,7 +79,7 @@ export async function compressConversation(
     prompt:
       "Summarize the following conversation excerpt in 1-2 concise sentences. " +
       "Capture the key topics discussed and any important decisions or facts.\n\n" +
-      `${transcript}\n\nSummary:`,
+      `${budgetedTranscript}\n\nSummary:`,
     user_id: userId,
   };
 

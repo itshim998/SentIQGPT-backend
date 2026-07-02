@@ -30,6 +30,9 @@ env:
   AZURE_CORE_OUTPUT: none
   # Azure backend image/resource identifier remains unchanged until a verified replacement exists.
   IMAGE_REPOSITORY: sentiqgpt-backend
+  SENTIQ_CONTAINER_MIN_REPLICAS: ${{ vars.SENTIQ_CONTAINER_MIN_REPLICAS || '0' }}
+  SENTIQ_CONTAINER_MAX_REPLICAS: ${{ vars.SENTIQ_CONTAINER_MAX_REPLICAS || '1' }}
+  SENTIQ_CONTAINER_COOLDOWN_SECONDS: ${{ vars.SENTIQ_CONTAINER_COOLDOWN_SECONDS || '900' }}
 
 jobs:
   build-and-deploy:
@@ -99,12 +102,43 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Deploy immutable image to Azure Container Apps
+        shell: bash
+        env:
+          DEPLOY_IMAGE: ${{ vars.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_REPOSITORY }}:${{ github.sha }}
         run: |
+          set -euo pipefail
+          current_config="${RUNNER_TEMP}/sentiq-container-app-current.json"
+          update_config="${RUNNER_TEMP}/sentiq-container-app-update.yaml"
+          trap 'rm -f "${current_config}" "${update_config}"' EXIT
+
+          az containerapp show \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -o json > "${current_config}"
+
+          node scripts/renderAzureContainerAppUpdate.mjs \
+            --input "${current_config}" \
+            --output "${update_config}" \
+            --container-name "${IMAGE_REPOSITORY}" \
+            --image "${DEPLOY_IMAGE}" \
+            --revision-suffix "${GITHUB_SHA::12}" \
+            --min-replicas "${SENTIQ_CONTAINER_MIN_REPLICAS}" \
+            --max-replicas "${SENTIQ_CONTAINER_MAX_REPLICAS}" \
+            --cooldown-seconds "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}"
+
           az containerapp update \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --image "${{ vars.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_REPOSITORY }}:${{ github.sha }}" \
-            --revision-suffix "${GITHUB_SHA::12}"
+            --yaml "${update_config}"
+
+          actual_min="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.minReplicas' -o tsv)"
+          actual_max="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.maxReplicas' -o tsv)"
+          actual_cooldown="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.cooldownPeriod' -o tsv)"
+          if [[ "${actual_min}" != "${SENTIQ_CONTAINER_MIN_REPLICAS}" || "${actual_max}" != "${SENTIQ_CONTAINER_MAX_REPLICAS}" || "${actual_cooldown}" != "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}" ]]; then
+            echo "Azure Container App scale verification failed."
+            exit 1
+          fi
+          echo "Azure Container App scale active: min=${actual_min}, max=${actual_max}, cooldown=${actual_cooldown}."
 
   rollback:
     name: Deploy existing image tag
@@ -112,6 +146,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.image_tag != ''
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Azure login
         uses: azure/login@v3
         with:
@@ -154,14 +191,42 @@ jobs:
           fi
 
       - name: Deploy selected immutable image to Azure Container Apps
+        shell: bash
         env:
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
           suffix="$(printf '%s' "${IMAGE_TAG}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | cut -c1-20)"
           suffix="${suffix:-manual}"
+          current_config="${RUNNER_TEMP}/sentiq-container-app-current.json"
+          update_config="${RUNNER_TEMP}/sentiq-container-app-update.yaml"
+          trap 'rm -f "${current_config}" "${update_config}"' EXIT
+
+          az containerapp show \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -o json > "${current_config}"
+
+          node scripts/renderAzureContainerAppUpdate.mjs \
+            --input "${current_config}" \
+            --output "${update_config}" \
+            --container-name "${IMAGE_REPOSITORY}" \
+            --image "${{ vars.AZURE_ACR_LOGIN_SERVER }}/${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+            --revision-suffix "rollback-${suffix}" \
+            --min-replicas "${SENTIQ_CONTAINER_MIN_REPLICAS}" \
+            --max-replicas "${SENTIQ_CONTAINER_MAX_REPLICAS}" \
+            --cooldown-seconds "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}"
+
           az containerapp update \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --image "${{ vars.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_REPOSITORY }}:${IMAGE_TAG}" \
-            --revision-suffix "rollback-${suffix}"
+            --yaml "${update_config}"
+
+          actual_min="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.minReplicas' -o tsv)"
+          actual_max="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.maxReplicas' -o tsv)"
+          actual_cooldown="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.cooldownPeriod' -o tsv)"
+          if [[ "${actual_min}" != "${SENTIQ_CONTAINER_MIN_REPLICAS}" || "${actual_max}" != "${SENTIQ_CONTAINER_MAX_REPLICAS}" || "${actual_cooldown}" != "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}" ]]; then
+            echo "Azure Container App scale verification failed."
+            exit 1
+          fi
+          echo "Azure Container App scale active: min=${actual_min}, max=${actual_max}, cooldown=${actual_cooldown}."

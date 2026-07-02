@@ -92,7 +92,7 @@ async function main(): Promise<void> {
     fileReferences: [{ filename: "brief.txt", extractedText: "Timeline, risks, and next steps." }],
   });
 
-  assert.match(prompt.prompt, /TRUSTED USER PROFILE:/, "chat prompt includes the trusted profile block");
+  assert.match(prompt.prompt, /STABLE USER CONTEXT:/, "chat prompt includes trusted profile context after stable rules");
   assert.match(prompt.prompt, /Maya Chen/, "chat prompt injects the saved display name");
   assert.match(prompt.prompt, /FILE ANALYSIS MODE:/, "profile injection still works for file-mode prompts");
 

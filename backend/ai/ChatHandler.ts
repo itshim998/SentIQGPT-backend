@@ -4,6 +4,7 @@ import {
   getDemoFallbackResponse,
 } from "./PromptBuilders";
 import type { ChatContext, ImageAttachment } from "./PromptBuilders";
+import type { RouteEvidenceItem } from "../orchestrator/contextComposer";
 import { extractUserFacingAnswer, finalizeStructuredReply } from "./replyGuard";
 import { PRODUCT_DISCLAIMER } from "../branding";
 
@@ -16,7 +17,7 @@ const GENERIC_CHAT_FALLBACK_PATTERN =
 
 function buildMemoryBackedFallbackAnswer(args: {
   readonly userMessage: string;
-  readonly memories?: readonly { type: string; summary: string }[];
+  readonly memories?: readonly { type: string; summary: string; importance?: number; relevance?: number }[];
 }): string | null {
   if (!/\b(?:what(?:'s| is)\s+my\s+name|who\s+am\s+i|do\s+you\s+remember\s+my\s+name)\b/i.test(args.userMessage)) {
     return null;
@@ -78,6 +79,7 @@ export async function handleChat(args: {
   readonly imageAttachments?: readonly ImageAttachment[];
   readonly conversationSummary?: string;
   readonly priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
+  readonly routeEvidence?: readonly RouteEvidenceItem[];
   readonly isExplicitRecallQuery?: boolean;
   readonly trustedProfile?: { displayName: string };
   readonly modelOverride?: string;
@@ -98,6 +100,7 @@ export async function handleChat(args: {
     imageAttachments: args.imageAttachments,
     conversationSummary: args.conversationSummary,
     priorConversationEvidence: args.priorConversationEvidence,
+    routeEvidence: args.routeEvidence,
     isExplicitRecallQuery: args.isExplicitRecallQuery,
     trustedProfile: args.trustedProfile,
     modelOverride: args.modelOverride,

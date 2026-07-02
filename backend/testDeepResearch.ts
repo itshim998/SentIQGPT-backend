@@ -344,6 +344,90 @@ async function testDurableTaskCoordinator(): Promise<void> {
   assert.deepEqual(quotaCalls, ["commit"]);
 }
 
+async function testContainerScaleGuard(): Promise<void> {
+  const {
+    resolveDeepResearchScaleGuardConfig,
+    startDeepResearchScaleGuard,
+  } = await import("./tools/deepResearch/deepResearchScaleGuard");
+
+  assert.equal(
+    resolveDeepResearchScaleGuardConfig({
+      SENTIQ_CONTAINER_MIN_REPLICAS: "0",
+      SENTIQ_CONTAINER_MAX_REPLICAS: "1",
+      SENTIQ_CONTAINER_COOLDOWN_SECONDS: "900",
+    }),
+    null,
+    "local environments without Azure revision metadata must not start a keepalive",
+  );
+  assert.equal(
+    resolveDeepResearchScaleGuardConfig({
+      SENTIQ_CONTAINER_MIN_REPLICAS: "1",
+      SENTIQ_CONTAINER_MAX_REPLICAS: "1",
+      SENTIQ_CONTAINER_COOLDOWN_SECONDS: "900",
+      CONTAINER_APP_HOSTNAME: "revision.example.azurecontainerapps.io",
+    }),
+    null,
+    "an always-on Container App must not create keepalive traffic",
+  );
+
+  const config = resolveDeepResearchScaleGuardConfig({
+    SENTIQ_CONTAINER_MIN_REPLICAS: "0",
+    SENTIQ_CONTAINER_MAX_REPLICAS: "1",
+    SENTIQ_CONTAINER_COOLDOWN_SECONDS: "900",
+    CONTAINER_APP_HOSTNAME: "revision.example.azurecontainerapps.io",
+  });
+  assert.deepEqual(config, {
+    intervalMs: 60_000,
+    url: "https://revision.example.azurecontainerapps.io/health",
+  });
+
+  let fetchCount = 0;
+  let scheduledCallback: (() => void) | undefined;
+  let scheduledDelay: number | undefined;
+  let cleared = false;
+  const fakeTimer = { unref: () => fakeTimer } as unknown as ReturnType<typeof setInterval>;
+  const guard = startDeepResearchScaleGuard({
+    env: {
+      SENTIQ_CONTAINER_MIN_REPLICAS: "0",
+      SENTIQ_CONTAINER_MAX_REPLICAS: "1",
+      SENTIQ_CONTAINER_COOLDOWN_SECONDS: "900",
+      CONTAINER_APP_HOSTNAME: "revision.example.azurecontainerapps.io",
+    },
+    fetchImpl: (async (input) => {
+      fetchCount += 1;
+      assert.equal(String(input), "https://revision.example.azurecontainerapps.io/health");
+      return new Response(null, { status: 204 });
+    }) as typeof fetch,
+    setIntervalImpl: ((callback: () => void, delay?: number) => {
+      scheduledCallback = callback;
+      scheduledDelay = delay;
+      return fakeTimer;
+    }) as typeof setInterval,
+    clearIntervalImpl: ((timer: ReturnType<typeof setInterval>) => {
+      assert.equal(timer, fakeTimer);
+      cleared = true;
+    }) as typeof clearInterval,
+    warn: () => assert.fail("a successful offline keepalive must not warn"),
+  });
+
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(guard.enabled, true);
+  assert.equal(guard.intervalMs, 60_000);
+  assert.equal(scheduledDelay, 60_000);
+  assert.equal(fetchCount, 1, "the scale guard must ping immediately when a task starts");
+  assert(scheduledCallback);
+  scheduledCallback();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(fetchCount, 2, "the scale guard must renew its ingress activity while research runs");
+
+  guard.stop();
+  assert.equal(cleared, true, "terminal research state must stop the keepalive interval");
+  scheduledCallback();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(fetchCount, 2, "a stopped scale guard must not issue later keepalives");
+  assert.equal(await guard.ping(), false);
+}
+
 async function testStatusSnapshots(): Promise<void> {
   const {
     buildDeepResearchStatusSnapshot,
@@ -558,6 +642,7 @@ function testStaticContracts(): void {
   const server = read("backend/server.ts");
   const client = read("backend/tools/deepResearch/tavilyDeepResearchClient.ts");
   const reportService = read("backend/tools/deepResearch/deepResearchService.ts");
+  const scaleGuard = read("backend/tools/deepResearch/deepResearchScaleGuard.ts");
   const taskCoordinator = read("backend/tools/deepResearch/deepResearchTaskCoordinator.ts");
   const api = read("frontend/scripts/services/api.js");
   const controller = read("frontend/scripts/features/chat-controller.js");
@@ -601,6 +686,10 @@ function testStaticContracts(): void {
   assert.match(reportService, /\.eq\("user_id", args\.userId\)/);
   assert.match(reportService, /\.eq\("status", "running"\)/);
   assert.match(reportService, /partial_content: partialContentPreview/);
+  assert.match(scaleGuard, /CONTAINER_APP_HOSTNAME/);
+  assert.match(scaleGuard, /SENTIQ_CONTAINER_COOLDOWN_SECONDS/);
+  assert.match(server, /startDeepResearchScaleGuard\(\)/);
+  assert.match(server, /scaleGuard\.stop\(\)/);
   assert.match(taskCoordinator, /Removing an SSE subscriber never aborts the task/);
   assert.match(taskCoordinator, /task\.abortController\.abort\(\)/);
 
@@ -654,6 +743,7 @@ async function main(): Promise<void> {
   await testKeyManagerWithoutLeakage();
   await testQuotaLifecycle();
   await testDurableTaskCoordinator();
+  await testContainerScaleGuard();
   await testStatusSnapshots();
   await testPersistenceTransitionGuards();
   await testUnauthenticatedRouteContract();

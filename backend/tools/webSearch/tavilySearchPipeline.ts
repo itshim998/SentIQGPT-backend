@@ -29,6 +29,7 @@ import { aggregateResults, formatResultsForLLM, extractSourceReferences } from "
 import { extractContent } from "./contentExtractor";
 import type { SearchResult } from "./types";
 import { callLLMAdapterDetailed } from "../../ai/PromptBuilders";
+import { composeContext, type RouteEvidenceItem } from "../../orchestrator/contextComposer";
 
 // ==============================
 // Configuration
@@ -66,9 +67,7 @@ export interface TavilySearchResponse {
 // LLM Synthesis
 // ==============================
 
-const SYNTHESIS_PROMPT = `You are a research assistant synthesizing web search results into a comprehensive answer.
-
-TASK: Based on the search results below, provide a clear, accurate, and well-organized answer to the user's question.
+const SYNTHESIS_SYSTEM_PROMPT = `You are a research assistant synthesizing supplied web evidence into a comprehensive answer.
 
 GUIDELINES:
 - Synthesize information from multiple sources into a coherent response
@@ -82,22 +81,20 @@ GUIDELINES:
 - Use short headings or bullet points only when they improve readability
 - Do not dump raw snippets, repeated source titles, or long numbered lists of search results
 - Do not include a "Sources" section; links will be appended separately
-- Avoid echoing webpage chrome such as navigation labels, repeated headings, or stray "Title:" prefixes from extracted content
-
-USER QUESTION: {query}
-
-{context}
-
-Provide your synthesized answer:`;
+- Avoid echoing webpage chrome such as navigation labels, repeated headings, or stray "Title:" prefixes from extracted content`;
 
 async function synthesizeWithLLM(
   query: string,
-  context: string,
+  evidence: readonly RouteEvidenceItem[],
   signal?: AbortSignal,
 ): Promise<{ answer: string; success: boolean; error?: string }> {
-  const prompt = SYNTHESIS_PROMPT
-    .replace("{query}", query)
-    .replace("{context}", context);
+  const prompt = composeContext({
+    systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
+    userMessage: query,
+    routeEvidence: evidence,
+    complexity: "heavy",
+    capacityAware: true,
+  });
 
   try {
     const result = await callLLMAdapterDetailed({
@@ -108,6 +105,7 @@ async function synthesizeWithLLM(
       user_id: "system",
       signal,
       timeout_ms: 60_000,
+      request_complexity: "heavy",
     });
     const answer = result.text;
 
@@ -337,8 +335,14 @@ export async function executeTavilySearchPipeline(
     enrichedResults = aggregated.results;
   }
 
-  // Step 6: Prepare context for LLM (fallback only)
-  const context = formatResultsForLLM(enrichedResults);
+  // Step 6: Prepare ranked evidence for token-aware LLM composition.
+  // The highest-ranked results are route-required; lower-ranked results degrade first.
+  const evidence: RouteEvidenceItem[] = enrichedResults.map((result, index) => ({
+    content: formatResultsForLLM([result]),
+    label: `result ${index + 1}`,
+    required: index < 3,
+    relevance: Math.max(0, 1 - index / Math.max(1, enrichedResults.length)),
+  }));
   const sources = extractSourceReferences(enrichedResults);
 
   // Step 7: Prefer Tavily answer, fallback to LLM when missing
@@ -346,7 +350,7 @@ export async function executeTavilySearchPipeline(
   if (primaryAnswer && primaryAnswer.trim()) {
     answer = primaryAnswer.trim();
   } else if (!skipLLMSynthesis) {
-    const synthesis = await synthesizeWithLLM(query, context, signal);
+    const synthesis = await synthesizeWithLLM(query, evidence, signal);
 
     if (synthesis.success) {
       answer = synthesis.answer;

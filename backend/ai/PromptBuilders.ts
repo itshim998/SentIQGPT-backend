@@ -1,7 +1,7 @@
 import { spawn } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { resolve as pathResolve } from "path";
-import { composeContext } from "../orchestrator/contextComposer";
+import { composeContext, type RouteEvidenceItem } from "../orchestrator/contextComposer";
 import { MATH_RESPONSE_SYSTEM_PROMPT } from "./mathPrompt";
 import { PRODUCT_DISCLAIMER, PRODUCT_NAME } from "../branding";
 import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../internalGateway";
@@ -687,11 +687,12 @@ export function selectGroqReasoningEffortForMessage(message: string): GroqReason
 export interface ChatContext {
   readonly userMessage: string;
   readonly recentMessages?: readonly { role: string; content: string }[];
-  readonly memories?: readonly { type: string; summary: string }[];
+  readonly memories?: readonly { type: string; summary: string; importance?: number; relevance?: number }[];
   readonly fileReferences?: readonly { filename: string; extractedText: string }[];
   readonly imageAttachments?: readonly ImageAttachment[];
   readonly conversationSummary?: string;
   readonly priorConversationEvidence?: readonly { content: string; createdAt?: string }[];
+  readonly routeEvidence?: readonly RouteEvidenceItem[];
   readonly isExplicitRecallQuery?: boolean;
   readonly trustedProfile?: {
     displayName: string;
@@ -730,15 +731,6 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT;
   }
 
-  if (ctx.trustedProfile?.displayName && !ctx.reasoningMode && !ctx.mathMode) {
-    const safeDisplayName = ctx.trustedProfile.displayName.replace(/\s+/g, " ").trim();
-    if (safeDisplayName) {
-      SYSTEM_PROMPT +=
-        "\nTRUSTED USER PROFILE:\n" +
-        `- The user's saved display name is ${safeDisplayName}.\n` +
-        "- Use their name naturally when it helps, but do not overuse it.\n";
-    }
-  }
   if (!ctx.reasoningMode && !ctx.mathMode) {
     SYSTEM_PROMPT +=
       "\nCONTEXT PROVENANCE RULES:\n" +
@@ -756,12 +748,11 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
 
   // When files are present, add explicit file-analysis instructions
   if (hasFiles && !ctx.reasoningMode) {
-    const filenames = ctx.fileReferences!.map((f) => f.filename).join(", ");
     SYSTEM_PROMPT +=
       "\nFILE ANALYSIS MODE:\n" +
-      `- The user has uploaded file(s): ${filenames}\n` +
-      "- The full extracted content of these files is provided below.\n" +
-      "- Base your answers ONLY on the actual file content provided.\n" +
+      "- Selected extracted content from the user's uploaded files is provided below.\n" +
+      "- Base claims about the files only on the actual file content provided.\n" +
+      "- Relevant saved user context may personalize the answer, but must not replace or contradict file evidence.\n" +
       "- If the file content says extraction failed, tell the user honestly.\n" +
       "- Do NOT hallucinate or invent file content.\n" +
       "- Do NOT reference files from previous conversations.\n" +
@@ -769,24 +760,33 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
   }
 
   if (hasImages && !ctx.reasoningMode) {
-    const filenames = ctx.imageAttachments!.map((image) => image.filename).join(", ");
     SYSTEM_PROMPT +=
       "\nIMAGE INPUT MODE:\n" +
-      `- The user attached image(s): ${filenames}\n` +
       "- Use the attached image pixels directly when answering.\n" +
       "- If the user asks to solve, read, debug, or analyze the image, use the image content as the problem statement.\n";
   }
+
+  const safeDisplayName = ctx.trustedProfile?.displayName.replace(/\s+/g, " ").trim();
+  const stableContext = safeDisplayName && !ctx.reasoningMode && !ctx.mathMode
+    ? `The user's saved display name is ${safeDisplayName}. Use it naturally when helpful, but do not overuse it.`
+    : undefined;
+  const isGroqChat = ctx.modelOverride === "gpt-oss-120b";
 
   // Delegate prompt assembly + budget enforcement to the Context Composer.
   const finalPrompt = composeContext({
     systemPrompt: SYSTEM_PROMPT,
     userMessage: ctx.userMessage,
+    stableContext,
     conversation: ctx.recentMessages,
     conversationSummary: ctx.conversationSummary,
     recallEvidence: ctx.priorConversationEvidence,
-    memories: hasFiles ? [] : ctx.memories, // When files present, skip memory to avoid confusion
+    recallEvidenceRequired: ctx.isExplicitRecallQuery,
+    memories: ctx.memories,
     fileReferences: ctx.fileReferences,
+    routeEvidence: ctx.routeEvidence,
     budgetProfile: ctx.streaming ? "streaming" : "standard",
+    complexity: hasFiles || (ctx.routeEvidence?.length ?? 0) > 0 ? "heavy" : "normal",
+    capacityAware: isGroqChat,
   });
 
   console.log(
@@ -802,7 +802,6 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     ctx.modelOverride === "openai-large" ||
     ctx.modelOverride === "minimax" ||
     ctx.modelOverride === "mistral";
-  const isGroqChat = ctx.modelOverride === "gpt-oss-120b";
   const groqReasoningEffort = isGroqChat
     ? ctx.reasoningEffort ?? selectGroqReasoningEffortForMessage(ctx.userMessage)
     : undefined;
@@ -818,6 +817,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     reasoning_effort: groqReasoningEffort,
     skip_wrappers: ctx.reasoningMode ?? false,
     image_attachments: ctx.imageAttachments,
+    request_complexity: hasFiles || (ctx.routeEvidence?.length ?? 0) > 0 ? "heavy" : "normal",
     message_count: (ctx.recentMessages?.length ?? 0) + 1,
   };
 }

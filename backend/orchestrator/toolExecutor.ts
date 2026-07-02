@@ -239,13 +239,16 @@ async function execConversation(
   let result: Awaited<ReturnType<typeof handleChat>>;
   try {
     result = await handleChat({
-      userMessage: augmentedInput,
+      userMessage: input,
       recentMessages: ctx.recentMessages,
       memories: ctx.memories,
       fileReferences: ctx.fileReferences,
       imageAttachments: ctx.imageAttachments,
       conversationSummary: ctx.conversationSummary,
       priorConversationEvidence: ctx.priorConversationEvidence,
+      routeEvidence: priorContext
+        ? [{ content: priorContext, label: "previous step", required: true, relevance: 1 }]
+        : undefined,
       isExplicitRecallQuery: ctx.isExplicitRecallQuery,
       trustedProfile: ctx.trustedProfile,
       modelOverride,
@@ -391,13 +394,16 @@ async function execFileAnalysis(
   let result: Awaited<ReturnType<typeof handleChat>>;
   try {
     result = await handleChat({
-      userMessage: augmentedInput,
+      userMessage: input,
       recentMessages: ctx.recentMessages,
       memories: ctx.memories,
       fileReferences: ctx.fileReferences,
       imageAttachments: ctx.imageAttachments,
       conversationSummary: ctx.conversationSummary,
       priorConversationEvidence: ctx.priorConversationEvidence,
+      routeEvidence: priorContext
+        ? [{ content: priorContext, label: "previous step", required: true, relevance: 1 }]
+        : undefined,
       isExplicitRecallQuery: ctx.isExplicitRecallQuery,
       trustedProfile: ctx.trustedProfile,
       modelOverride,

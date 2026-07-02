@@ -6670,6 +6670,7 @@ import {
   TavilyDeepResearchError,
 } from "./tools/deepResearch/tavilyDeepResearchClient";
 import { DeepResearchQuotaLifecycle } from "./tools/deepResearch/deepResearchQuotaLifecycle";
+import { startDeepResearchScaleGuard } from "./tools/deepResearch/deepResearchScaleGuard";
 import { DeepResearchTaskCoordinator } from "./tools/deepResearch/deepResearchTaskCoordinator";
 import type {
   DeepResearchEvent,
@@ -6768,6 +6769,9 @@ async function runDeepResearchTask(args: {
   let lastCancellationCheckAt = 0;
   let progressWrite = Promise.resolve();
   const runtime: DeepResearchRuntimeMetadata = { ...args.initialRuntime };
+  const scaleGuard = startDeepResearchScaleGuard();
+  const stopScaleGuard = () => scaleGuard.stop();
+  args.signal.addEventListener("abort", stopScaleGuard, { once: true });
 
   const persistProgress = async (force = false) => {
     const nowMs = Date.now();
@@ -6974,6 +6978,8 @@ async function runDeepResearchTask(args: {
     }
   } finally {
     clearInterval(heartbeat);
+    args.signal.removeEventListener("abort", stopScaleGuard);
+    scaleGuard.stop();
   }
 }
 

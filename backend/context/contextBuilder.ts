@@ -70,6 +70,7 @@ export interface BuiltContext {
     type: string;
     summary: string;
     importance?: number;
+    relevance?: number;
     scope?: "global" | "chat";
     chat_id?: string | null;
   }[];
@@ -106,6 +107,7 @@ type ContextMemory = {
   type: string;
   summary: string;
   importance?: number;
+  relevance?: number;
   embedding?: readonly number[];
   scope?: "global" | "chat";
   chat_id?: string | null;
@@ -433,7 +435,10 @@ export async function buildContext(
     : null;
   let memories: readonly ContextMemory[];
   if (semanticResults && semanticResults.length > 0) {
-    const semanticMemories = semanticResults.map((r) => r.memory);
+    const semanticMemories = semanticResults.map((result) => ({
+      ...result.memory,
+      relevance: result.similarity,
+    }));
     memories = isExplicitRecallQuery
       ? selectMemoriesForPrompt(mergeMemoryCandidates(semanticMemories, memoryCandidates), query, 6, true)
       : semanticMemories;
@@ -443,15 +448,16 @@ export async function buildContext(
     console.log(`[CONTEXT] memory retrieval: keyword fallback (${memories.length} selected)`);
   }
 
-  // 3. File references — pass through full content for prompt-level handling
-  //    (PromptBuilders.ts applies safe truncation at 40k per file)
+  // 3. Keep extracted text internal until token-aware prompt composition.
+  //    The token-aware Context Composer chunks, ranks, and trims this text
+  //    before it is injected into a model prompt.
   const fileReferences = (raw.file_references ?? []).map((f) => ({
     filename: f.filename,
     extractedText: f.extractedText,
   }));
   if (fileReferences.length > 0) {
     const totalChars = fileReferences.reduce((s, f) => s + f.extractedText.length, 0);
-    console.log(`[CONTEXT] file pass-through: ${fileReferences.length} file(s), ${totalChars} total chars`);
+    console.log(`[CONTEXT] file inputs queued for token-aware composition: ${fileReferences.length} file(s), ${totalChars} total chars`);
   }
   const imageAttachments = (raw.image_attachments ?? []).map((image) => ({
     filename: image.filename,
@@ -557,7 +563,7 @@ export async function buildContextFast(
     memories = selectMemoriesForPrompt(mergeMemoryCandidates(memories, cloudMemories), query, 6, isExplicitRecallQuery);
   }
 
-  // File references - just text extracted content
+  // Preserve extracted text internally; prompt composition performs chunk selection.
   const fileReferences = (raw.file_references ?? []).map((f) => ({
     filename: f.filename,
     extractedText: f.extractedText,
