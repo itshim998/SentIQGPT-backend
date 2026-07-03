@@ -3,6 +3,7 @@ export function getChatDomRefs(doc = document) {
     chatMessages: doc.getElementById("chat-messages"),
     chatInput: doc.getElementById("chat-input"),
     sendBtn: doc.getElementById("send-btn"),
+    liveVoiceBtn: doc.getElementById("live-beta-btn"),
     newChatBtn: doc.getElementById("new-chat-btn"),
     chatList: doc.getElementById("chat-list"),
     chatSearchInput: doc.getElementById("chat-search-input"),

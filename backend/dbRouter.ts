@@ -338,6 +338,10 @@ export function getControlDatabase(): SupabaseClient {
   return controlDbClient;
 }
 
+export function getDataShardDatabases(): readonly SupabaseClient[] {
+  return ASSIGNABLE_DATABASE_IDS.map((databaseId) => clientByDatabaseId[databaseId]);
+}
+
 export async function initializeControlUserSession(userId: string): Promise<void> {
   await ensureControlUserSession(userId);
 }

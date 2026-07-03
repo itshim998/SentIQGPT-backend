@@ -772,6 +772,33 @@ async function exportDeepResearchReport(reportId, format) {
   return response.blob();
 }
 
+async function getLiveStatus() {
+  return apiRequest("/api/live/status", { method: "GET" });
+}
+
+async function createLiveSessionToken(conversationId) {
+  return apiRequest("/api/live/session-token", {
+    method: "POST",
+    body: JSON.stringify(conversationId ? { conversationId } : {}),
+  });
+}
+
+async function commitLiveSession(sessionId, payload, options = {}) {
+  return apiRequest(`/api/live/session/${encodeURIComponent(sessionId)}/commit`, {
+    method: "POST",
+    body: JSON.stringify(payload || { transcript: [] }),
+    keepalive: Boolean(options.keepalive),
+  });
+}
+
+async function endLiveSession(sessionId, reason = "client_end", options = {}) {
+  return apiRequest(`/api/live/session/${encodeURIComponent(sessionId)}/end`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+    keepalive: Boolean(options.keepalive),
+  });
+}
+
 window.SentIQAPI = {
   sendMessage, sendMessageStream, canStreamResponses, getChatIntent, classifyMemory, compressMemories,
   sendSelectionMessage, uploadFile, subscribeFileUpdates, clearFileSession, generateImage, storeImage, getChatImages, getImageQuota, deleteImage, generateTitle,
@@ -782,4 +809,5 @@ window.SentIQAPI = {
   getHealth, getConfig: getConfigAPI,
   sendDeepResearchStream, startDeepResearch, getDeepResearchStatus, subscribeDeepResearchEvents,
   cancelDeepResearchReport, getDeepResearchQuota, getDeepResearchReport, exportDeepResearchReport,
+  getLiveStatus, createLiveSessionToken, commitLiveSession, endLiveSession,
 };

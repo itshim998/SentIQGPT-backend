@@ -22,6 +22,7 @@
     "test:pass3-memory": "ts-node --project tsconfig.backend.json backend/testPass3MemoryReliability.ts",
     "test:passA": "ts-node --project tsconfig.backend.json backend/testPassABugFixes.ts",
     "test:frontend-bootstrap": "ts-node --project tsconfig.backend.json backend/testFrontendBootstrap.ts",
+    "test:live": "ts-node --project tsconfig.backend.json backend/testSentIQLive.ts",
     "test:conversation-sync": "ts-node --project tsconfig.backend.json backend/testConversationSyncState.ts",
     "test:supabase-canonicalization": "ts-node --project tsconfig.backend.json backend/testSupabaseCanonicalization.ts",
     "test:execution-profiles": "ts-node --project tsconfig.backend.json backend/testExecutionProfiles.ts",

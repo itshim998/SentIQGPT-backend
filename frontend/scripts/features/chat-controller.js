@@ -35,6 +35,7 @@ import {
 } from "../services/storage.js";
 import { PRODUCT_NAME, STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "../shared/brand.js";
 import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
+import { resolveLiveComposerAction } from "./live/live-composer-state.js";
 
 // ================================================================
 // 3. Chat UI Controller
@@ -181,6 +182,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     chatMessages,
     chatInput,
     sendBtn,
+    liveVoiceBtn,
     newChatBtn,
     chatList,
     chatSearchInput,
@@ -290,6 +292,11 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   let composerHintCycleId = 0;
   let composerHintIntroConsumed = false;
   let composerResponseLocked = false;
+  let liveVoiceStatus = {
+    enabled: false,
+    available: false,
+    reason: "busy",
+  };
   let greetingUserScope = "";
   let pendingChatListLoad = null;
   let sidebarBackdrop = null;
@@ -1124,6 +1131,26 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       sendBtn.setAttribute("aria-disabled", sendBtn.disabled ? "true" : "false");
     }
 
+    const liveAction = resolveLiveComposerAction({
+      enabled: liveVoiceStatus.enabled,
+      available: liveVoiceStatus.available,
+      reason: liveVoiceStatus.reason,
+      inputValue: chatInput?.value,
+      hasAttachments: pendingFiles.length > 0 || fileUploadInFlight,
+      hasSelectionContext: Boolean(pendingComposerSelectionContext?.selected_text),
+      specialModeActive: Boolean(imageMode || webSearchModeOverride || deepResearchMode),
+      responseLocked: locked || stopModeActive,
+      requiresName,
+    });
+    if (liveVoiceBtn) {
+      liveVoiceBtn.hidden = !liveAction.showLive;
+      liveVoiceBtn.disabled = false;
+      liveVoiceBtn.classList.toggle("is-disabled", liveAction.disabled);
+      liveVoiceBtn.setAttribute("aria-disabled", liveAction.disabled ? "true" : "false");
+      liveVoiceBtn.title = liveAction.disabled ? liveAction.message : "Start Live voice";
+    }
+    if (sendBtn) sendBtn.hidden = !liveAction.showSend;
+
     if (newChatBtn) setControlDisabled(newChatBtn, requiresName);
 
     chatInputArea?.classList.toggle("is-response-locked", locked);
@@ -1432,6 +1459,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     chatInput.value = value;
     autoResizeInput();
     syncComposerHint();
+    syncComposerInteractivity();
     chatInput.focus();
     chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
   }
@@ -4472,6 +4500,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       selectedContextBar.hidden = !hasContext;
       selectedContextBar.setAttribute("aria-hidden", hasContext ? "false" : "true");
     }
+    syncComposerInteractivity();
   }
 
   function clearComposerSelectionContext(options = {}) {
@@ -4824,7 +4853,10 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
     });
     chatInput?.addEventListener("paste", handleComposerPaste);
-    chatInput?.addEventListener("input", autoResizeInput);
+    chatInput?.addEventListener("input", () => {
+      autoResizeInput();
+      syncComposerInteractivity();
+    });
     clearSelectedContext?.addEventListener("click", () => {
       clearComposerSelectionContext({ focus: true });
     });
@@ -9605,6 +9637,7 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     webSurfBasicBtn?.setAttribute("aria-pressed", (webSearchModeOverride === "basic").toString());
     deepResearchBtn?.classList.toggle("active", Boolean(deepResearchMode));
     deepResearchBtn?.setAttribute("aria-pressed", Boolean(deepResearchMode).toString());
+    syncComposerInteractivity();
   }
 
   function clearPendingFiles() {
@@ -10625,6 +10658,14 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
   }
 
   window.SentIQGetSafeErrorMessage = getSafeErrorMessage;
+  document.addEventListener("sentiq-live-status", (event) => {
+    liveVoiceStatus = {
+      enabled: Boolean(event.detail?.enabled),
+      available: Boolean(event.detail?.available),
+      reason: typeof event.detail?.reason === "string" ? event.detail.reason : "busy",
+    };
+    syncComposerInteractivity();
+  });
   window.SentIQChat = {
     copyCode,
     appendMessageBubble,
@@ -10639,6 +10680,27 @@ import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
     showToast,
     debugWarn,
     refreshAuthUI,
+    requestLiveAuth() {
+      openAuthModal("login");
+      setAuthStatus("Sign in to use Live voice.");
+    },
+    async prepareLiveConversation() {
+      if (!isAuthenticatedSession()) return null;
+      if (!currentChatId) await startNewChat();
+      if (!currentChatId) return null;
+      let conversationId = currentChatId;
+      const chat = await Storage.getChat(conversationId);
+      if (isPlaceholderServerChat(chat)) {
+        conversationId = await ensureRemoteConversationForChat(conversationId);
+      }
+      return getCanonicalConversationIdForRequest(conversationId) || null;
+    },
+    async refreshLiveConversation(conversationId) {
+      if (!isAuthenticatedSession() || !isValidUuid(conversationId)) return;
+      await fetchAuthenticatedChatList({ silent: true });
+      await loadChatList(true);
+      await loadChat(conversationId, { forceRemoteHydration: true, silent: true });
+    },
   };
 
   function startChatUi() {

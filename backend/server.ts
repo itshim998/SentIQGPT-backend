@@ -101,6 +101,15 @@ import {
 } from "./services/profileService";
 import { contextCapsuleService } from "./services/contextCapsuleService";
 import { sourceRetrievalService } from "./services/sourceRetrievalService";
+import { loadGeminiLiveConfig } from "./live/geminiLiveConfig";
+import { GeminiLiveKeyPool } from "./live/geminiLiveKeyPool";
+import { GeminiLiveTokenService } from "./live/geminiLiveTokenService";
+import { LiveSessionService } from "./live/liveSessionService";
+import { SentIQLivePersistence } from "./live/sentiqLivePersistence";
+import { registerLiveRoutes } from "./live/liveRoutes";
+import { loadLiveTierPolicy } from "./live/liveTierPolicy";
+import { LivePlanResolver } from "./live/livePlanResolver";
+import { SupabaseLiveUsageStore } from "./live/liveUsageStore";
 import {
   buildImagePromptMessageContent,
   findExistingAssistantImageMessage,
@@ -167,6 +176,21 @@ import { validateInternalGatewayConfiguration } from "./internalGateway";
 
 const app = express();
 const billingQuotaService = new BillingQuotaService();
+const geminiLiveConfig = loadGeminiLiveConfig();
+const liveTierPolicy = loadLiveTierPolicy();
+const liveSessionService = new LiveSessionService({
+  config: geminiLiveConfig,
+  tierPolicy: liveTierPolicy,
+  planResolver: new LivePlanResolver((userId) => billingQuotaService.resolvePlanCode({
+    userId,
+    anonymousKeyHash: null,
+    isGuest: false,
+  })),
+  usageStore: new SupabaseLiveUsageStore(),
+  keyPool: new GeminiLiveKeyPool(),
+  tokenService: new GeminiLiveTokenService(),
+  persistence: new SentIQLivePersistence(),
+});
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const JSON_BODY_LIMIT = process.env.SENTIQ_JSON_BODY_LIMIT?.trim() || "6mb";
 const TITLE_MAX_CHARS = 120;
@@ -333,6 +357,12 @@ app.use(attachRateLimitIdentity);
 app.use(generalRateLimiter);
 app.use(auditMiddleware);
 registerBillingRoutes(app);
+registerLiveRoutes(app, {
+  service: liveSessionService,
+  requireAuth: verifyJWT({ allowGuest: false }),
+  statusAuth: verifyJWT({ allowGuest: true }),
+  tokenRateLimiter: aiRateLimiter,
+});
 
 const MODEL_BUDGET_PATHS = new Set([
   "/api/chat",
