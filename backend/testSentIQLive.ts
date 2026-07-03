@@ -690,6 +690,10 @@ async function testFreeTierDefaultAllocation(): Promise<void> {
 async function testDisabledBehavior(): Promise<void> {
   const { service } = createService({ enabled: false });
   assert.equal(service.isAvailable(), false);
+  const status = await service.getStatus(USER_ID);
+  assert.equal(status.enabled, false);
+  assert.equal(status.available, false);
+  assert.equal(status.reason, "not_available");
   await assert.rejects(
     () => service.createSession({ userId: USER_ID }),
     (error: unknown) => error instanceof LiveSessionError && error.code === "live_disabled" && error.statusCode === 404,
@@ -756,6 +760,8 @@ function testFrontendFoundation(): void {
       showLive: true, showSend: false, disabled: false, message: "Live voice is busy. Try again soon."
     });
     assert.equal(resolveLiveComposerAction({ ...base, inputValue: "hello" }).showSend, true);
+    assert.equal(resolveLiveComposerAction({ ...base, inputValue: "   " }).showLive, true);
+    assert.equal(resolveLiveComposerAction({ ...base, inputValue: "" }).showLive, true);
     assert.equal(resolveLiveComposerAction({ ...base, hasAttachments: true }).showLive, false);
     assert.equal(resolveLiveComposerAction({ ...base, specialModeActive: true }).showLive, false);
     assert.equal(resolveLiveComposerAction({ ...base, responseLocked: true }).showLive, false);
@@ -764,6 +770,14 @@ function testFrontendFoundation(): void {
     assert.equal(denied.showLive, true);
     assert.equal(denied.disabled, true);
     assert.equal(denied.message, "You’ve used today’s Live voice time.");
+    const featureDisabled = resolveLiveComposerAction({ enabled: false, reason: "not_available" });
+    assert.equal(featureDisabled.showLive, true);
+    assert.equal(featureDisabled.showSend, false);
+    assert.equal(featureDisabled.disabled, true);
+    assert.equal(featureDisabled.message, "Live voice is not available right now.");
+    const unsupported = resolveLiveComposerAction({ reason: "browser_unsupported" });
+    assert.equal(unsupported.showLive, true);
+    assert.equal(unsupported.message, "Live voice is not supported in this browser.");
   `;
   execFileSync(process.execPath, ["--input-type=module", "-e", composerTest], { stdio: "pipe" });
 }

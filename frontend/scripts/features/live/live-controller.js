@@ -248,6 +248,14 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
     endButton.setAttribute("aria-label", label === "Close" ? "Close Live voice" : "End Live voice");
   }
 
+  function supportsLiveAudio() {
+    return Boolean(
+      typeof WebSocket === "function"
+      && navigator.mediaDevices?.getUserMedia
+      && (window.AudioContext || window.webkitAudioContext)
+    );
+  }
+
   function liveStartFailure(error) {
     if (error?.status === 401 || error?.code === "live_sign_in_required") {
       return { label: "Sign in required", message: getLiveUnavailableCopy("sign_in_required") };
@@ -469,7 +477,7 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
     if (!status.available) {
       const label = status.reason === "daily_limit_reached"
         ? "Daily limit reached"
-        : status.reason === "not_available_on_plan"
+        : ["not_available", "not_available_on_plan", "browser_unsupported"].includes(status.reason)
           ? "Unavailable"
           : "Busy";
       setPanelState("error", label, getLiveUnavailableCopy(status.reason));
@@ -479,12 +487,8 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
 
     setPanelState("connecting", "Connecting", "Getting Live voice ready.");
 
-    if (
-      typeof WebSocket !== "function"
-      || !navigator.mediaDevices?.getUserMedia
-      || !(window.AudioContext || window.webkitAudioContext)
-    ) {
-      setPanelState("error", "Unavailable", "Live voice needs microphone and audio support in this browser.");
+    if (!supportsLiveAudio()) {
+      setPanelState("error", "Unavailable", getLiveUnavailableCopy("browser_unsupported"));
       setEndButtonLabel("Close");
       return;
     }
@@ -539,10 +543,13 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
   async function refreshAvailability() {
     try {
       const status = await API.getLiveStatus();
+      const browserUnsupported = Boolean(status?.available) && !supportsLiveAudio();
       lastStatus = {
         enabled: Boolean(status?.enabled),
-        available: Boolean(status?.available),
-        reason: typeof status?.reason === "string" ? status.reason : "busy",
+        available: browserUnsupported ? false : Boolean(status?.available),
+        reason: browserUnsupported
+          ? "browser_unsupported"
+          : typeof status?.reason === "string" ? status.reason : "busy",
         remainingSecondsToday: Math.max(0, Number(status?.remainingSecondsToday) || 0),
         maxSessionSeconds: Math.max(0, Number(status?.maxSessionSeconds) || 0),
         activeSession: status?.activeSession?.status === "active" ? { status: "active" } : null,

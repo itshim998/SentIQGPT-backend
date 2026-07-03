@@ -10666,6 +10666,9 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     };
     syncComposerInteractivity();
   });
+  // Render the empty-composer affordance immediately; the async status refresh
+  // will then update its availability and safe message without swapping in Send.
+  syncComposerInteractivity();
   window.SentIQChat = {
     copyCode,
     appendMessageBubble,

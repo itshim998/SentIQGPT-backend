@@ -14,6 +14,7 @@ import type { LiveFinalizeResult, LiveUsageDenialReason, LiveUsageStore } from "
 export type LiveStatusReason =
   | "available"
   | "sign_in_required"
+  | "not_available"
   | "not_available_on_plan"
   | "daily_limit_reached"
   | "active_session_limit"
@@ -219,7 +220,7 @@ export class LiveSessionService {
   }
 
   async getStatus(userId?: string): Promise<LiveStatusResponse> {
-    const enabled = this.isAvailable();
+    const enabled = this.dependencies.config.enabled;
     const unavailable = (
       reason: LiveStatusReason,
       remainingSecondsToday = 0,
@@ -233,7 +234,10 @@ export class LiveSessionService {
       maxSessionSeconds,
       activeSession: activeSessions > 0 ? { status: "active" } : null,
     });
-    if (!enabled) return unavailable("busy");
+    if (!enabled) return unavailable("not_available");
+    if (!this.dependencies.config.audioOnly || this.dependencies.keyPool.size === 0) {
+      return unavailable("busy");
+    }
     if (!userId) return unavailable("sign_in_required");
 
     const planCode = await this.dependencies.planResolver.resolve(userId);
