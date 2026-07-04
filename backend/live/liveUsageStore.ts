@@ -39,8 +39,37 @@ export type LiveUserUsageStatus = {
   activeSessions: number;
 };
 
+export type LiveStoredSession = {
+  sessionId: string;
+  planCode: BillingPlanCode;
+  status: string;
+  startedAt: string;
+  audioStartedAt: string | null;
+  endedAt: string | null;
+  expiresAt: string;
+  reservedSeconds: number;
+  usedSeconds: number;
+  keySlot: number | null;
+  metadata: Record<string, unknown>;
+};
+
+export type LiveStartResult = {
+  found: boolean;
+  started: boolean;
+  alreadyStarted: boolean;
+  status: string;
+  audioStartedAt: string | null;
+  expiresAt: string | null;
+};
+
 export interface LiveUsageStore {
   getUserStatus(userId: string): Promise<LiveUserUsageStatus>;
+  getSession(args: { userId: string; sessionId: string }): Promise<LiveStoredSession | null>;
+  markSessionStarted(args: {
+    userId: string;
+    sessionId: string;
+    graceSeconds: number;
+  }): Promise<LiveStartResult>;
   hasCapacity(args: {
     globalMaxActive: number | null;
     projectMaxActive: number | null;
@@ -80,6 +109,7 @@ export interface LiveUsageStore {
     expiresAt: string;
   }): Promise<LiveCapacityReservationResult>;
   releaseCapacity(sessionId: string): Promise<boolean>;
+  extendCapacity(sessionId: string, expiresAt: string): Promise<boolean>;
 }
 
 function numberValue(value: unknown): number {
@@ -130,6 +160,54 @@ export class SupabaseLiveUsageStore implements LiveUsageStore {
       secondsUsed: numberValue(usageResult.data?.seconds_used),
       secondsReserved: numberValue(usageResult.data?.seconds_reserved),
       activeSessions: numberValue(activeResult.count),
+    };
+  }
+
+  async getSession(args: { userId: string; sessionId: string }): Promise<LiveStoredSession | null> {
+    const userDb = await this.userDatabase(args.userId, args.sessionId);
+    const { data, error } = await userDb
+      .from("live_sessions")
+      .select("session_id,plan,status,started_at,audio_started_at,ended_at,expires_at,reserved_seconds,used_seconds,key_slot,metadata")
+      .eq("session_id", args.sessionId)
+      .eq("owner_user_id", args.userId)
+      .maybeSingle();
+    if (error) throw rpcError("Live session lookup", error);
+    if (!data) return null;
+    return {
+      sessionId: String(data.session_id || ""),
+      planCode: data.plan as BillingPlanCode,
+      status: typeof data.status === "string" ? data.status : "unknown",
+      startedAt: typeof data.started_at === "string" ? data.started_at : "",
+      audioStartedAt: typeof data.audio_started_at === "string" ? data.audio_started_at : null,
+      endedAt: typeof data.ended_at === "string" ? data.ended_at : null,
+      expiresAt: typeof data.expires_at === "string" ? data.expires_at : "",
+      reservedSeconds: numberValue(data.reserved_seconds),
+      usedSeconds: numberValue(data.used_seconds),
+      keySlot: data.key_slot === null || data.key_slot === undefined ? null : numberValue(data.key_slot),
+      metadata: objectValue(data.metadata),
+    };
+  }
+
+  async markSessionStarted(args: {
+    userId: string;
+    sessionId: string;
+    graceSeconds: number;
+  }): Promise<LiveStartResult> {
+    const userDb = await this.userDatabase(args.userId, args.sessionId);
+    const { data, error } = await userDb.rpc("mark_live_session_started", {
+      p_owner_user_id: args.userId,
+      p_session_id: args.sessionId,
+      p_grace_seconds: args.graceSeconds,
+    });
+    if (error) throw rpcError("Live session start", error);
+    const row = objectValue(data);
+    return {
+      found: row.found === true,
+      started: row.started === true,
+      alreadyStarted: row.already_started === true,
+      status: typeof row.status === "string" ? row.status : "active",
+      audioStartedAt: typeof row.audio_started_at === "string" ? row.audio_started_at : null,
+      expiresAt: typeof row.expires_at === "string" ? row.expires_at : null,
     };
   }
 
@@ -305,5 +383,17 @@ export class SupabaseLiveUsageStore implements LiveUsageStore {
     });
     if (error) throw rpcError("Live capacity release", error);
     return data === true;
+  }
+
+  async extendCapacity(sessionId: string, expiresAt: string): Promise<boolean> {
+    const { data, error } = await getControlDatabase()
+      .from("live_capacity_leases")
+      .update({ expires_at: expiresAt })
+      .eq("session_id", sessionId)
+      .gt("expires_at", new Date().toISOString())
+      .select("session_id")
+      .maybeSingle();
+    if (error) throw rpcError("Live capacity extension", error);
+    return Boolean(data?.session_id);
   }
 }

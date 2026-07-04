@@ -10681,6 +10681,7 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     queueSyncJob,
     syncJobTypes: SYNC_JOB_TYPES,
     showToast,
+    debugLog,
     debugWarn,
     refreshAuthUI,
     requestLiveAuth() {

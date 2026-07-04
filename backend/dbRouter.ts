@@ -427,12 +427,52 @@ export async function verifyShardMigrations(): Promise<void> {
   const dummyId = randomUUID();
   console.log(`[SentIQ Chat] Running startup migration verification checks...`);
   const shardIds: DatabaseId[] = [2, 3, 4];
+  const verifyLiveSchema = process.env.SENTIQ_LIVE_ENABLED?.trim().toLowerCase() === "true";
   let failed = false;
 
   const markFailure = (dbId: DatabaseId, message: string): void => {
     console.error(`[SentIQ Chat] FATAL: Shard DB ${dbId} ${message}`);
     failed = true;
   };
+
+  if (verifyLiveSchema) {
+    const { error: liveCapacityError } = await controlDbClient
+      .from("live_capacity_leases")
+      .select("session_id,key_slot,expires_at", { head: true, count: "exact" })
+      .limit(1);
+    if (liveCapacityError) {
+      markFailure(
+        CONTROL_DATABASE_ID,
+        `is missing Live capacity schema (migration 20260703120000). code=${liveCapacityError.code ?? "unknown"} message=${liveCapacityError.message}`,
+      );
+    }
+
+    const { error: controlLiveLifecycleError } = await controlDbClient
+      .from("live_sessions")
+      .select("session_id,owner_user_id,status,audio_started_at,reserved_seconds,used_seconds", {
+        head: true,
+        count: "exact",
+      })
+      .limit(1);
+    if (controlLiveLifecycleError) {
+      markFailure(
+        CONTROL_DATABASE_ID,
+        `is missing hardened Live session lifecycle schema (migration 20260704120000). code=${controlLiveLifecycleError.code ?? "unknown"} message=${controlLiveLifecycleError.message}`,
+      );
+    }
+
+    const { error: controlLiveStartFnError } = await controlDbClient.rpc("mark_live_session_started", {
+      p_owner_user_id: dummyId,
+      p_session_id: dummyId,
+      p_grace_seconds: 30,
+    });
+    if (controlLiveStartFnError) {
+      markFailure(
+        CONTROL_DATABASE_ID,
+        `is missing mark_live_session_started RPC (migration 20260704120000). code=${controlLiveStartFnError.code ?? "unknown"} message=${controlLiveStartFnError.message}`,
+      );
+    }
+  }
 
   for (const id of shardIds) {
     const client = clientByDatabaseId[id];
@@ -658,6 +698,34 @@ export async function verifyShardMigrations(): Promise<void> {
           id,
           `is missing deep_research_reports schema objects (migration 20260628140000). code=${deepResearchReportsError.code ?? "unknown"} message=${deepResearchReportsError.message}`,
         );
+      }
+
+      if (verifyLiveSchema) {
+        const { error: liveSessionLifecycleError } = await client
+          .from("live_sessions")
+          .select("session_id,owner_user_id,status,audio_started_at,reserved_seconds,used_seconds", {
+            head: true,
+            count: "exact",
+          })
+          .limit(1);
+        if (liveSessionLifecycleError) {
+          markFailure(
+            id,
+            `is missing hardened Live session lifecycle schema (migration 20260704120000). code=${liveSessionLifecycleError.code ?? "unknown"} message=${liveSessionLifecycleError.message}`,
+          );
+        }
+
+        const { error: liveStartFnError } = await client.rpc("mark_live_session_started", {
+          p_owner_user_id: dummyId,
+          p_session_id: dummyId,
+          p_grace_seconds: 30,
+        });
+        if (liveStartFnError) {
+          markFailure(
+            id,
+            `is missing mark_live_session_started RPC (migration 20260704120000). code=${liveStartFnError.code ?? "unknown"} message=${liveStartFnError.message}`,
+          );
+        }
       }
     } finally {
       // Best-effort cleanup for probe records.

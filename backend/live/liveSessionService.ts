@@ -9,13 +9,19 @@ import {
 import { LivePlanResolver } from "./livePlanResolver";
 import type { LiveTierPolicy } from "./liveTierPolicy";
 import { GeminiLiveTokenError, GeminiLiveTokenService } from "./geminiLiveTokenService";
-import type { LiveFinalizeResult, LiveUsageDenialReason, LiveUsageStore } from "./liveUsageStore";
+import type {
+  LiveFinalizeResult,
+  LiveStoredSession,
+  LiveUsageDenialReason,
+  LiveUsageStore,
+} from "./liveUsageStore";
 
 export type LiveStatusReason =
   | "available"
   | "sign_in_required"
   | "not_available"
   | "not_available_on_plan"
+  | "daily_session_limit_reached"
   | "daily_limit_reached"
   | "active_session_limit"
   | "busy";
@@ -25,6 +31,7 @@ export type LiveStatusResponse = {
   available: boolean;
   reason: LiveStatusReason;
   remainingSecondsToday: number;
+  remainingSessionsToday: number;
   maxSessionSeconds: number;
   activeSession: { status: "active" } | null;
 };
@@ -86,7 +93,10 @@ type LiveSessionRecord = {
   reservedSeconds: number;
   createdAt: number;
   expiresAt: number;
+  audioStartedAt?: number;
   endedAt?: number;
+  usedSeconds: number;
+  status: string;
   committedAt?: number;
   committedMessageCount?: number;
   capacityReserved: boolean;
@@ -171,7 +181,7 @@ function buildInitialHistory(context: LivePreparedContext): LiveInitialHistoryTu
 
 function denialError(reason: LiveUsageDenialReason | undefined): LiveSessionError {
   if (reason === "daily_sessions") {
-    return new LiveSessionError("You've used today's Live voice time.", "live_daily_sessions_exhausted", 403);
+    return new LiveSessionError("You've used all of today's Live voice sessions.", "live_daily_sessions_exhausted", 403);
   }
   if (reason === "daily_time") {
     return new LiveSessionError("You've used today's Live voice time.", "live_daily_time_exhausted", 403);
@@ -224,6 +234,7 @@ export class LiveSessionService {
     const unavailable = (
       reason: LiveStatusReason,
       remainingSecondsToday = 0,
+      remainingSessionsToday = 0,
       maxSessionSeconds = 0,
       activeSessions = 0,
     ): LiveStatusResponse => ({
@@ -231,6 +242,7 @@ export class LiveSessionService {
       available: false,
       reason,
       remainingSecondsToday,
+      remainingSessionsToday,
       maxSessionSeconds,
       activeSession: activeSessions > 0 ? { status: "active" } : null,
     });
@@ -251,23 +263,35 @@ export class LiveSessionService {
         0,
         tier.dailySeconds - usage.secondsUsed - usage.secondsReserved,
       );
+      const remainingSessionsToday = Math.max(0, tier.dailySessions - usage.sessionsStarted);
       const maxSessionSeconds = Math.min(
         remainingSecondsToday,
         tier.maxSessionSeconds,
         this.dependencies.config.sessionMaxSeconds,
       );
-      if (usage.sessionsStarted >= tier.dailySessions || remainingSecondsToday <= 0) {
-        return unavailable(
-          "daily_limit_reached",
-          remainingSecondsToday,
-          maxSessionSeconds,
-          usage.activeSessions,
-        );
-      }
       if (usage.activeSessions >= tier.maxActiveSessions) {
         return unavailable(
           "active_session_limit",
           remainingSecondsToday,
+          remainingSessionsToday,
+          maxSessionSeconds,
+          usage.activeSessions,
+        );
+      }
+      if (remainingSessionsToday <= 0) {
+        return unavailable(
+          "daily_session_limit_reached",
+          remainingSecondsToday,
+          remainingSessionsToday,
+          maxSessionSeconds,
+          usage.activeSessions,
+        );
+      }
+      if (remainingSecondsToday <= 0) {
+        return unavailable(
+          "daily_limit_reached",
+          remainingSecondsToday,
+          remainingSessionsToday,
           maxSessionSeconds,
           usage.activeSessions,
         );
@@ -281,13 +305,20 @@ export class LiveSessionService {
         keySlots: this.dependencies.keyPool.slots,
       });
       if (!durableCapacity) {
-        return unavailable("busy", remainingSecondsToday, maxSessionSeconds, usage.activeSessions);
+        return unavailable(
+          "busy",
+          remainingSecondsToday,
+          remainingSessionsToday,
+          maxSessionSeconds,
+          usage.activeSessions,
+        );
       }
       return {
         enabled,
         available: true,
         reason: "available",
         remainingSecondsToday,
+        remainingSessionsToday,
         maxSessionSeconds,
         activeSession: usage.activeSessions > 0 ? { status: "active" } : null,
       };
@@ -334,10 +365,47 @@ export class LiveSessionService {
 
   private usedSeconds(session: LiveSessionRecord, forceReserved = false): number {
     if (forceReserved) return session.reservedSeconds;
+    if (!session.audioStartedAt) return 0;
     return Math.min(
       session.reservedSeconds,
-      Math.max(0, Math.floor((this.now() - session.createdAt) / 1_000)),
+      Math.max(0, Math.floor((this.now() - session.audioStartedAt) / 1_000)),
     );
+  }
+
+  private async cancelUnstartedRecord(session: LiveSessionRecord, reason: string): Promise<boolean> {
+    if (session.endedAt) return session.status === "cancelled";
+    const cancelled = await this.dependencies.usageStore.cancelReservation({
+      userId: session.userId,
+      sessionId: session.id,
+      reason,
+    });
+    if (!cancelled) {
+      const stored = await this.dependencies.usageStore.getSession({
+        userId: session.userId,
+        sessionId: session.id,
+      });
+      if (!stored) throw new Error("Live startup reservation could not be reconciled.");
+      session.audioStartedAt = stored.audioStartedAt ? Date.parse(stored.audioStartedAt) : undefined;
+      session.endedAt = stored.endedAt ? Date.parse(stored.endedAt) : undefined;
+      session.expiresAt = Date.parse(stored.expiresAt) || session.expiresAt;
+      session.usedSeconds = stored.usedSeconds;
+      session.status = stored.status;
+      if (session.endedAt) await this.releaseCapacity(session);
+      if (session.audioStartedAt || session.endedAt) return false;
+      throw new Error("Live startup reservation could not be cancelled.");
+    }
+    session.endedAt = this.now();
+    session.usedSeconds = 0;
+    session.status = "cancelled";
+    await this.releaseCapacity(session);
+    this.logger("session_finalized", {
+      plan: session.planCode,
+      key_slot: session.selectedSlot,
+      session_status: session.status,
+      reserved_seconds: session.reservedSeconds,
+      used_seconds: 0,
+    });
+    return true;
   }
 
   private async finalizeRecord(
@@ -355,6 +423,8 @@ export class LiveSessionService {
         metadata: { end_reason: reason },
       });
       if (!session.endedAt) session.endedAt = this.now();
+      session.usedSeconds = result.usedSeconds;
+      session.status = result.status;
       await this.releaseCapacity(session);
       this.logger("session_finalized", {
         plan: session.planCode,
@@ -378,7 +448,14 @@ export class LiveSessionService {
     const now = this.now();
     for (const session of this.sessions.values()) {
       if (session.endedAt || session.expiresAt > now) continue;
-      await this.finalizeRecord(session, "timeout", "stale_timeout");
+      if (session.audioStartedAt) {
+        await this.finalizeRecord(session, "timeout", "stale_timeout");
+      } else {
+        const cancelled = await this.cancelUnstartedRecord(session, "stale_startup_timeout");
+        if (!cancelled && session.audioStartedAt && !session.endedAt) {
+          await this.finalizeRecord(session, "timeout", "stale_timeout");
+        }
+      }
       cleaned += 1;
     }
     const retentionCutoff = now - 5 * 60_000;
@@ -475,6 +552,8 @@ export class LiveSessionService {
           reservedSeconds: reservation.reservedSeconds,
           createdAt: this.now(),
           expiresAt: Date.parse(capacityExpiresAt),
+          usedSeconds: 0,
+          status: "provisioning",
           capacityReserved: true,
           slotActive: false,
         };
@@ -490,13 +569,17 @@ export class LiveSessionService {
             userId: args.userId,
             sessionId,
             keySlot: lease.slot,
-            metadata: { search_grounding: !this.dependencies.config.disableSearchGrounding },
+            metadata: {
+              conversation_id: context.conversationId,
+              search_grounding: !this.dependencies.config.disableSearchGrounding,
+            },
           });
           if (!activated) throw new Error("Live session activation failed.");
 
           this.dependencies.keyPool.markSuccess(lease.slot);
           this.dependencies.keyPool.markActive(lease.slot);
           capacitySession.slotActive = true;
+          capacitySession.status = "active";
           this.sessions.set(sessionId, capacitySession);
           this.logger("session_created", {
             plan: planCode,
@@ -566,13 +649,86 @@ export class LiveSessionService {
     }
   }
 
+  private recordFromStoredSession(userId: string, stored: LiveStoredSession): LiveSessionRecord {
+    const conversationId = typeof stored.metadata.conversation_id === "string"
+      ? stored.metadata.conversation_id
+      : "";
+    return {
+      id: stored.sessionId,
+      userId,
+      conversationId,
+      planCode: stored.planCode,
+      selectedSlot: stored.keySlot ?? 0,
+      reservedSeconds: stored.reservedSeconds,
+      createdAt: Date.parse(stored.startedAt) || this.now(),
+      expiresAt: Date.parse(stored.expiresAt) || this.now(),
+      audioStartedAt: stored.audioStartedAt ? Date.parse(stored.audioStartedAt) : undefined,
+      endedAt: stored.endedAt ? Date.parse(stored.endedAt) : undefined,
+      usedSeconds: stored.usedSeconds,
+      status: stored.status,
+      capacityReserved: ["provisioning", "active"].includes(stored.status) && Boolean(stored.keySlot),
+      slotActive: false,
+    };
+  }
+
   private async getOwnedSession(userId: string, sessionId: string): Promise<LiveSessionRecord> {
     await this.cleanupStaleSessions();
-    const session = this.sessions.get(sessionId);
+    let session = this.sessions.get(sessionId);
+    if (!session) {
+      await this.dependencies.usageStore.cleanupStaleSessions(userId);
+      const stored = await this.dependencies.usageStore.getSession({ userId, sessionId });
+      if (stored) {
+        session = this.recordFromStoredSession(userId, stored);
+        this.sessions.set(sessionId, session);
+      }
+    }
     if (!session || session.userId !== userId) {
       throw new LiveSessionError("Live session not found.", "live_session_not_found", 404);
     }
     return session;
+  }
+
+  async markSessionStarted(args: { userId: string; sessionId: string }): Promise<{
+    started: boolean;
+    alreadyStarted: boolean;
+    sessionMaxSeconds: number;
+  }> {
+    const session = await this.getOwnedSession(args.userId, args.sessionId);
+    if (session.endedAt || session.status !== "active") {
+      throw new LiveSessionError("Live session is no longer active.", "live_session_inactive", 409);
+    }
+    if (session.audioStartedAt) {
+      return { started: true, alreadyStarted: true, sessionMaxSeconds: session.reservedSeconds };
+    }
+
+    const expiresAt = new Date(
+      this.now() + (session.reservedSeconds + this.dependencies.tierPolicy.staleGraceSeconds) * 1_000,
+    ).toISOString();
+    const extended = await this.dependencies.usageStore.extendCapacity(session.id, expiresAt);
+    if (!extended) {
+      throw new LiveSessionError("Live voice is busy. Try again soon.", "live_capacity_unavailable", 409);
+    }
+    const started = await this.dependencies.usageStore.markSessionStarted({
+      userId: session.userId,
+      sessionId: session.id,
+      graceSeconds: this.dependencies.tierPolicy.staleGraceSeconds,
+    });
+    if (!started.started || !started.audioStartedAt || !started.expiresAt) {
+      throw new LiveSessionError("Live voice could not start.", "live_session_start_failed", 409);
+    }
+    session.audioStartedAt = Date.parse(started.audioStartedAt);
+    session.expiresAt = Date.parse(started.expiresAt);
+    this.logger("session_started", {
+      plan: session.planCode,
+      key_slot: session.selectedSlot,
+      session_status: "active",
+      reserved_seconds: session.reservedSeconds,
+    });
+    return {
+      started: true,
+      alreadyStarted: started.alreadyStarted,
+      sessionMaxSeconds: session.reservedSeconds,
+    };
   }
 
   async commitSession(args: {
@@ -582,6 +738,17 @@ export class LiveSessionService {
     summary?: string;
   }): Promise<{ conversationId: string; committedMessageCount: number; alreadyCommitted: boolean }> {
     const session = await this.getOwnedSession(args.userId, args.sessionId);
+    if (!session.audioStartedAt) {
+      const cancelled = session.endedAt
+        ? session.status === "cancelled"
+        : await this.cancelUnstartedRecord(session, "commit_before_audio_start");
+      if (cancelled || !session.audioStartedAt) {
+        throw new LiveSessionError("Live session did not start.", "live_session_not_started", 409);
+      }
+    }
+    if (!session.conversationId) {
+      throw new LiveSessionError("Live conversation is unavailable.", "live_conversation_unavailable", 409);
+    }
     const alreadyCommitted = typeof session.committedAt === "number";
     if (!alreadyCommitted) {
       session.committedMessageCount = await this.dependencies.persistence.persistTranscript({
@@ -607,11 +774,33 @@ export class LiveSessionService {
     conversationId: string;
     durationSeconds: number;
     alreadyEnded: boolean;
+    cancelled: boolean;
   }> {
     const session = await this.getOwnedSession(args.userId, args.sessionId);
-    const alreadyEnded = typeof session.endedAt === "number";
-    const allowedReasons = new Set(["client_end", "max_duration", "socket_closed", "navigation", "error"]);
+    let alreadyEnded = typeof session.endedAt === "number";
+    const allowedReasons = new Set([
+      "client_end",
+      "max_duration",
+      "socket_closed",
+      "navigation",
+      "error",
+      "mic_blocked",
+      "websocket_failed",
+      "audio_start_failed",
+    ]);
     const safeReason = args.reason && allowedReasons.has(args.reason) ? args.reason : "client_end";
+    if (!alreadyEnded && !session.audioStartedAt) {
+      const cancelled = await this.cancelUnstartedRecord(session, safeReason);
+      if (cancelled) {
+        return {
+          conversationId: session.conversationId,
+          durationSeconds: 0,
+          alreadyEnded: false,
+          cancelled: true,
+        };
+      }
+      alreadyEnded = typeof session.endedAt === "number";
+    }
     const result = await this.finalizeRecord(
       session,
       safeReason === "max_duration" ? "timeout" : "ended",
@@ -621,6 +810,7 @@ export class LiveSessionService {
       conversationId: session.conversationId,
       durationSeconds: result.usedSeconds,
       alreadyEnded,
+      cancelled: result.status === "cancelled",
     };
   }
 }

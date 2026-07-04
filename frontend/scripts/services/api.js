@@ -783,6 +783,13 @@ async function createLiveSessionToken(conversationId) {
   });
 }
 
+async function markLiveSessionStarted(sessionId) {
+  return apiRequest(`/api/live/session/${encodeURIComponent(sessionId)}/started`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
 async function commitLiveSession(sessionId, payload, options = {}) {
   return apiRequest(`/api/live/session/${encodeURIComponent(sessionId)}/commit`, {
     method: "POST",
@@ -809,5 +816,5 @@ window.SentIQAPI = {
   getHealth, getConfig: getConfigAPI,
   sendDeepResearchStream, startDeepResearch, getDeepResearchStatus, subscribeDeepResearchEvents,
   cancelDeepResearchReport, getDeepResearchQuota, getDeepResearchReport, exportDeepResearchReport,
-  getLiveStatus, createLiveSessionToken, commitLiveSession, endLiveSession,
+  getLiveStatus, createLiveSessionToken, markLiveSessionStarted, commitLiveSession, endLiveSession,
 };

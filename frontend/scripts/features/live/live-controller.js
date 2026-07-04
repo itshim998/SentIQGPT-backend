@@ -1,4 +1,12 @@
 import { getLiveUnavailableCopy } from "./live-composer-state.js";
+import {
+  LIVE_INPUT_SAMPLE_RATE,
+  LIVE_OUTPUT_SAMPLE_RATE,
+  PcmChunkAccumulator,
+  StreamingPcm16Resampler,
+  base64Pcm16ToFloat32,
+  buildLiveAudioInputMessage,
+} from "./live-audio-protocol.js";
 
 (function initializeSentIQLive() {
   const API = window.SentIQAPI;
@@ -24,6 +32,10 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
   let mediaStream = null;
   let inputCapture = null;
   let playback = null;
+  let audioContext = null;
+  let audioInputReady = false;
+  let loggedFirstInputChunk = false;
+  let loggedFirstOutputChunk = false;
   let maxDurationTimer = 0;
   let remainingTimer = 0;
   let sessionEndAt = 0;
@@ -36,85 +48,39 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
     available: false,
     reason: "busy",
     remainingSecondsToday: 0,
+    remainingSessionsToday: 0,
     maxSessionSeconds: 0,
     activeSession: null,
   };
 
-  class StreamingPcm16Resampler {
-    constructor(inputSampleRate, outputSampleRate) {
-      this.ratio = inputSampleRate / outputSampleRate;
-      this.position = 0;
-      this.remainder = new Float32Array(0);
-    }
-
-    process(chunk) {
-      if (!(chunk instanceof Float32Array) || chunk.length === 0) return new Int16Array(0);
-      const combined = new Float32Array(this.remainder.length + chunk.length);
-      combined.set(this.remainder, 0);
-      combined.set(chunk, this.remainder.length);
-      const samples = [];
-      while (this.position + 1 < combined.length) {
-        const leftIndex = Math.floor(this.position);
-        const fraction = this.position - leftIndex;
-        const sample = combined[leftIndex] + (combined[leftIndex + 1] - combined[leftIndex]) * fraction;
-        samples.push(Math.max(-1, Math.min(1, sample)));
-        this.position += this.ratio;
-      }
-      const consumed = Math.min(Math.floor(this.position), Math.max(0, combined.length - 1));
-      this.remainder = combined.slice(consumed);
-      this.position -= consumed;
-      const output = new Int16Array(samples.length);
-      for (let index = 0; index < samples.length; index += 1) {
-        const sample = samples[index];
-        output[index] = sample < 0 ? Math.round(sample * 0x8000) : Math.round(sample * 0x7fff);
-      }
-      return output;
-    }
+  function liveDebug(event, details = {}) {
+    window.SentIQChat?.debugLog?.("[Live]", { event, ...details });
   }
 
-  function pcm16ToBase64(samples) {
-    const bytes = new Uint8Array(samples.length * 2);
-    const view = new DataView(bytes.buffer);
-    for (let index = 0; index < samples.length; index += 1) {
-      view.setInt16(index * 2, samples[index], true);
+  function unlockAudioContext() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return Promise.reject(new Error("Audio is unavailable."));
+    if (!audioContext || audioContext.state === "closed") {
+      audioContext = new AudioContextClass({ latencyHint: "interactive" });
     }
-    let binary = "";
-    for (let offset = 0; offset < bytes.length; offset += 8192) {
-      binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
-    }
-    return btoa(binary);
-  }
-
-  function base64ToFloat32(base64) {
-    const binary = atob(base64);
-    const byteLength = binary.length - (binary.length % 2);
-    const bytes = new Uint8Array(byteLength);
-    for (let index = 0; index < byteLength; index += 1) bytes[index] = binary.charCodeAt(index);
-    const view = new DataView(bytes.buffer);
-    const samples = new Float32Array(byteLength / 2);
-    for (let index = 0; index < samples.length; index += 1) {
-      samples[index] = view.getInt16(index * 2, true) / 0x8000;
-    }
-    return samples;
+    return audioContext.resume();
   }
 
   class PcmInputCapture {
-    constructor(stream, onSamples) {
+    constructor(stream, onSamples, context) {
       this.stream = stream;
       this.onSamples = onSamples;
-      this.context = null;
+      this.context = context;
       this.source = null;
       this.processor = null;
       this.silentGain = null;
       this.resampler = null;
+      this.accumulator = new PcmChunkAccumulator();
     }
 
     async start() {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) throw new Error("Audio capture is unavailable.");
-      this.context = new AudioContextClass({ latencyHint: "interactive" });
       await this.context.resume();
-      this.resampler = new StreamingPcm16Resampler(this.context.sampleRate, 16_000);
+      this.resampler = new StreamingPcm16Resampler(this.context.sampleRate, LIVE_INPUT_SAMPLE_RATE);
       this.source = this.context.createMediaStreamSource(this.stream);
       this.silentGain = this.context.createGain();
       this.silentGain.gain.value = 0;
@@ -122,7 +88,7 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
 
       const handleChunk = (chunk) => {
         const pcm = this.resampler?.process(chunk);
-        if (pcm?.length) this.onSamples(pcm);
+        if (pcm?.length) this.accumulator.push(pcm, this.onSamples);
       };
 
       if (this.context.audioWorklet && typeof window.AudioWorkletNode === "function") {
@@ -159,27 +125,23 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
       try { this.processor?.disconnect(); } catch { /* already disconnected */ }
       try { this.silentGain?.disconnect(); } catch { /* already disconnected */ }
       for (const track of this.stream.getTracks()) track.stop();
-      await this.context?.close().catch(() => {});
-      this.context = null;
+      this.accumulator.reset();
       this.source = null;
       this.processor = null;
     }
   }
 
   class PcmPlaybackQueue {
-    constructor(sampleRate) {
+    constructor(sampleRate, context) {
       this.sampleRate = sampleRate;
-      this.context = null;
+      this.context = context;
       this.nextStartTime = 0;
       this.sources = new Set();
     }
 
     async enqueue(base64) {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) throw new Error("Audio playback is unavailable.");
-      if (!this.context) this.context = new AudioContextClass({ latencyHint: "interactive" });
       await this.context.resume();
-      const samples = base64ToFloat32(base64);
+      const samples = base64Pcm16ToFloat32(base64);
       if (samples.length === 0) return;
       const buffer = this.context.createBuffer(1, samples.length, this.sampleRate);
       buffer.copyToChannel(samples, 0);
@@ -203,8 +165,6 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
 
     async close() {
       this.clear();
-      await this.context?.close().catch(() => {});
-      this.context = null;
     }
   }
 
@@ -212,7 +172,17 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
     panel.dataset.state = state;
     stateLabel.textContent = label;
     if (message) messageLabel.textContent = message;
-    retryButton.hidden = state !== "error" || Boolean(currentSession);
+    const retryable = [
+      "error",
+      "quota_denied",
+      "session_limit",
+      "mic_blocked",
+      "websocket_failed",
+      "audio_failed",
+      "unavailable",
+    ].includes(state);
+    retryButton.hidden = !retryable || Boolean(currentSession);
+    liveDebug("state", { state });
   }
 
   function formatDuration(totalSeconds) {
@@ -222,11 +192,16 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
   }
 
-  function setAvailableTime(seconds) {
-    const safeSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
-    remainingLabel.textContent = safeSeconds > 0
-      ? `${formatDuration(safeSeconds)} available today`
-      : "No time left today";
+  function setAvailableStatus(status) {
+    const safeSeconds = Math.max(0, Math.floor(Number(status?.remainingSecondsToday) || 0));
+    const safeSessions = Math.max(0, Math.floor(Number(status?.remainingSessionsToday) || 0));
+    if (safeSessions === 0 && safeSeconds > 0) {
+      remainingLabel.textContent = `${formatDuration(safeSeconds)} left · no sessions left`;
+    } else if (safeSeconds > 0) {
+      remainingLabel.textContent = `${formatDuration(safeSeconds)} available today`;
+    } else {
+      remainingLabel.textContent = "No time left today";
+    }
   }
 
   function updateSessionTime() {
@@ -263,7 +238,10 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
     if (error?.code === "live_plan_unavailable") {
       return { label: "Unavailable", message: getLiveUnavailableCopy("not_available_on_plan") };
     }
-    if (error?.code === "live_daily_time_exhausted" || error?.code === "live_daily_sessions_exhausted") {
+    if (error?.code === "live_daily_sessions_exhausted") {
+      return { label: "Session limit reached", message: getLiveUnavailableCopy("daily_session_limit_reached") };
+    }
+    if (error?.code === "live_daily_time_exhausted") {
       return { label: "Daily limit reached", message: getLiveUnavailableCopy("daily_limit_reached") };
     }
     if ([
@@ -341,6 +319,7 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
     maxDurationTimer = 0;
     remainingTimer = 0;
     sessionEndAt = 0;
+    audioInputReady = false;
     playback?.clear();
     const capture = inputCapture;
     inputCapture = null;
@@ -352,32 +331,45 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
     const player = playback;
     playback = null;
     if (player) await player.close().catch(() => {});
+    const context = audioContext;
+    audioContext = null;
+    if (context) await context.close().catch(() => {});
     const activeSocket = socket;
     socket = null;
     if (activeSocket && activeSocket.readyState < WebSocket.CLOSING) activeSocket.close(1000, "session ended");
     muteButton.disabled = true;
+    liveDebug("local_resources_released");
   }
 
   async function finishSession(reason = "client_end", options = {}) {
     if (ending) return;
     const session = currentSession;
     if (!session) {
-      hidePanel();
+      if (options.failure) {
+        setPanelState(options.failure.state || "error", options.failure.label, options.failure.message);
+        setEndButtonLabel("Close");
+      } else {
+        hidePanel();
+      }
       return;
     }
     ending = true;
     endButton.disabled = true;
-    setPanelState("ended", "Ending", "Saving the text transcript and closing the session.");
+    setPanelState("ended", "Ending", "Closing the Live conversation.");
     await releaseLocalResources();
     let commitSucceeded = true;
     try {
-      if (transcript.length > 0) {
+      if (!options.skipCommit && session.audioStarted && transcript.length > 0) {
         await API.commitLiveSession(session.sessionId, { transcript });
       }
     } catch {
       commitSucceeded = false;
     }
-    await API.endLiveSession(session.sessionId, reason, { keepalive: Boolean(options.keepalive) }).catch(() => {});
+    const endResult = await API.endLiveSession(
+      session.sessionId,
+      reason,
+      { keepalive: Boolean(options.keepalive) },
+    ).catch(() => null);
     currentSession = null;
     muted = false;
     const muteLabel = muteButton.querySelector("span");
@@ -387,15 +379,34 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
     endButton.disabled = false;
     setEndButtonLabel("Close");
     ending = false;
-    setPanelState(
-      commitSucceeded ? "ended" : "error",
-      commitSucceeded ? "Ended" : "Transcript not saved",
-      commitSucceeded ? "The Live conversation has ended." : "The conversation ended, but its transcript could not be saved.",
-    );
-    if (commitSucceeded) {
+    if (options.failure) {
+      setPanelState(options.failure.state || "error", options.failure.label, options.failure.message);
+    } else if (!endResult) {
+      setPanelState("error", "Cleanup pending", "Live voice ended here. Try again after the status refresh completes.");
+    } else {
+      setPanelState(
+        commitSucceeded ? "ended" : "error",
+        commitSucceeded ? "Ended" : "Transcript not saved",
+        commitSucceeded ? "The Live conversation has ended." : "The conversation ended, but its transcript could not be saved.",
+      );
+    }
+    liveDebug("session_finished", {
+      reason,
+      cleanup_succeeded: Boolean(endResult),
+      transcript_saved: commitSucceeded,
+      audio_started: Boolean(session.audioStarted),
+    });
+    if (commitSucceeded && session.audioStarted) {
       await window.SentIQChat?.refreshLiveConversation?.(session.conversationId).catch(() => {});
     }
     await refreshAvailability();
+  }
+
+  function failSession(reason, state, label, message) {
+    return finishSession(reason, {
+      skipCommit: true,
+      failure: { state, label, message },
+    });
   }
 
   async function handleServerMessage(event) {
@@ -405,24 +416,34 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
       const message = JSON.parse(raw);
       if (Object.prototype.hasOwnProperty.call(message, "setupComplete")) {
         if (inputCapture) return;
-        sendSocketMessage({
+        const historySent = sendSocketMessage({
           clientContent: {
             turns: Array.isArray(currentSession?.initialHistory) ? currentSession.initialHistory : [],
             turnComplete: true,
           },
         });
+        if (!historySent) throw new Error("Live setup could not be completed.");
+        liveDebug("setup_complete");
         inputCapture = new PcmInputCapture(mediaStream, (pcm) => {
-          if (muted || socket?.readyState !== WebSocket.OPEN) return;
-          sendSocketMessage({
-            realtimeInput: {
-              audio: {
-                data: pcm16ToBase64(pcm),
-                mimeType: "audio/pcm;rate=16000",
-              },
-            },
-          });
-        });
+          if (!audioInputReady || muted || socket?.readyState !== WebSocket.OPEN) return;
+          if (!loggedFirstInputChunk) {
+            loggedFirstInputChunk = true;
+            liveDebug("input_audio_started", {
+              sample_rate: LIVE_INPUT_SAMPLE_RATE,
+              chunk_samples: pcm.length,
+            });
+          }
+          sendSocketMessage(buildLiveAudioInputMessage(pcm));
+        }, audioContext);
         await inputCapture.start();
+        await API.markLiveSessionStarted(currentSession.sessionId);
+        currentSession.audioStarted = true;
+        audioInputReady = true;
+        startRemainingTimer(currentSession.sessionMaxSeconds);
+        maxDurationTimer = window.setTimeout(
+          () => finishSession("max_duration"),
+          currentSession.sessionMaxSeconds * 1_000,
+        );
         muteButton.disabled = false;
         setPanelState("listening", "Listening", "Speak naturally. You can interrupt while SentIQ is responding.");
         return;
@@ -434,17 +455,30 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
         setPanelState("listening", "Listening", "SentIQ stopped so you can continue.");
       }
       if (content?.inputTranscription?.text) {
+        liveDebug("transcription_received", { direction: "input" });
         appendTranscript("user", content.inputTranscription.text);
         setPanelState("thinking", "Thinking", "Considering what you said.");
       }
       if (content?.outputTranscription?.text) {
+        liveDebug("transcription_received", { direction: "output" });
         appendTranscript("assistant", content.outputTranscription.text);
         setPanelState("thinking", "Thinking", "Preparing a response.");
       }
       for (const part of content?.modelTurn?.parts || []) {
         const audio = part?.inlineData;
         if (!audio?.data || !String(audio.mimeType || "").startsWith("audio/pcm")) continue;
-        if (!playback) playback = new PcmPlaybackQueue(currentSession?.audio?.outputSampleRate || 24_000);
+        if (!playback) {
+          playback = new PcmPlaybackQueue(
+            currentSession?.audio?.outputSampleRate || LIVE_OUTPUT_SAMPLE_RATE,
+            audioContext,
+          );
+        }
+        if (!loggedFirstOutputChunk) {
+          loggedFirstOutputChunk = true;
+          liveDebug("output_audio_started", {
+            sample_rate: currentSession?.audio?.outputSampleRate || LIVE_OUTPUT_SAMPLE_RATE,
+          });
+        }
         setPanelState("speaking", "Speaking", "You can interrupt at any time.");
         await playback.enqueue(audio.data);
       }
@@ -453,14 +487,31 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
       }
       if (message.goAway) await finishSession("socket_closed");
     } catch {
-      setPanelState("error", "Connection error", "Live audio could not be processed. End the session and try again.");
+      await failSession(
+        "audio_start_failed",
+        "audio_failed",
+        "Audio connection failed",
+        "Live voice could not process audio. Try again.",
+      );
     }
   }
 
   async function startSession() {
     if (currentSession || ending) return;
+    loggedFirstInputChunk = false;
+    loggedFirstOutputChunk = false;
+    const audioUnlockPromise = supportsLiveAudio()
+      ? unlockAudioContext().then(() => null).catch((error) => error)
+      : Promise.resolve(null);
     const status = await refreshAvailability();
+    liveDebug("start_status", {
+      available: status.available,
+      reason: status.reason,
+      remaining_seconds: status.remainingSecondsToday,
+      remaining_sessions: status.remainingSessionsToday,
+    });
     if (status.reason === "sign_in_required") {
+      await releaseLocalResources();
       window.SentIQChat?.requestLiveAuth?.();
       return;
     }
@@ -472,15 +523,25 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
     setEndButtonLabel("End");
     endButton.disabled = false;
     muteButton.disabled = true;
-    setAvailableTime(status.remainingSecondsToday);
+    setAvailableStatus(status);
 
     if (!status.available) {
-      const label = status.reason === "daily_limit_reached"
+      await releaseLocalResources();
+      const label = status.reason === "daily_session_limit_reached"
+        ? "Session limit reached"
+        : status.reason === "daily_limit_reached"
         ? "Daily limit reached"
         : ["not_available", "not_available_on_plan", "browser_unsupported"].includes(status.reason)
           ? "Unavailable"
           : "Busy";
-      setPanelState("error", label, getLiveUnavailableCopy(status.reason));
+      const state = status.reason === "daily_session_limit_reached"
+        ? "session_limit"
+        : status.reason === "daily_limit_reached"
+          ? "quota_denied"
+          : ["not_available", "not_available_on_plan", "browser_unsupported"].includes(status.reason)
+            ? "unavailable"
+            : "error";
+      setPanelState(state, label, getLiveUnavailableCopy(status.reason));
       setEndButtonLabel("Close");
       return;
     }
@@ -488,20 +549,19 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
     setPanelState("connecting", "Connecting", "Getting Live voice ready.");
 
     if (!supportsLiveAudio()) {
-      setPanelState("error", "Unavailable", getLiveUnavailableCopy("browser_unsupported"));
+      setPanelState("unavailable", "Unavailable", getLiveUnavailableCopy("browser_unsupported"));
       setEndButtonLabel("Close");
       return;
     }
 
     try {
+      const audioUnlockError = await audioUnlockPromise;
+      if (audioUnlockError) throw audioUnlockError;
       const conversationId = await window.SentIQChat?.prepareLiveConversation?.();
       if (!conversationId) throw new Error("A signed-in conversation is required.");
       currentSession = await API.createLiveSessionToken(conversationId);
-      startRemainingTimer(currentSession.sessionMaxSeconds);
-      maxDurationTimer = window.setTimeout(
-        () => finishSession("max_duration"),
-        currentSession.sessionMaxSeconds * 1_000,
-      );
+      currentSession.audioStarted = false;
+      liveDebug("token_ready", { max_seconds: currentSession.sessionMaxSeconds });
       mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -511,32 +571,46 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
         },
         video: false,
       });
+      playback = new PcmPlaybackQueue(
+        currentSession?.audio?.outputSampleRate || LIVE_OUTPUT_SAMPLE_RATE,
+        audioContext,
+      );
       const separator = currentSession.webSocketUrl.includes("?") ? "&" : "?";
       socket = new WebSocket(
         `${currentSession.webSocketUrl}${separator}access_token=${encodeURIComponent(currentSession.ephemeralToken)}`,
       );
       socket.onopen = () => {
+        liveDebug("websocket_open");
         if (!sendSocketMessage({ setup: currentSession.setup })) {
-          void finishSession("error");
+          void failSession("websocket_failed", "websocket_failed", "Connection failed", "Live voice could not connect. Try again.");
         }
       };
       socket.onmessage = (event) => { void handleServerMessage(event); };
       socket.onerror = () => {
-        setPanelState("error", "Connection error", "Live voice could not connect. End the session and try again.");
+        liveDebug("failure", { stage: "websocket" });
+        void failSession("websocket_failed", "websocket_failed", "Connection failed", "Live voice could not connect. Try again.");
       };
       socket.onclose = () => {
-        if (!ending && currentSession) void finishSession("socket_closed");
+        if (!ending && currentSession) {
+          void failSession("websocket_failed", "websocket_failed", "Connection closed", "Live voice disconnected. Try again.");
+        }
       };
       currentSession.ephemeralToken = "";
     } catch (error) {
-      const session = currentSession;
-      await releaseLocalResources();
-      if (session?.sessionId) await API.endLiveSession(session.sessionId, "error").catch(() => {});
-      currentSession = null;
-      const failure = liveStartFailure(error);
-      setPanelState("error", failure.label, failure.message);
-      setEndButtonLabel("Close");
-      await refreshAvailability();
+      const micBlocked = error?.name === "NotAllowedError" || error?.name === "SecurityError";
+      const reason = micBlocked ? "mic_blocked" : "audio_start_failed";
+      const failure = micBlocked
+        ? { label: "Microphone blocked", message: "Allow microphone access to use Live voice." }
+        : liveStartFailure(error);
+      liveDebug("failure", { stage: micBlocked ? "microphone" : "startup", reason });
+      if (currentSession) {
+        await failSession(reason, micBlocked ? "mic_blocked" : "audio_failed", failure.label, failure.message);
+      } else {
+        await releaseLocalResources();
+        setPanelState(micBlocked ? "mic_blocked" : "error", failure.label, failure.message);
+        setEndButtonLabel("Close");
+        await refreshAvailability();
+      }
     }
   }
 
@@ -551,6 +625,7 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
           ? "browser_unsupported"
           : typeof status?.reason === "string" ? status.reason : "busy",
         remainingSecondsToday: Math.max(0, Number(status?.remainingSecondsToday) || 0),
+        remainingSessionsToday: Math.max(0, Number(status?.remainingSessionsToday) || 0),
         maxSessionSeconds: Math.max(0, Number(status?.maxSessionSeconds) || 0),
         activeSession: status?.activeSession?.status === "active" ? { status: "active" } : null,
       };
@@ -560,11 +635,19 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
         available: false,
         reason: "busy",
         remainingSecondsToday: 0,
+        remainingSessionsToday: 0,
         maxSessionSeconds: 0,
         activeSession: null,
       };
     }
     document.dispatchEvent(new CustomEvent("sentiq-live-status", { detail: { ...lastStatus } }));
+    liveDebug("status_refreshed", {
+      available: lastStatus.available,
+      reason: lastStatus.reason,
+      remaining_seconds: lastStatus.remainingSecondsToday,
+      remaining_sessions: lastStatus.remainingSessionsToday,
+      active: Boolean(lastStatus.activeSession),
+    });
     return lastStatus;
   }
 
@@ -621,7 +704,7 @@ import { getLiveUnavailableCopy } from "./live-composer-state.js";
     if (!currentSession || ending) return;
     const sessionId = currentSession.sessionId;
     ending = true;
-    if (transcript.length > 0) {
+    if (currentSession.audioStarted && transcript.length > 0) {
       void API.commitLiveSession(sessionId, { transcript }, { keepalive: true }).catch(() => {});
     }
     void releaseLocalResources();

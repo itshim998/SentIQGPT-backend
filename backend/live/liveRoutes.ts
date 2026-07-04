@@ -98,6 +98,23 @@ export function registerLiveRoutes(app: Express, dependencies: {
   );
 
   app.post(
+    "/api/live/session/:sessionId/started",
+    dependencies.requireAuth,
+    asyncRoute(async (req, res) => {
+      try {
+        const requestUser = getRequestUser(req);
+        const result = await dependencies.service.markSessionStarted({
+          userId: requestUser.sub,
+          sessionId: normalizeOptionalUuid(req.params.sessionId) || "",
+        });
+        res.json({ success: true, ...result });
+      } catch (error) {
+        if (!sendRouteError(error, res)) throw error;
+      }
+    }),
+  );
+
+  app.post(
     "/api/live/session/:sessionId/commit",
     dependencies.requireAuth,
     asyncRoute(async (req, res) => {
