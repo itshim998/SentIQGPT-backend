@@ -1,6 +1,46 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+startup_now_ms() {
+  local now
+  now="$(date +%s%3N 2>/dev/null || true)"
+  if [[ "${now}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${now}"
+  else
+    printf '%s000\n' "$(date +%s)"
+  fi
+}
+
+startup_started_ms="$(startup_now_ms)"
+startup_phase="script"
+startup_error_logged="0"
+
+startup_elapsed_ms() {
+  local now
+  now="$(startup_now_ms)"
+  printf '%s\n' "$((now - startup_started_ms))"
+}
+
+startup_log() {
+  echo "[Startup] ${1} elapsed=$(startup_elapsed_ms)ms"
+}
+
+startup_fail() {
+  startup_error_logged="1"
+  startup_log "${1}.failed"
+}
+
+startup_on_error() {
+  local status="$?"
+  if [[ "${startup_error_logged}" != "1" ]]; then
+    startup_fail "${startup_phase}"
+  fi
+  exit "${status}"
+}
+
+trap 'startup_on_error' ERR
+startup_log "script.begin"
+
 export PORT="${PORT:-3001}"
 export LLM_SERVICE_PORT="${LLM_SERVICE_PORT:-3002}"
 export LLM_SERVICE_HOST="${LLM_SERVICE_HOST:-127.0.0.1}"
@@ -8,19 +48,19 @@ export LLM_SERVICE_URL="${LLM_SERVICE_URL:-http://127.0.0.1:${LLM_SERVICE_PORT}}
 
 if [[ "${NODE_ENV:-}" == "production" ]]; then
   if [[ -z "${SENTIQ_INTERNAL_SERVICE_TOKEN:-}" ]]; then
-    echo "[startup] SENTIQ_INTERNAL_SERVICE_TOKEN is required in production"
+    startup_fail "production.internal-service-token"
     exit 1
   fi
   if [[ "${SENTIQ_ENABLE_UNSAFE_INTERNAL_ENDPOINTS:-false}" == "true" ]]; then
-    echo "[startup] Unsafe internal endpoints cannot be enabled in production"
+    startup_fail "production.internal-endpoints"
     exit 1
   fi
   if [[ "${LLM_SERVICE_HOST}" != "127.0.0.1" && "${LLM_SERVICE_HOST}" != "localhost" && "${LLM_SERVICE_HOST}" != "::1" ]]; then
-    echo "[startup] LLM_SERVICE_HOST must remain bound to 127.0.0.1 in production"
+    startup_fail "production.llm-host"
     exit 1
   fi
   if [[ "${LLM_SERVICE_URL}" != http://127.0.0.1:* && "${LLM_SERVICE_URL}" != http://localhost:* && "${LLM_SERVICE_URL}" != http://[::1]:* ]]; then
-    echo "[startup] LLM_SERVICE_URL must remain on the internal loopback service in production"
+    startup_fail "production.llm-url"
     exit 1
   fi
 fi
@@ -30,7 +70,7 @@ node_pid=""
 
 terminate() {
   trap - SIGTERM SIGINT
-  echo "[startup] stopping services"
+  startup_log "services.stopping"
   if [[ -n "${node_pid}" ]]; then
     kill -TERM "${node_pid}" 2>/dev/null || true
   fi
@@ -60,21 +100,24 @@ PY
 
 trap 'terminate; exit 143' SIGTERM SIGINT
 
-echo "[startup] starting Python LLM service on ${LLM_SERVICE_HOST}:${LLM_SERVICE_PORT}"
+startup_phase="python.process"
+startup_log "python.process.starting"
 python backend/llm_service.py &
 python_pid="$!"
 
+startup_phase="python.health"
+startup_log "python.health.wait.begin"
 max_attempts="${LLM_SERVICE_STARTUP_ATTEMPTS:-60}"
 attempt=1
 until check_llm_health; do
   if ! kill -0 "${python_pid}" 2>/dev/null; then
-    echo "[startup] Python LLM service exited before becoming healthy"
+    startup_fail "python.health.process-exited"
     wait "${python_pid}"
     exit "$?"
   fi
 
   if [[ "${attempt}" -ge "${max_attempts}" ]]; then
-    echo "[startup] Python LLM service did not become healthy after ${max_attempts}s"
+    startup_fail "python.health.timeout"
     terminate
     exit 1
   fi
@@ -83,8 +126,9 @@ until check_llm_health; do
   attempt=$((attempt + 1))
 done
 
-echo "[startup] Python LLM service is healthy"
-echo "[startup] starting Node API on port ${PORT}"
+startup_log "python.health.ready"
+startup_phase="node.process"
+startup_log "node.process.starting"
 node dist/backend/server.js &
 node_pid="$!"
 
@@ -93,6 +137,6 @@ wait -n "${python_pid}" "${node_pid}"
 exit_status="$?"
 set -e
 
-echo "[startup] one service exited with status ${exit_status}; shutting down container"
+startup_log "runtime.service-exited"
 terminate
 exit "${exit_status}"
