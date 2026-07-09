@@ -2,6 +2,8 @@
 //
 // Manages rotation, cooldowns, and retries across multiple keys.
 
+import { bootProfiler } from "../../../bootProfiler";
+
 const COOLDOWN_MS = 60_000; // 60 seconds cooldown for failed keys
 
 export type TavilyKeyManagerOptions = {
@@ -43,6 +45,7 @@ export class TavilyKeyManager {
     if (this.keys.length > 0) {
       console.log(`[Tavily] loaded ${this.keys.length} API key(s)`);
     }
+    bootProfiler.mark("tavily.keys.loaded");
   }
 
   hasKeys(): boolean {

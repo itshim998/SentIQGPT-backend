@@ -1,6 +1,7 @@
 import { callLLMAdapter, strictParseJsonObject, getDemoFallbackResponse } from "./PromptBuilders";
 import type { LLMAdapterCall } from "./PromptBuilders";
 import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../internalGateway";
+import { bootProfiler } from "../bootProfiler";
 
 // SentIQ Chat v1 — File Ingestion Handler
 //
@@ -189,6 +190,7 @@ export async function extractTextFromFile(args: {
 // using a file:// URL so it works in Node.js on both Windows and Linux.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _PDFParseClass: any = null;
+bootProfiler.mark("fileIngestion.pdfParser.init.begin");
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const mod = require("pdf-parse");
@@ -211,6 +213,8 @@ try {
   }
 } catch {
   console.warn("[File Parser] pdf-parse not available — PDF extraction disabled");
+} finally {
+  bootProfiler.mark("fileIngestion.pdfParser.init.done");
 }
 
 async function extractPdfText(buffer: Buffer): Promise<string> {

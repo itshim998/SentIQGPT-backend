@@ -1,3 +1,4 @@
+import { bootProfiler } from "./bootProfiler";
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -6,6 +7,8 @@ import multer from "multer";
 import { existsSync } from "fs";
 import { resolve as pathResolve } from "path";
 import { randomUUID } from "crypto";
+
+bootProfiler.mark("process.start");
 
 // Load .env
 const envPathCandidates = [
@@ -19,6 +22,8 @@ if (resolvedEnvPath) {
 } else {
   dotenv.config();
 }
+bootProfiler.enable();
+bootProfiler.mark("env.loaded");
 
 // AI handlers
 import { handleChat } from "./ai/ChatHandler";
@@ -175,9 +180,12 @@ import {
 import { validateInternalGatewayConfiguration } from "./internalGateway";
 
 const app = express();
+bootProfiler.mark("express.app.created");
 const billingQuotaService = new BillingQuotaService();
+bootProfiler.mark("billingQuotaService.created");
 const geminiLiveConfig = loadGeminiLiveConfig();
 const liveTierPolicy = loadLiveTierPolicy();
+bootProfiler.mark("live.config.loaded");
 const liveSessionService = new LiveSessionService({
   config: geminiLiveConfig,
   tierPolicy: liveTierPolicy,
@@ -191,6 +199,7 @@ const liveSessionService = new LiveSessionService({
   tokenService: new GeminiLiveTokenService(),
   persistence: new SentIQLivePersistence(),
 });
+bootProfiler.mark("liveSessionService.created");
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const JSON_BODY_LIMIT = process.env.SENTIQ_JSON_BODY_LIMIT?.trim() || "6mb";
 const TITLE_MAX_CHARS = 120;
@@ -203,6 +212,7 @@ const SHUTDOWN_GRACE_MS = (() => {
 })();
 
 app.set("trust proxy", process.env.TRUST_PROXY ?? "loopback, linklocal, uniquelocal");
+bootProfiler.mark("server.config.loaded");
 
 function getExplicitWebSearchMode(value: unknown): "basic" | undefined {
   if (!isWebSearchMode(value)) return undefined;
@@ -222,6 +232,7 @@ const ALLOWED_ORIGINS: string[] = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
   : DEFAULT_ORIGINS;
 
+bootProfiler.mark("cors.origins.resolved");
 console.log(`${LOG_PREFIX} CORS allowed origins:`, ALLOWED_ORIGINS);
 
 const corsOptions: cors.CorsOptions = {
@@ -363,6 +374,7 @@ registerLiveRoutes(app, {
   statusAuth: verifyJWT({ allowGuest: true }),
   tokenRateLimiter: aiRateLimiter,
 });
+bootProfiler.mark("middleware.routes.registered");
 
 const MODEL_BUDGET_PATHS = new Set([
   "/api/chat",
@@ -6806,6 +6818,7 @@ const deepResearchService = new DeepResearchService();
 const tavilyDeepResearchClient = new TavilyDeepResearchClient();
 const deepResearchTaskCoordinator = new DeepResearchTaskCoordinator();
 const deepResearchWorkerId = randomUUID();
+bootProfiler.mark("deepResearch.services.created");
 const DEEP_RESEARCH_HEARTBEAT_MS = 15_000;
 const DEEP_RESEARCH_STALE_AFTER_MS = (() => {
   const parsed = Number.parseInt(process.env.DEEP_RESEARCH_STALE_AFTER_MS || "90000", 10);
@@ -7697,10 +7710,12 @@ function shutdownProcess(reason: string, exitCode: number, error?: unknown): voi
   });
 }
 
-validateInternalGatewayConfiguration();
+bootProfiler.measureSync("internalGateway.validation", validateInternalGatewayConfiguration);
 
-verifyShardMigrations().then(() => {
+bootProfiler.measure("verifyShardMigrations", verifyShardMigrations).then(() => {
+  bootProfiler.mark("express.listen.begin");
   httpServer = app.listen(PORT, () => {
+    bootProfiler.mark("express.listen.ready");
     console.log(`${LOG_PREFIX} Server running on port ${PORT}`);
     console.log(`${LOG_PREFIX} Architecture: Orchestrated Dual-Model (Gemini + Groq)`);
     console.log(`${LOG_PREFIX} LLM Service expected on port ${process.env.LLM_SERVICE_PORT || "3002"}`);
@@ -7712,7 +7727,15 @@ verifyShardMigrations().then(() => {
 
     // Log Tavily availability for debugging
     const tavilyStatus = isTavilyAvailable();
+    bootProfiler.mark("tavily.availability.checked");
     console.log(`${LOG_PREFIX} Tavily Web Search: ${tavilyStatus ? "ENABLED" : "DISABLED (set TAVILY_KEYS in env)"}`);
+    bootProfiler.logSummary({
+      ready: true,
+      measures: [
+        { key: "verifyShardMigrations", label: "verifyShardMigrations" },
+        { key: "dataShardsParallel", label: "verifyShardMigrations.data-shards.parallel" },
+      ],
+    });
   });
 
   process.on("SIGTERM", () => shutdownProcess("SIGTERM", 0));
