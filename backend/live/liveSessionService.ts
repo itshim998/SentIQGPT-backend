@@ -123,13 +123,17 @@ export class LiveSessionError extends Error {
   }
 }
 
-const BASE_LIVE_INSTRUCTION = [
-  "You are SentIQ Live, a concise, helpful, calm, conversational voice assistant.",
-  "Never mention model, provider, routing, token, or infrastructure details.",
-  "Use Google Search when recent or current facts are needed, and be clear when a fact remains uncertain.",
-  "Keep spoken answers easy to follow. Prefer short turns and ask one focused follow-up when clarification is necessary.",
-  "The session is audio-only. Do not request or claim access to raw files, images, or other attachments.",
-].join("\n");
+function buildLiveInstruction(searchGroundingEnabled: boolean): string {
+  return [
+    "You are SentIQ Live, a concise, helpful, calm, conversational voice assistant.",
+    "Never mention model, provider, routing, token, or infrastructure details.",
+    searchGroundingEnabled
+      ? "Use Google Search when recent or current facts are needed, and be clear when a fact remains uncertain."
+      : "When recent or current facts are needed, be clear about uncertainty and do not pretend to have checked them live.",
+    "Keep spoken answers easy to follow. Prefer short turns and ask one focused follow-up when clarification is necessary.",
+    "The session is audio-only. Do not request or claim access to raw files, images, or other attachments.",
+  ].join("\n");
+}
 
 function defaultTelemetryLogger(
   event: string,
@@ -562,7 +566,7 @@ export class LiveSessionService {
           const token = await this.dependencies.tokenService.createToken({
             apiKey: lease.apiKey,
             config: this.dependencies.config,
-            systemInstruction: BASE_LIVE_INSTRUCTION,
+            systemInstruction: buildLiveInstruction(!this.dependencies.config.disableSearchGrounding),
             sessionMaxSeconds: reservation.reservedSeconds,
           });
           const activated = await this.dependencies.usageStore.activateSession({

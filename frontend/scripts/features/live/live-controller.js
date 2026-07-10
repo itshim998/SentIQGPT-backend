@@ -8,6 +8,8 @@ import {
   buildLiveAudioInputMessage,
 } from "./live-audio-protocol.js";
 
+const LIVE_HANDSHAKE_STABILITY_MS = 750;
+
 (function initializeSentIQLive() {
   const API = window.SentIQAPI;
   const liveButton = document.getElementById("live-beta-btn");
@@ -55,6 +57,18 @@ import {
 
   function liveDebug(event, details = {}) {
     window.SentIQChat?.debugLog?.("[Live]", { event, ...details });
+  }
+
+  function waitForHandshakeStability() {
+    return new Promise((resolve) => window.setTimeout(resolve, LIVE_HANDSHAKE_STABILITY_MS));
+  }
+
+  function classifySocketClose(event) {
+    const reason = typeof event?.reason === "string" ? event.reason.toLowerCase() : "";
+    if (event?.code === 1008 || /permission|policy|auth|forbidden/.test(reason)) return "policy";
+    if (event?.code === 1011 || /quota|capacity|resource/.test(reason)) return "capacity";
+    if (event?.code === 1000) return "normal";
+    return "connection";
   }
 
   function unlockAudioContext() {
@@ -424,6 +438,11 @@ import {
         });
         if (!historySent) throw new Error("Live setup could not be completed.");
         liveDebug("setup_complete");
+        // Some provider-side policy/quota failures arrive immediately after
+        // setupComplete. Do not start metering or audio capture until the
+        // socket has survived that setup window.
+        await waitForHandshakeStability();
+        if (ending || !currentSession || socket?.readyState !== WebSocket.OPEN) return;
         inputCapture = new PcmInputCapture(mediaStream, (pcm) => {
           if (!audioInputReady || muted || socket?.readyState !== WebSocket.OPEN) return;
           if (!loggedFirstInputChunk) {
@@ -590,7 +609,12 @@ import {
         liveDebug("failure", { stage: "websocket" });
         void failSession("websocket_failed", "websocket_failed", "Connection failed", "Live voice could not connect. Try again.");
       };
-      socket.onclose = () => {
+      socket.onclose = (event) => {
+        liveDebug("websocket_closed", {
+          code: Number(event?.code) || 0,
+          clean: Boolean(event?.wasClean),
+          failure_class: classifySocketClose(event),
+        });
         if (!ending && currentSession) {
           void failSession("websocket_failed", "websocket_failed", "Connection closed", "Live voice disconnected. Try again.");
         }

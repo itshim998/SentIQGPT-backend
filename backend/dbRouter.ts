@@ -490,6 +490,15 @@ async function verifyShardMigrationsLegacy(): Promise<void> {
           `is missing mark_live_session_started RPC (migration 20260704120000). code=${controlLiveStartFnError.code ?? "unknown"} message=${controlLiveStartFnError.message}`,
         );
       }
+
+      const { data: refundPolicyVersion, error: refundPolicyError } = await controlDbClient
+        .rpc("get_sentiq_live_refund_policy_version");
+      if (refundPolicyError || Number(refundPolicyVersion) < 1) {
+        markFailure(
+          CONTROL_DATABASE_ID,
+          `is missing Live startup refund policy (migration 20260710190000). code=${refundPolicyError?.code ?? "invalid_version"} message=${refundPolicyError?.message ?? "invalid policy version"}`,
+        );
+      }
     });
   }
 
@@ -805,6 +814,16 @@ async function verifyShardMigrationsLegacy(): Promise<void> {
                     );
                   }
                 })(),
+                (async () => {
+                  const { data: refundPolicyVersion, error: refundPolicyError } = await client
+                    .rpc("get_sentiq_live_refund_policy_version");
+                  if (refundPolicyError || Number(refundPolicyVersion) < 1) {
+                    markFailure(
+                      id,
+                      `is missing Live startup refund policy (migration 20260710190000). code=${refundPolicyError?.code ?? "invalid_version"} message=${refundPolicyError?.message ?? "invalid policy version"}`,
+                    );
+                  }
+                })(),
               ]);
             }),
           ] : []),
@@ -1034,6 +1053,15 @@ async function verifyShardMigrationsRpc(): Promise<void> {
       ));
       logStartupVerifierRpcTimings("verifyShardMigrations.control-live", result);
       reportStartupVerifierRpcFailures(CONTROL_DATABASE_ID, result, markFailure);
+
+      const { data: refundPolicyVersion, error: refundPolicyError } = await controlDbClient
+        .rpc("get_sentiq_live_refund_policy_version");
+      if (refundPolicyError || Number(refundPolicyVersion) < 1) {
+        markFailure(
+          CONTROL_DATABASE_ID,
+          `is missing Live startup refund policy (migration 20260710190000). code=${refundPolicyError?.code ?? "invalid_version"} message=${refundPolicyError?.message ?? "invalid policy version"}`,
+        );
+      }
     });
   }
 
@@ -1052,6 +1080,16 @@ async function verifyShardMigrationsRpc(): Promise<void> {
       ));
       logStartupVerifierRpcTimings(profileBase, result);
       reportStartupVerifierRpcFailures(id, result, markFailure);
+      if (verifyLiveSchema) {
+        const { data: refundPolicyVersion, error: refundPolicyError } = await clientByDatabaseId[id]
+          .rpc("get_sentiq_live_refund_policy_version");
+        if (refundPolicyError || Number(refundPolicyVersion) < 1) {
+          markFailure(
+            id,
+            `is missing Live startup refund policy (migration 20260710190000). code=${refundPolicyError?.code ?? "invalid_version"} message=${refundPolicyError?.message ?? "invalid policy version"}`,
+          );
+        }
+      }
     });
   };
 

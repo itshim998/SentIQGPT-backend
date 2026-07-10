@@ -157,7 +157,7 @@ async function testTokenService(): Promise<void> {
   assert.equal(capturedBody.uses, 1);
   assert.equal(capturedBody.bidiGenerateContentSetup.model, "models/gemini-3.1-flash-live-preview");
   assert.deepEqual(capturedBody.bidiGenerateContentSetup.generationConfig.responseModalities, ["AUDIO"]);
-  assert.deepEqual(capturedBody.bidiGenerateContentSetup.tools, [{ googleSearch: {} }]);
+  assert(!("tools" in capturedBody.bidiGenerateContentSetup), "core Live audio should not require Search quota");
   assert.deepEqual(capturedBody.bidiGenerateContentSetup.inputAudioTranscription, {});
   assert.deepEqual(capturedBody.bidiGenerateContentSetup.outputAudioTranscription, {});
   assert.deepEqual(capturedBody.bidiGenerateContentSetup.historyConfig, {
@@ -169,10 +169,25 @@ async function testTokenService(): Promise<void> {
   );
   assert(!initBodyContains(capturedBody, API_KEY), "the long-lived API key must not be embedded in the token body");
 
+  await service.createToken({
+    apiKey: API_KEY,
+    config: loadGeminiLiveConfig({
+      SENTIQ_LIVE_ENABLED: "true",
+      SENTIQ_LIVE_SEARCH_GROUNDING_ENABLED: "true",
+    }),
+    systemInstruction: "Live system instruction",
+  });
+  assert.deepEqual(
+    capturedBody.bidiGenerateContentSetup.tools,
+    [{ googleSearch: {} }],
+    "eligible deployments can explicitly opt into Search grounding",
+  );
+
   const constrainedToken = await service.createToken({
     apiKey: API_KEY,
     config: loadGeminiLiveConfig({
       SENTIQ_LIVE_ENABLED: "true",
+      SENTIQ_LIVE_SEARCH_GROUNDING_ENABLED: "true",
       SENTIQ_LIVE_DISABLE_SEARCH_GROUNDING: "true",
     }),
     systemInstruction: "Live system instruction",
@@ -1003,6 +1018,9 @@ function testFrontendFoundation(): void {
   assert(controller.includes("content?.interrupted"));
   assert(controller.includes("audioStreamEnd: true"));
   assert(controller.includes("API.markLiveSessionStarted(currentSession.sessionId)"));
+  assert(controller.includes("LIVE_HANDSHAKE_STABILITY_MS = 750"));
+  assert(controller.includes("await waitForHandshakeStability()"));
+  assert(controller.includes('liveDebug("websocket_closed"'));
   assert(controller.includes("const status = await refreshAvailability()"));
   assert(controller.indexOf("const status = await refreshAvailability()") < controller.indexOf("API.createLiveSessionToken"));
   const startAckIndex = controller.indexOf("API.markLiveSessionStarted(currentSession.sessionId)");
@@ -1134,8 +1152,21 @@ function testMigrationFoundation(): void {
   assert.match(lifecycleMigration, /sessions_started = greatest\(0, sessions_started - 1\)/i);
   assert.match(lifecycleMigration, /seconds_reserved = greatest\(0, seconds_reserved - stale_session\.reserved_seconds\)/i);
   assert.doesNotMatch(lifecycleMigration, /audio_data|raw_audio/i, "lifecycle migration must not store raw audio");
+
+  const startupRefundMigration = readFileSync(
+    resolve(root, "supabase/migrations/20260710190000_refund_failed_live_startups.sql"),
+    "utf8",
+  );
+  assert.match(startupRefundMigration, /create or replace function public\.finalize_live_session/i);
+  assert.match(startupRefundMigration, /end_reason[\s\S]*websocket_failed/i);
+  assert.match(startupRefundMigration, /when refund_failed_start then 'cancelled'/i);
+  assert.match(startupRefundMigration, /sessions_started = greatest\([\s\S]*refund_failed_start then 1 else 0/i);
+  assert.match(startupRefundMigration, /where status = 'ended'[\s\S]*used_seconds = 0/i);
+  assert.match(startupRefundMigration, /get_sentiq_live_refund_policy_version/i);
+  assert.doesNotMatch(startupRefundMigration, /audio_data|raw_audio/i, "startup refund migration must not store raw audio");
   assert.match(dbRouter, /SENTIQ_LIVE_ENABLED[\s\S]*audio_started_at/);
   assert.match(dbRouter, /mark_live_session_started/);
+  assert.match(dbRouter, /get_sentiq_live_refund_policy_version/);
 }
 
 async function main(): Promise<void> {

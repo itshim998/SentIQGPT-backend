@@ -43,6 +43,15 @@ function normalizeVoice(value: string | undefined): string {
   return /^[a-z][a-z0-9_-]{0,63}$/i.test(normalized) ? normalized : DEFAULT_GEMINI_LIVE_VOICE;
 }
 
+function disableSearchGrounding(env: NodeJS.ProcessEnv): boolean {
+  // Core audio must work on Gemini projects that do not have a paid Search
+  // grounding quota. Search is therefore an explicit opt-in, while the older
+  // disable flag remains an emergency override for existing deployments.
+  const enabled = readBoolean(env.SENTIQ_LIVE_SEARCH_GROUNDING_ENABLED, false);
+  const disabled = readBoolean(env.SENTIQ_LIVE_DISABLE_SEARCH_GROUNDING, false);
+  return !enabled || disabled;
+}
+
 export function loadGeminiLiveConfig(env: NodeJS.ProcessEnv = process.env): GeminiLiveConfig {
   return {
     enabled: readBoolean(env.SENTIQ_LIVE_ENABLED, false),
@@ -50,7 +59,7 @@ export function loadGeminiLiveConfig(env: NodeJS.ProcessEnv = process.env): Gemi
     defaultVoice: normalizeVoice(env.SENTIQ_LIVE_DEFAULT_VOICE),
     sessionMaxSeconds: readSessionMaxSeconds(env.SENTIQ_LIVE_SESSION_MAX_SECONDS),
     audioOnly: readBoolean(env.SENTIQ_LIVE_AUDIO_ONLY, true),
-    disableSearchGrounding: readBoolean(env.SENTIQ_LIVE_DISABLE_SEARCH_GROUNDING, false),
+    disableSearchGrounding: disableSearchGrounding(env),
     tokenUrl: GEMINI_LIVE_TOKEN_URL,
     webSocketUrl: GEMINI_LIVE_WEBSOCKET_URL,
   };
