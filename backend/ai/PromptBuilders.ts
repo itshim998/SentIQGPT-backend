@@ -4,7 +4,11 @@ import { resolve as pathResolve } from "path";
 import { composeContext, type RouteEvidenceItem } from "../orchestrator/contextComposer";
 import { MATH_RESPONSE_SYSTEM_PROMPT } from "./mathPrompt";
 import { PRODUCT_DISCLAIMER, PRODUCT_NAME } from "../branding";
-import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../internalGateway";
+import {
+  getInternalGatewayHeaders,
+  getInternalGatewayUrl,
+  waitForInternalGatewayReady,
+} from "../internalGateway";
 import { getRequestBudgetContext } from "../context/requestBudgetContext";
 import {
   estimateInputTokens,
@@ -253,6 +257,7 @@ function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
 }
 
 export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMAdapterResult> {
+  await waitForInternalGatewayReady();
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
   const url = getInternalGatewayUrl("/llm/invoke");
@@ -359,6 +364,7 @@ export async function callLLMAdapter(call: LLMAdapterCall): Promise<string> {
 export async function callLLMAdapterStream(
   call: LLMAdapterCall,
 ): Promise<ReadableStream<string>> {
+  await waitForInternalGatewayReady();
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
   const url = getInternalGatewayUrl("/llm/stream");

@@ -1,6 +1,10 @@
 import { callLLMAdapter, strictParseJsonObject, getDemoFallbackResponse } from "./PromptBuilders";
 import type { LLMAdapterCall } from "./PromptBuilders";
-import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../internalGateway";
+import {
+  getInternalGatewayHeaders,
+  getInternalGatewayUrl,
+  waitForInternalGatewayReady,
+} from "../internalGateway";
 import { bootProfiler } from "../bootProfiler";
 
 // SentIQ Chat v1 — File Ingestion Handler
@@ -292,6 +296,7 @@ async function analyzeImageWithVision(
     `Filename: ${filename}`;
 
   try {
+    await waitForInternalGatewayReady();
     const response = await fetch(getInternalGatewayUrl("/llm/vision"), {
       method: "POST",
       headers: getInternalGatewayHeaders({ "Content-Type": "application/json" }),

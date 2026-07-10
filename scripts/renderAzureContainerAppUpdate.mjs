@@ -7,6 +7,42 @@ export const SCALE_ENVIRONMENT_VARIABLES = Object.freeze({
   cooldownSeconds: "SENTIQ_CONTAINER_COOLDOWN_SECONDS",
 });
 
+export function buildContainerProbes(readinessPath) {
+  if (readinessPath !== "/ready" && readinessPath !== "/health") {
+    throw new Error("Readiness path must be /ready or /health.");
+  }
+
+  return [
+    {
+      type: "Liveness",
+      httpGet: { path: "/health", port: 3001, scheme: "HTTP" },
+      initialDelaySeconds: 30,
+      periodSeconds: 30,
+      timeoutSeconds: 5,
+      failureThreshold: 3,
+      successThreshold: 1,
+    },
+    {
+      type: "Readiness",
+      httpGet: { path: readinessPath, port: 3001, scheme: "HTTP" },
+      initialDelaySeconds: 5,
+      periodSeconds: 3,
+      timeoutSeconds: 2,
+      failureThreshold: 2,
+      successThreshold: 1,
+    },
+    {
+      type: "Startup",
+      httpGet: { path: "/health", port: 3001, scheme: "HTTP" },
+      initialDelaySeconds: 5,
+      periodSeconds: 5,
+      timeoutSeconds: 3,
+      failureThreshold: 30,
+      successThreshold: 1,
+    },
+  ];
+}
+
 function requireInteger(value, name, minimum, maximum) {
   const text = String(value ?? "").trim();
   if (!/^\d+$/.test(text)) {
@@ -61,8 +97,8 @@ export function renderAzureContainerAppUpdate(args) {
   if (!args.document || typeof args.document !== "object" || Array.isArray(args.document)) {
     throw new Error("Azure Container App input must be a JSON object.");
   }
-  if (!args.containerName || !args.image || !args.revisionSuffix) {
-    throw new Error("Container name, image, and revision suffix are required.");
+  if (!args.containerName || !args.image || !args.revisionSuffix || !args.readinessPath) {
+    throw new Error("Container name, image, revision suffix, and readiness path are required.");
   }
 
   const scale = parseScaleSettings(args);
@@ -79,6 +115,7 @@ export function renderAzureContainerAppUpdate(args) {
 
   const container = matchingContainers[0];
   container.image = args.image;
+  container.probes = buildContainerProbes(args.readinessPath);
   container.env = Array.isArray(container.env) ? container.env : [];
   upsertPlainEnvironmentVariable(
     container.env,
@@ -130,6 +167,7 @@ function main() {
     minReplicas: args["min-replicas"],
     maxReplicas: args["max-replicas"],
     cooldownSeconds: args["cooldown-seconds"],
+    readinessPath: args["readiness-path"],
   });
   fs.writeFileSync(args.output, `${JSON.stringify(rendered, null, 2)}\n`, { mode: 0o600 });
 }

@@ -177,7 +177,10 @@ import {
   PUBLIC_BACKEND_SERVICE_NAME,
   PUBLIC_SYSTEM_NAME,
 } from "./branding";
-import { validateInternalGatewayConfiguration } from "./internalGateway";
+import {
+  isInternalGatewayHealthy,
+  validateInternalGatewayConfiguration,
+} from "./internalGateway";
 
 const app = express();
 bootProfiler.mark("express.app.created");
@@ -213,6 +216,21 @@ const SHUTDOWN_GRACE_MS = (() => {
 
 app.set("trust proxy", process.env.TRUST_PROXY ?? "loopback, linklocal, uniquelocal");
 bootProfiler.mark("server.config.loaded");
+
+// Probe routes intentionally run before CORS, auth, audit, and rate limiting.
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok", service: PUBLIC_BACKEND_SERVICE_NAME });
+});
+
+app.get("/ready", async (_req, res) => {
+  const gatewayHealthy = await isInternalGatewayHealthy();
+  if (!gatewayHealthy) {
+    res.setHeader("Retry-After", "2");
+    res.status(503).json({ status: "warming" });
+    return;
+  }
+  res.json({ status: "ready" });
+});
 
 function getExplicitWebSearchMode(value: unknown): "basic" | undefined {
   if (!isWebSearchMode(value)) return undefined;
@@ -2096,13 +2114,6 @@ setInterval(() => {
     if (session.uploadTime < cutoff) fileSessionMap.delete(sessionKey);
   }
 }, 10 * 60 * 1000);
-
-// ===============================
-// GET /health — Lightweight uptime ping (UptimeRobot / Render keep-alive)
-// ===============================
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: PUBLIC_BACKEND_SERVICE_NAME });
-});
 
 // ===============================
 // GET /api/health

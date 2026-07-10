@@ -5,7 +5,9 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import {
   getInternalGatewayHeaders,
+  isInternalGatewayHealthy,
   validateInternalGatewayConfiguration,
+  waitForInternalGatewayReady,
 } from "./internalGateway";
 
 const root = path.resolve(__dirname, "..");
@@ -43,6 +45,11 @@ async function verifyNodeBridge(): Promise<void> {
         ? req.headers["x-sentiq-internal-token"]
         : undefined,
     });
+    if (req.url === "/llm/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
     if (req.url === "/llm/stream") {
       res.writeHead(200, { "Content-Type": "text/event-stream" });
       res.end(
@@ -79,12 +86,76 @@ async function verifyNodeBridge(): Promise<void> {
       streamed += value;
     }
     assert.equal(streamed, "stream-ok", "internal capacity telemetry does not alter public stream chunks");
-    assert.deepEqual(captured.map((request) => request.path), ["/llm/invoke", "/llm/stream"]);
-    assert(captured.every((request) => request.token === "pass1-test-token"), "Node bridge forwards internal token");
+    assert.deepEqual(captured.map((request) => request.path), ["/llm/health", "/llm/invoke", "/llm/stream"]);
+    assert.equal(captured[0].token, undefined, "minimal health probe does not send credentials");
+    assert(captured.slice(1).every((request) => request.token === "pass1-test-token"), "Node bridge forwards internal token");
     console.log("PASS | Node invoke and stream bridge forward internal token");
   } finally {
     restoreEnv("LLM_SERVICE_URL", originalUrl);
     restoreEnv("SENTIQ_INTERNAL_SERVICE_TOKEN", originalToken);
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+}
+
+async function verifyGatewayReadinessWait(): Promise<void> {
+  const originalUrl = process.env.LLM_SERVICE_URL;
+  let healthAttempts = 0;
+  let healthy = false;
+  const server = http.createServer((req, res) => {
+    if (req.url !== "/llm/health") {
+      res.writeHead(404).end();
+      return;
+    }
+    healthAttempts += 1;
+    if (healthAttempts >= 3) healthy = true;
+    res.writeHead(healthy ? 200 : 503, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: healthy ? "ok" : "warming" }));
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    process.env.LLM_SERVICE_URL = `http://127.0.0.1:${port}`;
+    await waitForInternalGatewayReady();
+    assert.equal(healthAttempts, 3, "bounded readiness wait retries until Python becomes healthy");
+    healthy = false;
+    healthAttempts = 0;
+    assert.equal(await isInternalGatewayHealthy(), false, "live readiness does not trust the startup latch");
+    console.log("PASS | delayed gateway readiness is bounded and live health remains current");
+  } finally {
+    restoreEnv("LLM_SERVICE_URL", originalUrl);
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+}
+
+async function verifyGatewayReadinessTimeout(): Promise<void> {
+  const originalUrl = process.env.LLM_SERVICE_URL;
+  const server = http.createServer((_req, res) => {
+    res.writeHead(503, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "warming", internal: "must-not-escape" }));
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    process.env.LLM_SERVICE_URL = `http://127.0.0.1:${port}`;
+    await assert.rejects(waitForInternalGatewayReady, (error: unknown) => {
+      const candidate = error as { statusCode?: number; code?: string; headers?: Record<string, string>; message?: string };
+      assert.equal(candidate.statusCode, 503);
+      assert.equal(candidate.code, "backend_unavailable");
+      assert.equal(candidate.headers?.["Retry-After"], "2");
+      assert.doesNotMatch(candidate.message || "", /127\.0\.0\.1|internal|llm/i);
+      return true;
+    });
+    console.log("PASS | gateway readiness timeout returns a sanitized retryable 503");
+  } finally {
+    restoreEnv("LLM_SERVICE_URL", originalUrl);
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
@@ -121,6 +192,8 @@ async function main(): Promise<void> {
     restoreEnv("SENTIQ_ENABLE_UNSAFE_INTERNAL_ENDPOINTS", originalUnsafe);
   }
 
+  await verifyGatewayReadinessWait();
+  await verifyGatewayReadinessTimeout();
   await verifyNodeBridge();
 
   const callerFiles = [
@@ -133,6 +206,7 @@ async function main(): Promise<void> {
     const source = read(relativePath);
     assert.match(source, /getInternalGatewayUrl/, `${relativePath} must use shared internal URL helper`);
     assert.match(source, /getInternalGatewayHeaders/, `${relativePath} must use shared token header helper`);
+    assert.match(source, /waitForInternalGatewayReady/, `${relativePath} must use shared bounded readiness wait`);
   }
   assert.match(
     read("backend/tools/webSearch/tavilySearchPipeline.ts"),
@@ -149,19 +223,30 @@ async function main(): Promise<void> {
   assert.doesNotMatch(python, /detail=str\(e\)|\{'error': str\(e\)\}|test_response_preview/, "Python responses must not expose raw internal errors");
 
   const server = read("backend/server.ts");
-  assert.match(server, /validateInternalGatewayConfiguration\(\)/, "Node startup must validate internal gateway configuration");
+  assert.match(
+    server,
+    /measureSync\("internalGateway\.validation", validateInternalGatewayConfiguration\)/,
+    "Node startup must validate internal gateway configuration",
+  );
   assert.match(server, /sanitizePublicPayload/, "Node public JSON and SSE responses must stay sanitized");
-  const publicHealth = sourceBlock(server, 'app.get("/health"', "// ===============================\n// GET /api/health");
+  const publicHealth = sourceBlock(server, 'app.get("/health"', 'app.get("/ready"');
+  const publicReady = sourceBlock(server, 'app.get("/ready"', "function getExplicitWebSearchMode");
   const apiHealth = sourceBlock(server, 'app.get("/api/health"', "// ===============================\n// POST /api/chat/intent");
   const apiConfig = sourceBlock(server, 'app.get("/api/config"', "// ===============================\n// GET /api/audit");
-  for (const [label, block] of [["health", publicHealth], ["api health", apiHealth], ["api config", apiConfig]] as const) {
+  for (const [label, block] of [["health", publicHealth], ["ready", publicReady], ["api health", apiHealth], ["api config", apiConfig]] as const) {
     assert.doesNotMatch(
       block,
       /SENTIQ_INTERNAL|LLM_SERVICE|provider|model|architecture|keyStatus|secret/i,
       `${label} must not expose internal gateway or provider details`,
     );
   }
+  const firstOrdinaryMiddleware = server.indexOf("app.use(attachRateLimitIdentity)");
+  assert(server.indexOf('app.get("/health"') < firstOrdinaryMiddleware);
+  assert(server.indexOf('app.get("/ready"') < firstOrdinaryMiddleware);
+  assert.doesNotMatch(publicHealth + publicReady, /verifyJWT|auditMiddleware|RateLimiter|rateLimiter/);
+  assert.match(publicReady, /isInternalGatewayHealthy/);
   console.log("PASS | public Node health and config source remains sanitized");
+  console.log("PASS | probe routes bypass auth, audit, and ordinary API rate limiting");
 
   const frontendSource = [
     read("frontend/index.html"),
@@ -171,9 +256,12 @@ async function main(): Promise<void> {
   console.log("PASS | frontend has no direct Python gateway references");
 
   const startup = read("scripts/start-container.sh");
-  assert.match(startup, /SENTIQ_INTERNAL_SERVICE_TOKEN is required in production/);
-  assert.match(startup, /LLM_SERVICE_HOST must remain bound to 127\.0\.0\.1 in production/);
-  assert.match(startup, /LLM_SERVICE_URL must remain on the internal loopback service in production/);
+  assert.match(startup, /production\.internal-service-token/);
+  assert.match(startup, /production\.llm-host/);
+  assert.match(startup, /production\.llm-url/);
+  assert.match(startup, /PYTHON_HEALTH_INTERVAL_SECONDS=10/);
+  assert.match(startup, /PYTHON_HEALTH_FAILURE_THRESHOLD=6/);
+  assert.doesNotMatch(startup, /wait -n -p/, "startup supervision must not require wait -n -p");
 
   const workflow = read(".github/workflows/azure-container-apps.yml");
   assert.match(workflow, /properties\.configuration\.ingress\.targetPort/);

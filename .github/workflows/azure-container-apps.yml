@@ -124,7 +124,8 @@ jobs:
             --revision-suffix "${GITHUB_SHA::12}" \
             --min-replicas "${SENTIQ_CONTAINER_MIN_REPLICAS}" \
             --max-replicas "${SENTIQ_CONTAINER_MAX_REPLICAS}" \
-            --cooldown-seconds "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}"
+            --cooldown-seconds "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}" \
+            --readiness-path "/ready"
 
           az containerapp update \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
@@ -134,8 +135,14 @@ jobs:
           actual_min="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.minReplicas' -o tsv)"
           actual_max="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.maxReplicas' -o tsv)"
           actual_cooldown="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.cooldownPeriod' -o tsv)"
+          readiness_path="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].probes[?type=='Readiness'].httpGet.path | [0]" -o tsv)"
+          readiness_failures="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].probes[?type=='Readiness'].failureThreshold | [0]" -o tsv)"
           if [[ "${actual_min}" != "${SENTIQ_CONTAINER_MIN_REPLICAS}" || "${actual_max}" != "${SENTIQ_CONTAINER_MAX_REPLICAS}" || "${actual_cooldown}" != "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}" ]]; then
             echo "Azure Container App scale verification failed."
+            exit 1
+          fi
+          if [[ "${readiness_path}" != "/ready" || "${readiness_failures}" != "2" ]]; then
+            echo "Azure Container App readiness probe verification failed."
             exit 1
           fi
           echo "Azure Container App scale active: min=${actual_min}, max=${actual_max}, cooldown=${actual_cooldown}."
@@ -215,7 +222,8 @@ jobs:
             --revision-suffix "rollback-${suffix}" \
             --min-replicas "${SENTIQ_CONTAINER_MIN_REPLICAS}" \
             --max-replicas "${SENTIQ_CONTAINER_MAX_REPLICAS}" \
-            --cooldown-seconds "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}"
+            --cooldown-seconds "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}" \
+            --readiness-path "/health"
 
           az containerapp update \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
@@ -225,8 +233,14 @@ jobs:
           actual_min="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.minReplicas' -o tsv)"
           actual_max="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.maxReplicas' -o tsv)"
           actual_cooldown="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.cooldownPeriod' -o tsv)"
+          readiness_path="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].probes[?type=='Readiness'].httpGet.path | [0]" -o tsv)"
+          readiness_failures="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].probes[?type=='Readiness'].failureThreshold | [0]" -o tsv)"
           if [[ "${actual_min}" != "${SENTIQ_CONTAINER_MIN_REPLICAS}" || "${actual_max}" != "${SENTIQ_CONTAINER_MAX_REPLICAS}" || "${actual_cooldown}" != "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}" ]]; then
             echo "Azure Container App scale verification failed."
+            exit 1
+          fi
+          if [[ "${readiness_path}" != "/health" || "${readiness_failures}" != "2" ]]; then
+            echo "Azure Container App rollback readiness probe verification failed."
             exit 1
           fi
           echo "Azure Container App scale active: min=${actual_min}, max=${actual_max}, cooldown=${actual_cooldown}."

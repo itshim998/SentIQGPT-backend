@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
+  buildContainerProbes,
   parseScaleSettings,
   renderAzureContainerAppUpdate,
   SCALE_ENVIRONMENT_VARIABLES,
@@ -43,13 +44,14 @@ const document = {
 };
 
 const rendered = renderAzureContainerAppUpdate({
-  document,
+  document: structuredClone(document),
   containerName: "sentiqgpt-backend",
   image: "registry/sentiqgpt-backend:new",
   revisionSuffix: "new-revision",
   minReplicas: "0",
   maxReplicas: "1",
   cooldownSeconds: "900",
+  readinessPath: "/ready",
 });
 
 const template = rendered.properties.template;
@@ -57,7 +59,17 @@ const container = template.containers[0];
 assert.deepEqual(rendered.properties.configuration.ingress, sentinelIngress);
 assert.deepEqual(template.scale.rules, sentinelRules);
 assert.equal(template.scale.pollingInterval, 30);
-assert.deepEqual(container.probes, [{ type: "Liveness", httpGet: { path: "/health", port: 3001 } }]);
+assert.deepEqual(container.probes, buildContainerProbes("/ready"));
+const readinessProbe = container.probes.find((probe) => probe.type === "Readiness");
+assert.deepEqual(readinessProbe, {
+  type: "Readiness",
+  httpGet: { path: "/ready", port: 3001, scheme: "HTTP" },
+  initialDelaySeconds: 5,
+  periodSeconds: 3,
+  timeoutSeconds: 2,
+  failureThreshold: 2,
+  successThreshold: 1,
+});
 assert.equal(container.image, "registry/sentiqgpt-backend:new");
 assert.equal(template.revisionSuffix, "new-revision");
 assert.deepEqual(
@@ -74,6 +86,22 @@ for (const [key, name] of Object.entries(SCALE_ENVIRONMENT_VARIABLES)) {
   const expected = key === "minReplicas" ? "0" : key === "maxReplicas" ? "1" : "900";
   assert.deepEqual(entries[0], { name, value: expected });
 }
+
+const rollback = renderAzureContainerAppUpdate({
+  document: structuredClone(document),
+  containerName: "sentiqgpt-backend",
+  image: "registry/sentiqgpt-backend:previous",
+  revisionSuffix: "rollback-previous",
+  minReplicas: "0",
+  maxReplicas: "1",
+  cooldownSeconds: "900",
+  readinessPath: "/health",
+});
+assert.deepEqual(
+  rollback.properties.template.containers[0].probes,
+  buildContainerProbes("/health"),
+  "previous-image rollback must restore readiness to /health",
+);
 
 assert.throws(
   () => parseScaleSettings({ minReplicas: "0", maxReplicas: "2", cooldownSeconds: "900" }),
@@ -102,6 +130,8 @@ assert.equal(
   2,
   "normal and rollback deployments must apply the rendered Container App configuration",
 );
+assert.equal(workflow.match(/--readiness-path "\/ready"/g)?.length, 1);
+assert.equal(workflow.match(/--readiness-path "\/health"/g)?.length, 1);
 assert.equal(
   workflow.match(/Azure Container App scale active:/g)?.length,
   2,

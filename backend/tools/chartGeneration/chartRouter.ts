@@ -13,7 +13,11 @@ import { generateChartSpec } from "./chartSpecGenerator";
 import { renderChart, rendererLabel } from "./chartRenderer";
 import type { ChartResult } from "./types";
 import { buildChartJsConfig, buildPlotlyFigure } from "./frontendPayloadBuilder";
-import { getInternalGatewayHeaders, getInternalGatewayUrl } from "../../internalGateway";
+import {
+  getInternalGatewayHeaders,
+  getInternalGatewayUrl,
+  waitForInternalGatewayReady,
+} from "../../internalGateway";
 
 // ==============================
 // Preview (optional)
@@ -31,6 +35,7 @@ async function fetchMatplotlibPreview(code: string): Promise<string | undefined>
     return undefined;
   }
   try {
+    await waitForInternalGatewayReady();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
 
