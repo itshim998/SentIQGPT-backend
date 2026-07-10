@@ -440,7 +440,7 @@ export async function getOrAssignUserDatabase(userId: string): Promise<SupabaseC
   return assignDatabaseToUser(normalizedUserId);
 }
 
-export async function verifyShardMigrations(): Promise<void> {
+async function verifyShardMigrationsLegacy(): Promise<void> {
   const dummyId = randomUUID();
   console.log(`[SentIQ Chat] Running startup migration verification checks...`);
   const shardIds: DatabaseId[] = [2, 3, 4];
@@ -829,5 +829,268 @@ export async function verifyShardMigrations(): Promise<void> {
   if (failed) {
     console.error(`[SentIQ Chat] Migration check failed! Exiting.`);
     process.exit(1);
+  }
+}
+
+type StartupVerifierMode = "legacy" | "rpc" | "auto";
+
+type StartupVerifierRpcFailure = {
+  readonly group: string;
+  readonly check: string;
+  readonly code: string;
+  readonly message: string;
+};
+
+type StartupVerifierRpcTiming = {
+  readonly group: string;
+  readonly elapsedMs: number;
+};
+
+type StartupVerifierRpcResult = {
+  readonly ok: boolean;
+  readonly failures: readonly StartupVerifierRpcFailure[];
+  readonly timings: readonly StartupVerifierRpcTiming[];
+};
+
+type StartupVerifierRpcName = "verify_sentiq_control_startup" | "verify_sentiq_data_shard_startup";
+
+type RpcFailureReporter = (dbId: DatabaseId, message: string) => void;
+
+class StartupVerifierRpcUnavailableError extends Error {
+  constructor(dbId: DatabaseId, rpcName: StartupVerifierRpcName) {
+    super(`[dbRouter] startup verifier RPC unavailable db=${dbId} rpc=${rpcName}`);
+    this.name = "StartupVerifierRpcUnavailableError";
+  }
+}
+
+function readStartupVerifierMode(): StartupVerifierMode {
+  const normalized = process.env.SENTIQ_STARTUP_VERIFIER?.trim().toLowerCase();
+  if (!normalized) return "auto";
+  if (normalized === "legacy" || normalized === "rpc" || normalized === "auto") return normalized;
+
+  console.warn(`[SentIQ Chat] startup-verifier.mode-invalid.using-auto`);
+  return "auto";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function safeRpcLabel(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const normalized = value.trim();
+  if (!/^[a-zA-Z0-9._:-]+$/.test(normalized)) return fallback;
+  return normalized.slice(0, 80) || fallback;
+}
+
+function safeRpcMessage(value: unknown): string {
+  if (typeof value !== "string") return "unknown";
+  return value.replace(/\s+/g, " ").trim().slice(0, 240) || "unknown";
+}
+
+function isStartupVerifierRpcUnavailable(error: DbRouterErrorLike, rpcName: StartupVerifierRpcName): boolean {
+  const code = error?.code ?? "";
+  const message = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`.toLowerCase();
+  const rpcNameLower = rpcName.toLowerCase();
+
+  return code === "PGRST202"
+    || code === "42883"
+    || (code === "42501" && message.includes(rpcNameLower))
+    || message.includes(`could not find the function`)
+    || (message.includes(rpcNameLower) && message.includes("does not exist"));
+}
+
+function parseStartupVerifierRpcResult(
+  value: unknown,
+  rpcName: StartupVerifierRpcName,
+  dbId: DatabaseId,
+): StartupVerifierRpcResult {
+  let parsedValue = value;
+  if (typeof parsedValue === "string") {
+    try {
+      parsedValue = JSON.parse(parsedValue) as unknown;
+    } catch {
+      throw new Error(`[dbRouter] malformed startup verifier RPC response db=${dbId} rpc=${rpcName}`);
+    }
+  }
+
+  if (Array.isArray(parsedValue) && parsedValue.length === 1 && isRecord(parsedValue[0])) {
+    parsedValue = parsedValue[0][rpcName] ?? parsedValue[0];
+  }
+
+  if (!isRecord(parsedValue) || typeof parsedValue.ok !== "boolean") {
+    throw new Error(`[dbRouter] malformed startup verifier RPC response db=${dbId} rpc=${rpcName}`);
+  }
+
+  if (!Array.isArray(parsedValue.failures) || !Array.isArray(parsedValue.timings)) {
+    throw new Error(`[dbRouter] malformed startup verifier RPC response db=${dbId} rpc=${rpcName}`);
+  }
+
+  const failures = parsedValue.failures.map((failure): StartupVerifierRpcFailure => {
+    if (!isRecord(failure)) {
+      throw new Error(`[dbRouter] malformed startup verifier RPC failure db=${dbId} rpc=${rpcName}`);
+    }
+
+    return {
+      group: safeRpcLabel(failure.group, "unknown"),
+      check: safeRpcLabel(failure.check, "unknown"),
+      code: safeRpcLabel(failure.code, "unknown"),
+      message: safeRpcMessage(failure.message),
+    };
+  });
+
+  const timings = parsedValue.timings.map((timing): StartupVerifierRpcTiming => {
+    if (!isRecord(timing)) {
+      throw new Error(`[dbRouter] malformed startup verifier RPC timing db=${dbId} rpc=${rpcName}`);
+    }
+
+    const elapsedMs = Number(timing.elapsed_ms);
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) {
+      throw new Error(`[dbRouter] malformed startup verifier RPC timing db=${dbId} rpc=${rpcName}`);
+    }
+
+    return {
+      group: safeRpcLabel(timing.group, "unknown"),
+      elapsedMs,
+    };
+  });
+
+  if (parsedValue.ok && failures.length > 0) {
+    throw new Error(`[dbRouter] malformed startup verifier RPC response db=${dbId} rpc=${rpcName}`);
+  }
+
+  return {
+    ok: parsedValue.ok,
+    failures,
+    timings,
+  };
+}
+
+async function callStartupVerifierRpc(
+  client: SupabaseClient,
+  dbId: DatabaseId,
+  rpcName: StartupVerifierRpcName,
+  args: Record<string, unknown>,
+): Promise<StartupVerifierRpcResult> {
+  const { data, error } = await client.rpc(rpcName, args);
+  if (error) {
+    if (isStartupVerifierRpcUnavailable(error, rpcName)) {
+      throw new StartupVerifierRpcUnavailableError(dbId, rpcName);
+    }
+
+    throw new Error(
+      `[dbRouter] startup verifier RPC failed db=${dbId} rpc=${rpcName} ${formatDbRouterError(error)}`,
+    );
+  }
+
+  return parseStartupVerifierRpcResult(data, rpcName, dbId);
+}
+
+function logStartupVerifierRpcTimings(profileBase: string, result: StartupVerifierRpcResult): void {
+  for (const timing of result.timings) {
+    bootProfiler.markDuration(`${profileBase}.rpc.${timing.group}.done`, timing.elapsedMs);
+  }
+}
+
+function reportStartupVerifierRpcFailures(
+  dbId: DatabaseId,
+  result: StartupVerifierRpcResult,
+  markFailure: RpcFailureReporter,
+): void {
+  if (result.ok) return;
+
+  if (result.failures.length === 0) {
+    markFailure(dbId, `startup verifier RPC returned ok=false without failure details`);
+    return;
+  }
+
+  for (const failure of result.failures) {
+    markFailure(
+      dbId,
+      `startup verifier RPC failure group=${failure.group} check=${failure.check} code=${failure.code} message=${failure.message}`,
+    );
+  }
+}
+
+async function verifyShardMigrationsRpc(): Promise<void> {
+  const dummyId = randomUUID();
+  console.log(`[SentIQ Chat] Running startup migration verification RPC checks...`);
+  const shardIds: DatabaseId[] = [2, 3, 4];
+  const verifyLiveSchema = process.env.SENTIQ_LIVE_ENABLED?.trim().toLowerCase() === "true";
+  let failed = false;
+
+  const markFailure = (dbId: DatabaseId, message: string): void => {
+    console.error(`[SentIQ Chat] FATAL: Shard DB ${dbId} ${message}`);
+    failed = true;
+  };
+
+  if (verifyLiveSchema) {
+    await bootProfiler.measure("verifyShardMigrations.control-live", async () => {
+      const result = await bootProfiler.measure("verifyShardMigrations.control-live.rpc", () => callStartupVerifierRpc(
+        controlDbClient,
+        CONTROL_DATABASE_ID,
+        "verify_sentiq_control_startup",
+        { p_probe_user_id: dummyId },
+      ));
+      logStartupVerifierRpcTimings("verifyShardMigrations.control-live", result);
+      reportStartupVerifierRpcFailures(CONTROL_DATABASE_ID, result, markFailure);
+    });
+  }
+
+  const verifyDataShard = async (id: DatabaseId): Promise<void> => {
+    const shardLabel = formatDatabaseBootLabel(id);
+    const profileBase = `verifyShardMigrations.${shardLabel}`;
+    await bootProfiler.measure(profileBase, async () => {
+      const result = await bootProfiler.measure(`${profileBase}.rpc`, () => callStartupVerifierRpc(
+        clientByDatabaseId[id],
+        id,
+        "verify_sentiq_data_shard_startup",
+        {
+          p_probe_user_id: dummyId,
+          p_verify_live: verifyLiveSchema,
+        },
+      ));
+      logStartupVerifierRpcTimings(profileBase, result);
+      reportStartupVerifierRpcFailures(id, result, markFailure);
+    });
+  };
+
+  console.log(`[SentIQ Chat] Running data shard migration verification RPC checks in parallel...`);
+  await bootProfiler.measure("verifyShardMigrations.data-shards.parallel", async () => {
+    const shardResults = await Promise.allSettled(shardIds.map((id) => verifyDataShard(id)));
+    const rejected = shardResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (rejected) {
+      throw rejected.reason;
+    }
+  });
+
+  if (failed) {
+    console.error(`[SentIQ Chat] Migration check failed! Exiting.`);
+    process.exit(1);
+  }
+}
+
+export async function verifyShardMigrations(): Promise<void> {
+  const mode = readStartupVerifierMode();
+  bootProfiler.mark(`verifyShardMigrations.mode.${mode}`);
+
+  if (mode === "legacy") {
+    return verifyShardMigrationsLegacy();
+  }
+
+  if (mode === "rpc") {
+    return verifyShardMigrationsRpc();
+  }
+
+  try {
+    await verifyShardMigrationsRpc();
+  } catch (error) {
+    if (!(error instanceof StartupVerifierRpcUnavailableError)) {
+      throw error;
+    }
+
+    console.warn(`[SentIQ Chat] startup-verifier.rpc-unavailable.fallback-legacy`);
+    bootProfiler.mark("verifyShardMigrations.rpc-unavailable.fallback-legacy");
+    await verifyShardMigrationsLegacy();
   }
 }

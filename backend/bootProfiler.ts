@@ -45,6 +45,11 @@ class BootProfiler {
     this.recordMark(label);
   }
 
+  markDuration(label: string, durationMs: number): void {
+    const safeDurationMs = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 0;
+    this.recordMark(label, safeDurationMs);
+  }
+
   private recordMark(label: string, deltaOverrideMs?: number): void {
     const now = performance.now();
     const entry: BootProfileEntry = {
