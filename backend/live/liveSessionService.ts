@@ -21,7 +21,6 @@ export type LiveStatusReason =
   | "sign_in_required"
   | "not_available"
   | "not_available_on_plan"
-  | "daily_session_limit_reached"
   | "daily_limit_reached"
   | "active_session_limit"
   | "busy";
@@ -63,6 +62,15 @@ export interface LiveSessionPersistence {
     transcript: LiveTranscriptTurn[];
     summary?: string;
   }): Promise<number>;
+}
+
+export interface LiveSessionTitleGenerator {
+  generateTitle(args: {
+    userId: string;
+    conversationId: string;
+    userMessage: string;
+    assistantReply: string;
+  }): Promise<void>;
 }
 
 export type LiveSessionTokenResponse = {
@@ -184,9 +192,6 @@ function buildInitialHistory(context: LivePreparedContext): LiveInitialHistoryTu
 }
 
 function denialError(reason: LiveUsageDenialReason | undefined): LiveSessionError {
-  if (reason === "daily_sessions") {
-    return new LiveSessionError("You've used all of today's Live voice sessions.", "live_daily_sessions_exhausted", 403);
-  }
   if (reason === "daily_time") {
     return new LiveSessionError("You've used today's Live voice time.", "live_daily_time_exhausted", 403);
   }
@@ -210,6 +215,7 @@ export class LiveSessionService {
     keyPool: GeminiLiveKeyPool;
     tokenService: GeminiLiveTokenService;
     persistence: LiveSessionPersistence;
+    titleGenerator?: LiveSessionTitleGenerator;
     now?: () => number;
     newId?: () => string;
     logger?: TelemetryLogger;
@@ -267,7 +273,9 @@ export class LiveSessionService {
         0,
         tier.dailySeconds - usage.secondsUsed - usage.secondsReserved,
       );
-      const remainingSessionsToday = Math.max(0, tier.dailySessions - usage.sessionsStarted);
+      // Compatibility field for older clients. Allowance is governed by time,
+      // so this means that at least one more session can be started.
+      const remainingSessionsToday = remainingSecondsToday > 0 ? 1 : 0;
       const maxSessionSeconds = Math.min(
         remainingSecondsToday,
         tier.maxSessionSeconds,
@@ -276,15 +284,6 @@ export class LiveSessionService {
       if (usage.activeSessions >= tier.maxActiveSessions) {
         return unavailable(
           "active_session_limit",
-          remainingSecondsToday,
-          remainingSessionsToday,
-          maxSessionSeconds,
-          usage.activeSessions,
-        );
-      }
-      if (remainingSessionsToday <= 0) {
-        return unavailable(
-          "daily_session_limit_reached",
           remainingSecondsToday,
           remainingSessionsToday,
           maxSessionSeconds,
@@ -493,7 +492,6 @@ export class LiveSessionService {
       sessionId,
       planCode,
       dailySeconds: tier.dailySeconds,
-      dailySessions: tier.dailySessions,
       maxActiveSessions: tier.maxActiveSessions,
       reserveSeconds: requestedSeconds,
       graceSeconds: this.dependencies.tierPolicy.staleGraceSeconds,
@@ -759,6 +757,28 @@ export class LiveSessionService {
         ...args,
         conversationId: session.conversationId,
       });
+      const firstUserMessage = args.transcript.find((turn) => turn.role === "user" && turn.text.trim())?.text.trim();
+      const firstAssistantReply = args.transcript.find((turn) => turn.role === "assistant" && turn.text.trim())?.text.trim();
+      if (firstUserMessage && firstAssistantReply && this.dependencies.titleGenerator) {
+        try {
+          await this.dependencies.titleGenerator.generateTitle({
+            userId: args.userId,
+            conversationId: session.conversationId,
+            userMessage: firstUserMessage,
+            assistantReply: firstAssistantReply,
+          });
+          this.logger("title_generated", {
+            plan: session.planCode,
+            key_slot: session.selectedSlot,
+          });
+        } catch (error) {
+          this.logger("title_generation_failed", {
+            plan: session.planCode,
+            key_slot: session.selectedSlot,
+            error_type: error instanceof Error ? error.name : "unknown",
+          });
+        }
+      }
       session.committedAt = this.now();
       this.logger("session_committed", {
         plan: session.planCode,

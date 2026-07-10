@@ -226,7 +226,6 @@ body.live-beta-open {
 }
 
 .live-beta-panel[data-state="quota_denied"] .live-beta-state-dot,
-.live-beta-panel[data-state="session_limit"] .live-beta-state-dot,
 .live-beta-panel[data-state="mic_blocked"] .live-beta-state-dot,
 .live-beta-panel[data-state="unavailable"] .live-beta-state-dot {
   background: #e5b96e;
@@ -241,7 +240,6 @@ body.live-beta-open {
 }
 
 .live-beta-panel[data-state="quota_denied"] .live-beta-orb,
-.live-beta-panel[data-state="session_limit"] .live-beta-orb,
 .live-beta-panel[data-state="mic_blocked"] .live-beta-orb,
 .live-beta-panel[data-state="unavailable"] .live-beta-orb,
 .live-beta-panel[data-state="error"] .live-beta-orb,

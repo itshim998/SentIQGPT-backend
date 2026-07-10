@@ -3,7 +3,6 @@ import type { BillingPlanCode } from "../billing/entitlementTypes";
 export type LiveTierLimit = {
   enabled: boolean;
   dailySeconds: number;
-  dailySessions: number;
   maxSessionSeconds: number;
   maxActiveSessions: number;
 };
@@ -53,7 +52,6 @@ function buildTier(
   return {
     enabled: defaults.enabled,
     dailySeconds: dailyMinutes * 60,
-    dailySessions: readInteger(env, `${prefix}_DAILY_SESSIONS`, defaults.dailySessions, 0, 1_000),
     maxSessionSeconds: readInteger(env, `${prefix}_MAX_SESSION_SECONDS`, defaults.maxSessionSeconds, 30, 900),
     maxActiveSessions: readInteger(env, `${prefix}_MAX_ACTIVE`, defaults.maxActiveSessions, 1, 100),
   };
@@ -63,7 +61,6 @@ export function loadLiveTierPolicy(env: NodeJS.ProcessEnv = process.env): LiveTi
   const free = buildTier(env, "SENTIQ_LIVE_FREE", {
     enabled: readBoolean(env.SENTIQ_LIVE_FREE_ENABLED, true),
     dailySeconds: 2 * 60,
-    dailySessions: 1,
     maxSessionSeconds: 120,
     maxActiveSessions: 1,
   });
@@ -74,21 +71,18 @@ export function loadLiveTierPolicy(env: NodeJS.ProcessEnv = process.env): LiveTi
       student_core: buildTier(env, "SENTIQ_LIVE_STUDENT_CORE", {
         enabled: true,
         dailySeconds: 8 * 60,
-        dailySessions: 3,
         maxSessionSeconds: 300,
         maxActiveSessions: 1,
       }),
       premium: buildTier(env, "SENTIQ_LIVE_PREMIUM", {
         enabled: true,
         dailySeconds: 25 * 60,
-        dailySessions: 8,
         maxSessionSeconds: 600,
         maxActiveSessions: 1,
       }),
       pro: buildTier(env, "SENTIQ_LIVE_PRO", {
         enabled: true,
         dailySeconds: 75 * 60,
-        dailySessions: 20,
         maxSessionSeconds: 600,
         maxActiveSessions: 2,
       }),

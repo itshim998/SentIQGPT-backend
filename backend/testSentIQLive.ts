@@ -81,32 +81,25 @@ function testTierPolicy(): void {
   const defaults = loadLiveTierPolicy({});
   assert.equal(defaults.plans.free.enabled, true);
   assert.equal(defaults.plans.free.dailySeconds, 120);
-  assert.equal(defaults.plans.free.dailySessions, 1);
   assert.equal(defaults.plans.free.maxSessionSeconds, 120);
   assert.equal(defaults.plans.free.maxActiveSessions, 1);
   assert.equal(defaults.plans.student_core.dailySeconds, 480);
-  assert.equal(defaults.plans.student_core.dailySessions, 3);
   assert.equal(defaults.plans.student_core.maxSessionSeconds, 300);
   assert.equal(defaults.plans.premium.dailySeconds, 1_500);
-  assert.equal(defaults.plans.premium.dailySessions, 8);
   assert.equal(defaults.plans.pro.dailySeconds, 4_500);
   assert.equal(defaults.plans.pro.maxActiveSessions, 2);
 
   const invalid = loadLiveTierPolicy({
     SENTIQ_LIVE_FREE_ENABLED: "not-a-boolean",
     SENTIQ_LIVE_FREE_DAILY_MINUTES: "-1",
-    SENTIQ_LIVE_FREE_DAILY_SESSIONS: "-1",
     SENTIQ_LIVE_STUDENT_CORE_DAILY_MINUTES: "-1",
-    SENTIQ_LIVE_PREMIUM_DAILY_SESSIONS: "NaN",
     SENTIQ_LIVE_PRO_MAX_SESSION_SECONDS: "99999",
     SENTIQ_LIVE_PRO_MAX_ACTIVE: "0",
     SENTIQ_LIVE_GLOBAL_MAX_ACTIVE: "invalid",
   });
   assert.equal(invalid.plans.free.enabled, true);
   assert.equal(invalid.plans.free.dailySeconds, 120);
-  assert.equal(invalid.plans.free.dailySessions, 1);
   assert.equal(invalid.plans.student_core.dailySeconds, 480);
-  assert.equal(invalid.plans.premium.dailySessions, 8);
   assert.equal(invalid.plans.pro.maxSessionSeconds, 600);
   assert.equal(invalid.plans.pro.maxActiveSessions, 2);
   assert.equal(invalid.globalMaxActive, null);
@@ -114,13 +107,11 @@ function testTierPolicy(): void {
   const configured = loadLiveTierPolicy({
     SENTIQ_LIVE_FREE_ENABLED: "true",
     SENTIQ_LIVE_FREE_DAILY_MINUTES: "2",
-    SENTIQ_LIVE_FREE_DAILY_SESSIONS: "1",
     SENTIQ_LIVE_GLOBAL_MAX_ACTIVE: "25",
     SENTIQ_LIVE_PROJECT_MAX_ACTIVE: "7",
   });
   assert.equal(configured.plans.free.enabled, true);
   assert.equal(configured.plans.free.dailySeconds, 120);
-  assert.equal(configured.plans.free.dailySessions, 1);
   assert.equal(configured.globalMaxActive, 25);
   assert.equal(configured.projectMaxActive, 7);
 }
@@ -351,7 +342,6 @@ class InMemoryLiveUsageStore implements LiveUsageStore {
     sessionId: string;
     planCode: any;
     dailySeconds: number;
-    dailySessions: number;
     maxActiveSessions: number;
     reserveSeconds: number;
     graceSeconds: number;
@@ -369,7 +359,6 @@ class InMemoryLiveUsageStore implements LiveUsageStore {
       activeSessions,
       resetAt: "2026-07-04T00:00:00.000Z",
     };
-    if (usage.sessions >= args.dailySessions) return { allowed: false, denialReason: "daily_sessions", ...base };
     const remaining = Math.max(0, args.dailySeconds - usage.used - usage.reserved);
     if (remaining <= 0) return { allowed: false, denialReason: "daily_time", ...base };
     if (activeSessions >= args.maxActiveSessions) return { allowed: false, denialReason: "active_limit", ...base };
@@ -550,6 +539,12 @@ function createService(args: {
   const now = args.now ?? Date.now;
   const usageStore = args.usageStore ?? new InMemoryLiveUsageStore(now);
   const keyPool = new GeminiLiveKeyPool({ keys: args.key === "" ? [] : [args.key || API_KEY], now });
+  const titleRequests: Array<{
+    userId: string;
+    conversationId: string;
+    userMessage: string;
+    assistantReply: string;
+  }> = [];
   let idCounter = 0;
   const service = new LiveSessionService({
     config: liveConfig(args.enabled ?? true),
@@ -565,6 +560,9 @@ function createService(args: {
       })),
     }),
     persistence,
+    titleGenerator: {
+      generateTitle: async (request) => { titleRequests.push(request); },
+    },
     now,
     newId: () => {
       const suffix = String(333_333_333_333 + idCounter).padStart(12, "0");
@@ -574,7 +572,7 @@ function createService(args: {
     logger: () => {},
     cleanupIntervalMs: 60 * 60_000,
   });
-  return { service, commits, usageStore, keyPool };
+  return { service, commits, titleRequests, usageStore, keyPool };
 }
 
 async function listen(app: express.Express): Promise<{ server: Server; baseUrl: string }> {
@@ -615,7 +613,7 @@ function buildApp(service: LiveSessionService) {
 }
 
 async function testRoutes(): Promise<void> {
-  const { service, commits, usageStore } = createService();
+  const { service, commits, titleRequests, usageStore } = createService();
   const { server, baseUrl } = await listen(buildApp(service));
   try {
     const unauthorized = await fetch(`${baseUrl}/api/live/session-token`, { method: "POST" });
@@ -638,7 +636,7 @@ async function testRoutes(): Promise<void> {
     assert.equal(status.available, true);
     assert.equal(status.reason, "available");
     assert.equal(status.remainingSecondsToday, 1_500);
-    assert.equal(status.remainingSessionsToday, 8);
+    assert.equal(status.remainingSessionsToday, 1, "compatibility field should indicate another timed session can start");
     assert.equal(status.maxSessionSeconds, 600);
     assert.equal(status.activeSession, null);
     assert.deepEqual(
@@ -714,6 +712,12 @@ async function testRoutes(): Promise<void> {
       { role: "user", text: "Hello" },
       { role: "assistant", text: "Hi there" },
     ]);
+    assert.deepEqual(titleRequests, [{
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      userMessage: "Hello",
+      assistantReply: "Hi there",
+    }], "a committed Live exchange should request one Groq-backed conversation title");
 
     const duplicateCommit = await fetch(`${baseUrl}/api/live/session/${SESSION_ID}/commit`, {
       method: "POST",
@@ -722,6 +726,7 @@ async function testRoutes(): Promise<void> {
     }).then((response) => response.json()) as any;
     assert.equal(duplicateCommit.alreadyCommitted, true);
     assert.equal(commits.length, 1, "duplicate commit should be idempotent");
+    assert.equal(titleRequests.length, 1, "duplicate commit must not regenerate the title");
 
     const ended = await fetch(`${baseUrl}/api/live/session/${SESSION_ID}/end`, {
       method: "POST",
@@ -746,7 +751,6 @@ async function testDailyAndActiveLimits(): Promise<void> {
   const nowFn = () => now;
   const policy = loadLiveTierPolicy({
     SENTIQ_LIVE_STUDENT_CORE_DAILY_MINUTES: "2",
-    SENTIQ_LIVE_STUDENT_CORE_DAILY_SESSIONS: "3",
     SENTIQ_LIVE_STUDENT_CORE_MAX_SESSION_SECONDS: "60",
     SENTIQ_LIVE_STUDENT_CORE_MAX_ACTIVE: "1",
     SENTIQ_LIVE_STALE_GRACE_SECONDS: "5",
@@ -768,7 +772,6 @@ async function testDailyAndActiveLimits(): Promise<void> {
 
   const timePolicy = loadLiveTierPolicy({
     SENTIQ_LIVE_STUDENT_CORE_DAILY_MINUTES: "1",
-    SENTIQ_LIVE_STUDENT_CORE_DAILY_SESSIONS: "3",
     SENTIQ_LIVE_STUDENT_CORE_MAX_SESSION_SECONDS: "60",
     SENTIQ_LIVE_STUDENT_CORE_MAX_ACTIVE: "1",
   });
@@ -782,20 +785,31 @@ async function testDailyAndActiveLimits(): Promise<void> {
     (error: unknown) => error instanceof LiveSessionError && error.code === "live_daily_time_exhausted",
   );
 
-  const sessionPolicy = loadLiveTierPolicy({
-    SENTIQ_LIVE_PREMIUM_DAILY_MINUTES: "30",
-    SENTIQ_LIVE_PREMIUM_DAILY_SESSIONS: "1",
-    SENTIQ_LIVE_PREMIUM_MAX_SESSION_SECONDS: "60",
-  });
-  const sessionLimited = createService({ planCode: "premium", now: nowFn, tierPolicy: sessionPolicy });
-  const only = await sessionLimited.service.createSession({ userId: USER_ID, conversationId: CONVERSATION_ID });
-  await sessionLimited.service.markSessionStarted({ userId: USER_ID, sessionId: only.sessionId });
-  now += 1_000;
-  await sessionLimited.service.endSession({ userId: USER_ID, sessionId: only.sessionId });
-  await assert.rejects(
-    () => sessionLimited.service.createSession({ userId: USER_ID, conversationId: CONVERSATION_ID }),
-    (error: unknown) => error instanceof LiveSessionError && error.code === "live_daily_sessions_exhausted",
-  );
+}
+
+async function testPartialUsageCanResumeAcrossAllTiers(): Promise<void> {
+  const plans = ["free", "student_core", "premium", "pro"] as const;
+  for (const planCode of plans) {
+    let now = Date.parse("2026-07-03T12:00:00.000Z");
+    const { service, usageStore } = createService({ planCode, now: () => now });
+    const dailySeconds = loadLiveTierPolicy({}).plans[planCode].dailySeconds;
+
+    const first = await service.createSession({ userId: USER_ID, conversationId: CONVERSATION_ID });
+    await service.markSessionStarted({ userId: USER_ID, sessionId: first.sessionId });
+    now += 34_000;
+    await service.endSession({ userId: USER_ID, sessionId: first.sessionId, reason: "client_end" });
+
+    const afterFirst = await service.getStatus(USER_ID);
+    assert.equal(afterFirst.available, true, `${planCode} should remain available while daily seconds remain`);
+    assert.equal(afterFirst.reason, "available");
+    assert.equal(afterFirst.remainingSecondsToday, dailySeconds - 34);
+    assert.equal(afterFirst.remainingSessionsToday, 1);
+    assert.equal(usageStore.getUsedSeconds(USER_ID), 34);
+
+    const second = await service.createSession({ userId: USER_ID, conversationId: CONVERSATION_ID });
+    assert(second.sessionMaxSeconds > 0, `${planCode} should be able to reserve another partial session`);
+    await service.endSession({ userId: USER_ID, sessionId: second.sessionId, reason: "client_end" });
+  }
 }
 
 async function testStaleCleanup(): Promise<void> {
@@ -803,7 +817,6 @@ async function testStaleCleanup(): Promise<void> {
   const nowFn = () => now;
   const policy = loadLiveTierPolicy({
     SENTIQ_LIVE_PREMIUM_DAILY_MINUTES: "2",
-    SENTIQ_LIVE_PREMIUM_DAILY_SESSIONS: "3",
     SENTIQ_LIVE_PREMIUM_MAX_SESSION_SECONDS: "60",
     SENTIQ_LIVE_STALE_GRACE_SECONDS: "5",
   });
@@ -844,7 +857,6 @@ async function testStartupCancellationAndRetry(): Promise<void> {
 
   const stalePolicy = loadLiveTierPolicy({
     SENTIQ_LIVE_PREMIUM_DAILY_MINUTES: "2",
-    SENTIQ_LIVE_PREMIUM_DAILY_SESSIONS: "3",
     SENTIQ_LIVE_PREMIUM_MAX_SESSION_SECONDS: "60",
     SENTIQ_LIVE_STALE_GRACE_SECONDS: "5",
   });
@@ -941,7 +953,7 @@ async function testFreeTierDefaultAllocation(): Promise<void> {
   assert.equal(session.sessionMaxSeconds, 120);
   await assert.rejects(
     () => service.createSession({ userId: USER_ID, conversationId: CONVERSATION_ID }),
-    (error: unknown) => error instanceof LiveSessionError && error.code === "live_daily_sessions_exhausted",
+    (error: unknown) => error instanceof LiveSessionError && error.code === "live_daily_time_exhausted",
   );
   await service.markSessionStarted({ userId: USER_ID, sessionId: session.sessionId });
   now += 6_000;
@@ -949,11 +961,14 @@ async function testFreeTierDefaultAllocation(): Promise<void> {
   assert.equal(usageStore.getActiveCount(USER_ID), 0);
   assert.equal(usageStore.getUsedSeconds(USER_ID), 6);
   const after = await service.getStatus(USER_ID);
-  assert.equal(after.available, false);
-  assert.equal(after.reason, "daily_session_limit_reached");
+  assert.equal(after.available, true);
+  assert.equal(after.reason, "available");
   assert.equal(after.remainingSecondsToday, 114);
-  assert.equal(after.remainingSessionsToday, 0);
+  assert.equal(after.remainingSessionsToday, 1);
   assert.equal(after.activeSession, null);
+  const retry = await service.createSession({ userId: USER_ID, conversationId: CONVERSATION_ID });
+  assert.equal(retry.sessionMaxSeconds, 114, "Free users should be able to use all remaining daily time");
+  await service.endSession({ userId: USER_ID, sessionId: retry.sessionId, reason: "client_end" });
 
   const disabledFree = createService({
     planCode: "free",
@@ -1036,7 +1051,6 @@ function testFrontendFoundation(): void {
     "speaking",
     "muted",
     "quota_denied",
-    "session_limit",
     "mic_blocked",
     "websocket_failed",
     "audio_failed",
@@ -1051,8 +1065,9 @@ function testFrontendFoundation(): void {
   }
   assert(composerState.includes("Live voice is not available on your current plan."));
   assert(composerState.includes("You’ve used today’s Live voice time."));
-  assert(composerState.includes("You’ve used all of today’s Live voice sessions."));
   assert(composerState.includes("Live voice is busy. Try again soon."));
+  assert(!composerState.includes("Live voice sessions"), "the UI should not expose a second daily session-count quota");
+  assert(!controller.includes("no sessions left"));
   assert(!controller.includes("GEMINI_API_KEY"));
 
   const moduleUrl = `data:text/javascript;base64,${Buffer.from(composerState).toString("base64")}`;
@@ -1074,10 +1089,6 @@ function testFrontendFoundation(): void {
     assert.equal(denied.showLive, true);
     assert.equal(denied.disabled, true);
     assert.equal(denied.message, "You’ve used today’s Live voice time.");
-    const sessionDenied = resolveLiveComposerAction({ enabled: true, reason: "daily_session_limit_reached" });
-    assert.equal(sessionDenied.showLive, true);
-    assert.equal(sessionDenied.disabled, true);
-    assert.equal(sessionDenied.message, "You’ve used all of today’s Live voice sessions.");
     const featureDisabled = resolveLiveComposerAction({ enabled: false, reason: "not_available" });
     assert.equal(featureDisabled.showLive, true);
     assert.equal(featureDisabled.showSend, false);
@@ -1123,6 +1134,7 @@ function testFrontendFoundation(): void {
 function testMigrationFoundation(): void {
   const root = resolve(__dirname, "..");
   const dbRouter = readFileSync(resolve(root, "backend/dbRouter.ts"), "utf8");
+  const usageStore = readFileSync(resolve(root, "backend/live/liveUsageStore.ts"), "utf8");
   const migration = readFileSync(
     resolve(root, "supabase/migrations/20260703120000_add_live_usage_policy.sql"),
     "utf8",
@@ -1138,6 +1150,11 @@ function testMigrationFoundation(): void {
   assert.match(migration, /enable row level security/i);
   assert.match(migration, /owner_user_id = auth\.uid\(\)/i);
   assert.doesNotMatch(migration, /audio_data|raw_audio/i, "migration must not store raw audio");
+  assert.match(
+    usageStore,
+    /p_daily_sessions:\s*2_147_483_647/,
+    "the legacy RPC session-count parameter must not block remaining timed allowance",
+  );
 
   const lifecycleMigration = readFileSync(
     resolve(root, "supabase/migrations/20260704120000_harden_live_session_lifecycle.sql"),
@@ -1169,6 +1186,23 @@ function testMigrationFoundation(): void {
   assert.match(dbRouter, /get_sentiq_live_refund_policy_version/);
 }
 
+function testLiveTitleFoundation(): void {
+  const root = resolve(__dirname, "..");
+  const server = readFileSync(resolve(root, "backend/server.ts"), "utf8");
+  const service = readFileSync(resolve(root, "backend/live/liveSessionService.ts"), "utf8");
+  const persistence = readFileSync(resolve(root, "backend/live/sentiqLivePersistence.ts"), "utf8");
+  const promptBuilders = readFileSync(resolve(root, "backend/ai/PromptBuilders.ts"), "utf8");
+  assert.match(service, /titleGenerator\.generateTitle/);
+  assert.match(server, /scope:\s*"live\.title\.auto"/);
+  assert.match(server, /normalized === "live conversation"/i, "legacy generic Live titles should be replaceable");
+  assert.match(persistence, /title:\s*"New Chat"/);
+  assert.match(
+    promptBuilders,
+    /function buildTitleGeneratePrompt[\s\S]*prefer:\s*"groq"/,
+    "Live title generation must reuse the Groq-first title prompt",
+  );
+}
+
 async function main(): Promise<void> {
   testTierPolicy();
   await testPlanResolutionFallback();
@@ -1176,6 +1210,7 @@ async function main(): Promise<void> {
   await testTokenService();
   await testRoutes();
   await testDailyAndActiveLimits();
+  await testPartialUsageCanResumeAcrossAllTiers();
   await testStaleCleanup();
   await testStartupCancellationAndRetry();
   await testTokenFailureReleasesReservation();
@@ -1185,6 +1220,7 @@ async function main(): Promise<void> {
   await testDisabledBehavior();
   testFrontendFoundation();
   testMigrationFoundation();
+  testLiveTitleFoundation();
   console.log("PASS | SentIQ Live Phase 1, Phase 2, and Phase 3 focused tests passed.");
 }
 

@@ -63,7 +63,7 @@ export class SentIQLivePersistence implements LiveSessionPersistence {
       const created = await createConversation(userDb, {
         id: conversationId,
         userId: args.userId,
-        title: "Live conversation",
+        title: "New Chat",
       });
       if (created.error || !created.data) {
         throw new Error(created.error?.message || "Live conversation creation failed.");
@@ -131,4 +131,3 @@ export class SentIQLivePersistence implements LiveSessionPersistence {
     return 1;
   }
 }
-

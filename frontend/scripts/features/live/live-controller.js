@@ -189,7 +189,6 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
     const retryable = [
       "error",
       "quota_denied",
-      "session_limit",
       "mic_blocked",
       "websocket_failed",
       "audio_failed",
@@ -208,10 +207,7 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
 
   function setAvailableStatus(status) {
     const safeSeconds = Math.max(0, Math.floor(Number(status?.remainingSecondsToday) || 0));
-    const safeSessions = Math.max(0, Math.floor(Number(status?.remainingSessionsToday) || 0));
-    if (safeSessions === 0 && safeSeconds > 0) {
-      remainingLabel.textContent = `${formatDuration(safeSeconds)} left · no sessions left`;
-    } else if (safeSeconds > 0) {
+    if (safeSeconds > 0) {
       remainingLabel.textContent = `${formatDuration(safeSeconds)} available today`;
     } else {
       remainingLabel.textContent = "No time left today";
@@ -251,9 +247,6 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
     }
     if (error?.code === "live_plan_unavailable") {
       return { label: "Unavailable", message: getLiveUnavailableCopy("not_available_on_plan") };
-    }
-    if (error?.code === "live_daily_sessions_exhausted") {
-      return { label: "Session limit reached", message: getLiveUnavailableCopy("daily_session_limit_reached") };
     }
     if (error?.code === "live_daily_time_exhausted") {
       return { label: "Daily limit reached", message: getLiveUnavailableCopy("daily_limit_reached") };
@@ -546,20 +539,16 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
 
     if (!status.available) {
       await releaseLocalResources();
-      const label = status.reason === "daily_session_limit_reached"
-        ? "Session limit reached"
-        : status.reason === "daily_limit_reached"
+      const label = status.reason === "daily_limit_reached"
         ? "Daily limit reached"
         : ["not_available", "not_available_on_plan", "browser_unsupported"].includes(status.reason)
           ? "Unavailable"
           : "Busy";
-      const state = status.reason === "daily_session_limit_reached"
-        ? "session_limit"
-        : status.reason === "daily_limit_reached"
-          ? "quota_denied"
-          : ["not_available", "not_available_on_plan", "browser_unsupported"].includes(status.reason)
-            ? "unavailable"
-            : "error";
+      const state = status.reason === "daily_limit_reached"
+        ? "quota_denied"
+        : ["not_available", "not_available_on_plan", "browser_unsupported"].includes(status.reason)
+          ? "unavailable"
+          : "error";
       setPanelState(state, label, getLiveUnavailableCopy(status.reason));
       setEndButtonLabel("Close");
       return;

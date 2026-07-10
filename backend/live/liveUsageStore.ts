@@ -2,7 +2,6 @@ import type { BillingPlanCode } from "../billing/entitlementTypes";
 import { getControlDatabase, getDataShardDatabases, getOrAssignUserDatabase } from "../dbRouter";
 
 export type LiveUsageDenialReason =
-  | "daily_sessions"
   | "daily_time"
   | "active_limit"
   | "duplicate_session"
@@ -80,7 +79,6 @@ export interface LiveUsageStore {
     sessionId: string;
     planCode: BillingPlanCode;
     dailySeconds: number;
-    dailySessions: number;
     maxActiveSessions: number;
     reserveSeconds: number;
     graceSeconds: number;
@@ -245,7 +243,6 @@ export class SupabaseLiveUsageStore implements LiveUsageStore {
     sessionId: string;
     planCode: BillingPlanCode;
     dailySeconds: number;
-    dailySessions: number;
     maxActiveSessions: number;
     reserveSeconds: number;
     graceSeconds: number;
@@ -256,7 +253,9 @@ export class SupabaseLiveUsageStore implements LiveUsageStore {
       p_session_id: args.sessionId,
       p_plan: args.planCode,
       p_daily_seconds: args.dailySeconds,
-      p_daily_sessions: args.dailySessions,
+      // Legacy RPC parameter. Live allowance is time-based, so completed calls
+      // must not exhaust an independent start-count quota while time remains.
+      p_daily_sessions: 2_147_483_647,
       p_max_active: args.maxActiveSessions,
       p_reserve_seconds: args.reserveSeconds,
       p_grace_seconds: args.graceSeconds,

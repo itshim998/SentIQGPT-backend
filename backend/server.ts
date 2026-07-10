@@ -201,6 +201,27 @@ const liveSessionService = new LiveSessionService({
   keyPool: new GeminiLiveKeyPool(),
   tokenService: new GeminiLiveTokenService(),
   persistence: new SentIQLivePersistence(),
+  titleGenerator: {
+    generateTitle: async ({ userId, conversationId, userMessage, assistantReply }) => {
+      const userDb = await resolveUserDatabaseOrThrow(userId, "live.title");
+      await initializeUserSessionOrThrow(userDb, userId, "live.title");
+      const currentTitle = await readConversationTitleIfOwned(
+        userDb,
+        userId,
+        conversationId,
+        "live.title",
+      );
+      await maybeAutoTitleConversation({
+        userDb,
+        userId,
+        conversationId,
+        userMessage,
+        assistantReply,
+        scope: "live.title.auto",
+        currentTitle,
+      });
+    },
+  },
 });
 bootProfiler.mark("liveSessionService.created");
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -1099,7 +1120,11 @@ function normalizeComparableText(value: unknown): string {
 
 function isGenericConversationTitle(title: unknown): boolean {
   const normalized = normalizeComparableText(title);
-  return !normalized || normalized === "new chat" || normalized === "untitled chat" || normalized === "untitled conversation";
+  return !normalized
+    || normalized === "new chat"
+    || normalized === "live conversation"
+    || normalized === "untitled chat"
+    || normalized === "untitled conversation";
 }
 
 function titleLooksLikeFirstMessageFallback(title: unknown, firstUserMessage: unknown): boolean {
@@ -1255,7 +1280,7 @@ async function persistConversationTitleIfEligible(options: {
     && options.replacementBasisMessage
     && titleLooksLikeFirstMessageFallback(currentTitle || "", options.replacementBasisMessage),
   );
-  if (normalizedCurrent && normalizedCurrent !== "New Chat" && !canReplaceFallbackTitle) {
+  if (normalizedCurrent && !isGenericConversationTitle(normalizedCurrent) && !canReplaceFallbackTitle) {
     logDbEvent(`${options.scope}.title-persist.skip`, options.userId, {
       conversationId: options.conversationId,
     });
@@ -1293,7 +1318,7 @@ async function maybeAutoTitleConversation(options: {
   if (!options.userDb || !options.conversationId) return;
   const normalizedCurrent = normalizeTitleCandidate(options.currentTitle || "");
   const currentLooksFallback = titleLooksLikeFirstMessageFallback(options.currentTitle || "", options.userMessage);
-  if (normalizedCurrent && normalizedCurrent !== "New Chat" && !currentLooksFallback) return;
+  if (normalizedCurrent && !isGenericConversationTitle(normalizedCurrent) && !currentLooksFallback) return;
 
   const generation = await generateTitleWithFallback({
     userMessage: options.userMessage,
