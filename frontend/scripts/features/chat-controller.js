@@ -46,9 +46,9 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
 
   let currentChatId = null;
   let imageMode = false;
-  let pendingFiles = [];
-  let fileUploadInFlight = false;
-  const pendingFileStatusByFile = new WeakMap();
+  let composerAttachments = [];
+  let composerAttachmentScope = 0;
+  const attachmentIdByAnalysisId = new Map();
   let composerDragDepth = 0;
   let currentSessionFiles = []; // Tracks uploaded files for current-chat context
   let currentSessionImageAttachments = []; // Tracks recent image inputs for follow-up questions
@@ -1107,6 +1107,12 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     const locked = Boolean(composerResponseLocked);
     const composerDisabled = requiresName || locked;
     const stopModeActive = Boolean(sendBtn?.classList.contains("is-stop"));
+    const hasAttachments = composerAttachments.length > 0;
+    const attachmentsReady = areComposerAttachmentsReady();
+    const hasSendableAttachmentPrompt = Boolean(
+      chatInput?.value.trim() || pendingComposerSelectionContext?.selected_text,
+    );
+    const attachmentBlocksSend = hasAttachments && (!attachmentsReady || !hasSendableAttachmentPrompt);
 
     if (locked) {
       closeComposerMenu();
@@ -1127,8 +1133,13 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     }
 
     if (sendBtn) {
-      sendBtn.disabled = requiresName || (locked && !stopModeActive);
+      sendBtn.disabled = requiresName || (locked && !stopModeActive) || (!stopModeActive && attachmentBlocksSend);
       sendBtn.setAttribute("aria-disabled", sendBtn.disabled ? "true" : "false");
+      if (!stopModeActive && attachmentBlocksSend) {
+        sendBtn.title = attachmentsReady ? "Add a message before sending attachments" : "Finishing attachment...";
+      } else if (!stopModeActive) {
+        sendBtn.title = "Send message";
+      }
     }
 
     const liveAction = resolveLiveComposerAction({
@@ -1136,7 +1147,7 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       available: liveVoiceStatus.available,
       reason: liveVoiceStatus.reason,
       inputValue: chatInput?.value,
-      hasAttachments: pendingFiles.length > 0 || fileUploadInFlight,
+      hasAttachments,
       hasSelectionContext: Boolean(pendingComposerSelectionContext?.selected_text),
       specialModeActive: Boolean(imageMode || webSearchModeOverride || deepResearchMode),
       responseLocked: locked || stopModeActive,
@@ -1376,7 +1387,7 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       && !composerHintIntroConsumed
       && !chatInput.disabled
       && !chatInput.value.trim()
-      && pendingFiles.length === 0
+      && composerAttachments.length === 0
       && !getPendingClarification()
       && !imageMode
       && !webSearchModeOverride
@@ -1491,46 +1502,22 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
 
   let fileUpdatesPromise = null;
   let fileUpdatesAbort = null;
-  const pendingFileUploadUi = new Map();
-  const fileAnalysisUi = new Map();
   const pendingFileAnalysisEvents = new Map();
 
-  function attachFileAnalysisStatus(contentDiv, status, label) {
-    if (!contentDiv) return null;
-    const statusEl = document.createElement("div");
-    statusEl.className = `file-analysis-status ${status}`;
-    const dot = document.createElement("span");
-    dot.className = "file-analysis-dot";
-    const text = document.createElement("span");
-    text.className = "file-analysis-text";
-    text.textContent = label;
-    statusEl.appendChild(dot);
-    statusEl.appendChild(text);
-    contentDiv.appendChild(statusEl);
-    return { statusEl, textEl: text };
-  }
-
-  function setFileAnalysisStatus(entry, status, label) {
-    if (!entry?.statusEl || !entry?.textEl) return;
-    entry.statusEl.className = `file-analysis-status ${status}`;
-    entry.textEl.textContent = label;
-  }
-
   function applyFileAnalysisEvent(event) {
-    const entry = fileAnalysisUi.get(event.analysis_id);
-    if (!entry) return false;
-    const status = event.status || "processing";
-    const label = status === "complete"
-      ? "Analysis ready"
-      : status === "error"
-        ? "Analysis failed"
-        : "Analyzing file...";
-    setFileAnalysisStatus(entry, status, label);
-    if (status === "complete") {
-      showToast("File analysis ready.", "success", 2500);
-    }
-    if (status === "error" && event.error) {
-      showToast(`File analysis failed: ${event.error}`, "error", 3500);
+    const attachmentId = attachmentIdByAnalysisId.get(event?.analysis_id);
+    const attachment = composerAttachments.find((item) => item.id === attachmentId);
+    if (!attachment || attachment.removed) return false;
+    if (event.status === "complete") {
+      setComposerAttachmentState(attachment, "ready");
+    } else if (event.status === "error") {
+      setComposerAttachmentState(
+        attachment,
+        "failed",
+        getAttachmentFailureMessage(event.error, attachment.file),
+      );
+    } else {
+      setComposerAttachmentState(attachment, "processing");
     }
     return true;
   }
@@ -1622,14 +1609,17 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       }, { chatId: message.conversation_id || message.conversationId || null });
     }
     if (!meta && messageType === "file_upload") {
-      meta = {
-        type: "file-upload",
-        filename: message.file_name || message.fileName || preview.filename || "File",
-        size_bytes: message.file_size_bytes || message.fileSizeBytes || preview.size_bytes || null,
-        mime_type: message.mime_type || message.mimeType || preview.mime_type || "",
-        analysis_id: preview.analysis_id || "",
-        analysis_status: preview.analysis_status || "complete",
-      };
+      const attachments = Array.isArray(preview.attachments) ? preview.attachments : [];
+      meta = attachments.length > 0
+        ? { type: "message-attachments", attachments }
+        : {
+          type: "file-upload",
+          filename: message.file_name || message.fileName || preview.filename || "File",
+          size_bytes: message.file_size_bytes || message.fileSizeBytes || preview.size_bytes || null,
+          mime_type: message.mime_type || message.mimeType || preview.mime_type || "",
+          analysis_id: preview.analysis_id || "",
+          analysis_status: preview.analysis_status || "complete",
+        };
     }
     if (!meta && messageType === "deep_research") {
       const deepResearchStatus = ["running", "completed", "cancelled", "failed"].includes(preview.status)
@@ -1759,6 +1749,7 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     }
 
     moveTransientChatState(from, to);
+    reassignComposerAttachmentsToChat(from, to);
     if (currentChatId === from) currentChatId = to;
     return to;
   }
@@ -1804,6 +1795,22 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
         storage_path: meta.storage_path || meta.storagePath || "",
         file_size_bytes: meta.file_size_bytes || meta.fileSizeBytes || null,
         preview: meta.preview || null,
+      };
+    } else if (meta?.type === "message-attachments") {
+      const attachments = Array.isArray(meta.attachments) ? meta.attachments : [];
+      const first = attachments[0] || {};
+      output.meta = {
+        type: "message-attachments",
+        attachments: attachments.map((attachment) => ({
+          kind: attachment?.kind === "image" ? "image" : "file",
+          filename: String(attachment?.filename || "").slice(0, 255),
+          mime_type: String(attachment?.mime_type || "").slice(0, 160),
+          size_bytes: Number.isFinite(Number(attachment?.size_bytes)) ? Number(attachment.size_bytes) : null,
+          ...(typeof attachment?.analysis_id === "string" && attachment.analysis_id ? { analysis_id: attachment.analysis_id } : {}),
+        })).filter((attachment) => attachment.filename),
+        filename: first.filename || "",
+        size_bytes: first.size_bytes || null,
+        mime_type: first.mime_type || "",
       };
     } else if (meta?.type === "file-upload") {
       output.meta = {
@@ -5553,6 +5560,9 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     const prevChatId = currentChatId;
     const switchedChats = Boolean(prevChatId && prevChatId !== chatId);
     if (switchedChats) {
+      if (composerAttachments.some((attachment) => attachment.chatId !== chatId)) {
+        clearPendingFiles();
+      }
       clearComposerSelectionContext();
       const oldState = getChatState(currentChatId);
       if (oldState) oldState.requestId = null;
@@ -6233,6 +6243,35 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       contentDiv.appendChild(panel);
     } else if (meta?.type === "clarification") {
       renderClarificationContent(contentDiv, meta, meta.chatId || currentChatId);
+    } else if (meta?.type === "message-attachments") {
+      const attachments = Array.isArray(meta.attachments) ? meta.attachments : [];
+      if (attachments.length > 0) {
+        const list = document.createElement("div");
+        list.className = "message-attachment-list";
+        attachments.forEach((attachment) => {
+          const card = document.createElement("div");
+          card.className = "message-file-chip message-attachment-card";
+          const isImage = attachment?.kind === "image";
+          card.innerHTML = isImage
+            ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>'
+            : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>';
+          const name = document.createElement("span");
+          name.className = "message-attachment-name";
+          name.textContent = attachment?.filename || (isImage ? "Image" : "File");
+          const type = document.createElement("span");
+          type.className = "message-attachment-type";
+          type.textContent = getMessageAttachmentTypeLabel(attachment);
+          card.append(name, type);
+          list.appendChild(card);
+        });
+        contentDiv.appendChild(list);
+      }
+      if (content) {
+        const desc = document.createElement("p");
+        desc.className = "message-attachment-prompt";
+        desc.textContent = content;
+        contentDiv.appendChild(desc);
+      }
     } else if (meta?.type === "image-upload") {
       const images = Array.isArray(meta.images) ? meta.images : [];
       for (const image of images) {
@@ -8919,12 +8958,26 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       options.selectedContext || pendingComposerSelectionContext,
     );
     const message = retryMessage || options.message || chatInput.value.trim();
-    if (!message && !selectedContextForRequest && pendingFiles.length === 0 && suppliedImageAttachments.length === 0) {
+    const requestComposerAttachments = retryMessage ? [] : getReadyComposerAttachments();
+    const composerAttachmentIdsForRequest = requestComposerAttachments.map((attachment) => attachment.id);
+    let requestCompleted = false;
+    const hasComposerAttachments = composerAttachments.length > 0;
+    if (hasComposerAttachments && !areComposerAttachmentsReady()) {
+      syncComposerInteractivity();
+      stopMeasure("blocked", { reason: "attachments_processing" });
+      return;
+    }
+    if (hasComposerAttachments && !message && !selectedContextForRequest) {
+      syncComposerInteractivity();
+      stopMeasure("blocked", { reason: "attachment_prompt_required" });
+      return;
+    }
+    if (!message && !selectedContextForRequest && requestComposerAttachments.length === 0 && suppliedImageAttachments.length === 0) {
       stopMeasure("skipped");
       return;
     }
     if (!currentChatId) {
-      await startNewChat();
+      await startNewChat({ preserveComposerAttachments: hasComposerAttachments });
       if (!currentChatId) {
         stopMeasure("error", { reason: "chat_not_created" });
         return;
@@ -8959,6 +9012,7 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     hideWelcome();
     if (chatMessages) chatMessages.classList.add("has-messages");
     if (!retryMessage) markComposerHintIntroConsumed();
+    const composerDraftBeforeSend = retryMessage ? "" : String(chatInput?.value || "");
     if (!retryMessage) {
       chatInput.value = "";
       chatInput.style.height = "auto";
@@ -8966,10 +9020,6 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     }
     debugLog("[UI] handleSend", { length: message.length, retry: Boolean(retryMessage) });
 
-    if (!isClarificationAnswer && pendingFiles.length > 0 && !options.skipPendingFileProcessing) {
-      await processPendingFiles(message, { selectedContext: selectedContextForRequest });
-      return;
-    }
     if (!isClarificationAnswer && deepResearchMode && message) {
       setDeepResearchMode(false);
       await handleDeepResearchSend(message);
@@ -8980,23 +9030,40 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     let apiMessage = message
       || selectedContextForRequest?.selected_text
       || (suppliedImageAttachments.length > 0 ? DEFAULT_IMAGE_ANALYSIS_PROMPT : "");
-    const visibleUserMessage = message || selectedContextForRequest?.selected_text || (
-      suppliedImageAttachments.length > 0
-        ? `Uploaded image: ${suppliedImageAttachments.map((image) => image.filename).join(", ")}`
-        : ""
-    );
+    const visibleUserMessage = message || selectedContextForRequest?.selected_text || "";
+    const composerImageAttachments = requestComposerAttachments
+      .filter((attachment) => attachment.kind === "image" && attachment.imageAttachment)
+      .map((attachment) => attachment.imageAttachment);
+    const composerFileReferences = requestComposerAttachments
+      .filter((attachment) => attachment.kind === "file" && attachment.fileReference)
+      .map((attachment) => attachment.fileReference);
     const imageAttachmentsForRequest = isClarificationAnswer && Array.isArray(clarificationContextSnapshot?.imageAttachments)
       ? clarificationContextSnapshot.imageAttachments
       : suppliedImageAttachments.length > 0
         ? suppliedImageAttachments
-        : getCurrentImageAttachments(apiMessage);
-    const userMessageMeta = suppliedImageAttachments.length > 0
-      ? buildImageUploadMeta(suppliedImageAttachments)
+        : composerImageAttachments.length > 0
+          ? composerImageAttachments
+          : getCurrentImageAttachments(apiMessage);
+    const userMessageMeta = requestComposerAttachments.length > 0 || suppliedImageAttachments.length > 0
+      ? buildMessageAttachmentMeta([
+        ...requestComposerAttachments.map(toMessageAttachmentMeta),
+        ...suppliedImageAttachments.map((image) => ({
+          kind: "image",
+          filename: image.filename,
+          mime_type: image.mime_type,
+          size_bytes: image.size_bytes,
+        })),
+      ])
       : options.continuationOf
         ? { type: "continuation-request", continuationOf: options.continuationOf }
         : null;
-    if (suppliedImageAttachments.length > 0) {
-      setCurrentSessionImageAttachments(suppliedImageAttachments);
+    if (composerFileReferences.length > 0) {
+      addCurrentSessionFiles(composerFileReferences);
+    }
+    if (composerImageAttachments.length > 0 || suppliedImageAttachments.length > 0) {
+      setCurrentSessionImageAttachments(
+        composerImageAttachments.length > 0 ? composerImageAttachments : suppliedImageAttachments,
+      );
     }
 
     const originalApiMessage = apiMessage;
@@ -9499,6 +9566,7 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
           clientRequestId: requestId,
         });
       }
+      requestCompleted = true;
       if (fullReply) {
         await upsertChatMessageSyncJob(requestId, {
           localChatId: targetChatId,
@@ -9588,6 +9656,12 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
           currentClarification.inFlight = false;
         }
       }
+      if (requestCompleted && composerAttachmentIdsForRequest.length > 0) {
+        removeComposerAttachmentsById(composerAttachmentIdsForRequest);
+      } else if (!retryMessage && composerDraftBeforeSend && targetChatId === currentChatId && chatInput && !chatInput.value) {
+        chatInput.value = composerDraftBeforeSend;
+        autoResizeInput();
+      }
       setSendMode();
       scheduleChatListRefresh();
       flushAutomaticContinuation();
@@ -9628,7 +9702,7 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
   }
 
   function updateComposerActionSelection() {
-    const hasFiles = pendingFiles.length > 0;
+    const hasFiles = composerAttachments.length > 0;
     fileAttachBtn?.classList.toggle("active", hasFiles);
     fileAttachBtn?.setAttribute("aria-pressed", hasFiles.toString());
     imageGenBtn?.classList.toggle("active", Boolean(imageMode));
@@ -9641,8 +9715,14 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
   }
 
   function clearPendingFiles() {
-    if (pendingFiles.length === 0) return;
-    pendingFiles = [];
+    composerAttachmentScope += 1;
+    for (const attachment of composerAttachments) {
+      attachment.removed = true;
+      revokeAttachmentThumbnail(attachment);
+      if (attachment.analysisId) attachmentIdByAnalysisId.delete(attachment.analysisId);
+    }
+    composerAttachments = [];
+    pendingFileAnalysisEvents.clear();
     renderFilePreview();
     syncComposerHint();
   }
@@ -10044,16 +10124,16 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
   }
 
   function validateQueuedFile(file) {
-    if (!file) return { ok: false, reason: "Invalid file." };
+    if (!file) return { ok: false, reason: "Couldn't attach file" };
     if (file.size > MAX_CLIENT_UPLOAD_BYTES) {
-      return { ok: false, reason: `${file.name || "File"} is larger than 10MB.` };
+      return { ok: false, reason: "File is too large" };
     }
     const type = String(file.type || "").toLowerCase();
     const ext = getFileExtension(file);
     const supportedMime = SUPPORTED_UPLOAD_MIME_TYPES.has(type)
       || SUPPORTED_UPLOAD_MIME_PREFIXES.some((prefix) => type.startsWith(prefix));
     if (!supportedMime && !SUPPORTED_UPLOAD_EXTENSIONS.has(ext)) {
-      return { ok: false, reason: `${file.name || "File"} is not a supported file type.` };
+      return { ok: false, reason: "This file type isn't supported" };
     }
     return { ok: true };
   }
@@ -10061,42 +10141,28 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
   function addPendingFiles(files) {
     const incoming = Array.from(files || []);
     const accepted = [];
-    const rejected = [];
+    const additions = [];
     for (const file of incoming) {
       const validation = validateQueuedFile(file);
-      if (validation.ok) accepted.push(file);
-      else rejected.push(validation.reason);
+      const attachment = createComposerAttachment(file, validation);
+      additions.push(attachment);
+      if (validation.ok) accepted.push(attachment);
     }
-    pendingFiles.push(...accepted);
-    accepted.forEach((file) => {
-      pendingFileStatusByFile.set(file, { status: "queued", label: "Ready to upload" });
-    });
-    if (rejected.length > 0) {
-      showToast(rejected[0] + (rejected.length > 1 ? ` (${rejected.length} files skipped.)` : ""), "error", 4200);
-    }
+    composerAttachments.push(...additions);
+    renderFilePreview();
+    accepted.forEach((attachment) => { void processComposerAttachment(attachment); });
     debugLog("[Upload] files queued", {
       incoming: incoming.length,
       accepted: accepted.length,
-      rejected: rejected.length,
+      rejected: additions.length - accepted.length,
       guest: isGuestSession(),
     });
-    return { accepted, rejected };
+    return { accepted, rejected: additions.filter((attachment) => attachment.status === "failed") };
   }
 
-  function setPendingFileStatus(file, status, label) {
-    if (!file) return;
-    pendingFileStatusByFile.set(file, { status, label });
-  }
-
-  function removePendingFile(file) {
-    pendingFiles = pendingFiles.filter((item) => item !== file);
-    if (file) pendingFileStatusByFile.delete(file);
-  }
-
-  function queueDroppedFiles(files, options = {}) {
+  function queueDroppedFiles(files) {
     if (!files || files.length === 0) return;
     if (ensureNameCapture()) return;
-    const { showToastMessage = true } = options;
     imageMode = false;
     webSearchModeOverride = null;
     deepResearchMode = false;
@@ -10109,9 +10175,7 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     renderFilePreview();
     syncComposerHint();
     chatInput?.focus();
-    if (showToastMessage && accepted.length > 0) {
-      showToast(`${accepted.length} file(s) ready to upload. Type a message and send.`, "info");
-    }
+    if (accepted.length > 0) syncComposerInteractivity();
   }
 
   function handleFileSelect(e) {
@@ -10174,51 +10238,203 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     chatInput?.focus();
   }
 
-  function formatFileSize(bytes) {
-    const value = Number(bytes) || 0;
-    if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
-    if (value >= 1024) return `${Math.ceil(value / 1024)} KB`;
-    return `${value} B`;
+  function getAttachmentTypeLabel(file) {
+    const extension = getFileExtension(file).replace(".", "").toUpperCase();
+    if (extension) return extension;
+    if (isNativeChatImageFile(file)) return "IMAGE";
+    return "FILE";
+  }
+
+  function getMessageAttachmentTypeLabel(attachment) {
+    const filename = String(attachment?.filename || "");
+    const extension = filename.includes(".") ? filename.slice(filename.lastIndexOf(".") + 1).toUpperCase() : "";
+    return extension || (attachment?.kind === "image" ? "IMAGE" : "FILE");
+  }
+
+  function createComposerAttachment(file, validation = { ok: true }) {
+    const kind = isNativeChatImageFile(file) ? "image" : "file";
+    let thumbnailUrl = "";
+    if (kind === "image" && typeof URL?.createObjectURL === "function") {
+      try { thumbnailUrl = URL.createObjectURL(file); } catch { /* thumbnail is optional */ }
+    }
+    return {
+      id: Storage.generateId(),
+      file,
+      kind,
+      chatId: currentChatId,
+      scope: composerAttachmentScope,
+      attempt: 0,
+      status: validation.ok ? "processing" : "failed",
+      error: validation.ok ? "" : validation.reason,
+      retryable: Boolean(validation.ok),
+      thumbnailUrl,
+      analysisId: "",
+      fileReference: null,
+      imageAttachment: null,
+      removed: false,
+    };
+  }
+
+  function revokeAttachmentThumbnail(attachment) {
+    if (!attachment?.thumbnailUrl || typeof URL?.revokeObjectURL !== "function") return;
+    try { URL.revokeObjectURL(attachment.thumbnailUrl); } catch { /* ignore optional preview cleanup */ }
+    attachment.thumbnailUrl = "";
+  }
+
+  function isActiveComposerAttachment(attachment, attempt = attachment?.attempt) {
+    return Boolean(
+      attachment
+      && !attachment.removed
+      && attachment.scope === composerAttachmentScope
+      && attachment.attempt === attempt
+      && composerAttachments.some((item) => item.id === attachment.id),
+    );
+  }
+
+  function areComposerAttachmentsReady() {
+    return composerAttachments.length > 0 && composerAttachments.every((attachment) => attachment.status === "ready");
+  }
+
+  function getReadyComposerAttachments() {
+    return composerAttachments.filter((attachment) => attachment.status === "ready" && !attachment.removed);
+  }
+
+  function getAttachmentFailureMessage(error, file) {
+    const source = String(getSafeErrorMessage(error) || "").toLowerCase();
+    if (source.includes("too large") || source.includes("size")) return "File is too large";
+    if (source.includes("type") || source.includes("format") || source.includes("supported")) return "This file type isn't supported";
+    if (getFileExtension(file) === ".pdf" && /(read|parse|extract|pdf)/.test(source)) return "Couldn't read this PDF";
+    return "Couldn't attach file";
+  }
+
+  function setComposerAttachmentState(attachment, status, error = "") {
+    if (!isActiveComposerAttachment(attachment)) return;
+    attachment.status = status;
+    attachment.error = status === "failed" ? (error || "Couldn't attach file") : "";
+    renderFilePreview();
+    syncComposerHint();
+    syncComposerInteractivity();
+  }
+
+  function removeComposerAttachment(attachmentId) {
+    const attachment = composerAttachments.find((item) => item.id === attachmentId);
+    if (!attachment) return;
+    attachment.removed = true;
+    if (attachment.analysisId) attachmentIdByAnalysisId.delete(attachment.analysisId);
+    revokeAttachmentThumbnail(attachment);
+    composerAttachments = composerAttachments.filter((item) => item.id !== attachmentId);
+    renderFilePreview();
+    syncComposerHint();
+  }
+
+  function removeComposerAttachmentsById(attachmentIds) {
+    const ids = new Set(Array.isArray(attachmentIds) ? attachmentIds : [attachmentIds]);
+    composerAttachments.filter((attachment) => ids.has(attachment.id)).forEach((attachment) => {
+      attachment.removed = true;
+      if (attachment.analysisId) attachmentIdByAnalysisId.delete(attachment.analysisId);
+      revokeAttachmentThumbnail(attachment);
+    });
+    composerAttachments = composerAttachments.filter((attachment) => !ids.has(attachment.id));
+    renderFilePreview();
+    syncComposerHint();
+  }
+
+  function reassignComposerAttachmentsToChat(fromChatId, toChatId) {
+    let changed = false;
+    composerAttachments.forEach((attachment) => {
+      if (attachment.chatId === fromChatId) {
+        attachment.chatId = toChatId;
+        changed = true;
+      }
+    });
+    if (changed) renderFilePreview();
+  }
+
+  function createAttachmentIcon() {
+    const icon = document.createElement("span");
+    icon.className = "composer-attachment-visual";
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+    return icon;
+  }
+
+  function renderComposerAttachment(attachment) {
+    const card = document.createElement("div");
+    card.className = `composer-attachment is-${attachment.status}`;
+    card.setAttribute("role", "group");
+    card.setAttribute("aria-label", `${attachment.file.name}, ${attachment.status === "failed" ? attachment.error : attachment.status === "ready" ? "attached" : "processing"}`);
+    card.setAttribute("aria-busy", attachment.status === "processing" ? "true" : "false");
+
+    const visual = attachment.status === "processing"
+      ? document.createElement("span")
+      : createAttachmentIcon();
+    if (attachment.status === "processing") {
+      visual.className = "composer-attachment-visual";
+      const spinner = document.createElement("span");
+      spinner.className = "composer-attachment-spinner";
+      spinner.setAttribute("aria-hidden", "true");
+      visual.appendChild(spinner);
+    } else if (attachment.kind === "image" && attachment.thumbnailUrl) {
+      visual.replaceChildren();
+      const thumbnail = document.createElement("img");
+      thumbnail.className = "composer-attachment-thumbnail";
+      thumbnail.src = attachment.thumbnailUrl;
+      thumbnail.alt = "";
+      visual.appendChild(thumbnail);
+    }
+
+    const name = document.createElement("span");
+    name.className = "composer-attachment-name";
+    name.textContent = attachment.file.name || "File";
+    name.title = attachment.file.name || "File";
+
+    const type = document.createElement("span");
+    type.className = "composer-attachment-type";
+    type.textContent = getAttachmentTypeLabel(attachment.file);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "composer-attachment-remove";
+    removeBtn.type = "button";
+    removeBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"></path><path d="M6 6l12 12"></path></svg>';
+    removeBtn.setAttribute("aria-label", `Remove ${attachment.file.name || "file"}`);
+    removeBtn.addEventListener("click", () => removeComposerAttachment(attachment.id));
+
+    card.append(visual, name, type, removeBtn);
+    if (attachment.status === "failed") {
+      const error = document.createElement("div");
+      error.className = "composer-attachment-error";
+      error.setAttribute("role", "alert");
+      const copy = document.createElement("span");
+      copy.className = "composer-attachment-error-copy";
+      copy.textContent = attachment.error || "Couldn't attach file";
+      error.appendChild(copy);
+      if (attachment.retryable) {
+        const retryBtn = document.createElement("button");
+        retryBtn.className = "composer-attachment-retry";
+        retryBtn.type = "button";
+        retryBtn.textContent = "Retry";
+        retryBtn.setAttribute("aria-label", `Retry ${attachment.file.name || "file"}`);
+        retryBtn.addEventListener("click", () => { void retryComposerAttachment(attachment.id); });
+        error.appendChild(retryBtn);
+      }
+      card.appendChild(error);
+    }
+    return card;
   }
 
   function renderFilePreview() {
     if (!filePreviewArea) return;
-    if (pendingFiles.length === 0) {
-      filePreviewArea.style.display = "none";
+    if (composerAttachments.length === 0) {
+      filePreviewArea.hidden = true;
+      filePreviewArea.replaceChildren();
+      chatInputArea?.classList.remove("has-attachments");
       updateComposerActionSelection();
       return;
     }
-    filePreviewArea.style.display = "flex";
-    filePreviewArea.innerHTML = "";
-    pendingFiles.forEach((file, index) => {
-      const chip = document.createElement("div");
-      chip.className = "file-chip";
-      const status = pendingFileStatusByFile.get(file);
-      if (status?.status) chip.classList.add(`file-chip-${status.status}`);
-      chip.title = `${file.name} - ${formatFileSize(file.size)}`;
-      const icon = document.createElement("span");
-      icon.className = "file-chip-icon";
-      icon.textContent = isNativeChatImageFile(file) ? "IMG" : "FILE";
-      icon.textContent = "📄";
-      icon.textContent = isNativeChatImageFile(file) ? "IMG" : "FILE";
-      const name = document.createElement("span");
-      name.className = "file-chip-name";
-      name.textContent = file.name.length > 25 ? file.name.slice(0, 22) + "..." : file.name;
-      const meta = document.createElement("span");
-      meta.className = "file-chip-meta";
-      meta.textContent = status?.label || formatFileSize(file.size);
-      const removeBtn = document.createElement("button");
-      removeBtn.className = "file-chip-remove";
-      removeBtn.type = "button";
-      removeBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"></path><path d="M6 6l12 12"></path></svg>';
-      removeBtn.setAttribute("aria-label", `Remove ${file.name}`);
-      removeBtn.addEventListener("click", () => { pendingFiles.splice(index, 1); pendingFileStatusByFile.delete(file); renderFilePreview(); });
-      chip.appendChild(icon);
-      chip.appendChild(name);
-      chip.appendChild(meta);
-      chip.appendChild(removeBtn);
-      filePreviewArea.appendChild(chip);
-    });
+    filePreviewArea.hidden = false;
+    chatInputArea?.classList.add("has-attachments");
+    const fragment = document.createDocumentFragment();
+    composerAttachments.forEach((attachment) => fragment.appendChild(renderComposerAttachment(attachment)));
+    filePreviewArea.replaceChildren(fragment);
     updateComposerActionSelection();
   }
 
@@ -10261,6 +10477,107 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     };
   }
 
+  function toMessageAttachmentMeta(attachment) {
+    return {
+      kind: attachment.kind === "image" ? "image" : "file",
+      filename: attachment.fileReference?.filename || attachment.imageAttachment?.filename || attachment.file?.name || "File",
+      mime_type: attachment.fileReference?.mime_type || attachment.imageAttachment?.mime_type || attachment.file?.type || "",
+      size_bytes: attachment.fileReference?.size_bytes || attachment.imageAttachment?.size_bytes || attachment.file?.size || null,
+      ...(attachment.analysisId ? { analysis_id: attachment.analysisId } : {}),
+    };
+  }
+
+  function buildMessageAttachmentMeta(attachments) {
+    const normalized = (Array.isArray(attachments) ? attachments : [])
+      .filter((attachment) => attachment?.filename)
+      .map((attachment) => ({
+        kind: attachment.kind === "image" ? "image" : "file",
+        filename: String(attachment.filename).slice(0, 255),
+        mime_type: String(attachment.mime_type || "").slice(0, 160),
+        size_bytes: Number.isFinite(Number(attachment.size_bytes)) ? Number(attachment.size_bytes) : null,
+        ...(typeof attachment.analysis_id === "string" && attachment.analysis_id ? { analysis_id: attachment.analysis_id } : {}),
+      }));
+    return normalized.length ? { type: "message-attachments", attachments: normalized } : null;
+  }
+
+  async function retryComposerAttachment(attachmentId) {
+    const attachment = composerAttachments.find((item) => item.id === attachmentId);
+    if (!attachment || attachment.status !== "failed") return;
+    await processComposerAttachment(attachment);
+  }
+
+  async function processComposerAttachment(attachment) {
+    if (!isActiveComposerAttachment(attachment)) return;
+    const attempt = attachment.attempt + 1;
+    attachment.attempt = attempt;
+    if (attachment.analysisId) attachmentIdByAnalysisId.delete(attachment.analysisId);
+    attachment.analysisId = "";
+    attachment.fileReference = null;
+    attachment.imageAttachment = null;
+    setComposerAttachmentState(attachment, "processing");
+    try {
+      if (attachment.kind === "image") {
+        const imageAttachment = await buildImageAttachment(attachment.file);
+        if (!isActiveComposerAttachment(attachment, attempt)) return;
+        attachment.imageAttachment = imageAttachment;
+        setComposerAttachmentState(attachment, "ready");
+        return;
+      }
+
+      const result = await API.uploadFile(attachment.file);
+      if (!isActiveComposerAttachment(attachment, attempt)) return;
+      const analysisId = result.analysis_id || `file-${attachment.id}`;
+      const fileReference = {
+        filename: result.filename || attachment.file.name,
+        type: result.type,
+        size_bytes: result.size_bytes || attachment.file.size,
+        extracted_text: result.extracted_text || "",
+        analysis_id: analysisId,
+        mime_type: attachment.file.type || result.mime_type || "application/octet-stream",
+      };
+      attachment.analysisId = analysisId;
+      attachment.fileReference = fileReference;
+      attachmentIdByAnalysisId.set(analysisId, attachment.id);
+
+      if (isAuthenticatedSession()) {
+        Storage.storeFile?.({
+          filename: fileReference.filename,
+          type: fileReference.type,
+          extracted_text: fileReference.extracted_text,
+          size_bytes: fileReference.size_bytes,
+          blob: attachment.file,
+          owner_user_id: getActiveAuthUserId(),
+        }).catch((error) => {
+          debugWarn(`[UI] Attachment cache write failed: ${getSafeErrorMessage(error)}`);
+        });
+      }
+
+      if (!fileReference.extracted_text) {
+        setComposerAttachmentState(attachment, "failed", getAttachmentFailureMessage("read", attachment.file));
+        return;
+      }
+      if (result.analysis_status === "error") {
+        setComposerAttachmentState(attachment, "failed", getAttachmentFailureMessage(result.error, attachment.file));
+        return;
+      }
+      if ((result.analysis_status || "complete") === "complete") {
+        setComposerAttachmentState(attachment, "ready");
+        return;
+      }
+      const queuedEvent = pendingFileAnalysisEvents.get(analysisId);
+      if (queuedEvent) {
+        pendingFileAnalysisEvents.delete(analysisId);
+        applyFileAnalysisEvent(queuedEvent);
+      } else {
+        setComposerAttachmentState(attachment, "processing");
+      }
+    } catch (error) {
+      if (!isActiveComposerAttachment(attachment, attempt)) return;
+      setComposerAttachmentState(attachment, "failed", getAttachmentFailureMessage(error, attachment.file));
+      debugWarn(`[UI] Attachment processing failed: ${getSafeErrorMessage(error)}`);
+    }
+  }
+
   async function runWithConcurrencyLimit(items, limit, worker) {
     const results = new Array(items.length);
     let nextIndex = 0;
@@ -10278,203 +10595,6 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     return results;
   }
 
-  function buildImageUploadMeta(attachments) {
-    return {
-      type: "image-upload",
-      images: attachments.map((image) => ({
-        filename: image.filename,
-        mime_type: image.mime_type,
-        size_bytes: image.size_bytes,
-      })),
-    };
-  }
-
-  async function processPendingFiles(message, sendOptions = {}) {
-    if (fileUploadInFlight) {
-      showToast("Files are still uploading. Please wait a moment.", "info", 2500);
-      return;
-    }
-    const filesToProcess = [...pendingFiles];
-    if (filesToProcess.length === 0) return;
-    fileUploadInFlight = true;
-    try {
-      filesToProcess.forEach((file) => setPendingFileStatus(file, "processing", "Uploading..."));
-      renderFilePreview();
-      const imageFiles = filesToProcess.filter(isNativeChatImageFile);
-      const regularFiles = filesToProcess.filter((file) => !isNativeChatImageFile(file));
-      debugLog("[Upload] processing files", {
-        total: filesToProcess.length,
-        images: imageFiles.length,
-        regular: regularFiles.length,
-        guest: isGuestSession(),
-      });
-      const imageAttachmentResults = await Promise.allSettled(imageFiles.map(buildImageAttachment));
-      const imageAttachments = [];
-      imageAttachmentResults.forEach((result, index) => {
-        const file = imageFiles[index];
-        if (result.status === "fulfilled") {
-          imageAttachments.push(result.value);
-          removePendingFile(file);
-          return;
-        }
-        setPendingFileStatus(file, "error", "Read failed");
-        const { contentDiv: upErrDiv } = appendMessageBubble("assistant", "");
-        typeMessage(`Sorry, I couldn't read ${file.name}. Please try again.`, upErrDiv);
-        debugWarn(`[UI] Image read error: ${getSafeErrorMessage(result.reason)}`);
-      });
-      renderFilePreview();
-
-      const uploadResults = await runWithConcurrencyLimit(regularFiles, 2, async (file) => {
-        setPendingFileStatus(file, "processing", "Analyzing...");
-        renderFilePreview();
-        const localUploadId = Storage.generateId();
-        const uploadRequestId = `file-${localUploadId}`;
-        const uploadMeta = {
-          type: "file-upload",
-          filename: file.name,
-          size_bytes: file.size,
-          mime_type: file.type || "application/octet-stream",
-          analysis_id: localUploadId,
-          analysis_status: "processing",
-          clientRequestId: uploadRequestId,
-        };
-        const { contentDiv } = appendMessageBubble("user", `Uploaded file: ${file.name}`, uploadMeta);
-        const statusEntry = attachFileAnalysisStatus(contentDiv, "processing", "Uploading and analyzing...");
-        if (statusEntry) {
-          pendingFileUploadUi.set(localUploadId, { ...statusEntry, filename: file.name });
-        }
-        await persistChatMessage(currentChatId, "user", `Uploaded file: ${file.name}`, uploadMeta, {
-          id: `user-${uploadRequestId}`,
-          clientRequestId: uploadRequestId,
-        });
-        await upsertChatMessageSyncJob(uploadRequestId, {
-          localChatId: currentChatId,
-          conversationId: getCanonicalConversationIdForRequest(currentChatId) || null,
-          title: `Uploaded file: ${file.name}`.slice(0, 50),
-          messages: [{
-            role: "user",
-            content: `Uploaded file: ${file.name}`,
-            clientRequestId: uploadRequestId,
-            meta: uploadMeta,
-          }],
-        });
-        showActivityIndicator("thinking", { chatId: currentChatId, withTimer: false, persist: false });
-        scrollToBottom();
-        try {
-          const result = await API.uploadFile(file);
-          const analysisId = result.analysis_id || localUploadId;
-          const pendingEntry = pendingFileUploadUi.get(localUploadId);
-          pendingFileUploadUi.delete(localUploadId);
-          const sessionFile = {
-            filename: result.filename,
-            type: result.type,
-            extracted_text: result.extracted_text,
-            size_bytes: result.size_bytes,
-            timestamp: new Date().toISOString(),
-            analysis_id: analysisId,
-            mime_type: file.type || result.mime_type || "application/octet-stream",
-          };
-          const completedUploadMeta = {
-            ...uploadMeta,
-            filename: result.filename,
-            size_bytes: result.size_bytes || file.size,
-            mime_type: sessionFile.mime_type,
-            analysis_id: analysisId,
-            analysis_status: result.analysis_status || "complete",
-          };
-          await persistChatMessage(currentChatId, "user", `Uploaded file: ${result.filename}`, completedUploadMeta, {
-            id: `user-${uploadRequestId}`,
-            clientRequestId: uploadRequestId,
-          });
-          await upsertChatMessageSyncJob(uploadRequestId, {
-            localChatId: currentChatId,
-            conversationId: getCanonicalConversationIdForRequest(currentChatId) || null,
-            title: `Uploaded file: ${result.filename}`.slice(0, 50),
-            messages: [{
-              role: "user",
-              content: `Uploaded file: ${result.filename}`,
-              clientRequestId: uploadRequestId,
-              meta: completedUploadMeta,
-            }],
-          });
-          if (pendingEntry) {
-            fileAnalysisUi.set(analysisId, { ...pendingEntry, filename: result.filename, fileType: result.type });
-            const status = result.analysis_status || "processing";
-            const label = status === "complete" ? "Analysis ready" : "Analyzing file...";
-            setFileAnalysisStatus(pendingEntry, status, label);
-            const queuedEvent = pendingFileAnalysisEvents.get(analysisId);
-            if (queuedEvent) {
-              pendingFileAnalysisEvents.delete(analysisId);
-              if (!(status === "complete" && queuedEvent.status !== "error" && queuedEvent.status !== "complete")) {
-                applyFileAnalysisEvent(queuedEvent);
-              }
-            }
-          }
-          if (isAuthenticatedSession()) {
-            await Storage.storeFile({
-              filename: result.filename, type: result.type,
-              extracted_text: result.extracted_text, size_bytes: result.size_bytes, blob: file,
-              owner_user_id: getActiveAuthUserId(),
-            });
-          } else {
-            debugLog("[Upload] guest upload ready", {
-              filename: sessionFile.filename,
-              extracted_chars: sessionFile.extracted_text.length,
-              analysis_id: sessionFile.analysis_id,
-            });
-          }
-          removePendingFile(file);
-          renderFilePreview();
-          return sessionFile;
-        } catch (err) {
-          setPendingFileStatus(file, "error", "Upload failed - retry");
-          renderFilePreview();
-          const pendingEntry = pendingFileUploadUi.get(localUploadId);
-          if (pendingEntry) {
-            setFileAnalysisStatus(pendingEntry, "error", "Upload failed");
-            pendingFileUploadUi.delete(localUploadId);
-          }
-          if (!(await maybeHandleProfileNameRequiredError(err, "file.upload"))) {
-            const { contentDiv: upErrDiv } = appendMessageBubble("assistant", "");
-            typeMessage(`Sorry, I couldn\u2019t process that file. Please try again.`, upErrDiv);
-            debugWarn(`[UI] Upload error: ${getSafeErrorMessage(err)}`);
-          }
-          return null;
-        } finally {
-          hideActivityIndicator(null);
-        }
-      });
-
-      const completedSessionFiles = uploadResults
-        .filter((result) => result?.status === "fulfilled" && result.value)
-        .map((result) => result.value);
-      if (completedSessionFiles.length > 0) {
-        addCurrentSessionFiles(completedSessionFiles);
-        if (isGuestSession()) {
-          debugLog("[Upload] guest files attached to session", {
-            files: completedSessionFiles.length,
-            context_files: getCurrentFileReferences().length,
-          });
-        }
-      }
-      if (message || sendOptions.selectedContext || imageAttachments.length > 0) {
-        await handleSend(null, {
-          message,
-          imageAttachments,
-          skipPendingFileProcessing: true,
-          ...(sendOptions.selectedContext ? { selectedContext: sendOptions.selectedContext } : {}),
-        });
-      } else if (isAuthenticatedSession()) {
-        processSyncQueue().catch((error) => {
-          debugWarn("[UI] Upload-only file sync failed:", getSafeErrorMessage(error));
-        });
-      }
-      scheduleChatListRefresh();
-    } finally {
-      fileUploadInFlight = false;
-      renderFilePreview();
-    }
-  }
 
   function openSettings() {
     if (!isAuthenticatedSession()) return;
@@ -10536,13 +10656,14 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     return guestChat;
   }
 
-  async function startNewChat() {
+  async function startNewChat(options = {}) {
     debugLog("[UI] startNewChat");
     const stopMeasure = startPerf("ui.new_chat");
     if (ensureNameCapture()) {
       stopMeasure("blocked", { reason: "name_required" });
       return;
     }
+    if (!options.preserveComposerAttachments) clearPendingFiles();
     if (isGuestSession()) {
       const guestChat = resetGuestSession();
       stopMeasure("ok", { chat_id: guestChat?.id || "", guest: true });
@@ -10573,6 +10694,9 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       return;
     }
     currentChatId = chat.id;
+    composerAttachments.forEach((attachment) => {
+      if (!attachment.chatId) attachment.chatId = chat.id;
+    });
     syncActiveChatItem();
     clearChatSessionContext(chat.id);
     pendingClarifications.delete(chat.id);

@@ -519,6 +519,60 @@
   flex-shrink: 0;
 }
 
+.message-attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+
+.message-file-chip.message-attachment-card {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-areas:
+    "icon name"
+    "icon type";
+  width: min(236px, 100%);
+  min-width: 176px;
+  min-height: 50px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+  line-height: 1.2;
+}
+
+.message-attachment-card svg { grid-area: icon; }
+
+.message-attachment-name {
+  grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachment-type {
+  grid-area: type;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.055em;
+}
+
+.message-attachment-prompt {
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .message-file-chip.message-attachment-card {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
 .generated-file-panel {
   width: min(760px, 100%);
   margin: 10px 0 4px;
@@ -1073,4 +1127,3 @@
     opacity: 1 !important;
   }
 }
-

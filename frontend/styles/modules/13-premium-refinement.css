@@ -1000,12 +1000,11 @@ body::after {
 }
 
 .file-preview-area {
-  margin: 0 16px -3px;
-  padding: 10px 12px 12px;
-  background: var(--sentiq-surface-elevated);
-  border-color: var(--sentiq-border-hairline);
-  border-bottom-color: transparent;
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.16);
+  margin: 0;
+  padding: 0 2px 4px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
 .file-chip {
@@ -1641,7 +1640,6 @@ textarea:focus-visible {
     line-height: 1.5;
   }
 
-  .file-preview-area,
   .auth-gate-message {
     margin-inline: 10px;
   }

@@ -199,7 +199,6 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
           </button>
         </div>
-        <div id="file-preview-area" class="file-preview-area" style="display: none;"></div>
         <div id="auth-gate-message" class="auth-gate-message" role="status" aria-live="polite">Log in to start chatting.</div>
 
         <div class="chat-input-area">
@@ -208,6 +207,7 @@
             <span class="composer-drop-orb"></span>
             <span class="composer-drop-text">Drop files to attach</span>
           </div>
+          <div id="file-preview-area" class="file-preview-area" aria-label="Attachments" hidden></div>
           <div id="composer-action-menu" class="composer-action-menu" aria-hidden="true">
             <button id="file-attach-btn" class="composer-action-option" title="Attach file" aria-label="Attach file" type="button">
               <span class="composer-action-icon" aria-hidden="true">

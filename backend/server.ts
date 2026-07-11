@@ -2463,6 +2463,28 @@ app.post(
           previewJson: meta.preview || undefined,
         };
       }
+      if (meta?.type === "message-attachments") {
+        const attachments = Array.isArray(meta.attachments)
+          ? meta.attachments
+            .map((attachment: any) => ({
+              kind: attachment?.kind === "image" ? "image" : "file",
+              filename: typeof attachment?.filename === "string" ? attachment.filename.slice(0, 255) : "",
+              mime_type: typeof attachment?.mime_type === "string" ? attachment.mime_type.slice(0, 160) : "",
+              size_bytes: toNumberOrUndefined(attachment?.size_bytes),
+              analysis_id: typeof attachment?.analysis_id === "string" ? attachment.analysis_id.slice(0, 160) : undefined,
+            }))
+            .filter((attachment: any) => attachment.filename)
+          : [];
+        const first = attachments[0];
+        return {
+          ...base,
+          messageType: "file_upload",
+          fileName: first?.filename,
+          mimeType: first?.mime_type,
+          fileSizeBytes: first?.size_bytes,
+          previewJson: { attachments },
+        };
+      }
       if (meta?.type === "file-upload") {
         return {
           ...base,
@@ -2503,7 +2525,7 @@ app.post(
       }))
       .filter((message: SyncMessage) => {
         if (message.content.trim().length > 0) return true;
-        return message.meta?.type === "image" || message.meta?.type === "generated-file" || message.meta?.type === "file-upload";
+        return message.meta?.type === "image" || message.meta?.type === "generated-file" || message.meta?.type === "file-upload" || message.meta?.type === "message-attachments";
       })
       .slice(0, 20) as SyncMessage[];
 
