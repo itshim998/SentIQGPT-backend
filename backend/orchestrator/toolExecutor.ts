@@ -25,6 +25,7 @@ import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
 import { routeFileGeneration } from "../tools/fileGeneration/fileGenerator";
 import { executeTavilySearchPipeline } from "../tools/webSearch/tavilySearchPipeline";
 import { normalizeWebSearchMode } from "../tools/webSearch/webSearchMode";
+import { isWebSurfV2Enabled, prepareWebSurfV2, type WebSurfV2Evidence, type WebSurfV2Payload } from "../tools/webSearch/webSurfV2";
 import { processMessageForMemory } from "../ai/MemoryProcessor";
 import { resolveContextReferences } from "../context/referenceResolver";
 import type { BuiltContext } from "../context/contextBuilder";
@@ -121,6 +122,7 @@ export interface StepResult {
     sources: Array<{ title: string; url: string }>;
     queriesUsed: number;
     provider?: string;
+    v2?: WebSurfV2Payload;
   };
   readonly error?: string;
 }
@@ -196,6 +198,7 @@ async function execConversation(
   priorContext: string,
   profile: ExecutionProfile,
   signal?: AbortSignal,
+  webSurfEvidence?: WebSurfV2Evidence,
 ): Promise<StepResult> {
   const augmentedInput = priorContext
     ? `${input}\n\n[Previous step context]: ${priorContext}`
@@ -248,15 +251,16 @@ async function execConversation(
       conversationCapsule: ctx.conversationCapsule,
       workspaceCapsule: ctx.workspaceCapsule,
       priorConversationEvidence: ctx.priorConversationEvidence,
-      routeEvidence: priorContext
+      routeEvidence: webSurfEvidence?.routeEvidence ?? (priorContext
         ? [{ content: priorContext, label: "previous step", required: true, relevance: 1 }]
-        : undefined,
+        : undefined),
       isExplicitRecallQuery: ctx.isExplicitRecallQuery,
       trustedProfile: ctx.trustedProfile,
       modelOverride,
       userId: ctx.userId,
       reasoningEffort: profile.model.reasoningEffort,
       signal,
+      webSurfSourceIds: webSurfEvidence?.payload.sources.map((source) => source.id),
     });
     if (reservation) {
       await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "conversation" });
@@ -539,8 +543,46 @@ async function execFileGeneration(
 async function execWebSearch(
   input: string,
   ctx: BuiltContext,
+  profile: ExecutionProfile,
   signal?: AbortSignal,
 ): Promise<StepResult> {
+  if (isWebSurfV2Enabled()) {
+    try {
+      const evidence = await prepareWebSurfV2(
+        input,
+        ctx.webSearchTrigger ?? (ctx.webSearchMode ? "manual" : "auto"),
+        {},
+        signal,
+      );
+      // This delegates to the normal conversation executor. It is deliberately
+      // the only point that reserves, commits, or releases a text allowance.
+      const synthesis = await execConversation(input, ctx, "", profile, signal, evidence);
+      return {
+        ...synthesis,
+        tool: "web_search",
+        web_search: {
+          query: evidence.payload.query,
+          results: [],
+          sources: evidence.payload.sources.map((source) => ({ title: source.title, url: source.url })),
+          queriesUsed: 1,
+          provider: evidence.payload.provider,
+          v2: evidence.payload,
+        },
+      };
+    } catch (err) {
+      if (signal?.aborted) throwIfAborted(signal);
+      if (err instanceof BillingQuotaError) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      console.log(`[WebSurfV2] retrieval/synthesis error: ${message}`);
+      return {
+        step: 0,
+        tool: "web_search",
+        reply: safeWebSearchFailureMessage(message),
+        fallback: true,
+      };
+    }
+  }
+
   console.log(`[WebSearch] executing Tavily pipeline for: "${input.slice(0, 60)}..."`);
   const webSearchMode = normalizeWebSearchMode(ctx.webSearchMode);
 
@@ -670,7 +712,7 @@ async function executeStep(
         result = await execFileGeneration(stepInput, ctx);
         break;
       case "web_search":
-        result = await execWebSearch(stepInput, ctx, signal);
+        result = await execWebSearch(stepInput, ctx, profile, signal);
         break;
       case "conversation":
       default:

@@ -43,6 +43,7 @@ import type { DetectedTool } from "./toolDetector";
 import type { PlanTool } from "./planner";
 import type { StepResult } from "./toolExecutor";
 import type { SearchResult } from "../tools/webSearch/types";
+import type { WebSurfV2Payload } from "../tools/webSearch/webSurfV2";
 import { resolveExecutionProfile, type ExecutionMode, type ExecutionProfile } from "./executionProfile";
 
 // ==============================
@@ -138,6 +139,7 @@ export interface OrchestratorResponse {
     sources: Array<{ title: string; url: string }>;
     queriesUsed: number;
     provider?: string;
+    v2?: WebSurfV2Payload;
   };
   /** Intent clarification payload for interactive follow-up UI */
   readonly clarification?: ClarificationPayload;

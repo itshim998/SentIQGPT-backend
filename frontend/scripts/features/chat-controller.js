@@ -1638,6 +1638,10 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
         latestStatusText: preview.latest_status_text || "",
       };
     }
+    if (!meta && messageType === "text" && preview.web_surf_v2) {
+      const payload = normalizeWebSurfV2Payload(preview.web_surf_v2);
+      if (payload) meta = { type: "websurf_v2", payload };
+    }
     if (!meta && messageType === "text" && preview.response_status) {
       meta = {
         type: "response-state",
@@ -1821,6 +1825,9 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
         analysis_id: meta.analysis_id || "",
         analysis_status: meta.analysis_status || "",
       };
+    } else if (meta?.type === "websurf_v2") {
+      const payload = normalizeWebSurfV2Payload(meta.payload);
+      if (payload) output.meta = { type: "websurf_v2", payload };
     } else if (meta?.responseStatus) {
       output.meta = {
         type: "response-state",
@@ -3445,6 +3452,193 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     }
   }
 
+  function isBlockedWebSurfHost(hostname) {
+    const host = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+    if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+    const ipv4 = host.split(".").map((part) => Number(part));
+    if (ipv4.length === 4 && ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
+      const [a, b] = ipv4;
+      return a === 0 || a === 10 || a === 127 || a >= 224
+        || (a === 100 && b >= 64 && b <= 127)
+        || (a === 169 && b === 254)
+        || (a === 172 && b >= 16 && b <= 31)
+        || (a === 192 && b === 168)
+        || (a === 198 && (b === 18 || b === 19));
+    }
+    return host === "::" || host === "::1" || host.startsWith("::ffff:")
+      || host.startsWith("fc") || host.startsWith("fd")
+      || /^fe[89ab]/.test(host) || host.startsWith("ff");
+  }
+
+  function safeHttpsUrl(value) {
+    const url = String(value || "").trim();
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === "https:"
+        && !parsed.username
+        && !parsed.password
+        && !isBlockedWebSurfHost(parsed.hostname)
+        ? parsed.toString()
+        : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function normalizeWebSurfV2Payload(value) {
+    const payload = value?.v2 || value?.web_surf_v2 || value;
+    if (!payload || Number(payload.version) !== 2 || !Array.isArray(payload.sources)) return null;
+    const seen = new Set();
+    const sources = payload.sources
+      .map((source) => {
+        const id = String(source?.id || "").trim();
+        const url = safeHttpsUrl(source?.url);
+        if (!/^S\d+$/.test(id) || !url || seen.has(id)) return null;
+        seen.add(id);
+        return {
+          id,
+          title: String(source?.title || getHostLabel(url) || "Source").trim().slice(0, 220),
+          url,
+          domain: String(source?.domain || getHostLabel(url)).trim().slice(0, 180),
+          snippet: String(source?.snippet || "").trim().slice(0, 1200),
+          published_at: String(source?.published_at || "").trim().slice(0, 128),
+          favicon_url: safeHttpsUrl(source?.favicon_url),
+          thumbnail_url: safeHttpsUrl(source?.thumbnail_url),
+        };
+      })
+      .filter(Boolean);
+    return sources.length > 0
+      ? {
+          version: 2,
+          query: String(payload.query || "").trim(),
+          trigger: payload.trigger === "auto" ? "auto" : "manual",
+          ...(typeof payload.provider === "string" && payload.provider.trim()
+            ? { provider: payload.provider.trim().slice(0, 120) }
+            : {}),
+          sources,
+        }
+      : null;
+  }
+
+  function replaceWebSurfCitationSentinels(root, sources) {
+    const sourceById = new Map(sources.map((source) => [source.id, source]));
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        return parent && !parent.closest("a, code, pre") && /\[\[S\d+\]\]/.test(node.nodeValue || "")
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      },
+    });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach((node) => {
+      const text = node.nodeValue || "";
+      const fragment = document.createDocumentFragment();
+      let cursor = 0;
+      text.replace(/\[\[(S\d+)\]\]/g, (marker, id, offset) => {
+        fragment.append(document.createTextNode(text.slice(cursor, offset)));
+        const source = sourceById.get(id);
+        if (!source) {
+          fragment.append(document.createTextNode(marker));
+        } else {
+          const citation = document.createElement("a");
+          citation.className = "websurf-v2-citation";
+          citation.href = source.url;
+          citation.target = "_blank";
+          citation.rel = "noopener noreferrer";
+          citation.referrerPolicy = "no-referrer";
+          citation.textContent = `[${id.slice(1)}]`;
+          citation.setAttribute("aria-label", `Open source ${id}: ${source.title}`);
+          fragment.append(citation);
+        }
+        cursor = offset + marker.length;
+        return marker;
+      });
+      fragment.append(document.createTextNode(text.slice(cursor)));
+      node.parentNode?.replaceChild(fragment, node);
+    });
+  }
+
+  function createWebSurfV2SourceCard(source) {
+    const card = document.createElement("article");
+    card.className = "websurf-v2-source";
+    const title = document.createElement("a");
+    title.className = "websurf-v2-source-title";
+    title.href = source.url;
+    title.target = "_blank";
+    title.rel = "noopener noreferrer";
+    title.referrerPolicy = "no-referrer";
+    title.textContent = `${source.id} · ${source.title}`;
+
+    const meta = document.createElement("div");
+    meta.className = "websurf-v2-source-meta";
+    meta.textContent = [source.domain, source.published_at].filter(Boolean).join(" · ");
+
+    const body = document.createElement("div");
+    body.className = "websurf-v2-source-body";
+    if (source.thumbnail_url) {
+      const image = document.createElement("img");
+      image.className = "websurf-v2-thumbnail";
+      image.src = source.thumbnail_url;
+      image.alt = "";
+      image.loading = "lazy";
+      image.referrerPolicy = "no-referrer";
+      image.addEventListener("error", () => image.remove());
+      body.append(image);
+    }
+    const copy = document.createElement("div");
+    if (source.favicon_url) {
+      const favicon = document.createElement("img");
+      favicon.className = "websurf-v2-favicon";
+      favicon.src = source.favicon_url;
+      favicon.alt = "";
+      favicon.loading = "lazy";
+      favicon.referrerPolicy = "no-referrer";
+      favicon.addEventListener("error", () => favicon.remove());
+      copy.append(favicon);
+    }
+    if (source.snippet) {
+      const snippet = document.createElement("p");
+      snippet.textContent = source.snippet;
+      copy.append(snippet);
+    }
+    body.append(copy);
+    card.append(title, meta, body);
+    return card;
+  }
+
+  function renderWebSurfV2Panel(payload, answerText, thinkingText, renderOptions = {}) {
+    const panel = document.createElement("section");
+    panel.className = "websurf-v2-panel";
+    const answer = document.createElement("div");
+    answer.className = "websurf-v2-answer";
+    answer.innerHTML = renderAssistantMessageHtml(answerText, thinkingText, renderOptions);
+    replaceWebSurfCitationSentinels(answer, payload.sources);
+    wireThinkingPanels(answer);
+    wireCodeCopyButtons(answer);
+    panel.append(answer);
+
+    const list = document.createElement("div");
+    list.className = "websurf-v2-sources";
+    const heading = document.createElement("div");
+    heading.className = "websurf-v2-sources-label";
+    heading.textContent = "Sources";
+    list.append(heading);
+    payload.sources.slice(0, 3).forEach((source) => list.append(createWebSurfV2SourceCard(source)));
+    if (payload.sources.length > 3) {
+      const more = document.createElement("details");
+      more.className = "websurf-v2-more";
+      const summary = document.createElement("summary");
+      summary.textContent = `${payload.sources.length - 3} more source${payload.sources.length - 3 === 1 ? "" : "s"}`;
+      more.append(summary);
+      payload.sources.slice(3).forEach((source) => more.append(createWebSurfV2SourceCard(source)));
+      list.append(more);
+    }
+    panel.append(list);
+    return panel;
+  }
+
   function normalizeWebSearchPayloadLegacyUnused(response) {
     const payload = response?.web_search || response?.webSearch || response?.search;
     if (!payload || typeof payload !== "object") return null;
@@ -4282,6 +4476,8 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     const rawImagePayload = response?.image || (response?.type === "image" ? response : null);
     const imageMeta = createImageMeta(rawImagePayload);
     if ((response?.route === "image_generation" && response?.image) || response?.type === "image") return imageMeta;
+    const webSurfV2 = normalizeWebSurfV2Payload(response?.web_search?.v2 || response?.web_surf_v2);
+    if (webSurfV2) return { type: "websurf_v2", payload: webSurfV2 };
     return null;
   }
 
@@ -4327,6 +4523,20 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       cacheGeneratedFileFromMeta(fileMeta).catch(() => null);
       await persistChatMessage(targetChatId, "assistant", assistantText || `Generated ${fileMeta.file_name}.`, fileMeta, assistantPersistOptions);
       return assistantText || `Generated ${fileMeta.file_name}.`;
+    }
+
+    const webSurfV2 = normalizeWebSurfV2Payload(response?.web_search?.v2 || response?.web_surf_v2);
+    if (webSurfV2) {
+      const webSurfMeta = { type: "websurf_v2", payload: webSurfV2 };
+      if (renderInView) {
+        appendMessageBubble("assistant", assistantText, webSurfMeta, effectiveRenderOptions, {
+          thinking: assistantThinking,
+          animateReveal: true,
+          responseTrust,
+        });
+      }
+      await persistChatMessage(targetChatId, "assistant", assistantText, webSurfMeta, assistantPersistOptions);
+      return assistantText || "Web search results are ready.";
     }
 
     if (webSearchPayload) {
@@ -6224,6 +6434,15 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       const chartContainer = document.createElement("div");
       renderChartContent(chartContainer, meta);
       contentDiv.appendChild(chartContainer);
+    } else if (meta?.type === "websurf_v2") {
+      const payload = normalizeWebSurfV2Payload(meta.payload);
+      if (payload) {
+        contentDiv.appendChild(renderWebSurfV2Panel(payload, content, assistantThinking, renderOptions));
+      } else {
+        contentDiv.innerHTML = role === "assistant"
+          ? renderAssistantMessageHtml(content, assistantThinking, renderOptions)
+          : renderRichText(content, renderOptions);
+      }
     } else if (meta?.type === "web_search") {
       const payload = meta.payload || {
         query: "",
@@ -9230,6 +9449,8 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       let responseRenderMode = null;
       let fileArtifactResponse = null;
       let finalAssistantMeta = null;
+      let webSurfV2Sources = null;
+      let webSurfV2Completion = null;
       let lastSyncDraftAt = 0;
       const streamDraft = createStreamingDraftPersister(targetChatId, requestId);
 
@@ -9335,8 +9556,8 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
                   updateActivityIndicator("web_search", { chatId: targetChatId, withTimer: true });
                 }
                 if (route === "web_search") {
-                  responseRenderMode = "web_search";
-                  streamBubble.setRenderMode("web_search");
+                  responseRenderMode = routeMeta?.v2 ? "websurf_v2" : "web_search";
+                  if (!routeMeta?.v2) streamBubble.setRenderMode("web_search");
                 }
                 if (route === "math_reasoning") {
                   responseRenderMode = "math";
@@ -9353,6 +9574,17 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
                 if (!isRequestStale(targetChatId, requestId) && targetChatId === currentChatId) {
                   SentIQLoaderEngine.showForRoute(route, { chatId: targetChatId });
                 }
+              },
+              onWebSurfSources(payload) {
+                webSurfV2Sources = normalizeWebSurfV2Payload(payload);
+              },
+              onWebSurfComplete(event, payload) {
+                const normalized = normalizeWebSurfV2Payload(payload) || webSurfV2Sources;
+                if (!normalized) return;
+                webSurfV2Completion = {
+                  payload: normalized,
+                  answer: typeof event?.answer === "string" ? event.answer : "",
+                };
               },
               onMemory(memory) { memoryResult = memory; },
               onSync(sync) { responseSync = sync; },
@@ -9416,7 +9648,23 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
                 ? "Response interrupted — showing partial output."
                 : "";
               await streamBubble.finish({ interruptionNotice });
-              fullReply = streamBubble.getFullText();
+              if (webSurfV2Completion && !streamResult?.interrupted) {
+                fullReply = webSurfV2Completion.answer || streamBubble.getFullText();
+                const webSurfMeta = { type: "websurf_v2", payload: webSurfV2Completion.payload };
+                finalAssistantMeta = webSurfMeta;
+                chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"]`)?.remove();
+                if (!isRequestStale(targetChatId, requestId) && targetChatId === currentChatId) {
+                  appendMessageBubble("assistant", fullReply, webSurfMeta, {}, { animateReveal: true });
+                }
+                await persistChatMessage(targetChatId, "assistant", fullReply, webSurfMeta, {
+                  id: `assistant-${requestId}`,
+                  clientRequestId: requestId,
+                });
+                assistantPersisted = true;
+                consumeWebSearchOneShot("web_search");
+              } else {
+                fullReply = streamBubble.getFullText();
+              }
               if (responseRenderMode === "web_search") {
                 consumeWebSearchOneShot("web_search");
               }
@@ -9434,13 +9682,15 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
                     autoResumeAttempted: options.allowAutoResume !== false,
                   };
                 }
-                await streamDraft.finalize(fullReply, {
-                  ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
-                  responseStatus,
-                  ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
-                  ...(streamResult?.interrupted ? { autoResumeAttempted: options.allowAutoResume !== false } : {}),
-                });
-                assistantPersisted = true;
+                if (!webSurfV2Completion || streamResult?.interrupted) {
+                  await streamDraft.finalize(fullReply, {
+                    ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
+                    responseStatus,
+                    ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+                    ...(streamResult?.interrupted ? { autoResumeAttempted: options.allowAutoResume !== false } : {}),
+                  });
+                  assistantPersisted = true;
+                }
                 if (streamResult?.interrupted) {
                   appendResponseRecoveryRow(
                     chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .message-content`),
@@ -9509,6 +9759,9 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
               orphan.closest(".message")?.remove();
             }
             if (!partial && /response did not complete|please retry/i.test(streamErrorMessage)) {
+              throw streamErr;
+            }
+            if (!partial && (streamErr?.code === "websurf_retrieval_failed" || responseRenderMode === "websurf_v2")) {
               throw streamErr;
             }
             if (!partial) {

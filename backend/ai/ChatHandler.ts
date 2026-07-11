@@ -88,6 +88,7 @@ export async function handleChat(args: {
   readonly userId?: string;
   readonly reasoningMode?: boolean;
   readonly reasoningEffort?: "low" | "medium";
+  readonly webSurfSourceIds?: readonly string[];
   readonly signal?: AbortSignal;
 }): Promise<ChatResponse> {
   if (!args.userMessage.trim()) {
@@ -111,6 +112,7 @@ export async function handleChat(args: {
     userId: args.userId,
     reasoningMode: args.reasoningMode,
     reasoningEffort: args.reasoningEffort,
+    webSurfSourceIds: args.webSurfSourceIds,
   };
 
   const baseCall = buildChatPrompt(ctx);

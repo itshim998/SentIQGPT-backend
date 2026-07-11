@@ -59,6 +59,7 @@ export interface RawMessageContext {
     displayName: string;
   };
   readonly web_search_mode?: WebSearchMode;
+  readonly web_search_trigger?: "manual" | "auto";
   readonly userMessage?: string;
   readonly userDb?: SupabaseClient;
   readonly userId?: string;
@@ -92,6 +93,7 @@ export interface BuiltContext {
   readonly workspaceCapsule?: string;
   readonly hasFileContext: boolean;
   readonly webSearchMode?: WebSearchMode;
+  readonly webSearchTrigger?: "manual" | "auto";
   readonly userId?: string;
   readonly userDb?: SupabaseClient;
   readonly conversationId?: string;
@@ -515,6 +517,7 @@ export async function buildContext(
     workspaceCapsule: capsules.workspace?.content,
     hasFileContext: fileReferences.length > 0 || imageAttachments.length > 0,
     webSearchMode: raw.web_search_mode,
+    webSearchTrigger: raw.web_search_trigger,
     userId: normalizedUserId,
     userDb: raw.userDb,
     conversationId: raw.conversationId,
@@ -634,6 +637,7 @@ export async function buildContextFast(
     workspaceCapsule: capsules.workspace?.content,
     hasFileContext: fileReferences.length > 0 || imageAttachments.length > 0,
     webSearchMode: raw.web_search_mode,
+    webSearchTrigger: raw.web_search_trigger,
     userId: normalizedUserId,
     userDb: raw.userDb,
     conversationId: raw.conversationId,

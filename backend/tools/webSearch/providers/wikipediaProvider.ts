@@ -24,13 +24,13 @@ export class WikipediaProvider implements WebSearchProvider {
     return true;
   }
 
-  async search(query: string, maxResults = 3): Promise<readonly SearchResult[]> {
+  async search(query: string, maxResults = 3, signal?: AbortSignal): Promise<readonly SearchResult[]> {
     // Strategy 1: Try the search endpoint for broad coverage
     const searchUrl = `https://en.wikipedia.org/w/rest.php/v1/search/page?q=${encodeURIComponent(query)}&limit=${maxResults}`;
 
     const res = await fetch(searchUrl, {
       headers: { "User-Agent": SERVICE_USER_AGENT },
-      signal: AbortSignal.timeout(8000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000),
     });
 
     if (!res.ok) throw new Error(`Wikipedia search API ${res.status}`);
@@ -47,9 +47,10 @@ export class WikipediaProvider implements WebSearchProvider {
 
     for (const page of pages.slice(0, maxResults)) {
       try {
-        const summary = await this.fetchSummary(page.key);
+        const summary = await this.fetchSummary(page.key, signal);
         results.push(summary);
-      } catch {
+      } catch (error) {
+        if (signal?.aborted) throw error;
         // Fall back to search excerpt
         results.push({
           title: page.title,
@@ -64,12 +65,12 @@ export class WikipediaProvider implements WebSearchProvider {
     return results;
   }
 
-  private async fetchSummary(titleKey: string): Promise<SearchResult> {
+  private async fetchSummary(titleKey: string, signal?: AbortSignal): Promise<SearchResult> {
     const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(titleKey)}`;
 
     const res = await fetch(url, {
       headers: { "User-Agent": SERVICE_USER_AGENT },
-      signal: AbortSignal.timeout(6000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(6000)]) : AbortSignal.timeout(6000),
     });
 
     if (!res.ok) throw new Error(`Wikipedia summary ${res.status}`);

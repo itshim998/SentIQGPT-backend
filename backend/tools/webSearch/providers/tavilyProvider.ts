@@ -44,6 +44,10 @@ interface TavilyResponse {
   images?: string[];
 }
 
+interface TavilyRequestOptions {
+  readonly includeAnswer?: boolean;
+}
+
 function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -68,10 +72,11 @@ export class TavilyProvider implements WebSearchProvider {
     maxResults = 5,
     mode: WebSearchMode = DEFAULT_WEB_SEARCH_MODE,
     signal?: AbortSignal,
+    options: TavilyRequestOptions = {},
   ): Promise<readonly SearchResult[]> {
     const normalizedMode = normalizeWebSearchMode(mode);
     const data = await this.executeWithRotation(query, maxResults, (apiKey) =>
-      this.executeRequest(query, apiKey, maxResults, normalizedMode, signal)
+      this.executeRequest(query, apiKey, maxResults, normalizedMode, signal, options)
     );
     return this.mapResults(data, normalizedMode);
   }
@@ -118,6 +123,7 @@ export class TavilyProvider implements WebSearchProvider {
         return result;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
+        if (lastError.name === "AbortError") throw lastError;
 
         const isRateLimit = lastError.message.includes("429");
         const isAuthError = lastError.message.includes("401");
@@ -144,13 +150,17 @@ export class TavilyProvider implements WebSearchProvider {
     maxResults: number,
     mode: WebSearchMode,
     signal?: AbortSignal,
+    options: TavilyRequestOptions = {},
   ): Promise<TavilyResponse> {
     const requestBody: Record<string, unknown> = {
       query,
       search_depth: "advanced",
-      include_answer: "advanced",
+      include_answer: options.includeAnswer === false ? false : "advanced",
       max_results: maxResults,
     };
+
+    const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const effectiveSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
     const response = await fetch(TAVILY_API_ENDPOINT, {
       method: "POST",
@@ -159,7 +169,7 @@ export class TavilyProvider implements WebSearchProvider {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(requestBody),
-      signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: effectiveSignal,
     });
 
     if (!response.ok) {

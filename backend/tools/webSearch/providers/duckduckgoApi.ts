@@ -17,12 +17,12 @@ export class DuckDuckGoApiProvider implements WebSearchProvider {
     return true; // Free, no key needed
   }
 
-  async search(query: string, maxResults = 5): Promise<readonly SearchResult[]> {
+  async search(query: string, maxResults = 5, signal?: AbortSignal): Promise<readonly SearchResult[]> {
     const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
 
     const res = await fetch(url, {
       headers: { "User-Agent": SERVICE_USER_AGENT },
-      signal: AbortSignal.timeout(8000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000),
     });
 
     if (!res.ok) throw new Error(`DuckDuckGo API ${res.status}`);

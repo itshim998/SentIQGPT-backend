@@ -69,11 +69,13 @@ const MAX_EXTRACT = 3;
 export async function routeWebSearch(args: {
   readonly query: string;
   readonly maxResults?: number;
+  readonly signal?: AbortSignal;
 }): Promise<WebSearchResult> {
   const query = args.query.trim();
   if (!query) {
     return { success: false, query: args.query, results: [], error: "Query is required" };
   }
+  args.signal?.throwIfAborted();
 
   // Check web search cache first
   const cached = getCachedSearchResults(query);
@@ -92,6 +94,7 @@ export async function routeWebSearch(args: {
   let providerUsed: string | undefined;
 
   for (const provider of providers) {
+    args.signal?.throwIfAborted();
     if (!provider.isAvailable()) {
       console.log(`[WEB SEARCH] skipping ${provider.name}: not available`);
       errors.push(`${provider.name}: not available`);
@@ -100,11 +103,18 @@ export async function routeWebSearch(args: {
 
     try {
       console.log(`[WEB SEARCH] trying provider: ${provider.name}`);
-      rawResults = await provider.search(query, maxResults);
+      rawResults = provider instanceof TavilyProvider
+        ? await provider.search(query, maxResults, "basic", args.signal, { includeAnswer: false })
+        : await (provider.search as (
+            query: string,
+            maxResults?: number,
+            signal?: AbortSignal,
+          ) => Promise<readonly SearchResult[]>)(query, maxResults, args.signal);
       providerUsed = provider.name;
       console.log(`[WEB SEARCH] provider ${provider.name} — ${rawResults.length} result(s)`);
       break;
     } catch (err) {
+      if (args.signal?.aborted || (err instanceof Error && err.name === "AbortError")) throw err;
       const message = err instanceof Error ? err.message : String(err);
       console.log(`[WEB SEARCH] provider ${provider.name} failed: ${message}`);
       errors.push(`${provider.name}: ${message}`);
@@ -126,6 +136,7 @@ export async function routeWebSearch(args: {
     enriched = await extractContent(
       rawResults.slice(0, MAX_EXTRACT),
       1500,
+      args.signal,
     );
     // Append remaining un-extracted results
     if (rawResults.length > MAX_EXTRACT) {

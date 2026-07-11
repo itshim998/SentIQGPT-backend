@@ -137,6 +137,8 @@ import { selectModelForPromptWithMaster } from "./orchestrator/masterRouter";
 import { detectExplicitMemoryWriteIntent, shouldAutoUseWebSurf } from "./orchestrator/queryClassifier";
 import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 import { isWebSearchMode, normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
+import { isWebSurfV2Enabled, prepareWebSurfV2, type WebSurfV2Payload } from "./tools/webSearch/webSurfV2";
+import { WebSurfCitationStream } from "./tools/webSearch/webSurfCitationStream";
 import { normalizeExecutionMode, resolveExecutionProfile } from "./orchestrator/executionProfile";
 
 // Middleware
@@ -256,6 +258,10 @@ app.get("/ready", async (_req, res) => {
 function getExplicitWebSearchMode(value: unknown): "basic" | undefined {
   if (!isWebSearchMode(value)) return undefined;
   return normalizeWebSearchMode(value) === "basic" ? "basic" : undefined;
+}
+
+function getWebSurfV2Preview(payload: WebSurfV2Payload | undefined): Record<string, WebSurfV2Payload> | undefined {
+  return payload ? { web_surf_v2: payload } : undefined;
 }
 
 // ---- CORS ----
@@ -2512,6 +2518,13 @@ app.post(
           },
         };
       }
+      if (meta?.type === "websurf_v2" && meta.payload && typeof meta.payload === "object") {
+        return {
+          ...base,
+          messageType: "text",
+          previewJson: { web_surf_v2: meta.payload },
+        };
+      }
       return base;
     };
     const messages = rawMessages
@@ -2525,7 +2538,7 @@ app.post(
       }))
       .filter((message: SyncMessage) => {
         if (message.content.trim().length > 0) return true;
-        return message.meta?.type === "image" || message.meta?.type === "generated-file" || message.meta?.type === "file-upload" || message.meta?.type === "message-attachments";
+        return message.meta?.type === "image" || message.meta?.type === "generated-file" || message.meta?.type === "file-upload" || message.meta?.type === "message-attachments" || message.meta?.type === "websurf_v2";
       })
       .slice(0, 20) as SyncMessage[];
 
@@ -2539,7 +2552,11 @@ app.post(
         "chat.sync",
         buildSyncMessageOptions(message),
       );
-      if (message.role === "assistant" && message.meta?.type === "response-state" && message.clientRequestId) {
+      if (
+        message.role === "assistant"
+        && (message.meta?.type === "response-state" || message.meta?.type === "websurf_v2")
+        && message.clientRequestId
+      ) {
         const options = buildSyncMessageOptions(message);
         const { error: responseStateError } = await userDb
           .from("messages")
@@ -2549,7 +2566,7 @@ app.post(
           .eq("client_request_id", message.clientRequestId)
           .eq("message_type", "text");
         if (responseStateError) {
-          logDbFailure("chat.sync.response-state", userId, responseStateError, { conversationId });
+          logDbFailure("chat.sync.assistant-preview", userId, responseStateError, { conversationId });
         }
       }
     }
@@ -2781,6 +2798,7 @@ app.post(
         : undefined;
     const effectiveWebSearchMode = webSearchMode ?? autoWebSearchMode;
     const hasEffectiveWebSearchMode = Boolean(effectiveWebSearchMode);
+    const webSurfV2Enabled = isWebSurfV2Enabled();
     const isReasoningQuery = false;
     const isMathReasoningQuery = false;
     const isLogicReasoningQuery = isReasoningQuery && !isMathReasoningQuery;
@@ -2806,7 +2824,7 @@ app.post(
       console.log(`[Image] orchestrator: ${orcImageAttachments.length} image attachment(s) included in context`);
     }
 
-    if (isGuest && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
+    if (isGuest && hasEffectiveWebSearchMode && !webSurfV2Enabled && !isFileGenerationRequest(effectiveUserMessage)) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
         executionMode: parsed.data.executionMode,
@@ -2872,7 +2890,7 @@ app.post(
         answeredQuestion: resolvedClarification.answeredQuestion,
         answeredOptions: resolvedClarification.answeredOptions,
         selectedOptionId: resolvedClarification.selectedOptionId,
-        webSearch: false,
+        webSearch: hasEffectiveWebSearchMode,
       })
         : null;
       if (guestClarification) {
@@ -2927,6 +2945,24 @@ app.post(
         return;
       }
 
+      let guestWebSurfV2: Awaited<ReturnType<typeof prepareWebSurfV2>> | undefined;
+      if (webSurfV2Enabled && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
+        try {
+          guestWebSurfV2 = await prepareWebSurfV2(
+            effectiveUserMessage,
+            hasExplicitWebSearchMode ? "manual" : "auto",
+          );
+        } catch (error) {
+          res.json({
+            route: "web_search",
+            answer: "Web search is temporarily unavailable. Please try again later.",
+            reply: "Web search is temporarily unavailable. Please try again later.",
+            searched: false,
+          });
+          return;
+        }
+      }
+
       const guestReservation = await reserveTextBilling({
         identity: billingIdentity,
         requestId: `${billingRequestId}:guest-chat`,
@@ -2947,11 +2983,13 @@ app.post(
           conversationCapsule: guestContext.conversationCapsule,
           workspaceCapsule: guestContext.workspaceCapsule,
           priorConversationEvidence: guestContext.priorConversationEvidence,
+          routeEvidence: guestWebSurfV2?.routeEvidence,
           isExplicitRecallQuery: guestContext.isExplicitRecallQuery,
           modelOverride: guestChatModelOverride,
           userId,
           reasoningMode: isReasoningQuery,
           reasoningEffort: executionProfile.model.reasoningEffort,
+          webSurfSourceIds: guestWebSurfV2?.payload.sources.map((source) => source.id),
         });
         await commitTextBilling(guestReservation, "guest.chat");
       } catch (error) {
@@ -2960,7 +2998,7 @@ app.post(
       }
 
       res.json({
-        route: "chat",
+        route: guestWebSurfV2 ? "web_search" : "chat",
         answer: guestResult.answer,
         reply: guestResult.reply,
         thinking: gateThinking(guestResult.thinking, { modelOverride: guestChatModelOverride, isReasoning: isReasoningQuery }),
@@ -2970,7 +3008,8 @@ app.post(
         memory: undefined,
         confidence: undefined,
         model_used: guestResult.model_used,
-        searched: false,
+        searched: Boolean(guestWebSurfV2),
+        web_search: guestWebSurfV2 ? { v2: guestWebSurfV2.payload } : undefined,
       });
       return;
     }
@@ -3225,6 +3264,7 @@ app.post(
         image_attachments: orcImageAttachments,
         trustedProfile,
         web_search_mode: effectiveWebSearchMode,
+        web_search_trigger: hasEffectiveWebSearchMode ? (hasExplicitWebSearchMode ? "manual" : "auto") : undefined,
         userDb,
         userId,
         conversationId: activeConversationId || undefined,
@@ -3317,6 +3357,14 @@ app.post(
               previewJson: result.file.preview,
             }
           : {};
+        const webSurfV2Payload = result.web_search?.v2;
+        const persistedAssistantOptions = webSurfV2Payload && !result.file?.success
+          ? {
+              clientRequestId: parsed.data.clientRequestId,
+              messageType: "text",
+              previewJson: getWebSurfV2Preview(webSurfV2Payload),
+            }
+          : assistantMessageOptions;
         await insertConversationMessageOrThrow(
           userDb,
           userId,
@@ -3324,7 +3372,7 @@ app.post(
           "assistant",
           responseReply ?? "",
           "chat",
-          assistantMessageOptions,
+          persistedAssistantOptions,
         );
         assistantMessagePersisted = true;
       } catch (assistantPersistError) {
@@ -3497,6 +3545,10 @@ app.post(
     const sendStreamError = async (err: unknown, metrics?: StreamMetrics) => {
       const message = err instanceof Error ? err.message : String(err);
       const partial = Boolean(metrics && metrics.chunkCount > 0);
+      const rawErrorCode = err && typeof err === "object" && typeof (err as { code?: unknown }).code === "string"
+        ? (err as { code: string }).code
+        : undefined;
+      const explicitCode = rawErrorCode === "websurf_retrieval_failed" ? rawErrorCode : undefined;
       console.error(`[Stream] error: ${message}`);
       if (!clientDisconnected) {
         try {
@@ -3515,7 +3567,7 @@ app.post(
           }
           await writeSseJson({
             type: "error",
-            code: partial ? "response_interrupted" : "backend_unavailable",
+            code: explicitCode ?? (partial ? "response_interrupted" : "backend_unavailable"),
             error: partial
               ? "The response was interrupted. Your partial answer has been preserved."
               : `${PRODUCT_NAME} could not finish that response. Please try again.`,
@@ -3595,12 +3647,13 @@ app.post(
         : undefined;
     const effectiveWebSearchMode = webSearchMode ?? autoWebSearchMode;
     const hasEffectiveWebSearchMode = Boolean(effectiveWebSearchMode);
+    const webSurfV2Enabled = isWebSurfV2Enabled();
     const isBufferedReasoning = false;
     const isMathReasoningQuery = false;
     const guestUserMessage = isGuest && isFileGenerationRequest(effectiveUserMessage)
       ? getFileGenerationGuestInstruction(effectiveUserMessage)
       : effectiveUserMessage;
-    if (isGuest && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
+    if (isGuest && hasEffectiveWebSearchMode && !webSurfV2Enabled && !isFileGenerationRequest(effectiveUserMessage)) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
         executionMode: parsed.data.executionMode,
@@ -3652,6 +3705,7 @@ app.post(
         answeredQuestion: resolvedClarification.answeredQuestion,
         answeredOptions: resolvedClarification.answeredOptions,
         selectedOptionId: resolvedClarification.selectedOptionId,
+        webSearch: hasEffectiveWebSearchMode,
       })
         : null;
       if (guestClarification) {
@@ -3925,8 +3979,23 @@ app.post(
       console.log(`[Stream] guest model=${guestGeneralModelOverride} hasFiles=${guestCtx.hasFileContext} msgLen=${parsed.data.message.length}`);
 
       let guestGeneralCallForRecovery: LLMAdapterCall | null = null;
+      let guestWebSurfV2: Awaited<ReturnType<typeof prepareWebSurfV2>> | undefined;
+      let guestCitationStream: WebSurfCitationStream | undefined;
       try {
         const streamStart = Date.now();
+        if (webSurfV2Enabled && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
+          await writeSseJson({ type: "route", route: "web_search", v2: true });
+          guestWebSurfV2 = await prepareWebSurfV2(
+            effectiveUserMessage,
+            hasExplicitWebSearchMode ? "manual" : "auto",
+            {},
+            requestAbortController.signal,
+          );
+          guestCitationStream = new WebSurfCitationStream(
+            new Set(guestWebSurfV2.payload.sources.map((source) => source.id)),
+          );
+          await writeSseJson({ type: "websurf_sources", web_search: guestWebSurfV2.payload });
+        }
         if (isMathReasoningQuery) {
           await writeSseJson({ type: "route", route: "math_reasoning" });
           const result = await solveGuestMathWithGemini({
@@ -3964,11 +4033,13 @@ app.post(
           conversationCapsule: guestCtx.conversationCapsule,
           workspaceCapsule: guestCtx.workspaceCapsule,
           priorConversationEvidence: guestCtx.priorConversationEvidence,
+          routeEvidence: guestWebSurfV2?.routeEvidence,
           isExplicitRecallQuery: guestCtx.isExplicitRecallQuery,
           modelOverride: guestGeneralModelOverride,
           userId,
           streaming: true,
           reasoningEffort: executionProfile.model.reasoningEffort,
+          webSurfSourceIds: guestWebSurfV2?.payload.sources.map((source) => source.id),
         });
         guestGeneralCallForRecovery = call;
         const adapterStream = await callLLMAdapterStream({ ...call, signal: requestAbortController.signal });
@@ -3982,8 +4053,11 @@ app.post(
             if (done) break;
             if (!value) continue;
             fullReply += value;
-            recordStreamChunk(streamMetrics, value);
-            await writeSseJson({ type: "token", text: value });
+            const visible = guestCitationStream ? guestCitationStream.push(value) : value;
+            if (visible) {
+              recordStreamChunk(streamMetrics, visible);
+              await writeSseJson({ type: "token", text: visible });
+            }
           }
         } finally {
           if (clientDisconnected) {
@@ -4001,7 +4075,10 @@ app.post(
             signal: requestAbortController.signal,
           });
           fullReply = fallbackText;
-          await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
+          const visible = guestCitationStream
+            ? `${guestCitationStream.push(fallbackText)}${guestCitationStream.flush()}`
+            : fallbackText;
+          await streamBufferedAnswer(visible, undefined, false, streamMetrics);
         }
 
         if (fullReply && !clientDisconnected) {
@@ -4011,6 +4088,18 @@ app.post(
         }
 
         if (!clientDisconnected) {
+          const citationTail = guestCitationStream?.flush();
+          if (citationTail) {
+            recordStreamChunk(streamMetrics, citationTail);
+            await writeSseJson({ type: "token", text: citationTail });
+          }
+          if (guestWebSurfV2) {
+            await writeSseJson({
+              type: "websurf_complete",
+              answer: fullReply,
+              web_search: guestWebSurfV2.payload,
+            });
+          }
           await writeSseEvent("[DONE]");
           logStreamMetrics(streamMetrics, "complete");
         }
@@ -4026,8 +4115,18 @@ app.post(
               timeoutMs: 90_000,
               signal: requestAbortController.signal,
             });
-            await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
+            const visible = guestCitationStream
+              ? `${guestCitationStream.push(fallbackText)}${guestCitationStream.flush()}`
+              : fallbackText;
+            await streamBufferedAnswer(visible, undefined, false, streamMetrics);
             await commitTextBilling(guestGeneralReservation, "guest.general.stream.fallback");
+            if (guestWebSurfV2) {
+              await writeSseJson({
+                type: "websurf_complete",
+                answer: fallbackText,
+                web_search: guestWebSurfV2.payload,
+              });
+            }
             await writeSseEvent("[DONE]");
             logStreamMetrics(streamMetrics, "fallback");
             return;
@@ -4494,7 +4593,7 @@ app.post(
       }
     }
 
-    const persistAssistantMessage = async (content: string) => {
+    const persistAssistantMessage = async (content: string, webSurfV2Payload?: WebSurfV2Payload) => {
       if (!userDb || !activeConversationId) {
         sync.persisted = false;
         sync.deferred = true;
@@ -4508,7 +4607,11 @@ app.post(
           "assistant",
           content,
           "chat.stream",
-          { clientRequestId: parsed.data.clientRequestId },
+          {
+            clientRequestId: parsed.data.clientRequestId,
+            messageType: "text",
+            previewJson: getWebSurfV2Preview(webSurfV2Payload),
+          },
         );
         assistantMessagePersisted = true;
         if (
@@ -4711,7 +4814,7 @@ app.post(
       degraded: buildDegradedStatus(sync),
     });
 
-    if (hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
+    if (hasEffectiveWebSearchMode && !webSurfV2Enabled && !isFileGenerationRequest(effectiveUserMessage)) {
       console.log(
         hasExplicitWebSearchMode
           ? `[Stream] explicit WebSurf mode=${effectiveWebSearchMode} - redirecting to orchestrator`
@@ -5326,7 +5429,7 @@ app.post(
       answeredQuestion: resolvedClarification.answeredQuestion,
       answeredOptions: resolvedClarification.answeredOptions,
       selectedOptionId: resolvedClarification.selectedOptionId,
-      webSearch: false,
+      webSearch: hasEffectiveWebSearchMode,
     })
       : null;
     if (directClarification) {
@@ -5342,6 +5445,27 @@ app.post(
 
     const requestStart = Date.now();
     console.log(`[Latency] user query received`);
+
+    let webSurfV2: Awaited<ReturnType<typeof prepareWebSurfV2>> | undefined;
+    let webSurfCitationStream: WebSurfCitationStream | undefined;
+    if (webSurfV2Enabled && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
+      try {
+        webSurfV2 = await prepareWebSurfV2(
+          effectiveUserMessage,
+          hasExplicitWebSearchMode ? "manual" : "auto",
+          {},
+          requestAbortController.signal,
+        );
+        webSurfCitationStream = new WebSurfCitationStream(
+          new Set(webSurfV2.payload.sources.map((source) => source.id)),
+        );
+      } catch (error) {
+        const retrievalError = new Error("Web search is temporarily unavailable. Please try again later.");
+        (retrievalError as Error & { code?: string }).code = "websurf_retrieval_failed";
+        await sendStreamError(retrievalError);
+        return;
+      }
+    }
 
     // Always include file_references when present — the frontend only sends
     // the current session file (scoped correctly), so no backend gating needed.
@@ -5434,6 +5558,11 @@ app.post(
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
 
+    if (webSurfV2) {
+      await writeSseJson({ type: "route", route: "web_search", v2: true });
+      await writeSseJson({ type: "websurf_sources", web_search: webSurfV2.payload });
+    }
+
     let stopHeartbeat = () => {};
     const call = buildChatPrompt({
       userMessage: effectiveUserMessage,
@@ -5445,12 +5574,14 @@ app.post(
       conversationCapsule: ctx.conversationCapsule,
       workspaceCapsule: ctx.workspaceCapsule,
       priorConversationEvidence: ctx.priorConversationEvidence,
+      routeEvidence: webSurfV2?.routeEvidence,
       isExplicitRecallQuery: ctx.isExplicitRecallQuery,
       trustedProfile: ctx.trustedProfile,
       modelOverride,
       userId,
       streaming: true,
       reasoningEffort: executionProfile.model.reasoningEffort,
+      webSurfSourceIds: webSurfV2?.payload.sources.map((source) => source.id),
     });
 
     try {
@@ -5474,8 +5605,11 @@ app.post(
           if (done) break;
           if (!value) continue;
           fullReply += value;
-          recordStreamChunk(streamMetrics, value);
-          await writeSseJson({ type: "token", text: value });
+          const visible = webSurfCitationStream ? webSurfCitationStream.push(value) : value;
+          if (visible) {
+            recordStreamChunk(streamMetrics, visible);
+            await writeSseJson({ type: "token", text: visible });
+          }
         }
       } finally {
         if (clientDisconnected) {
@@ -5494,16 +5628,31 @@ app.post(
           timeoutMs: modelOverride === "openai-large" ? 180_000 : 90_000,
           signal: requestAbortController.signal,
         });
-        await streamBufferedAnswer(fullReply, undefined, false, streamMetrics);
+        const visible = webSurfCitationStream
+          ? `${webSurfCitationStream.push(fullReply)}${webSurfCitationStream.flush()}`
+          : fullReply;
+        await streamBufferedAnswer(visible, undefined, false, streamMetrics);
       }
 
       if (fullReply && !clientDisconnected) {
         await commitTextBilling(directReservation, "stream");
-        await persistAssistantMessage(fullReply);
+        await persistAssistantMessage(fullReply, webSurfV2?.payload);
       } else if (clientDisconnected) {
         await releaseBillingReservation(directReservation);
       }
       if (!clientDisconnected) {
+        const citationTail = webSurfCitationStream?.flush();
+        if (citationTail) {
+          recordStreamChunk(streamMetrics, citationTail);
+          await writeSseJson({ type: "token", text: citationTail });
+        }
+        if (webSurfV2) {
+          await writeSseJson({
+            type: "websurf_complete",
+            answer: fullReply,
+            web_search: webSurfV2.payload,
+          });
+        }
         reportStreamMessageGap(Boolean(fullReply), "stream");
         const streamSync = getStreamSyncPayload(Boolean(fullReply));
         await writeSseJson({ type: "sync", sync: streamSync, degraded: buildDegradedStatusFromStreamSync(streamSync) });
@@ -5524,9 +5673,19 @@ app.post(
             signal: requestAbortController.signal,
           });
           await commitTextBilling(directReservation, "stream.fallback");
-          await persistAssistantMessage(fallbackText);
+          await persistAssistantMessage(fallbackText, webSurfV2?.payload);
           reportStreamMessageGap(Boolean(fallbackText), "stream.fallback");
-          await streamBufferedAnswer(fallbackText, undefined, false, streamMetrics);
+          const visible = webSurfCitationStream
+            ? `${webSurfCitationStream.push(fallbackText)}${webSurfCitationStream.flush()}`
+            : fallbackText;
+          await streamBufferedAnswer(visible, undefined, false, streamMetrics);
+          if (webSurfV2) {
+            await writeSseJson({
+              type: "websurf_complete",
+              answer: fallbackText,
+              web_search: webSurfV2.payload,
+            });
+          }
           const streamSync = getStreamSyncPayload(Boolean(fallbackText));
           await writeSseJson({ type: "sync", sync: streamSync, degraded: buildDegradedStatusFromStreamSync(streamSync) });
           await writeSseEvent("[DONE]");

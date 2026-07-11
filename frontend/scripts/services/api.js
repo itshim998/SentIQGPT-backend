@@ -202,6 +202,12 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
           return true;
         }
         else if (parsed.type === "route" && parsed.route) { if (callbacks.onRoute) callbacks.onRoute(parsed.route, parsed); }
+        else if (parsed.type === "websurf_sources" && parsed.web_search) {
+          if (callbacks.onWebSurfSources) callbacks.onWebSurfSources(parsed.web_search, parsed);
+        }
+        else if (parsed.type === "websurf_complete" && parsed.web_search) {
+          if (callbacks.onWebSurfComplete) callbacks.onWebSurfComplete(parsed, parsed.web_search);
+        }
         else if (parsed.type === "memory" && parsed.memory) { if (callbacks.onMemory) callbacks.onMemory(parsed.memory); }
         else if (parsed.type === "sync" && parsed.sync) { if (callbacks.onSync) callbacks.onSync(parsed.sync, parsed.degraded || null); }
         else if (parsed.type === "error") {

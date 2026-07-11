@@ -88,7 +88,9 @@ async function main(): Promise<void> {
     const simpleAdvancedSearch = await searchTavily("climate policy", 3, "advanced");
     assert(simpleAdvancedSearch.success === true, "simple search path accepts explicit advanced mode");
 
-    const [basicRequest, advancedRequest, simpleAdvancedRequest] = capturedBodies;
+    await provider.search("evidence only", 3, "basic", undefined, { includeAnswer: false });
+
+    const [basicRequest, advancedRequest, simpleAdvancedRequest, evidenceOnlyRequest] = capturedBodies;
 
     assert(basicRequest.include_answer === "advanced", "basic Tavily request upgrades include_answer to advanced");
     assert(basicRequest.search_depth === "advanced", "basic Tavily request keeps advanced search depth");
@@ -102,6 +104,7 @@ async function main(): Promise<void> {
 
     assert(!("include_images" in simpleAdvancedRequest), "simple search path ignores legacy advanced image mode");
     assert(!("include_favicon" in simpleAdvancedRequest), "simple search path ignores legacy advanced favicon mode");
+    assert(evidenceOnlyRequest.include_answer === false, "evidence-only retrieval does not request a Tavily generated answer");
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -8,12 +8,16 @@
 
 import type { SearchResult } from "./types";
 import { lookup as dnsLookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { BlockList, isIP } from "node:net";
 import { SERVICE_USER_AGENT } from "../../branding";
 
 const MAX_BODY_CHARS = 1500;
 const FETCH_TIMEOUT_MS = 8000;
 const MAX_REDIRECTS = 5;
+const MAX_EXTRACT_RESPONSE_BYTES = 512 * 1024;
+const MAX_METADATA_RESPONSE_BYTES = 256 * 1024;
 
 type DnsResolver = (hostname: string) => Promise<readonly { address: string }[]>;
 
@@ -29,6 +33,7 @@ const DEFAULT_DNS_RESOLVER: DnsResolver = async (hostname) => {
 export async function extractContent(
   results: readonly SearchResult[],
   maxPerPage = MAX_BODY_CHARS,
+  signal?: AbortSignal,
 ): Promise<SearchResult[]> {
   const enriched: SearchResult[] = [];
 
@@ -40,9 +45,10 @@ export async function extractContent(
     }
 
     try {
-      const body = await fetchAndExtract(result.url, maxPerPage);
+      const body = await fetchAndExtract(result.url, maxPerPage, signal);
       enriched.push({ ...result, body });
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) throw error;
       // Keep result as-is (snippet only)
       enriched.push({ ...result });
     }
@@ -55,40 +61,48 @@ function normalizeHostname(hostname: string): string {
   return hostname.trim().replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
 }
 
-function parseIpv4(address: string): number[] | null {
-  const match = address.match(/^(\d{1,3})(?:\.(\d{1,3})){3}$/);
-  if (!match) return null;
-  const parts = address.split(".").map((part) => Number.parseInt(part, 10));
-  return parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
-    ? parts
-    : null;
+const NON_PUBLIC_ADDRESSES = new BlockList();
+
+for (const [network, prefix] of [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4],
+] as const) {
+  NON_PUBLIC_ADDRESSES.addSubnet(network, prefix, "ipv4");
+}
+
+for (const [network, prefix] of [
+  ["::", 128],
+  ["::1", 128],
+  ["::ffff:0:0", 96],
+  ["64:ff9b:1::", 48],
+  ["100::", 64],
+  ["2001:db8::", 32],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["ff00::", 8],
+] as const) {
+  NON_PUBLIC_ADDRESSES.addSubnet(network, prefix, "ipv6");
 }
 
 export function isPrivateOrInternalAddress(address: string): boolean {
   const normalized = normalizeHostname(address);
-  const ipv4Mapped = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
-  const ipv4 = parseIpv4(ipv4Mapped?.[1] ?? normalized);
-  if (ipv4) {
-    const [a, b] = ipv4;
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 100 && b >= 64 && b <= 127)
-    );
-  }
-
-  if (isIP(normalized) !== 6) return false;
-  return (
-    normalized === "::" ||
-    normalized === "::1" ||
-    normalized.startsWith("fe80:") ||
-    normalized.startsWith("fc") ||
-    normalized.startsWith("fd")
-  );
+  const family = isIP(normalized);
+  if (family === 4) return NON_PUBLIC_ADDRESSES.check(normalized, "ipv4");
+  if (family === 6) return NON_PUBLIC_ADDRESSES.check(normalized, "ipv6");
+  return false;
 }
 
 export function isPrivateOrInternalHost(hostname: string): boolean {
@@ -102,10 +116,13 @@ export function isPrivateOrInternalHost(hostname: string): boolean {
   );
 }
 
-async function assertPublicHttpUrl(url: string, resolver: DnsResolver = DEFAULT_DNS_RESOLVER): Promise<URL> {
+export async function assertPublicHttpUrl(url: string, resolver: DnsResolver = DEFAULT_DNS_RESOLVER): Promise<URL> {
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Only HTTP(S) URLs are allowed");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("Credential-bearing URLs are not allowed");
   }
 
   const host = normalizeHostname(parsed.hostname);
@@ -123,42 +140,220 @@ async function assertPublicHttpUrl(url: string, resolver: DnsResolver = DEFAULT_
   return parsed;
 }
 
-async function fetchValidated(url: string, redirectCount = 0): Promise<Response> {
-  const parsed = await assertPublicHttpUrl(url);
-  const res = await fetch(parsed.toString(), {
-    headers: {
-      "User-Agent": `${SERVICE_USER_AGENT} (content extractor)`,
-      "Accept": "text/html",
-    },
-    redirect: "manual",
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
+async function resolvePinnedPublicAddress(parsed: URL): Promise<{ address: string; family: 4 | 6 }> {
+  const host = normalizeHostname(parsed.hostname);
+  if (isPrivateOrInternalHost(host)) throw new Error("Private/internal URLs are blocked");
+  if (isIP(host) === 4 || isIP(host) === 6) {
+    return { address: host, family: isIP(host) as 4 | 6 };
+  }
+  const addresses = await DEFAULT_DNS_RESOLVER(host);
+  if (addresses.length === 0 || addresses.some(({ address }) => isPrivateOrInternalAddress(address))) {
+    throw new Error("Private/internal URLs are blocked");
+  }
+  const selected = addresses.find(({ address }) => isIP(address) === 4) ?? addresses[0];
+  const family = isIP(selected.address);
+  if (family !== 4 && family !== 6) throw new Error("URL host did not resolve to an IP address");
+  return { address: selected.address, family };
+}
 
-  if ([301, 302, 303, 307, 308].includes(res.status)) {
+function getHeader(response: IncomingMessage, name: string): string {
+  const value = response.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
+
+type ValidatedIncomingMessage = IncomingMessage & { validatedUrl?: string };
+
+async function requestPinned(parsed: URL, signal?: AbortSignal, method: "GET" | "HEAD" = "GET"): Promise<ValidatedIncomingMessage> {
+  const pinned = await resolvePinnedPublicAddress(parsed);
+  const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  const effectiveSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  const requestImpl = parsed.protocol === "https:" ? httpsRequest : httpRequest;
+
+  return new Promise<ValidatedIncomingMessage>((resolve, reject) => {
+    const request = requestImpl({
+      protocol: parsed.protocol,
+      hostname: parsed.hostname,
+      port: parsed.port || undefined,
+      path: `${parsed.pathname}${parsed.search}`,
+      method,
+      headers: {
+        "User-Agent": `${SERVICE_USER_AGENT} (content extractor)`,
+        "Accept": "image/*,text/html;q=0.9,text/plain;q=0.8",
+        "Accept-Encoding": "identity",
+        "Host": parsed.host,
+      },
+      signal: effectiveSignal,
+      servername: parsed.protocol === "https:" ? parsed.hostname : undefined,
+      lookup: ((_hostname: string, _options: unknown, callback: (...args: unknown[]) => void) => {
+        callback(null, pinned.address, pinned.family);
+      }) as any,
+    }, (response) => {
+      const validatedResponse = response as ValidatedIncomingMessage;
+      validatedResponse.validatedUrl = parsed.toString();
+      resolve(validatedResponse);
+    });
+    request.once("error", reject);
+    request.end();
+  });
+}
+
+async function fetchValidated(
+  url: string,
+  redirectCount = 0,
+  signal?: AbortSignal,
+  method: "GET" | "HEAD" = "GET",
+): Promise<ValidatedIncomingMessage> {
+  const parsed = await assertPublicHttpUrl(url);
+  const res = await requestPinned(parsed, signal, method);
+
+  if ([301, 302, 303, 307, 308].includes(res.statusCode ?? 0)) {
     if (redirectCount >= MAX_REDIRECTS) {
+      res.destroy();
       throw new Error("Too many redirects");
     }
-    const location = res.headers.get("location");
+    const location = getHeader(res, "location");
     if (!location) throw new Error("Redirect missing location");
-    const redirectedUrl = new URL(location, parsed).toString();
+    const redirected = new URL(location, parsed);
+    if (parsed.protocol === "https:" && redirected.protocol !== "https:") {
+      res.destroy();
+      throw new Error("HTTPS URLs cannot redirect to an insecure protocol");
+    }
+    const redirectedUrl = redirected.toString();
     await assertPublicHttpUrl(redirectedUrl);
-    return fetchValidated(redirectedUrl, redirectCount + 1);
+    res.destroy();
+    return fetchValidated(redirectedUrl, redirectCount + 1, signal, method);
   }
 
   return res;
 }
 
-async function fetchAndExtract(url: string, maxChars: number): Promise<string> {
-  const res = await fetchValidated(url);
+async function readResponseTextLimited(response: IncomingMessage, maxBytes: number): Promise<string> {
+  const declaredLength = Number.parseInt(getHeader(response, "content-length"), 10);
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    response.destroy();
+    throw new Error("Response body exceeded the allowed size");
+  }
 
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  for await (const value of response) {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    totalBytes += chunk.length;
+    if (totalBytes > maxBytes) {
+      response.destroy();
+      throw new Error("Response body exceeded the allowed size");
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
-  const contentType = res.headers.get("content-type") ?? "";
+export interface WebSurfArticleMetadata {
+  readonly published_at?: string;
+  readonly favicon_url?: string;
+  readonly thumbnail_url?: string;
+}
+
+function getMetaContent(html: string, name: string): string | undefined {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`<meta[^>]+(?:property|name)=["']${escapedName}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i"),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${escapedName}["'][^>]*>`, "i"),
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return undefined;
+}
+
+export function getLinkHref(html: string, relName: string): string | undefined {
+  const escapedRel = relName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`<link[^>]+rel=["'][^"']*\\b${escapedRel}\\b[^"']*["'][^>]+href=["']([^"']+)["'][^>]*>`, "i"),
+    new RegExp(`<link[^>]+href=["']([^"']+)["'][^>]+rel=["'][^"']*\\b${escapedRel}\\b[^"']*["'][^>]*>`, "i"),
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return undefined;
+}
+
+async function validateHttpsAssetUrl(
+  rawUrl: string | undefined,
+  pageUrl: URL,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  if (!rawUrl) return undefined;
+  try {
+    const parsed = new URL(rawUrl, pageUrl);
+    if (parsed.protocol !== "https:") return undefined;
+    await assertPublicHttpUrl(parsed.toString());
+    const response = await fetchValidated(parsed.toString(), 0, signal, "HEAD");
+    const finalUrl = new URL(response.validatedUrl ?? parsed.toString());
+    const statusCode = response.statusCode ?? 0;
+    const contentType = getHeader(response, "content-type");
+    response.destroy();
+    if (finalUrl.protocol !== "https:" || statusCode < 200 || statusCode >= 400) return undefined;
+    if (contentType && !contentType.toLowerCase().startsWith("image/")) return undefined;
+    return finalUrl.toString();
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return undefined;
+  }
+}
+
+/**
+ * Read the small, presentation-only metadata surface used by WebSurf V2.
+ * This deliberately does not proxy or fetch candidate image assets: a page's
+ * Open Graph image, Twitter card image, or HTTPS favicon is merely returned
+ * after server-side URL validation. Any failure is non-fatal for the search.
+ */
+export async function fetchWebSurfArticleMetadata(url: string, signal?: AbortSignal): Promise<WebSurfArticleMetadata> {
+  const pageUrl = await assertPublicHttpUrl(url);
+  const response = await fetchValidated(pageUrl.toString(), 0, signal);
+  const statusCode = response.statusCode ?? 0;
+  if (statusCode < 200 || statusCode >= 300 || !getHeader(response, "content-type").includes("text/html")) {
+    response.destroy();
+    return {};
+  }
+
+  const html = await readResponseTextLimited(response, MAX_METADATA_RESPONSE_BYTES);
+  const thumbnailCandidate = getMetaContent(html, "og:image")
+    ?? getMetaContent(html, "twitter:image")
+    ?? getMetaContent(html, "twitter:image:src");
+  const faviconFromDocument = getLinkHref(html, "icon") ?? getLinkHref(html, "shortcut icon");
+  const [thumbnail_url, favicon_url] = await Promise.all([
+    validateHttpsAssetUrl(thumbnailCandidate, pageUrl, signal),
+    validateHttpsAssetUrl(faviconFromDocument ?? `https://${pageUrl.hostname}/favicon.ico`, pageUrl, signal),
+  ]);
+  const published_at = getMetaContent(html, "article:published_time")
+    ?? getMetaContent(html, "date")
+    ?? getMetaContent(html, "publish-date");
+
+  return {
+    published_at: published_at?.slice(0, 128),
+    favicon_url,
+    thumbnail_url,
+  };
+}
+
+async function fetchAndExtract(url: string, maxChars: number, signal?: AbortSignal): Promise<string> {
+  const res = await fetchValidated(url, 0, signal);
+
+  const statusCode = res.statusCode ?? 0;
+  if (statusCode < 200 || statusCode >= 300) {
+    res.destroy();
+    throw new Error(`HTTP ${statusCode}`);
+  }
+
+  const contentType = getHeader(res, "content-type");
   if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
     throw new Error(`Unsupported content type: ${contentType}`);
   }
 
-  const html = await res.text();
+  const html = await readResponseTextLimited(res, MAX_EXTRACT_RESPONSE_BYTES);
   return htmlToText(html, maxChars);
 }
 

@@ -18,7 +18,7 @@ export class DuckDuckGoHtmlProvider implements WebSearchProvider {
     return true;
   }
 
-  async search(query: string, maxResults = 5): Promise<readonly SearchResult[]> {
+  async search(query: string, maxResults = 5, signal?: AbortSignal): Promise<readonly SearchResult[]> {
     const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
 
     const res = await fetch(url, {
@@ -26,7 +26,7 @@ export class DuckDuckGoHtmlProvider implements WebSearchProvider {
         "User-Agent": `${SERVICE_USER_AGENT} (text browser)`,
         "Accept": "text/html",
       },
-      signal: AbortSignal.timeout(10000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
     });
 
     if (!res.ok) throw new Error(`DuckDuckGo HTML ${res.status}`);
