@@ -5460,6 +5460,10 @@ app.post(
           new Set(webSurfV2.payload.sources.map((source) => source.id)),
         );
       } catch (error) {
+        const errorClass = error instanceof Error && /^[A-Za-z0-9_-]{1,64}$/.test(error.name)
+          ? error.name
+          : "Error";
+        console.warn(`[WebSurfV2] stage=signed_stream_preparation_failed error_class=${errorClass}`);
         const retrievalError = new Error("Web search is temporarily unavailable. Please try again later.");
         (retrievalError as Error & { code?: string }).code = "websurf_retrieval_failed";
         await sendStreamError(retrievalError);

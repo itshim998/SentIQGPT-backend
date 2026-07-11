@@ -47,6 +47,12 @@ assert.match(webSurf, /mapWithConcurrency[\s\S]*METADATA_CONCURRENCY/,
   "metadata enrichment uses bounded worker concurrency");
 assert.match(webSurf, /seenUrls[\s\S]*canonicalSourceKey/,
   "source identity is deduplicated before the registry is frozen");
+assert.match(webSurf, /logPreparationStage\("metadata_enrichment",[\s\S]*failure_count/,
+  "V2 preparation logs bounded metadata outcomes without page content");
+assert.match(webSurf, /assertSafeWebSurfPresentationUrl/,
+  "source registry validation is isolated from optional metadata DNS validation");
+assert.match(server, /stage=signed_stream_preparation_failed error_class=/,
+  "signed streaming failures retain a safe preparation-stage diagnostic");
 assert.match(router, /readonly signal\?: AbortSignal[\s\S]*args\.signal\?\.throwIfAborted/,
   "retrieval router propagates and observes request cancellation");
 assert.match(extractor, /MAX_METADATA_RESPONSE_BYTES[\s\S]*readResponseTextLimited/,

@@ -1,6 +1,11 @@
 import { isWebSurfV2Enabled, prepareWebSurfV2 } from "./tools/webSearch/webSurfV2";
 import { WebSurfCitationStream } from "./tools/webSearch/webSurfCitationStream";
-import { assertPublicHttpUrl, getLinkHref, isPrivateOrInternalAddress } from "./tools/webSearch/contentExtractor";
+import {
+  assertPublicHttpUrl,
+  assertSafeWebSurfPresentationUrl,
+  getLinkHref,
+  isPrivateOrInternalAddress,
+} from "./tools/webSearch/contentExtractor";
 import { buildChatPrompt } from "./ai/PromptBuilders";
 
 function assert(condition: boolean, label: string): void {
@@ -131,6 +136,79 @@ async function main(): Promise<void> {
     "the final synthesis prompt establishes the webpage-content trust boundary",
   );
 
+  const cachedShapeEvidence = await prepareWebSurfV2("latest cached update", "auto", {
+    search: async () => ({
+      success: true,
+      query: "latest cached update",
+      provider_used: "tavily",
+      results: [
+        { title: "Cached body", url: "https://cached-one.example/news", snippet: "", body: "Cached result body", source: "tavily" },
+        { title: "Malformed", url: "javascript:alert(1)", snippet: "Skip me", source: "tavily" },
+        { title: "Cached content", url: "https://cached-two.example/news", snippet: "", content: "Cached result content", source: "tavily" },
+      ],
+    }),
+    metadata: async (url) => {
+      if (url.includes("cached-two.example")) {
+        return { favicon_url: "https://cached-two.example/favicon.ico" };
+      }
+      const error = new Error("metadata unavailable");
+      (error as Error & { code?: string }).code = "EAI_AGAIN";
+      throw error;
+    },
+  });
+  assert(cachedShapeEvidence.payload.trigger === "auto", "automatic WebSurf trigger reaches V2 preparation");
+  assert(cachedShapeEvidence.payload.sources.length === 2, "one malformed source does not discard cached valid results");
+  assert(
+    !cachedShapeEvidence.payload.sources[0].thumbnail_url
+      && cachedShapeEvidence.payload.sources[1].favicon_url === "https://cached-two.example/favicon.ico",
+    "one metadata failure degrades only that source while successful metadata remains available",
+  );
+  assert(
+    cachedShapeEvidence.routeEvidence.map((source) => source.content).join(" ").includes("Cached result body")
+      && cachedShapeEvidence.routeEvidence.map((source) => source.content).join(" ").includes("Cached result content"),
+    "cached body and content shapes remain usable for synthesis",
+  );
+
+  const allMetadataFailedEvidence = await prepareWebSurfV2("latest resilient update", "auto", {
+    search: async () => ({
+      success: true,
+      query: "latest resilient update",
+      provider_used: "tavily",
+      results: Array.from({ length: 8 }, (_, index) => ({
+        title: `Source ${index + 1}`,
+        url: `https://metadata-failure-${index + 1}.example/news`,
+        snippet: `Evidence ${index + 1}`,
+        source: "tavily" as const,
+      })),
+    }),
+    metadata: async () => { throw new Error("metadata fetch failed"); },
+  });
+  assert(allMetadataFailedEvidence.payload.sources.length === 6, "eight valid results still reach synthesis when every enrichment request fails");
+  assert(
+    allMetadataFailedEvidence.payload.sources.map((source) => source.id).join(",") === "S1,S2,S3,S4,S5,S6",
+    "metadata failure keeps a contiguous frozen registry for synthesis",
+  );
+
+  let allInvalidRejected = false;
+  try {
+    await prepareWebSurfV2("invalid sources", "manual", {
+      search: async () => ({
+        success: true,
+        query: "invalid sources",
+        provider_used: "mock",
+        results: [
+          { title: "HTTP", url: "http://unsafe.example", snippet: "", source: "tavily" },
+          { title: "Private", url: "https://127.0.0.1/private", snippet: "", source: "tavily" },
+          { title: "Credentials", url: "https://user:secret@example.com/private", snippet: "", source: "tavily" },
+        ],
+      }),
+      metadata: async () => ({}),
+    });
+  } catch (error) {
+    allInvalidRejected = error instanceof Error && error.message === "No safe HTTPS web sources were available";
+  }
+  assert(allInvalidRejected, "only an all-invalid source set produces the safe retrieval error");
+
   const aborted = new AbortController();
   aborted.abort();
   let abortObserved = false;
@@ -154,6 +232,10 @@ async function main(): Promise<void> {
     credentialUrlRejected = true;
   }
   assert(credentialUrlRejected, "credential-bearing public URLs are rejected");
+  assert(
+    assertSafeWebSurfPresentationUrl("https://dns-temporarily-unavailable.example/news").hostname === "dns-temporarily-unavailable.example",
+    "source presentation validation does not make transient DNS availability a retrieval requirement",
+  );
   assert(
     getLinkHref('<link href="/assets/site.ico" rel="shortcut icon">', "icon") === "/assets/site.ico",
     "standard link rel favicon markup is parsed",

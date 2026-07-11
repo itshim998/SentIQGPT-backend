@@ -140,6 +140,26 @@ export async function assertPublicHttpUrl(url: string, resolver: DnsResolver = D
   return parsed;
 }
 
+/**
+ * Validate a source URL which is only presented to the browser. Unlike a
+ * server-side fetch, presenting a link must not depend on a live DNS lookup:
+ * a transient resolver failure is not evidence that a public HTTPS result is
+ * unsafe. Server-side fetches still use assertPublicHttpUrl and DNS pinning.
+ */
+export function assertSafeWebSurfPresentationUrl(url: string): URL {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:") {
+    throw new Error("Only HTTPS source URLs are allowed");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("Credential-bearing URLs are not allowed");
+  }
+  if (isPrivateOrInternalHost(parsed.hostname)) {
+    throw new Error("Private/internal URLs are blocked");
+  }
+  return parsed;
+}
+
 async function resolvePinnedPublicAddress(parsed: URL): Promise<{ address: string; family: 4 | 6 }> {
   const host = normalizeHostname(parsed.hostname);
   if (isPrivateOrInternalHost(host)) throw new Error("Private/internal URLs are blocked");

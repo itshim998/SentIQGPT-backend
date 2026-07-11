@@ -1,4 +1,8 @@
-import { assertPublicHttpUrl, fetchWebSurfArticleMetadata, type WebSurfArticleMetadata } from "./contentExtractor";
+import {
+  assertSafeWebSurfPresentationUrl,
+  fetchWebSurfArticleMetadata,
+  type WebSurfArticleMetadata,
+} from "./contentExtractor";
 import { routeWebSearch } from "./webSearchRouter";
 import type { SearchResult, WebSearchResult } from "./types";
 
@@ -46,6 +50,15 @@ const METADATA_CONCURRENCY = 3;
 
 const RESERVED_PROMPT_LABELS = /\b(?:system|developer|assistant|current user message|context handling rules|route-required web or tool evidence|saved memory context|recent chat turns)\s*:/gi;
 
+type SourcePreparation = {
+  readonly source: WebSurfV2Source | null;
+  readonly metadataSucceeded: boolean;
+  readonly metadataFailureClass?: string;
+  readonly sourceFailureClass?: string;
+};
+
+type FailureCounts = Map<string, number>;
+
 function cleanText(value: string | undefined, maxChars: number): string {
   return (value ?? "")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
@@ -68,6 +81,37 @@ function canonicalSourceKey(url: URL): string {
   }
   normalized.searchParams.sort();
   return normalized.toString();
+}
+
+function safeErrorClass(error: unknown): string {
+  const name = error instanceof Error && /^[A-Za-z0-9_-]{1,64}$/.test(error.name)
+    ? error.name
+    : "Error";
+  const rawCode = error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : "";
+  const code = /^[A-Z0-9_:-]{1,64}$/.test(rawCode) ? rawCode : "";
+  return code ? `${name}:${code}` : name;
+}
+
+function recordFailure(counts: FailureCounts, failureClass: string | undefined): void {
+  if (!failureClass) return;
+  counts.set(failureClass, (counts.get(failureClass) ?? 0) + 1);
+}
+
+function summarizeFailures(counts: FailureCounts): string {
+  const summary = [...counts.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([failureClass, count]) => `${failureClass}:${count}`)
+    .join(",");
+  return summary || "none";
+}
+
+function logPreparationStage(stage: string, fields: Record<string, string | number>): void {
+  const details = Object.entries(fields)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(" ");
+  console.info(`[WebSurfV2] stage=${stage} ${details}`);
 }
 
 async function mapWithConcurrency<T, R>(
@@ -93,31 +137,47 @@ async function createSource(
   metadata: (url: string, signal?: AbortSignal) => Promise<WebSurfArticleMetadata>,
   validateUrl: (url: string) => Promise<URL>,
   signal?: AbortSignal,
-): Promise<WebSurfV2Source | null> {
+): Promise<SourcePreparation> {
   try {
     signal?.throwIfAborted();
     const parsed = await validateUrl(result.url);
     // Source cards and citations never receive non-HTTPS URLs. This also
     // prevents unvalidated provider image or favicon data from crossing the
     // presentation boundary.
-    if (parsed.protocol !== "https:") return null;
-    const details: WebSurfArticleMetadata = await metadata(parsed.toString(), signal).catch((error) => {
+    if (parsed.protocol !== "https:") {
+      return { source: null, metadataSucceeded: false, sourceFailureClass: "InsecureProtocol" };
+    }
+    let details: WebSurfArticleMetadata = {};
+    let metadataSucceeded = true;
+    let metadataFailureClass: string | undefined;
+    try {
+      details = await metadata(parsed.toString(), signal);
+    } catch (error) {
       if (signal?.aborted) throw error;
-      return {};
-    });
+      metadataSucceeded = false;
+      metadataFailureClass = safeErrorClass(error);
+    }
     return {
-      id: `S${index + 1}`,
-      title: cleanText(result.title, 220) || parsed.hostname,
-      url: parsed.toString(),
-      domain: parsed.hostname.replace(/^www\./i, ""),
-      snippet: cleanUntrustedEvidenceText(result.body ?? result.content ?? result.snippet, 1_200),
-      published_at: details.published_at,
-      favicon_url: details.favicon_url,
-      thumbnail_url: details.thumbnail_url,
+      metadataSucceeded,
+      metadataFailureClass,
+      source: {
+        id: `S${index + 1}`,
+        title: cleanText(result.title, 220) || parsed.hostname,
+        url: parsed.toString(),
+        domain: parsed.hostname.replace(/^www\./i, ""),
+        snippet: cleanUntrustedEvidenceText(result.body ?? result.content ?? result.snippet, 1_200),
+        published_at: details.published_at,
+        favicon_url: details.favicon_url,
+        thumbnail_url: details.thumbnail_url,
+      },
     };
   } catch (error) {
     if (signal?.aborted) throw error;
-    return null;
+    return {
+      source: null,
+      metadataSucceeded: false,
+      sourceFailureClass: safeErrorClass(error),
+    };
   }
 }
 
@@ -137,32 +197,96 @@ export async function prepareWebSurfV2(
 
   const search = dependencies.search ?? routeWebSearch;
   const metadata = dependencies.metadata ?? fetchWebSurfArticleMetadata;
-  const validateUrl = dependencies.validateUrl ?? assertPublicHttpUrl;
+  // DNS-pinned validation is mandatory for optional server-side metadata
+  // fetches. The frozen source registry only presents safe HTTPS links, so it
+  // deliberately avoids making a transient DNS failure fatal to core search.
+  const validateUrl = dependencies.validateUrl ?? (async (url: string) => assertSafeWebSurfPresentationUrl(url));
   signal?.throwIfAborted();
   const result = await search({ query: normalizedQuery, maxResults: MAX_CANDIDATE_SOURCES, signal });
   if (!result.success || result.results.length === 0) {
+    logPreparationStage("core_retrieval_failed", {
+      result_count: result.results.length,
+      success: result.success ? 1 : 0,
+    });
     throw new Error(result.error || "No web results found");
   }
 
   const candidates = result.results.slice(0, MAX_CANDIDATE_SOURCES);
-  const sourceCandidates = await mapWithConcurrency(
+  logPreparationStage("retrieved", { result_count: result.results.length, candidate_count: candidates.length });
+  const sourcePreparations = await mapWithConcurrency(
     candidates,
     METADATA_CONCURRENCY,
-    (item, index) => createSource(item, index, metadata, validateUrl, signal),
+    async (item, index) => {
+      try {
+        return await createSource(item, index, metadata, validateUrl, signal);
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        return {
+          source: null,
+          metadataSucceeded: false,
+          sourceFailureClass: safeErrorClass(error),
+        } satisfies SourcePreparation;
+      }
+    },
   );
   signal?.throwIfAborted();
-  const seenUrls = new Set<string>();
-  const uniqueSources = sourceCandidates.filter((source): source is WebSurfV2Source => {
-    if (!source) return false;
-    const key = canonicalSourceKey(new URL(source.url));
-    if (seenUrls.has(key)) return false;
-    seenUrls.add(key);
-    return true;
+
+  const sourceFailureCounts: FailureCounts = new Map();
+  const metadataFailureCounts: FailureCounts = new Map();
+  let metadataSucceeded = 0;
+  let metadataFailed = 0;
+  for (const preparation of sourcePreparations) {
+    recordFailure(sourceFailureCounts, preparation.sourceFailureClass);
+    if (preparation.source) {
+      if (preparation.metadataSucceeded) {
+        metadataSucceeded += 1;
+      } else {
+        metadataFailed += 1;
+        recordFailure(metadataFailureCounts, preparation.metadataFailureClass);
+      }
+    }
+  }
+  const sourceCandidates = sourcePreparations.map((preparation) => preparation.source);
+  const urlValidCount = sourceCandidates.filter((source): source is WebSurfV2Source => source !== null).length;
+  logPreparationStage("source_validation", {
+    candidate_count: candidates.length,
+    url_valid_count: urlValidCount,
+    url_rejected_count: candidates.length - urlValidCount,
+    failure_classes: summarizeFailures(sourceFailureCounts),
   });
+  logPreparationStage("metadata_enrichment", {
+    success_count: metadataSucceeded,
+    failure_count: metadataFailed,
+    failure_classes: summarizeFailures(metadataFailureCounts),
+  });
+
+  const seenUrls = new Set<string>();
+  const uniqueSources: WebSurfV2Source[] = [];
+  let duplicateCount = 0;
+  for (const source of sourceCandidates) {
+    if (!source) continue;
+    try {
+      const key = canonicalSourceKey(new URL(source.url));
+      if (seenUrls.has(key)) {
+        duplicateCount += 1;
+        continue;
+      }
+      seenUrls.add(key);
+      uniqueSources.push(source);
+    } catch (error) {
+      recordFailure(sourceFailureCounts, safeErrorClass(error));
+    }
+  }
   // IDs must be contiguous and frozen once, before the model begins.
   const sources = uniqueSources
     .slice(0, MAX_PRESENTED_SOURCES)
     .map((source, index) => ({ ...source, id: `S${index + 1}` }));
+  logPreparationStage("source_registry", {
+    url_valid_count: urlValidCount,
+    deduplicated_count: duplicateCount,
+    final_source_count: sources.length,
+    source_failure_classes: summarizeFailures(sourceFailureCounts),
+  });
   if (sources.length === 0) {
     throw new Error("No safe HTTPS web sources were available");
   }
