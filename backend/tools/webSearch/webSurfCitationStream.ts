@@ -14,7 +14,10 @@ export class WebSurfCitationStream {
   private linkLabelDepth = 0;
   private lastLiteralChar = "";
 
-  constructor(private readonly sourceIds: ReadonlySet<string>) {}
+  constructor(
+    private readonly sourceIds: ReadonlySet<string>,
+    private readonly options: { readonly preserveSourceMarkers?: boolean } = {},
+  ) {}
 
   private appendLiteral(text: string): string {
     for (let index = 0; index < text.length; index += 1) {
@@ -86,7 +89,10 @@ export class WebSurfCitationStream {
       const marker = this.pending.slice(0, markerEnd + 2);
       const match = marker.match(/^\[\[(S\d+)\]\]$/);
       if (match && this.sourceIds.has(match[1]) && this.canRenderCitation()) {
-        visible += `[${Number.parseInt(match[1].slice(1), 10)}]`;
+        // Pass C's client has the frozen source registry before answer tokens.
+        // Keeping the opaque marker lets it hydrate an accessible publisher chip
+        // without changing legacy stream output or model/persistence content.
+        visible += this.options.preserveSourceMarkers ? marker : `[${Number.parseInt(match[1].slice(1), 10)}]`;
       } else {
         // An unknown source is ordinary text, never an interactive citation.
         visible += this.appendLiteral(marker);

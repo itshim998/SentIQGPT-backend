@@ -110,6 +110,25 @@ export function setCachedSearchResults(query: string, result: CachedSearchResult
   console.log(`[CACHE] stored: web_search`);
 }
 
+/**
+ * Pass-A-only cache helpers. They deliberately share the bounded web-search
+ * bucket but use a separate namespace and caller-provided TTL, so legacy
+ * router behaviour and the public search endpoints remain unchanged.
+ */
+export function getCachedWebSurfSearch<T>(identity: string): T | undefined {
+  const key = makeKey("web_search", "websurf-v2.1", identity);
+  const hit = cacheGet<T>(key);
+  console.log(`[CACHE] ${hit === undefined ? "miss" : "hit"}: websurf-v2.1`);
+  return hit;
+}
+
+export function setCachedWebSurfSearch<T>(identity: string, value: T, ttlMs: number): void {
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) return;
+  const key = makeKey("web_search", "websurf-v2.1", identity);
+  cacheSet(key, value, "web_search", ttlMs);
+  console.log(`[CACHE] stored: websurf-v2.1 ttl_ms=${ttlMs}`);
+}
+
 // ==============================
 // 3. Embedding Cache
 // ==============================

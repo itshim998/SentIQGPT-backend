@@ -7,6 +7,8 @@ import type { ChatContext, ImageAttachment } from "./PromptBuilders";
 import type { RouteEvidenceItem } from "../orchestrator/contextComposer";
 import { extractUserFacingAnswer, finalizeStructuredReply } from "./replyGuard";
 import { PRODUCT_DISCLAIMER } from "../branding";
+import type { WebSurfAnswerPlan, WebSurfAnswerSourceContext } from "../tools/webSearch/webSurfAnswerIntelligence";
+import { normalizeWebSurfAnswerOutput } from "../tools/webSearch/webSurfOutputGuard";
 
 const REASONING_MAX_OUTPUT_TOKENS = 2600;
 const CONTINUATION_MAX_OUTPUT_TOKENS = 1800;
@@ -89,6 +91,8 @@ export async function handleChat(args: {
   readonly reasoningMode?: boolean;
   readonly reasoningEffort?: "low" | "medium";
   readonly webSurfSourceIds?: readonly string[];
+  readonly webSurfAnswerPlan?: WebSurfAnswerPlan;
+  readonly webSurfAnswerSources?: readonly WebSurfAnswerSourceContext[];
   readonly signal?: AbortSignal;
 }): Promise<ChatResponse> {
   if (!args.userMessage.trim()) {
@@ -113,6 +117,8 @@ export async function handleChat(args: {
     reasoningMode: args.reasoningMode,
     reasoningEffort: args.reasoningEffort,
     webSurfSourceIds: args.webSurfSourceIds,
+    webSurfAnswerPlan: args.webSurfAnswerPlan,
+    webSurfAnswerSources: args.webSurfAnswerSources,
   };
 
   const baseCall = buildChatPrompt(ctx);
@@ -183,7 +189,9 @@ export async function handleChat(args: {
     finalThinking = undefined;
   }
 
-  const shouldAttemptContinuation = truncated && finalAnswer.trim().length >= 20;
+  // Pass B has a deliberately bounded single-synthesis contract. Ordinary chat
+  // retains its existing continuation behavior when the feature is not active.
+  const shouldAttemptContinuation = !args.webSurfAnswerPlan && truncated && finalAnswer.trim().length >= 20;
   if (shouldAttemptContinuation) {
     try {
       console.log(
@@ -235,6 +243,10 @@ export async function handleChat(args: {
       finalThinking = undefined;
       fallback = true;
     }
+  }
+
+  if (args.webSurfAnswerPlan && args.webSurfSourceIds?.length) {
+    finalAnswer = normalizeWebSurfAnswerOutput(finalAnswer, new Set(args.webSurfSourceIds));
   }
 
   return {

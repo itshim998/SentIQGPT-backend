@@ -70,6 +70,8 @@ export async function routeWebSearch(args: {
   readonly query: string;
   readonly maxResults?: number;
   readonly signal?: AbortSignal;
+  readonly skipTavily?: boolean;
+  readonly skipCache?: boolean;
 }): Promise<WebSearchResult> {
   const query = args.query.trim();
   if (!query) {
@@ -78,9 +80,11 @@ export async function routeWebSearch(args: {
   args.signal?.throwIfAborted();
 
   // Check web search cache first
-  const cached = getCachedSearchResults(query);
-  if (cached) {
-    return { ...cached, success: true };
+  if (!args.skipCache) {
+    const cached = getCachedSearchResults(query);
+    if (cached) {
+      return { ...cached, success: true };
+    }
   }
 
   const maxResults = args.maxResults ?? 5;
@@ -88,7 +92,9 @@ export async function routeWebSearch(args: {
   console.log(`[WEB SEARCH] routing query: "${query.slice(0, 60)}..."`);
 
   // Get fresh provider chain (respects current key availability)
-  const providers = getProviders();
+  const providers = args.skipTavily
+    ? getProviders().filter((provider) => !(provider instanceof TavilyProvider))
+    : getProviders();
 
   let rawResults: readonly SearchResult[] = [];
   let providerUsed: string | undefined;
@@ -156,7 +162,7 @@ export async function routeWebSearch(args: {
   };
 
   // Store in cache for future identical queries
-  setCachedSearchResults(query, finalResult);
+  if (!args.skipCache) setCachedSearchResults(query, finalResult);
 
   return finalResult;
 }

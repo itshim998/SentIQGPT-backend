@@ -21,6 +21,8 @@ export interface SearchResult {
   readonly source: SearchSource;
   /** Relevance score (0-1) from providers that support it (e.g., Tavily). */
   readonly score?: number;
+  /** Provider-supplied publication time when it is reliable enough to retain. */
+  readonly publishedAt?: string;
 }
 
 export type SearchSource = "duckduckgo_api" | "duckduckgo_html" | "wikipedia" | "tavily";

@@ -89,8 +89,9 @@ async function main(): Promise<void> {
     assert(simpleAdvancedSearch.success === true, "simple search path accepts explicit advanced mode");
 
     await provider.search("evidence only", 3, "basic", undefined, { includeAnswer: false });
+    await provider.search("live score evidence", 3, "basic", undefined, { includeAnswer: false, topic: "news", days: 2 });
 
-    const [basicRequest, advancedRequest, simpleAdvancedRequest, evidenceOnlyRequest] = capturedBodies;
+    const [basicRequest, advancedRequest, simpleAdvancedRequest, evidenceOnlyRequest, liveEvidenceRequest] = capturedBodies;
 
     assert(basicRequest.include_answer === "advanced", "basic Tavily request upgrades include_answer to advanced");
     assert(basicRequest.search_depth === "advanced", "basic Tavily request keeps advanced search depth");
@@ -105,6 +106,8 @@ async function main(): Promise<void> {
     assert(!("include_images" in simpleAdvancedRequest), "simple search path ignores legacy advanced image mode");
     assert(!("include_favicon" in simpleAdvancedRequest), "simple search path ignores legacy advanced favicon mode");
     assert(evidenceOnlyRequest.include_answer === false, "evidence-only retrieval does not request a Tavily generated answer");
+    assert(liveEvidenceRequest.include_answer === false, "current-information profile remains evidence-only");
+    assert(liveEvidenceRequest.topic === "news" && liveEvidenceRequest.days === 2, "current-information profile uses Tavily news freshness fields");
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -36,6 +36,14 @@ import {
 import { PRODUCT_NAME, STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "../shared/brand.js";
 import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 import { resolveLiveComposerAction } from "./live/live-composer-state.js";
+import {
+  cleanWebSurfPresentationText,
+  collectWebSurfCitationIds,
+  getWebSurfPresentationVersion,
+  getWebSurfPublisherLabel,
+  selectFeaturedWebSurfSources,
+  truncateWebSurfExcerpt,
+} from "./websurf-presentation.mjs";
 
 // ================================================================
 // 3. Chat UI Controller
@@ -63,6 +71,7 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
   const conversationAliasCache = new Map();
   let imageLightbox = null;
   let imageLightboxScale = 1;
+  let webSurfPresentationElementId = 0;
 
   // ---- Per-chat state isolation ----
   // Each chat maintains its own state so switching chats doesn't bleed UI.
@@ -3497,11 +3506,11 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
         seen.add(id);
         return {
           id,
-          title: String(source?.title || getHostLabel(url) || "Source").trim().slice(0, 220),
+          title: cleanWebSurfPresentationText(source?.title || getHostLabel(url) || "Source", 220),
           url,
-          domain: String(source?.domain || getHostLabel(url)).trim().slice(0, 180),
-          snippet: String(source?.snippet || "").trim().slice(0, 1200),
-          published_at: String(source?.published_at || "").trim().slice(0, 128),
+          domain: getHostLabel(url),
+          snippet: cleanWebSurfPresentationText(source?.snippet, 1200),
+          published_at: cleanWebSurfPresentationText(source?.published_at, 128),
           favicon_url: safeHttpsUrl(source?.favicon_url),
           thumbnail_url: safeHttpsUrl(source?.thumbnail_url),
         };
@@ -3515,6 +3524,7 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
           ...(typeof payload.provider === "string" && payload.provider.trim()
             ? { provider: payload.provider.trim().slice(0, 120) }
             : {}),
+          ...(getWebSurfPresentationVersion(payload) === 1 ? { presentationVersion: 1 } : {}),
           sources,
         }
       : null;
@@ -3558,6 +3568,281 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       fragment.append(document.createTextNode(text.slice(cursor)));
       node.parentNode?.replaceChild(fragment, node);
     });
+  }
+
+  function createWebSurfExternalLink(source, className, label) {
+    const link = document.createElement("a");
+    link.className = className;
+    link.href = source.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.referrerPolicy = "no-referrer";
+    link.setAttribute("aria-label", label || `Open source: ${getWebSurfPublisherLabel(source)} — ${source.title}`);
+    return link;
+  }
+
+  function createWebSurfFavicon(source, className = "websurf-v2-presentation-favicon") {
+    const fallback = document.createElement("span");
+    fallback.className = `${className} is-fallback`;
+    fallback.setAttribute("aria-hidden", "true");
+    fallback.textContent = getWebSurfPublisherLabel(source).charAt(0).toUpperCase() || "•";
+    if (!source.favicon_url) return fallback;
+    const image = document.createElement("img");
+    image.className = className;
+    image.src = source.favicon_url;
+    image.alt = "";
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.referrerPolicy = "no-referrer";
+    image.addEventListener("error", () => image.replaceWith(fallback));
+    return image;
+  }
+
+  function formatWebSurfPublicationDate(value) {
+    const text = cleanWebSurfPresentationText(value, 128);
+    if (!text) return "";
+    const date = new Date(text);
+    if (!Number.isFinite(date.getTime())) return "";
+    try {
+      return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(date);
+    } catch {
+      return text.slice(0, 32);
+    }
+  }
+
+  function createWebSurfPresentationCitation(sources) {
+    const primary = sources[0];
+    if (!primary) return document.createTextNode("");
+    const publisher = getWebSurfPublisherLabel(primary);
+    if (sources.length === 1) {
+      const citation = createWebSurfExternalLink(primary, "websurf-v2-citation websurf-v2-publisher-chip");
+      citation.textContent = `[${publisher}]`;
+      return citation;
+    }
+
+    webSurfPresentationElementId += 1;
+    const id = `websurf-citation-group-${webSurfPresentationElementId}`;
+    const group = document.createElement("span");
+    group.className = "websurf-v2-citation-group";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "websurf-v2-citation websurf-v2-publisher-chip";
+    button.textContent = `[${publisher} · +${sources.length - 1}]`;
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-controls", id);
+    button.setAttribute("aria-label", `Open ${sources.length} supporting sources, starting with ${publisher}`);
+    const menu = document.createElement("span");
+    menu.id = id;
+    menu.className = "websurf-v2-citation-menu";
+    menu.hidden = true;
+    menu.setAttribute("role", "list");
+    sources.forEach((source) => {
+      const item = document.createElement("span");
+      item.setAttribute("role", "listitem");
+      const link = createWebSurfExternalLink(source, "websurf-v2-citation-menu-link");
+      link.textContent = `${getWebSurfPublisherLabel(source)} — ${source.title}`;
+      item.appendChild(link);
+      menu.appendChild(item);
+    });
+    const close = (returnFocus = false) => {
+      menu.hidden = true;
+      button.setAttribute("aria-expanded", "false");
+      if (returnFocus) button.focus();
+    };
+    button.addEventListener("click", () => {
+      const opening = menu.hidden;
+      menu.hidden = !opening;
+      button.setAttribute("aria-expanded", opening ? "true" : "false");
+      if (opening) menu.querySelector("a")?.focus();
+    });
+    group.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !menu.hidden) {
+        event.preventDefault();
+        close(true);
+      }
+    });
+    group.addEventListener("focusout", () => {
+      requestAnimationFrame(() => {
+        if (!group.contains(document.activeElement)) close(false);
+      });
+    });
+    group.append(button, menu);
+    return group;
+  }
+
+  function appendWebSurfPresentationCitationText(container, text, sources) {
+    const sourceById = new Map(sources.map((source) => [source.id, source]));
+    const markerPattern = /\[\[(S\d+)\]\]/g;
+    const value = String(text || "");
+    const matches = [...value.matchAll(markerPattern)];
+    let cursor = 0;
+    for (let index = 0; index < matches.length; index += 1) {
+      const match = matches[index];
+      const source = sourceById.get(match[1]);
+      const start = match.index ?? 0;
+      if (!source) continue;
+      const grouped = [source];
+      let groupEnd = start + match[0].length;
+      let nextIndex = index + 1;
+      while (nextIndex < matches.length) {
+        const next = matches[nextIndex];
+        const gap = value.slice(groupEnd, next.index ?? groupEnd);
+        const nextSource = sourceById.get(next[1]);
+        if (!nextSource || gap.trim()) break;
+        grouped.push(nextSource);
+        groupEnd = (next.index ?? groupEnd) + next[0].length;
+        nextIndex += 1;
+      }
+      container.appendChild(document.createTextNode(value.slice(cursor, start)));
+      container.appendChild(createWebSurfPresentationCitation(grouped));
+      cursor = groupEnd;
+      index = nextIndex - 1;
+    }
+    container.appendChild(document.createTextNode(value.slice(cursor)));
+  }
+
+  function replaceWebSurfPresentationCitations(root, sources) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        return parent && !parent.closest("a, code, pre") && /\[\[S\d+\]\]/.test(node.nodeValue || "")
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      },
+    });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach((node) => {
+      const fragment = document.createDocumentFragment();
+      appendWebSurfPresentationCitationText(fragment, node.nodeValue || "", sources);
+      node.parentNode?.replaceChild(fragment, node);
+    });
+  }
+
+  function createWebSurfFeaturedCard(source) {
+    const card = createWebSurfExternalLink(source, "websurf-v2-featured-card");
+    const media = document.createElement("span");
+    media.className = "websurf-v2-featured-media";
+    if (source.thumbnail_url) {
+      const image = document.createElement("img");
+      image.src = source.thumbnail_url;
+      image.alt = `${getWebSurfPublisherLabel(source)}: ${source.title}`;
+      image.loading = "lazy";
+      image.decoding = "async";
+      image.referrerPolicy = "no-referrer";
+      image.addEventListener("error", () => {
+        image.remove();
+        media.classList.add("is-image-fallback");
+      });
+      media.appendChild(image);
+    } else {
+      media.classList.add("is-image-fallback");
+    }
+    const body = document.createElement("span");
+    body.className = "websurf-v2-featured-copy";
+    const meta = document.createElement("span");
+    meta.className = "websurf-v2-featured-meta";
+    meta.append(createWebSurfFavicon(source), document.createTextNode(getWebSurfPublisherLabel(source)));
+    const date = formatWebSurfPublicationDate(source.published_at);
+    if (date) meta.append(document.createTextNode(` · ${date}`));
+    const title = document.createElement("span");
+    title.className = "websurf-v2-featured-title";
+    title.textContent = source.title;
+    body.append(meta, title);
+    card.append(media, body);
+    return card;
+  }
+
+  function createWebSurfPresentationSourceRow(source) {
+    const row = createWebSurfExternalLink(source, "websurf-v2-explorer-source");
+    const favicon = createWebSurfFavicon(source, "websurf-v2-explorer-favicon");
+    const copy = document.createElement("span");
+    copy.className = "websurf-v2-explorer-copy";
+    const meta = document.createElement("span");
+    meta.className = "websurf-v2-explorer-meta";
+    meta.textContent = [getWebSurfPublisherLabel(source), formatWebSurfPublicationDate(source.published_at)].filter(Boolean).join(" · ");
+    const title = document.createElement("span");
+    title.className = "websurf-v2-explorer-title";
+    title.textContent = source.title;
+    copy.append(meta, title);
+    const excerpt = truncateWebSurfExcerpt(source.snippet, 220);
+    if (excerpt) {
+      const snippet = document.createElement("span");
+      snippet.className = "websurf-v2-explorer-excerpt";
+      snippet.textContent = excerpt;
+      copy.appendChild(snippet);
+    }
+    row.append(favicon, copy);
+    return row;
+  }
+
+  function createWebSurfSourceExplorer(payload, citedIds) {
+    webSurfPresentationElementId += 1;
+    const panelId = `websurf-source-explorer-${webSurfPresentationElementId}`;
+    const explorer = document.createElement("section");
+    explorer.className = "websurf-v2-source-explorer";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "websurf-v2-source-explorer-toggle";
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-controls", panelId);
+    const label = document.createElement("span");
+    label.className = "websurf-v2-source-explorer-label";
+    label.textContent = `Sources · ${payload.sources.length}`;
+    const favicons = document.createElement("span");
+    favicons.className = "websurf-v2-source-explorer-favicons";
+    payload.sources.slice(0, 3).forEach((source) => favicons.appendChild(createWebSurfFavicon(source, "websurf-v2-source-explorer-favicon")));
+    const chevron = document.createElement("span");
+    chevron.className = "websurf-v2-source-explorer-chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.textContent = "⌄";
+    toggle.append(label, favicons, chevron);
+    const detail = document.createElement("div");
+    detail.id = panelId;
+    detail.className = "websurf-v2-source-explorer-detail";
+    detail.hidden = true;
+    const cited = payload.sources.filter((source) => citedIds.has(source.id));
+    const additional = payload.sources.filter((source) => !citedIds.has(source.id));
+    [["Cited in answer", cited], ["Additional results", additional]].forEach(([heading, sources]) => {
+      if (!sources.length) return;
+      const group = document.createElement("section");
+      group.className = "websurf-v2-source-group";
+      const title = document.createElement("h4");
+      title.textContent = heading;
+      group.appendChild(title);
+      sources.forEach((source) => group.appendChild(createWebSurfPresentationSourceRow(source)));
+      detail.appendChild(group);
+    });
+    toggle.addEventListener("click", () => {
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      toggle.setAttribute("aria-expanded", expanded ? "false" : "true");
+      detail.hidden = expanded;
+      explorer.classList.toggle("is-expanded", !expanded);
+    });
+    explorer.append(toggle, detail);
+    return explorer;
+  }
+
+  function renderWebSurfV2Presentation(payload, answerText, thinkingText, renderOptions = {}) {
+    const message = document.createElement("section");
+    message.className = "websurf-v2-message websurf-v2-presentation";
+    const featured = selectFeaturedWebSurfSources(payload.sources, 3);
+    if (featured.length) {
+      const cards = document.createElement("div");
+      cards.className = "websurf-v2-featured-sources";
+      featured.forEach((source) => cards.appendChild(createWebSurfFeaturedCard(source)));
+      message.appendChild(cards);
+    }
+    const answer = document.createElement("div");
+    answer.className = "websurf-v2-presentation-answer";
+    answer.innerHTML = renderAssistantMessageHtml(answerText, thinkingText, renderOptions);
+    replaceWebSurfPresentationCitations(answer, payload.sources);
+    wireThinkingPanels(answer);
+    wireCodeCopyButtons(answer);
+    message.appendChild(answer);
+    const citedIds = new Set(collectWebSurfCitationIds(answerText, payload.sources.map((source) => source.id)));
+    message.appendChild(createWebSurfSourceExplorer(payload, citedIds));
+    return message;
   }
 
   function createWebSurfV2SourceCard(source) {
@@ -3609,6 +3894,9 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
   }
 
   function renderWebSurfV2Panel(payload, answerText, thinkingText, renderOptions = {}) {
+    if (getWebSurfPresentationVersion(payload) === 1) {
+      return renderWebSurfV2Presentation(payload, answerText, thinkingText, renderOptions);
+    }
     const panel = document.createElement("section");
     panel.className = "websurf-v2-panel";
     const answer = document.createElement("div");
@@ -7994,6 +8282,8 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       ? options.getRenderMode
       : () => options.renderMode || null;
     const minInterval = Number.isFinite(options.minInterval) ? options.minInterval : 80;
+    const renderTail = typeof options.renderTail === "function" ? options.renderTail : null;
+    const hydrateRendered = typeof options.hydrateRendered === "function" ? options.hydrateRendered : null;
     const tailContainer = tailTextNode?.parentNode || tailTextNode?.parentElement || null;
     let lastSafeIndex = -1;
     let lastRenderAt = 0;
@@ -8009,6 +8299,12 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
 
     function setTailText(value) {
       const nextText = String(value || "");
+      if (renderTail && tailContainer) {
+        tailContainer.replaceChildren();
+        renderTail(tailContainer, nextText);
+        lastTailText = nextText;
+        return;
+      }
       if (!tailContainer) {
         if (tailTextNode) tailTextNode.nodeValue = nextText;
         lastTailText = nextText;
@@ -8084,6 +8380,7 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       renderedDiv.innerHTML = safeText.trim()
         ? renderRichText(safeText, { mode: getRenderMode() })
         : "";
+      hydrateRendered?.(renderedDiv);
       wireCodeCopyButtons(renderedDiv);
       pulseRenderedContent();
       lastSafeIndex = safeIndex;
@@ -8929,10 +9226,23 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
     let renderMode = options.renderMode || null;
     let thinkingText = "";
     let revealed = false;
+    let webSurfPresentationPayload = null;
     const STREAM_RENDER_MIN_INTERVAL = 120;
     const progressiveRenderer = createProgressiveRichRenderer(renderedDiv, tailTextNode, {
       getRenderMode: () => renderMode,
       minInterval: STREAM_RENDER_MIN_INTERVAL,
+      renderTail(container, value) {
+        if (getWebSurfPresentationVersion(webSurfPresentationPayload) === 1) {
+          appendWebSurfPresentationCitationText(container, value, webSurfPresentationPayload.sources);
+          return;
+        }
+        container.textContent = value;
+      },
+      hydrateRendered(container) {
+        if (getWebSurfPresentationVersion(webSurfPresentationPayload) === 1) {
+          replaceWebSurfPresentationCitations(container, webSurfPresentationPayload.sources);
+        }
+      },
     });
     let lastVisibleChars = 0;
     let pendingRenderReset = false;
@@ -8972,16 +9282,27 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
       if (fullText.length > 15000) {
         // Show plain text immediately, then render rich text in next idle frame
         renderedDiv.innerHTML = "";
-        tailTextNode.nodeValue = fullText;
+        if (getWebSurfPresentationVersion(webSurfPresentationPayload) === 1) {
+          tailDiv.replaceChildren();
+          appendWebSurfPresentationCitationText(tailDiv, fullText, webSurfPresentationPayload.sources);
+        } else {
+          tailTextNode.nodeValue = fullText;
+        }
         var idleCb = window.requestIdleCallback || function(fn) { setTimeout(fn, 1); };
         idleCb(function() {
           contentDiv.innerHTML = renderAssistantMessageHtml(fullText, thinkingText, { mode: renderMode }) + statusNoticeHtml;
+          if (getWebSurfPresentationVersion(webSurfPresentationPayload) === 1) {
+            replaceWebSurfPresentationCitations(contentDiv, webSurfPresentationPayload.sources);
+          }
           wireThinkingPanels(contentDiv);
           wireCodeCopyButtons(contentDiv);
           scrollToBottom(true);
         });
       } else {
         contentDiv.innerHTML = renderAssistantMessageHtml(fullText, thinkingText, { mode: renderMode }) + statusNoticeHtml;
+        if (getWebSurfPresentationVersion(webSurfPresentationPayload) === 1) {
+          replaceWebSurfPresentationCitations(contentDiv, webSurfPresentationPayload.sources);
+        }
         wireThinkingPanels(contentDiv);
         wireCodeCopyButtons(contentDiv);
         scrollToBottom(true);
@@ -9060,6 +9381,12 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
         }
       },
       setThinking(thinking) { thinkingText = typeof thinking === "string" ? thinking : ""; },
+      setWebSurfPresentation(payload) {
+        webSurfPresentationPayload = getWebSurfPresentationVersion(payload) === 1 ? payload : null;
+        pendingRenderReset = true;
+        const visibleText = fullText.substring(0, displayedChars);
+        if (visibleText) updateStreamingRender(visibleText, true);
+      },
       getRequestId() { return bubble.dataset.requestId || ""; },
       getFullText() { return fullText; },
     };
@@ -9577,6 +9904,7 @@ import { resolveLiveComposerAction } from "./live/live-composer-state.js";
               },
               onWebSurfSources(payload) {
                 webSurfV2Sources = normalizeWebSurfV2Payload(payload);
+                streamBubble?.setWebSurfPresentation?.(webSurfV2Sources);
               },
               onWebSurfComplete(event, payload) {
                 const normalized = normalizeWebSurfV2Payload(payload) || webSurfV2Sources;

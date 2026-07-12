@@ -35,6 +35,7 @@ interface TavilySearchResult {
   score: number;
   images?: string[];
   favicon?: string;
+  published_date?: string;
 }
 
 interface TavilyResponse {
@@ -44,8 +45,11 @@ interface TavilyResponse {
   images?: string[];
 }
 
-interface TavilyRequestOptions {
+export interface TavilyRequestOptions {
   readonly includeAnswer?: boolean;
+  /** Tavily-supported current-information profile fields. */
+  readonly topic?: "general" | "news";
+  readonly days?: number;
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -158,6 +162,8 @@ export class TavilyProvider implements WebSearchProvider {
       include_answer: options.includeAnswer === false ? false : "advanced",
       max_results: maxResults,
     };
+    if (options.topic) requestBody.topic = options.topic;
+    if (typeof options.days === "number" && options.days > 0) requestBody.days = options.days;
 
     const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     const effectiveSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
@@ -200,6 +206,7 @@ export class TavilyProvider implements WebSearchProvider {
       favicon: undefined,
       source: this.source,
       score: r.score,
+      publishedAt: typeof r.published_date === "string" ? r.published_date : undefined,
     }));
   }
 }

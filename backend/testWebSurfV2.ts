@@ -1,4 +1,8 @@
-import { isWebSurfV2Enabled, prepareWebSurfV2 } from "./tools/webSearch/webSurfV2";
+import {
+  isWebSurfV2Enabled,
+  isWebSurfV2PresentationEnabled,
+  prepareWebSurfV2,
+} from "./tools/webSearch/webSurfV2";
 import { WebSurfCitationStream } from "./tools/webSearch/webSurfCitationStream";
 import {
   assertPublicHttpUrl,
@@ -57,6 +61,41 @@ async function main(): Promise<void> {
       && restored.sources[1].favicon_url === "https://two.example/favicon.ico",
     "payload JSON round-trip preserves source metadata for persistence",
   );
+
+  const previousPresentationFlag = process.env.SENTIQ_WEBSURF_V2_PRESENTATION_ENABLED;
+  try {
+    process.env.SENTIQ_WEBSURF_V2_PRESENTATION_ENABLED = "false";
+    const legacyPresentation = await prepareWebSurfV2("presentation flag off", "manual", {
+      search: async () => ({
+        success: true,
+        query: "presentation flag off",
+        provider_used: "mock",
+        results: [{ title: "Source", url: "https://presentation.example/one", snippet: "Evidence", source: "tavily" }],
+      }),
+      validateUrl: async (url) => new URL(url),
+      metadata: async () => ({}),
+    });
+    assert(legacyPresentation.payload.presentationVersion === undefined, "Pass C flag false preserves the current V2 payload");
+    process.env.SENTIQ_WEBSURF_V2_PRESENTATION_ENABLED = "true";
+    const passCPresentation = await prepareWebSurfV2("presentation flag on", "auto", {
+      search: async () => ({
+        success: true,
+        query: "presentation flag on",
+        provider_used: "mock",
+        results: [{ title: "Source", url: "https://presentation.example/two", snippet: "Evidence", source: "tavily" }],
+      }),
+      validateUrl: async (url) => new URL(url),
+      metadata: async () => ({}),
+    });
+    assert(passCPresentation.payload.presentationVersion === 1, "Pass C flag marks new automatic and manual V2 payloads");
+    assert(
+      JSON.parse(JSON.stringify(passCPresentation.payload)).presentationVersion === 1,
+      "presentation marker survives payload serialization",
+    );
+  } finally {
+    if (previousPresentationFlag === undefined) delete process.env.SENTIQ_WEBSURF_V2_PRESENTATION_ENABLED;
+    else process.env.SENTIQ_WEBSURF_V2_PRESENTATION_ENABLED = previousPresentationFlag;
+  }
 
   const citations = new WebSurfCitationStream(new Set(["S1", "S2"]));
   assert(citations.push("A [[") === "A ", "incomplete citation prefix is buffered");
@@ -243,6 +282,13 @@ async function main(): Promise<void> {
 
   assert(isWebSurfV2Enabled("false") === false, "flag false preserves legacy branch selection");
   assert(isWebSurfV2Enabled("true") === true, "flag true enables the V2 branch");
+  assert(isWebSurfV2PresentationEnabled("false") === false, "Pass C flag false leaves legacy V2 presentation selected");
+  assert(isWebSurfV2PresentationEnabled("true") === true, "Pass C flag true enables the persisted presentation marker");
+  const presentationCitation = new WebSurfCitationStream(new Set(["S1"]), { preserveSourceMarkers: true });
+  assert(
+    presentationCitation.push("Proof [[S1") === "Proof " && presentationCitation.push("]]!") === "[[S1]]!",
+    "Pass C streams only complete registered source markers for client citation hydration",
+  );
   console.log("\nWebSurf V2 validation passed.");
 }
 

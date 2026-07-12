@@ -33,6 +33,14 @@ assert.match(api, /type === "websurf_sources"[\s\S]*onWebSurfSources[\s\S]*type 
   "SSE client consumes source registry before completion");
 assert.match(controller, /trigger:\s*payload\.trigger === "auto"[\s\S]*provider:\s*payload\.provider\.trim/,
   "frontend persistence normalization retains trigger and provider metadata");
+assert.match(webSurf, /presentationVersion\?: 1[\s\S]*isWebSurfV2PresentationEnabled/,
+  "the server-only Pass C flag adds only an optional persisted presentation marker");
+assert.match(controller, /getWebSurfPresentationVersion\(payload\) === 1[\s\S]*presentationVersion: 1/,
+  "frontend normalization preserves the optional presentation marker through reload and sync");
+assert.match(controller, /renderWebSurfV2Presentation[\s\S]*collectWebSurfCitationIds[\s\S]*createWebSurfSourceExplorer/,
+  "Pass C reload rendering derives featured cards and cited/additional groups from stored answer plus registry");
+assert.match(controller, /streamBubble\?\.setWebSurfPresentation\?\.\(webSurfV2Sources\)/,
+  "SSE source metadata hydrates Pass C citations before streamed answer completion");
 assert.match(controller, /!parsed\.username[\s\S]*!parsed\.password[\s\S]*!isBlockedWebSurfHost/,
   "frontend source and asset URLs reject credentials and obvious local-network hosts");
 assert.match(controller, /streamErr\?\.code === "websurf_retrieval_failed" \|\| responseRenderMode === "websurf_v2"/,

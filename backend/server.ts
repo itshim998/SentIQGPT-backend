@@ -139,6 +139,7 @@ import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 import { isWebSearchMode, normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
 import { isWebSurfV2Enabled, prepareWebSurfV2, type WebSurfV2Payload } from "./tools/webSearch/webSurfV2";
 import { WebSurfCitationStream } from "./tools/webSearch/webSurfCitationStream";
+import { WebSurfOutputGuardStream } from "./tools/webSearch/webSurfOutputGuard";
 import { normalizeExecutionMode, resolveExecutionProfile } from "./orchestrator/executionProfile";
 
 // Middleware
@@ -262,6 +263,19 @@ function getExplicitWebSearchMode(value: unknown): "basic" | undefined {
 
 function getWebSurfV2Preview(payload: WebSurfV2Payload | undefined): Record<string, WebSurfV2Payload> | undefined {
   return payload ? { web_surf_v2: payload } : undefined;
+}
+
+function logWebSurfAnswerOutput(args: {
+  readonly profile?: string;
+  readonly answer: string;
+  readonly outputGuardRemovedInternalArtefact: boolean;
+}): void {
+  if (!args.profile) return;
+  const citationMarkerCount = (args.answer.match(/\[\[S\d+\]\]/g) ?? []).length;
+  console.info(
+    `[WebSurfV2] stage=answer_output profile=${args.profile} citation_marker_count=${citationMarkerCount} ` +
+    `streamed_output_chars=${args.answer.length} output_guard_removed=${args.outputGuardRemovedInternalArtefact ? 1 : 0}`,
+  );
 }
 
 // ---- CORS ----
@@ -2989,7 +3003,9 @@ app.post(
           userId,
           reasoningMode: isReasoningQuery,
           reasoningEffort: executionProfile.model.reasoningEffort,
-          webSurfSourceIds: guestWebSurfV2?.payload.sources.map((source) => source.id),
+          webSurfSourceIds: guestWebSurfV2?.synthesisSourceIds,
+          webSurfAnswerPlan: guestWebSurfV2?.answerIntelligence?.plan,
+          webSurfAnswerSources: guestWebSurfV2?.answerIntelligence?.sources,
         });
         await commitTextBilling(guestReservation, "guest.chat");
       } catch (error) {
@@ -3981,6 +3997,7 @@ app.post(
       let guestGeneralCallForRecovery: LLMAdapterCall | null = null;
       let guestWebSurfV2: Awaited<ReturnType<typeof prepareWebSurfV2>> | undefined;
       let guestCitationStream: WebSurfCitationStream | undefined;
+      let guestOutputGuard: WebSurfOutputGuardStream | undefined;
       try {
         const streamStart = Date.now();
         if (webSurfV2Enabled && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
@@ -3991,9 +4008,12 @@ app.post(
             {},
             requestAbortController.signal,
           );
-          guestCitationStream = new WebSurfCitationStream(
-            new Set(guestWebSurfV2.payload.sources.map((source) => source.id)),
-          );
+          guestCitationStream = new WebSurfCitationStream(new Set(guestWebSurfV2.synthesisSourceIds), {
+            preserveSourceMarkers: guestWebSurfV2.payload.presentationVersion === 1,
+          });
+          if (guestWebSurfV2.answerIntelligence) {
+            guestOutputGuard = new WebSurfOutputGuardStream(new Set(guestWebSurfV2.synthesisSourceIds));
+          }
           await writeSseJson({ type: "websurf_sources", web_search: guestWebSurfV2.payload });
         }
         if (isMathReasoningQuery) {
@@ -4039,7 +4059,9 @@ app.post(
           userId,
           streaming: true,
           reasoningEffort: executionProfile.model.reasoningEffort,
-          webSurfSourceIds: guestWebSurfV2?.payload.sources.map((source) => source.id),
+          webSurfSourceIds: guestWebSurfV2?.synthesisSourceIds,
+          webSurfAnswerPlan: guestWebSurfV2?.answerIntelligence?.plan,
+          webSurfAnswerSources: guestWebSurfV2?.answerIntelligence?.sources,
         });
         guestGeneralCallForRecovery = call;
         const adapterStream = await callLLMAdapterStream({ ...call, signal: requestAbortController.signal });
@@ -4052,8 +4074,9 @@ app.post(
             const { done, value } = await reader.read();
             if (done) break;
             if (!value) continue;
-            fullReply += value;
-            const visible = guestCitationStream ? guestCitationStream.push(value) : value;
+            const safeValue = guestOutputGuard ? guestOutputGuard.push(value) : value;
+            fullReply += safeValue;
+            const visible = guestCitationStream ? guestCitationStream.push(safeValue) : safeValue;
             if (visible) {
               recordStreamChunk(streamMetrics, visible);
               await writeSseJson({ type: "token", text: visible });
@@ -4062,6 +4085,16 @@ app.post(
         } finally {
           if (clientDisconnected) {
             await reader.cancel("client disconnected").catch(() => undefined);
+          }
+        }
+
+        const outputGuardTail = guestOutputGuard?.flush();
+        if (outputGuardTail) {
+          fullReply += outputGuardTail;
+          const visible = guestCitationStream ? guestCitationStream.push(outputGuardTail) : outputGuardTail;
+          if (visible) {
+            recordStreamChunk(streamMetrics, visible);
+            await writeSseJson({ type: "token", text: visible });
           }
         }
 
@@ -4074,14 +4107,22 @@ app.post(
             timeoutMs: 90_000,
             signal: requestAbortController.signal,
           });
-          fullReply = fallbackText;
-          const visible = guestCitationStream
-            ? `${guestCitationStream.push(fallbackText)}${guestCitationStream.flush()}`
+          const safeFallbackText = guestOutputGuard
+            ? `${guestOutputGuard.push(fallbackText)}${guestOutputGuard.flush()}`
             : fallbackText;
+          fullReply = safeFallbackText;
+          const visible = guestCitationStream
+            ? `${guestCitationStream.push(safeFallbackText)}${guestCitationStream.flush()}`
+            : safeFallbackText;
           await streamBufferedAnswer(visible, undefined, false, streamMetrics);
         }
 
         if (fullReply && !clientDisconnected) {
+          logWebSurfAnswerOutput({
+            profile: guestWebSurfV2?.answerIntelligence?.plan.profile,
+            answer: fullReply,
+            outputGuardRemovedInternalArtefact: guestOutputGuard?.removedInternalArtefact ?? false,
+          });
           await commitTextBilling(guestGeneralReservation, "guest.general.stream");
         } else if (clientDisconnected) {
           await releaseBillingReservation(guestGeneralReservation);
@@ -4115,15 +4156,23 @@ app.post(
               timeoutMs: 90_000,
               signal: requestAbortController.signal,
             });
-            const visible = guestCitationStream
-              ? `${guestCitationStream.push(fallbackText)}${guestCitationStream.flush()}`
+            const safeFallbackText = guestOutputGuard
+              ? `${guestOutputGuard.push(fallbackText)}${guestOutputGuard.flush()}`
               : fallbackText;
+            const visible = guestCitationStream
+              ? `${guestCitationStream.push(safeFallbackText)}${guestCitationStream.flush()}`
+              : safeFallbackText;
             await streamBufferedAnswer(visible, undefined, false, streamMetrics);
             await commitTextBilling(guestGeneralReservation, "guest.general.stream.fallback");
+            logWebSurfAnswerOutput({
+              profile: guestWebSurfV2?.answerIntelligence?.plan.profile,
+              answer: safeFallbackText,
+              outputGuardRemovedInternalArtefact: guestOutputGuard?.removedInternalArtefact ?? false,
+            });
             if (guestWebSurfV2) {
               await writeSseJson({
                 type: "websurf_complete",
-                answer: fallbackText,
+                answer: safeFallbackText,
                 web_search: guestWebSurfV2.payload,
               });
             }
@@ -5448,6 +5497,7 @@ app.post(
 
     let webSurfV2: Awaited<ReturnType<typeof prepareWebSurfV2>> | undefined;
     let webSurfCitationStream: WebSurfCitationStream | undefined;
+    let webSurfOutputGuard: WebSurfOutputGuardStream | undefined;
     if (webSurfV2Enabled && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
       try {
         webSurfV2 = await prepareWebSurfV2(
@@ -5456,9 +5506,12 @@ app.post(
           {},
           requestAbortController.signal,
         );
-        webSurfCitationStream = new WebSurfCitationStream(
-          new Set(webSurfV2.payload.sources.map((source) => source.id)),
-        );
+        webSurfCitationStream = new WebSurfCitationStream(new Set(webSurfV2.synthesisSourceIds), {
+          preserveSourceMarkers: webSurfV2.payload.presentationVersion === 1,
+        });
+        if (webSurfV2.answerIntelligence) {
+          webSurfOutputGuard = new WebSurfOutputGuardStream(new Set(webSurfV2.synthesisSourceIds));
+        }
       } catch (error) {
         const errorClass = error instanceof Error && /^[A-Za-z0-9_-]{1,64}$/.test(error.name)
           ? error.name
@@ -5585,7 +5638,9 @@ app.post(
       userId,
       streaming: true,
       reasoningEffort: executionProfile.model.reasoningEffort,
-      webSurfSourceIds: webSurfV2?.payload.sources.map((source) => source.id),
+      webSurfSourceIds: webSurfV2?.synthesisSourceIds,
+      webSurfAnswerPlan: webSurfV2?.answerIntelligence?.plan,
+      webSurfAnswerSources: webSurfV2?.answerIntelligence?.sources,
     });
 
     try {
@@ -5608,8 +5663,9 @@ app.post(
           const { done, value } = await reader.read();
           if (done) break;
           if (!value) continue;
-          fullReply += value;
-          const visible = webSurfCitationStream ? webSurfCitationStream.push(value) : value;
+          const safeValue = webSurfOutputGuard ? webSurfOutputGuard.push(value) : value;
+          fullReply += safeValue;
+          const visible = webSurfCitationStream ? webSurfCitationStream.push(safeValue) : safeValue;
           if (visible) {
             recordStreamChunk(streamMetrics, visible);
             await writeSseJson({ type: "token", text: visible });
@@ -5623,8 +5679,18 @@ app.post(
 
       stopHeartbeat();
 
+      const outputGuardTail = webSurfOutputGuard?.flush();
+      if (outputGuardTail) {
+        fullReply += outputGuardTail;
+        const visible = webSurfCitationStream ? webSurfCitationStream.push(outputGuardTail) : outputGuardTail;
+        if (visible) {
+          recordStreamChunk(streamMetrics, visible);
+          await writeSseJson({ type: "token", text: visible });
+        }
+      }
+
       if (!fullReply.trim() && !clientDisconnected) {
-        fullReply = await recoverBufferedStreamText({
+        const recoveredText = await recoverBufferedStreamText({
           route: "stream",
           model: modelOverride,
           reason: "empty_stream",
@@ -5632,6 +5698,9 @@ app.post(
           timeoutMs: modelOverride === "openai-large" ? 180_000 : 90_000,
           signal: requestAbortController.signal,
         });
+        fullReply = webSurfOutputGuard
+          ? `${webSurfOutputGuard.push(recoveredText)}${webSurfOutputGuard.flush()}`
+          : recoveredText;
         const visible = webSurfCitationStream
           ? `${webSurfCitationStream.push(fullReply)}${webSurfCitationStream.flush()}`
           : fullReply;
@@ -5639,6 +5708,11 @@ app.post(
       }
 
       if (fullReply && !clientDisconnected) {
+        logWebSurfAnswerOutput({
+          profile: webSurfV2?.answerIntelligence?.plan.profile,
+          answer: fullReply,
+          outputGuardRemovedInternalArtefact: webSurfOutputGuard?.removedInternalArtefact ?? false,
+        });
         await commitTextBilling(directReservation, "stream");
         await persistAssistantMessage(fullReply, webSurfV2?.payload);
       } else if (clientDisconnected) {
@@ -5676,17 +5750,25 @@ app.post(
             timeoutMs: modelOverride === "openai-large" ? 180_000 : 90_000,
             signal: requestAbortController.signal,
           });
-          await commitTextBilling(directReservation, "stream.fallback");
-          await persistAssistantMessage(fallbackText, webSurfV2?.payload);
-          reportStreamMessageGap(Boolean(fallbackText), "stream.fallback");
-          const visible = webSurfCitationStream
-            ? `${webSurfCitationStream.push(fallbackText)}${webSurfCitationStream.flush()}`
+          const safeFallbackText = webSurfOutputGuard
+            ? `${webSurfOutputGuard.push(fallbackText)}${webSurfOutputGuard.flush()}`
             : fallbackText;
+          await commitTextBilling(directReservation, "stream.fallback");
+          await persistAssistantMessage(safeFallbackText, webSurfV2?.payload);
+          reportStreamMessageGap(Boolean(safeFallbackText), "stream.fallback");
+          const visible = webSurfCitationStream
+            ? `${webSurfCitationStream.push(safeFallbackText)}${webSurfCitationStream.flush()}`
+            : safeFallbackText;
           await streamBufferedAnswer(visible, undefined, false, streamMetrics);
+          logWebSurfAnswerOutput({
+            profile: webSurfV2?.answerIntelligence?.plan.profile,
+            answer: safeFallbackText,
+            outputGuardRemovedInternalArtefact: webSurfOutputGuard?.removedInternalArtefact ?? false,
+          });
           if (webSurfV2) {
             await writeSseJson({
               type: "websurf_complete",
-              answer: fallbackText,
+              answer: safeFallbackText,
               web_search: webSurfV2.payload,
             });
           }

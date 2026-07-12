@@ -58,6 +58,7 @@ export function cacheSet<T = unknown>(
   key: string,
   value: T,
   category: CacheCategory,
+  ttlMs = CACHE_TTL[category],
 ): void {
   // Evict if at capacity for this category
   evictIfNeeded(category);
@@ -67,7 +68,7 @@ export function cacheSet<T = unknown>(
     value,
     category,
     createdAt: now,
-    expiresAt: now + CACHE_TTL[category],
+    expiresAt: now + ttlMs,
     hitCount: 0,
   };
 

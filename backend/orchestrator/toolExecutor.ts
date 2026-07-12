@@ -260,7 +260,9 @@ async function execConversation(
       userId: ctx.userId,
       reasoningEffort: profile.model.reasoningEffort,
       signal,
-      webSurfSourceIds: webSurfEvidence?.payload.sources.map((source) => source.id),
+      webSurfSourceIds: webSurfEvidence?.synthesisSourceIds,
+      webSurfAnswerPlan: webSurfEvidence?.answerIntelligence?.plan,
+      webSurfAnswerSources: webSurfEvidence?.answerIntelligence?.sources,
     });
     if (reservation) {
       await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "conversation" });

@@ -4,6 +4,16 @@ import {
   type WebSurfArticleMetadata,
 } from "./contentExtractor";
 import { routeWebSearch } from "./webSearchRouter";
+import {
+  executeWebSurfSearchIntelligence,
+  type WebSurfSearchPlan,
+  type WebSurfSelectedSourceContext,
+} from "./webSurfSearchIntelligence";
+import {
+  buildWebSurfAnswerIntelligence,
+  isWebSurfV2AnswerIntelligenceEnabled,
+  type WebSurfAnswerIntelligence,
+} from "./webSurfAnswerIntelligence";
 import type { SearchResult, WebSearchResult } from "./types";
 
 export type WebSurfV2Trigger = "manual" | "auto";
@@ -21,6 +31,8 @@ export interface WebSurfV2Source {
 
 export interface WebSurfV2Payload {
   readonly version: 2;
+  /** Optional persisted UI contract; absent retains the legacy V2 renderer. */
+  readonly presentationVersion?: 1;
   readonly query: string;
   readonly trigger: WebSurfV2Trigger;
   readonly provider?: string;
@@ -30,6 +42,10 @@ export interface WebSurfV2Payload {
 
 export interface WebSurfV2Evidence {
   readonly payload: WebSurfV2Payload;
+  /** Pass B-only internal planning context. It is never persisted or public. */
+  readonly answerIntelligence?: WebSurfAnswerIntelligence;
+  /** Source IDs eligible for this one synthesis call; stable public IDs remain unchanged. */
+  readonly synthesisSourceIds: readonly string[];
   readonly routeEvidence: readonly {
     readonly content: string;
     readonly label: string;
@@ -202,7 +218,35 @@ export async function prepareWebSurfV2(
   // deliberately avoids making a transient DNS failure fatal to core search.
   const validateUrl = dependencies.validateUrl ?? (async (url: string) => assertSafeWebSurfPresentationUrl(url));
   signal?.throwIfAborted();
-  const result = await search({ query: normalizedQuery, maxResults: MAX_CANDIDATE_SOURCES, signal });
+  let result: WebSearchResult;
+  let searchPlan: WebSurfSearchPlan | undefined;
+  let selectedSourceContext: readonly WebSurfSelectedSourceContext[] | undefined;
+  if (isWebSurfV2SearchIntelligenceEnabled()) {
+    const intelligence = await executeWebSurfSearchIntelligence(
+      normalizedQuery,
+      {
+        search: dependencies.search
+          ? async (request) => dependencies.search!({
+            query: request.query,
+            maxResults: request.maxResults,
+            signal: request.signal,
+          })
+          : undefined,
+      },
+      signal,
+    );
+    searchPlan = intelligence.plan;
+    selectedSourceContext = intelligence.sourceIntelligence;
+    result = {
+      success: intelligence.results.length > 0,
+      query: normalizedQuery,
+      results: intelligence.results,
+      provider_used: intelligence.provider,
+      error: intelligence.results.length === 0 ? "No viable web evidence was found" : undefined,
+    };
+  } else {
+    result = await search({ query: normalizedQuery, maxResults: MAX_CANDIDATE_SOURCES, signal });
+  }
   if (!result.success || result.results.length === 0) {
     logPreparationStage("core_retrieval_failed", {
       result_count: result.results.length,
@@ -293,12 +337,13 @@ export async function prepareWebSurfV2(
 
   const payload: WebSurfV2Payload = {
     version: 2,
+    ...(isWebSurfV2PresentationEnabled() ? { presentationVersion: 1 as const } : {}),
     query: normalizedQuery,
     trigger,
     provider: result.provider_used,
     sources,
   };
-  const routeEvidence = sources.map((source, index) => ({
+  const unfilteredRouteEvidence = sources.map((source, index) => ({
     label: source.id,
     required: true,
     relevance: Math.max(0.5, 1 - index * 0.08),
@@ -309,9 +354,46 @@ export async function prepareWebSurfV2(
       excerpt: source.snippet,
     }),
   }));
-  return { payload, routeEvidence };
+  const answerIntelligence = isWebSurfV2AnswerIntelligenceEnabled()
+    ? buildWebSurfAnswerIntelligence({
+      query: normalizedQuery,
+      sources,
+      searchPlan,
+      selectedSourceContext,
+    })
+    : undefined;
+  const synthesisSourceIds = answerIntelligence?.synthesisSourceIds ?? sources.map((source) => source.id);
+  const synthesisIdSet = new Set(synthesisSourceIds);
+  const routeEvidence = answerIntelligence
+    ? unfilteredRouteEvidence.filter((item) => synthesisIdSet.has(item.label))
+    : unfilteredRouteEvidence;
+  if (answerIntelligence) {
+    const plan = answerIntelligence.plan;
+    console.info(
+      `[WebSurfV2] stage=answer_intelligence profile=${plan.profile} max_words=${plan.maxWords} ` +
+      `table_policy=${plan.tablePolicy} required_coverage_count=${plan.requiredCoverageGoals.length} ` +
+      `uncertainty_requested=${plan.uncertaintyPolicy === "normal" ? 0 : 1} synthesis_sources=${synthesisSourceIds.length}`,
+    );
+  }
+  return { payload, answerIntelligence, synthesisSourceIds, routeEvidence };
 }
 
 export function isWebSurfV2Enabled(value = process.env.SENTIQ_WEBSURF_V2_ENABLED): boolean {
   return value?.trim().toLowerCase() === "true";
 }
+
+/** Server-only Pass A subfeature. False keeps the current V2 retrieval path intact. */
+export function isWebSurfV2SearchIntelligenceEnabled(
+  value = process.env.SENTIQ_WEBSURF_V2_SEARCH_INTELLIGENCE_ENABLED,
+): boolean {
+  return value?.trim().toLowerCase() === "true";
+}
+
+/** Server-only Pass C switch. It marks new messages without changing V2 retrieval. */
+export function isWebSurfV2PresentationEnabled(
+  value = process.env.SENTIQ_WEBSURF_V2_PRESENTATION_ENABLED,
+): boolean {
+  return value?.trim().toLowerCase() === "true";
+}
+
+export { isWebSurfV2AnswerIntelligenceEnabled } from "./webSurfAnswerIntelligence";
