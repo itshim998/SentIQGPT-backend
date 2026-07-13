@@ -1,5 +1,4 @@
 import type { BillingMode, BillingPlan, BillingPlanCode, BillableFeature, FeatureQuota } from "./entitlementTypes";
-import { PRODUCT_NAME } from "../branding";
 
 const INR = "INR";
 
@@ -70,7 +69,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
     {
       code: "free",
       name: "Free",
-      description: "Starter access with transparent rolling limits.",
+      description: "A straightforward way to get started, with clear rolling limits.",
       currency,
       pricePaise: readPricePaise("SENTIQ_PLAN_FREE_PRICE_PAISE", 0),
       interval: "month",
@@ -91,8 +90,8 @@ export function getPlanCatalog(): readonly BillingPlan[] {
     },
     {
       code: "student_core",
-      name: "Student Core",
-      description: "Affordable Standard access for students.",
+      name: "Essential",
+      description: "Balanced access for regular, everyday use.",
       currency,
       pricePaise: readPricePaise("SENTIQ_PLAN_STUDENT_CORE_PRICE_PAISE", 9_900),
       interval: "month",
@@ -113,8 +112,8 @@ export function getPlanCatalog(): readonly BillingPlan[] {
     },
     {
       code: "premium",
-      name: "Premium",
-      description: "Best value for heavier student workflows.",
+      name: "Plus",
+      description: "Expanded limits for frequent and more involved workflows.",
       currency,
       pricePaise: readPricePaise("SENTIQ_PLAN_PREMIUM_PRICE_PAISE", 24_900),
       interval: "month",
@@ -136,7 +135,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
     {
       code: "pro",
       name: "Pro",
-      description: `Highest ${PRODUCT_NAME} limits for regular power use.`,
+      description: "Our highest limits for sustained, demanding use.",
       currency,
       pricePaise: readPricePaise("SENTIQ_PLAN_PRO_PRICE_PAISE", 54_900),
       interval: "month",

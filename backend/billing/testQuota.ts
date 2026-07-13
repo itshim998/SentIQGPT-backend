@@ -19,8 +19,60 @@ function ensureTestSupabaseEnv() {
 }
 
 function testPlanCatalog() {
-  const plans = getPlanCatalog();
+  const planPriceEnvNames = [
+    "SENTIQ_PLAN_FREE_PRICE_PAISE",
+    "SENTIQ_PLAN_STUDENT_CORE_PRICE_PAISE",
+    "SENTIQ_PLAN_PREMIUM_PRICE_PAISE",
+    "SENTIQ_PLAN_PRO_PRICE_PAISE",
+  ];
+  const previousPlanPrices = new Map(planPriceEnvNames.map((name) => [name, process.env[name]]));
+  for (const name of planPriceEnvNames) delete process.env[name];
+
+  let plans;
+  try {
+    plans = getPlanCatalog();
+  } finally {
+    for (const [name, value] of previousPlanPrices) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+
   assert(plans.length === 4, "expected exactly four default billing plans");
+  const expectedPlans = [
+    {
+      code: "free",
+      name: "Free",
+      description: "A straightforward way to get started, with clear rolling limits.",
+      pricePaise: 0,
+    },
+    {
+      code: "student_core",
+      name: "Essential",
+      description: "Balanced access for regular, everyday use.",
+      pricePaise: 9_900,
+    },
+    {
+      code: "premium",
+      name: "Plus",
+      description: "Expanded limits for frequent and more involved workflows.",
+      pricePaise: 24_900,
+    },
+    {
+      code: "pro",
+      name: "Pro",
+      description: "Our highest limits for sustained, demanding use.",
+      pricePaise: 54_900,
+    },
+  ] as const;
+  expectedPlans.forEach((expected, index) => {
+    const actual = plans[index];
+    assert(actual?.code === expected.code, `plan ${index + 1} should use code ${expected.code}`);
+    assert(actual?.name === expected.name, `${expected.code} should use public name ${expected.name}`);
+    assert(actual?.description === expected.description, `${expected.code} should use the exact public description`);
+    assert(actual?.pricePaise === expected.pricePaise, `${expected.code} default price should remain unchanged`);
+  });
+
   for (const plan of plans) {
     assert(plan.entitlements.quotas.premium_text.limit >= 0, `${plan.code} missing premium_text quota`);
     assert(plan.entitlements.quotas.lite_text.limit >= 0, `${plan.code} missing lite_text quota`);

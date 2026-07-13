@@ -117,7 +117,7 @@ export class BillingQuotaService {
       const resetAt = typeof result?.reset_at === "string" ? result.reset_at : null;
       throw new BillingQuotaError(
         args.feature === "lite_text"
-          ? "You've used today's free AI messages. Upgrade to Student Core for INR 99/month or come back after the reset."
+          ? "You've used today's free AI messages. Upgrade to Essential for INR 99/month or come back after the reset."
           : `${args.route.safeModelLabel} limit reached.`,
         {
           code: "quota_exceeded",
@@ -126,7 +126,7 @@ export class BillingQuotaService {
           resetAt,
           limit,
           remaining,
-          upgradeCta: planCode === "free" ? "Upgrade to Student Core" : "Upgrade plan",
+          upgradeCta: planCode === "free" ? "Upgrade to Essential" : "Upgrade plan",
         },
       );
     }
