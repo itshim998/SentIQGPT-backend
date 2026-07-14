@@ -271,6 +271,7 @@ async function invokeFileModel(
   modelOverride: string,
   callModel: typeof callLLMAdapterDetailed,
   userId: string,
+  signal?: AbortSignal,
 ): Promise<{ spec: GeneratedFileSpec; result: LLMAdapterResult }> {
   const result = await callModel({
     task: "file_generate",
@@ -280,6 +281,7 @@ async function invokeFileModel(
     timeout_ms: FILE_GENERATION_TIMEOUT_MS,
     max_output_tokens: FILE_GENERATION_MAX_TOKENS,
     skip_wrappers: true,
+    signal,
   });
 
   if (result.error) {
@@ -945,6 +947,7 @@ async function attemptGenerate(
     modelOverride,
     dependencies.callModel,
     args.userId,
+    args.signal,
   );
 
   const repairedSpec = repairSpecForFormat(spec, format);
@@ -968,7 +971,12 @@ export async function routeFileGeneration(
   } = {},
   dependencies: FileGeneratorDependencies = {},
 ): Promise<GeneratedFileResult> {
-  const format = detectGeneratedFileFormat(args.userMessage);
+  const throwIfAborted = () => {
+    if (!args.signal?.aborted) return;
+    throw args.signal.reason instanceof Error ? args.signal.reason : new Error("File generation aborted");
+  };
+  throwIfAborted();
+  const format = args.requestedFormat ?? detectGeneratedFileFormat(args.userMessage);
   if (!format) {
     return {
       success: false,
@@ -1001,6 +1009,7 @@ export async function routeFileGeneration(
   let fallbackReason: string | null = null;
 
   try {
+    throwIfAborted();
     const primary = await attemptGenerate(args, format, PRIMARY_MODEL, { callModel });
     rendered = primary.rendered;
     llmResult = primary.llm;
@@ -1011,6 +1020,7 @@ export async function routeFileGeneration(
     fallback = true;
     fallbackReason = primaryError instanceof Error ? primaryError.message : String(primaryError);
     try {
+      throwIfAborted();
       const secondary = await attemptGenerate(args, format, FALLBACK_MODEL, { callModel });
       rendered = secondary.rendered;
       generatedSpec = secondary.spec;
@@ -1035,10 +1045,12 @@ export async function routeFileGeneration(
 
   if (format === "html" && rendered.html && options.onHtmlToken) {
     for (const token of chunkText(rendered.html)) {
+      throwIfAborted();
       await options.onHtmlToken(token);
     }
   }
 
+  throwIfAborted();
   const mimeType = getGeneratedFileMimeType(format);
   const fileName = buildGeneratedFileName(format, generatedSpec || { format }, args.userMessage);
   const uploaded = await uploadFile(storageDb, {
@@ -1063,6 +1075,15 @@ export async function routeFileGeneration(
       fallback_reason: uploaded.error || fallbackReason,
       error: uploaded.error || "Generated file could not be uploaded.",
     };
+  }
+
+  if (args.signal?.aborted) {
+    if (uploaded.storageBucket && uploaded.storagePath) {
+      await deleteFile(storageDb, uploaded.storageBucket, uploaded.storagePath).catch((cleanupError) => {
+        console.warn(`[FileGeneration] cancellation cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+      });
+    }
+    throwIfAborted();
   }
 
   try {

@@ -71,7 +71,7 @@ export interface ValidatedToolCall {
 
 export type ToolLifecycleEvent = Readonly<{
   type: "tool_selected" | "tool_started" | "tool_result" | "tool_error";
-  tool: "web_surf" | "image_gen";
+  tool: SentIQToolName;
   call_id: string;
   code?: string;
 }>;

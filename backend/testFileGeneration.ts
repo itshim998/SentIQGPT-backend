@@ -458,6 +458,59 @@ async function testMetadataFailureReportsCleanupFailure(): Promise<void> {
   assert.match(result.warning || "", /could not be cleaned up/i);
 }
 
+async function testModelSelectedFormatAndCancellationCleanup(): Promise<void> {
+  const controller = new AbortController();
+  let cleanupCalls = 0;
+  await assert.rejects(
+    () => routeFileGeneration(
+      {
+        userMessage: "Create a concise downloadable project report",
+        requestedFormat: "txt",
+        userId: "00000000-0000-4000-8000-000000000011",
+        conversationId: "00000000-0000-4000-8000-000000000012",
+        userDb: {},
+        storageDb: {},
+        signal: controller.signal,
+      },
+      {},
+      {
+        callModel: async () => llmResult(JSON.stringify({
+          title: "Project report",
+          format: "txt",
+          text: "A concise project report generated from the user's request.",
+        }), "minimax"),
+        uploadFile: async () => {
+          controller.abort(new Error("request cancelled"));
+          return {
+            success: true,
+            fileId: "file-cancelled",
+            fileUrl: "https://example.test/project-report.txt",
+            storagePath: "u/c/file-cancelled/project-report.txt",
+            storageBucket: "sentiq-generated-files-private",
+            fileSizeBytes: 64,
+          };
+        },
+        saveMetadata: async () => assert.fail("cancelled work must not persist metadata"),
+        deleteFile: async () => { cleanupCalls += 1; },
+        storageDb: {},
+      },
+    ),
+    /request cancelled/,
+  );
+  assert.equal(cleanupCalls, 1, "a cancellation after upload cleans the orphan before propagating");
+
+  const preCancelled = new AbortController();
+  preCancelled.abort(new Error("cancelled before generation"));
+  await assert.rejects(() => routeFileGeneration({
+    userMessage: "Create a report",
+    requestedFormat: "pdf",
+    userId: "00000000-0000-4000-8000-000000000013",
+    conversationId: "00000000-0000-4000-8000-000000000014",
+    userDb: {},
+    signal: preCancelled.signal,
+  }), /cancelled before generation/);
+}
+
 function sourceBlock(source: string, needle: string, chars = 1800): string {
   const start = source.indexOf(needle);
   assert.ok(start >= 0, `Expected source to include ${needle}`);
@@ -512,6 +565,7 @@ async function main(): Promise<void> {
   await testFallbackFailureIsStructured();
   await testMetadataFailureCleansUploadedObject();
   await testMetadataFailureReportsCleanupFailure();
+  await testModelSelectedFormatAndCancellationCleanup();
   testStorageApiSourceGuards();
   console.log("file generation tests passed");
 }

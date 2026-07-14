@@ -9,10 +9,16 @@ import {
 } from "./ai/modelToolExecution";
 import {
   getEnabledAutomaticSentIQTools,
+  isAutomaticConversationalClarificationEnabled,
+  isModelChartSelectionEnabled,
+  isModelConversationalClarificationEnabled,
+  isModelFileSelectionEnabled,
   isModelImageSelectionEnabled,
+  isModelMemorySelectionEnabled,
   isModelWebSurfSelectionEnabled,
 } from "./ai/modelToolCapability";
 import { resolveHardRoutedPlan } from "./orchestrator/planner";
+import { isDuplicateMemoryCandidate, validateAutomaticMemoryUpdateRequest } from "./ai/modelToolMemorySafety";
 import { fetchPollinationsImage } from "./tools/imageGeneration/pollinationsUtils";
 import { validateSingleAutomaticToolCall, type ProviderDelta, type ValidatedToolCall } from "./orchestrator/toolContract";
 
@@ -28,6 +34,10 @@ function streamOf(events: readonly ProviderDelta[]): ReadableStream<ProviderDelt
 async function main(): Promise<void> {
   assert.equal(isModelWebSurfSelectionEnabled(undefined), false);
   assert.equal(isModelImageSelectionEnabled(undefined), false);
+  assert.equal(isModelChartSelectionEnabled(undefined), false);
+  assert.equal(isModelFileSelectionEnabled(undefined), false);
+  assert.equal(isModelMemorySelectionEnabled(undefined), false);
+  assert.equal(isModelConversationalClarificationEnabled(undefined), false);
   assert.equal(isModelWebSurfSelectionEnabled("true"), true);
   assert.equal(isModelImageSelectionEnabled("TRUE"), true);
 
@@ -35,15 +45,25 @@ async function main(): Promise<void> {
     registry: process.env.SENTIQ_MODEL_TOOL_REGISTRY_ENABLED,
     web: process.env.SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED,
     image: process.env.SENTIQ_MODEL_IMAGE_SELECTION_ENABLED,
+    chart: process.env.SENTIQ_MODEL_CHART_SELECTION_ENABLED,
+    file: process.env.SENTIQ_MODEL_FILE_SELECTION_ENABLED,
+    memory: process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED,
+    clarification: process.env.SENTIQ_MODEL_CONVERSATIONAL_CLARIFICATION_ENABLED,
     groq: process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
   };
   process.env.SENTIQ_MODEL_TOOL_REGISTRY_ENABLED = "true";
   process.env.SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED = "true";
   process.env.SENTIQ_MODEL_IMAGE_SELECTION_ENABLED = "false";
+  process.env.SENTIQ_MODEL_CHART_SELECTION_ENABLED = "false";
+  process.env.SENTIQ_MODEL_FILE_SELECTION_ENABLED = "false";
+  process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED = "false";
+  process.env.SENTIQ_MODEL_CONVERSATIONAL_CLARIFICATION_ENABLED = "true";
   process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = "false";
   try {
     assert.deepEqual(getEnabledAutomaticSentIQTools(), [], "selection flags require an enabled provider transport");
+    assert.equal(isAutomaticConversationalClarificationEnabled(), false, "clarification rollback stays active without provider transport");
     process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = "true";
+    assert.equal(isAutomaticConversationalClarificationEnabled(), true);
     assert.deepEqual(getEnabledAutomaticSentIQTools(), ["web_surf"]);
     assert.deepEqual(
       buildSentIQToolTransportRequest({
@@ -63,6 +83,18 @@ async function main(): Promise<void> {
     ]), (text) => { visible.push(text); });
     assert.deepEqual(textTurn, { kind: "assistant_text", text: "ordinary answer" });
     assert.deepEqual(visible, ["ordinary ", "answer"]);
+    for (const question of [
+      "Which Jordan do you mean?",
+      "Which earlier report should I use?",
+      "Please attach or identify the file you want me to edit.",
+      "Which output format would you like?",
+    ]) {
+      const clarificationTurn = await consumeModelTurnStream(streamOf([
+        { kind: "text_delta", text: question },
+        { kind: "done" },
+      ]), () => undefined);
+      assert.deepEqual(clarificationTurn, { kind: "assistant_text", text: question });
+    }
 
     const call: ValidatedToolCall = {
       id: "call_web_1",
@@ -88,7 +120,7 @@ async function main(): Promise<void> {
 
     const lifecycle: string[] = [];
     let receivedQuery = "";
-    const webDispatch = await dispatchAutomaticModelToolCall({
+    const webDispatch = await dispatchAutomaticModelToolCall<{ ok: boolean }>({
       calls: [call],
       context: { authenticated: false, executionMode: "fast" },
       allowedTools: ["web_surf"],
@@ -97,6 +129,9 @@ async function main(): Promise<void> {
         return { ok: true };
       },
       executeImage: async () => assert.fail("web selection must not execute image generation"),
+      executeChart: async () => assert.fail("web selection must not execute chart generation"),
+      executeFile: async () => assert.fail("web selection must not execute file generation"),
+      executeMemory: async () => assert.fail("web selection must not execute memory update"),
       onLifecycleEvent: (event) => { lifecycle.push(event.type); },
     });
     assert.equal(receivedQuery, "Latest FIFA updates of 2026", "validated usable queries pass through unchanged");
@@ -110,7 +145,7 @@ async function main(): Promise<void> {
       index: 0,
     };
     let receivedPrompt = "";
-    const imageDispatch = await dispatchAutomaticModelToolCall({
+    const imageDispatch = await dispatchAutomaticModelToolCall<{ success: boolean }>({
       calls: [imageCall],
       context: { authenticated: false, executionMode: "intuitive" },
       allowedTools: ["image_gen"],
@@ -119,21 +154,84 @@ async function main(): Promise<void> {
         receivedPrompt = prompt;
         return { success: true };
       },
+      executeChart: async () => assert.fail("image selection must not execute chart generation"),
+      executeFile: async () => assert.fail("image selection must not execute file generation"),
+      executeMemory: async () => assert.fail("image selection must not execute memory update"),
     });
     assert.equal(receivedPrompt, imageCall.arguments.prompt, "validated model image prompts pass directly to execution");
     assert.equal(imageDispatch.events.at(-1)?.type, "tool_result");
 
     await assert.rejects(
-      () => dispatchAutomaticModelToolCall({
+      () => dispatchAutomaticModelToolCall<{ success: boolean }>({
         calls: [imageCall],
         context: { authenticated: false, executionMode: "fast" },
         allowedTools: ["image_gen"],
         executeWebSurf: async () => ({ success: false }),
         executeImage: async () => { throw new Error("provider failed"); },
+        executeChart: async () => ({ success: false }),
+        executeFile: async () => ({ success: false }),
+        executeMemory: async () => ({ success: false }),
       }),
       (error: unknown) => error instanceof AutomaticToolDispatchError
         && error.events.at(-1)?.type === "tool_error",
     );
+
+    process.env.SENTIQ_MODEL_CHART_SELECTION_ENABLED = "true";
+    process.env.SENTIQ_MODEL_FILE_SELECTION_ENABLED = "true";
+    process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED = "true";
+    assert.deepEqual(getEnabledAutomaticSentIQTools(), ["web_surf", "chart_gen", "file_gen", "memory_update"]);
+
+    const remainingCalls: readonly ValidatedToolCall[] = [
+      { id: "call_chart_1", name: "chart_gen", arguments: { request: "Plot revenue by month" }, index: 0 },
+      { id: "call_file_1", name: "file_gen", arguments: { request: "Create the report", format: "pdf" }, index: 0 },
+      { id: "call_memory_1", name: "memory_update", arguments: { content: "User prefers concise answers", scope: "chat" }, index: 0 },
+    ];
+    const executed: string[] = [];
+    for (const [remainingIndex, remainingCall] of remainingCalls.entries()) {
+      const dispatched = await dispatchAutomaticModelToolCall<{ success: boolean }>({
+        calls: [remainingCall],
+        context: { authenticated: true, executionMode: remainingIndex % 2 === 0 ? "fast" : "intuitive" },
+        allowedTools: [remainingCall.name],
+        executeWebSurf: async () => assert.fail("remaining tool must not execute WebSurf"),
+        executeImage: async () => assert.fail("remaining tool must not execute image generation"),
+        executeChart: async (request) => { executed.push(`chart:${request}`); return { success: true }; },
+        executeFile: async (request, format) => { executed.push(`file:${format}:${request}`); return { success: true }; },
+        executeMemory: async (content, scope) => { executed.push(`memory:${scope}:${content}`); return { success: true }; },
+      });
+      assert.equal(dispatched.events.at(-1)?.type, "tool_result");
+    }
+    assert.deepEqual(executed, [
+      "chart:Plot revenue by month",
+      "file:pdf:Create the report",
+      "memory:chat:User prefers concise answers",
+    ]);
+    await assert.rejects(
+      () => dispatchAutomaticModelToolCall<{ success: boolean }>({
+        calls: [remainingCalls[0]],
+        context: { authenticated: true, executionMode: "fast" },
+        allowedTools: ["chart_gen"],
+        executeWebSurf: async () => ({ success: false }),
+        executeImage: async () => ({ success: false }),
+        executeChart: async () => { throw new Error("renderer unavailable"); },
+        executeFile: async () => ({ success: false }),
+        executeMemory: async () => ({ success: false }),
+      }),
+      (error: unknown) => error instanceof AutomaticToolDispatchError
+        && error.call.name === "chart_gen"
+        && error.events.at(-1)?.type === "tool_error",
+    );
+
+    assert.equal(validateAutomaticMemoryUpdateRequest("Remember that my name is Mira"), "Remember that my name is Mira");
+    assert.throws(
+      () => validateAutomaticMemoryUpdateRequest("My name is Mira"),
+      /Explicit memory intent/,
+      "a useful but vague personal statement cannot trigger an automatic write",
+    );
+    assert.equal(isDuplicateMemoryCandidate(
+      [{ type: "preference", summary: "User prefers concise answers.", scope: "chat" }],
+      { type: "preference", summary: " user prefers concise answers. " },
+      "chat",
+    ), true);
 
     assert.equal(resolveHardRoutedPlan({
       userMessage: "Latest FIFA updates of 2026",
@@ -155,12 +253,16 @@ async function main(): Promise<void> {
     const serverSource = readFileSync(resolve(__dirname, "server.ts"), "utf8");
     const executorSource = readFileSync(resolve(__dirname, "orchestrator", "toolExecutor.ts"), "utf8");
     const executionSource = readFileSync(resolve(__dirname, "ai", "modelToolExecution.ts"), "utf8");
+    const frontendSource = readFileSync(resolve(__dirname, "..", "frontend", "scripts", "features", "chat-controller.js"), "utf8");
     assert.match(serverSource, /callLLMAdapterTurnStream/, "streaming ordinary chat consumes normalized provider-neutral turns");
     assert.match(serverSource, /automaticToolAccepted/, "accepted tool selections close text-provider recovery");
     assert.match(serverSource, /guestAutomaticToolAccepted/, "guest accepted selections also close recovery");
     assert.match(executorSource, /execConversation\(originalUserRequest, ctx, "", profile, signal, evidence\)/, "WebSurf synthesis retains the original request");
     assert.match(executionSource, /tool_result/, "confirmed tool results emit a normalized lifecycle");
     assert.match(executionSource, /tool_error/, "tool failures emit a normalized lifecycle");
+    assert.match(serverSource, /messageType: "text"[\s\S]*previewJson: \{ chart: result\.chart \}/, "chart payloads persist in the existing idempotent text-message envelope");
+    assert.match(frontendSource, /preview\.chart[\s\S]*normalizeChartMeta\(preview\.chart\)/, "reloaded chart messages hydrate structured chart metadata");
+    assert.match(serverSource, /!isAutomaticConversationalClarificationEnabled\(\)/, "new model-native turns bypass the dedicated clarification request");
 
     const originalFetch = globalThis.fetch;
     let providerSignalAborted = false;
@@ -185,6 +287,14 @@ async function main(): Promise<void> {
     else process.env.SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED = previous.web;
     if (previous.image === undefined) delete process.env.SENTIQ_MODEL_IMAGE_SELECTION_ENABLED;
     else process.env.SENTIQ_MODEL_IMAGE_SELECTION_ENABLED = previous.image;
+    if (previous.chart === undefined) delete process.env.SENTIQ_MODEL_CHART_SELECTION_ENABLED;
+    else process.env.SENTIQ_MODEL_CHART_SELECTION_ENABLED = previous.chart;
+    if (previous.file === undefined) delete process.env.SENTIQ_MODEL_FILE_SELECTION_ENABLED;
+    else process.env.SENTIQ_MODEL_FILE_SELECTION_ENABLED = previous.file;
+    if (previous.memory === undefined) delete process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED;
+    else process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED = previous.memory;
+    if (previous.clarification === undefined) delete process.env.SENTIQ_MODEL_CONVERSATIONAL_CLARIFICATION_ENABLED;
+    else process.env.SENTIQ_MODEL_CONVERSATIONAL_CLARIFICATION_ENABLED = previous.clarification;
     if (previous.groq === undefined) delete process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED;
     else process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = previous.groq;
   }

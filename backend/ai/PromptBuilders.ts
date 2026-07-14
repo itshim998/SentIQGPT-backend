@@ -806,7 +806,7 @@ export async function callLLMAdapterStream(call: LLMAdapterCall): Promise<Readab
           return;
         }
         if (value.kind === "tool_calls_complete") {
-          controller.error(new Error("SentIQ model tool execution is disabled in Pass 1."));
+          controller.error(new Error("This text-only stream cannot execute a SentIQ model tool call."));
           return;
         }
       }

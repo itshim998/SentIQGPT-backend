@@ -1617,6 +1617,9 @@ import {
         model_used: message.provider || "",
       }, { chatId: message.conversation_id || message.conversationId || null });
     }
+    if (!meta && preview.chart) {
+      meta = normalizeChartMeta(preview.chart);
+    }
     if (!meta && messageType === "file_upload") {
       const attachments = Array.isArray(preview.attachments) ? preview.attachments : [];
       meta = attachments.length > 0

@@ -45,6 +45,10 @@ import { commitImageQuotaSuccess, getQuotaInfo } from "../middleware/imageQuota"
 import { getEnabledAutomaticSentIQTools } from "../ai/modelToolCapability";
 import type { ToolLifecycleEvent, ValidatedToolCall } from "./toolContract";
 import { AutomaticToolDispatchError, dispatchAutomaticModelToolCall } from "../ai/modelToolExecution";
+import type { GeneratedFileFormat } from "../tools/fileGeneration/types";
+import { getConversationMessageByClientRequestId } from "../services/conversationService";
+import { isDuplicateMemoryCandidate, validateAutomaticMemoryUpdateRequest } from "../ai/modelToolMemorySafety";
+import { isChatScopedMemoryRequest } from "../memory/memoryScope";
 
 // ==============================
 // Types
@@ -126,6 +130,7 @@ export interface StepResult {
     persisted?: boolean;
     source_conversation_id?: string | null;
     failure_reason?: string;
+    deduplicated?: boolean;
   };
   /** Web search payload (web_search) */
   readonly web_search?: {
@@ -181,6 +186,19 @@ function safeImageGenerationFailureMessage(): string {
   return "Image generation could not finish. Please try again.";
 }
 
+function safeAutomaticToolFailure(call: ValidatedToolCall): Pick<StepResult, "tool" | "reply"> {
+  switch (call.name) {
+    case "web_surf": return { tool: "web_search", reply: safeWebSearchFailureMessage() };
+    case "image_gen": return { tool: "image_generation", reply: safeImageGenerationFailureMessage() };
+    case "chart_gen": return { tool: "chart_generation", reply: safeChartGenerationFailureMessage() };
+    case "file_gen": return { tool: "file_generation", reply: safeFileGenerationFailureMessage() };
+    case "memory_update": return {
+      tool: "memory_update",
+      reply: "I couldn't store that memory. Please phrase it as something to remember about your identity, preferences, or project.",
+    };
+  }
+}
+
 function safeChartGenerationFailureMessage(): string {
   return "Chart generation could not finish. Please try again.";
 }
@@ -194,6 +212,28 @@ function safeWebSearchFailureMessage(error?: string): string {
     return "I couldn't find current web results for that. Please try again with a more specific query.";
   }
   return "Web search is temporarily unavailable. Please try again later.";
+}
+
+async function hasPersistedDuplicateMemory(
+  ctx: BuiltContext,
+  candidate: { type?: string; summary?: string },
+  scope: "global" | "chat",
+): Promise<boolean> {
+  if (!ctx.userDb || !ctx.userId || !candidate.type || !candidate.summary) return false;
+  try {
+    let query = ctx.userDb
+      .from("memories")
+      .select("id")
+      .eq("user_id", ctx.userId)
+      .eq("type", candidate.type)
+      .eq("summary", candidate.summary)
+      .eq("scope", scope);
+    if (scope === "chat") query = query.eq("chat_id", ctx.conversationId || "");
+    const result = await query.limit(1).maybeSingle();
+    return Boolean(result.data?.id) && !result.error;
+  } catch {
+    return false;
+  }
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -320,6 +360,7 @@ export async function executeAutomaticModelToolCalls(
   profile: ExecutionProfile,
   signal?: AbortSignal,
   onLifecycleEvent?: (event: ToolLifecycleEvent) => void | Promise<void>,
+  onFileToken?: (token: string) => void | Promise<void>,
 ): Promise<StepResult> {
   const allowedTools = getEnabledAutomaticSentIQTools();
   try {
@@ -332,8 +373,28 @@ export async function executeAutomaticModelToolCalls(
       allowedTools,
       executeWebSurf: (query) => execWebSearch(query, ctx, profile, signal, originalUserRequest),
       executeImage: (prompt) => execImageGeneration(prompt, ctx, profile, signal),
+      executeChart: (request) => execChartGeneration(request, ctx, signal),
+      executeFile: (request, format) => execFileGeneration(
+        request,
+        ctx,
+        format as GeneratedFileFormat | undefined,
+        signal,
+        onFileToken,
+      ),
+      executeMemory: (_content, scope) => execMemoryUpdate(
+        originalUserRequest,
+        ctx,
+        profile,
+        signal,
+        scope,
+        originalUserRequest,
+        true,
+      ),
       isFailure: (result, call) => Boolean(result.error)
         || result.image?.success === false
+        || result.chart?.success === false
+        || result.file?.success === false
+        || result.memory?.stored === false
         || (call.name === "web_surf" && !result.web_search),
       onLifecycleEvent,
     });
@@ -341,10 +402,10 @@ export async function executeAutomaticModelToolCalls(
   } catch (error) {
     if (signal?.aborted) throwIfAborted(signal);
     if (!(error instanceof AutomaticToolDispatchError)) throw error;
+    const failure = safeAutomaticToolFailure(error.call);
     return {
       step: 0,
-      tool: error.call.name === "web_surf" ? "web_search" : "image_generation",
-      reply: error.call.name === "web_surf" ? safeWebSearchFailureMessage() : safeImageGenerationFailureMessage(),
+      ...failure,
       error: "Automatic SentIQ tool execution failed.",
       tool_events: error.events,
     };
@@ -575,10 +636,18 @@ async function execMemoryUpdate(
   ctx: BuiltContext,
   profile: ExecutionProfile,
   signal?: AbortSignal,
+  _requestedScope?: "global" | "chat",
+  originalUserRequest = input,
+  requireAuthenticatedConversation = false,
 ): Promise<StepResult> {
   throwIfAborted(signal);
+  if (requireAuthenticatedConversation && (!ctx.userId || ctx.userId === "guest" || !ctx.userDb || !ctx.conversationId)) {
+    throw new Error("Memory updates require an authenticated conversation.");
+  }
+  const safeMemoryRequest = validateAutomaticMemoryUpdateRequest(originalUserRequest);
+  const effectiveScope: "global" | "chat" = isChatScopedMemoryRequest(safeMemoryRequest) ? "chat" : "global";
   const memResult = await processMessageForMemory({
-    message: input,
+    message: safeMemoryRequest,
     recentMessages: ctx.recentMessages,
     existingMemories: ctx.memories,
     forceStore: true,
@@ -589,10 +658,16 @@ async function execMemoryUpdate(
     failure_reason: error instanceof Error ? error.message : String(error),
   }));
 
+  const deduplicated = memResult.stored
+    ? isDuplicateMemoryCandidate(ctx.memories ?? [], memResult.memory ?? {}, effectiveScope)
+      || await hasPersistedDuplicateMemory(ctx, memResult.memory ?? {}, effectiveScope)
+    : false;
   const memory = memResult.stored
     ? {
         stored: true,
         ...memResult.memory,
+        scope: effectiveScope,
+        deduplicated,
       }
     : { stored: false, failure_reason: memResult.failure_reason };
 
@@ -601,11 +676,33 @@ async function execMemoryUpdate(
 
 async function execChartGeneration(
   input: string,
+  ctx?: BuiltContext,
+  signal?: AbortSignal,
 ): Promise<StepResult> {
+  throwIfAborted(signal);
+  if (ctx?.userDb && ctx.conversationId && ctx.clientRequestId) {
+    const existing = await getConversationMessageByClientRequestId(ctx.userDb, {
+      conversationId: ctx.conversationId,
+      clientRequestId: ctx.clientRequestId,
+      role: "assistant",
+      messageType: "text",
+    });
+    const chart = existing.data?.preview_json?.chart;
+    if (!existing.error && chart?.success === true && typeof chart.chart_type === "string" && typeof chart.renderer === "string") {
+      return {
+        step: 0,
+        tool: "chart_generation",
+        reply: existing.data?.content || "Generated chart.",
+        chart,
+      };
+    }
+  }
   const result = await routeChartGeneration({
     userMessage: input,
     fetchPreview: true,
+    signal,
   });
+  throwIfAborted(signal);
 
   return {
     step: 0,
@@ -632,13 +729,50 @@ async function execChartGeneration(
 async function execFileGeneration(
   input: string,
   ctx: BuiltContext,
+  requestedFormat?: GeneratedFileFormat,
+  signal?: AbortSignal,
+  onHtmlToken?: (token: string) => void | Promise<void>,
 ): Promise<StepResult> {
-  const result = await routeFileGeneration({
-    userMessage: input,
-    userId: ctx.userId || "",
-    conversationId: ctx.conversationId || "",
-    userDb: ctx.userDb,
-  });
+  throwIfAborted(signal);
+  if (ctx.userDb && ctx.conversationId && ctx.clientRequestId) {
+    const existing = await getConversationMessageByClientRequestId(ctx.userDb, {
+      conversationId: ctx.conversationId,
+      clientRequestId: ctx.clientRequestId,
+      role: "assistant",
+      messageType: "file",
+    });
+    if (!existing.error && existing.data?.generated_file_id && existing.data.file_name && existing.data.mime_type) {
+      return {
+        step: 0,
+        tool: "file_generation",
+        reply: existing.data.content || `Generated ${existing.data.file_name}.`,
+        file: {
+          type: "file",
+          success: true,
+          format: existing.data.file_format || requestedFormat || "txt",
+          file_name: existing.data.file_name,
+          mime_type: existing.data.mime_type,
+          file_url: existing.data.file_url || undefined,
+          storage_path: existing.data.storage_path || undefined,
+          file_size_bytes: existing.data.file_size_bytes || undefined,
+          file_id: existing.data.generated_file_id,
+          preview: existing.data.preview_json || undefined,
+        },
+      };
+    }
+  }
+  const result = await routeFileGeneration(
+    {
+      userMessage: input,
+      userId: ctx.userId || "",
+      conversationId: ctx.conversationId || "",
+      userDb: ctx.userDb,
+      requestedFormat,
+      signal,
+    },
+    { onHtmlToken },
+  );
+  throwIfAborted(signal);
 
   return {
     step: 0,
@@ -839,10 +973,10 @@ async function executeStep(
         result = await execMemoryUpdate(stepInput, ctx, profile, signal);
         break;
       case "chart_generation":
-        result = await execChartGeneration(stepInput);
+        result = await execChartGeneration(stepInput, ctx, signal);
         break;
       case "file_generation":
-        result = await execFileGeneration(stepInput, ctx);
+        result = await execFileGeneration(stepInput, ctx, undefined, signal);
         break;
       case "web_search":
         result = await execWebSearch(stepInput, ctx, profile, signal);

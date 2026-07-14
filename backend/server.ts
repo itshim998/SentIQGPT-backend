@@ -128,6 +128,7 @@ import { executeAutomaticModelToolCalls } from "./orchestrator/toolExecutor";
 import { consumeModelTurnStream } from "./ai/modelToolExecution";
 import {
   getEnabledAutomaticSentIQTools,
+  isAutomaticConversationalClarificationEnabled,
 } from "./ai/modelToolCapability";
 import {
   DEFAULT_MAX_CLARIFICATION_TURNS,
@@ -343,6 +344,9 @@ const PUBLIC_PRIVATE_RESPONSE_KEYS = new Set([
   "fallbackReason",
   "error_detail",
   "errorDetail",
+  "embedding",
+  "embedding_model",
+  "embeddingModel",
   "storage_bucket",
   "storageBucket",
   "storage_path",
@@ -2950,7 +2954,7 @@ app.post(
         ? await buildContext(guestRawContext, undefined, userId, { profile: executionProfile })
         : await buildContextFast(guestRawContext, undefined, userId, { profile: executionProfile });
 
-      const guestClarification = executionProfile.clarification.enabled
+      const guestClarification = !isAutomaticConversationalClarificationEnabled() && executionProfile.clarification.enabled
         ? await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
         originalMessage: resolvedClarification.originalMessage,
@@ -3167,7 +3171,7 @@ app.post(
     }
 
     if (isLogicReasoningQuery && !hasExplicitWebSearchMode) {
-      const logicClarification = executionProfile.clarification.enabled
+      const logicClarification = !isAutomaticConversationalClarificationEnabled() && executionProfile.clarification.enabled
         ? await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
         originalMessage: resolvedClarification.originalMessage,
@@ -3357,7 +3361,20 @@ app.post(
     let responseAnswer = result.answer ?? result.reply;
     let responseMemory = result.memory;
     if (result.image?.success && result.image.persisted) assistantMessagePersisted = true;
-    if (userDb && result.memory && result.memory.stored === true) {
+    if (userDb && result.memory && result.memory.stored === true && result.memory.deduplicated === true) {
+      const memoryScope = resolveMemoryScopeForRequest(result.memory, parsed.data.message);
+      responseMemory = {
+        ...result.memory,
+        persisted: true,
+        scope: memoryScope,
+        chat_id: memoryScope === "chat" ? activeConversationId : null,
+        source_conversation_id: activeConversationId ?? null,
+      };
+      if (result.route === "memory_update") {
+        responseReply = getMemoryConfirmationText(memoryScope);
+        responseAnswer = responseReply;
+      }
+    } else if (userDb && result.memory && result.memory.stored === true) {
       const memoryScope = resolveMemoryScopeForRequest(result.memory, parsed.data.message);
       try {
         const insertedMemory = await insertMemoryOrThrow(
@@ -3437,7 +3454,13 @@ app.post(
               generatedFileId: result.file.file_id,
               previewJson: result.file.preview,
             }
-          : {};
+          : result.chart?.success
+            ? {
+                clientRequestId: parsed.data.clientRequestId,
+                messageType: "text",
+                previewJson: { chart: result.chart },
+              }
+            : { clientRequestId: parsed.data.clientRequestId };
         const webSurfV2Payload = result.web_search?.v2;
         const persistedAssistantOptions = webSurfV2Payload && !result.file?.success
           ? {
@@ -3773,7 +3796,7 @@ app.post(
     }
 
     if (isGuest) {
-      const guestClarification = executionProfile.clarification.enabled
+      const guestClarification = !isAutomaticConversationalClarificationEnabled() && executionProfile.clarification.enabled
         ? await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
         originalMessage: resolvedClarification.originalMessage,
@@ -4824,9 +4847,17 @@ app.post(
       persisted?: boolean;
       source_conversation_id?: string | null;
       failure_reason?: string;
+      deduplicated?: boolean;
     }): Promise<boolean> => {
       if (!memory || memory.stored !== true) return true;
       const normalizedScope = resolveMemoryScopeForRequest(memory, parsed.data.message);
+      if (memory.deduplicated === true) {
+        memory.persisted = true;
+        memory.scope = normalizedScope;
+        memory.chat_id = normalizedScope === "chat" ? activeConversationId ?? memory.chat_id ?? null : null;
+        memory.source_conversation_id = activeConversationId ?? null;
+        return true;
+      }
       if (!userDb) {
         sync.persisted = false;
         sync.deferred = true;
@@ -4941,6 +4972,42 @@ app.post(
       }
     };
 
+    const persistAssistantChartMessage = async (
+      content: string,
+      chart: NonNullable<Awaited<ReturnType<typeof orchestrate>>["chart"]>,
+    ) => {
+      if (!userDb || !activeConversationId || !chart.success) {
+        sync.persisted = false;
+        sync.deferred = true;
+        return;
+      }
+      try {
+        await insertConversationMessageOrThrow(
+          userDb,
+          userId,
+          activeConversationId,
+          "assistant",
+          content,
+          "chat.stream",
+          {
+            clientRequestId: parsed.data.clientRequestId,
+            messageType: "text",
+            previewJson: { chart },
+          },
+        );
+        assistantMessagePersisted = true;
+      } catch (assistantPersistError) {
+        sync.persisted = false;
+        sync.deferred = true;
+        logDbFailure(
+          "chat.stream.assistant-chart-message",
+          userId,
+          assistantPersistError instanceof Error ? assistantPersistError : new Error(String(assistantPersistError)),
+          { conversationId: activeConversationId },
+        );
+      }
+    };
+
     const reportStreamMessageGap = (assistantExpected: boolean, route: string, error?: string) => {
       if (!activeConversationId) return;
       logMessagePersistenceGap("chat.stream", userId, {
@@ -5016,7 +5083,7 @@ app.post(
       return;
     }
 
-    if (detectExplicitMemoryWriteIntent(effectiveUserMessage)) {
+    if (!getEnabledAutomaticSentIQTools().includes("memory_update") && detectExplicitMemoryWriteIntent(effectiveUserMessage)) {
       console.log(`[Stream] explicit memory write detected — redirecting to orchestrator`);
       try {
         const result = await orchestrate({
@@ -5195,11 +5262,13 @@ app.post(
             billingRequestId,
           },
         });
-        if (result.reply) {
+        if (result.chart?.success) {
+          await persistAssistantChartMessage(result.reply ?? "Generated chart.", result.chart);
+        } else if (result.reply) {
           await persistAssistantMessage(result.reply);
         }
         await persistStoredMemory(result.memory);
-        reportStreamMessageGap(Boolean(result.reply), "orchestrator.chart");
+        reportStreamMessageGap(Boolean(result.reply || result.chart?.success), "orchestrator.chart");
         await writeStructuredResponse(buildStreamStructuredPayload({
           route: result.route,
           answer: result.answer ?? result.reply,
@@ -5277,7 +5346,7 @@ app.post(
     // ── Safety gate: math queries use the direct math pipeline via orchestrator ──
     // Math queries use the advanced-reasoning reservation path, which is only
     // available through the orchestrator. Redirect like chart requests.
-    const reasoningClarification = isBufferedReasoning && executionProfile.clarification.enabled
+    const reasoningClarification = !isAutomaticConversationalClarificationEnabled() && isBufferedReasoning && executionProfile.clarification.enabled
       ? await maybeCreateChatClarification({
         userMessage: effectiveUserMessage,
         originalMessage: resolvedClarification.originalMessage,
@@ -5561,7 +5630,7 @@ app.post(
       return;
     }
 
-    const directClarification = executionProfile.clarification.enabled
+    const directClarification = !isAutomaticConversationalClarificationEnabled() && executionProfile.clarification.enabled
       ? await maybeCreateChatClarification({
       userMessage: effectiveUserMessage,
       originalMessage: resolvedClarification.originalMessage,
@@ -5786,6 +5855,7 @@ app.post(
           executionProfile,
           requestAbortController.signal,
           async (event) => writeSseJson(event),
+          async (token) => writeSseJson({ type: "file_token", format: "html", text: token }),
         );
         if (toolResult.reply && toolResult.web_search?.v2) {
           await streamBufferedAnswer(toolResult.reply, undefined, false, streamMetrics);
@@ -5798,11 +5868,35 @@ app.post(
             type: "structured_response",
             response: { route: "image_generation", image: toolResult.image, reply: toolResult.reply },
           });
+        } else if (toolResult.chart?.success) {
+          await persistAssistantChartMessage(toolResult.reply ?? "Generated chart.", toolResult.chart as any);
+          await writeSseJson({
+            type: "structured_response",
+            response: { route: "chart_generation", chart: toolResult.chart, reply: toolResult.reply },
+          });
+        } else if (toolResult.file?.success) {
+          await persistAssistantFileMessage(toolResult.reply ?? `Generated ${toolResult.file.file_name}.`, toolResult.file as any);
+          await writeSseJson({
+            type: "structured_response",
+            response: { route: "file_generation", file: toolResult.file, reply: toolResult.reply },
+          });
+        } else if (toolResult.memory) {
+          await persistStoredMemory(toolResult.memory);
+          const memoryReply = toolResult.memory.stored && toolResult.memory.persisted
+            ? getMemoryConfirmationText(toolResult.memory.scope === "chat" ? "chat" : "global")
+            : (toolResult.reply || MEMORY_PERSISTENCE_FAILURE_TEXT);
+          await persistAssistantMessage(memoryReply);
+          await writeSseJson({
+            type: "structured_response",
+            response: { route: "memory_update", memory: toolResult.memory, reply: memoryReply, answer: memoryReply },
+          });
         } else if (toolResult.reply) {
           await streamBufferedAnswer(toolResult.reply, undefined, false, streamMetrics);
           await persistAssistantMessage(toolResult.reply);
         }
-        const streamSync = getStreamSyncPayload(Boolean(toolResult.reply || toolResult.image));
+        const streamSync = getStreamSyncPayload(Boolean(
+          toolResult.reply || toolResult.image || toolResult.chart || toolResult.file || toolResult.memory,
+        ));
         await writeSseJson({ type: "sync", sync: streamSync, degraded: buildDegradedStatusFromStreamSync(streamSync) });
         await writeSseEvent("[DONE]");
         logStreamMetrics(streamMetrics, toolResult.error ? "error" : "complete");

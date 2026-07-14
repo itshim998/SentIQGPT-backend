@@ -46,6 +46,7 @@ import type { SearchResult } from "../tools/webSearch/types";
 import type { WebSurfV2Payload } from "../tools/webSearch/webSurfV2";
 import type { ToolLifecycleEvent } from "./toolContract";
 import { resolveExecutionProfile, type ExecutionMode, type ExecutionProfile } from "./executionProfile";
+import { getEnabledAutomaticSentIQTools, isAutomaticConversationalClarificationEnabled } from "../ai/modelToolCapability";
 
 // ==============================
 // Types
@@ -135,6 +136,7 @@ export interface OrchestratorResponse {
     persisted?: boolean;
     source_conversation_id?: string | null;
     failure_reason?: string;
+    deduplicated?: boolean;
   };
   /** Web search payload (for structured rendering) */
   readonly web_search?: {
@@ -518,7 +520,7 @@ async function _orchestrateInner(
   // numerical context and causes word problems to be misclassified as general chat.
   // When math is detected, we bypass the planner entirely and go straight to
   // the openai-large math pipeline.
-  if (detectExplicitMemoryWriteIntent(userMessage)) {
+  if (!getEnabledAutomaticSentIQTools().includes("memory_update") && detectExplicitMemoryWriteIntent(userMessage)) {
     console.log(`[ORCHESTRATOR] explicit memory write detected — bypassing planner`);
     const ctx = await buildContextForProfile(profile, rawContext, userMessage);
     const execution = await executePlan(
@@ -544,7 +546,7 @@ async function _orchestrateInner(
 
   const maybeWebSearchRequest = Boolean(rawContext?.web_search_mode);
 
-  if (profile.clarification.enabled && !maybeWebSearchRequest) {
+  if (!isAutomaticConversationalClarificationEnabled() && profile.clarification.enabled && !maybeWebSearchRequest) {
     const clarificationResponse = await maybeClarify(
       userMessage,
       rawContext,
@@ -585,7 +587,7 @@ async function _orchestrateInner(
   const isWebSearchPlan = firstStep?.tool === "web_search";
   let execution: Awaited<ReturnType<typeof executePlan>>;
   if (isWebSearchPlan) {
-    const clarificationResponse = profile.clarification.enabled
+    const clarificationResponse = !isAutomaticConversationalClarificationEnabled() && profile.clarification.enabled
       ? await maybeClarify(
           userMessage,
           rawContext,

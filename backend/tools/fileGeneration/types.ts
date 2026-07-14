@@ -67,4 +67,6 @@ export interface FileGenerationRequest {
   readonly conversationId: string;
   readonly userDb: any;
   readonly storageDb?: any;
+  readonly requestedFormat?: GeneratedFileFormat;
+  readonly signal?: AbortSignal;
 }

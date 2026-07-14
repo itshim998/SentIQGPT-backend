@@ -25,22 +25,45 @@ export async function dispatchAutomaticModelToolCall<T>(args: {
   allowedTools: readonly SentIQToolName[];
   executeWebSurf: (query: string, call: ValidatedToolCall) => Promise<T>;
   executeImage: (prompt: string, call: ValidatedToolCall) => Promise<T>;
+  executeChart: (request: string, call: ValidatedToolCall) => Promise<T>;
+  executeFile: (request: string, format: string | undefined, call: ValidatedToolCall) => Promise<T>;
+  executeMemory: (content: string, scope: "global" | "chat" | undefined, call: ValidatedToolCall) => Promise<T>;
   isFailure?: (result: T, call: ValidatedToolCall) => boolean;
   onLifecycleEvent?: (event: ToolLifecycleEvent) => void | Promise<void>;
 }): Promise<{ call: ValidatedToolCall; result: T; events: readonly ToolLifecycleEvent[] }> {
   const call = validateSingleAutomaticToolCall(args.calls, args.context, args.allowedTools);
-  if (call.name !== "web_surf" && call.name !== "image_gen") {
-    throw new Error("Selected SentIQ tool is not executable in this migration pass.");
-  }
   const events: ToolLifecycleEvent[] = [
     { type: "tool_selected", tool: call.name, call_id: call.id },
     { type: "tool_started", tool: call.name, call_id: call.id },
   ];
   for (const event of events) await args.onLifecycleEvent?.(event);
   try {
-    const result = call.name === "web_surf"
-      ? await args.executeWebSurf(String(call.arguments.query), call)
-      : await args.executeImage(String(call.arguments.prompt), call);
+    let result: T;
+    switch (call.name) {
+      case "web_surf":
+        result = await args.executeWebSurf(String(call.arguments.query), call);
+        break;
+      case "image_gen":
+        result = await args.executeImage(String(call.arguments.prompt), call);
+        break;
+      case "chart_gen":
+        result = await args.executeChart(String(call.arguments.request), call);
+        break;
+      case "file_gen":
+        result = await args.executeFile(
+          String(call.arguments.request),
+          typeof call.arguments.format === "string" ? call.arguments.format : undefined,
+          call,
+        );
+        break;
+      case "memory_update":
+        result = await args.executeMemory(
+          String(call.arguments.content),
+          call.arguments.scope === "global" || call.arguments.scope === "chat" ? call.arguments.scope : undefined,
+          call,
+        );
+        break;
+    }
     const terminalEvent: ToolLifecycleEvent = args.isFailure?.(result, call)
       ? { type: "tool_error", tool: call.name, call_id: call.id, code: "execution_failed" }
       : { type: "tool_result", tool: call.name, call_id: call.id };

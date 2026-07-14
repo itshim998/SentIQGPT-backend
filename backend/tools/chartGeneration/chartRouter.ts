@@ -30,14 +30,17 @@ const PYTHON_CHART_RENDER_ENABLED = process.env.SENTIQ_ENABLE_PYTHON_CHART_RENDE
  * preview as a data URI.  Returns undefined on any failure so the
  * chart result is still usable without a preview.
  */
-async function fetchMatplotlibPreview(code: string): Promise<string | undefined> {
+async function fetchMatplotlibPreview(code: string, parentSignal?: AbortSignal): Promise<string | undefined> {
   if (!PYTHON_CHART_RENDER_ENABLED) {
     return undefined;
   }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  const abortFromParent = () => controller.abort(parentSignal?.reason);
+  parentSignal?.addEventListener("abort", abortFromParent, { once: true });
   try {
     await waitForInternalGatewayReady();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
+    if (parentSignal?.aborted) return undefined;
 
     const resp = await fetch(getInternalGatewayUrl("/chart/render"), {
       method: "POST",
@@ -45,8 +48,6 @@ async function fetchMatplotlibPreview(code: string): Promise<string | undefined>
       body: JSON.stringify({ code }),
       signal: controller.signal,
     });
-
-    clearTimeout(timeout);
 
     if (!resp.ok) return undefined;
 
@@ -56,6 +57,9 @@ async function fetchMatplotlibPreview(code: string): Promise<string | undefined>
       : undefined;
   } catch {
     return undefined;
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", abortFromParent);
   }
 }
 
@@ -68,6 +72,7 @@ export interface ChartRouterRequest {
   readonly userMessage: string;
   /** When true, attempt to fetch a PNG preview via the LLM service */
   readonly fetchPreview?: boolean;
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -80,9 +85,10 @@ export interface ChartRouterRequest {
 export async function routeChartGeneration(
   request: ChartRouterRequest,
 ): Promise<ChartResult> {
-  const { userMessage, fetchPreview = false } = request;
+  const { userMessage, fetchPreview = false, signal } = request;
 
   try {
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("Chart generation aborted");
     // 1. Detect intent
     const intent = detectChartIntent(userMessage);
     console.log(`[CHART ROUTER] type=${intent.type} source=${intent.data_source}`);
@@ -97,7 +103,7 @@ export async function routeChartGeneration(
     // 4. Optionally fetch preview PNG from Python service
     let preview: string | undefined;
     if (fetchPreview && spec.renderer === "matplotlib") {
-      preview = await fetchMatplotlibPreview(code);
+      preview = await fetchMatplotlibPreview(code, signal);
       if (preview) {
         console.log(`[CHART ROUTER] preview PNG fetched (${preview.length} chars)`);
       }

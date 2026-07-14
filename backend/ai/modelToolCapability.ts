@@ -1,3 +1,5 @@
+import type { SentIQToolName } from "../orchestrator/toolContract";
+
 export type LLMProviderKind = "groq" | "gemini" | "gemma" | "pollinations" | "unknown";
 
 export interface SentIQToolCapability {
@@ -54,11 +56,44 @@ export function isModelImageSelectionEnabled(
   return value?.trim().toLowerCase() === "true";
 }
 
-export function getEnabledAutomaticSentIQTools(): readonly ("web_surf" | "image_gen")[] {
+export function isModelChartSelectionEnabled(
+  value = process.env.SENTIQ_MODEL_CHART_SELECTION_ENABLED,
+): boolean {
+  return value?.trim().toLowerCase() === "true";
+}
+
+export function isModelFileSelectionEnabled(
+  value = process.env.SENTIQ_MODEL_FILE_SELECTION_ENABLED,
+): boolean {
+  return value?.trim().toLowerCase() === "true";
+}
+
+export function isModelMemorySelectionEnabled(
+  value = process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED,
+): boolean {
+  return value?.trim().toLowerCase() === "true";
+}
+
+export function isModelConversationalClarificationEnabled(
+  value = process.env.SENTIQ_MODEL_CONVERSATIONAL_CLARIFICATION_ENABLED,
+): boolean {
+  return value?.trim().toLowerCase() === "true";
+}
+
+export function isAutomaticConversationalClarificationEnabled(): boolean {
+  return isModelToolRegistryEnabled()
+    && (isGroqSentIQToolTransportEnabled() || isGeminiSentIQToolTransportEnabled())
+    && isModelConversationalClarificationEnabled();
+}
+
+export function getEnabledAutomaticSentIQTools(): readonly SentIQToolName[] {
   if (!isModelToolRegistryEnabled()) return [];
   if (!isGroqSentIQToolTransportEnabled() && !isGeminiSentIQToolTransportEnabled()) return [];
   return [
     ...(isModelWebSurfSelectionEnabled() ? ["web_surf" as const] : []),
     ...(isModelImageSelectionEnabled() ? ["image_gen" as const] : []),
+    ...(isModelChartSelectionEnabled() ? ["chart_gen" as const] : []),
+    ...(isModelFileSelectionEnabled() ? ["file_gen" as const] : []),
+    ...(isModelMemorySelectionEnabled() ? ["memory_update" as const] : []),
   ];
 }

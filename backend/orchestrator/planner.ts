@@ -27,7 +27,7 @@ import { isTavilyAvailable } from "../tools/webSearch/providers/tavilyProvider";
 import { normalizeExecutionMode, type ExecutionMode } from "./executionProfile";
 import { classifyQueryType, shouldAutoUseWebSurf } from "./queryClassifier";
 import { getAllowedModelOwnedTools } from "./toolContract";
-import { getEnabledAutomaticSentIQTools } from "../ai/modelToolCapability";
+import { getEnabledAutomaticSentIQTools, isAutomaticConversationalClarificationEnabled } from "../ai/modelToolCapability";
 
 // ==============================
 // Types
@@ -250,7 +250,7 @@ export async function planTask(args: {
   // model owns the web/image decision. Do not spend a separate planner call
   // rediscovering that intent. Deterministic/manual rollback routes above stay
   // authoritative for the tools not migrated in this pass.
-  if (automaticTools.length > 0) {
+  if (automaticTools.length > 0 || isAutomaticConversationalClarificationEnabled()) {
     return createSingleStepPlan("conversation", args.userMessage);
   }
 
