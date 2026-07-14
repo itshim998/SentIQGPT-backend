@@ -1,7 +1,6 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { buildTitleGeneratePrompt } from "./ai/PromptBuilders";
-import { classifyQueryType, shouldForceWebSearch } from "./orchestrator/queryClassifier";
 import { selectRenderer } from "./tools/chartGeneration/chartSpecGenerator";
 import { getImageQuotaKey } from "./middleware/imageQuota";
 
@@ -17,7 +16,7 @@ function serverSource(): string {
 }
 
 function routeBlock(source: string, path: string): string {
-  const start = source.indexOf(`"${path}"`);
+  const start = source.lastIndexOf(`"${path}"`);
   assert(start >= 0, `${path} route exists`);
   return source.slice(start, start + 260);
 }
@@ -47,11 +46,6 @@ function run(): void {
   const auditBlock = routeBlock(serverSource(), "/api/audit");
   assert(auditBlock.includes("verifyJWT({ allowGuest: false })"), "/api/audit is not public");
   assert(auditBlock.includes("SENTIQ_ENABLE_AUDIT_API"), "/api/audit is disabled unless explicitly enabled");
-
-  assert(!classifyQueryType("linear algebra 2026 homework").needsWebSearch, "weak year phrase does not force web search");
-  assert(classifyQueryType("best AI models in 2026").needsWebSearch, "time-sensitive year phrase does force web search");
-  assert(!shouldForceWebSearch("linear algebra 2026 homework"), "force-search guard rejects weak year phrase");
-  assert(shouldForceWebSearch("best AI models in 2026"), "force-search guard accepts current comparison intent");
 
   assert(selectRenderer("make a bar chart of these values") === "chartjs", "chart generation defaults to frontend-native Chart.js");
   assert(selectRenderer("make a matplotlib histogram") === "matplotlib", "matplotlib remains explicit opt-in");

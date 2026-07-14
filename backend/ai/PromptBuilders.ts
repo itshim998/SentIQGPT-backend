@@ -82,8 +82,6 @@ try {
     "memory_classify",
     "memory_summarize",
     "memory_compress",
-    "route_classify",
-    "master_route",
     "file_extract",
     "image_generate",
   ]);
@@ -94,9 +92,6 @@ export type TaskName =
   | "memory_classify"
   | "memory_summarize"
   | "memory_compress"
-  | "route_classify"
-  | "master_route"
-  | "intent_clarify"
   | "file_extract"
   | "file_generate"
   | "image_generate"
@@ -253,15 +248,14 @@ function inferBudgetClass(call: LLMAdapterCall): {
   if (call.task === "memory_summarize" || call.task === "memory_compress" || call.task === "file_extract") {
     return { budgetClass: "auxiliary", auxiliaryKind: "memory" };
   }
-  if (call.task === "route_classify" || call.task === "master_route" || call.task === "image_generate") {
+  if (call.task === "image_generate") {
     return { budgetClass: "auxiliary", auxiliaryKind: "routing" };
   }
-  if (call.task === "intent_clarify") return { budgetClass: "auxiliary", auxiliaryKind: "clarification" };
   return { budgetClass: "interactive" };
 }
 
 function isGroqPrimaryCall(call: LLMAdapterCall): boolean {
-  if (call.prefer === "groq" || call.task === "master_route") return true;
+  if (call.prefer === "groq") return true;
   return call.model_override === "gpt-oss-120b" || call.model_override?.startsWith("groq:") === true;
 }
 
@@ -1294,16 +1288,6 @@ export function getDemoFallbackResponse(task: TaskName): string {
       return JSON.stringify({ summary: "", importance: 1 });
     case "memory_compress":
       return JSON.stringify({ compressed_summary: "", importance: 1 });
-    case "route_classify":
-      return JSON.stringify({ tool: "normal_chat", confidence: 0.5 });
-    case "master_route":
-      return JSON.stringify({
-        selected_model: "general_model",
-        confidence: 0,
-        reason: "fallback",
-      });
-    case "intent_clarify":
-      return JSON.stringify({ needs_clarification: false, options: [] });
     default:
       return JSON.stringify({ status: "fallback", task });
   }

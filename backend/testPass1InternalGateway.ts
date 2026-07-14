@@ -231,7 +231,7 @@ async function main(): Promise<void> {
   assert.match(server, /sanitizePublicPayload/, "Node public JSON and SSE responses must stay sanitized");
   const publicHealth = sourceBlock(server, 'app.get("/health"', 'app.get("/ready"');
   const publicReady = sourceBlock(server, 'app.get("/ready"', "function getExplicitWebSearchMode");
-  const apiHealth = sourceBlock(server, 'app.get("/api/health"', "// ===============================\n// POST /api/chat/intent");
+  const apiHealth = sourceBlock(server, 'app.get("/api/health"', "// ===============================\n// GET /api/profile");
   const apiConfig = sourceBlock(server, 'app.get("/api/config"', "// ===============================\n// GET /api/audit");
   for (const [label, block] of [["health", publicHealth], ["ready", publicReady], ["api health", apiHealth], ["api config", apiConfig]] as const) {
     assert.doesNotMatch(

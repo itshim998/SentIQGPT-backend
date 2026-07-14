@@ -74,18 +74,6 @@ export function isModelMemorySelectionEnabled(
   return value?.trim().toLowerCase() === "true";
 }
 
-export function isModelConversationalClarificationEnabled(
-  value = process.env.SENTIQ_MODEL_CONVERSATIONAL_CLARIFICATION_ENABLED,
-): boolean {
-  return value?.trim().toLowerCase() === "true";
-}
-
-export function isAutomaticConversationalClarificationEnabled(): boolean {
-  return isModelToolRegistryEnabled()
-    && (isGroqSentIQToolTransportEnabled() || isGeminiSentIQToolTransportEnabled())
-    && isModelConversationalClarificationEnabled();
-}
-
 export function getEnabledAutomaticSentIQTools(): readonly SentIQToolName[] {
   if (!isModelToolRegistryEnabled()) return [];
   if (!isGroqSentIQToolTransportEnabled() && !isGeminiSentIQToolTransportEnabled()) return [];

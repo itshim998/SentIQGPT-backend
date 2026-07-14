@@ -31,9 +31,7 @@ import { processMessageForMemory, compressMemories } from "./ai/MemoryProcessor"
 import { extractTextFromFile, validateFileUpload } from "./ai/FileIngestionHandler";
 import { routeImageGeneration } from "./tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "./tools/chartGeneration/chartRouter";
-import { isChartRequest } from "./tools/chartGeneration/chartDetector";
 import { ensureHtmlDocument, getGeneratedFileMimeType, routeFileGeneration } from "./tools/fileGeneration/fileGenerator";
-import { detectGeneratedFileFormat, getFileGenerationGuestInstruction, isFileGenerationRequest } from "./tools/fileGeneration/fileDetector";
 import {
   buildGeneratedFileApiUrl,
   deleteGeneratedFileObject,
@@ -128,20 +126,9 @@ import { executeAutomaticModelToolCalls } from "./orchestrator/toolExecutor";
 import { consumeModelTurnStream } from "./ai/modelToolExecution";
 import {
   getEnabledAutomaticSentIQTools,
-  isAutomaticConversationalClarificationEnabled,
 } from "./ai/modelToolCapability";
-import {
-  DEFAULT_MAX_CLARIFICATION_TURNS,
-  formatClarificationText,
-  maybeCreateClarification,
-  resolveClarificationInput,
-  type ClarificationOption,
-  type ClarificationPayload,
-} from "./orchestrator/intentClarifier";
 
-import { detectCodeQuery, detectImageMathPrompt, isBufferedReasoningQuery, isMathQuery } from "./orchestrator/modelRouter";
-import { selectModelForPromptWithMaster } from "./orchestrator/masterRouter";
-import { detectExplicitMemoryWriteIntent, shouldAutoUseWebSurf } from "./orchestrator/queryClassifier";
+import { selectModelForCapabilities } from "./orchestrator/capabilityModelSelector";
 import { isTavilyAvailable } from "./tools/webSearch/providers/tavilyProvider";
 import { isWebSearchMode, normalizeWebSearchMode } from "./tools/webSearch/webSearchMode";
 import { isWebSurfV2Enabled, prepareWebSurfV2, type WebSurfV2Payload } from "./tools/webSearch/webSurfV2";
@@ -152,7 +139,7 @@ import { normalizeExecutionMode, resolveExecutionProfile } from "./orchestrator/
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
 import { auditMiddleware, getRecentAuditEntries } from "./middleware/audit";
-import { commitImageQuotaSuccess, imageQuotaMiddleware, getImageQuotaKey, getQuotaInfo, isImageRequest } from "./middleware/imageQuota";
+import { commitImageQuotaSuccess, imageQuotaMiddleware, getImageQuotaKey, getQuotaInfo } from "./middleware/imageQuota";
 import { AuthError, getRequestUser, resolveRequestUser, verifyJWT } from "./middleware/auth";
 import { HttpError, buildHttpErrorResponse } from "./httpErrors";
 
@@ -371,7 +358,6 @@ function sanitizePublicPayload(value: unknown): unknown {
         "chart_generation",
         "image_generation",
         "memory_update",
-        "clarification",
       ]);
       output[key] = publicRoutes.has(nestedValue) ? nestedValue : "chat";
       continue;
@@ -448,7 +434,6 @@ bootProfiler.mark("middleware.routes.registered");
 const MODEL_BUDGET_PATHS = new Set([
   "/api/chat",
   "/api/chat/stream",
-  "/api/chat/intent",
   "/api/chat/selection",
   "/api/chat/title",
   "/api/memory/classify",
@@ -824,66 +809,6 @@ const GUEST_MODEL_OVERRIDE = "gemini-search";
 const GUEST_TEXT_MODEL_OVERRIDE = "gpt-oss-120b";
 const GUEST_MATH_MAX_OUTPUT_TOKENS = 6000;
 const GUEST_MATH_EMPTY_FALLBACK = "Sorry, I couldn't complete the math response. Please try again.";
-
-function buildClarificationApiResponse(payload: ClarificationPayload) {
-  const reply = formatClarificationText(payload);
-  return {
-    route: "clarification",
-    answer: reply,
-    reply,
-    thinking: undefined,
-    disclaimer: PRODUCT_DISCLAIMER,
-    image: undefined,
-    chart: undefined,
-    memory: { stored: false },
-    web_search: undefined,
-    clarification: payload,
-    confidence: 0.9,
-    model_used: payload.model_used,
-    searched: false,
-  };
-}
-
-async function maybeCreateChatClarification(args: {
-  readonly userMessage: string;
-  readonly originalMessage?: string;
-  readonly previousAnswers?: readonly string[];
-  readonly context?: {
-    readonly file_references?: readonly { filename: string; extractedText: string }[];
-    readonly image_attachments?: readonly ImageAttachment[];
-    readonly trustedProfile?: { displayName: string };
-  };
-  readonly userId: string;
-  readonly isGuest: boolean;
-  readonly currentTurn: number;
-  readonly webSearch?: boolean;
-  readonly answeredQuestion?: string;
-  readonly answeredOptions?: readonly ClarificationOption[];
-  readonly selectedOptionId?: string;
-}): Promise<ReturnType<typeof buildClarificationApiResponse> | null> {
-  const fileReferences = args.context?.file_references ?? [];
-  const imageAttachments = args.context?.image_attachments ?? [];
-  const payload = await maybeCreateClarification({
-    userMessage: args.userMessage,
-    originalMessage: args.originalMessage,
-    previousAnswers: args.previousAnswers,
-    userId: args.userId,
-    isGuest: args.isGuest,
-    hasFile: fileReferences.length > 0,
-    hasImage: imageAttachments.length > 0,
-    fileNames: fileReferences.map((file) => file.filename),
-    fileContent: fileReferences.map((file) => file.extractedText).join("\n"),
-    trustedProfileName: args.context?.trustedProfile?.displayName,
-    webSearch: args.webSearch === true,
-    currentTurn: args.currentTurn,
-    maxTurns: DEFAULT_MAX_CLARIFICATION_TURNS,
-    forceModelOverride: args.isGuest ? GUEST_MODEL_OVERRIDE : undefined,
-    answeredQuestion: args.answeredQuestion,
-    answeredOptions: args.answeredOptions,
-    selectedOptionId: args.selectedOptionId,
-  });
-  return payload ? buildClarificationApiResponse(payload) : null;
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CAPACITY LIMITS (enforced per user to keep DBs under 95% usage)
@@ -2183,86 +2108,6 @@ app.get("/api/health", (_req, res) => {
 });
 
 // ===============================
-// POST /api/chat/intent - Backend-owned chat routing preflight
-// ===============================
-app.post(
-  "/api/chat/intent",
-  verifyJWT({ allowGuest: true }),
-  asyncHandler(async (req, res) => {
-    const parsed = ChatRequestSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: formatZodError(parsed.error) });
-      return;
-    }
-
-    const { isGuest } = getRequestUser(req);
-    const resolvedClarification = resolveClarificationInput(
-      parsed.data.message,
-      parsed.data.clarification_response,
-    );
-    const effectiveUserMessage = resolvedClarification.effectiveMessage;
-    if (detectPromptInjection(parsed.data.message) || detectPromptInjection(effectiveUserMessage)) {
-      res.status(400).json({ error: "Message rejected by safety filter." });
-      return;
-    }
-
-    const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
-    const hasExplicitWebSearchMode = Boolean(webSearchMode);
-    const hasImageAttachments = (parsed.data.context?.image_attachments?.length ?? 0) > 0;
-    const isBufferedReasoning = false;
-    const isMathReasoningQuery = false;
-    const fileGeneration = isFileGenerationRequest(effectiveUserMessage);
-    const fileFormat = detectGeneratedFileFormat(effectiveUserMessage);
-    const chartRequest = !fileGeneration && isChartRequest(effectiveUserMessage);
-    const imageRequest = !fileGeneration && !chartRequest && !hasImageAttachments && isImageRequest(effectiveUserMessage);
-    const autoWebSearchRequest =
-      !fileGeneration &&
-      !chartRequest &&
-      !imageRequest &&
-      shouldAutoUseWebSurf(effectiveUserMessage);
-    const webSearchRequest =
-      !fileGeneration &&
-      (hasExplicitWebSearchMode || autoWebSearchRequest);
-
-    let route: string = "normal_chat";
-    if (isGuest && fileGeneration) route = "normal_chat";
-    else if (fileGeneration) route = "file_generation";
-    else if (chartRequest) route = "chart_generation";
-    else if (webSearchRequest) route = "web_search";
-    else if (imageRequest && !isGuest) route = "image_generation";
-
-    res.json({
-      route,
-      stream: route === "normal_chat" || route === "reasoning" || route === "math_reasoning",
-      structured: route === "file_generation" || route === "chart_generation" || route === "web_search",
-      direct: route === "image_generation" ? "image_generation" : null,
-      loader: route === "image_generation"
-        ? "loader-image"
-        : route === "chart_generation"
-          ? "loader-chart"
-          : route === "file_generation" || route === "reasoning" || route === "math_reasoning"
-            ? "loader-generic"
-            : route === "web_search"
-              ? "loader-generic"
-              : "loader-text",
-      file: fileGeneration ? { format: fileFormat } : null,
-      web_search: webSearchRequest
-        ? {
-            mode: webSearchMode || "basic",
-            explicit: hasExplicitWebSearchMode,
-            matched_rule: hasExplicitWebSearchMode ? "manual_websurf" : "auto_current_live",
-            category: hasExplicitWebSearchMode ? "manual" : "real_time_information",
-          }
-        : null,
-      reasoning: isBufferedReasoning
-        ? { buffered: true, math: isMathReasoningQuery }
-        : { buffered: false, math: false },
-      fallback: false,
-    });
-  }),
-);
-
-// ===============================
 // GET /api/profile
 // ===============================
 app.get(
@@ -2814,33 +2659,19 @@ app.post(
     const { sub: userId, isGuest } = requestUser;
     const billingIdentity = buildBillingIdentity(req, requestUser);
     const billingRequestId = buildBillingRequestId("chat", userId, parsed.data.clientRequestId);
-    const resolvedClarification = resolveClarificationInput(
-      parsed.data.message,
-      parsed.data.clarification_response,
-    );
-    const effectiveUserMessage = resolvedClarification.effectiveMessage;
+    const effectiveUserMessage = parsed.data.message;
     const requestedConversationId = getOptionalUuid(parsed.data.conversationId, "conversationId", {
       ignoreInvalid: isGuest,
     });
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
-    const autoWebSearchMode =
-      !hasExplicitWebSearchMode &&
-      !isFileGenerationRequest(effectiveUserMessage) &&
-      !isChartRequest(effectiveUserMessage) &&
-      !getEnabledAutomaticSentIQTools().includes("web_surf") &&
-      shouldAutoUseWebSurf(effectiveUserMessage)
-        ? "basic"
-        : undefined;
-    const effectiveWebSearchMode = webSearchMode ?? autoWebSearchMode;
+    const effectiveWebSearchMode = webSearchMode;
     const hasEffectiveWebSearchMode = Boolean(effectiveWebSearchMode);
     const webSurfV2Enabled = isWebSurfV2Enabled();
     const isReasoningQuery = false;
     const isMathReasoningQuery = false;
     const isLogicReasoningQuery = isReasoningQuery && !isMathReasoningQuery;
-    const guestUserMessage = isGuest && isFileGenerationRequest(effectiveUserMessage)
-      ? getFileGenerationGuestInstruction(effectiveUserMessage)
-      : effectiveUserMessage;
+    const guestUserMessage = effectiveUserMessage;
 
     // Prompt injection detection
     if (detectPromptInjection(parsed.data.message) || detectPromptInjection(effectiveUserMessage)) {
@@ -2860,11 +2691,10 @@ app.post(
       console.log(`[Image] orchestrator: ${orcImageAttachments.length} image attachment(s) included in context`);
     }
 
-    if (isGuest && hasEffectiveWebSearchMode && !webSurfV2Enabled && !isFileGenerationRequest(effectiveUserMessage)) {
+    if (isGuest && hasEffectiveWebSearchMode && !webSurfV2Enabled) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
         executionMode: parsed.data.executionMode,
-        clarificationResponse: parsed.data.clarification_response,
         signal: requestAbortController.signal,
         context: {
           recent_messages: normalizedRecentMessages,
@@ -2891,7 +2721,6 @@ app.post(
         file: result.file,
         memory: result.memory,
         web_search: result.web_search,
-        clarification: result.clarification,
         confidence: result.confidence,
         model_used: result.model_used,
         searched: result.searched === true,
@@ -2902,15 +2731,11 @@ app.post(
     if (
       isGuest &&
       getEnabledAutomaticSentIQTools().length > 0 &&
-      !hasExplicitWebSearchMode &&
-      !isFileGenerationRequest(effectiveUserMessage) &&
-      !isChartRequest(effectiveUserMessage) &&
-      !detectExplicitMemoryWriteIntent(effectiveUserMessage)
+      !hasExplicitWebSearchMode
     ) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
         executionMode: parsed.data.executionMode,
-        clarificationResponse: parsed.data.clarification_response,
         signal: requestAbortController.signal,
         context: {
           recent_messages: normalizedRecentMessages,
@@ -2953,29 +2778,6 @@ app.post(
       const guestContext = executionProfile.context.compressConversation
         ? await buildContext(guestRawContext, undefined, userId, { profile: executionProfile })
         : await buildContextFast(guestRawContext, undefined, userId, { profile: executionProfile });
-
-      const guestClarification = !isAutomaticConversationalClarificationEnabled() && executionProfile.clarification.enabled
-        ? await maybeCreateChatClarification({
-        userMessage: effectiveUserMessage,
-        originalMessage: resolvedClarification.originalMessage,
-        previousAnswers: resolvedClarification.answers,
-        context: {
-          file_references: orcFileRefs,
-          image_attachments: orcImageAttachments,
-        },
-        userId,
-        isGuest,
-        currentTurn: resolvedClarification.turn,
-        answeredQuestion: resolvedClarification.answeredQuestion,
-        answeredOptions: resolvedClarification.answeredOptions,
-        selectedOptionId: resolvedClarification.selectedOptionId,
-        webSearch: hasEffectiveWebSearchMode,
-      })
-        : null;
-      if (guestClarification) {
-        res.json(guestClarification);
-        return;
-      }
 
       if (isMathReasoningQuery) {
         const mathReservation = await reserveAdvancedBilling({
@@ -3025,7 +2827,7 @@ app.post(
       }
 
       let guestWebSurfV2: Awaited<ReturnType<typeof prepareWebSurfV2>> | undefined;
-      if (webSurfV2Enabled && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
+      if (webSurfV2Enabled && hasEffectiveWebSearchMode) {
         try {
           guestWebSurfV2 = await prepareWebSurfV2(
             effectiveUserMessage,
@@ -3171,51 +2973,6 @@ app.post(
     }
 
     if (isLogicReasoningQuery && !hasExplicitWebSearchMode) {
-      const logicClarification = !isAutomaticConversationalClarificationEnabled() && executionProfile.clarification.enabled
-        ? await maybeCreateChatClarification({
-        userMessage: effectiveUserMessage,
-        originalMessage: resolvedClarification.originalMessage,
-        previousAnswers: resolvedClarification.answers,
-        context: {
-          file_references: orcFileRefs,
-          image_attachments: orcImageAttachments,
-          trustedProfile,
-        },
-        userId,
-        isGuest,
-        currentTurn: resolvedClarification.turn,
-        answeredQuestion: resolvedClarification.answeredQuestion,
-        answeredOptions: resolvedClarification.answeredOptions,
-        selectedOptionId: resolvedClarification.selectedOptionId,
-      })
-        : null;
-      if (logicClarification) {
-        if (userDb && activeConversationId) {
-          try {
-            await insertConversationMessageOrThrow(
-              userDb,
-              userId,
-              activeConversationId,
-              "assistant",
-              logicClarification.reply ?? "",
-              "chat",
-            );
-            assistantMessagePersisted = true;
-          } catch (assistantPersistError) {
-            sync.persisted = false;
-            sync.deferred = true;
-            logDbFailure(
-              "chat.assistant-message.persist",
-              userId,
-              assistantPersistError instanceof Error ? assistantPersistError : new Error(String(assistantPersistError)),
-              { conversationId: activeConversationId },
-            );
-          }
-        }
-        res.json({ ...logicClarification, sync: finalizeSyncStatus(sync), degraded: buildDegradedStatus(sync) });
-        return;
-      }
-
       const reasoningRawContext = {
         recent_messages: normalizedRecentMessages,
         memories: parsed.data.context?.memories,
@@ -3337,7 +3094,6 @@ app.post(
     const result = await orchestrate({
       userMessage: parsed.data.message,
       executionMode: parsed.data.executionMode,
-      clarificationResponse: parsed.data.clarification_response,
       signal: requestAbortController.signal,
       context: {
         recent_messages: normalizedRecentMessages,
@@ -3531,7 +3287,6 @@ app.post(
       file: result.file,
       memory: responseMemory,
       web_search: result.web_search,
-      clarification: result.clarification,
       confidence: result.confidence,
       model_used: result.model_used,
       searched: result.searched === true,
@@ -3729,11 +3484,7 @@ app.post(
     const { sub: userId, isGuest } = requestUser;
     const billingIdentity = buildBillingIdentity(req, requestUser);
     const billingRequestId = buildBillingRequestId("chat-stream", userId, parsed.data.clientRequestId);
-    const resolvedClarification = resolveClarificationInput(
-      parsed.data.message,
-      parsed.data.clarification_response,
-    );
-    const effectiveUserMessage = resolvedClarification.effectiveMessage;
+    const effectiveUserMessage = parsed.data.message;
     if (detectPromptInjection(effectiveUserMessage)) {
       res.status(400).json({ error: "Message rejected by safety filter." });
       return;
@@ -3743,27 +3494,16 @@ app.post(
     });
     const webSearchMode = getExplicitWebSearchMode(parsed.data.context?.web_search_mode);
     const hasExplicitWebSearchMode = Boolean(webSearchMode);
-    const autoWebSearchMode =
-      !hasExplicitWebSearchMode &&
-      !isFileGenerationRequest(effectiveUserMessage) &&
-      !isChartRequest(effectiveUserMessage) &&
-      !getEnabledAutomaticSentIQTools().includes("web_surf") &&
-      shouldAutoUseWebSurf(effectiveUserMessage)
-        ? "basic"
-        : undefined;
-    const effectiveWebSearchMode = webSearchMode ?? autoWebSearchMode;
+    const effectiveWebSearchMode = webSearchMode;
     const hasEffectiveWebSearchMode = Boolean(effectiveWebSearchMode);
     const webSurfV2Enabled = isWebSurfV2Enabled();
     const isBufferedReasoning = false;
     const isMathReasoningQuery = false;
-    const guestUserMessage = isGuest && isFileGenerationRequest(effectiveUserMessage)
-      ? getFileGenerationGuestInstruction(effectiveUserMessage)
-      : effectiveUserMessage;
-    if (isGuest && hasEffectiveWebSearchMode && !webSurfV2Enabled && !isFileGenerationRequest(effectiveUserMessage)) {
+    const guestUserMessage = effectiveUserMessage;
+    if (isGuest && hasEffectiveWebSearchMode && !webSurfV2Enabled) {
       const result = await orchestrate({
         userMessage: parsed.data.message,
         executionMode: parsed.data.executionMode,
-        clarificationResponse: parsed.data.clarification_response,
         signal: requestAbortController.signal,
         context: {
           recent_messages: normalizedRecentMessages,
@@ -3787,37 +3527,11 @@ app.post(
         file: result.file,
         memory: result.memory,
         web_search: result.web_search,
-        clarification: result.clarification,
         confidence: result.confidence,
         model_used: result.model_used,
         searched: result.searched === true,
       });
       return;
-    }
-
-    if (isGuest) {
-      const guestClarification = !isAutomaticConversationalClarificationEnabled() && executionProfile.clarification.enabled
-        ? await maybeCreateChatClarification({
-        userMessage: effectiveUserMessage,
-        originalMessage: resolvedClarification.originalMessage,
-        previousAnswers: resolvedClarification.answers,
-        context: {
-          file_references: parsed.data.context?.file_references,
-          image_attachments: parsed.data.context?.image_attachments,
-        },
-        userId,
-        isGuest,
-        currentTurn: resolvedClarification.turn,
-        answeredQuestion: resolvedClarification.answeredQuestion,
-        answeredOptions: resolvedClarification.answeredOptions,
-        selectedOptionId: resolvedClarification.selectedOptionId,
-        webSearch: hasEffectiveWebSearchMode,
-      })
-        : null;
-      if (guestClarification) {
-        await writeStructuredResponse(guestClarification as unknown as Record<string, unknown>);
-        return;
-      }
     }
 
     if (isGuest) {
@@ -4062,9 +3776,7 @@ app.post(
         imageQuotaKey: getImageQuotaKey(req),
       }, undefined, userId, { profile: executionProfile });
 
-      const guestFastPath = !guestCtx.hasFileContext
-        && effectiveUserMessage.length <= 280
-        && !detectCodeQuery(effectiveUserMessage);
+      const guestFastPath = !guestCtx.hasFileContext && effectiveUserMessage.length <= 280;
       const guestGeneralReservation = await reserveTextBilling({
         identity: billingIdentity,
         requestId: `${billingRequestId}:guest-general-stream`,
@@ -4095,7 +3807,7 @@ app.post(
       let guestAutomaticToolAccepted = false;
       try {
         const streamStart = Date.now();
-        if (webSurfV2Enabled && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
+        if (webSurfV2Enabled && hasEffectiveWebSearchMode) {
           await writeSseJson({ type: "route", route: "web_search", v2: true });
           guestWebSurfV2 = await prepareWebSurfV2(
             effectiveUserMessage,
@@ -4328,10 +4040,6 @@ app.post(
       !hasEffectiveWebSearchMode &&
       !fastHasFileContext &&
       !fastHasImageContext &&
-      !isFileGenerationRequest(effectiveUserMessage) &&
-      !isImageRequest(effectiveUserMessage) &&
-      !detectExplicitMemoryWriteIntent(effectiveUserMessage) &&
-      !isChartRequest(effectiveUserMessage) &&
       !isBufferedReasoning;
 
     if (fastPlainChatEligible) {
@@ -4566,7 +4274,7 @@ app.post(
         });
         const [fastCtx, routedModel] = await Promise.all([
           buildContextFast(fastRawContext, undefined, userId, { profile: executionProfile }),
-          selectModelForPromptWithMaster({
+          selectModelForCapabilities({
             query: effectiveUserMessage,
             options: { hasImage: false, hasFile: false },
             executionMode: executionProfile.mode,
@@ -5028,7 +4736,7 @@ app.post(
       degraded: buildDegradedStatus(sync),
     });
 
-    if (hasEffectiveWebSearchMode && !webSurfV2Enabled && !isFileGenerationRequest(effectiveUserMessage)) {
+    if (hasEffectiveWebSearchMode && !webSurfV2Enabled) {
       console.log(
         hasExplicitWebSearchMode
           ? `[Stream] explicit WebSurf mode=${effectiveWebSearchMode} - redirecting to orchestrator`
@@ -5038,7 +4746,6 @@ app.post(
         const result = await orchestrate({
           userMessage: parsed.data.message,
           executionMode: parsed.data.executionMode,
-          clarificationResponse: parsed.data.clarification_response,
           signal: requestAbortController.signal,
           context: {
             recent_messages: normalizedRecentMessages,
@@ -5070,7 +4777,6 @@ app.post(
           chart: result.chart,
           memory: result.memory,
           web_search: result.web_search,
-          clarification: result.clarification,
           confidence: result.confidence,
           model_used: result.model_used,
           searched: result.searched === true,
@@ -5083,299 +4789,9 @@ app.post(
       return;
     }
 
-    if (!getEnabledAutomaticSentIQTools().includes("memory_update") && detectExplicitMemoryWriteIntent(effectiveUserMessage)) {
-      console.log(`[Stream] explicit memory write detected — redirecting to orchestrator`);
-      try {
-        const result = await orchestrate({
-          userMessage: parsed.data.message,
-          executionMode: parsed.data.executionMode,
-          clarificationResponse: parsed.data.clarification_response,
-          signal: requestAbortController.signal,
-          context: {
-            recent_messages: normalizedRecentMessages,
-            memories: parsed.data.context?.memories,
-            file_references: parsed.data.context?.file_references,
-            image_attachments: parsed.data.context?.image_attachments,
-            trustedProfile,
-            web_search_mode: effectiveWebSearchMode,
-            conversationId: activeConversationId || undefined,
-            userDb,
-            userId,
-            billingIdentity,
-            billingRequestId,
-          },
-        });
-        await persistStoredMemory(result.memory);
-        finalizeMemoryUpdateCopy(result);
-        if (result.reply) {
-          await persistAssistantMessage(result.reply);
-        }
-        reportStreamMessageGap(Boolean(result.reply), "orchestrator.memory");
-        await writeStructuredResponse(buildStreamStructuredPayload({
-          route: result.route,
-          answer: result.answer ?? result.reply,
-          reply: result.reply,
-          thinking: gateThinking(result.thinking, { route: result.route }),
-          disclaimer: result.disclaimer,
-          image: result.image,
-          chart: result.chart,
-          memory: result.memory,
-          web_search: result.web_search,
-          clarification: result.clarification,
-          confidence: result.confidence,
-          model_used: result.model_used,
-          searched: result.searched === true,
-        }));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Stream] memory orchestration failed: ${message}`);
-        await sendStreamError(err);
-      }
-      return;
-    }
-
-    if (isFileGenerationRequest(effectiveUserMessage)) {
-      const requestedFormat = detectGeneratedFileFormat(effectiveUserMessage);
-      if (requestedFormat === "html") {
-        console.log(`[Stream] HTML file generation detected - streaming file artifact`);
-        res.setHeader("Content-Type", "text/event-stream");
-        res.setHeader("Cache-Control", "no-cache");
-        res.setHeader("Connection", "keep-alive");
-        res.setHeader("X-Accel-Buffering", "no");
-        res.flushHeaders();
-
-        try {
-          await writeSseJson({ type: "route", route: "file_generation", format: "html" });
-          const result = await routeFileGeneration(
-            {
-              userMessage: effectiveUserMessage,
-              userId,
-              conversationId: activeConversationId || "",
-              userDb,
-              storageDb: getGeneratedFileStorageDatabase(),
-            },
-            {
-              onHtmlToken: async (token) => {
-                await writeSseJson({ type: "file_token", format: "html", text: token });
-              },
-            },
-          );
-          const reply = result.success
-            ? `Generated ${result.file_name}.`
-            : (result.error || "Sorry, I couldn't generate that file. Please try again.");
-          if (result.success) {
-            await persistAssistantFileMessage(reply, result);
-          } else if (reply) {
-            await persistAssistantMessage(reply);
-          }
-          reportStreamMessageGap(Boolean(reply), "orchestrator.file_generation", result.error);
-          await writeSseJson({
-            type: "file_artifact",
-            route: "file_generation",
-            reply,
-            answer: reply,
-            file: result,
-            sync: finalizeSyncStatus(sync),
-            degraded: buildDegradedStatus(sync),
-          });
-          await writeSseEvent("[DONE]");
-        } catch (err) {
-          await sendStreamError(err);
-        } finally {
-          finishSse();
-        }
-        return;
-      }
-
-      console.log(`[Stream] file generation detected - redirecting to orchestrator`);
-      try {
-        const result = await orchestrate({
-          userMessage: parsed.data.message,
-          executionMode: parsed.data.executionMode,
-          clarificationResponse: parsed.data.clarification_response,
-          signal: requestAbortController.signal,
-          context: {
-            recent_messages: normalizedRecentMessages,
-            memories: parsed.data.context?.memories,
-            file_references: parsed.data.context?.file_references,
-            image_attachments: parsed.data.context?.image_attachments,
-            trustedProfile,
-            web_search_mode: effectiveWebSearchMode,
-            conversationId: activeConversationId || undefined,
-            userDb,
-            userId,
-            billingIdentity,
-            billingRequestId,
-          },
-        });
-        await persistStoredMemory(result.memory);
-        finalizeMemoryUpdateCopy(result);
-        if (result.file?.success) {
-          await persistAssistantFileMessage(result.reply ?? `Generated ${result.file.file_name}.`, result.file as any);
-        } else if (result.reply) {
-          await persistAssistantMessage(result.reply);
-        }
-        reportStreamMessageGap(Boolean(result.reply), "orchestrator.file_generation");
-        await writeStructuredResponse(buildStreamStructuredPayload({
-          route: result.route,
-          answer: result.answer ?? result.reply,
-          reply: result.reply,
-          thinking: gateThinking(result.thinking, { route: result.route }),
-          disclaimer: result.disclaimer,
-          image: result.image,
-          chart: result.chart,
-          file: result.file,
-          memory: result.memory,
-          web_search: result.web_search,
-          clarification: result.clarification,
-          confidence: result.confidence,
-          model_used: result.model_used,
-          searched: result.searched === true,
-        }));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Stream] file generation orchestration failed: ${message}`);
-        await sendStreamError(err);
-      }
-      return;
-    }
-
-    if (isChartRequest(effectiveUserMessage)) {
-      console.log(`[Stream] chart request detected — redirecting to orchestrator`);
-      try {
-        const result = await orchestrate({
-          userMessage: parsed.data.message,
-          executionMode: parsed.data.executionMode,
-          clarificationResponse: parsed.data.clarification_response,
-          signal: requestAbortController.signal,
-          context: {
-            recent_messages: normalizedRecentMessages,
-            memories: parsed.data.context?.memories,
-            file_references: parsed.data.context?.file_references,
-            image_attachments: parsed.data.context?.image_attachments,
-            trustedProfile,
-            web_search_mode: effectiveWebSearchMode,
-            conversationId: activeConversationId || undefined,
-            userDb,
-            userId,
-            billingIdentity,
-            billingRequestId,
-          },
-        });
-        if (result.chart?.success) {
-          await persistAssistantChartMessage(result.reply ?? "Generated chart.", result.chart);
-        } else if (result.reply) {
-          await persistAssistantMessage(result.reply);
-        }
-        await persistStoredMemory(result.memory);
-        reportStreamMessageGap(Boolean(result.reply || result.chart?.success), "orchestrator.chart");
-        await writeStructuredResponse(buildStreamStructuredPayload({
-          route: result.route,
-          answer: result.answer ?? result.reply,
-          reply: result.reply,
-          thinking: gateThinking(result.thinking, { route: result.route }),
-          disclaimer: result.disclaimer,
-          image: result.image,
-          chart: result.chart,
-          memory: result.memory,
-          web_search: result.web_search,
-          clarification: result.clarification,
-          confidence: result.confidence,
-          model_used: result.model_used,
-          searched: result.searched === true,
-        }));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Stream] chart orchestration failed: ${message}`);
-        await sendStreamError(err);
-      }
-      return;
-    }
-
-    if (!getEnabledAutomaticSentIQTools().includes("image_gen") && !isGuest && !fastHasImageContext && isImageRequest(effectiveUserMessage)) {
-      console.log(`[Stream] image request detected - redirecting to orchestrator`);
-      try {
-        const result = await orchestrate({
-          userMessage: parsed.data.message,
-          executionMode: parsed.data.executionMode,
-          clarificationResponse: parsed.data.clarification_response,
-          signal: requestAbortController.signal,
-          context: {
-            recent_messages: normalizedRecentMessages,
-            memories: parsed.data.context?.memories,
-            file_references: parsed.data.context?.file_references,
-            image_attachments: parsed.data.context?.image_attachments,
-            trustedProfile,
-            web_search_mode: effectiveWebSearchMode,
-            conversationId: activeConversationId || undefined,
-            userDb,
-            userId,
-            billingIdentity,
-            billingRequestId,
-          },
-        });
-        if (result.reply && !result.image?.success) {
-          await persistAssistantMessage(result.reply);
-        }
-        if (result.image?.success && result.image.persisted) assistantMessagePersisted = true;
-        await persistStoredMemory(result.memory);
-        reportStreamMessageGap(Boolean(result.reply && !result.image?.success), "orchestrator.image_generation");
-        await writeStructuredResponse(buildStreamStructuredPayload({
-          route: result.route,
-          answer: result.answer ?? result.reply,
-          reply: result.reply,
-          thinking: gateThinking(result.thinking, { route: result.route }),
-          disclaimer: result.disclaimer,
-          image: result.image,
-          chart: result.chart,
-          memory: result.memory,
-          web_search: result.web_search,
-          clarification: result.clarification,
-          confidence: result.confidence,
-          model_used: result.model_used,
-          searched: result.searched === true,
-        }));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Stream] image generation orchestration failed: ${message}`);
-        await sendStreamError(err);
-      }
-      return;
-    }
-
     // ── Safety gate: math queries use the direct math pipeline via orchestrator ──
     // Math queries use the advanced-reasoning reservation path, which is only
     // available through the orchestrator. Redirect like chart requests.
-    const reasoningClarification = !isAutomaticConversationalClarificationEnabled() && isBufferedReasoning && executionProfile.clarification.enabled
-      ? await maybeCreateChatClarification({
-        userMessage: effectiveUserMessage,
-        originalMessage: resolvedClarification.originalMessage,
-        previousAnswers: resolvedClarification.answers,
-        context: {
-          file_references: parsed.data.context?.file_references,
-          image_attachments: parsed.data.context?.image_attachments,
-          trustedProfile,
-        },
-        userId,
-        isGuest,
-        currentTurn: resolvedClarification.turn,
-        answeredQuestion: resolvedClarification.answeredQuestion,
-        answeredOptions: resolvedClarification.answeredOptions,
-        selectedOptionId: resolvedClarification.selectedOptionId,
-        webSearch: false,
-      })
-      : null;
-    if (reasoningClarification) {
-      if (reasoningClarification.reply) {
-        await persistAssistantMessage(reasoningClarification.reply);
-      }
-      reportStreamMessageGap(Boolean(reasoningClarification.reply), "clarification.reasoning");
-      await writeStructuredResponse(buildStreamStructuredPayload({
-        ...reasoningClarification,
-      } as unknown as Record<string, unknown>));
-      return;
-    }
-
     if (isBufferedReasoning) {
       console.log(`[Stream] buffered reasoning query detected - streaming SSE response`);
       res.setHeader("Content-Type", "text/event-stream");
@@ -5630,43 +5046,13 @@ app.post(
       return;
     }
 
-    const directClarification = !isAutomaticConversationalClarificationEnabled() && executionProfile.clarification.enabled
-      ? await maybeCreateChatClarification({
-      userMessage: effectiveUserMessage,
-      originalMessage: resolvedClarification.originalMessage,
-      previousAnswers: resolvedClarification.answers,
-      context: {
-        file_references: parsed.data.context?.file_references,
-        image_attachments: parsed.data.context?.image_attachments,
-        trustedProfile,
-      },
-      userId,
-      isGuest,
-      currentTurn: resolvedClarification.turn,
-      answeredQuestion: resolvedClarification.answeredQuestion,
-      answeredOptions: resolvedClarification.answeredOptions,
-      selectedOptionId: resolvedClarification.selectedOptionId,
-      webSearch: hasEffectiveWebSearchMode,
-    })
-      : null;
-    if (directClarification) {
-      if (directClarification.reply) {
-        await persistAssistantMessage(directClarification.reply);
-      }
-      reportStreamMessageGap(Boolean(directClarification.reply), "clarification");
-      await writeStructuredResponse(buildStreamStructuredPayload({
-        ...directClarification,
-      } as unknown as Record<string, unknown>));
-      return;
-    }
-
     const requestStart = Date.now();
     console.log(`[Latency] user query received`);
 
     let webSurfV2: Awaited<ReturnType<typeof prepareWebSurfV2>> | undefined;
     let webSurfCitationStream: WebSurfCitationStream | undefined;
     let webSurfOutputGuard: WebSurfOutputGuardStream | undefined;
-    if (webSurfV2Enabled && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
+    if (webSurfV2Enabled && hasEffectiveWebSearchMode) {
       try {
         webSurfV2 = await prepareWebSurfV2(
           effectiveUserMessage,
@@ -5705,14 +5091,13 @@ app.post(
     const recentMessageCount = normalizedRecentMessages.length;
     const lowComplexity =
       effectiveUserMessage.length <= 280 &&
-      recentMessageCount <= 6 &&
-      !detectCodeQuery(effectiveUserMessage);
+      recentMessageCount <= 6;
 
     // Extract file names and content for coding PDF detection
     const fileNames = hasFile ? fileRefs.map((f: { filename?: string }) => f.filename || "") : undefined;
     const fileContent = hasFile ? fileRefs.map((f: { extractedText?: string }) => f.extractedText || "").join("\n") : undefined;
 
-    const routedModel = await selectModelForPromptWithMaster({
+    const routedModel = await selectModelForCapabilities({
       query: effectiveUserMessage,
       options: {
         hasImage,
@@ -5733,8 +5118,8 @@ app.post(
       route: "stream",
     });
     const modelOverride = directReservation.adapterModelOverride;
-    if (routedModel.source === "deterministic" && routedModel.fallback_reason) {
-      console.log(`[MasterRouter] stream deterministic fallback=${routedModel.fallback_reason}`);
+    if (routedModel.fallback_reason) {
+      console.log(`[ModelSelector] stream capability=${routedModel.fallback_reason}`);
     }
 
     const fastPathEligible =
@@ -7147,7 +6532,6 @@ app.post(
       image: result.image,
       chart: result.chart,
       memory: result.memory,
-      clarification: result.clarification,
       confidence: result.confidence,
     });
   }),

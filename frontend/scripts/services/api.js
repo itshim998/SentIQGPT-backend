@@ -128,9 +128,6 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
     typeof context.clientRequestId === "string" && context.clientRequestId.trim()
       ? context.clientRequestId.trim()
       : undefined;
-  const clarificationResponse = context.clarificationResponse && typeof context.clarificationResponse === "object"
-    ? context.clarificationResponse
-    : undefined;
   const executionMode = normalizeExecutionMode(context.executionMode || context.execution_mode);
   const response = await fetch(url, {
     method: "POST",
@@ -140,7 +137,6 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
       ...(conversationId ? { conversationId } : {}),
       ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
       execution_mode: executionMode,
-      ...(clarificationResponse ? { clarification_response: clarificationResponse } : {}),
       context: buildChatRequestContext(context),
     }),
     signal,
@@ -202,6 +198,9 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
           return true;
         }
         else if (parsed.type === "route" && parsed.route) { if (callbacks.onRoute) callbacks.onRoute(parsed.route, parsed); }
+        else if (["tool_selected", "tool_started", "tool_result", "tool_error"].includes(parsed.type) && parsed.tool) {
+          if (callbacks.onToolLifecycle) callbacks.onToolLifecycle(parsed);
+        }
         else if (parsed.type === "websurf_sources" && parsed.web_search) {
           if (callbacks.onWebSurfSources) callbacks.onWebSurfSources(parsed.web_search, parsed);
         }
@@ -269,9 +268,6 @@ async function sendMessage(message, context = {}) {
     typeof context.clientRequestId === "string" && context.clientRequestId.trim()
       ? context.clientRequestId.trim()
       : undefined;
-  const clarificationResponse = context.clarificationResponse && typeof context.clarificationResponse === "object"
-    ? context.clarificationResponse
-    : undefined;
   const executionMode = normalizeExecutionMode(context.executionMode || context.execution_mode);
   const result = await apiRequest("/api/chat", {
     method: "POST",
@@ -280,40 +276,12 @@ async function sendMessage(message, context = {}) {
       ...(conversationId ? { conversationId } : {}),
       ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
       execution_mode: executionMode,
-      ...(clarificationResponse ? { clarification_response: clarificationResponse } : {}),
       context: buildChatRequestContext(context),
     }),
     signal: context.signal || null,
   });
   window.dispatchEvent(new CustomEvent("sentiq-billing-refresh"));
   return result;
-}
-
-async function getChatIntent(message, context = {}) {
-  const conversationId =
-    typeof context.conversationId === "string" && context.conversationId.trim()
-      ? context.conversationId.trim()
-      : undefined;
-  const clientRequestId =
-    typeof context.clientRequestId === "string" && context.clientRequestId.trim()
-      ? context.clientRequestId.trim()
-      : undefined;
-  const clarificationResponse = context.clarificationResponse && typeof context.clarificationResponse === "object"
-    ? context.clarificationResponse
-    : undefined;
-  const executionMode = normalizeExecutionMode(context.executionMode || context.execution_mode);
-  return apiRequest("/api/chat/intent", {
-    method: "POST",
-    body: JSON.stringify({
-      message,
-      ...(conversationId ? { conversationId } : {}),
-      ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
-      execution_mode: executionMode,
-      ...(clarificationResponse ? { clarification_response: clarificationResponse } : {}),
-      context: buildChatRequestContext(context),
-    }),
-    signal: context.signal || null,
-  });
 }
 
 async function getConversations() {
@@ -813,7 +781,7 @@ async function endLiveSession(sessionId, reason = "client_end", options = {}) {
 }
 
 window.SentIQAPI = {
-  sendMessage, sendMessageStream, canStreamResponses, getChatIntent, classifyMemory, compressMemories,
+  sendMessage, sendMessageStream, canStreamResponses, classifyMemory, compressMemories,
   sendSelectionMessage, uploadFile, subscribeFileUpdates, clearFileSession, generateImage, storeImage, getChatImages, getImageQuota, deleteImage, generateTitle,
   getBillingPlans, getBillingMe, getBillingUsage, startBillingCheckout, verifyBillingCheckout, cancelBillingSubscription,
   getGeneratedFileAccessUrl, updateGeneratedHtmlFile, deleteGeneratedFile,

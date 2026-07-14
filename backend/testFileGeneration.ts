@@ -3,9 +3,6 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 import {
   detectGeneratedFileFormat,
-  getFileGenerationGuestInstruction,
-  isFileGenerationRequest,
-  isImpliedFileGenerationRequest,
   resolveFileGenerationIntent,
 } from "./tools/fileGeneration/fileDetector";
 import type { LLMAdapterResult } from "./ai/PromptBuilders";
@@ -30,21 +27,9 @@ async function testFileIntentDetection(): Promise<void> {
   assert.equal(detectGeneratedFileFormat("Create a 5-slide presentation"), "pptx");
   assert.equal(detectGeneratedFileFormat("Create a .docx document containing my presentation script"), "docx");
   assert.equal(detectGeneratedFileFormat("Export this as a PDF"), "pdf");
-  assert.equal(isFileGenerationRequest("Create a downloadable docx document about AI"), true);
-  assert.equal(isFileGenerationRequest("Create a .html typing animation document"), true);
-  assert.equal(isFileGenerationRequest("Create a .txt summary"), true);
-  assert.equal(isFileGenerationRequest("Create a 5-slide presentation"), false);
-  assert.equal(isImpliedFileGenerationRequest("Create a 5-slide presentation"), true);
-  assert.equal(isFileGenerationRequest("Make an HTML document with a typing animation"), false);
-  assert.equal(isImpliedFileGenerationRequest("Make an HTML document with a typing animation"), true);
   assert.deepEqual(
     resolveFileGenerationIntent("Create a .docx presentation script").format,
     "docx",
-  );
-  assert.equal(isFileGenerationRequest("What is HTML?"), false);
-  assert.match(
-    getFileGenerationGuestInstruction("Create an xlsx project tracker"),
-    /Markdown table/i,
   );
 }
 

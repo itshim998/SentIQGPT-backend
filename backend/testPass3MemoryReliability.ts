@@ -7,7 +7,7 @@ import {
   MEMORY_PERSISTENCE_FAILURE_TEXT,
   resolveMemoryScopeForRequest,
 } from "./memory/memoryScope";
-import { processMessageForMemory } from "./ai/MemoryProcessor";
+import { prepareModelSelectedMemory } from "./ai/MemoryProcessor";
 import { selectMemoriesForQuery } from "./context/memorySelector";
 import { filterSemanticResultsByThreshold } from "./memory/semanticSearch";
 import { readFrontendSources } from "./frontendSource";
@@ -108,32 +108,28 @@ function assertFrontendContract() {
   );
 }
 
-async function assertDeterministicMemoryFallback() {
-  const result = await processMessageForMemory({
-    message: "Remember my name is Soumo.",
-    forceStore: true,
+async function assertModelSelectedMemoryPayload() {
+  const result = await prepareModelSelectedMemory({
+    content: "User's name is Soumo.",
+    type: "identity",
     generateEmbedding: false,
   });
-  assert.strictEqual(result.stored, true, "explicit identity memory should store without live summarizer dependency");
-  assert.strictEqual(result.memory?.type, "identity");
-  assert.strictEqual(result.memory?.summary, "User's name is Soumo.");
+  assert.strictEqual(result.type, "identity");
+  assert.strictEqual(result.summary, "User's name is Soumo.");
+  assert.strictEqual(result.importance, 9);
 }
 
-async function assertForceStoreBypassesExplicitPhraseOnlyForTypedMemories() {
-  const forced = await processMessageForMemory({
-    message: "My name is Soumo.",
-    forceStore: true,
+async function assertModelSelectionOwnsWriteIntent() {
+  const selected = await prepareModelSelectedMemory({
+    content: "User's name is Soumo.",
+    type: "identity",
     generateEmbedding: false,
   });
-  assert.strictEqual(forced.stored, true, "forceStore should store typed memory without remember/save wording");
-  assert.strictEqual(forced.memory?.type, "identity");
-
-  const implicit = await processMessageForMemory({
-    message: "My name is Soumo.",
-    generateEmbedding: false,
-  });
-  assert.strictEqual(implicit.stored, false, "implicit personal facts should not store without explicit intent");
-  assert.strictEqual(implicit.failure_reason, "explicit_intent_missing");
+  assert.strictEqual(selected.type, "identity", "validated model selection replaces a second keyword intent gate");
+  await assert.rejects(
+    () => prepareModelSelectedMemory({ content: "  ", type: "identity", generateEmbedding: false }),
+    /required/,
+  );
 }
 
 function assertMemoryMetadataMergeContract() {
@@ -148,10 +144,10 @@ function assertMemoryMetadataMergeContract() {
     "orchestrator merge should preserve full memory metadata",
   );
   assert.ok(
-    executorSource.includes("...memResult.memory") &&
-    executorSource.includes("failure_reason: memResult.failure_reason") &&
+    executorSource.includes("prepareModelSelectedMemory") &&
+    executorSource.includes("...candidate") &&
     executorSource.includes("embedding?: readonly number[]"),
-    "tool executor should preserve memory pipeline metadata",
+    "tool executor should preserve validated model-selected memory metadata",
   );
 }
 
@@ -203,8 +199,8 @@ async function main() {
   assertStaticPersistenceContract();
   assertPromptContract();
   assertFrontendContract();
-  await assertDeterministicMemoryFallback();
-  await assertForceStoreBypassesExplicitPhraseOnlyForTypedMemories();
+  await assertModelSelectedMemoryPayload();
+  await assertModelSelectionOwnsWriteIntent();
   assertMemoryMetadataMergeContract();
   assertSemanticThresholdContract();
   assertMemoryMaintenanceContract();

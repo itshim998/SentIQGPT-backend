@@ -27,7 +27,7 @@ export async function dispatchAutomaticModelToolCall<T>(args: {
   executeImage: (prompt: string, call: ValidatedToolCall) => Promise<T>;
   executeChart: (request: string, call: ValidatedToolCall) => Promise<T>;
   executeFile: (request: string, format: string | undefined, call: ValidatedToolCall) => Promise<T>;
-  executeMemory: (content: string, scope: "global" | "chat" | undefined, call: ValidatedToolCall) => Promise<T>;
+  executeMemory: (content: string, type: "identity" | "preference" | "project", scope: "global" | "chat", call: ValidatedToolCall) => Promise<T>;
   isFailure?: (result: T, call: ValidatedToolCall) => boolean;
   onLifecycleEvent?: (event: ToolLifecycleEvent) => void | Promise<void>;
 }): Promise<{ call: ValidatedToolCall; result: T; events: readonly ToolLifecycleEvent[] }> {
@@ -59,7 +59,8 @@ export async function dispatchAutomaticModelToolCall<T>(args: {
       case "memory_update":
         result = await args.executeMemory(
           String(call.arguments.content),
-          call.arguments.scope === "global" || call.arguments.scope === "chat" ? call.arguments.scope : undefined,
+          call.arguments.type as "identity" | "preference" | "project",
+          call.arguments.scope as "global" | "chat",
           call,
         );
         break;

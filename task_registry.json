@@ -4,9 +4,6 @@
     "memory_classify",
     "memory_summarize",
     "memory_compress",
-    "route_classify",
-    "master_route",
-    "intent_clarify",
     "file_extract",
     "file_generate",
     "image_generate"

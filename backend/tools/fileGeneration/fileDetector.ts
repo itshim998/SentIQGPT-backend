@@ -26,35 +26,8 @@ const IMPLIED_FORMAT_PATTERNS: ReadonlyArray<[GeneratedFileFormat, RegExp, strin
   ["txt", /\b(?:plain\s+text\s+file|text\s+file)\b/i, "text_alias"],
 ];
 
-const GENERATION_VERBS =
-  /\b(?:generate|create|make|build|write|prepare|draft|produce|export|turn\s+.*\s+into|convert\s+.*\s+to)\b/i;
-
-const DOWNLOADABLE_HINTS =
-  /\b(?:downloadable|file|document|workbook|spreadsheet|presentation|slides?|deck|pdf|docx|pptx|xlsx|html|txt)\b/i;
-
-function hasGenerationIntent(message: string): boolean {
-  return GENERATION_VERBS.test(message) && DOWNLOADABLE_HINTS.test(message);
-}
-
-function hasAsFormatIntent(message: string): boolean {
-  return /\b(?:as|to)\s+(?:a\s+)?(?:pdf|docx|pptx|xlsx|html|txt|spreadsheet|presentation|word\s+document)\b/i
-    .test(message);
-}
-
-function stripClarificationOptionCatalog(message: string): string {
-  return message.replace(/\nAvailable options:\n[^\n]*(?:\n|$)/i, "\n");
-}
-
-function hasChatOnlyClarificationSelection(message: string): boolean {
-  if (!/\nUser clarification\(s\):\n/i.test(message)) return false;
-  if (/\nSelected option id:\n(?:text_outline|text_document|markdown_table|text_answer|code_in_chat)\b/i.test(message)) {
-    return true;
-  }
-  return /\nLatest clarification answer:\n[^\n]*\b(?:in chat|chat only|text outline|text document|html code)\b/i.test(message);
-}
-
 export function resolveFileGenerationIntent(message: string): FileGenerationIntent {
-  const normalized = stripClarificationOptionCatalog(String(message || "")).trim();
+  const normalized = String(message || "").trim();
   if (!normalized) return { strength: "none", format: null };
 
   for (const [format, pattern] of EXACT_FORMAT_PATTERNS) {
@@ -74,51 +47,4 @@ export function resolveFileGenerationIntent(message: string): FileGenerationInte
 
 export function detectGeneratedFileFormat(message: string): GeneratedFileFormat | null {
   return resolveFileGenerationIntent(message).format;
-}
-
-export function isFileGenerationRequest(message: string): boolean {
-  const normalized = String(message || "").trim();
-  if (!normalized) return false;
-  if (hasChatOnlyClarificationSelection(normalized)) return false;
-
-  const intent = resolveFileGenerationIntent(normalized);
-  if (!intent.format) return false;
-
-  if (intent.strength === "exact" && (hasGenerationIntent(normalized) || hasAsFormatIntent(normalized))) {
-    return true;
-  }
-
-  if (
-    intent.strength === "implied" &&
-    (/\bdownloadable\b/i.test(normalized) || hasAsFormatIntent(normalized)) &&
-    (hasGenerationIntent(normalized) || hasAsFormatIntent(normalized))
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-export function isImpliedFileGenerationRequest(message: string): boolean {
-  const normalized = String(message || "").trim();
-  const intent = resolveFileGenerationIntent(normalized);
-  return intent.strength === "implied" && Boolean(intent.format) && (hasGenerationIntent(normalized) || hasAsFormatIntent(normalized));
-}
-
-export function getFileGenerationGuestInstruction(message: string): string {
-  if (/Guest mode cannot create/i.test(message)) return message;
-  const format = detectGeneratedFileFormat(message);
-  if (format === "xlsx") {
-    return [
-      message,
-      "",
-      "Guest mode cannot create downloadable files. Provide the spreadsheet content as a clear Markdown table in chat only.",
-    ].join("\n");
-  }
-
-  return [
-    message,
-    "",
-    "Guest mode cannot create, store, preview, or download native files. Provide the requested content directly in chat only.",
-  ].join("\n");
 }

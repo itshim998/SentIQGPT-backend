@@ -744,7 +744,6 @@ body::after {
 .thinking-panel,
 .web-search-panel,
 .message-chart-container,
-.clarification-panel,
 .memory-item,
 .auth-menu-panel,
 .composer-action-menu,
@@ -754,7 +753,6 @@ body::after {
   box-shadow: var(--shadow-sm);
 }
 
-.clarification-option-btn,
 .web-search-card,
 .web-search-source-link,
 .message-chart-frame,

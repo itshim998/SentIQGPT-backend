@@ -1,14 +1,11 @@
 import assert from "node:assert/strict";
 import {
-  MODEL_OWNED_TOOL_CONTRACTS,
+  SENTIQ_TOOL_REGISTRY,
   SENTIQ_TOOL_CHOICE_POLICY,
   SENTIQ_TOOL_REGISTRY_VERSION,
-  getAllowedModelOwnedTools,
   getAllowedToolFingerprint,
   getAvailableToolDefinitions,
   getProviderToolDefinitions,
-  isModelOwnedToolAllowed,
-  legacyRouteForModelOwnedTool,
   normalizeAssistantTurn,
   validateModelToolCalls,
 } from "./orchestrator/toolContract";
@@ -16,9 +13,9 @@ import {
 const guest = { authenticated: false } as const;
 const authenticated = { authenticated: true } as const;
 
-assert.match(SENTIQ_TOOL_REGISTRY_VERSION, /^2026-07-pass1-v\d+$/);
+assert.match(SENTIQ_TOOL_REGISTRY_VERSION, /^2026-07-pass5-v\d+$/);
 assert.deepEqual(
-  MODEL_OWNED_TOOL_CONTRACTS.map((tool) => tool.name),
+  SENTIQ_TOOL_REGISTRY.map((tool) => tool.name),
   ["web_surf", "image_gen", "chart_gen", "file_gen", "memory_update"],
   "registry exposes only canonical product tools",
 );
@@ -35,14 +32,10 @@ assert.deepEqual(
   getAvailableToolDefinitions(authenticated).map((tool) => tool.name),
   ["web_surf", "image_gen", "chart_gen", "file_gen", "memory_update"],
 );
-assert.deepEqual(getAllowedModelOwnedTools("fast"), getAllowedModelOwnedTools("intuitive"));
-assert.equal(isModelOwnedToolAllowed("image_gen", "fast"), true);
-assert.equal(isModelOwnedToolAllowed("intent_clarification_tool", "intuitive"), false);
-assert.equal(legacyRouteForModelOwnedTool("web_surf"), "web_search");
-assert.equal(legacyRouteForModelOwnedTool("image_gen"), "image_generation");
-assert.equal(legacyRouteForModelOwnedTool("chart_gen"), "chart_generation");
-assert.equal(legacyRouteForModelOwnedTool("file_gen"), "file_generation");
-assert.equal(legacyRouteForModelOwnedTool("memory_update"), "memory_update");
+assert.deepEqual(
+  getAvailableToolDefinitions({ authenticated: true, executionMode: "fast" }).map((tool) => tool.name),
+  getAvailableToolDefinitions({ authenticated: true, executionMode: "intuitive" }).map((tool) => tool.name),
+);
 
 const guestProviderTools = getProviderToolDefinitions(guest);
 const authProviderTools = getProviderToolDefinitions(authenticated);
@@ -76,6 +69,12 @@ assert.throws(() => validateModelToolCalls([
 assert.throws(() => validateModelToolCalls([
   { id: "call_5", name: "file_gen", arguments: { request: "Make it", format: "exe" } },
 ], authenticated), /Invalid enum value/);
+assert.throws(() => validateModelToolCalls([
+  { id: "call_memory_missing_type", name: "memory_update", arguments: { content: "User prefers concise answers.", scope: "global" } },
+], authenticated), /Required/);
+assert.equal(validateModelToolCalls([
+  { id: "call_memory", name: "memory_update", arguments: { content: "User prefers concise answers.", type: "preference", scope: "global" } },
+], authenticated)[0]?.name, "memory_update");
 assert.throws(() => validateModelToolCalls([
   { id: "call_6", name: "web_surf", arguments: { query: "news", user_id: "attacker" } },
 ], authenticated), /unrecognized key/i);

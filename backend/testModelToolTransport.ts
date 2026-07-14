@@ -28,7 +28,7 @@ assert.equal(canUseSentIQTools("gemma", false), false);
 assert.equal(canUseSentIQTools("pollinations", true), false);
 
 assert.equal(buildSentIQToolTransportRequest({ prompt: "hello", task: "chat" }, false), undefined);
-assert.equal(buildSentIQToolTransportRequest({ prompt: "route", task: "route_classify" }, true), undefined);
+assert.equal(buildSentIQToolTransportRequest({ prompt: "classify", task: "memory_classify" }, true), undefined);
 assert.deepEqual(
   buildSentIQToolTransportRequest({ prompt: "hello", task: "chat", user_id: "guest" }, true)?.allowed_tool_names,
   ["web_surf", "image_gen"],

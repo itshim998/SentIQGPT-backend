@@ -1,16 +1,12 @@
-import { detectExplicitMemoryWriteIntent } from "../orchestrator/queryClassifier";
-
 export interface ExistingMemoryCandidate {
   readonly type: string;
   readonly summary: string;
   readonly scope?: "global" | "chat";
 }
 
-export function validateAutomaticMemoryUpdateRequest(originalUserRequest: string): string {
-  const normalized = originalUserRequest.trim();
-  if (!detectExplicitMemoryWriteIntent(normalized)) {
-    throw new Error("Explicit memory intent is required.");
-  }
+export function validateAutomaticMemoryUpdateContent(content: string): string {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (!normalized) throw new Error("Memory content is required.");
   return normalized;
 }
 

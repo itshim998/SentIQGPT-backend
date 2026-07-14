@@ -1,22 +1,6 @@
-// SentIQ Chat v2 — Tool Executor
-//
-// Executes a structured plan produced by the Task Planner.
-// Runs each step sequentially, routing to the correct capability:
-//
-//   conversation     → ChatHandler (Gemini)
-//   image_generation → Image Router (FLUX/HF/Pollinations)
-//   file_analysis    → ChatHandler + file context
-//   memory_update    → MemoryProcessor (force-store)
-//   chart_generation → ChartRouter (matplotlib / plotly / chart.js)
-//   web_search       → Tavily Search Pipeline (query expansion + LLM synthesis)
-//
-// Results from earlier steps are threaded into later steps as
-// additional context so the LLM can build on prior outputs.
-//
-// Safety:
-//   • Validates that each tool exists before executing
-//   • Max 3 steps enforced by the planner (executor also guards)
-//   • Each step has an independent timeout (inherits from LLM call)
+// Executes one ordinary model turn or an explicit manual WebSurf request.
+// Validated provider-neutral model tool calls enter terminal tool executors
+// directly and cannot be produced by this local plan boundary.
 
 import { handleChat } from "../ai/ChatHandler";
 import { createHash, randomUUID } from "crypto";
@@ -26,11 +10,10 @@ import { routeFileGeneration } from "../tools/fileGeneration/fileGenerator";
 import { executeTavilySearchPipeline } from "../tools/webSearch/tavilySearchPipeline";
 import { normalizeWebSearchMode } from "../tools/webSearch/webSearchMode";
 import { isWebSurfV2Enabled, prepareWebSurfV2, type WebSurfV2Evidence, type WebSurfV2Payload } from "../tools/webSearch/webSurfV2";
-import { processMessageForMemory } from "../ai/MemoryProcessor";
-import { resolveContextReferences } from "../context/referenceResolver";
+import { prepareModelSelectedMemory } from "../ai/MemoryProcessor";
 import type { BuiltContext } from "../context/contextBuilder";
 import type { PlanStep, PlanTool } from "./planner";
-import { selectImageModelPreferenceWithMaster, selectModelForPromptWithMaster } from "./masterRouter";
+import { selectImageModelForCapabilities, selectModelForCapabilities } from "./capabilityModelSelector";
 import type { SearchResult } from "../tools/webSearch/types";
 import { INTUITIVE_PROFILE, type ExecutionProfile } from "./executionProfile";
 import { BillingQuotaError, BillingQuotaService } from "../billing/quotaService";
@@ -47,8 +30,7 @@ import type { ToolLifecycleEvent, ValidatedToolCall } from "./toolContract";
 import { AutomaticToolDispatchError, dispatchAutomaticModelToolCall } from "../ai/modelToolExecution";
 import type { GeneratedFileFormat } from "../tools/fileGeneration/types";
 import { getConversationMessageByClientRequestId } from "../services/conversationService";
-import { isDuplicateMemoryCandidate, validateAutomaticMemoryUpdateRequest } from "../ai/modelToolMemorySafety";
-import { isChatScopedMemoryRequest } from "../memory/memoryScope";
+import { isDuplicateMemoryCandidate, validateAutomaticMemoryUpdateContent } from "../ai/modelToolMemorySafety";
 
 // ==============================
 // Types
@@ -158,15 +140,10 @@ export interface ExecutePlanOptions {
 
 const VALID_TOOLS: ReadonlySet<string> = new Set<PlanTool>([
   "conversation",
-  "image_generation",
-  "file_analysis",
-  "memory_update",
-  "chart_generation",
-  "file_generation",
   "web_search",
 ]);
 
-const MAX_EXEC_STEPS = 3;
+const MAX_EXEC_STEPS = 1;
 const billingQuotaService = new BillingQuotaService();
 
 function createBillingStepRequestId(ctx: BuiltContext, tool: PlanTool, input: string): string {
@@ -259,14 +236,13 @@ async function execConversation(
     ? `${input}\n\n[Previous step context]: ${priorContext}`
     : input;
 
-  // ── Standard conversation path ──
-  // Pass file context to router for coding PDF detection
+  // Provider choice is based only on required input capabilities.
   const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
   const hasImages = ctx.imageAttachments && ctx.imageAttachments.length > 0;
   const fileNames = hasFiles ? ctx.fileReferences.map((f) => f.filename) : undefined;
   const fileContent = hasFiles ? ctx.fileReferences.map((f) => f.extractedText).join("\n") : undefined;
   
-  const routedModel = await selectModelForPromptWithMaster({
+  const routedModel = await selectModelForCapabilities({
     query: input,
     options: {
       hasImage: hasImages,
@@ -290,8 +266,8 @@ async function execConversation(
     : null;
   const modelOverride = reservation?.adapterModelOverride ?? routedModel.model;
 
-  if (routedModel.source === "deterministic" && routedModel.fallback_reason) {
-    console.log(`[MasterRouter] conversation deterministic fallback=${routedModel.fallback_reason}`);
+  if (routedModel.fallback_reason) {
+    console.log(`[ModelSelector] conversation capability=${routedModel.fallback_reason}`);
   }
   
   const automaticTools = !priorContext && !webSurfEvidence && !ctx.webSearchMode
@@ -381,15 +357,7 @@ export async function executeAutomaticModelToolCalls(
         signal,
         onFileToken,
       ),
-      executeMemory: (_content, scope) => execMemoryUpdate(
-        originalUserRequest,
-        ctx,
-        profile,
-        signal,
-        scope,
-        originalUserRequest,
-        true,
-      ),
+      executeMemory: (content, type, scope) => execAutomaticMemoryUpdate(content, type, scope, ctx, profile, signal),
       isFailure: (result, call) => Boolean(result.error)
         || result.image?.success === false
         || result.chart?.success === false
@@ -471,13 +439,7 @@ async function execImageGeneration(
       route: entitledRoute.route,
     };
   } else {
-    preferredModel = await selectImageModelPreferenceWithMaster({
-      prompt: input,
-      executionMode: profile.mode,
-      userId: ctx.userId,
-      isGuest: ctx.userId === "guest",
-      signal,
-    });
+    preferredModel = await selectImageModelForCapabilities();
   }
 
   let result: Awaited<ReturnType<typeof routeImageGeneration>>;
@@ -545,133 +507,32 @@ async function execImageGeneration(
   };
 }
 
-async function execFileAnalysis(
-  input: string,
-  ctx: BuiltContext,
-  priorContext: string,
-  profile: ExecutionProfile,
-  signal?: AbortSignal,
-): Promise<StepResult> {
-  const augmentedInput = priorContext
-    ? `${input}\n\n[Previous step context]: ${priorContext}`
-    : input;
-
-  // Pass file context to router for coding PDF detection
-  const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
-  const hasImages = ctx.imageAttachments && ctx.imageAttachments.length > 0;
-  const fileNames = hasFiles ? ctx.fileReferences.map((f) => f.filename) : undefined;
-  const fileContent = hasFiles ? ctx.fileReferences.map((f) => f.extractedText).join("\n") : undefined;
-  
-  const routedModel = await selectModelForPromptWithMaster({
-    query: input,
-    options: {
-      hasImage: hasImages,
-      hasFile: hasFiles,
-      fileNames,
-      fileContent,
-    },
-    executionMode: profile.mode,
-    userId: ctx.userId,
-    isGuest: ctx.userId === "guest",
-    signal,
-  });
-  const reservation = ctx.billingIdentity
-    ? await billingQuotaService.reserveTextRoute({
-        identity: ctx.billingIdentity,
-        requestId: createBillingStepRequestId(ctx, "file_analysis", augmentedInput),
-        conversationId: ctx.conversationId,
-        clientRequestId: ctx.billingRequestId,
-        metadata: { endpoint: "orchestrator", tool: "file_analysis", routed_model: routedModel.model },
-      })
-    : null;
-  const modelOverride = reservation?.adapterModelOverride ?? routedModel.model;
-
-  if (routedModel.source === "deterministic" && routedModel.fallback_reason) {
-    console.log(`[MasterRouter] file_analysis deterministic fallback=${routedModel.fallback_reason}`);
-  }
-  
-  let result: Awaited<ReturnType<typeof handleChat>>;
-  try {
-    result = await handleChat({
-      userMessage: input,
-      recentMessages: ctx.recentMessages,
-      memories: ctx.memories,
-      fileReferences: ctx.fileReferences,
-      imageAttachments: ctx.imageAttachments,
-      conversationSummary: ctx.conversationSummary,
-      conversationCapsule: ctx.conversationCapsule,
-      workspaceCapsule: ctx.workspaceCapsule,
-      priorConversationEvidence: ctx.priorConversationEvidence,
-      routeEvidence: priorContext
-        ? [{ content: priorContext, label: "previous step", required: true, relevance: 1 }]
-        : undefined,
-      isExplicitRecallQuery: ctx.isExplicitRecallQuery,
-      trustedProfile: ctx.trustedProfile,
-      modelOverride,
-      userId: ctx.userId,
-      reasoningEffort: profile.model.reasoningEffort,
-      signal,
-    });
-    if (reservation) {
-      await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "file_analysis" });
-    }
-  } catch (error) {
-    await releaseBillingReservation(reservation);
-    throw error;
-  }
-
-  return {
-    step: 0,
-    tool: "file_analysis",
-    reply: result.reply,
-    thinking: result.thinking,
-    model_used: result.model_used,
-    fallback: result.fallback,
-    sanitize_bypass: result.sanitize_bypass,
-  };
-}
-
-async function execMemoryUpdate(
-  input: string,
+async function execAutomaticMemoryUpdate(
+  content: string,
+  type: "identity" | "preference" | "project",
+  scope: "global" | "chat",
   ctx: BuiltContext,
   profile: ExecutionProfile,
   signal?: AbortSignal,
-  _requestedScope?: "global" | "chat",
-  originalUserRequest = input,
-  requireAuthenticatedConversation = false,
 ): Promise<StepResult> {
   throwIfAborted(signal);
-  if (requireAuthenticatedConversation && (!ctx.userId || ctx.userId === "guest" || !ctx.userDb || !ctx.conversationId)) {
+  if (!ctx.userId || ctx.userId === "guest" || !ctx.userDb || !ctx.conversationId) {
     throw new Error("Memory updates require an authenticated conversation.");
   }
-  const safeMemoryRequest = validateAutomaticMemoryUpdateRequest(originalUserRequest);
-  const effectiveScope: "global" | "chat" = isChatScopedMemoryRequest(safeMemoryRequest) ? "chat" : "global";
-  const memResult = await processMessageForMemory({
-    message: safeMemoryRequest,
-    recentMessages: ctx.recentMessages,
-    existingMemories: ctx.memories,
-    forceStore: true,
-    userId: ctx.userId,
+  const safeContent = validateAutomaticMemoryUpdateContent(content);
+  const candidate = await prepareModelSelectedMemory({
+    content: safeContent,
+    type,
     generateEmbedding: profile.persistence.blockOnMemoryEmbedding,
-  }).catch((error) => ({
-    stored: false as const,
-    failure_reason: error instanceof Error ? error.message : String(error),
-  }));
-
-  const deduplicated = memResult.stored
-    ? isDuplicateMemoryCandidate(ctx.memories ?? [], memResult.memory ?? {}, effectiveScope)
-      || await hasPersistedDuplicateMemory(ctx, memResult.memory ?? {}, effectiveScope)
-    : false;
-  const memory = memResult.stored
-    ? {
-        stored: true,
-        ...memResult.memory,
-        scope: effectiveScope,
-        deduplicated,
-      }
-    : { stored: false, failure_reason: memResult.failure_reason };
-
-  return { step: 0, tool: "memory_update", memory };
+  });
+  throwIfAborted(signal);
+  const deduplicated = isDuplicateMemoryCandidate(ctx.memories ?? [], candidate, scope)
+    || await hasPersistedDuplicateMemory(ctx, candidate, scope);
+  return {
+    step: 0,
+    tool: "memory_update",
+    memory: { stored: true, ...candidate, scope, deduplicated },
+  };
 }
 
 async function execChartGeneration(
@@ -915,7 +776,6 @@ async function execWebSearch(
 async function executeStep(
   planStep: PlanStep,
   ctx: BuiltContext,
-  priorContext: string,
   profile: ExecutionProfile,
   signal?: AbortSignal,
 ): Promise<StepResult> {
@@ -932,59 +792,15 @@ async function executeStep(
 
   try {
     let result: StepResult;
-    const resolved = planStep.tool === "memory_update"
-      ? {
-          resolved: planStep.input,
-          changed: false,
-          needsClarification: false,
-          confidence: 1,
-          candidates: [] as readonly string[],
-          subject: undefined as string | undefined,
-          source: undefined as "conversation" | "summary" | "chat_memory" | undefined,
-        }
-      : resolveContextReferences({
-          input: planStep.input,
-          tool: planStep.tool,
-          recentMessages: ctx.recentMessages,
-          conversationSummary: ctx.conversationSummary,
-          memories: ctx.memories,
-        });
-    const stepInput = resolved.resolved;
-    if (resolved.changed) {
-      console.log(
-        `[CONTEXT AWARENESS] ${planStep.tool} resolved "${planStep.input.slice(0, 80)}" -> "${stepInput.slice(0, 120)}" ` +
-        `subject="${resolved.subject ?? ""}" source=${resolved.source ?? "none"} confidence=${resolved.confidence.toFixed(2)}`,
-      );
-    } else if (resolved.needsClarification) {
-      console.log(
-        `[CONTEXT AWARENESS] ${planStep.tool} reference unresolved input="${planStep.input.slice(0, 80)}" ` +
-        `candidates=${resolved.candidates.join(" | ")}`,
-      );
-    }
-
     switch (planStep.tool) {
-      case "image_generation":
-        result = await execImageGeneration(stepInput, ctx, profile, signal);
-        break;
-      case "file_analysis":
-        result = await execFileAnalysis(stepInput, ctx, priorContext, profile, signal);
-        break;
-      case "memory_update":
-        result = await execMemoryUpdate(stepInput, ctx, profile, signal);
-        break;
-      case "chart_generation":
-        result = await execChartGeneration(stepInput, ctx, signal);
-        break;
-      case "file_generation":
-        result = await execFileGeneration(stepInput, ctx, undefined, signal);
-        break;
       case "web_search":
-        result = await execWebSearch(stepInput, ctx, profile, signal);
+        result = await execWebSearch(planStep.input, ctx, profile, signal);
         break;
       case "conversation":
-      default:
-        result = await execConversation(stepInput, ctx, priorContext, profile, signal);
+        result = await execConversation(planStep.input, ctx, "", profile, signal);
         break;
+      default:
+        throw new Error(`Planner cannot dispatch ${planStep.tool}; automatic tools require a validated model tool call.`);
     }
 
     throwIfAborted(signal);
@@ -1003,38 +819,14 @@ async function executeStep(
   }
 }
 
-/** Build context string from a step result */
-function buildContextFromResult(result: StepResult, input: string): string {
-  if (result.reply) {
-    return result.reply.slice(0, 500);
-  }
-  if (result.image?.success) {
-    return `[Image generated: ${result.image.provider_used ?? "unknown"} — "${input.slice(0, 80)}"]`;
-  }
-  if (result.chart?.success) {
-    return `[Chart generated: ${result.chart.chart_type} (${result.chart.renderer}) — "${input.slice(0, 80)}"]`;
-  }
-  if (result.file?.success) {
-    return `[File generated: ${result.file.file_name} (${result.file.format}) - "${input.slice(0, 80)}"]`;
-  }
-  if (result.memory?.stored) {
-    return `[Memory stored: ${result.memory.summary ?? input.slice(0, 80)}]`;
-  }
-  return "";
-}
-
 // ==============================
 // Public API
 // ==============================
 
 /**
- * Execute an ordered plan, routing each step to its capability module.
- *
- * Side-effectful and quota-consuming tools run sequentially to preserve
- * ordering and avoid partial parallel commits.
- *
- * Results from prior steps are condensed and forwarded to subsequent
- * steps as context so the LLM can produce coherent multi-step answers.
+ * Execute the single ordinary-model or explicit-manual-WebSurf plan step.
+ * Automatic product tools bypass this plan boundary and require a validated
+ * provider-neutral model tool call.
  */
 export async function executePlan(
   steps: readonly PlanStep[],
@@ -1046,18 +838,13 @@ export async function executePlan(
   const stepsToExecute = steps.slice(0, MAX_EXEC_STEPS);
 
   const results: StepResult[] = [];
-  let priorContext = "";
 
   for (let index = 0; index < stepsToExecute.length; index += 1) {
     throwIfAborted(signal);
     const planStep = stepsToExecute[index];
 
-    const result = await executeStep(planStep, ctx, priorContext, profile, signal);
+    const result = await executeStep(planStep, ctx, profile, signal);
     results.push(result);
-    const contextPart = buildContextFromResult(result, planStep.input);
-    if (contextPart) {
-      priorContext += (priorContext ? "\n" : "") + contextPart;
-    }
   }
 
   // Sort results by step number to maintain original order

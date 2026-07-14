@@ -82,19 +82,29 @@ def test_capabilities_and_cache_dimensions():
     base = adapter._cache_key("hello", "chat", "model", "groq")
     registry = adapter._cache_key(
         "hello", "chat", "model", "groq",
-        tool_registry_version="2026-07-pass1-v1",
+        tool_registry_version="2026-07-pass5-v1",
         allowed_tool_fingerprint="guest-tools",
         tool_choice_policy="policy",
         tool_capability="openai_function_transport",
     )
     different_tools = adapter._cache_key(
         "hello", "chat", "model", "groq",
-        tool_registry_version="2026-07-pass1-v1",
+        tool_registry_version="2026-07-pass5-v1",
         allowed_tool_fingerprint="authenticated-tools",
         tool_choice_policy="policy",
         tool_capability="openai_function_transport",
     )
     assert len({base, registry, different_tools}) == 3
+
+    writes = []
+    fake_cache = SimpleNamespace(set=lambda key, value: writes.append((key, value)))
+    with patch.object(adapter, "_memory_cache", fake_cache), patch.object(adapter.threading, "Thread") as thread:
+        adapter._cache_set("tool", {"assistant_turn": {"kind": "tool_calls", "calls": []}})
+        assert writes == []
+        thread.assert_not_called()
+        adapter._cache_set("text", {"assistant_turn": {"kind": "assistant_text", "text": "safe"}})
+        assert len(writes) == 1
+        thread.assert_called_once()
 
 
 def test_groq_buffered_and_fragmented_stream_transport():

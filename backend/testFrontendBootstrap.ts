@@ -72,26 +72,12 @@ assert.match(
   /API\.generateImage\(prompt,\s*\{[\s\S]*executionMode:\s*normalizeExecutionMode\(currentExecutionMode\)/,
   "image generation should send current execution mode",
 );
-assert.match(
-  chatController,
-  /function\s+shouldSkipFastIntentPreflight/,
-  "chat controller should include a fast plain-chat intent preflight skip helper",
-);
-assert.match(
-  chatController,
-  /if\s*\(\s*!skipFastIntentPreflight\s*&&\s*apiMessage\s*&&\s*typeof\s+API\.getChatIntent\s*===\s*["']function["']\s*\)/,
-  "fast plain-chat should skip the intent preflight only through the explicit guard",
-);
-assert.match(
-  chatController,
-  /function\s+shouldSkipFastIntentPreflight[\s\S]*!isLikelyFileGenerationRequest[\s\S]*!isChartRequest[\s\S]*!isLikelyBufferedReasoningPrompt[\s\S]*!isImageRequest/,
-  "fast intent skip should retain local guards for file, chart, reasoning, and image prompts",
-);
 assert.doesNotMatch(
   chatController,
-  /shouldSkipFastIntentPreflight[\s\S]*!isLikelyCurrentInfoPrompt/,
-  "current-info prompts should not force an intent preflight without manual WebSurf",
+  /shouldSkipFastIntentPreflight|API\.getChatIntent|isLikelyFileGenerationRequest|isChartRequest|isImageRequest/,
+  "chat startup must not predict semantic intent",
 );
+assert.match(chatController, /onToolLifecycle/, "confirmed tool lifecycle events drive tool UI state");
 assert.match(
   chatController,
   /getChatContextData\(targetChatId,\s*\{\s*recentLimit:\s*requestExecutionMode\s*===\s*["']fast["']\s*\?\s*6\s*:\s*20,\s*\}\)/,

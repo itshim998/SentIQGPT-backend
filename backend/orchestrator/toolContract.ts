@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ExecutionMode } from "./executionProfile";
 
-export const SENTIQ_TOOL_REGISTRY_VERSION = "2026-07-pass1-v1";
+export const SENTIQ_TOOL_REGISTRY_VERSION = "2026-07-pass5-v1";
 export const MAX_TOOL_ARGUMENT_BYTES = 16 * 1024;
 export const MAX_TOOL_CALLS_PER_TURN = 4;
 
@@ -21,9 +21,6 @@ export type SentIQToolName =
   | "chart_gen"
   | "file_gen"
   | "memory_update";
-
-// Compatibility alias retained while the legacy planner remains active.
-export type ModelOwnedToolName = SentIQToolName;
 
 export type ToolAuthorization = "guest" | "authenticated" | "entitled";
 export type ToolHandoff = "assistant_continue" | "terminal_structured";
@@ -95,7 +92,11 @@ const schemas = {
   image_gen: z.object({ prompt: boundedText }).strict(),
   chart_gen: z.object({ request: boundedText }).strict(),
   file_gen: z.object({ request: boundedText, format: fileFormat.optional() }).strict(),
-  memory_update: z.object({ content: boundedText, scope: z.enum(["global", "chat"]).optional() }).strict(),
+  memory_update: z.object({
+    content: boundedText,
+    type: z.enum(["identity", "preference", "project"]),
+    scope: z.enum(["global", "chat"]),
+  }).strict(),
 } as const;
 
 const objectSchema = (
@@ -181,9 +182,10 @@ export const SENTIQ_TOOL_REGISTRY: readonly ToolDefinition[] = [
     name: "memory_update",
     description: "Store an explicit user request to remember durable identity, preference, or project information.",
     inputSchema: objectSchema({
-      content: stringProperty("The information the user explicitly asked SentIQ to remember."),
-      scope: stringProperty("Optional memory scope.", { enum: ["global", "chat"] }),
-    }, ["content"]),
+      content: stringProperty("A concise durable fact the user explicitly asked SentIQ to remember."),
+      type: stringProperty("The durable memory category.", { enum: ["identity", "preference", "project"] }),
+      scope: stringProperty("Use chat only when the user limits the memory to this chat; otherwise use global.", { enum: ["global", "chat"] }),
+    }, ["content", "type", "scope"]),
     resultSchema: objectSchema({ memory: { type: "object" } }, ["memory"]),
     authorization: "authenticated",
     handoff: "terminal_structured",
@@ -191,9 +193,6 @@ export const SENTIQ_TOOL_REGISTRY: readonly ToolDefinition[] = [
     isAvailable: authenticated,
   }),
 ] as const;
-
-// Compatibility export retained for the legacy planner and its tests.
-export const MODEL_OWNED_TOOL_CONTRACTS = SENTIQ_TOOL_REGISTRY;
 
 const REGISTRY_BY_NAME = new Map<SentIQToolName, ToolDefinition>(
   SENTIQ_TOOL_REGISTRY.map((tool) => [tool.name, tool]),
@@ -306,26 +305,4 @@ export function normalizeAssistantTurn(
     return { kind: "tool_calls", calls: validateModelToolCalls(candidate.calls, context, allowedTools) };
   }
   throw new Error("Assistant turn kind is unsupported.");
-}
-
-export function getAllowedModelOwnedTools(_mode: ExecutionMode | undefined): readonly ModelOwnedToolName[] {
-  return SENTIQ_TOOL_REGISTRY.map((tool) => tool.name);
-}
-
-export function isModelOwnedToolAllowed(
-  toolName: string,
-  _mode: ExecutionMode | undefined,
-): toolName is ModelOwnedToolName {
-  return isSentIQToolName(toolName);
-}
-
-export function legacyRouteForModelOwnedTool(toolName: ModelOwnedToolName): string {
-  switch (toolName) {
-    case "web_surf": return "web_search";
-    case "image_gen": return "image_generation";
-    case "chart_gen": return "chart_generation";
-    case "file_gen": return "file_generation";
-    case "memory_update": return "memory_update";
-    default: return "normal_chat";
-  }
 }

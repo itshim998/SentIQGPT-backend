@@ -181,10 +181,6 @@ GROQ_API_KEYS = [
 GROQ_API_KEYS = [k for k in GROQ_API_KEYS if k]
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", "openai/gpt-oss-120b")
-MASTER_ROUTER_MODEL = os.getenv(
-    "MASTER_ROUTER_MODEL",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-)
 
 # --- Smart model routing aliases (resolved to provider-native model IDs) ---
 GEMINI_FAST_MODEL = os.getenv("SMART_MODEL_GEMINI_FAST", GEMINI_STANDARD_MODEL)
@@ -200,12 +196,6 @@ PRODUCT_NAME = "SentIQ Chat"
 GPT_OSS_SYSTEM_PROMPT = (
     f"You are {PRODUCT_NAME}, a grounded AI assistant. "
     "Provide accurate, concise, well-structured answers."
-)
-MASTER_ROUTER_SYSTEM_PROMPT = (
-    f"You are the Master Routing AI for {PRODUCT_NAME}. "
-    "Your task is not to answer user prompts. "
-    "Determine the minimum sufficient specialized model while minimizing unnecessary cost. "
-    "Output strict JSON only."
 )
 GPT_OSS_DEFAULT_MAX_COMPLETION_TOKENS = 2000
 GPT_OSS_REASONING_EFFORTS = {"low", "medium"}
@@ -648,6 +638,14 @@ def _cache_set(key: str, value: Any) -> None:
     Writes to memory cache immediately for fast subsequent reads.
     Disk write happens in background thread to avoid blocking.
     """
+    # Never cache an accepted product tool selection. This prevents replaying
+    # terminal or stateful side effects while still allowing tool-aware turns
+    # that answered with ordinary text to reuse their isolated cache entry.
+    if isinstance(value, dict):
+        assistant_turn = value.get("assistant_turn")
+        if isinstance(assistant_turn, dict) and assistant_turn.get("kind") == "tool_calls":
+            return
+
     # Tier 1: Write to memory cache (instant)
     _memory_cache.set(key, value)
     
@@ -680,8 +678,6 @@ GROQ_TASKS = {
     "memory_classify",
     "memory_summarize",
     "memory_compress",
-    "route_classify",
-    "master_route",
 }
 
 CHATLIKE_TASKS = {"chat", "general", "math_reasoning"}
@@ -808,12 +804,6 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
 # Simulation (safe dev mode)
 # ==============================
 def simulated_response(prompt: str, task: str) -> str:
-    if task == "master_route":
-        return json.dumps({
-            "selected_model": "general_model",
-            "confidence": 0.0,
-            "reason": "simulated fallback",
-        })
     if _should_request_worked_explanation(prompt=prompt, task=task, model_override=None):
         return json.dumps({
             "explanation": "Step 1: Work through the problem in concise user-facing steps.",
@@ -1835,7 +1825,7 @@ def _call_groq(
         raw_response = client.chat.completions.with_raw_response.create(
             model=resolved_model,
             messages=[
-                {"role": "system", "content": MASTER_ROUTER_SYSTEM_PROMPT},
+                {"role": "system", "content": GPT_OSS_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.5,
@@ -2508,10 +2498,6 @@ def call_llm_router(
     default_provider = prefer or get_provider_for_task(task)
     provider, resolved_override = resolve_model_override(model_override, default_provider)
     model = resolved_override or _default_model_for_provider(provider)
-    if task == "master_route":
-        provider = "groq"
-        resolved_override = resolved_override or MASTER_ROUTER_MODEL
-        model = resolved_override
     actual_model_used = model
     fallback_triggered = False
     fallback_reason = None
@@ -2576,7 +2562,7 @@ def call_llm_router(
         str(sentiq_tool_request.get("tool_choice_policy") or "") if sentiq_tool_request else None,
         get_sentiq_tool_capability(provider, model).get("reason") if sentiq_tool_request else None,
     )
-    cache_enabled = sentiq_tool_request is None
+    cache_enabled = True
     cached = _cache_get(key) if cache_enabled else None
     if cached is not None:
         logger.info("Cache hit for task=%s provider=%s", task, provider)
@@ -2676,7 +2662,7 @@ def call_llm_router(
                     resolved_override,
                     max_output_tokens,
                     effective_reasoning_effort,
-                    response_format_json=task == "master_route",
+                    response_format_json=False,
                     execution_mode=execution_mode,
                     enable_builtin_tools=task in CHATLIKE_TASKS and not bool(groq_sentiq_tool_request),
                     sentiq_tool_request=groq_sentiq_tool_request,

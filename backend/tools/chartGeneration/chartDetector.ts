@@ -8,7 +8,6 @@
 // latency low for chart routing decisions.
 
 import type { ChartType, DataSourceType, ChartIntent } from "./types";
-import { detectCodeQuery } from "../../orchestrator/modelRouter";
 
 // ==============================
 // Pattern tables
@@ -29,44 +28,6 @@ const CHART_TYPE_PATTERNS: ReadonlyArray<{ readonly pattern: RegExp; readonly ty
   { pattern: /\bline\s*(?:graph|chart|plot)?\b/i, type: "line" },
 ];
 
-const CONCRETE_CHART_REQUEST_PATTERNS: ReadonlyArray<RegExp> = [
-  /\bscatter\s*(?:plot|chart|graph)\b/i,
-  /\bbar\s*(?:chart|graph|plot)\b/i,
-  /\bline\s*(?:graph|chart|plot)\b/i,
-  /\bpie\s*(?:chart|graph|plot)\b/i,
-  /\bbox\s*(?:plot|chart)\b/i,
-  /\bhistogram\b/i,
-  /\bheat\s*map\b/i,
-  /\btime[\s-]?series\s*(?:plot|chart|graph)?\b/i,
-  /\bpca\s*(?:plot|chart)\b/i,
-  /\bcluster(?:ing)?\s*(?:plot|visualization|chart)\b/i,
-  /\bregression\s*(?:plot|line|chart)\b/i,
-  /\bdistribution\s*(?:plot|chart|graph)\b/i,
-];
-
-const EXPLICIT_CHART_ACTION_PATTERNS: ReadonlyArray<RegExp> = [
-  /\b(?:generate|create|show|make|plot|visualize|visualise|draw)\b[\s\S]{0,80}\b(?:chart|graph|plot|visualization)\b/i,
-  /\b(?:chart|graph|plot|visualization)\b[\s\S]{0,40}\b(?:for|of|with|showing)\b/i,
-];
-
-const DATA_VISUALIZATION_PATTERNS: ReadonlyArray<RegExp> = [
-  /\bdata(?:set)?\s+visuali[sz]ation\b/i,
-  /\bvisuali[sz]e\s+(?:the\s+)?(?:data|dataset|results?|distribution|trend|metrics?)\b/i,
-  /\b(?:data|dataset|results?|distribution|trend|metrics?)\b[\s\S]{0,40}\b(?:chart|graph|plot|visualization)\b/i,
-];
-
-const BUILD_REQUEST_PATTERNS: ReadonlyArray<RegExp> = [
-  /\b(?:code|build|create|develop|design(?:\s+and\s+build)?)\b/i,
-  /\b(?:html\s+page|website|portfolio|landing\s+page|app|component|ui|ux|hero\s+section)\b/i,
-  /\b(?:next\.js|react|tailwind|gsap|framer\s+motion|three\.js|typescript)\b/i,
-];
-
-function looksLikeCodingBuildRequest(message: string): boolean {
-  if (detectCodeQuery(message)) return true;
-  const hits = BUILD_REQUEST_PATTERNS.filter((pat) => pat.test(message)).length;
-  return hits >= 2;
-}
-
 function extractInlineStaticValues(message: string): number[] | null {
   const candidate = message.match(/\b(?:comparing|compare|values?|data|with|of|for)\b([\s\S]{0,140})/i)?.[1] ?? message;
   const values = [...candidate.matchAll(/[-+]?\d+(?:\.\d+)?/g)]
@@ -83,16 +44,6 @@ function extractInlineStaticValues(message: string): number[] | null {
  * Returns true if the user message appears to be requesting a chart or
  * data visualization.
  */
-export function isChartRequest(message: string): boolean {
-  if (!message.trim()) return false;
-  if (CONCRETE_CHART_REQUEST_PATTERNS.some((pat) => pat.test(message))) return true;
-  if (looksLikeCodingBuildRequest(message)) return false;
-  return (
-    EXPLICIT_CHART_ACTION_PATTERNS.some((pat) => pat.test(message)) ||
-    DATA_VISUALIZATION_PATTERNS.some((pat) => pat.test(message))
-  );
-}
-
 /**
  * Extract the chart type from a message (defaults to "scatter" when
  * no specific chart keyword is matched).

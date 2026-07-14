@@ -9,16 +9,14 @@ import {
 } from "./ai/modelToolExecution";
 import {
   getEnabledAutomaticSentIQTools,
-  isAutomaticConversationalClarificationEnabled,
   isModelChartSelectionEnabled,
-  isModelConversationalClarificationEnabled,
   isModelFileSelectionEnabled,
   isModelImageSelectionEnabled,
   isModelMemorySelectionEnabled,
   isModelWebSurfSelectionEnabled,
 } from "./ai/modelToolCapability";
-import { resolveHardRoutedPlan } from "./orchestrator/planner";
-import { isDuplicateMemoryCandidate, validateAutomaticMemoryUpdateRequest } from "./ai/modelToolMemorySafety";
+import { planTask } from "./orchestrator/planner";
+import { isDuplicateMemoryCandidate, validateAutomaticMemoryUpdateContent } from "./ai/modelToolMemorySafety";
 import { fetchPollinationsImage } from "./tools/imageGeneration/pollinationsUtils";
 import { validateSingleAutomaticToolCall, type ProviderDelta, type ValidatedToolCall } from "./orchestrator/toolContract";
 
@@ -37,7 +35,6 @@ async function main(): Promise<void> {
   assert.equal(isModelChartSelectionEnabled(undefined), false);
   assert.equal(isModelFileSelectionEnabled(undefined), false);
   assert.equal(isModelMemorySelectionEnabled(undefined), false);
-  assert.equal(isModelConversationalClarificationEnabled(undefined), false);
   assert.equal(isModelWebSurfSelectionEnabled("true"), true);
   assert.equal(isModelImageSelectionEnabled("TRUE"), true);
 
@@ -48,7 +45,6 @@ async function main(): Promise<void> {
     chart: process.env.SENTIQ_MODEL_CHART_SELECTION_ENABLED,
     file: process.env.SENTIQ_MODEL_FILE_SELECTION_ENABLED,
     memory: process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED,
-    clarification: process.env.SENTIQ_MODEL_CONVERSATIONAL_CLARIFICATION_ENABLED,
     groq: process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
   };
   process.env.SENTIQ_MODEL_TOOL_REGISTRY_ENABLED = "true";
@@ -57,13 +53,10 @@ async function main(): Promise<void> {
   process.env.SENTIQ_MODEL_CHART_SELECTION_ENABLED = "false";
   process.env.SENTIQ_MODEL_FILE_SELECTION_ENABLED = "false";
   process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED = "false";
-  process.env.SENTIQ_MODEL_CONVERSATIONAL_CLARIFICATION_ENABLED = "true";
   process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = "false";
   try {
     assert.deepEqual(getEnabledAutomaticSentIQTools(), [], "selection flags require an enabled provider transport");
-    assert.equal(isAutomaticConversationalClarificationEnabled(), false, "clarification rollback stays active without provider transport");
     process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = "true";
-    assert.equal(isAutomaticConversationalClarificationEnabled(), true);
     assert.deepEqual(getEnabledAutomaticSentIQTools(), ["web_surf"]);
     assert.deepEqual(
       buildSentIQToolTransportRequest({
@@ -184,7 +177,7 @@ async function main(): Promise<void> {
     const remainingCalls: readonly ValidatedToolCall[] = [
       { id: "call_chart_1", name: "chart_gen", arguments: { request: "Plot revenue by month" }, index: 0 },
       { id: "call_file_1", name: "file_gen", arguments: { request: "Create the report", format: "pdf" }, index: 0 },
-      { id: "call_memory_1", name: "memory_update", arguments: { content: "User prefers concise answers", scope: "chat" }, index: 0 },
+      { id: "call_memory_1", name: "memory_update", arguments: { content: "User prefers concise answers.", type: "preference", scope: "chat" }, index: 0 },
     ];
     const executed: string[] = [];
     for (const [remainingIndex, remainingCall] of remainingCalls.entries()) {
@@ -196,14 +189,14 @@ async function main(): Promise<void> {
         executeImage: async () => assert.fail("remaining tool must not execute image generation"),
         executeChart: async (request) => { executed.push(`chart:${request}`); return { success: true }; },
         executeFile: async (request, format) => { executed.push(`file:${format}:${request}`); return { success: true }; },
-        executeMemory: async (content, scope) => { executed.push(`memory:${scope}:${content}`); return { success: true }; },
+        executeMemory: async (content, type, scope) => { executed.push(`memory:${type}:${scope}:${content}`); return { success: true }; },
       });
       assert.equal(dispatched.events.at(-1)?.type, "tool_result");
     }
     assert.deepEqual(executed, [
       "chart:Plot revenue by month",
       "file:pdf:Create the report",
-      "memory:chat:User prefers concise answers",
+      "memory:preference:chat:User prefers concise answers.",
     ]);
     await assert.rejects(
       () => dispatchAutomaticModelToolCall<{ success: boolean }>({
@@ -221,34 +214,24 @@ async function main(): Promise<void> {
         && error.events.at(-1)?.type === "tool_error",
     );
 
-    assert.equal(validateAutomaticMemoryUpdateRequest("Remember that my name is Mira"), "Remember that my name is Mira");
-    assert.throws(
-      () => validateAutomaticMemoryUpdateRequest("My name is Mira"),
-      /Explicit memory intent/,
-      "a useful but vague personal statement cannot trigger an automatic write",
-    );
+    assert.equal(validateAutomaticMemoryUpdateContent("  User's name is Mira.  "), "User's name is Mira.");
+    assert.throws(() => validateAutomaticMemoryUpdateContent("   "), /required/);
     assert.equal(isDuplicateMemoryCandidate(
       [{ type: "preference", summary: "User prefers concise answers.", scope: "chat" }],
       { type: "preference", summary: " user prefers concise answers. " },
       "chat",
     ), true);
 
-    assert.equal(resolveHardRoutedPlan({
+    assert.equal((await planTask({
       userMessage: "Latest FIFA updates of 2026",
-      hasWebSearch: true,
-      modelWebSurfSelection: true,
-    }), null);
-    assert.equal(resolveHardRoutedPlan({
+    })).steps[0]?.tool, "conversation");
+    assert.equal((await planTask({
       userMessage: "Generate an image of a puppy",
-      hasWebSearch: true,
-      modelImageSelection: true,
-    }), null);
-    assert.equal(resolveHardRoutedPlan({
+    })).steps[0]?.tool, "conversation");
+    assert.equal((await planTask({
       userMessage: "Latest FIFA updates of 2026",
-      hasWebSearch: true,
       explicitWebSearchMode: "basic",
-      modelWebSurfSelection: true,
-    })?.steps[0]?.tool, "web_search");
+    })).steps[0]?.tool, "web_search");
 
     const serverSource = readFileSync(resolve(__dirname, "server.ts"), "utf8");
     const executorSource = readFileSync(resolve(__dirname, "orchestrator", "toolExecutor.ts"), "utf8");
@@ -262,7 +245,8 @@ async function main(): Promise<void> {
     assert.match(executionSource, /tool_error/, "tool failures emit a normalized lifecycle");
     assert.match(serverSource, /messageType: "text"[\s\S]*previewJson: \{ chart: result\.chart \}/, "chart payloads persist in the existing idempotent text-message envelope");
     assert.match(frontendSource, /preview\.chart[\s\S]*normalizeChartMeta\(preview\.chart\)/, "reloaded chart messages hydrate structured chart metadata");
-    assert.match(serverSource, /!isAutomaticConversationalClarificationEnabled\(\)/, "new model-native turns bypass the dedicated clarification request");
+    assert.doesNotMatch(serverSource, /\/api\/chat\/intent|clarification_response/, "legacy intent preflight and structured clarification protocol are removed");
+    assert.match(frontendSource, /onToolLifecycle/, "frontend loaders consume confirmed tool lifecycle events");
 
     const originalFetch = globalThis.fetch;
     let providerSignalAborted = false;
@@ -293,8 +277,6 @@ async function main(): Promise<void> {
     else process.env.SENTIQ_MODEL_FILE_SELECTION_ENABLED = previous.file;
     if (previous.memory === undefined) delete process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED;
     else process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED = previous.memory;
-    if (previous.clarification === undefined) delete process.env.SENTIQ_MODEL_CONVERSATIONAL_CLARIFICATION_ENABLED;
-    else process.env.SENTIQ_MODEL_CONVERSATIONAL_CLARIFICATION_ENABLED = previous.clarification;
     if (previous.groq === undefined) delete process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED;
     else process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = previous.groq;
   }

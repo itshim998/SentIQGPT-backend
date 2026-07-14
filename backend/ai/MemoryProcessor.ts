@@ -7,7 +7,6 @@ import {
   strictParseJsonObject,
 } from "./PromptBuilders";
 import { generateEmbedding } from "../memory/memoryEmbedding";
-import { detectExplicitMemoryWriteIntent, detectPersonalMemoryType } from "../orchestrator/queryClassifier";
 
 // SentIQ Chat v1 — Memory Processor
 //
@@ -34,77 +33,20 @@ export interface MemoryCompression {
 
 type SupportedMemoryType = "identity" | "preference" | "project";
 type MemoryFailureReason =
-  | "explicit_intent_missing"
   | "unsupported_memory_type"
   | "knowledge_memory_skipped"
   | "empty_summary";
 
-function cleanMemoryFragment(value: string): string {
-  return value
-    .replace(/\s+/g, " ")
-    .replace(/^[\s"'`]+|[\s"'`]+$/g, "")
-    .replace(/[.!?;:,]+$/g, "")
-    .trim();
-}
-
-function capitalizeSentence(value: string): string {
-  const trimmed = cleanMemoryFragment(value);
-  if (!trimmed) return "";
-  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
-}
-
-function buildDeterministicMemorySummary(message: string, memoryType: SupportedMemoryType): MemorySummary | null {
-  const nameMatch = message.match(/\bmy\s+name\s+is\s+([^.!?\n,;]+)/i);
-  if (memoryType === "identity" && nameMatch?.[1]) {
-    const name = cleanMemoryFragment(nameMatch[1]);
-    if (name) return { summary: `User's name is ${name}.`, importance: 9 };
-  }
-
-  const preferenceMatch = message.match(/\bi\s+(prefer|like|love|dislike|hate)\s+([^.!?\n;]+)/i);
-  if (memoryType === "preference" && preferenceMatch?.[1] && preferenceMatch?.[2]) {
-    const verbByInput: Record<string, string> = {
-      prefer: "prefers",
-      like: "likes",
-      love: "loves",
-      dislike: "dislikes",
-      hate: "hates",
-    };
-    const object = cleanMemoryFragment(preferenceMatch[2]);
-    if (object) return { summary: `User ${verbByInput[preferenceMatch[1].toLowerCase()] || "prefers"} ${object}.`, importance: 7 };
-  }
-
-  const projectMatch = message.match(/\b(working\s+on|building|developing)\s+([^.!?\n;]+)/i);
-  if (memoryType === "project" && projectMatch?.[1] && projectMatch?.[2]) {
-    const action = projectMatch[1].toLowerCase().replace(/\s+/g, " ");
-    const project = cleanMemoryFragment(projectMatch[2]);
-    if (project) return { summary: `User is ${action} ${project}.`, importance: 8 };
-  }
-
-  const stripped = cleanMemoryFragment(
-    message
-      .replace(/\b(?:please\s+)?(?:remember|save|store|keep)\b(?:\s+(?:that|this|it))?/gi, "")
-      .replace(/\b(?:do\s+not|don't)\s+forget(?:\s+(?:that|this|it))?/gi, "")
-      .replace(/\bfor\s+future\s+reference\b/gi, ""),
-  );
-  if (stripped.length < 4) return null;
-
-  if (/^my\s+/i.test(stripped)) {
-    return {
-      summary: `User's ${cleanMemoryFragment(stripped.replace(/^my\s+/i, ""))}.`,
-      importance: memoryType === "identity" ? 8 : 7,
-    };
-  }
-  if (/^i\s+am\s+/i.test(stripped)) {
-    return {
-      summary: `User is ${cleanMemoryFragment(stripped.replace(/^i\s+am\s+/i, ""))}.`,
-      importance: memoryType === "identity" ? 8 : 7,
-    };
-  }
-
-  return {
-    summary: `${capitalizeSentence(stripped)}.`,
-    importance: memoryType === "project" ? 8 : 7,
-  };
+export async function prepareModelSelectedMemory(args: {
+  readonly content: string;
+  readonly type: SupportedMemoryType;
+  readonly generateEmbedding?: boolean;
+}): Promise<{ type: SupportedMemoryType; summary: string; importance: number; embedding?: readonly number[] }> {
+  const summary = args.content.replace(/\s+/g, " ").trim();
+  if (!summary) throw new Error("Memory content is required.");
+  const importance = args.type === "identity" ? 9 : args.type === "project" ? 8 : 7;
+  const embedding = args.generateEmbedding === false ? undefined : await generateEmbedding(summary);
+  return { type: args.type, summary, importance, embedding };
 }
 
 // ==============================
@@ -223,9 +165,6 @@ export async function processMessageForMemory(args: {
     embedding?: readonly number[];
   };
 }> {
-  const explicitWrite = detectExplicitMemoryWriteIntent(args.message);
-  const deterministicType = detectPersonalMemoryType(args.message);
-
   // Step 1: Classify
   const classification = await classifyMemory({
     message: args.message,
@@ -247,18 +186,18 @@ export async function processMessageForMemory(args: {
       ? classification.type
       : null;
 
-  const memType = deterministicType ?? classifiedType;
+  const memType = classifiedType;
   const forceStore = args.forceStore === true;
-  const shouldStore = (explicitWrite || forceStore) && !!memType;
+  const shouldStore = (classification.should_store || forceStore) && !!memType;
 
   if (!shouldStore) {
     console.log(
-      `[MEMORY] storage skipped: explicitWrite=${explicitWrite} classifiedStore=${classification.should_store} ` +
+      `[MEMORY] storage skipped: classifiedStore=${classification.should_store} ` +
       `type=${memType ?? "null"} forceStore=${forceStore}`,
     );
     return {
       stored: false,
-      failure_reason: memType ? "explicit_intent_missing" : "unsupported_memory_type",
+      failure_reason: "unsupported_memory_type",
     };
   }
 
@@ -277,14 +216,6 @@ export async function processMessageForMemory(args: {
     existingMemories: typeMemories,
     userId: args.userId,
   });
-
-  if (!summary.summary && deterministicType) {
-    const deterministicSummary = buildDeterministicMemorySummary(args.message, deterministicType);
-    if (deterministicSummary) {
-      summary = deterministicSummary;
-      console.log(`[MEMORY] deterministic summary fallback used`);
-    }
-  }
 
   console.log(`[MEMORY] summary generated: "${summary.summary.slice(0, 80)}" (importance: ${summary.importance})`);
 

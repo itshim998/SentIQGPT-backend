@@ -17,6 +17,7 @@ export function resolveMemoryScopeForRequest(
   userMessage: string,
 ): MemoryScope {
   if (memory?.scope === "chat") return "chat";
+  if (memory?.scope === "global") return "global";
   if (isChatScopedMemoryRequest(userMessage)) return "chat";
   return "global";
 }

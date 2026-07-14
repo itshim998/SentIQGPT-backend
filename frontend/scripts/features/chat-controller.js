@@ -13,17 +13,6 @@ import {
 import { getChatDomRefs } from "./chat/dom-refs.js";
 import { resolveDeepResearchCardState } from "./deep-research-state.js";
 import {
-  buildGuestFileGenerationInstruction,
-  detectClarificationDownloadFormat,
-  detectLoaderKindForPrompt,
-  detectRequestedFileFormat,
-  isChartRequest,
-  isImageRequest,
-  isLikelyBufferedReasoningPrompt,
-  isLikelyCurrentInfoRequest,
-  isLikelyFileGenerationRequest,
-} from "./chat/intent-detection.js";
-import {
   MAX_CLIENT_UPLOAD_BYTES,
   SUPPORTED_UPLOAD_EXTENSIONS,
   SUPPORTED_UPLOAD_MIME_PREFIXES,
@@ -60,7 +49,6 @@ import {
   let composerDragDepth = 0;
   let currentSessionFiles = []; // Tracks uploaded files for current-chat context
   let currentSessionImageAttachments = []; // Tracks recent image inputs for follow-up questions
-  const pendingClarifications = new Map();
   let selectionButton = null;
   let pendingSelectionPayload = null;
   let pendingComposerSelectionContext = null;
@@ -1382,7 +1370,6 @@ import {
 
   function getBaseComposerPlaceholder() {
     if (isNameCaptureRequired()) return "Add your name to continue...";
-    if (getPendingClarification()) return "Enter your custom answer...";
     if (imageMode) return "Describe the image you want to generate...";
     if (webSearchModeOverride) return "Ask about something current on the web...";
     return composerHintIntroConsumed ? `Message ${PRODUCT_NAME}` : "";
@@ -1397,7 +1384,6 @@ import {
       && !chatInput.disabled
       && !chatInput.value.trim()
       && composerAttachments.length === 0
-      && !getPendingClarification()
       && !imageMode
       && !webSearchModeOverride
       && !isNameCaptureRequired()
@@ -1729,10 +1715,6 @@ import {
     const pendingState = chatStates.get(fromChatId);
     if (pendingState && !chatStates.has(toChatId)) chatStates.set(toChatId, pendingState);
     chatStates.delete(fromChatId);
-    if (pendingClarifications.has(fromChatId) && !pendingClarifications.has(toChatId)) {
-      pendingClarifications.set(toChatId, pendingClarifications.get(fromChatId));
-    }
-    pendingClarifications.delete(fromChatId);
     if (chatRenderSignatures.has(fromChatId) && !chatRenderSignatures.has(toChatId)) {
       chatRenderSignatures.set(toChatId, chatRenderSignatures.get(fromChatId));
     }
@@ -2271,10 +2253,6 @@ import {
       const pendingState = chatStates.get(pendingChatId);
       if (pendingState && !chatStates.has(actualChat.id)) chatStates.set(actualChat.id, pendingState);
       chatStates.delete(pendingChatId);
-      if (pendingClarifications.has(pendingChatId) && !pendingClarifications.has(actualChat.id)) {
-        pendingClarifications.set(actualChat.id, pendingClarifications.get(pendingChatId));
-      }
-      pendingClarifications.delete(pendingChatId);
       if (chatRenderSignatures.has(pendingChatId) && !chatRenderSignatures.has(actualChat.id)) {
         chatRenderSignatures.set(actualChat.id, chatRenderSignatures.get(pendingChatId));
       }
@@ -2579,7 +2557,6 @@ import {
     currentChatId = null;
     currentSessionFiles = [];
     currentSessionImageAttachments = [];
-    pendingClarifications.clear();
     chatStates.clear();
     chatRenderSignatures.clear();
     if (!signedIn) {
@@ -3098,6 +3075,7 @@ import {
     image_generation: "Generating image",
     file_generation: "Reading file",
     chart_generation: "Preparing chart",
+    memory_update: "Saving memory",
   };
   const ACTIVITY_LOADER_KIND = {
     thinking: "loader-text",
@@ -3106,6 +3084,7 @@ import {
     image_generation: "loader-image",
     file_generation: "loader-generic",
     chart_generation: "loader-chart",
+    memory_update: "loader-generic",
   };
   function getActivityBaseText(mode = "thinking") {
     return ACTIVITY_BASE_TEXT[mode] || ACTIVITY_BASE_TEXT.thinking;
@@ -3140,6 +3119,8 @@ import {
         ? "file_generation"
       : normalized === "chart_generation"
         ? "chart_generation"
+      : normalized === "memory_update"
+        ? "memory_update"
       : normalized === "math_reasoning" || normalized === "reasoning"
         ? "reasoning"
         : "thinking";
@@ -3147,7 +3128,7 @@ import {
       ? "loader-image"
       : normalized === "chart_generation"
         ? "loader-chart"
-        : normalized === "math_reasoning" || normalized === "reasoning" || normalized === "web_search" || normalized === "file_generation"
+        : normalized === "math_reasoning" || normalized === "reasoning" || normalized === "web_search" || normalized === "file_generation" || normalized === "memory_update"
           ? "loader-generic"
           : normalized === "image_generation" || normalized === "image"
             ? "loader-image"
@@ -3169,7 +3150,9 @@ import {
   // Reusable loader controller used across send, stream, and image flows.
   const SentIQLoaderEngine = {
     resolveKind(prompt, options = {}) {
-      return detectLoaderKindForPrompt(prompt, options);
+      void prompt;
+      void options;
+      return "loader-text";
     },
     showForPrompt(prompt, options = {}) {
       const loaderKind = this.resolveKind(prompt, options);
@@ -4491,78 +4474,6 @@ import {
     container.appendChild(buildChartError("Chart payload was received, but no renderable data was found."));
   }
 
-  function renderClarificationContent(container, meta, chatId) {
-    const payload = meta?.payload || meta || {};
-    container.innerHTML = "";
-    container.classList.add("clarification-panel-host");
-
-    const panel = document.createElement("div");
-    panel.className = "clarification-panel";
-
-    const question = document.createElement("p");
-    question.className = "clarification-question";
-    question.textContent = payload.question || "Could you clarify what you need?";
-    panel.appendChild(question);
-
-    const options = Array.isArray(payload.options) ? payload.options : [];
-    if (options.length > 0) {
-      const optionList = document.createElement("div");
-      optionList.className = "clarification-options";
-      options.forEach((option) => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "clarification-option-btn";
-        const label = document.createElement("span");
-        label.className = "clarification-option-label";
-        label.textContent = option.label;
-        btn.appendChild(label);
-        if (option.description) {
-          const desc = document.createElement("span");
-          desc.className = "clarification-option-desc";
-          desc.textContent = option.description;
-          btn.appendChild(desc);
-        }
-        btn.addEventListener("click", () => {
-          if (submitClarificationOption(chatId, payload.id, option)) {
-            optionList.querySelectorAll("button").forEach((item) => { item.disabled = true; });
-          }
-        });
-        optionList.appendChild(btn);
-      });
-      panel.appendChild(optionList);
-    }
-
-    const footer = document.createElement("div");
-    footer.className = "clarification-footer";
-    let hint = null;
-    if (options.length > 0) {
-      hint = document.createElement("span");
-      hint.className = "clarification-custom-hint";
-      hint.textContent = payload.custom_answer_prompt || "Or enter a custom answer in the message bar.";
-      footer.appendChild(hint);
-    }
-
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "clarification-cancel-btn";
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("click", () => {
-      clearPendingClarification(chatId);
-      container.querySelectorAll("button").forEach((item) => { item.disabled = true; });
-      if (hint) {
-        hint.textContent = "Clarification cancelled. Type a new message to continue.";
-      } else {
-        const cancelled = document.createElement("span");
-        cancelled.className = "clarification-custom-hint";
-        cancelled.textContent = "Clarification cancelled. Type a new message to continue.";
-        footer.insertBefore(cancelled, cancel);
-      }
-    });
-    footer.appendChild(cancel);
-    panel.appendChild(footer);
-    container.appendChild(panel);
-  }
-
   async function getChatContextData(chatId, options = {}) {
     const recentLimit = Number.isFinite(Number(options.recentLimit))
       ? Math.max(1, Math.min(50, Number(options.recentLimit)))
@@ -4648,111 +4559,6 @@ import {
     return shouldReuseCurrentSessionImages(message) ? attachments : [];
   }
 
-  function normalizeClarificationPayload(response = {}) {
-    const payload = response?.clarification || response?.intent_clarification || null;
-    if (!payload || typeof payload !== "object") return null;
-    const question = String(payload.question || "").trim();
-    if (!question) return null;
-    const options = Array.isArray(payload.options)
-      ? payload.options
-        .map((option, index) => ({
-          id: String(option?.id || `option_${index + 1}`).trim() || `option_${index + 1}`,
-          label: String(option?.label || "").trim(),
-          description: String(option?.description || "").trim(),
-        }))
-        .filter((option) => option.label)
-        .slice(0, 4)
-      : [];
-    return {
-      id: String(payload.id || Storage.generateId()).trim(),
-      original_message: String(payload.original_message || "").trim(),
-      previous_answers: Array.isArray(payload.previous_answers)
-        ? payload.previous_answers.map((answer) => String(answer || "").trim()).filter(Boolean).slice(0, 2)
-        : [],
-      question,
-      options,
-      allow_custom_answer: payload.allow_custom_answer !== false,
-      custom_answer_prompt: String(payload.custom_answer_prompt || "Or enter a custom answer in the message bar.").trim(),
-      turn: Number.isFinite(Number(payload.turn)) ? Number(payload.turn) : 1,
-      max_turns: Number.isFinite(Number(payload.max_turns)) ? Number(payload.max_turns) : 2,
-      source: payload.source === "fallback" ? "fallback" : "model",
-    };
-  }
-
-  function cloneClarificationContext(context = {}) {
-    return {
-      recentMessages: Array.isArray(context.recentMessages) ? [...context.recentMessages] : [],
-      memories: Array.isArray(context.memories) ? [...context.memories] : [],
-      fileReferences: Array.isArray(context.fileReferences) ? context.fileReferences.map((item) => ({ ...item })) : [],
-      imageAttachments: Array.isArray(context.imageAttachments) ? context.imageAttachments.map((item) => ({ ...item })) : [],
-      webSearchMode: context.webSearchMode || null,
-    };
-  }
-
-  function clearPendingClarification(chatId = currentChatId) {
-    if (!chatId) return;
-    pendingClarifications.delete(chatId);
-    syncComposerHint();
-  }
-
-  function setPendingClarification(chatId, clarification, contextSnapshot) {
-    if (!chatId || !clarification) return;
-    const previous = pendingClarifications.get(chatId);
-    pendingClarifications.set(chatId, {
-      clarification,
-      contextSnapshot: cloneClarificationContext(contextSnapshot || previous?.contextSnapshot || {}),
-      answers: Array.isArray(clarification.previous_answers) ? [...clarification.previous_answers] : [],
-      inFlight: false,
-    });
-    syncComposerHint();
-  }
-
-  function getPendingClarification(chatId = currentChatId) {
-    return chatId ? pendingClarifications.get(chatId) || null : null;
-  }
-
-  function buildClarificationResponsePayload(state, answer, source, selectedOptionId = "") {
-    const clarification = state?.clarification || {};
-    const priorAnswers = Array.isArray(state?.answers) ? state.answers : [];
-    const options = Array.isArray(clarification.options)
-      ? clarification.options
-        .map((option) => ({
-          id: String(option?.id || "").trim(),
-          label: String(option?.label || "").trim(),
-          ...(option?.description ? { description: String(option.description).trim() } : {}),
-        }))
-        .filter((option) => option.id && option.label)
-        .slice(0, 4)
-      : [];
-    return {
-      clarification_id: clarification.id,
-      original_message: clarification.original_message,
-      question: clarification.question,
-      options,
-      answers: priorAnswers,
-      source,
-      ...(selectedOptionId ? { selected_option_id: selectedOptionId } : {}),
-    };
-  }
-
-  function submitClarificationOption(chatId, clarificationId, option) {
-    const state = getPendingClarification(chatId);
-    if (!state || !option?.label) return false;
-    if (clarificationId && state.clarification?.id !== clarificationId) return false;
-    if (state.inFlight) return false;
-    state.inFlight = true;
-    handleSend(null, {
-      message: option.label,
-      clarificationResponse: buildClarificationResponsePayload(state, option.label, "option", option.id),
-      clarificationContextSnapshot: state.contextSnapshot,
-      skipPendingFileProcessing: true,
-    }).finally(() => {
-      const current = getPendingClarification(chatId);
-      if (current === state) current.inFlight = false;
-    });
-    return true;
-  }
-
   function getResponseTrustMeta() {
     return null;
   }
@@ -4786,21 +4592,6 @@ import {
     if (renderInView) {
       hideActivityIndicator(targetChatId);
     }
-
-    const clarificationPayload = normalizeClarificationPayload(response);
-    if (response?.route === "clarification" && clarificationPayload) {
-      const clarificationMeta = { type: "clarification", payload: clarificationPayload, chatId: targetChatId };
-      setPendingClarification(targetChatId, clarificationPayload, renderOptions?.pendingClarificationContext);
-      if (renderInView) {
-        appendMessageBubble("assistant", assistantText, clarificationMeta, effectiveRenderOptions, {
-          animateReveal: true,
-        });
-      }
-      await persistChatMessage(targetChatId, "assistant", assistantText, null, assistantPersistOptions);
-      return assistantText || clarificationPayload.question;
-    }
-
-    clearPendingClarification(targetChatId);
 
     const fileMeta = normalizeGeneratedFileMeta(response?.file || (response?.type === "file" ? response : null), { chatId: targetChatId });
     if (response?.route === "file_generation" && hasRenderableGeneratedFile(fileMeta)) {
@@ -6751,8 +6542,6 @@ import {
         { ...renderOptions, mode: "web_search" }
       );
       contentDiv.appendChild(panel);
-    } else if (meta?.type === "clarification") {
-      renderClarificationContent(contentDiv, meta, meta.chatId || currentChatId);
     } else if (meta?.type === "message-attachments") {
       const attachments = Array.isArray(meta.attachments) ? meta.attachments : [];
       if (attachments.length > 0) {
@@ -9383,6 +9172,11 @@ import {
           if (visibleText) updateStreamingRender(visibleText, true);
         }
       },
+      setActivityMode(mode) {
+        const normalizedMode = ACTIVITY_BASE_TEXT[mode] ? mode : "thinking";
+        bubble.dataset.loaderKind = ACTIVITY_LOADER_KIND[normalizedMode] || "loader-text";
+        if (loaderCopy) loaderCopy.textContent = getActivityBaseText(normalizedMode);
+      },
       setThinking(thinking) { thinkingText = typeof thinking === "string" ? thinking : ""; },
       setWebSurfPresentation(payload) {
         webSurfPresentationPayload = getWebSurfPresentationVersion(payload) === 1 ? payload : null;
@@ -9459,26 +9253,6 @@ import {
     };
   }
 
-  function shouldSkipFastIntentPreflight({
-    message,
-    executionMode,
-    webSearchMode,
-    imageAttachments = [],
-    isClarificationAnswer = false,
-  } = {}) {
-    const text = String(message || "").trim();
-    return executionMode === "fast"
-      && Boolean(text)
-      && !isClarificationAnswer
-      && !webSearchMode
-      && imageAttachments.length === 0
-      && !isLikelyFileGenerationRequest(text)
-      && !isChartRequest(text)
-      && !isLikelyCurrentInfoRequest(text)
-      && !isLikelyBufferedReasoningPrompt(text)
-      && !isImageRequest(text);
-  }
-
   async function handleSend(retryMessage, options = {}) {
     const stopMeasure = startPerf("ui.chat.send", {
       retry: Boolean(retryMessage),
@@ -9532,32 +9306,6 @@ import {
         return;
       }
     }
-    const explicitClarificationResponse = options.clarificationResponse && typeof options.clarificationResponse === "object"
-      ? options.clarificationResponse
-      : null;
-    const pendingClarificationState = getPendingClarification(currentChatId);
-    let clarificationStateLockedForRequest = null;
-    let clarificationLockChatId = currentChatId;
-    if (message && pendingClarificationState?.inFlight && !explicitClarificationResponse) {
-      showToast("Please wait for the current clarification answer to finish.", "info", 2500);
-      stopMeasure("skipped", { reason: "clarification_in_flight" });
-      return;
-    }
-    const isClarificationAnswer = Boolean(message && (explicitClarificationResponse || pendingClarificationState));
-    let clarificationResponseForRequest = explicitClarificationResponse;
-    const clarificationContextSnapshot = options.clarificationContextSnapshot
-      || pendingClarificationState?.contextSnapshot
-      || null;
-    if (isClarificationAnswer && !clarificationResponseForRequest && pendingClarificationState) {
-      clarificationResponseForRequest = buildClarificationResponsePayload(
-        pendingClarificationState,
-        message,
-        "custom",
-      );
-      pendingClarificationState.inFlight = true;
-      clarificationStateLockedForRequest = pendingClarificationState;
-      clarificationLockChatId = currentChatId;
-    }
     hideWelcome();
     if (chatMessages) chatMessages.classList.add("has-messages");
     if (!retryMessage) markComposerHintIntroConsumed();
@@ -9569,12 +9317,12 @@ import {
     }
     debugLog("[UI] handleSend", { length: message.length, retry: Boolean(retryMessage) });
 
-    if (!isClarificationAnswer && deepResearchMode && message) {
+    if (deepResearchMode && message) {
       setDeepResearchMode(false);
       await handleDeepResearchSend(message);
       return;
     }
-    if (!isClarificationAnswer && imageMode && message) { setImageMode(false); await handleImageGeneration(message); return; }
+    if (imageMode && message) { setImageMode(false); await handleImageGeneration(message); return; }
 
     let apiMessage = message
       || selectedContextForRequest?.selected_text
@@ -9586,13 +9334,11 @@ import {
     const composerFileReferences = requestComposerAttachments
       .filter((attachment) => attachment.kind === "file" && attachment.fileReference)
       .map((attachment) => attachment.fileReference);
-    const imageAttachmentsForRequest = isClarificationAnswer && Array.isArray(clarificationContextSnapshot?.imageAttachments)
-      ? clarificationContextSnapshot.imageAttachments
-      : suppliedImageAttachments.length > 0
-        ? suppliedImageAttachments
-        : composerImageAttachments.length > 0
-          ? composerImageAttachments
-          : getCurrentImageAttachments(apiMessage);
+    const imageAttachmentsForRequest = suppliedImageAttachments.length > 0
+      ? suppliedImageAttachments
+      : composerImageAttachments.length > 0
+        ? composerImageAttachments
+        : getCurrentImageAttachments(apiMessage);
     const userMessageMeta = requestComposerAttachments.length > 0 || suppliedImageAttachments.length > 0
       ? buildMessageAttachmentMeta([
         ...requestComposerAttachments.map(toMessageAttachmentMeta),
@@ -9615,75 +9361,22 @@ import {
       );
     }
 
-    const originalApiMessage = apiMessage;
     const requestExecutionMode = normalizeExecutionMode(currentExecutionMode);
     const preliminaryWebSearchMode = getEffectiveWebSearchMode();
-    let routeIntent = null;
-    const skipFastIntentPreflight = shouldSkipFastIntentPreflight({
-      message: apiMessage,
-      executionMode: requestExecutionMode,
-      webSearchMode: preliminaryWebSearchMode,
-      imageAttachments: imageAttachmentsForRequest,
-      isClarificationAnswer,
-    });
-    if (!skipFastIntentPreflight && apiMessage && typeof API.getChatIntent === "function") {
-      try {
-        routeIntent = await API.getChatIntent(apiMessage, {
-          imageAttachments: imageAttachmentsForRequest,
-          webSearchMode: preliminaryWebSearchMode,
-          executionMode: requestExecutionMode,
-          clarificationResponse: clarificationResponseForRequest,
-        });
-      } catch (error) {
-        debugWarn("[UI] Chat intent preflight failed; using local fallback:", getSafeErrorMessage(error));
-      }
-    }
-    const intentRoute = routeIntent?.route || "";
-    const clarifiedDownloadFormat = detectClarificationDownloadFormat(clarificationResponseForRequest);
-    const typedClarificationDownloadFormat = isClarificationAnswer && /\bdownloadable\b/i.test(originalApiMessage)
-      ? detectRequestedFileFormat(originalApiMessage)
-      : null;
-    const requestedFileFormat = routeIntent?.file?.format || clarifiedDownloadFormat || typedClarificationDownloadFormat || detectRequestedFileFormat(originalApiMessage);
-    const fileGenerationPrompt = intentRoute === "file_generation"
-      || Boolean(clarifiedDownloadFormat || typedClarificationDownloadFormat)
-      || (!routeIntent && !isClarificationAnswer && isLikelyFileGenerationRequest(originalApiMessage));
-    const authenticatedFileGenerationRequired = fileGenerationPrompt && isAuthenticatedSession();
-    const htmlFileGenerationRequired = authenticatedFileGenerationRequired && requestedFileFormat === "html";
-    if (fileGenerationPrompt && !isAuthenticatedSession()) {
-      apiMessage = buildGuestFileGenerationInstruction(originalApiMessage, requestedFileFormat);
-    }
-    const chartResponseRequired = !authenticatedFileGenerationRequired && (
-      intentRoute === "chart_generation" || (!routeIntent && isChartRequest(apiMessage))
-    );
+    const requestedFileFormat = null;
+    const authenticatedFileGenerationRequired = false;
+    const htmlFileGenerationRequired = false;
+    const chartResponseRequired = false;
     const bufferedReasoningRequired = false;
     const structuredResponseRequired = false;
-    const requestLoaderKind = routeIntent?.loader || SentIQLoaderEngine.resolveKind(apiMessage, {
-      structured: chartResponseRequired,
-      reasoning: bufferedReasoningRequired,
-      file: authenticatedFileGenerationRequired,
-    });
-    const requestActivityMode = preliminaryWebSearchMode && !authenticatedFileGenerationRequired
-      ? "web_search"
-      : intentRoute === "web_search"
-        ? "web_search"
-      : authenticatedFileGenerationRequired
-        ? "file_generation"
-        : chartResponseRequired
-          ? "chart_generation"
-          : bufferedReasoningRequired
-            ? "reasoning"
-            : "thinking";
+    const requestLoaderKind = "loader-text";
+    const requestActivityMode = preliminaryWebSearchMode ? "web_search" : "thinking";
     const requestLoaderText = getActivityBaseText(requestActivityMode);
-
-    if (!isClarificationAnswer && !selectedContextForRequest && !webSearchModeOverride && imageAttachmentsForRequest.length === 0 && !chartResponseRequired && !bufferedReasoningRequired && !authenticatedFileGenerationRequired && apiMessage && (intentRoute === "image_generation" || (!routeIntent && isImageRequest(apiMessage)))) {
-      await handleImageGeneration(apiMessage);
-      return;
-    }
 
     let targetChatId = currentChatId;
     if (isAuthenticatedSession()) {
       const activeChat = await Storage.getChat(targetChatId);
-      const canUseLocalFirstConversation = requestExecutionMode === "fast" && !authenticatedFileGenerationRequired;
+      const canUseLocalFirstConversation = requestExecutionMode === "fast";
       if (isPlaceholderServerChat(activeChat) && !canUseLocalFirstConversation) {
         try {
           targetChatId = await ensureRemoteConversationForChat(targetChatId);
@@ -9733,17 +9426,12 @@ import {
     if (scrollAnchorPill) scrollAnchorPill.classList.remove("visible");
     scrollToBottom();
 
-    let retryClarificationContextSnapshot = clarificationContextSnapshot;
     try {
       const contextData = await getChatContextData(targetChatId, {
         recentLimit: requestExecutionMode === "fast" ? 6 : 20,
       });
-      const fileReferences = isClarificationAnswer && Array.isArray(clarificationContextSnapshot?.fileReferences)
-        ? clarificationContextSnapshot.fileReferences
-        : getCurrentFileReferences();
-      const effectiveWebSearchMode = isClarificationAnswer && clarificationContextSnapshot?.webSearchMode
-        ? clarificationContextSnapshot.webSearchMode
-        : preliminaryWebSearchMode;
+      const fileReferences = getCurrentFileReferences();
+      const effectiveWebSearchMode = preliminaryWebSearchMode;
       if (fileReferences.length > 0) {
         debugLog("[Frontend] using session file", { extracted_chars: fileReferences[0].extractedText.length });
       }
@@ -9765,10 +9453,8 @@ import {
         trustedProfile: requestExecutionMode === "fast" && authProfileState.displayName
           ? { displayName: authProfileState.displayName }
           : undefined,
-        clarificationResponse: clarificationResponseForRequest,
         signal: ac.signal,
       };
-      retryClarificationContextSnapshot = cloneClarificationContext(contextPayload);
 
       let fullReply = "";
       let streamThinking = "";
@@ -9874,6 +9560,28 @@ import {
                   if (streamBubble) streamBubble.setThinking(streamThinking);
                 }
               },
+              onToolLifecycle(event) {
+                if (isRequestStale(targetChatId, requestId)) return;
+                const activityByTool = {
+                  web_surf: "web_search",
+                  image_gen: "image_generation",
+                  chart_gen: "chart_generation",
+                  file_gen: "file_generation",
+                  memory_update: "memory_update",
+                };
+                if (event.type === "tool_selected" || event.type === "tool_started") {
+                  const confirmedMode = activityByTool[event.tool] || "thinking";
+                  state.activityMode = confirmedMode;
+                  streamBubble?.setActivityMode?.(confirmedMode);
+                  updateActivityIndicator(confirmedMode, { chatId: targetChatId, withTimer: confirmedMode === "web_search" });
+                  return;
+                }
+                if (event.type === "tool_error") {
+                  state.activityMode = "thinking";
+                  streamBubble?.setActivityMode?.("thinking");
+                  updateActivityIndicator("thinking", { chatId: targetChatId });
+                }
+              },
               onRoute(route, routeMeta = {}) {
                 state.activityMode = route === "web_search"
                   ? "web_search"
@@ -9966,7 +9674,6 @@ import {
                 renderInView,
                 {
                   ...(responseRenderMode ? { mode: responseRenderMode } : {}),
-                  pendingClarificationContext: contextPayload,
                   clientRequestId: requestId,
                 },
               );
@@ -10133,7 +9840,6 @@ import {
           renderInView,
           {
             ...(responseRenderMode ? { mode: responseRenderMode } : {}),
-            pendingClarificationContext: contextPayload,
             clientRequestId: requestId,
           },
         );
@@ -10187,8 +9893,7 @@ import {
           await storeMemoryForContext(scopedMemory);
         }
       }
-      const titleSeedMessage = clarificationResponseForRequest?.original_message || visibleUserMessage || apiMessage;
-      maybeGenerateTitle(titleSeedMessage, fullReply || (chartResponseRequired ? "Generated a chart." : ""), targetChatId);
+      maybeGenerateTitle(visibleUserMessage || apiMessage, fullReply, targetChatId);
     } catch (err) {
       stopMeasure("error");
       if (err.name === "AbortError") { /* user-initiated stop */ }
@@ -10210,8 +9915,6 @@ import {
         retryBtn.textContent = "Retry";
           const capturedMsg = apiMessage;
           const capturedImages = imageAttachmentsForRequest;
-          const capturedClarificationResponse = clarificationResponseForRequest;
-          const capturedClarificationContext = retryClarificationContextSnapshot;
           const capturedSelectedContext = selectedContextForRequest;
           retryBtn.addEventListener("click", () => {
             errDiv.closest(".message")?.remove();
@@ -10219,8 +9922,6 @@ import {
               imageAttachments: capturedImages,
               skipPendingFileProcessing: true,
               ...(capturedSelectedContext ? { selectedContext: capturedSelectedContext } : {}),
-              ...(capturedClarificationResponse ? { clarificationResponse: capturedClarificationResponse } : {}),
-              ...(capturedClarificationContext ? { clarificationContextSnapshot: capturedClarificationContext } : {}),
             });
           });
         wrap.appendChild(retryBtn);
@@ -10234,12 +9935,6 @@ import {
       state.abortController = null;
       state.stopRequested = false;
       hideActivityIndicator(targetChatId);
-      if (clarificationStateLockedForRequest) {
-        const currentClarification = getPendingClarification(clarificationLockChatId);
-        if (currentClarification === clarificationStateLockedForRequest) {
-          currentClarification.inFlight = false;
-        }
-      }
       if (requestCompleted && composerAttachmentIdsForRequest.length > 0) {
         removeComposerAttachmentsById(composerAttachmentIdsForRequest);
       } else if (!retryMessage && composerDraftBeforeSend && targetChatId === currentChatId && chatInput && !chatInput.value) {
@@ -11228,7 +10923,6 @@ import {
     clearChatSessionContext(previousChatId);
     if (scrollAnchorPill) scrollAnchorPill.classList.remove("visible");
     if (previousChatId) {
-      pendingClarifications.delete(previousChatId);
       chatStates.delete(previousChatId);
       chatRenderSignatures.delete(previousChatId);
       welcomeGreetingByChatId.delete(previousChatId);
@@ -11283,7 +10977,6 @@ import {
     });
     syncActiveChatItem();
     clearChatSessionContext(chat.id);
-    pendingClarifications.delete(chat.id);
     if (chatMessages) chatMessages.innerHTML = "";
     showWelcome();
     updateHtmlTitle("");

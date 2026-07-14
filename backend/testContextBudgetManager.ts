@@ -28,9 +28,7 @@ async function main(): Promise<void> {
   assert.deepStrictEqual(AUXILIARY_OUTPUT_CAPS, {
     title: 80,
     routing: 200,
-    critic: 300,
     memory: 400,
-    clarification: 600,
   });
   assert.strictEqual(ARTIFACT_OUTPUT_POLICY.hardOutputTokens, 6_500);
 

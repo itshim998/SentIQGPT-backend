@@ -9,41 +9,36 @@ function assert(condition: boolean, label: string, detail?: string): void {
 async function main(): Promise<void> {
   process.env.TAVILY_KEYS = "test-key-1,test-key-2";
 
-  const { resolveHardRoutedPlan } = await import("./orchestrator/planner");
+  const { planTask } = await import("./orchestrator/planner");
   const { TavilyProvider } = await import("./tools/webSearch/providers/tavilyProvider");
   const { searchTavily } = await import("./tools/webSearch/tavilySearchPipeline");
 
-  const forcedBasicPlan = resolveHardRoutedPlan({
+  const forcedBasicPlan = await planTask({
     userMessage: "Tell me a joke about spring rain.",
-    hasWebSearch: true,
     explicitWebSearchMode: "basic",
   });
   assert(forcedBasicPlan?.steps[0]?.tool === "web_search", "explicit WebSurf hard-routes to web_search");
 
-  const forcedAdvancedPlan = resolveHardRoutedPlan({
+  const forcedAdvancedPlan = await planTask({
     userMessage: "Summarize this company in plain English.",
-    hasWebSearch: true,
     explicitWebSearchMode: "advanced",
   });
   assert(forcedAdvancedPlan?.steps[0]?.tool === "web_search", "explicit WebSurf (legacy advanced) hard-routes to web_search");
 
-  const normalChatPlan = resolveHardRoutedPlan({
+  const normalChatPlan = await planTask({
     userMessage: "Tell me a joke about spring rain.",
-    hasWebSearch: true,
   });
-  assert(normalChatPlan === null, "no explicit WebSurf selection preserves non-forced routing");
+  assert(normalChatPlan.steps[0]?.tool === "conversation", "no explicit WebSurf selection preserves ordinary chat");
 
-  const automaticSearchPlan = resolveHardRoutedPlan({
+  const automaticSearchPlan = await planTask({
     userMessage: "latest NVIDIA announcements in 2026",
-    hasWebSearch: true,
   });
-  assert(automaticSearchPlan?.steps[0]?.tool === "web_search", "clearly current/live queries auto-route to web_surf via web_search");
+  assert(automaticSearchPlan.steps[0]?.tool === "conversation", "automatic WebSurf selection remains model-native");
 
-  const academicPlan = resolveHardRoutedPlan({
+  const academicPlan = await planTask({
     userMessage: "Detail the core difference between regular probability and fuzzy logic.",
-    hasWebSearch: true,
   });
-  assert(academicPlan === null, "academic prompts do not auto-route to WebSurf");
+  assert(academicPlan.steps[0]?.tool === "conversation", "ordinary prompts remain on the model-native turn");
 
   const capturedBodies: Array<Record<string, unknown>> = [];
   const originalFetch = globalThis.fetch;

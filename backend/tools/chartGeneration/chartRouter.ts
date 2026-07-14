@@ -8,7 +8,7 @@
 //
 // This is the single entry-point used by toolExecutor.ts.
 
-import { detectChartIntent, isChartRequest } from "./chartDetector";
+import { detectChartIntent } from "./chartDetector";
 import { generateChartSpec } from "./chartSpecGenerator";
 import { renderChart, rendererLabel } from "./chartRenderer";
 import type { ChartResult } from "./types";
@@ -142,4 +142,4 @@ export async function routeChartGeneration(
 }
 
 /** Convenience re-export so callers don't need to import from two places. */
-export { isChartRequest, rendererLabel };
+export { rendererLabel };

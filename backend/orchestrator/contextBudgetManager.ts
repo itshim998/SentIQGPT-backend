@@ -9,7 +9,7 @@ export type ContextBudgetProfile = "standard" | "streaming";
 // Canonical request, input-context, and completion policy registry.
 export type ContextPlanCode = "free" | "student_core" | "premium" | "pro";
 export type OutputBudgetClass = "interactive" | "artifact" | "auxiliary";
-export type AuxiliaryOutputKind = "title" | "routing" | "critic" | "memory" | "clarification";
+export type AuxiliaryOutputKind = "title" | "routing" | "memory";
 export type RequestComplexity = "normal" | "heavy";
 export type GroqCapacityBand = "unknown" | "healthy" | "guarded" | "constrained" | "critical";
 
@@ -41,9 +41,7 @@ export const EXECUTION_MODE_OUTPUT_POLICIES: Readonly<Record<ExecutionMode, Exec
 export const AUXILIARY_OUTPUT_CAPS: Readonly<Record<AuxiliaryOutputKind, number>> = {
   title: 80,
   routing: 200,
-  critic: 300,
   memory: 400,
-  clarification: 600,
 };
 
 export const ARTIFACT_OUTPUT_POLICY = {

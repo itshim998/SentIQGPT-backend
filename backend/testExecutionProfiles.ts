@@ -8,7 +8,6 @@ import {
   resolveExecutionProfile,
 } from "./orchestrator/executionProfile";
 import { ChatRequestSchema, ImageGenerateRequestSchema } from "./validation/schemas";
-import { selectModelForPrompt } from "./orchestrator/modelRouter";
 import { buildContextFast } from "./context/contextBuilder";
 import { buildChatPrompt } from "./ai/PromptBuilders";
 
@@ -80,18 +79,6 @@ const nonGroqFastChatCall = buildChatPrompt({
 });
 assert.equal(nonGroqFastChatCall.reasoning_effort, undefined, "model effort is only forwarded to compatible chat models");
 
-const routingCases = [
-  "Write a TypeScript function to debounce input.",
-  "Solve 14x + 8 = 64.",
-  "Analyze the attached image.",
-  "Summarize this short note.",
-];
-for (const prompt of routingCases) {
-  const fastModel = selectModelForPrompt(prompt);
-  const intuitiveModel = selectModelForPrompt(prompt);
-  assert.equal(fastModel, intuitiveModel, `mode-independent model routing for: ${prompt}`);
-}
-
 const assistantTextIdempotencyMigration = readFileSync(
   resolve(process.cwd(), "supabase/migrations/20260517120000_add_assistant_text_client_request_id_unique.sql"),
   "utf8",
@@ -115,13 +102,13 @@ assert.match(
 const plannerSource = readFileSync(resolve(process.cwd(), "backend/orchestrator/planner.ts"), "utf8");
 assert.match(
   plannerSource,
-  /normalizeExecutionMode\(args\.executionMode\)\s*===\s*"fast"[\s\S]*createSingleStepPlan\("conversation"/,
-  "fast mode plain chat should bypass the planner LLM",
+  /return singleStep\("conversation", args\.userMessage\)/,
+  "both modes enter one ordinary model turn",
 );
-assert.match(
+assert.doesNotMatch(
   plannerSource,
-  /skipping planner LLM/,
-  "fast planner bypass should leave an observable log breadcrumb",
+  /classif|keyword|regex|route_classify/i,
+  "execution planning must not infer prompt semantics",
 );
 
 const serverSource = readFileSync(resolve(process.cwd(), "backend/server.ts"), "utf8");
@@ -135,8 +122,8 @@ assert.match(
 );
 assert.match(
   serverSource,
-  /fastPlainChatEligible[\s\S]*!fastHasFileContext[\s\S]*!fastHasImageContext[\s\S]*!isFileGenerationRequest/,
-  "fast stream early path should stay limited to plain chat",
+  /fastPlainChatEligible[\s\S]*!fastHasFileContext[\s\S]*!fastHasImageContext/,
+  "fast stream early path should be based on execution context, not prompt semantics",
 );
 
 const llmAdapterSource = readFileSync(resolve(process.cwd(), "llm_adapter.py"), "utf8");

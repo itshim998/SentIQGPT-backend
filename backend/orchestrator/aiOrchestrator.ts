@@ -1,52 +1,30 @@
-// SentIQ Chat v2 — AI Orchestrator (with Autonomous Tool Selection)
-//
-// Central intelligence pipeline. The orchestrator:
-//
-//   1. Builds compressed context (conversation window + semantic memories)
-//   2. Runs the Task Planner (Groq)
-//   3. Hands the execution plan to the Tool Executor
-//   4. Merges multi-step results into a single OrchestratorResponse
-//
-//   User Message
-//       ├── Task Planner (Groq, fast)       → ExecutionPlan (1–3 steps)
-//       └── Context Builder (async)
-//               └── Tool Executor
-//                     ├── conversation      → ChatHandler (Gemini)
-//                     ├── image_generation   → Image Router
-//                     ├── file_analysis      → ChatHandler + file context
-//                     └── memory_update      → Explicit memory storage
-//
-//   5. Self-Reflection Loop
-//        └── Answer Critic (Groq) → optional Answer Improver (Gemini)
-//   6. Knowledge Cache Layer
-//        └── LLM answer cache (check before pipeline, store after reflection)
+// SentIQ Chat model-native orchestration boundary.
+// Context construction and the explicit manual-WebSurf override happen here.
+// Automatic product-tool selection happens inside the ordinary model turn.
 
 import { finalizeUserFacingReply } from "../ai/replyGuard";
 import { buildContext, buildContextFast } from "../context/contextBuilder";
 import { planTask } from "./planner";
 import { executePlan } from "./toolExecutor";
-import { detectExplicitMemoryWriteIntent } from "./queryClassifier";
-import {
-  DEFAULT_MAX_CLARIFICATION_TURNS,
-  formatClarificationText,
-  maybeCreateClarification,
-  resolveClarificationInput,
-  type ClarificationPayload,
-  type ClarificationOption,
-  type ClarificationResponsePayload,
-} from "./intentClarifier";
-import { evaluateAnswer } from "../reflection/answerCritic";
 import { PRODUCT_DISCLAIMER } from "../branding";
-import { improveAnswer } from "../reflection/answerImprover";
 import type { RawMessageContext } from "../context/contextBuilder";
-import type { DetectedTool } from "./toolDetector";
 import type { PlanTool } from "./planner";
 import type { StepResult } from "./toolExecutor";
 import type { SearchResult } from "../tools/webSearch/types";
 import type { WebSurfV2Payload } from "../tools/webSearch/webSurfV2";
 import type { ToolLifecycleEvent } from "./toolContract";
 import { resolveExecutionProfile, type ExecutionMode, type ExecutionProfile } from "./executionProfile";
-import { getEnabledAutomaticSentIQTools, isAutomaticConversationalClarificationEnabled } from "../ai/modelToolCapability";
+
+export type DetectedTool =
+  | "normal_chat"
+  | "file_analysis"
+  | "memory_update"
+  | "chart_generation"
+  | "file_generation"
+  | "web_search"
+  | "image_generation"
+  | "math_reasoning"
+  | "knowledge_query";
 
 // ==============================
 // Types
@@ -56,10 +34,7 @@ export interface OrchestratorRequest {
   readonly userMessage: string;
   readonly context?: RawMessageContext;
   readonly executionMode?: ExecutionMode;
-  readonly clarificationResponse?: ClarificationResponsePayload;
   readonly signal?: AbortSignal;
-  /** Skip reflection loop for faster response (default: false) */
-  readonly skipReflection?: boolean;
 }
 
 export interface OrchestratorResponse {
@@ -149,15 +124,7 @@ export interface OrchestratorResponse {
     provider?: string;
     v2?: WebSurfV2Payload;
   };
-  /** Intent clarification payload for interactive follow-up UI */
-  readonly clarification?: ClarificationPayload;
-  /** Self-reflection evaluation (if run) */
-  readonly reflection?: {
-    score: number;
-    issues: readonly string[];
-    improved: boolean;
-  };
-  /** Tool detection confidence */
+  /** Response confidence estimate */
   readonly confidence: number;
   /** Primary model/provider used for the response when known */
   readonly model_used?: string;
@@ -177,7 +144,7 @@ type InternalMergedResponse = Omit<OrchestratorResponse, "confidence"> & {
 // Helpers
 // ==============================
 
-/** Map planner tool names to the legacy DetectedTool union. */
+/** Map the executed step to the public response route. */
 function planToolToRoute(tool: PlanTool): DetectedTool {
   switch (tool) {
     case "image_generation": return "image_generation";
@@ -279,21 +246,6 @@ function waitForAbort(signal: AbortSignal): Promise<never> {
   });
 }
 
-function buildClarificationResponse(payload: ClarificationPayload): OrchestratorResponse {
-  const reply = formatClarificationText(payload);
-  return {
-    route: "clarification" as DetectedTool,
-    answer: reply,
-    reply,
-    disclaimer: PRODUCT_DISCLAIMER,
-    memory: { stored: false },
-    clarification: payload,
-    confidence: 0.9,
-    model_used: payload.model_used,
-    searched: false,
-  };
-}
-
 function buildContextForProfile(
   profile: ExecutionProfile,
   rawContext: RawMessageContext | undefined,
@@ -304,42 +256,6 @@ function buildContextForProfile(
   return profile.context.compressConversation
     ? buildContext(raw, rawContext?.userDb, rawContext?.userId, options)
     : buildContextFast(raw, rawContext?.userDb, rawContext?.userId, options);
-}
-
-async function maybeClarify(
-  userMessage: string,
-  rawContext: RawMessageContext | undefined,
-  currentTurn: number,
-  options: {
-    webSearch?: boolean;
-    originalMessage?: string;
-    previousAnswers?: readonly string[];
-    answeredQuestion?: string;
-    answeredOptions?: readonly ClarificationOption[];
-    selectedOptionId?: string;
-  } = {},
-): Promise<OrchestratorResponse | null> {
-  const fileReferences = rawContext?.file_references ?? [];
-  const imageAttachments = rawContext?.image_attachments ?? [];
-  const clarification = await maybeCreateClarification({
-    userMessage,
-    originalMessage: options.originalMessage,
-    previousAnswers: options.previousAnswers,
-    userId: rawContext?.userId,
-    isGuest: rawContext?.userId === "guest",
-    hasFile: fileReferences.length > 0,
-    hasImage: imageAttachments.length > 0,
-    fileNames: fileReferences.map((file) => file.filename),
-    fileContent: fileReferences.map((file) => file.extractedText).join("\n"),
-    trustedProfileName: rawContext?.trustedProfile?.displayName,
-    webSearch: options.webSearch === true,
-    currentTurn,
-    maxTurns: DEFAULT_MAX_CLARIFICATION_TURNS,
-    answeredQuestion: options.answeredQuestion,
-    answeredOptions: options.answeredOptions,
-    selectedOptionId: options.selectedOptionId,
-  });
-  return clarification ? buildClarificationResponse(clarification) : null;
 }
 
 export function finalizeReply(
@@ -479,8 +395,8 @@ export function mergeResults(
 /**
  * Main orchestration function.
  *
- * Runs the Task Planner alongside context building for speed,
- * then hands the execution plan to the Tool Executor.
+ * Builds context alongside the one-step execution boundary, then runs either
+ * the ordinary tool-capable model turn or explicit manual WebSurf.
  */
 export async function orchestrate(
   request: OrchestratorRequest,
@@ -504,69 +420,14 @@ async function _orchestrateInner(
   const signal = request.signal;
   throwIfAborted(signal);
   const { context: rawContext } = request;
-  const skipReflection = request.skipReflection ?? !profile.reflection.enabled;
-  const resolvedClarification = resolveClarificationInput(
-    request.userMessage,
-    request.clarificationResponse,
-  );
-  const userMessage = resolvedClarification.effectiveMessage;
+  const userMessage = request.userMessage;
 
-  console.log(`[ORCHESTRATOR] Processing: "${userMessage.slice(0, 80)}..." (mode=${profile.mode}, skipReflection=${skipReflection})`);
+  console.log(`[ORCHESTRATOR] Processing: "${userMessage.slice(0, 80)}..." (mode=${profile.mode})`);
 
 
-  // ── Early Math Detection ──
-  // Math detection MUST run on the raw userMessage, not the planner-rewritten
-  // input. The planner (Groq) compresses/summarizes the query, which strips
-  // numerical context and causes word problems to be misclassified as general chat.
-  // When math is detected, we bypass the planner entirely and go straight to
-  // the openai-large math pipeline.
-  if (!getEnabledAutomaticSentIQTools().includes("memory_update") && detectExplicitMemoryWriteIntent(userMessage)) {
-    console.log(`[ORCHESTRATOR] explicit memory write detected — bypassing planner`);
-    const ctx = await buildContextForProfile(profile, rawContext, userMessage);
-    const execution = await executePlan(
-      [{ step: 1, tool: "memory_update", input: userMessage }],
-      ctx,
-      { profile, signal },
-    );
-    const merged = mergeResults(execution.steps, { stored: false });
-    const reply = merged.memory.stored
-      ? "Got it. I've remembered that."
-      : "I couldn't store that memory. Please phrase it as something to remember about your identity, preferences, or project.";
-    const confidence = computeConfidence("memory_update", false, merged.memory.stored ? reply : "");
-
-    return {
-      route: "memory_update",
-      answer: reply,
-      reply,
-      disclaimer: PRODUCT_DISCLAIMER,
-      memory: merged.memory,
-      confidence,
-    };
-  }
-
-  const maybeWebSearchRequest = Boolean(rawContext?.web_search_mode);
-
-  if (!isAutomaticConversationalClarificationEnabled() && profile.clarification.enabled && !maybeWebSearchRequest) {
-    const clarificationResponse = await maybeClarify(
-      userMessage,
-      rawContext,
-      resolvedClarification.turn,
-      {
-        originalMessage: resolvedClarification.originalMessage,
-        previousAnswers: resolvedClarification.answers,
-        answeredQuestion: resolvedClarification.answeredQuestion,
-        answeredOptions: resolvedClarification.answeredOptions,
-        selectedOptionId: resolvedClarification.selectedOptionId,
-      },
-    );
-    if (clarificationResponse) {
-      return clarificationResponse;
-    }
-  }
   throwIfAborted(signal);
 
-  // 1. Build context + run planner in PARALLEL (both are independent)
-  //    Memory pipeline is deferred to background — never blocks the LLM response.
+  // 1. Build context and the one-step execution boundary in parallel.
   const [ctx, plan] = await Promise.all([
     buildContextForProfile(profile, rawContext, userMessage),
     planTask({
@@ -582,79 +443,32 @@ async function _orchestrateInner(
   console.log(`[ORCHESTRATOR] plan: ${plan.steps.length} step(s)`);
 
   // 2. Execute the plan
-  let finalPlan = plan;
-  const firstStep = finalPlan.steps[0];
-  const isWebSearchPlan = firstStep?.tool === "web_search";
-  let execution: Awaited<ReturnType<typeof executePlan>>;
-  if (isWebSearchPlan) {
-    const clarificationResponse = !isAutomaticConversationalClarificationEnabled() && profile.clarification.enabled
-      ? await maybeClarify(
-          userMessage,
-          rawContext,
-          resolvedClarification.turn,
-          {
-            webSearch: true,
-            originalMessage: resolvedClarification.originalMessage,
-            previousAnswers: resolvedClarification.answers,
-            answeredQuestion: resolvedClarification.answeredQuestion,
-            answeredOptions: resolvedClarification.answeredOptions,
-            selectedOptionId: resolvedClarification.selectedOptionId,
-          },
-        )
-      : null;
-    if (clarificationResponse) {
-      return clarificationResponse;
-    }
-    throwIfAborted(signal);
-    execution = await executePlan(finalPlan.steps, ctx, { profile, signal });
-  } else {
-    execution = await executePlan(finalPlan.steps, ctx, { profile, signal });
-  }
+  const execution = await executePlan(plan.steps, ctx, { profile, signal });
   throwIfAborted(signal);
 
   // 3. Merge step results into a single response
   const merged = mergeResults(execution.steps, { stored: false });
 
-  // 3b. Self-Reflection Loop (OPTIONAL for performance)
-  //     Only runs when:
-  //       - skipReflection is false (default)
-  //       - Text replies ≥ 100 chars
-  //     Always skips:
-  //       - image-only, memory-only, short responses
-  //       - math queries (handled by direct math pipeline)
-  let reflected: { merged: InternalMergedResponse; reflection?: OrchestratorResponse["reflection"] };
-  
-  if (skipReflection) {
-    console.log("[REFLECTION] skipped per request (skipReflection=true)");
-    reflected = { merged };
-  } else {
-    reflected = await reflectOnAnswer(
-      userMessage,
-      merged,
-      merged._isMathResult,
-      rawContext?.userId,
-    );
-  }
-
+  // 4. Normalize the user-facing terminal result without another model call.
   const finalReply =
-    reflected.merged._isMathResult
-      ? (reflected.merged.reply?.trim() || "Sorry, something went wrong. Please try again.")
-      : reflected.merged.reply !== undefined
-      ? finalizeReply(reflected.merged.reply, undefined, reflected.merged._sanitize_bypass === true)
-      : reflected.merged.route === "memory_update" && reflected.merged.memory.stored
+    merged._isMathResult
+      ? (merged.reply?.trim() || "Sorry, something went wrong. Please try again.")
+      : merged.reply !== undefined
+      ? finalizeReply(merged.reply, undefined, merged._sanitize_bypass === true)
+      : merged.route === "memory_update" && merged.memory.stored
         ? finalizeReply(undefined, "Got it. I've remembered that.")
-        : reflected.merged.route === "memory_update"
+        : merged.route === "memory_update"
           ? finalizeReply(
               undefined,
               "I couldn't store that memory. Please phrase it as something to remember about your identity, preferences, or project.",
             )
         : finalizeReply(undefined);
   const computedConfidence = computeConfidence(
-    reflected.merged._model_used,
-    reflected.merged._fallback,
+    merged._model_used,
+    merged._fallback,
     finalReply,
   );
-  const { _isMathResult, _model_used, _fallback, ...publicMerged } = reflected.merged;
+  const { _isMathResult, _model_used, _fallback, ...publicMerged } = merged;
   void _isMathResult;
   void _fallback;
 
@@ -662,103 +476,11 @@ async function _orchestrateInner(
     ...publicMerged,
     answer: finalReply,
     reply: finalReply,
-    thinking: reflected.merged.thinking,
-    reflection: reflected.reflection,
+    thinking: merged.thinking,
     confidence: computedConfidence,
     model_used: _model_used,
-    searched: reflected.merged.route === "web_search" || Boolean(reflected.merged.web_search),
+    searched: merged.route === "web_search" || Boolean(merged.web_search),
   };
 
   return finalResponse;
-}
-
-// ==============================
-// Self-Reflection
-// ==============================
-
-const MIN_REFLECTION_LENGTH = 100;
-
-/**
- * Run the self-reflection loop on a merged response.
- *
- * Skips reflection when:
- *   • No text reply exists (image/memory-only)
- *   • Reply is shorter than MIN_REFLECTION_LENGTH
- *   • Route is image_generation (tool output, not prose)
- *   • Route is chart_generation
- *   • Query was handled by the math pipeline
- */
-async function reflectOnAnswer(
-  userMessage: string,
-  merged: InternalMergedResponse,
-  isMathResult?: boolean,
-  userId?: string,
-): Promise<{
-  merged: InternalMergedResponse;
-  reflection?: OrchestratorResponse["reflection"];
-}> {
-  // Guard: skip for non-text or short replies
-  if (
-    !merged.reply ||
-    merged.reply.length < MIN_REFLECTION_LENGTH ||
-    merged._sanitize_bypass === true ||
-    merged.route === "image_generation" ||
-    merged.route === "chart_generation" ||
-    merged.route === "file_generation" ||
-    merged.route === "web_search" // Skip reflection for web search (already synthesized)
-  ) {
-    return { merged };
-  }
-
-  // Guard: skip for math queries — already handled by the math pipeline
-  if (isMathResult) {
-    console.log("[MathPipeline] reflection skipped — math query already handled by direct math pipeline");
-    return { merged };
-  }
-
-  try {
-    // Critic pass (Groq — fast & cheap)
-    const evaluation = await evaluateAnswer(userMessage, merged.reply, userId);
-
-    console.log(`[REFLECTION] score: ${evaluation.score.toFixed(2)}`);
-    console.log(`[REFLECTION] issues detected: ${evaluation.issues.length}`);
-
-    if (!evaluation.improve) {
-      console.log("[REFLECTION] quality sufficient, skipping improvement");
-      return {
-        merged,
-        reflection: {
-          score: evaluation.score,
-          issues: evaluation.issues,
-          improved: false,
-        },
-      };
-    }
-
-    // Improvement pass (Gemini — high quality)
-    const result = await improveAnswer(userMessage, merged.reply, evaluation, userId);
-
-    if (result.improved) {
-      console.log("[REFLECTION] improvement applied");
-    }
-
-    return {
-      merged: result.improved
-        ? {
-            ...merged,
-            reply: result.answer,
-            _model_used: result.model_used ?? merged._model_used ?? "unknown",
-            _fallback: result.fallback ?? false,
-          }
-        : merged,
-      reflection: {
-        score: evaluation.score,
-        issues: evaluation.issues,
-        improved: result.improved,
-      },
-    };
-  } catch (err) {
-    console.log(`[REFLECTION] loop failed: ${err instanceof Error ? err.message : err}`);
-    return { merged };
-  }
 }

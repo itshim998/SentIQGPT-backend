@@ -3,17 +3,11 @@ export type ModelReasoningEffort = "low" | "medium";
 
 export type ExecutionProfile = {
   readonly mode: ExecutionMode;
-  readonly clarification: {
-    readonly enabled: boolean;
-  };
   readonly context: {
     readonly compressConversation: boolean;
     readonly cloudMemories: boolean;
     readonly semanticMemorySearch: boolean;
     readonly priorConversationRecall: boolean;
-  };
-  readonly reflection: {
-    readonly enabled: boolean;
   };
   readonly persistence: {
     readonly blockOnAssistantWrite: boolean;
@@ -29,14 +23,12 @@ export type ExecutionProfile = {
 
 export const FAST_PROFILE: ExecutionProfile = {
   mode: "fast",
-  clarification: { enabled: false },
   context: {
     compressConversation: false,
     cloudMemories: false,
     semanticMemorySearch: false,
     priorConversationRecall: false,
   },
-  reflection: { enabled: false },
   persistence: {
     blockOnAssistantWrite: false,
     blockOnMemoryEmbedding: false,
@@ -51,14 +43,12 @@ export const FAST_PROFILE: ExecutionProfile = {
 
 export const INTUITIVE_PROFILE: ExecutionProfile = {
   mode: "intuitive",
-  clarification: { enabled: true },
   context: {
     compressConversation: true,
     cloudMemories: true,
     semanticMemorySearch: true,
     priorConversationRecall: true,
   },
-  reflection: { enabled: true },
   persistence: {
     blockOnAssistantWrite: true,
     blockOnMemoryEmbedding: true,

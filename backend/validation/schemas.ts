@@ -36,19 +36,6 @@ export const ChatRequestSchema = z.object({
   execution_mode: z.enum(["fast", "intuitive"]).optional(),
   clientRequestId: z.string().min(1).max(120).optional(),
   client_request_id: z.string().min(1).max(120).optional(),
-  clarification_response: z.object({
-    clarification_id: z.string().min(1).max(120).optional(),
-    original_message: z.string().min(1).max(10000).optional(),
-    question: z.string().min(1).max(500).optional(),
-    options: z.array(z.object({
-      id: z.string().min(1).max(120),
-      label: z.string().min(1).max(120),
-      description: z.string().max(240).optional(),
-    })).max(4).optional(),
-    answers: z.array(z.string().min(1).max(1000)).max(2).optional(),
-    source: z.enum(["option", "custom"]).optional(),
-    selected_option_id: z.string().min(1).max(120).optional(),
-  }).optional(),
   context: z.object({
     recent_messages: z.array(RecentMessageSchema).max(50).optional(),
     memories: z.array(ContextMemorySchema).max(100).optional(),
