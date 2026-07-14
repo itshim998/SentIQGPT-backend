@@ -20,6 +20,19 @@ import {
   type RequestComplexity,
 } from "../orchestrator/contextBudgetManager";
 import type { ExecutionMode } from "../orchestrator/executionProfile";
+import {
+  SENTIQ_TOOL_CHOICE_POLICY,
+  SENTIQ_TOOL_REGISTRY_VERSION,
+  getAllowedToolFingerprint,
+  getProviderToolDefinitions,
+  normalizeAssistantTurn,
+  type AssistantTurn,
+  type ProviderDelta,
+  type SentIQToolName,
+  type ToolAvailabilityContext,
+} from "../orchestrator/toolContract";
+import { ToolCallStreamAccumulator, type RawProviderDelta } from "./modelToolTransport";
+import { isModelToolRegistryEnabled } from "./modelToolCapability";
 import type {
   WebSurfAnswerPlan,
   WebSurfAnswerSourceContext,
@@ -109,6 +122,8 @@ export interface LLMAdapterCall {
   readonly auxiliary_budget?: AuxiliaryOutputKind;
   readonly request_complexity?: RequestComplexity;
   readonly message_count?: number;
+  /** Explicit server-derived availability. Never populate this from model output. */
+  readonly sentiq_tool_context?: ToolAvailabilityContext;
 }
 
 interface InternalBudgetPolicy {
@@ -141,6 +156,7 @@ export interface ImageAttachment {
 
 export interface LLMAdapterResult {
   readonly text: string;
+  readonly assistant_turn?: AssistantTurn;
   readonly model_used?: string;
   readonly fallback?: boolean;
   readonly fallback_reason?: string | null;
@@ -148,6 +164,46 @@ export interface LLMAdapterResult {
   readonly truncated?: boolean;
   readonly error?: string | null;
   readonly error_detail?: string | null;
+}
+
+interface SentIQToolTransportRequest {
+  readonly registry_version: string;
+  readonly allowed_tool_fingerprint: string;
+  readonly tool_choice_policy: string;
+  readonly tools: ReturnType<typeof getProviderToolDefinitions>;
+  readonly allowed_tool_names: readonly SentIQToolName[];
+  readonly availability_context: ToolAvailabilityContext;
+}
+
+// Only the ordinary answer turn is eligible. Auxiliary "general" calls (for
+// example title generation) must never receive product tool definitions.
+const MODEL_TOOL_ELIGIBLE_TASKS = new Set<TaskName>(["chat"]);
+
+function inferToolAvailabilityContext(call: LLMAdapterCall): ToolAvailabilityContext {
+  if (call.sentiq_tool_context) return call.sentiq_tool_context;
+  const userId = call.user_id?.trim().toLowerCase() ?? "";
+  return {
+    authenticated: Boolean(userId && userId !== "guest" && userId !== "anonymous"),
+    executionMode: call.execution_mode,
+  };
+}
+
+export function buildSentIQToolTransportRequest(
+  call: LLMAdapterCall,
+  enabled = isModelToolRegistryEnabled(),
+): SentIQToolTransportRequest | undefined {
+  if (!enabled || !MODEL_TOOL_ELIGIBLE_TASKS.has(call.task)) return undefined;
+  const availabilityContext = inferToolAvailabilityContext(call);
+  const tools = getProviderToolDefinitions(availabilityContext);
+  if (tools.length === 0) return undefined;
+  return {
+    registry_version: SENTIQ_TOOL_REGISTRY_VERSION,
+    allowed_tool_fingerprint: getAllowedToolFingerprint(tools),
+    tool_choice_policy: SENTIQ_TOOL_CHOICE_POLICY,
+    tools,
+    allowed_tool_names: tools.map((tool) => tool.name),
+    availability_context: availabilityContext,
+  };
 }
 
 // ==============================
@@ -264,6 +320,7 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
   await waitForInternalGatewayReady();
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
+  const sentiqToolRequest = buildSentIQToolTransportRequest(call);
   const url = getInternalGatewayUrl("/llm/invoke");
   const abort = createAdapterAbortSignal(call.signal, call.timeout_ms ?? 90_000);
 
@@ -286,6 +343,7 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
         skip_wrappers: call.skip_wrappers,
         image_attachments: call.image_attachments,
         budget_policy: prepared.budgetPolicy,
+        sentiq_tool_request: sentiqToolRequest,
       }),
       signal: abort.signal,
     });
@@ -328,6 +386,7 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
           truncated?: boolean;
           error?: string | null;
           error_detail?: string | null;
+          assistant_turn?: unknown;
           telemetry?: { capacity?: unknown };
         };
   };
@@ -344,8 +403,16 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
     };
   }
   recordGroqCapacitySnapshot(data.result.telemetry?.capacity);
+  const assistantTurn = data.result.assistant_turn
+    ? normalizeAssistantTurn(
+      data.result.assistant_turn,
+      sentiqToolRequest?.availability_context ?? inferToolAvailabilityContext(call),
+      sentiqToolRequest?.allowed_tool_names,
+    )
+    : { kind: "assistant_text" as const, text: typeof data.result.text === "string" ? data.result.text : "" };
   return {
-    text: typeof data.result.text === "string" ? data.result.text : "",
+    text: assistantTurn.kind === "assistant_text" ? assistantTurn.text : "",
+    assistant_turn: assistantTurn,
     model_used: data.result.model_used,
     fallback: data.result.fallback,
     fallback_reason: data.result.fallback_reason,
@@ -365,7 +432,7 @@ export async function callLLMAdapter(call: LLMAdapterCall): Promise<string> {
  * Streaming variant — returns a ReadableStream that yields text chunks.
  * Proxies the SSE stream from the Python LLM service.
  */
-export async function callLLMAdapterStream(
+async function callLLMAdapterTextStreamLegacy(
   call: LLMAdapterCall,
 ): Promise<ReadableStream<string>> {
   await waitForInternalGatewayReady();
@@ -557,6 +624,193 @@ export async function callLLMAdapterStream(
 }
 
 // Fallback: invoke via child process (v1 compatibility)
+function textStreamToProviderDeltas(stream: ReadableStream<string>): ReadableStream<ProviderDelta> {
+  const reader = stream.getReader();
+  return new ReadableStream<ProviderDelta>({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        controller.enqueue({ kind: "done" });
+        controller.close();
+        return;
+      }
+      if (value) controller.enqueue({ kind: "text_delta", text: value });
+    },
+    async cancel(reason) {
+      await reader.cancel(reason).catch(() => undefined);
+    },
+  });
+}
+
+export async function callLLMAdapterTurnStream(
+  call: LLMAdapterCall,
+): Promise<ReadableStream<ProviderDelta>> {
+  if (!buildSentIQToolTransportRequest(call)) {
+    return textStreamToProviderDeltas(await callLLMAdapterTextStreamLegacy(call));
+  }
+
+  await waitForInternalGatewayReady();
+  const prepared = prepareBudgetedCall(call);
+  call = prepared.call;
+  const sentiqToolRequest = buildSentIQToolTransportRequest(call);
+  if (!sentiqToolRequest) return textStreamToProviderDeltas(await callLLMAdapterTextStreamLegacy(call));
+
+  const abort = createAdapterAbortSignal(call.signal, call.timeout_ms ?? 120_000);
+  let response: Response;
+  try {
+    response = await fetch(getInternalGatewayUrl("/llm/stream"), {
+      method: "POST",
+      headers: getInternalGatewayHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        prompt: call.prompt,
+        task: call.task,
+        use_simulation: call.use_simulation ?? false,
+        prefer: call.prefer,
+        model_override: call.model_override,
+        user_id: call.user_id,
+        safety_mode: call.safety_mode,
+        max_output_tokens: call.max_output_tokens,
+        reasoning_effort: call.reasoning_effort,
+        execution_mode: call.execution_mode,
+        skip_wrappers: call.skip_wrappers,
+        image_attachments: call.image_attachments,
+        budget_policy: prepared.budgetPolicy,
+        sentiq_tool_request: sentiqToolRequest,
+      }),
+      signal: abort.signal,
+    });
+  } catch (error) {
+    abort.cleanup();
+    throw error;
+  }
+  if (!response.ok) {
+    abort.cleanup();
+    throw new Error(`LLM stream error (${response.status}): ${await response.text()}`);
+  }
+  if (!response.body) {
+    abort.cleanup();
+    throw new Error("No response body for streaming");
+  }
+
+  const source = response.body.getReader();
+  const decoder = new TextDecoder();
+  const accumulator = new ToolCallStreamAccumulator(
+    sentiqToolRequest.availability_context,
+    sentiqToolRequest.allowed_tool_names,
+  );
+  const queue: ProviderDelta[] = [];
+  let buffer = "";
+  let normalizedDone = false;
+
+  const queueRaw = (delta: RawProviderDelta) => {
+    if (delta.kind === "done") normalizedDone = true;
+    queue.push(...accumulator.push(delta));
+  };
+
+  const parseBlock = (block: string) => {
+    const eventType = block.match(/^event:\s*(\w+)/m)?.[1];
+    const payload = block.split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n")
+      .trim();
+    if (!payload) return;
+    if (payload === "[DONE]") {
+      if (!normalizedDone) queueRaw({ kind: "done" });
+      return;
+    }
+    const parsed = JSON.parse(payload) as {
+      text?: string;
+      error?: string;
+      message?: string;
+      capacity?: unknown;
+      delta?: RawProviderDelta;
+    };
+    if (eventType === "capacity") {
+      recordGroqCapacitySnapshot(parsed.capacity ?? parsed);
+      return;
+    }
+    if (eventType === "error" || parsed.error) throw new Error(parsed.message || parsed.error || "LLM stream failed");
+    if (parsed.delta) queueRaw(parsed.delta);
+    else if (parsed.text) queueRaw({ kind: "text_delta", text: parsed.text });
+  };
+
+  const flush = () => {
+    let split = buffer.indexOf("\n\n");
+    while (split >= 0) {
+      parseBlock(buffer.slice(0, split).replace(/\r/g, ""));
+      buffer = buffer.slice(split + 2);
+      split = buffer.indexOf("\n\n");
+    }
+  };
+
+  return new ReadableStream<ProviderDelta>({
+    async pull(controller) {
+      try {
+        while (queue.length === 0) {
+          const { done, value } = await source.read();
+          if (done) {
+            buffer += decoder.decode();
+            if (buffer.trim()) parseBlock(buffer.replace(/\r/g, ""));
+            buffer = "";
+            if (!normalizedDone) queueRaw({ kind: "done" });
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          flush();
+        }
+        const event = queue.shift();
+        if (!event) {
+          abort.cleanup();
+          controller.close();
+          return;
+        }
+        controller.enqueue(event);
+        if (event.kind === "done") {
+          abort.cleanup();
+          controller.close();
+        }
+      } catch (error) {
+        abort.cleanup();
+        await source.cancel(error).catch(() => undefined);
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      abort.cleanup();
+      await source.cancel(reason).catch(() => undefined);
+    },
+  });
+}
+
+export async function callLLMAdapterStream(call: LLMAdapterCall): Promise<ReadableStream<string>> {
+  if (!buildSentIQToolTransportRequest(call)) return callLLMAdapterTextStreamLegacy(call);
+  const events = await callLLMAdapterTurnStream(call);
+  const reader = events.getReader();
+  return new ReadableStream<string>({
+    async pull(controller) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done || value?.kind === "done") {
+          controller.close();
+          return;
+        }
+        if (value.kind === "text_delta") {
+          controller.enqueue(value.text);
+          return;
+        }
+        if (value.kind === "tool_calls_complete") {
+          controller.error(new Error("SentIQ model tool execution is disabled in Pass 1."));
+          return;
+        }
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason).catch(() => undefined);
+    },
+  });
+}
+
 export function callLLMAdapterSync(call: LLMAdapterCall): Promise<string> {
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;

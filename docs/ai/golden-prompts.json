@@ -1,12 +1,12 @@
 {
   "name": "SentIQ Chat Student Builder Golden Prompts",
-  "version": 2,
+  "version": 3,
   "cases": [
     {
       "id": "math-linear-programming",
       "category": "math",
       "prompt": "A factory makes chairs and desks. Each chair needs 2 hours and gives $30 profit. Each desk needs 5 hours and gives $80 profit. The factory has 40 hours. How many of each should it make to maximize profit?",
-      "expected_route": "math_reasoning",
+      "expected_route": "normal_chat",
       "success_criteria": [
         "Sets up variables and objective",
         "Shows constraints clearly",

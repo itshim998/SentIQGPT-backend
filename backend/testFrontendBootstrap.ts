@@ -133,16 +133,15 @@ assert(queueDroppedFilesStart > 0 && queueDroppedFilesEnd > queueDroppedFilesSta
 const queueDroppedFilesBlock = chatController.slice(queueDroppedFilesStart, queueDroppedFilesEnd);
 assert.match(queueDroppedFilesBlock, /addPendingFiles\(files\)[\s\S]*renderFilePreview\(\)/, "guest file drops should queue and preview files");
 assert.doesNotMatch(queueDroppedFilesBlock, /requireAuthAccess|isAuthenticatedSession\(\)/, "guest file drops should not require authentication");
-const processPendingFilesStart = chatController.indexOf("async function processPendingFiles");
-const processPendingFilesEnd = chatController.indexOf("function openSettings", processPendingFilesStart);
-assert(processPendingFilesStart > 0 && processPendingFilesEnd > processPendingFilesStart);
-const processPendingFilesBlock = chatController.slice(processPendingFilesStart, processPendingFilesEnd);
-assert.match(processPendingFilesBlock, /fileUploadInFlight/, "file uploads should guard against duplicate processing");
-assert.match(processPendingFilesBlock, /API\.uploadFile\(file\)/, "guest and authenticated regular files should use the upload endpoint");
-assert.match(processPendingFilesBlock, /addCurrentSessionFiles\(completedSessionFiles\)/, "uploaded files should be attached to session context");
-assert.match(processPendingFilesBlock, /debugLog\(["']\[Upload\] guest files attached to session["']/, "guest upload context attachment should be logged");
-assert.match(processPendingFilesBlock, /skipPendingFileProcessing:\s*true/, "follow-up chat after upload should not reprocess the same files");
-assert.match(chatController, /pendingFileStatusByFile\.set\(file,\s*\{\s*status:\s*["']queued["']/, "selected files should remain previewable before upload");
+const processAttachmentStart = chatController.indexOf("async function processComposerAttachment");
+const processAttachmentEnd = chatController.indexOf("async function runWithConcurrencyLimit", processAttachmentStart);
+assert(processAttachmentStart > 0 && processAttachmentEnd > processAttachmentStart);
+const processAttachmentBlock = chatController.slice(processAttachmentStart, processAttachmentEnd);
+assert.match(processAttachmentBlock, /attachment\.attempt\s*=\s*attempt/, "file uploads should version processing attempts");
+assert.match(processAttachmentBlock, /API\.uploadFile\(attachment\.file\)/, "guest and authenticated regular files should use the upload endpoint");
+assert.match(processAttachmentBlock, /isActiveComposerAttachment\(attachment, attempt\)/, "stale upload completions must not mutate active composer state");
+assert.match(processAttachmentBlock, /attachment\.fileReference\s*=\s*fileReference/, "uploaded files should become request context references");
+assert.match(chatController, /status:\s*validation\.ok\s*\?\s*["']processing["']\s*:\s*["']failed["']/, "selected files should remain previewable while upload processing begins");
 assert.match(
   apiClient,
   /!tokensReceived\s*&&\s*!structuredReceived\s*&&\s*!terminalError/,

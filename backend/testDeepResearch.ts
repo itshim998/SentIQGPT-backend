@@ -702,7 +702,8 @@ function testStaticContracts(): void {
   assert.match(api, /eventName/);
   assert.match(api, /stream_incomplete/);
   const exportClientStart = api.indexOf("async function exportDeepResearchReport");
-  const exportClientEnd = api.indexOf("window.SentIQAPI", exportClientStart);
+  const exportClientEnd = api.indexOf("async function getLiveStatus", exportClientStart);
+  assert(exportClientStart >= 0 && exportClientEnd > exportClientStart, "frontend export function should have a bounded source block");
   const exportClient = api.slice(exportClientStart, exportClientEnd);
   assert.match(exportClient, /reportId/);
   assert.match(exportClient, /format/);

@@ -21,7 +21,7 @@ function functionBlock(source: string, signature: string, nextSignature: string)
 
 const startNewChatBlock = functionBlock(
   chatController,
-  "async function startNewChat()",
+  "async function startNewChat(options = {})",
   "function updateHtmlTitle",
 );
 assert.doesNotMatch(

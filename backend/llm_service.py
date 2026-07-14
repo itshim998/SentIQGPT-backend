@@ -405,6 +405,7 @@ class LLMInvokeRequest(BaseModel):
     skip_wrappers: Optional[bool] = None
     image_attachments: Optional[list[dict[str, Any]]] = None
     budget_policy: Optional[dict[str, Any]] = None
+    sentiq_tool_request: Optional[dict[str, Any]] = None
 
 
 class LLMInvokeResponse(BaseModel):
@@ -860,6 +861,7 @@ async def invoke_llm(request: LLMInvokeRequest):
             request.image_attachments or None,
             request.budget_policy,
             request.execution_mode,
+            request.sentiq_tool_request,
         )
         # Resolve the actual provider (not just the prefer hint)
         from llm_adapter import resolve_model_override, get_provider_for_task
@@ -1016,12 +1018,25 @@ async def stream_llm(request: LLMInvokeRequest):
                 execution_mode=request.execution_mode,
                 skip_wrappers=bool(request.skip_wrappers),
                 budget_policy=request.budget_policy,
+                sentiq_tool_request=request.sentiq_tool_request,
             ):
                 if not capacity_event_sent:
                     telemetry = get_current_groq_call_telemetry()
                     if telemetry and telemetry.get("capacity"):
                         yield f"event: capacity\ndata: {json.dumps({'capacity': telemetry['capacity']})}\n\n"
                         capacity_event_sent = True
+                if isinstance(chunk, dict):
+                    if chunk.get("kind") == "text_delta":
+                        text_delta = str(chunk.get("text") or "")
+                        if safety_monitor and text_delta:
+                            full_output_parts.append(text_delta)
+                            if not safety_monitor.add_token(text_delta):
+                                logger.warning("[Safety] Output violation detected - terminating stream")
+                                yield f"event: error\ndata: {json.dumps({'code': 'safety_violation', 'message': 'Response blocked due to safety concerns'})}\n\n"
+                                return
+                    yield f"data: {json.dumps({'delta': chunk})}\n\n"
+                    continue
+
                 # Check output safety (if monitor active)
                 if safety_monitor:
                     full_output_parts.append(chunk)

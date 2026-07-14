@@ -18,7 +18,7 @@ assert.match(html, /storeGeneratedFile/);
 assert.match(html, /getGeneratedFile/);
 assert.match(html, /file_token/);
 assert.match(html, /file_artifact/);
-assert.match(html, /file_generation: "Analysing\.\.\."/);
+assert.match(html, /file_generation: "Reading file"/);
 assert.match(html, /createFileGenerationStreamingBubble/);
 assert.match(html, /Copy/);
 assert.match(html, /Edit/);

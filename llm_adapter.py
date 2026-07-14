@@ -138,6 +138,9 @@ GEMINI_WEB_MODEL = os.getenv("GEMINI_WEB_MODEL", "gemini-2.5-flash-lite")
 GEMINI_WEB_BACKUP_MODEL = os.getenv("GEMINI_WEB_BACKUP_MODEL", "gemini-2.5-flash")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", GEMINI_STANDARD_MODEL)
 GEMINI_GOOGLE_SEARCH_ENABLED = _parse_bool_env("GEMINI_GOOGLE_SEARCH_ENABLED", False)
+SENTIQ_MODEL_TOOL_REGISTRY_ENABLED = _parse_bool_env("SENTIQ_MODEL_TOOL_REGISTRY_ENABLED", False)
+SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = _parse_bool_env("SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED", False)
+SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED = _parse_bool_env("SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", False)
 GEMINI_TIMEOUT_MS = _parse_int_env("GEMINI_TIMEOUT_MS", 45_000)
 GEMINI_KEY_COOLDOWN_MS = _parse_int_env("GEMINI_KEY_COOLDOWN_MS", 60_000)
 GEMINI_429_COOLDOWN_MS = _parse_int_env("GEMINI_429_COOLDOWN_MS", 180_000)
@@ -580,12 +583,18 @@ def _cache_key(
     image_attachments: Optional[list[dict[str, Any]]] = None,
     reasoning_effort: Optional[str] = None,
     execution_mode: Optional[str] = None,
+    tool_registry_version: Optional[str] = None,
+    allowed_tool_fingerprint: Optional[str] = None,
+    tool_choice_policy: Optional[str] = None,
+    tool_capability: Optional[str] = None,
 ) -> str:
     h = hashlib.sha256()
     image_fingerprint = _image_attachment_fingerprint(image_attachments)
     h.update(
         f"{provider}|{task}|{model}|{user_id}|{max_output_tokens or ''}|"
-        f"{reasoning_effort or ''}|{execution_mode or ''}|{int(skip_wrappers)}|{image_fingerprint}|{prompt}".encode()
+        f"{reasoning_effort or ''}|{execution_mode or ''}|{int(skip_wrappers)}|{image_fingerprint}|"
+        f"{tool_registry_version or ''}|{allowed_tool_fingerprint or ''}|{tool_choice_policy or ''}|"
+        f"{tool_capability or ''}|{prompt}".encode()
     )
     return h.hexdigest()
 
@@ -939,6 +948,110 @@ def _is_gemma_model(model: Optional[str]) -> bool:
     return (model or "").strip().lower().startswith("gemma")
 
 
+def get_sentiq_tool_capability(provider: str, model: Optional[str], streaming: bool = False) -> dict[str, Any]:
+    normalized_provider = (provider or "").strip().lower()
+    if normalized_provider == "groq" and _is_gpt_oss_model(model):
+        enabled = SENTIQ_MODEL_TOOL_REGISTRY_ENABLED and SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED
+        return {"provider": "groq", "supported": enabled, "streaming": enabled, "reason": "openai_function_transport" if enabled else "transport_disabled"}
+    if normalized_provider == "gemini" and not _is_gemma_model(model):
+        enabled = SENTIQ_MODEL_TOOL_REGISTRY_ENABLED and SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED and bool(GOOGLE_GENAI_MODULE)
+        return {"provider": "gemini", "supported": enabled, "streaming": enabled, "reason": "google_function_transport" if enabled else "transport_disabled"}
+    reason = "text_only_model" if _is_gemma_model(model) else "text_only_transport"
+    return {"provider": normalized_provider or "unknown", "supported": False, "streaming": False, "reason": reason}
+
+
+def _sentiq_tool_request_for_route(
+    request: Optional[dict[str, Any]],
+    provider: str,
+    model: Optional[str],
+    *,
+    streaming: bool = False,
+) -> Optional[dict[str, Any]]:
+    if not isinstance(request, dict) or not isinstance(request.get("tools"), list):
+        return None
+    capability = get_sentiq_tool_capability(provider, model, streaming)
+    if not capability["supported"] or (streaming and not capability["streaming"]):
+        return None
+    return request
+
+
+def _serialize_openai_sentiq_tools(request: dict[str, Any]) -> list[dict[str, Any]]:
+    serialized: list[dict[str, Any]] = []
+    for tool in request.get("tools") or []:
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name") or "").strip()
+        description = str(tool.get("description") or "").strip()
+        input_schema = tool.get("input_schema")
+        if not name or not isinstance(input_schema, dict):
+            continue
+        serialized.append({
+            "type": "function",
+            "function": {"name": name, "description": description, "parameters": input_schema},
+        })
+    return serialized
+
+
+def _serialize_gemini_sentiq_tools(request: dict[str, Any]) -> list[dict[str, Any]]:
+    declarations: list[dict[str, Any]] = []
+    for tool in request.get("tools") or []:
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name") or "").strip()
+        input_schema = tool.get("input_schema")
+        if not name or not isinstance(input_schema, dict):
+            continue
+        declarations.append({
+            "name": name,
+            "description": str(tool.get("description") or "").strip(),
+            "parameters": input_schema,
+        })
+    return [{"function_declarations": declarations}] if declarations else []
+
+
+def _assistant_text_turn(text: Any) -> dict[str, Any]:
+    return {"kind": "assistant_text", "text": text if isinstance(text, str) else str(text or "")}
+
+
+def _openai_assistant_turn(message: Any) -> dict[str, Any]:
+    tool_calls = getattr(message, "tool_calls", None) or []
+    if tool_calls:
+        calls: list[dict[str, Any]] = []
+        for index, call in enumerate(tool_calls):
+            function = getattr(call, "function", None)
+            calls.append({
+                "id": str(getattr(call, "id", "") or f"groq_call_{index}"),
+                "name": str(getattr(function, "name", "") or ""),
+                "arguments": getattr(function, "arguments", "{}") or "{}",
+                "index": index,
+            })
+        return {"kind": "tool_calls", "calls": calls}
+    return _assistant_text_turn(getattr(message, "content", "") or "")
+
+
+def _gemini_function_calls(value: Any) -> list[Any]:
+    calls = getattr(value, "function_calls", None)
+    if calls:
+        return list(calls)
+    return []
+
+
+def _gemini_assistant_turn(response: Any) -> dict[str, Any]:
+    function_calls = _gemini_function_calls(response)
+    if function_calls:
+        calls: list[dict[str, Any]] = []
+        for index, call in enumerate(function_calls):
+            args = getattr(call, "args", None)
+            calls.append({
+                "id": str(getattr(call, "id", "") or f"gemini_call_{index}"),
+                "name": str(getattr(call, "name", "") or ""),
+                "arguments": args if isinstance(args, dict) else {},
+                "index": index,
+            })
+        return {"kind": "tool_calls", "calls": calls}
+    return _assistant_text_turn(getattr(response, "text", str(response)))
+
+
 def _normalize_execution_mode(execution_mode: Optional[str]) -> str:
     normalized = (execution_mode or "").strip().lower()
     return normalized if normalized in EXECUTION_MODES else "fast"
@@ -982,6 +1095,7 @@ def _build_google_genai_config(
     google_search: bool = False,
     high_thinking: bool = False,
     max_output_tokens: Optional[int] = None,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
 ) -> Any:
     if not GOOGLE_GENAI_TYPES_MODULE:
         return None
@@ -989,7 +1103,13 @@ def _build_google_genai_config(
     kwargs: dict[str, Any] = {}
     if isinstance(max_output_tokens, int) and max_output_tokens > 0:
         kwargs["max_output_tokens"] = max_output_tokens
-    if google_search:
+    sentiq_tools = _serialize_gemini_sentiq_tools(sentiq_tool_request) if sentiq_tool_request else []
+    if sentiq_tools:
+        kwargs["tools"] = sentiq_tools
+        policy = str(sentiq_tool_request.get("tool_choice_policy") or "").strip()
+        if policy:
+            kwargs["system_instruction"] = policy
+    elif google_search:
         kwargs["tools"] = [
             GOOGLE_GENAI_TYPES_MODULE.Tool(
                 google_search=GOOGLE_GENAI_TYPES_MODULE.GoogleSearch(),
@@ -1030,7 +1150,8 @@ def _call_gemini(
     high_thinking: bool = False,
     max_output_tokens: Optional[int] = None,
     execution_mode: Optional[str] = None,
-) -> str:
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
+) -> Any:
     resolved_model = model or GEMINI_STANDARD_MODEL
     if not api_key:
         raise RuntimeError("Gemini API key is empty")
@@ -1045,6 +1166,7 @@ def _call_gemini(
             google_search=google_search,
             high_thinking=high_thinking,
             max_output_tokens=max_output_tokens,
+            sentiq_tool_request=sentiq_tool_request,
         )
         kwargs: dict[str, Any] = {"model": resolved_model, "contents": prompt}
         if config is not None:
@@ -1053,8 +1175,10 @@ def _call_gemini(
             lambda: client.models.generate_content(**kwargs),
             f"Gemini generate_content model={resolved_model}",
         )
-        return getattr(resp, "text", str(resp))
+        return _gemini_assistant_turn(resp) if sentiq_tool_request else getattr(resp, "text", str(resp))
 
+    if sentiq_tool_request:
+        raise RuntimeError("Google GenAI SDK is required for Gemini SentIQ tool transport")
     if google_search or _is_gemma_model(resolved_model):
         raise RuntimeError("Google GenAI SDK is required for Gemma and google_search")
     if not GENAI_MODULE:
@@ -1090,6 +1214,7 @@ def _call_gemini_stream(
     high_thinking: bool = False,
     max_output_tokens: Optional[int] = None,
     execution_mode: Optional[str] = None,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
 ):
     """Streaming variant - yields text chunks."""
     resolved_model = model or GEMINI_STANDARD_MODEL
@@ -1106,6 +1231,7 @@ def _call_gemini_stream(
             google_search=google_search,
             high_thinking=high_thinking,
             max_output_tokens=max_output_tokens,
+            sentiq_tool_request=sentiq_tool_request,
         )
         kwargs: dict[str, Any] = {"model": resolved_model, "contents": prompt}
         if config is not None:
@@ -1115,6 +1241,9 @@ def _call_gemini_stream(
             f"Gemini stream start model={resolved_model}",
         )
         iterator = iter(response)
+        emitted_function_calls: set[tuple[str, str]] = set()
+        next_call_index = 0
+        emitted_sentiq_outcome = False
         while True:
             chunk = _run_gemini_with_timeout(
                 lambda: _next_gemini_stream_chunk(iterator),
@@ -1122,11 +1251,33 @@ def _call_gemini_stream(
             )
             if chunk is _GEMINI_STREAM_END:
                 break
+            function_calls = _gemini_function_calls(chunk) if sentiq_tool_request else []
+            for function_call in function_calls:
+                name = str(getattr(function_call, "name", "") or "")
+                args = getattr(function_call, "args", None)
+                args_object = args if isinstance(args, dict) else {}
+                args_text = json.dumps(args_object, separators=(",", ":"), sort_keys=True)
+                fingerprint = (name, args_text)
+                if fingerprint in emitted_function_calls:
+                    continue
+                emitted_function_calls.add(fingerprint)
+                call_id = str(getattr(function_call, "id", "") or f"gemini_call_{next_call_index}")
+                yield {"kind": "tool_call_start", "id": call_id, "name": name, "index": next_call_index}
+                yield {"kind": "tool_argument_delta", "id": call_id, "text": args_text, "index": next_call_index}
+                emitted_sentiq_outcome = True
+                next_call_index += 1
             text = getattr(chunk, "text", "")
             if text:
-                yield text
+                emitted_sentiq_outcome = True
+                yield {"kind": "text_delta", "text": text} if sentiq_tool_request else text
+        if sentiq_tool_request:
+            if not emitted_sentiq_outcome:
+                raise RuntimeError("Gemini stream produced neither assistant text nor a tool call")
+            yield {"kind": "done"}
         return
 
+    if sentiq_tool_request:
+        raise RuntimeError("Google GenAI SDK is required for Gemini SentIQ tool transport")
     if google_search or _is_gemma_model(resolved_model):
         raise RuntimeError("Google GenAI SDK is required for Gemma and google_search")
     if not GENAI_MODULE:
@@ -1174,7 +1325,8 @@ def _invoke_gemini(
     high_thinking: bool = False,
     max_output_tokens: Optional[int] = None,
     execution_mode: Optional[str] = None,
-) -> str:
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
+) -> Any:
     """Try Gemini/Gemma keys with rotation, cooldown, and invalid-key disable."""
     if not GEMINI_KEY_RECORDS:
         raise RuntimeError("No Gemini API keys configured")
@@ -1195,6 +1347,7 @@ def _invoke_gemini(
                 high_thinking=high_thinking,
                 max_output_tokens=max_output_tokens,
                 execution_mode=execution_mode,
+                sentiq_tool_request=sentiq_tool_request,
             )
             _record_gemini_success(record, resolved_model)
             logger.info(
@@ -1220,7 +1373,8 @@ def _invoke_gemini_attempt_chain(
     attempts: list[GeminiAttempt],
     max_output_tokens: Optional[int] = None,
     execution_mode: Optional[str] = None,
-) -> tuple[str, str]:
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
+) -> tuple[Any, str]:
     last_error: Optional[Exception] = None
     for attempt in attempts:
         try:
@@ -1231,6 +1385,7 @@ def _invoke_gemini_attempt_chain(
                 high_thinking=attempt.high_thinking,
                 max_output_tokens=max_output_tokens,
                 execution_mode=execution_mode,
+                sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "gemini", attempt.model),
             )
             return result, attempt.model
         except Exception as e:
@@ -1251,6 +1406,7 @@ def _stream_gemini_attempt_chain(
     attempts: list[GeminiAttempt],
     max_output_tokens: Optional[int] = None,
     execution_mode: Optional[str] = None,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
 ):
     last_error: Optional[Exception] = None
     for attempt in attempts:
@@ -1266,6 +1422,9 @@ def _stream_gemini_attempt_chain(
                     high_thinking=attempt.high_thinking,
                     max_output_tokens=max_output_tokens,
                     execution_mode=execution_mode,
+                    sentiq_tool_request=_sentiq_tool_request_for_route(
+                        sentiq_tool_request, "gemini", attempt.model, streaming=True
+                    ),
                 ):
                     if chunk:
                         emitted_text = True
@@ -1622,7 +1781,14 @@ def _normalize_gpt_oss_reasoning_effort(reasoning_effort: Optional[str]) -> str:
     return normalized if normalized in GPT_OSS_REASONING_EFFORTS else "medium"
 
 
-def _gpt_oss_system_prompt(execution_mode: Optional[str], enable_builtin_tools: bool) -> str:
+def _gpt_oss_system_prompt(
+    execution_mode: Optional[str],
+    enable_builtin_tools: bool,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
+) -> str:
+    if sentiq_tool_request:
+        policy = str(sentiq_tool_request.get("tool_choice_policy") or "").strip()
+        return GPT_OSS_SYSTEM_PROMPT + (f" {policy}" if policy else "")
     if not enable_builtin_tools:
         return GPT_OSS_SYSTEM_PROMPT
     if _normalize_execution_mode(execution_mode) == "intuitive":
@@ -1653,7 +1819,8 @@ def _call_groq(
     response_format_json: bool = False,
     execution_mode: Optional[str] = None,
     enable_builtin_tools: bool = False,
-) -> str:
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
+) -> Any:
     if not GROQ_MODULE:
         raise RuntimeError("Groq SDK not installed")
     if not api_key:
@@ -1685,7 +1852,7 @@ def _call_groq(
         request_kwargs: dict[str, Any] = {
             "model": resolved_model,
             "messages": [
-                {"role": "system", "content": _gpt_oss_system_prompt(execution_mode, enable_builtin_tools)},
+                {"role": "system", "content": _gpt_oss_system_prompt(execution_mode, enable_builtin_tools, sentiq_tool_request)},
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.9,
@@ -1695,15 +1862,21 @@ def _call_groq(
             "stream": False,
             "stop": None,
         }
-        builtin_tools = _gpt_oss_builtin_tools(enable_builtin_tools)
-        if builtin_tools:
-            request_kwargs["tools"] = builtin_tools
+        sentiq_tools = _serialize_openai_sentiq_tools(sentiq_tool_request) if sentiq_tool_request else []
+        if sentiq_tools:
+            request_kwargs["tools"] = sentiq_tools
+            request_kwargs["tool_choice"] = "auto"
+        else:
+            builtin_tools = _gpt_oss_builtin_tools(enable_builtin_tools)
+            if builtin_tools:
+                request_kwargs["tools"] = builtin_tools
         raw_response = client.chat.completions.with_raw_response.create(
             **request_kwargs,
         )
         response = raw_response.parse()
         _capture_groq_telemetry(raw_response.headers, response)
-        return response.choices[0].message.content or ""
+        message = response.choices[0].message
+        return _openai_assistant_turn(message) if sentiq_tool_request else message.content or ""
 
     raw_response = client.chat.completions.with_raw_response.create(
         model=resolved_model,
@@ -1723,6 +1896,7 @@ def _call_groq_stream(
     reasoning_effort: Optional[str] = None,
     execution_mode: Optional[str] = None,
     enable_builtin_tools: bool = False,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
 ):
     if not GROQ_MODULE:
         raise RuntimeError("Groq SDK not installed")
@@ -1739,7 +1913,7 @@ def _call_groq_stream(
     request_kwargs: dict[str, Any] = {
         "model": resolved_model,
         "messages": [
-            {"role": "system", "content": _gpt_oss_system_prompt(execution_mode, enable_builtin_tools)},
+            {"role": "system", "content": _gpt_oss_system_prompt(execution_mode, enable_builtin_tools, sentiq_tool_request)},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.9,
@@ -1749,12 +1923,20 @@ def _call_groq_stream(
         "stream": True,
         "stop": None,
     }
-    builtin_tools = _gpt_oss_builtin_tools(enable_builtin_tools)
-    if builtin_tools:
-        request_kwargs["tools"] = builtin_tools
+    sentiq_tools = _serialize_openai_sentiq_tools(sentiq_tool_request) if sentiq_tool_request else []
+    if sentiq_tools:
+        request_kwargs["tools"] = sentiq_tools
+        request_kwargs["tool_choice"] = "auto"
+    else:
+        builtin_tools = _gpt_oss_builtin_tools(enable_builtin_tools)
+        if builtin_tools:
+            request_kwargs["tools"] = builtin_tools
     raw_response = client.chat.completions.with_raw_response.create(**request_kwargs)
     completion = raw_response.parse()
     _capture_groq_telemetry(raw_response.headers)
+    tool_call_state: dict[int, dict[str, str]] = {}
+    finish_reason: Optional[str] = None
+    emitted_sentiq_outcome = False
     for chunk in completion:
         chunk_usage = getattr(chunk, "usage", None) or getattr(getattr(chunk, "x_groq", None), "usage", None)
         if chunk_usage is not None:
@@ -1762,10 +1944,30 @@ def _call_groq_stream(
         choices = getattr(chunk, "choices", None) or []
         if not choices:
             continue
-        delta = getattr(choices[0], "delta", None)
+        choice = choices[0]
+        finish_reason = getattr(choice, "finish_reason", None) or finish_reason
+        delta = getattr(choice, "delta", None)
+        if sentiq_tool_request:
+            for raw_call in getattr(delta, "tool_calls", None) or []:
+                index = int(getattr(raw_call, "index", 0) or 0)
+                function = getattr(raw_call, "function", None)
+                call_id = str(getattr(raw_call, "id", "") or tool_call_state.get(index, {}).get("id") or f"groq_call_{index}")
+                name = str(getattr(function, "name", "") or tool_call_state.get(index, {}).get("name") or "")
+                if index not in tool_call_state:
+                    tool_call_state[index] = {"id": call_id, "name": name}
+                    yield {"kind": "tool_call_start", "id": call_id, "name": name, "index": index}
+                    emitted_sentiq_outcome = True
+                arguments_delta = getattr(function, "arguments", None)
+                if arguments_delta:
+                    yield {"kind": "tool_argument_delta", "id": call_id, "text": str(arguments_delta), "index": index}
         text = getattr(delta, "content", None)
         if text:
-            yield text
+            emitted_sentiq_outcome = True
+            yield {"kind": "text_delta", "text": text} if sentiq_tool_request else text
+    if sentiq_tool_request:
+        if not emitted_sentiq_outcome:
+            raise RuntimeError("Groq stream produced neither assistant text nor a tool call")
+        yield {"kind": "done", "finishReason": finish_reason} if finish_reason else {"kind": "done"}
 
 def _invoke_groq(
     prompt: str,
@@ -1775,7 +1977,8 @@ def _invoke_groq(
     response_format_json: bool = False,
     execution_mode: Optional[str] = None,
     enable_builtin_tools: bool = False,
-) -> str:
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
+) -> Any:
     """Try Groq keys with smart rotation (skip recently failed keys)."""
     if not GROQ_API_KEYS:
         raise RuntimeError("No Groq API keys configured")
@@ -1794,6 +1997,7 @@ def _invoke_groq(
                 response_format_json=response_format_json,
                 execution_mode=execution_mode,
                 enable_builtin_tools=enable_builtin_tools,
+                sentiq_tool_request=sentiq_tool_request,
             )
             logger.info("Groq key #%d succeeded", idx)
             return result
@@ -2277,6 +2481,7 @@ def call_llm_router(
     image_attachments: Optional[list[dict[str, Any]]] = None,
     budget_policy: Optional[dict[str, Any]] = None,
     execution_mode: Optional[str] = None,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """
     Route an LLM call to the correct provider based on task.
@@ -2316,7 +2521,7 @@ def call_llm_router(
     response_error_detail = None
 
     def _build_response_payload(
-        text: str,
+        result: Any,
         *,
         error: Optional[str] = None,
         error_detail: Optional[str] = None,
@@ -2329,7 +2534,9 @@ def call_llm_router(
         capacity = get_groq_capacity_snapshot()
         if telemetry is None and capacity is not None:
             telemetry = {"capacity": capacity, "usage": None}
-        return {
+        assistant_turn = result if isinstance(result, dict) and result.get("kind") in {"assistant_text", "tool_calls"} else _assistant_text_turn(result)
+        text = assistant_turn.get("text", "") if assistant_turn.get("kind") == "assistant_text" else ""
+        payload = {
             "text": text,
             "model_used": actual_model_used,
             "fallback": fallback_triggered,
@@ -2340,6 +2547,9 @@ def call_llm_router(
             "error_detail": error_detail,
             "telemetry": telemetry,
         }
+        if sentiq_tool_request:
+            payload["assistant_turn"] = assistant_turn
+        return payload
 
     if use_simulation:
         actual_model_used = "simulation"
@@ -2361,8 +2571,13 @@ def call_llm_router(
         image_attachments,
         effective_reasoning_effort,
         execution_mode,
+        str(sentiq_tool_request.get("registry_version") or "") if sentiq_tool_request else None,
+        str(sentiq_tool_request.get("allowed_tool_fingerprint") or "") if sentiq_tool_request else None,
+        str(sentiq_tool_request.get("tool_choice_policy") or "") if sentiq_tool_request else None,
+        get_sentiq_tool_capability(provider, model).get("reason") if sentiq_tool_request else None,
     )
-    cached = _cache_get(key)
+    cache_enabled = sentiq_tool_request is None
+    cached = _cache_get(key) if cache_enabled else None
     if cached is not None:
         logger.info("Cache hit for task=%s provider=%s", task, provider)
         if isinstance(cached, dict):
@@ -2409,10 +2624,12 @@ def call_llm_router(
             attempts,
             max_output_tokens=max_output_tokens,
             execution_mode=execution_mode,
+            sentiq_tool_request=sentiq_tool_request,
         )
         actual_model_used = used_model
         payload = _build_response_payload(fallback_result)
-        _cache_set(key, payload)
+        if cache_enabled:
+            _cache_set(key, payload)
         return payload
 
     def _fallback_to_pollinations(
@@ -2430,7 +2647,8 @@ def call_llm_router(
             image_attachments=image_attachments,
         )
         payload = _build_response_payload(fallback_result)
-        _cache_set(key, payload)
+        if cache_enabled:
+            _cache_set(key, payload)
         return payload
 
     # Invoke the correct provider
@@ -2450,6 +2668,9 @@ def call_llm_router(
             if force_capacity_fallback:
                 raise GroqCapacityDeferredError("Groq capacity protected; use configured fallback")
             try:
+                groq_sentiq_tool_request = _sentiq_tool_request_for_route(
+                    sentiq_tool_request, "groq", resolved_override or model
+                )
                 result = _invoke_groq(
                     effective_prompt,
                     resolved_override,
@@ -2457,7 +2678,8 @@ def call_llm_router(
                     effective_reasoning_effort,
                     response_format_json=task == "master_route",
                     execution_mode=execution_mode,
-                    enable_builtin_tools=task in CHATLIKE_TASKS,
+                    enable_builtin_tools=task in CHATLIKE_TASKS and not bool(groq_sentiq_tool_request),
+                    sentiq_tool_request=groq_sentiq_tool_request,
                 )
             finally:
                 _release_groq_capacity_reservation(reservation)
@@ -2469,13 +2691,15 @@ def call_llm_router(
                 high_thinking=_is_gemma_model(resolved_override or model) and bool(skip_wrappers),
                 max_output_tokens=max_output_tokens,
                 execution_mode=execution_mode,
+                sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "gemini", resolved_override or model),
             )
 
         if _looks_like_provider_error_payload(result):
             raise RuntimeError("Provider returned an internal error payload instead of an answer")
 
         payload = _build_response_payload(result)
-        _cache_set(key, payload)
+        if cache_enabled:
+            _cache_set(key, payload)
         logger.info("Provider=%s succeeded for task=%s", provider, task)
         return payload
 
@@ -2504,7 +2728,8 @@ def call_llm_router(
                         image_attachments=image_attachments,
                     )
                     payload = _build_response_payload(fallback_result)
-                    _cache_set(key, payload)
+                    if cache_enabled:
+                        _cache_set(key, payload)
                     return payload
                 except Exception as fallback_error:
                     logger.error(
@@ -2545,7 +2770,8 @@ def call_llm_router(
                     image_attachments=image_attachments,
                 )
                 payload = _build_response_payload(fallback_result)
-                _cache_set(key, payload)
+                if cache_enabled:
+                    _cache_set(key, payload)
                 logger.info(
                     "[Fallback] Pollinations alternate model %s succeeded for task=%s",
                     alt_pollinations_model,
@@ -2576,9 +2802,11 @@ def call_llm_router(
                     GEMINI_FAST_MODEL,
                     max_output_tokens=max_output_tokens,
                     execution_mode=execution_mode,
+                    sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "gemini", GEMINI_FAST_MODEL),
                 )
                 payload = _build_response_payload(fallback_result)
-                _cache_set(key, payload)
+                if cache_enabled:
+                    _cache_set(key, payload)
                 logger.info("Fallback Gemini path succeeded for task=%s", task)
                 return payload
             except Exception as fallback_error:
@@ -2679,6 +2907,7 @@ def stream_llm_router(
     skip_wrappers: bool = False,
     budget_policy: Optional[dict[str, Any]] = None,
     execution_mode: Optional[str] = None,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
 ):
     """
     Streaming variant — yields text chunks.
@@ -2717,6 +2946,9 @@ def stream_llm_router(
             budget_policy,
         )
         try:
+            groq_sentiq_tool_request = _sentiq_tool_request_for_route(
+                sentiq_tool_request, "groq", model, streaming=True
+            )
             if force_capacity_fallback:
                 last_error = GroqCapacityDeferredError("Groq capacity protected; use configured fallback")
             else:
@@ -2729,7 +2961,8 @@ def stream_llm_router(
                             max_output_tokens=max_output_tokens,
                             reasoning_effort=effective_reasoning_effort,
                             execution_mode=execution_mode,
-                            enable_builtin_tools=task in CHATLIKE_TASKS,
+                            enable_builtin_tools=task in CHATLIKE_TASKS and not bool(groq_sentiq_tool_request),
+                            sentiq_tool_request=groq_sentiq_tool_request,
                         ):
                             if chunk:
                                 emitted_groq_text = True
@@ -2860,6 +3093,7 @@ def stream_llm_router(
             gemini_stream_attempts,
             max_output_tokens=max_output_tokens,
             execution_mode=execution_mode,
+            sentiq_tool_request=sentiq_tool_request,
         )
         return
     except Exception as gemini_stream_error:

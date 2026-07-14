@@ -1,70 +1,313 @@
-import { normalizeExecutionMode, type ExecutionMode } from "./executionProfile";
+import { createHash } from "node:crypto";
+import { z } from "zod";
+import type { ExecutionMode } from "./executionProfile";
 
-export type ModelOwnedToolName =
+export const SENTIQ_TOOL_REGISTRY_VERSION = "2026-07-pass1-v1";
+export const MAX_TOOL_ARGUMENT_BYTES = 16 * 1024;
+export const MAX_TOOL_CALLS_PER_TURN = 4;
+
+export const SENTIQ_TOOL_CHOICE_POLICY = [
+  "Answer normally when no SentIQ tool is genuinely required.",
+  "Do not call a tool merely because a keyword appears.",
+  "Use the original user request as the tool argument when it is already suitable.",
+  "Refine an argument only as needed for execution, preserving every material user constraint.",
+  "Do not invent material facts, entities, dates, identities, scope, or requirements.",
+  "If material ambiguity prevents safe execution, ask a concise conversational clarification instead of calling a tool.",
+].join(" ");
+
+export type SentIQToolName =
   | "web_surf"
-  | "image_gen_basic"
-  | "image_gen_advanced"
-  | "intent_clarification_tool";
+  | "image_gen"
+  | "chart_gen"
+  | "file_gen"
+  | "memory_update";
 
-export interface ToolContract {
-  readonly name: ModelOwnedToolName;
-  readonly description: string;
-  readonly allowedModes: readonly ExecutionMode[];
+// Compatibility alias retained while the legacy planner remains active.
+export type ModelOwnedToolName = SentIQToolName;
+
+export type ToolAuthorization = "guest" | "authenticated" | "entitled";
+export type ToolHandoff = "assistant_continue" | "terminal_structured";
+export type ToolSideEffect = "none" | "idempotent" | "stateful";
+
+export type JsonSchema = Readonly<Record<string, unknown>>;
+
+export interface ToolAvailabilityContext {
+  readonly authenticated: boolean;
+  readonly executionMode?: ExecutionMode;
+  readonly entitlements?: Readonly<Partial<Record<SentIQToolName, boolean>>>;
 }
 
-export const MODEL_OWNED_TOOL_CONTRACTS: readonly ToolContract[] = [
-  {
-    name: "web_surf",
-    description: "Search live web sources for clearly current, recent, or real-time prompts.",
-    allowedModes: ["fast", "intuitive"],
-  },
-  {
-    name: "image_gen_basic",
-    description: "Generate a basic image from an explicit image-generation prompt.",
-    allowedModes: ["fast", "intuitive"],
-  },
-  {
-    name: "image_gen_advanced",
-    description: "Generate a complex image from an explicit image-generation prompt and entitlement-approved advanced model.",
-    allowedModes: ["fast", "intuitive"],
-  },
-  {
-    name: "intent_clarification_tool",
-    description: "Ask a follow-up question only when ambiguity would materially change the answer.",
-    allowedModes: ["intuitive"],
-  },
-];
+export interface ToolDefinition<Name extends SentIQToolName = SentIQToolName> {
+  readonly name: Name;
+  readonly description: string;
+  readonly inputSchema: JsonSchema;
+  readonly resultSchema: JsonSchema;
+  readonly authorization: ToolAuthorization;
+  readonly handoff: ToolHandoff;
+  readonly sideEffect: ToolSideEffect;
+  readonly isAvailable: (context: ToolAvailabilityContext) => boolean;
+  readonly validateInput: (input: unknown) => Record<string, unknown>;
+}
 
-const CONTRACT_BY_NAME = new Map<ModelOwnedToolName, ToolContract>(
-  MODEL_OWNED_TOOL_CONTRACTS.map((contract) => [contract.name, contract]),
+export interface ProviderToolDefinition {
+  readonly name: SentIQToolName;
+  readonly description: string;
+  readonly input_schema: JsonSchema;
+}
+
+export interface RawModelToolCall {
+  readonly id?: unknown;
+  readonly name?: unknown;
+  readonly arguments?: unknown;
+  readonly index?: unknown;
+}
+
+export interface ValidatedToolCall {
+  readonly id: string;
+  readonly name: SentIQToolName;
+  readonly arguments: Readonly<Record<string, unknown>>;
+  readonly index: number;
+}
+
+export type AssistantTurn =
+  | { readonly kind: "assistant_text"; readonly text: string }
+  | { readonly kind: "tool_calls"; readonly calls: readonly ValidatedToolCall[] };
+
+export type ProviderDelta =
+  | { readonly kind: "text_delta"; readonly text: string }
+  | { readonly kind: "tool_call_start"; readonly id: string; readonly name: SentIQToolName; readonly index: number }
+  | { readonly kind: "tool_argument_delta"; readonly id: string; readonly text: string; readonly index: number }
+  | { readonly kind: "tool_calls_complete"; readonly calls: readonly ValidatedToolCall[] }
+  | { readonly kind: "done"; readonly finishReason?: string };
+
+const boundedText = z.string().trim().min(1).max(12_000);
+const fileFormat = z.enum(["html", "txt", "xlsx", "pptx", "docx", "pdf"]);
+
+const schemas = {
+  web_surf: z.object({ query: boundedText }).strict(),
+  image_gen: z.object({ prompt: boundedText }).strict(),
+  chart_gen: z.object({ request: boundedText }).strict(),
+  file_gen: z.object({ request: boundedText, format: fileFormat.optional() }).strict(),
+  memory_update: z.object({ content: boundedText, scope: z.enum(["global", "chat"]).optional() }).strict(),
+} as const;
+
+const objectSchema = (
+  properties: Record<string, unknown>,
+  required: readonly string[],
+): JsonSchema => ({
+  type: "object",
+  additionalProperties: false,
+  properties,
+  required,
+});
+
+const stringProperty = (description: string, extra: Record<string, unknown> = {}): JsonSchema => ({
+  type: "string",
+  minLength: 1,
+  maxLength: 12_000,
+  description,
+  ...extra,
+});
+
+function authenticated(context: ToolAvailabilityContext): boolean {
+  return context.authenticated;
+}
+
+function guestOrAuthenticated(context: ToolAvailabilityContext): boolean {
+  return context.entitlements?.image_gen !== false;
+}
+
+function definition<Name extends SentIQToolName>(args: Omit<ToolDefinition<Name>, "validateInput">): ToolDefinition<Name> {
+  return {
+    ...args,
+    validateInput(input: unknown): Record<string, unknown> {
+      return schemas[args.name].parse(input) as Record<string, unknown>;
+    },
+  };
+}
+
+export const SENTIQ_TOOL_REGISTRY: readonly ToolDefinition[] = [
+  definition({
+    name: "web_surf",
+    description: "Search live web sources when current or externally verified information is genuinely required.",
+    inputSchema: objectSchema({ query: stringProperty("The user's web research request.") }, ["query"]),
+    resultSchema: objectSchema({ evidence: { type: "object" } }, ["evidence"]),
+    authorization: "guest",
+    handoff: "assistant_continue",
+    sideEffect: "none",
+    isAvailable: () => true,
+  }),
+  definition({
+    name: "image_gen",
+    description: "Generate an image when the user asks for a new visual asset.",
+    inputSchema: objectSchema({ prompt: stringProperty("The image the user wants generated.") }, ["prompt"]),
+    resultSchema: objectSchema({ image: { type: "object" } }, ["image"]),
+    authorization: "entitled",
+    handoff: "terminal_structured",
+    sideEffect: "idempotent",
+    isAvailable: guestOrAuthenticated,
+  }),
+  definition({
+    name: "chart_gen",
+    description: "Create a chart or data visualization explicitly requested by the user.",
+    inputSchema: objectSchema({ request: stringProperty("The requested chart, including supplied data and constraints.") }, ["request"]),
+    resultSchema: objectSchema({ chart: { type: "object" } }, ["chart"]),
+    authorization: "authenticated",
+    handoff: "terminal_structured",
+    sideEffect: "idempotent",
+    isAvailable: authenticated,
+  }),
+  definition({
+    name: "file_gen",
+    description: "Create a downloadable file explicitly requested by the user.",
+    inputSchema: objectSchema({
+      request: stringProperty("The requested file and its material content constraints."),
+      format: stringProperty("Optional supported output format.", { enum: fileFormat.options }),
+    }, ["request"]),
+    resultSchema: objectSchema({ file: { type: "object" } }, ["file"]),
+    authorization: "authenticated",
+    handoff: "terminal_structured",
+    sideEffect: "idempotent",
+    isAvailable: authenticated,
+  }),
+  definition({
+    name: "memory_update",
+    description: "Store an explicit user request to remember durable identity, preference, or project information.",
+    inputSchema: objectSchema({
+      content: stringProperty("The information the user explicitly asked SentIQ to remember."),
+      scope: stringProperty("Optional memory scope.", { enum: ["global", "chat"] }),
+    }, ["content"]),
+    resultSchema: objectSchema({ memory: { type: "object" } }, ["memory"]),
+    authorization: "authenticated",
+    handoff: "terminal_structured",
+    sideEffect: "stateful",
+    isAvailable: authenticated,
+  }),
+] as const;
+
+// Compatibility export retained for the legacy planner and its tests.
+export const MODEL_OWNED_TOOL_CONTRACTS = SENTIQ_TOOL_REGISTRY;
+
+const REGISTRY_BY_NAME = new Map<SentIQToolName, ToolDefinition>(
+  SENTIQ_TOOL_REGISTRY.map((tool) => [tool.name, tool]),
 );
 
-export function getAllowedModelOwnedTools(mode: ExecutionMode | undefined): readonly ModelOwnedToolName[] {
-  const normalizedMode = normalizeExecutionMode(mode);
-  return MODEL_OWNED_TOOL_CONTRACTS
-    .filter((contract) => contract.allowedModes.includes(normalizedMode))
-    .map((contract) => contract.name);
+export function isSentIQToolName(value: string): value is SentIQToolName {
+  return REGISTRY_BY_NAME.has(value as SentIQToolName);
+}
+
+export function getToolDefinition(name: SentIQToolName): ToolDefinition {
+  const tool = REGISTRY_BY_NAME.get(name);
+  if (!tool) throw new Error(`Unknown SentIQ tool: ${name}`);
+  return tool;
+}
+
+export function getAvailableToolDefinitions(context: ToolAvailabilityContext): readonly ToolDefinition[] {
+  return SENTIQ_TOOL_REGISTRY.filter((tool) => (
+    tool.isAvailable(context) && context.entitlements?.[tool.name] !== false
+  ));
+}
+
+export function getProviderToolDefinitions(context: ToolAvailabilityContext): readonly ProviderToolDefinition[] {
+  return getAvailableToolDefinitions(context).map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.inputSchema,
+  }));
+}
+
+export function getAllowedToolFingerprint(tools: readonly ProviderToolDefinition[]): string {
+  const canonical = tools
+    .map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.input_schema }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+function parseArguments(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  if (Buffer.byteLength(value, "utf8") > MAX_TOOL_ARGUMENT_BYTES) {
+    throw new Error("Tool arguments exceed the allowed size.");
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error("Tool arguments must be valid JSON.");
+  }
+}
+
+export function validateModelToolCalls(
+  rawCalls: readonly RawModelToolCall[],
+  context: ToolAvailabilityContext,
+  allowedTools: readonly SentIQToolName[] = getAvailableToolDefinitions(context).map((tool) => tool.name),
+): readonly ValidatedToolCall[] {
+  if (!Array.isArray(rawCalls) || rawCalls.length === 0) throw new Error("At least one tool call is required.");
+  if (rawCalls.length > MAX_TOOL_CALLS_PER_TURN) throw new Error("Too many tool calls were returned.");
+
+  const allowed = new Set<SentIQToolName>(allowedTools);
+  const ids = new Set<string>();
+  const indexes = new Set<number>();
+  return rawCalls.map((raw, position) => {
+    const id = typeof raw.id === "string" ? raw.id.trim() : "";
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new Error("Tool call ID is malformed.");
+    if (ids.has(id)) throw new Error("Duplicate tool call ID.");
+    ids.add(id);
+
+    const name = typeof raw.name === "string" ? raw.name.trim() : "";
+    if (!isSentIQToolName(name)) throw new Error(`Unknown SentIQ tool: ${name || "(missing)"}`);
+    if (!allowed.has(name)) throw new Error(`SentIQ tool is unavailable: ${name}`);
+    const tool = getToolDefinition(name);
+    if (!tool.isAvailable(context) || context.entitlements?.[name] === false) {
+      throw new Error(`SentIQ tool is unavailable: ${name}`);
+    }
+
+    const serialized = typeof raw.arguments === "string" ? raw.arguments : JSON.stringify(raw.arguments ?? null);
+    if (Buffer.byteLength(serialized, "utf8") > MAX_TOOL_ARGUMENT_BYTES) {
+      throw new Error("Tool arguments exceed the allowed size.");
+    }
+    const argumentsValue = tool.validateInput(parseArguments(raw.arguments));
+    const index = typeof raw.index === "number" && Number.isInteger(raw.index) && raw.index >= 0
+      ? raw.index
+      : position;
+    if (indexes.has(index)) throw new Error("Duplicate tool call index.");
+    indexes.add(index);
+    return { id, name, arguments: argumentsValue, index };
+  });
+}
+
+export function normalizeAssistantTurn(
+  raw: unknown,
+  context: ToolAvailabilityContext,
+  allowedTools?: readonly SentIQToolName[],
+): AssistantTurn {
+  if (!raw || typeof raw !== "object") throw new Error("Assistant turn is malformed.");
+  const candidate = raw as { kind?: unknown; text?: unknown; calls?: unknown };
+  if (candidate.kind === "assistant_text") {
+    return { kind: "assistant_text", text: typeof candidate.text === "string" ? candidate.text : "" };
+  }
+  if (candidate.kind === "tool_calls" && Array.isArray(candidate.calls)) {
+    return { kind: "tool_calls", calls: validateModelToolCalls(candidate.calls, context, allowedTools) };
+  }
+  throw new Error("Assistant turn kind is unsupported.");
+}
+
+export function getAllowedModelOwnedTools(_mode: ExecutionMode | undefined): readonly ModelOwnedToolName[] {
+  return SENTIQ_TOOL_REGISTRY.map((tool) => tool.name);
 }
 
 export function isModelOwnedToolAllowed(
   toolName: string,
-  mode: ExecutionMode | undefined,
+  _mode: ExecutionMode | undefined,
 ): toolName is ModelOwnedToolName {
-  const contract = CONTRACT_BY_NAME.get(toolName as ModelOwnedToolName);
-  if (!contract) return false;
-  return contract.allowedModes.includes(normalizeExecutionMode(mode));
+  return isSentIQToolName(toolName);
 }
 
 export function legacyRouteForModelOwnedTool(toolName: ModelOwnedToolName): string {
   switch (toolName) {
-    case "web_surf":
-      return "web_search";
-    case "image_gen_basic":
-    case "image_gen_advanced":
-      return "image_generation";
-    case "intent_clarification_tool":
-      return "clarification";
-    default:
-      return "normal_chat";
+    case "web_surf": return "web_search";
+    case "image_gen": return "image_generation";
+    case "chart_gen": return "chart_generation";
+    case "file_gen": return "file_generation";
+    case "memory_update": return "memory_update";
+    default: return "normal_chat";
   }
 }

@@ -22,7 +22,7 @@ function sourceBlock(source: string, startNeedle: string, endNeedle: string): st
 
 const streamRoute = sourceBlock(
   server,
-  '"/api/chat/stream"',
+  '// POST /api/chat/stream — SSE streaming chat endpoint',
   "// ===============================\n// POST /api/memory/classify",
 );
 
