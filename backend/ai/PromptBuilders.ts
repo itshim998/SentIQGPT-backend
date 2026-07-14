@@ -124,6 +124,8 @@ export interface LLMAdapterCall {
   readonly message_count?: number;
   /** Explicit server-derived availability. Never populate this from model output. */
   readonly sentiq_tool_context?: ToolAvailabilityContext;
+  /** Server-selected subset. Model output must never populate this field. */
+  readonly sentiq_allowed_tool_names?: readonly SentIQToolName[];
 }
 
 interface InternalBudgetPolicy {
@@ -194,7 +196,11 @@ export function buildSentIQToolTransportRequest(
 ): SentIQToolTransportRequest | undefined {
   if (!enabled || !MODEL_TOOL_ELIGIBLE_TASKS.has(call.task)) return undefined;
   const availabilityContext = inferToolAvailabilityContext(call);
-  const tools = getProviderToolDefinitions(availabilityContext);
+  const requestedNames = call.sentiq_allowed_tool_names
+    ? new Set(call.sentiq_allowed_tool_names)
+    : undefined;
+  const tools = getProviderToolDefinitions(availabilityContext)
+    .filter((tool) => !requestedNames || requestedNames.has(tool.name));
   if (tools.length === 0) return undefined;
   return {
     registry_version: SENTIQ_TOOL_REGISTRY_VERSION,

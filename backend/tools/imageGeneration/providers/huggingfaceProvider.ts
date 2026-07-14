@@ -16,7 +16,7 @@ export class HuggingFaceProvider implements ImageProvider {
     return Boolean(process.env.HUGGINGFACE_API_TOKEN);
   }
 
-  async generate(prompt: string): Promise<ImageProviderResult> {
+  async generate(prompt: string, _size?: string, signal?: AbortSignal): Promise<ImageProviderResult> {
     const token = process.env.HUGGINGFACE_API_TOKEN;
     if (!token) {
       throw new Error("HUGGINGFACE_API_TOKEN not configured");
@@ -24,6 +24,9 @@ export class HuggingFaceProvider implements ImageProvider {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), HF_TIMEOUT_MS);
+    const abortFromParent = () => controller.abort(signal?.reason);
+    if (signal?.aborted) abortFromParent();
+    else signal?.addEventListener("abort", abortFromParent, { once: true });
 
     try {
       const response = await fetch(
@@ -49,6 +52,7 @@ export class HuggingFaceProvider implements ImageProvider {
       return { base64 };
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortFromParent);
     }
   }
 }

@@ -20,6 +20,7 @@ export type PersistGeneratedImageParams = {
   provider?: string;
   clientRequestId?: string;
   storageDb?: any;
+  persistPromptMessage?: boolean;
 };
 
 export type PersistGeneratedImageResult = {
@@ -70,16 +71,16 @@ export async function persistGeneratedImageResult(
   const uploadImage = dependencies.uploadImage ?? uploadChatImage;
   const trimmedClientRequestId = typeof params.clientRequestId === "string" ? params.clientRequestId.trim() : "";
 
-  const promptInsert = await insertMessage(params.userDb, {
-    conversationId: params.conversationId,
-    role: "user",
-    content: buildImagePromptMessageContent(params.prompt),
-    clientRequestId: trimmedClientRequestId || undefined,
-  });
+  const promptInsert = params.persistPromptMessage === false
+    ? { data: null, error: null, duplicate: false }
+    : await insertMessage(params.userDb, {
+        conversationId: params.conversationId,
+        role: "user",
+        content: buildImagePromptMessageContent(params.prompt),
+        clientRequestId: trimmedClientRequestId || undefined,
+      });
 
-  if (promptInsert.error) {
-    throw new Error(promptInsert.error.message);
-  }
+  if (promptInsert.error) throw new Error(promptInsert.error.message);
 
   const uploaded = await uploadImage(
     params.userDb,

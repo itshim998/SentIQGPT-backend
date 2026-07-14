@@ -36,6 +36,15 @@ import { INTUITIVE_PROFILE, type ExecutionProfile } from "./executionProfile";
 import { BillingQuotaError, BillingQuotaService } from "../billing/quotaService";
 import { getImageModelForPlan } from "../billing/modelEntitlementRouter";
 import type { UsageReservation } from "../billing/entitlementTypes";
+import {
+  findExistingAssistantImageMessage,
+  persistGeneratedImageResult,
+} from "../services/generatedImagePersistenceService";
+import { getImageStorageDatabase } from "../dbRouter";
+import { commitImageQuotaSuccess, getQuotaInfo } from "../middleware/imageQuota";
+import { getEnabledAutomaticSentIQTools } from "../ai/modelToolCapability";
+import type { ToolLifecycleEvent, ValidatedToolCall } from "./toolContract";
+import { AutomaticToolDispatchError, dispatchAutomaticModelToolCall } from "../ai/modelToolExecution";
 
 // ==============================
 // Types
@@ -62,6 +71,11 @@ export interface StepResult {
     provider_used?: string;
     prompt: string;
     error?: string;
+    persisted?: boolean;
+    deduplicated?: boolean;
+    storage_path?: string;
+    file_size_bytes?: number;
+    warning?: string;
   };
   /** Chart output (chart_generation) */
   readonly chart?: {
@@ -125,6 +139,7 @@ export interface StepResult {
     v2?: WebSurfV2Payload;
   };
   readonly error?: string;
+  readonly tool_events?: readonly ToolLifecycleEvent[];
 }
 
 export interface ExecutionResult {
@@ -239,6 +254,9 @@ async function execConversation(
     console.log(`[MasterRouter] conversation deterministic fallback=${routedModel.fallback_reason}`);
   }
   
+  const automaticTools = !priorContext && !webSurfEvidence && !ctx.webSearchMode
+    ? getEnabledAutomaticSentIQTools()
+    : [];
   let result: Awaited<ReturnType<typeof handleChat>>;
   try {
     result = await handleChat({
@@ -263,7 +281,19 @@ async function execConversation(
       webSurfSourceIds: webSurfEvidence?.synthesisSourceIds,
       webSurfAnswerPlan: webSurfEvidence?.answerIntelligence?.plan,
       webSurfAnswerSources: webSurfEvidence?.answerIntelligence?.sources,
+      executionMode: profile.mode,
+      modelToolContext: automaticTools.length > 0 ? {
+        authenticated: Boolean(ctx.userId && ctx.userId !== "guest"),
+        executionMode: profile.mode,
+      } : undefined,
+      allowedModelTools: automaticTools,
     });
+    if (result.tool_calls) {
+      if (reservation) {
+        await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "conversation", outcome: "tool_selected" });
+      }
+      return executeAutomaticModelToolCalls(result.tool_calls, input, ctx, profile, signal);
+    }
     if (reservation) {
       await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "conversation" });
     }
@@ -283,12 +313,77 @@ async function execConversation(
   };
 }
 
+export async function executeAutomaticModelToolCalls(
+  calls: readonly ValidatedToolCall[],
+  originalUserRequest: string,
+  ctx: BuiltContext,
+  profile: ExecutionProfile,
+  signal?: AbortSignal,
+  onLifecycleEvent?: (event: ToolLifecycleEvent) => void | Promise<void>,
+): Promise<StepResult> {
+  const allowedTools = getEnabledAutomaticSentIQTools();
+  try {
+    const dispatched = await dispatchAutomaticModelToolCall<StepResult>({
+      calls,
+      context: {
+        authenticated: Boolean(ctx.userId && ctx.userId !== "guest"),
+        executionMode: profile.mode,
+      },
+      allowedTools,
+      executeWebSurf: (query) => execWebSearch(query, ctx, profile, signal, originalUserRequest),
+      executeImage: (prompt) => execImageGeneration(prompt, ctx, profile, signal),
+      isFailure: (result, call) => Boolean(result.error)
+        || result.image?.success === false
+        || (call.name === "web_surf" && !result.web_search),
+      onLifecycleEvent,
+    });
+    return { ...dispatched.result, tool_events: dispatched.events };
+  } catch (error) {
+    if (signal?.aborted) throwIfAborted(signal);
+    if (!(error instanceof AutomaticToolDispatchError)) throw error;
+    return {
+      step: 0,
+      tool: error.call.name === "web_surf" ? "web_search" : "image_generation",
+      reply: error.call.name === "web_surf" ? safeWebSearchFailureMessage() : safeImageGenerationFailureMessage(),
+      error: "Automatic SentIQ tool execution failed.",
+      tool_events: error.events,
+    };
+  }
+}
+
 async function execImageGeneration(
   input: string,
   ctx: BuiltContext,
   profile: ExecutionProfile,
   signal?: AbortSignal,
 ): Promise<StepResult> {
+  const localQuota = ctx.imageQuotaKey ? getQuotaInfo(ctx.imageQuotaKey) : undefined;
+  if (localQuota?.cooldownActive) {
+    throw new Error("Image generation cooldown is active.");
+  }
+  if (localQuota && localQuota.remaining <= 0) {
+    throw new Error("Image generation quota is exhausted.");
+  }
+  if (ctx.userDb && ctx.conversationId && ctx.clientRequestId) {
+    const existing = await findExistingAssistantImageMessage(ctx.userDb, ctx.conversationId, ctx.clientRequestId);
+    if (existing?.image_url) {
+      return {
+        step: 0,
+        tool: "image_generation",
+        reply: "Generated image.",
+        image: {
+          success: true,
+          image_url: existing.image_url,
+          provider_used: existing.provider || undefined,
+          prompt: existing.prompt || input,
+          persisted: true,
+          deduplicated: true,
+          storage_path: existing.storage_path || undefined,
+          file_size_bytes: existing.file_size_bytes || undefined,
+        },
+      };
+    }
+  }
   let reservation: UsageReservation | null = null;
   let committedReservation: UsageReservation | null = null;
   let preferredModel: string | undefined;
@@ -337,6 +432,37 @@ async function execImageGeneration(
     throw error;
   }
 
+  let imageUrl = result.image_url;
+  let imageBase64 = result.image_base64;
+  let persisted = false;
+  let storagePath: string | undefined;
+  let fileSizeBytes: number | undefined;
+  let persistenceWarning: string | undefined;
+  if (result.success && ctx.userDb && ctx.conversationId && (imageBase64 || imageUrl)) {
+    try {
+      const persistenceResult = await persistGeneratedImageResult({
+        userDb: ctx.userDb,
+        userId: ctx.userId || "",
+        conversationId: ctx.conversationId,
+        prompt: input,
+        generatedImageData: imageBase64 || imageUrl || "",
+        provider: result.provider_used,
+        clientRequestId: ctx.clientRequestId,
+        storageDb: getImageStorageDatabase(),
+        persistPromptMessage: false,
+      });
+      imageUrl = persistenceResult.assistantMessage.image_url || persistenceResult.storedImage.imageUrl;
+      imageBase64 = undefined;
+      storagePath = persistenceResult.assistantMessage.storage_path || persistenceResult.storedImage.storagePath;
+      fileSizeBytes = persistenceResult.assistantMessage.file_size_bytes || persistenceResult.storedImage.fileSizeBytes;
+      persisted = true;
+    } catch (error) {
+      console.warn(`[IMAGE] automatic persistence degraded: ${error instanceof Error ? error.message : String(error)}`);
+      persistenceWarning = "Image was generated, but couldn't be saved to your conversation.";
+    }
+  }
+  if (result.success && ctx.imageQuotaKey) commitImageQuotaSuccess(ctx.imageQuotaKey);
+
   return {
     step: 0,
     tool: "image_generation",
@@ -345,11 +471,15 @@ async function execImageGeneration(
       : safeImageGenerationFailureMessage(),
     image: {
       success: result.success,
-      image_url: result.image_url,
-      image_base64: result.image_base64,
+      image_url: imageUrl,
+      image_base64: imageBase64,
       provider_used: result.provider_used,
       prompt: result.prompt,
       error: result.success ? undefined : safeImageGenerationFailureMessage(),
+      persisted,
+      storage_path: storagePath,
+      file_size_bytes: fileSizeBytes,
+      warning: persistenceWarning,
     },
   };
 }
@@ -547,6 +677,7 @@ async function execWebSearch(
   ctx: BuiltContext,
   profile: ExecutionProfile,
   signal?: AbortSignal,
+  originalUserRequest = input,
 ): Promise<StepResult> {
   if (isWebSurfV2Enabled()) {
     try {
@@ -558,7 +689,7 @@ async function execWebSearch(
       );
       // This delegates to the normal conversation executor. It is deliberately
       // the only point that reserves, commits, or releases a text allowance.
-      const synthesis = await execConversation(input, ctx, "", profile, signal, evidence);
+      const synthesis = await execConversation(originalUserRequest, ctx, "", profile, signal, evidence);
       return {
         ...synthesis,
         tool: "web_search",

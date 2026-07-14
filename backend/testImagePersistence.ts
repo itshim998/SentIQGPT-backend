@@ -85,6 +85,22 @@ async function testPersistGeneratedImageResult(): Promise<void> {
   assert(insertCalls[1].storagePath === "user/chat/generated.webp", "assistant message stores storage path");
   assert(insertCalls[1].fileSizeBytes === 12345, "assistant message stores file size metadata");
   assert(result.assistantMessage.message_type === "image", "result exposes assistant image metadata");
+
+  insertCalls.length = 0;
+  await persistGeneratedImageResult(
+    {
+      userDb: {},
+      userId: "user-1",
+      conversationId: "chat-1",
+      prompt: "Automatic image request",
+      generatedImageData: "https://provider.example.com/automatic.png",
+      clientRequestId: "req-auto",
+      persistPromptMessage: false,
+    },
+    { insertMessage: insertMessage as any, uploadImage: uploadImage as any },
+  );
+  assert(insertCalls.length === 1, "automatic chat persistence does not duplicate the existing user turn");
+  assert(insertCalls[0].role === "assistant", "automatic chat persistence stores only the terminal image result");
 }
 
 async function testFindExistingAssistantImageMessage(): Promise<void> {
@@ -122,7 +138,7 @@ function testImageRouteSourceGuards(): void {
   const server = readFileSync(resolve(__dirname, "server.ts"), "utf8");
   const routeStart = server.indexOf('"/api/images/generate"');
   assert(routeStart >= 0, "image generation route exists");
-  const routeBlock = server.slice(routeStart, routeStart + 9500);
+  const routeBlock = server.slice(routeStart, routeStart + 12_000);
   assert(routeBlock.includes('feature: "image_generation"'), "image route reserves billing image quota before provider generation");
   assert(routeBlock.includes("releaseBillingReservation(committedImageReservation)"), "image route releases billing quota when provider generation fails");
   assert(routeBlock.includes("billingQuotaService.commit(committedImageReservation"), "image route commits billing quota after provider success");

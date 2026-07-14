@@ -25,7 +25,7 @@ export interface ImageProvider {
   /** Returns true when the provider has the credentials it needs. */
   isAvailable(): boolean;
   /** Generate an image. Throws on failure. */
-  generate(prompt: string, size?: string): Promise<ImageProviderResult>;
+  generate(prompt: string, size?: string, signal?: AbortSignal): Promise<ImageProviderResult>;
 }
 
 /**

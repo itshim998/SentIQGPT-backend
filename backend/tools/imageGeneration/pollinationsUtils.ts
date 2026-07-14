@@ -68,9 +68,13 @@ export function buildPollinationsUrl(
 export async function fetchPollinationsImage(
   imageUrl: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromParent = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abortFromParent();
+  else signal?.addEventListener("abort", abortFromParent, { once: true });
 
   const apiKey = getPollinationsApiKey();
   console.log(`[POLLINATIONS] request url=${imageUrl.slice(0, 120)}... auth=${!!apiKey}`);
@@ -96,5 +100,6 @@ export async function fetchPollinationsImage(
     return Buffer.from(arrayBuffer).toString("base64");
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", abortFromParent);
   }
 }

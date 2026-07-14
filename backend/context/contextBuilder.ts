@@ -66,6 +66,8 @@ export interface RawMessageContext {
   readonly conversationId?: string;
   readonly billingIdentity?: BillingIdentity;
   readonly billingRequestId?: string;
+  readonly clientRequestId?: string;
+  readonly imageQuotaKey?: string;
 }
 
 export interface ImageAttachmentContext {
@@ -99,6 +101,8 @@ export interface BuiltContext {
   readonly conversationId?: string;
   readonly billingIdentity?: BillingIdentity;
   readonly billingRequestId?: string;
+  readonly clientRequestId?: string;
+  readonly imageQuotaKey?: string;
   readonly trustedProfile?: {
     displayName: string;
   };
@@ -523,6 +527,8 @@ export async function buildContext(
     conversationId: raw.conversationId,
     billingIdentity: raw.billingIdentity,
     billingRequestId: raw.billingRequestId,
+    clientRequestId: raw.clientRequestId,
+    imageQuotaKey: raw.imageQuotaKey,
     trustedProfile: raw.trustedProfile,
     priorConversationEvidence,
     isExplicitRecallQuery,
@@ -643,6 +649,8 @@ export async function buildContextFast(
     conversationId: raw.conversationId,
     billingIdentity: raw.billingIdentity,
     billingRequestId: raw.billingRequestId,
+    clientRequestId: raw.clientRequestId,
+    imageQuotaKey: raw.imageQuotaKey,
     trustedProfile: raw.trustedProfile,
     priorConversationEvidence,
     isExplicitRecallQuery,

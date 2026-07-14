@@ -30,7 +30,7 @@ export class StabilityProvider implements ImageProvider {
     return Boolean(process.env.STABILITY_API_KEY);
   }
 
-  async generate(prompt: string, size?: string): Promise<ImageProviderResult> {
+  async generate(prompt: string, size?: string, signal?: AbortSignal): Promise<ImageProviderResult> {
     const apiKey = process.env.STABILITY_API_KEY;
     if (!apiKey) {
       throw new Error("STABILITY_API_KEY not configured");
@@ -40,6 +40,9 @@ export class StabilityProvider implements ImageProvider {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), STABILITY_TIMEOUT_MS);
+    const abortFromParent = () => controller.abort(signal?.reason);
+    if (signal?.aborted) abortFromParent();
+    else signal?.addEventListener("abort", abortFromParent, { once: true });
 
     try {
       const response = await fetch(
@@ -80,6 +83,7 @@ export class StabilityProvider implements ImageProvider {
       return { base64: artifact.base64 };
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortFromParent);
     }
   }
 }

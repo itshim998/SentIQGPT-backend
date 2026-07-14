@@ -69,6 +69,13 @@ export interface ValidatedToolCall {
   readonly index: number;
 }
 
+export type ToolLifecycleEvent = Readonly<{
+  type: "tool_selected" | "tool_started" | "tool_result" | "tool_error";
+  tool: "web_surf" | "image_gen";
+  call_id: string;
+  code?: string;
+}>;
+
 export type AssistantTurn =
   | { readonly kind: "assistant_text"; readonly text: string }
   | { readonly kind: "tool_calls"; readonly calls: readonly ValidatedToolCall[] };
@@ -272,6 +279,17 @@ export function validateModelToolCalls(
     indexes.add(index);
     return { id, name, arguments: argumentsValue, index };
   });
+}
+
+export function validateSingleAutomaticToolCall(
+  calls: readonly ValidatedToolCall[],
+  context: ToolAvailabilityContext,
+  allowedTools: readonly SentIQToolName[],
+): ValidatedToolCall {
+  if (calls.length !== 1) {
+    throw new Error("Automatic SentIQ execution permits exactly one tool call per turn.");
+  }
+  return validateModelToolCalls(calls, context, allowedTools)[0];
 }
 
 export function normalizeAssistantTurn(

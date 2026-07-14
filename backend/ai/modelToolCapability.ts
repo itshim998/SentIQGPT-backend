@@ -41,3 +41,24 @@ export function isGeminiSentIQToolTransportEnabled(
 ): boolean {
   return value?.trim().toLowerCase() === "true";
 }
+
+export function isModelWebSurfSelectionEnabled(
+  value = process.env.SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED,
+): boolean {
+  return value?.trim().toLowerCase() === "true";
+}
+
+export function isModelImageSelectionEnabled(
+  value = process.env.SENTIQ_MODEL_IMAGE_SELECTION_ENABLED,
+): boolean {
+  return value?.trim().toLowerCase() === "true";
+}
+
+export function getEnabledAutomaticSentIQTools(): readonly ("web_surf" | "image_gen")[] {
+  if (!isModelToolRegistryEnabled()) return [];
+  if (!isGroqSentIQToolTransportEnabled() && !isGeminiSentIQToolTransportEnabled()) return [];
+  return [
+    ...(isModelWebSurfSelectionEnabled() ? ["web_surf" as const] : []),
+    ...(isModelImageSelectionEnabled() ? ["image_gen" as const] : []),
+  ];
+}

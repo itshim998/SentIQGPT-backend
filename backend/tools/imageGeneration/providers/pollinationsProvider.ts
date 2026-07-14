@@ -15,10 +15,10 @@ export class PollinationsProvider implements ImageProvider {
     return Boolean(getPollinationsApiKey());
   }
 
-  async generate(prompt: string, size?: string): Promise<ImageProviderResult> {
+  async generate(prompt: string, size?: string, signal?: AbortSignal): Promise<ImageProviderResult> {
     const enhanced = enhancePrompt(prompt);
     const imageUrl = buildPollinationsUrl(enhanced, "z-image-turbo", size);
-    const base64 = await fetchPollinationsImage(imageUrl, TURBO_TIMEOUT_MS);
+    const base64 = await fetchPollinationsImage(imageUrl, TURBO_TIMEOUT_MS, signal);
     return { base64 };
   }
 }

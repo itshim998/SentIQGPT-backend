@@ -21,10 +21,10 @@ export class GptImageProvider implements ImageProvider {
     return Boolean(getPollinationsApiKey());
   }
 
-  async generate(prompt: string, size?: string): Promise<ImageProviderResult> {
+  async generate(prompt: string, size?: string, signal?: AbortSignal): Promise<ImageProviderResult> {
     // Keep complex prompts unchanged so the model receives the full instruction verbatim.
     const imageUrl = buildPollinationsUrl(prompt, this.modelName, size);
-    const base64 = await fetchPollinationsImage(imageUrl, GPTIMAGE_TIMEOUT_MS);
+    const base64 = await fetchPollinationsImage(imageUrl, GPTIMAGE_TIMEOUT_MS, signal);
     return { base64 };
   }
 }

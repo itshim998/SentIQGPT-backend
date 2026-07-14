@@ -9,6 +9,7 @@ import { extractUserFacingAnswer, finalizeStructuredReply } from "./replyGuard";
 import { PRODUCT_DISCLAIMER } from "../branding";
 import type { WebSurfAnswerPlan, WebSurfAnswerSourceContext } from "../tools/webSearch/webSurfAnswerIntelligence";
 import { normalizeWebSurfAnswerOutput } from "../tools/webSearch/webSurfOutputGuard";
+import type { SentIQToolName, ToolAvailabilityContext, ValidatedToolCall } from "../orchestrator/toolContract";
 
 const REASONING_MAX_OUTPUT_TOKENS = 2600;
 const CONTINUATION_MAX_OUTPUT_TOKENS = 1800;
@@ -71,6 +72,7 @@ export interface ChatResponse {
   readonly model_used?: string;
   readonly fallback?: boolean;
   readonly sanitize_bypass?: boolean;
+  readonly tool_calls?: readonly ValidatedToolCall[];
 }
 
 export async function handleChat(args: {
@@ -94,6 +96,9 @@ export async function handleChat(args: {
   readonly webSurfAnswerPlan?: WebSurfAnswerPlan;
   readonly webSurfAnswerSources?: readonly WebSurfAnswerSourceContext[];
   readonly signal?: AbortSignal;
+  readonly executionMode?: "fast" | "intuitive";
+  readonly modelToolContext?: ToolAvailabilityContext;
+  readonly allowedModelTools?: readonly SentIQToolName[];
 }): Promise<ChatResponse> {
   if (!args.userMessage.trim()) {
     throw new Error("userMessage must be a non-empty string.");
@@ -139,7 +144,23 @@ export async function handleChat(args: {
   let finishReason: string | null | undefined;
 
   try {
-    const result = await callLLMAdapterDetailed({ ...call, signal: args.signal });
+    const result = await callLLMAdapterDetailed({
+      ...call,
+      signal: args.signal,
+      execution_mode: args.executionMode,
+      sentiq_tool_context: args.modelToolContext,
+      sentiq_allowed_tool_names: args.allowedModelTools,
+    });
+    if (result.assistant_turn?.kind === "tool_calls") {
+      return {
+        answer: "",
+        reply: "",
+        disclaimer: PRODUCT_DISCLAIMER,
+        model_used: result.model_used,
+        fallback: result.fallback,
+        tool_calls: result.assistant_turn.calls,
+      };
+    }
     raw = result.text;
     model_used = result.model_used;
     fallback = result.fallback ?? false;

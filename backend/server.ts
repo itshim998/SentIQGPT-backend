@@ -49,6 +49,7 @@ import {
   callLLMAdapter,
   callLLMAdapterDetailed,
   callLLMAdapterStream,
+  callLLMAdapterTurnStream,
   buildTitleGeneratePrompt,
   strictParseJsonObject,
 } from "./ai/PromptBuilders";
@@ -123,6 +124,11 @@ import {
 
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
+import { executeAutomaticModelToolCalls } from "./orchestrator/toolExecutor";
+import { consumeModelTurnStream } from "./ai/modelToolExecution";
+import {
+  getEnabledAutomaticSentIQTools,
+} from "./ai/modelToolCapability";
 import {
   DEFAULT_MAX_CLARIFICATION_TURNS,
   formatClarificationText,
@@ -2780,6 +2786,17 @@ app.post(
   verifyJWT({ allowGuest: true }),
   aiRateLimiter,
   asyncHandler(async (req, res) => {
+    const requestAbortController = new AbortController();
+    const abortRequest = () => {
+      if (!res.writableEnded) requestAbortController.abort(new Error("Client disconnected"));
+    };
+    const cleanupAbortListeners = () => {
+      req.removeListener("aborted", abortRequest);
+      res.removeListener("close", abortRequest);
+    };
+    req.once("aborted", abortRequest);
+    res.once("close", abortRequest);
+    res.once("finish", cleanupAbortListeners);
     const parsed = ChatRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: formatZodError(parsed.error) });
@@ -2807,6 +2824,7 @@ app.post(
       !hasExplicitWebSearchMode &&
       !isFileGenerationRequest(effectiveUserMessage) &&
       !isChartRequest(effectiveUserMessage) &&
+      !getEnabledAutomaticSentIQTools().includes("web_surf") &&
       shouldAutoUseWebSurf(effectiveUserMessage)
         ? "basic"
         : undefined;
@@ -2843,6 +2861,7 @@ app.post(
         userMessage: parsed.data.message,
         executionMode: parsed.data.executionMode,
         clarificationResponse: parsed.data.clarification_response,
+        signal: requestAbortController.signal,
         context: {
           recent_messages: normalizedRecentMessages,
           memories: [],
@@ -2852,6 +2871,8 @@ app.post(
           userId,
           billingIdentity,
           billingRequestId,
+          clientRequestId: parsed.data.clientRequestId,
+          imageQuotaKey: getImageQuotaKey(req),
         },
       });
 
@@ -2867,6 +2888,46 @@ app.post(
         memory: result.memory,
         web_search: result.web_search,
         clarification: result.clarification,
+        confidence: result.confidence,
+        model_used: result.model_used,
+        searched: result.searched === true,
+      });
+      return;
+    }
+
+    if (
+      isGuest &&
+      getEnabledAutomaticSentIQTools().length > 0 &&
+      !hasExplicitWebSearchMode &&
+      !isFileGenerationRequest(effectiveUserMessage) &&
+      !isChartRequest(effectiveUserMessage) &&
+      !detectExplicitMemoryWriteIntent(effectiveUserMessage)
+    ) {
+      const result = await orchestrate({
+        userMessage: parsed.data.message,
+        executionMode: parsed.data.executionMode,
+        clarificationResponse: parsed.data.clarification_response,
+        signal: requestAbortController.signal,
+        context: {
+          recent_messages: normalizedRecentMessages,
+          memories: [],
+          file_references: orcFileRefs,
+          image_attachments: orcImageAttachments,
+          userId,
+          billingIdentity,
+          billingRequestId,
+          clientRequestId: parsed.data.clientRequestId,
+          imageQuotaKey: getImageQuotaKey(req),
+        },
+      });
+      res.json({
+        route: result.route,
+        answer: result.answer ?? result.reply,
+        reply: result.reply,
+        disclaimer: result.disclaimer,
+        image: result.image,
+        web_search: result.web_search,
+        tool_events: result.tool_events,
         confidence: result.confidence,
         model_used: result.model_used,
         searched: result.searched === true,
@@ -3273,6 +3334,7 @@ app.post(
       userMessage: parsed.data.message,
       executionMode: parsed.data.executionMode,
       clarificationResponse: parsed.data.clarification_response,
+      signal: requestAbortController.signal,
       context: {
         recent_messages: normalizedRecentMessages,
         memories: parsed.data.context?.memories,
@@ -3286,12 +3348,15 @@ app.post(
         conversationId: activeConversationId || undefined,
         billingIdentity,
         billingRequestId,
+        clientRequestId: parsed.data.clientRequestId,
+        imageQuotaKey: getImageQuotaKey(req),
       },
     });
 
     let responseReply = result.reply;
     let responseAnswer = result.answer ?? result.reply;
     let responseMemory = result.memory;
+    if (result.image?.success && result.image.persisted) assistantMessagePersisted = true;
     if (userDb && result.memory && result.memory.stored === true) {
       const memoryScope = resolveMemoryScopeForRequest(result.memory, parsed.data.message);
       try {
@@ -3355,7 +3420,7 @@ app.post(
       }
     }
 
-    if (userDb && activeConversationId) {
+    if (userDb && activeConversationId && !result.image?.success) {
       try {
         const assistantMessageOptions = result.file?.success
           ? {
@@ -3447,6 +3512,7 @@ app.post(
       confidence: result.confidence,
       model_used: result.model_used,
       searched: result.searched === true,
+      tool_events: result.tool_events,
       sync: finalizeSyncStatus(sync),
       degraded: buildDegradedStatus(sync),
     });
@@ -3658,6 +3724,7 @@ app.post(
       !hasExplicitWebSearchMode &&
       !isFileGenerationRequest(effectiveUserMessage) &&
       !isChartRequest(effectiveUserMessage) &&
+      !getEnabledAutomaticSentIQTools().includes("web_surf") &&
       shouldAutoUseWebSurf(effectiveUserMessage)
         ? "basic"
         : undefined;
@@ -3966,6 +4033,10 @@ app.post(
         image_attachments: parsed.data.context?.image_attachments,
         web_search_mode: effectiveWebSearchMode,
         userMessage: guestUserMessage,
+        billingIdentity,
+        billingRequestId,
+        clientRequestId: parsed.data.clientRequestId,
+        imageQuotaKey: getImageQuotaKey(req),
       }, undefined, userId, { profile: executionProfile });
 
       const guestFastPath = !guestCtx.hasFileContext
@@ -3998,6 +4069,7 @@ app.post(
       let guestWebSurfV2: Awaited<ReturnType<typeof prepareWebSurfV2>> | undefined;
       let guestCitationStream: WebSurfCitationStream | undefined;
       let guestOutputGuard: WebSurfOutputGuardStream | undefined;
+      let guestAutomaticToolAccepted = false;
       try {
         const streamStart = Date.now();
         if (webSurfV2Enabled && hasEffectiveWebSearchMode && !isFileGenerationRequest(effectiveUserMessage)) {
@@ -4064,16 +4136,17 @@ app.post(
           webSurfAnswerSources: guestWebSurfV2?.answerIntelligence?.sources,
         });
         guestGeneralCallForRecovery = call;
-        const adapterStream = await callLLMAdapterStream({ ...call, signal: requestAbortController.signal });
-        const reader = adapterStream.getReader();
+        const automaticTools = guestWebSurfV2 ? [] : getEnabledAutomaticSentIQTools();
+        const adapterStream = await callLLMAdapterTurnStream({
+          ...call,
+          signal: requestAbortController.signal,
+          sentiq_tool_context: automaticTools.length > 0 ? { authenticated: false, executionMode: executionProfile.mode } : undefined,
+          sentiq_allowed_tool_names: automaticTools,
+        });
         let fullReply = "";
 
-        try {
-          while (true) {
-            if (clientDisconnected) break;
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (!value) continue;
+        const turn = await consumeModelTurnStream(adapterStream, async (value) => {
+            if (clientDisconnected) return;
             const safeValue = guestOutputGuard ? guestOutputGuard.push(value) : value;
             fullReply += safeValue;
             const visible = guestCitationStream ? guestCitationStream.push(safeValue) : safeValue;
@@ -4081,11 +4154,31 @@ app.post(
               recordStreamChunk(streamMetrics, visible);
               await writeSseJson({ type: "token", text: visible });
             }
+        });
+        if (turn.kind === "tool_calls") {
+          guestAutomaticToolAccepted = true;
+          await commitTextBilling(guestGeneralReservation, "guest.general.stream.tool-selected");
+          const toolResult = await executeAutomaticModelToolCalls(
+            turn.calls,
+            effectiveUserMessage,
+            guestCtx,
+            executionProfile,
+            requestAbortController.signal,
+            async (event) => writeSseJson(event),
+          );
+          if (toolResult.reply && !toolResult.image) {
+            await streamBufferedAnswer(toolResult.reply, undefined, false, streamMetrics);
           }
-        } finally {
-          if (clientDisconnected) {
-            await reader.cancel("client disconnected").catch(() => undefined);
+          if (toolResult.web_search?.v2) {
+            await writeSseJson({ type: "websurf_sources", web_search: toolResult.web_search.v2 });
+            await writeSseJson({ type: "websurf_complete", answer: toolResult.reply, web_search: toolResult.web_search.v2 });
           }
+          if (toolResult.image) {
+            await writeSseJson({ type: "structured_response", response: { route: "image_generation", image: toolResult.image, reply: toolResult.reply } });
+          }
+          await writeSseEvent("[DONE]");
+          logStreamMetrics(streamMetrics, "complete");
+          return;
         }
 
         const outputGuardTail = guestOutputGuard?.flush();
@@ -4146,7 +4239,11 @@ app.post(
         }
         console.log(`[Stream] guest live stream completed in ${Date.now() - streamStart}ms`);
       } catch (err) {
-        if (streamMetrics.chunkCount === 0 && !clientDisconnected && guestGeneralCallForRecovery) {
+        if (guestAutomaticToolAccepted) {
+          await sendStreamError(err, streamMetrics);
+          return;
+        }
+        if (!guestAutomaticToolAccepted && streamMetrics.chunkCount === 0 && !clientDisconnected && guestGeneralCallForRecovery) {
           try {
             const fallbackText = await recoverBufferedStreamText({
               route: "guest.general",
@@ -4204,6 +4301,7 @@ app.post(
     const fastHasImageContext = (parsed.data.context?.image_attachments?.length ?? 0) > 0;
     const fastPlainChatEligible =
       executionProfile.mode === "fast" &&
+      getEnabledAutomaticSentIQTools().length === 0 &&
       !hasEffectiveWebSearchMode &&
       !fastHasFileContext &&
       !fastHasImageContext &&
@@ -5125,7 +5223,7 @@ app.post(
       return;
     }
 
-    if (!isGuest && !fastHasImageContext && isImageRequest(effectiveUserMessage)) {
+    if (!getEnabledAutomaticSentIQTools().includes("image_gen") && !isGuest && !fastHasImageContext && isImageRequest(effectiveUserMessage)) {
       console.log(`[Stream] image request detected - redirecting to orchestrator`);
       try {
         const result = await orchestrate({
@@ -5147,11 +5245,12 @@ app.post(
             billingRequestId,
           },
         });
-        if (result.reply) {
+        if (result.reply && !result.image?.success) {
           await persistAssistantMessage(result.reply);
         }
+        if (result.image?.success && result.image.persisted) assistantMessagePersisted = true;
         await persistStoredMemory(result.memory);
-        reportStreamMessageGap(Boolean(result.reply), "orchestrator.image_generation");
+        reportStreamMessageGap(Boolean(result.reply && !result.image?.success), "orchestrator.image_generation");
         await writeStructuredResponse(buildStreamStructuredPayload({
           route: result.route,
           answer: result.answer ?? result.reply,
@@ -5594,6 +5693,8 @@ app.post(
       conversationId: activeConversationId || undefined,
       billingIdentity,
       billingRequestId,
+      clientRequestId: parsed.data.clientRequestId,
+      imageQuotaKey: getImageQuotaKey(req),
     };
     const ctx = executionProfile.context.compressConversation
       ? await buildContext(directRawContext, userDb, userId, { profile: executionProfile })
@@ -5621,6 +5722,7 @@ app.post(
     }
 
     let stopHeartbeat = () => {};
+    let automaticToolAccepted = false;
     const call = buildChatPrompt({
       userMessage: effectiveUserMessage,
       recentMessages: ctx.recentMessages,
@@ -5654,15 +5756,18 @@ app.post(
       stopHeartbeat = modelOverride === "openai-large"
         ? startStreamHeartbeat(10_000, "openai-large")
         : () => {};
-      const adapterStream = await callLLMAdapterStream(streamCall);
-      const reader = adapterStream.getReader();
+      const automaticTools = webSurfV2 ? [] : getEnabledAutomaticSentIQTools();
+      const adapterStream = await callLLMAdapterTurnStream({
+        ...streamCall,
+        sentiq_tool_context: automaticTools.length > 0 ? {
+          authenticated: !isGuest,
+          executionMode: executionProfile.mode,
+        } : undefined,
+        sentiq_allowed_tool_names: automaticTools,
+      });
       let fullReply = "";
 
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (!value) continue;
+      const turn = await consumeModelTurnStream(adapterStream, async (value) => {
           const safeValue = webSurfOutputGuard ? webSurfOutputGuard.push(value) : value;
           fullReply += safeValue;
           const visible = webSurfCitationStream ? webSurfCitationStream.push(safeValue) : safeValue;
@@ -5670,11 +5775,38 @@ app.post(
             recordStreamChunk(streamMetrics, visible);
             await writeSseJson({ type: "token", text: visible });
           }
+      });
+      if (turn.kind === "tool_calls") {
+        automaticToolAccepted = true;
+        await commitTextBilling(directReservation, "stream.tool-selected");
+        const toolResult = await executeAutomaticModelToolCalls(
+          turn.calls,
+          effectiveUserMessage,
+          ctx,
+          executionProfile,
+          requestAbortController.signal,
+          async (event) => writeSseJson(event),
+        );
+        if (toolResult.reply && toolResult.web_search?.v2) {
+          await streamBufferedAnswer(toolResult.reply, undefined, false, streamMetrics);
+          await persistAssistantMessage(toolResult.reply, toolResult.web_search.v2);
+          await writeSseJson({ type: "websurf_sources", web_search: toolResult.web_search.v2 });
+          await writeSseJson({ type: "websurf_complete", answer: toolResult.reply, web_search: toolResult.web_search.v2 });
+        } else if (toolResult.image) {
+          if (toolResult.image.persisted) assistantMessagePersisted = true;
+          await writeSseJson({
+            type: "structured_response",
+            response: { route: "image_generation", image: toolResult.image, reply: toolResult.reply },
+          });
+        } else if (toolResult.reply) {
+          await streamBufferedAnswer(toolResult.reply, undefined, false, streamMetrics);
+          await persistAssistantMessage(toolResult.reply);
         }
-      } finally {
-        if (clientDisconnected) {
-          await reader.cancel("client disconnected").catch(() => undefined);
-        }
+        const streamSync = getStreamSyncPayload(Boolean(toolResult.reply || toolResult.image));
+        await writeSseJson({ type: "sync", sync: streamSync, degraded: buildDegradedStatusFromStreamSync(streamSync) });
+        await writeSseEvent("[DONE]");
+        logStreamMetrics(streamMetrics, toolResult.error ? "error" : "complete");
+        return;
       }
 
       stopHeartbeat();
@@ -5740,7 +5872,11 @@ app.post(
       }
       console.log(`[Stream] live stream completed in ${Date.now() - streamStart}ms`);
     } catch (err) {
-      if (streamMetrics.chunkCount === 0 && !clientDisconnected) {
+      if (automaticToolAccepted) {
+        await sendStreamError(err, streamMetrics);
+        return;
+      }
+      if (!automaticToolAccepted && streamMetrics.chunkCount === 0 && !clientDisconnected) {
         try {
           const fallbackText = await recoverBufferedStreamText({
             route: "stream",
@@ -6510,16 +6646,26 @@ app.post(
     const preferredModel = entitledImageRoute.adapterModelOverride as any;
 
     let result: Awaited<ReturnType<typeof routeImageGeneration>>;
+    const imageAbortController = new AbortController();
+    const abortImageRequest = () => {
+      if (!res.writableEnded) imageAbortController.abort(new Error("Client disconnected"));
+    };
+    req.once("aborted", abortImageRequest);
+    res.once("close", abortImageRequest);
     try {
       result = await routeImageGeneration({
         prompt: providerPrompt,
         size: parsed.data.size,
         userId,
         preferredModel,
+        signal: imageAbortController.signal,
       });
     } catch (error) {
       await releaseBillingReservation(committedImageReservation);
       throw error;
+    } finally {
+      req.removeListener("aborted", abortImageRequest);
+      res.removeListener("close", abortImageRequest);
     }
 
     if (!result.success) {

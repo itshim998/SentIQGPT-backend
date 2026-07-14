@@ -27,6 +27,7 @@ import { isTavilyAvailable } from "../tools/webSearch/providers/tavilyProvider";
 import { normalizeExecutionMode, type ExecutionMode } from "./executionProfile";
 import { classifyQueryType, shouldAutoUseWebSurf } from "./queryClassifier";
 import { getAllowedModelOwnedTools } from "./toolContract";
+import { getEnabledAutomaticSentIQTools } from "../ai/modelToolCapability";
 
 // ==============================
 // Types
@@ -176,6 +177,8 @@ export function resolveHardRoutedPlan(args: {
   readonly userMessage: string;
   readonly hasWebSearch: boolean;
   readonly explicitWebSearchMode?: WebSearchMode;
+  readonly modelWebSurfSelection?: boolean;
+  readonly modelImageSelection?: boolean;
 }): ExecutionPlan | null {
   if (isFileGenerationRequest(args.userMessage)) {
     console.log("[PLANNER] file generation detected - hard-routing to file_generation");
@@ -192,7 +195,7 @@ export function resolveHardRoutedPlan(args: {
     return createSingleStepPlan("web_search", args.userMessage);
   }
 
-  if (args.hasWebSearch && shouldAutoUseWebSurf(args.userMessage)) {
+  if (!args.modelWebSurfSelection && args.hasWebSearch && shouldAutoUseWebSurf(args.userMessage)) {
     console.log("[PLANNER] live/current query detected - routing web_surf contract through web_search");
     return createSingleStepPlan("web_search", args.userMessage);
   }
@@ -203,7 +206,7 @@ export function resolveHardRoutedPlan(args: {
   }
 
   const queryClassification = classifyQueryType(args.userMessage);
-  if (queryClassification.category === "image_generation") {
+  if (!args.modelImageSelection && queryClassification.category === "image_generation") {
     console.log(`[PLANNER] image request detected (rule: ${queryClassification.matchedRule}) - hard-routing to image_generation`);
     return createSingleStepPlan("image_generation", args.userMessage);
   }
@@ -228,6 +231,7 @@ export async function planTask(args: {
   readonly explicitWebSearchMode?: WebSearchMode;
   readonly executionMode?: ExecutionMode;
 }): Promise<ExecutionPlan> {
+  const automaticTools = getEnabledAutomaticSentIQTools();
   const allowedModelOwnedTools = getAllowedModelOwnedTools(args.executionMode);
   const hasWebSearch = isTavilyAvailable()
     && (Boolean(args.explicitWebSearchMode) || allowedModelOwnedTools.includes("web_surf"));
@@ -235,9 +239,19 @@ export async function planTask(args: {
     userMessage: args.userMessage,
     hasWebSearch,
     explicitWebSearchMode: args.explicitWebSearchMode,
+    modelWebSurfSelection: automaticTools.includes("web_surf"),
+    modelImageSelection: automaticTools.includes("image_gen"),
   });
   if (hardRoutedPlan) {
     return hardRoutedPlan;
+  }
+
+  // While either automatic model-tool path is enabled, the ordinary answer
+  // model owns the web/image decision. Do not spend a separate planner call
+  // rediscovering that intent. Deterministic/manual rollback routes above stay
+  // authoritative for the tools not migrated in this pass.
+  if (automaticTools.length > 0) {
+    return createSingleStepPlan("conversation", args.userMessage);
   }
 
   if (normalizeExecutionMode(args.executionMode) === "fast") {

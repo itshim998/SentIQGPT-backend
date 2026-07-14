@@ -44,6 +44,7 @@ import type { PlanTool } from "./planner";
 import type { StepResult } from "./toolExecutor";
 import type { SearchResult } from "../tools/webSearch/types";
 import type { WebSurfV2Payload } from "../tools/webSearch/webSurfV2";
+import type { ToolLifecycleEvent } from "./toolContract";
 import { resolveExecutionProfile, type ExecutionMode, type ExecutionProfile } from "./executionProfile";
 
 // ==============================
@@ -79,6 +80,11 @@ export interface OrchestratorResponse {
     provider_used?: string;
     prompt: string;
     error?: string;
+    persisted?: boolean;
+    deduplicated?: boolean;
+    storage_path?: string;
+    file_size_bytes?: number;
+    warning?: string;
   };
   /** Chart result (for chart_generation) */
   readonly chart?: {
@@ -155,6 +161,7 @@ export interface OrchestratorResponse {
   readonly model_used?: string;
   /** True when the response used live web search */
   readonly searched?: boolean;
+  readonly tool_events?: readonly ToolLifecycleEvent[];
 }
 
 type InternalMergedResponse = Omit<OrchestratorResponse, "confidence"> & {
@@ -361,6 +368,7 @@ export function mergeResults(
   let _model_used: string | undefined;
   let _fallback = false;
   let _sanitize_bypass = false;
+  const tool_events: ToolLifecycleEvent[] = [];
 
   const replyParts: string[] = [];
   const thinkingParts: string[] = [];
@@ -430,6 +438,7 @@ export function mergeResults(
     if (step.web_search) {
       web_search = step.web_search;
     }
+    if (step.tool_events) tool_events.push(...step.tool_events);
   }
 
   if (replyParts.length > 0) {
@@ -453,6 +462,7 @@ export function mergeResults(
     file,
     memory,
     web_search,
+    tool_events: tool_events.length > 0 ? tool_events : undefined,
     _isMathResult,
     _model_used,
     _fallback,

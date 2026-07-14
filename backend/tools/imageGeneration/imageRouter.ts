@@ -382,7 +382,8 @@ async function executeImageGeneration(args: {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         console.log(`[IMAGE] provider=${provider.name} attempt=${attempt}`);
-        const result = await provider.generate(args.prompt, args.size);
+        const result = await provider.generate(args.prompt, args.size, args.signal);
+        throwIfAborted(args.signal);
         const elapsed = Date.now() - startTime;
         console.log(`[IMAGE] provider=${provider.name} success duration=${elapsed}ms`);
         return {
@@ -410,6 +411,7 @@ async function executeImageGeneration(args: {
     }
   }
 
+  throwIfAborted(args.signal);
   const elapsed = Date.now() - startTime;
   console.log(`[IMAGE] all_providers_failed duration=${elapsed}ms`);
   return {
