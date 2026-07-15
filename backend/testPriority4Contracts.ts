@@ -26,7 +26,7 @@ const streamRoute = sourceBlock(
   "// ===============================\n// POST /api/memory/classify",
 );
 
-assert.match(server, /"\/api\/chat\/intent"/, "backend must expose chat intent preflight");
+assert.doesNotMatch(server, /"\/api\/chat\/intent"/, "backend must not restore the deleted chat intent preflight");
 assert.match(server, /type DegradedStatus/, "backend must define the additive degraded-state contract");
 assert.match(server, /function buildDegradedStatus/, "backend must derive degraded state from sync status");
 assert.match(server, /degraded: buildDegradedStatus\(sync\)/, "chat responses must include degraded metadata");
@@ -47,8 +47,8 @@ assert.match(
   "structured stream responses must include sync/degraded metadata",
 );
 
-assert.match(apiClient, /async function getChatIntent/, "frontend API must call backend intent preflight");
-assert.match(apiClient, /\/api\/chat\/intent/, "frontend API must target the backend intent endpoint");
+assert.doesNotMatch(apiClient, /async function getChatIntent/, "frontend API must not restore the deleted intent-preflight caller");
+assert.doesNotMatch(apiClient, /\/api\/chat\/intent/, "frontend API must not target the deleted intent endpoint");
 assert.match(apiClient, /parsed\.type === "structured_response"/, "frontend stream parser must handle structured_response events");
 assert.match(apiClient, /callbacks\.onStructuredResponse\(parsed\.response\)/, "structured SSE payload must reach chat controller");
 
@@ -72,4 +72,4 @@ assert.doesNotMatch(
   "Priority 4 roadmap block should be removed after implementation",
 );
 
-console.log("PASS | Priority 4 route, degraded-state, streaming, and file-context contracts passed.");
+console.log("PASS | Priority 4 model-native route, degraded-state, streaming, and file-context contracts passed.");

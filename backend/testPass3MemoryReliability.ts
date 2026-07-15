@@ -70,6 +70,7 @@ function assertStaticPersistenceContract() {
 function assertPromptContract() {
   const root = resolve(__dirname, "..");
   const promptSource = readFileSync(resolve(root, "backend", "ai", "PromptBuilders.ts"), "utf8");
+  const chatHandlerSource = readFileSync(resolve(root, "backend", "ai", "ChatHandler.ts"), "utf8");
   assert.ok(
     promptSource.includes("SAVED MEMORY CONTEXT contains durable user facts"),
     "prompt should treat saved memory as durable user facts",
@@ -77,6 +78,12 @@ function assertPromptContract() {
   assert.ok(
     promptSource.includes("Saved memory is not transcript evidence"),
     "prompt should avoid claiming exact prior transcript from memory alone",
+  );
+  assert.ok(
+    chatHandlerSource.includes("buildMemoryBackedFallbackAnswer")
+      && chatHandlerSource.includes("GENERIC_CHAT_FALLBACK_PATTERN.test(finalAnswer)")
+      && chatHandlerSource.includes("return name ? `Your name is ${name}.` : null"),
+    "unavailable-model fallback should still answer an explicit saved-name recall from identity memory",
   );
 }
 

@@ -30,6 +30,11 @@ async function main(): Promise<void> {
   const planner = readFileSync(resolve(__dirname, "orchestrator", "planner.ts"), "utf8");
   const frontend = readFileSync(resolve(__dirname, "..", "frontend", "scripts", "features", "chat-controller.js"), "utf8");
   const executor = readFileSync(resolve(__dirname, "orchestrator", "toolExecutor.ts"), "utf8");
+  const chatHandler = readFileSync(resolve(__dirname, "ai", "ChatHandler.ts"), "utf8");
+  const contextCompressor = readFileSync(resolve(__dirname, "context", "contextCompressor.ts"), "utf8");
+  const contextCapsules = readFileSync(resolve(__dirname, "services", "contextCapsuleService.ts"), "utf8");
+  const fileGenerator = readFileSync(resolve(__dirname, "tools", "fileGeneration", "fileGenerator.ts"), "utf8");
+  const llmService = readFileSync(resolve(__dirname, "llm_service.py"), "utf8");
   assert.doesNotMatch(server, /\/api\/chat\/intent|clarification_response|shouldAutoUseWebSurf|isFileGenerationRequest|isChartRequest|isImageRequest/);
   assert.doesNotMatch(planner, /route_classify|keyword|regex|classifyQueryType/);
   assert.doesNotMatch(frontend, /getChatIntent|intent-detection|isLikelyFileGenerationRequest|isImageRequest\(|isChartRequest\(/);
@@ -38,7 +43,7 @@ async function main(): Promise<void> {
   assert.doesNotMatch(executor, /resolveContextReferences|masterRouter|queryClassifier|modelRouter/);
   assert.match(executor, /automatic tools require a validated model tool call/);
 
-  const cost = {
+  const primaryHappyPathCost = {
     ordinary_fast: { textModelCalls: 1, toolCalls: 0 },
     ordinary_intuitive: { textModelCalls: 1, toolCalls: 0 },
     automatic_web_surf: { textModelCalls: 2, toolCalls: 1 },
@@ -50,9 +55,32 @@ async function main(): Promise<void> {
     manual_image: { textModelCalls: 0, toolCalls: 1 },
     clarification: { textModelCalls: 1, toolCalls: 0 },
   } as const;
-  assert.deepEqual(cost.ordinary_fast, cost.ordinary_intuitive);
-  assert.equal(cost.automatic_web_surf.textModelCalls, 2);
-  console.log(JSON.stringify(cost, null, 2));
+  assert.deepEqual(primaryHappyPathCost.ordinary_fast, primaryHappyPathCost.ordinary_intuitive);
+  assert.equal(primaryHappyPathCost.automatic_web_surf.textModelCalls, 2);
+
+  const verifiedAdditionalCostPaths = {
+    ordinaryTruncationContinuation: chatHandler.includes("shouldAttemptContinuation")
+      && chatHandler.includes("continuationResult = await callLLMAdapterDetailed"),
+    intuitiveConversationCompression: contextCompressor.includes("SKIP_COMPRESSION_THRESHOLD")
+      && contextCompressor.includes("await callLLMAdapter(call)"),
+    fileGenerationFallback: fileGenerator.includes("const secondary = await attemptGenerate"),
+    backgroundTitleGeneration: server.includes("generateTitleWithFallback")
+      && server.includes("scheduleAutoTitleConversation"),
+    backgroundContextCapsules: contextCapsules.includes("refreshConversationCapsule")
+      && contextCapsules.includes("refreshWorkspaceCapsuleIfNeeded")
+      && contextCapsules.includes("this.dependencies.generateSummary(prompt)"),
+    inputSafetyModel: llmService.includes("check_input_safety")
+      && llmService.includes("call_safety_model(prompt, check_type=\"input\")"),
+    streamingOutputSafetyModels: llmService.includes("StreamingSafetyMonitor")
+      && llmService.includes("check_output_safety(final_output"),
+    webSurfV2ConfigurationBranch: executor.includes("if (isWebSurfV2Enabled())")
+      && executor.includes("skipLLMSynthesis: true"),
+  } as const;
+  for (const [name, present] of Object.entries(verifiedAdditionalCostPaths)) {
+    assert.equal(present, true, `missing documented additional cost path: ${name}`);
+  }
+
+  console.log(JSON.stringify({ primaryHappyPathCost, verifiedAdditionalCostPaths }, null, 2));
   console.log("Model-native lifecycle and request-cost checks passed.");
 }
 

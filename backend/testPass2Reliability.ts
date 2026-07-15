@@ -21,12 +21,11 @@ const memoryMaintenanceMigration = fs.readFileSync(
 );
 
 function routeBlock(route: string): string {
-  const needle = `"${route}"`;
-  const index = server.indexOf(needle);
+  const escapedRoute = route.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`app\\.(?:get|post)\\(\\s*"${escapedRoute}"`).exec(server);
+  const index = match?.index ?? -1;
   assert(index >= 0, `Missing route ${route}`);
-  const end = server.indexOf(");", index);
-  assert(end > index, `Missing end for route ${route}`);
-  return server.slice(index, end);
+  return server.slice(index, index + 500);
 }
 
 function assertAuthBeforeLimiter(route: string): void {
@@ -71,7 +70,7 @@ function assertAuthBeforeLimiter(route: string): void {
 {
   assert(orchestrator.includes("function createOrchestratorAbortSignal"), "orchestrator should create an abortable timeout signal");
   assert(orchestrator.includes("_orchestrateInner({ ...request, signal: abort.signal })"), "orchestrator should pass timeout/request signal into inner work");
-  assert(orchestrator.includes("executePlan(finalPlan.steps, ctx, { profile, signal })"), "orchestrator should pass abort signals into plan execution");
+  assert(orchestrator.includes("executePlan(plan.steps, ctx, { profile, signal })"), "orchestrator should pass abort signals into plan execution");
   assert(!orchestrator.includes("const executionPromise = executePlan"), "web-search orchestration should not start execution before clarification");
   assert(toolExecutor.includes("throwIfAborted(signal)"), "tool executor should check cancellation between steps");
   assert(!toolExecutor.includes("PARALLELIZABLE_TOOLS"), "side-effectful tools should not be grouped as parallelizable");

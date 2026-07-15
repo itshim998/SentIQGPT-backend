@@ -48,7 +48,8 @@ assert(controller.includes("STORAGE_KEYS.guestRecoveryDraft"), "guest recovery m
 assert(controller.includes("LEGACY_STORAGE_KEYS.guestRecoveryDraft"), "guest recovery must retain legacy draft reads during migration");
 assert(controller.includes("readSessionStorageWithLegacy"), "guest recovery must fall back to legacy session storage");
 
-assert(html.includes("privacy-data-btn"), "sidebar must expose privacy and data controls");
+assert(html.includes('data-trust-tab="support"'), "account panel must expose the trust and support dialog");
+assert(html.includes('data-trust-tab="controls"'), "trust dialog must expose privacy and data controls");
 assert(html.includes("support@sentiqlabs.com"), "support email fallback must be visible");
 assert(trustPanel.includes("clearFileSession"), "local clear must clear temporary backend upload context");
 assert(trustPanel.includes("clearUploadedSourceContext"), "data controls must clear temporary source files independently");

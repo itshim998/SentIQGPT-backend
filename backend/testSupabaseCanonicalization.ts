@@ -136,7 +136,7 @@ assert.doesNotMatch(
 );
 assert.match(
   server,
-  /if \(fullReply && !clientDisconnected\) \{\s*streamSync = await persistFastAssistantMessage\(fullReply\);\s*\}/,
+  /if \(fullReply && !clientDisconnected\) \{\s*await commitTextBilling\(fastReservation, "stream\.fast"\);\s*streamSync = await persistFastAssistantMessage\(fullReply\);\s*\}/,
   "fast stream must await chat-content persistence before final sync",
 );
 assert.doesNotMatch(

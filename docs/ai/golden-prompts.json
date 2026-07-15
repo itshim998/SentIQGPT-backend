@@ -1,136 +1,200 @@
 {
-  "name": "SentIQ Chat Student Builder Golden Prompts",
-  "version": 3,
+  "name": "SentIQ Chat Model-Native Tool Selection Golden Prompts",
+  "version": 4,
   "cases": [
     {
-      "id": "math-linear-programming",
-      "category": "math",
-      "prompt": "A factory makes chairs and desks. Each chair needs 2 hours and gives $30 profit. Each desk needs 5 hours and gives $80 profit. The factory has 40 hours. How many of each should it make to maximize profit?",
-      "expected_route": "normal_chat",
-      "success_criteria": [
-        "Sets up variables and objective",
-        "Shows constraints clearly",
-        "Gives a final numeric recommendation"
-      ]
+      "id": "web-current-direct",
+      "category": "web_surf",
+      "coverage": "web_current_direct",
+      "prompt": "What is the current RBI repo rate today?",
+      "expected_outcome": "web_surf",
+      "success_criteria": ["Uses controlled SentIQ web retrieval", "Answers from current sources", "Includes source citations"]
     },
     {
-      "id": "coding-debug-python-loop",
-      "category": "coding",
-      "prompt": "Debug this Python code and explain the fix:\n\nfor i in range(5):\nprint(i)",
-      "expected_route": "normal_chat",
-      "success_criteria": [
-        "Identifies indentation error",
-        "Provides corrected code",
-        "Explains why indentation matters"
-      ]
+      "id": "web-current-indirect",
+      "category": "web_surf",
+      "coverage": "web_current_indirect",
+      "prompt": "Who took home the men's Wimbledon singles trophy this year?",
+      "expected_outcome": "web_surf",
+      "success_criteria": ["Recognizes that the answer is time-sensitive", "Uses controlled SentIQ web retrieval", "Does not rely on provider-native search"]
     },
     {
-      "id": "file-analysis-summary",
-      "category": "file_analysis",
-      "prompt": "Summarize the uploaded PDF and list the action items.",
-      "expected_route": "file_analysis",
-      "requires_context": ["file_references"],
-      "success_criteria": [
-        "Answers from uploaded file context",
-        "Separates summary from action items",
-        "Does not hallucinate missing sections"
-      ]
+      "id": "web-explicit-search",
+      "category": "web_surf",
+      "coverage": "web_explicit_search",
+      "prompt": "Search the web for the latest official Node.js LTS release notes.",
+      "expected_outcome": "web_surf",
+      "success_criteria": ["Uses web_surf", "Preserves the official-source constraint", "Does not answer from memory alone"]
     },
     {
-      "id": "image-ocr-question",
-      "category": "vision",
-      "prompt": "Read the text in this screenshot and explain what I should do next.",
-      "expected_route": "normal_chat",
-      "requires_context": ["image_attachments"],
-      "success_criteria": [
-        "Uses image attachment context",
-        "Extracts visible text when possible",
-        "Gives concise next steps"
-      ]
-    },
-    {
-      "id": "web-current-ai-models",
-      "category": "current_info_chat",
-      "prompt": "What are the best AI coding models in 2026?",
-      "expected_route": "normal_chat",
-      "success_criteria": [
-        "Does not trigger Tavily WebSurf without manual mode",
-        "Uses model-grounded current information when available",
-        "Compares models for coding use"
-      ]
-    },
-    {
-      "id": "memory-explicit-store",
-      "category": "memory",
-      "prompt": "Remember that my portfolio project is a Supabase-backed AI study assistant.",
-      "expected_route": "memory_update",
-      "success_criteria": [
-        "Stores a project memory",
-        "Confirms briefly",
-        "Does not store generic knowledge"
-      ]
-    },
-    {
-      "id": "chart-frontend-native",
-      "category": "chart_generation",
-      "prompt": "Create a bar chart comparing React, Vue, Angular, and Svelte usage.",
-      "expected_route": "chart_generation",
-      "success_criteria": [
-        "Uses a frontend-native chart payload by default",
-        "Does not call Python chart execution unless explicitly requested",
-        "Returns renderable chart metadata"
-      ]
-    },
-    {
-      "id": "image-generation",
-      "category": "image_generation",
+      "id": "image-explicit",
+      "category": "image_gen",
+      "coverage": "image_explicit",
       "prompt": "Generate an image of a clean futuristic study desk with a laptop and notebook.",
-      "expected_route": "image_generation",
-      "success_criteria": [
-        "Routes to image generation",
-        "Returns an image URL or base64 payload",
-        "Persists result when conversation ID is available"
-      ]
+      "expected_outcome": "image_gen",
+      "success_criteria": ["Uses image_gen", "Preserves the requested scene", "Returns a terminal image result"]
     },
     {
-      "id": "context-image-pronoun-current-chat",
-      "category": "context_awareness",
-      "prompt": "Generate their image",
-      "conversation_context": [
-        { "role": "user", "content": "Tell me about Spitz dogs" },
-        { "role": "assistant", "content": "It looks like you're interested in Spitz dogs. They're fluffy companion dogs." }
-      ],
-      "expected_route": "image_generation",
-      "success_criteria": [
-        "Resolves their to Spitz dogs before provider call",
-        "Does not generate unrelated people",
-        "Does not use older global topical memories over current chat"
-      ]
+      "id": "image-indirect-visual",
+      "category": "image_gen",
+      "coverage": "image_indirect",
+      "prompt": "I need a square hero illustration for my study app: a calm student under a starry sky, no text.",
+      "expected_outcome": "image_gen",
+      "success_criteria": ["Recognizes visual-asset creation intent", "Preserves aspect and no-text constraints", "Returns a terminal image result"]
     },
     {
-      "id": "context-web-search-pronoun-current-chat",
-      "category": "context_awareness",
-      "prompt": "search about it",
-      "conversation_context": [
-        { "role": "user", "content": "Can you explain the transformer architecture?" }
-      ],
-      "expected_route": "normal_chat",
-      "success_criteria": [
-        "Does not trigger Tavily WebSurf without manual mode",
-        "Resolves it to transformer architecture in the answer",
-        "Keeps current chat context ahead of saved memories"
-      ]
+      "id": "chart-clear-request",
+      "category": "chart_gen",
+      "coverage": "chart_request",
+      "prompt": "Create a bar chart comparing React 42%, Vue 25%, Angular 20%, and Svelte 13%.",
+      "expected_outcome": "chart_gen",
+      "success_criteria": ["Uses chart_gen", "Preserves all labels and values", "Returns renderable chart metadata"]
     },
     {
-      "id": "memory-explicit-only-no-silent-save",
-      "category": "memory",
-      "prompt": "I like short answers when debugging JavaScript.",
-      "expected_route": "normal_chat",
-      "success_criteria": [
-        "Does not silently store a durable memory",
-        "May answer naturally using the current message",
-        "Only stores if the user explicitly asks SentIQ Chat to remember it"
-      ]
+      "id": "file-download-pdf",
+      "category": "file_gen",
+      "coverage": "file_download",
+      "prompt": "Create a downloadable PDF study plan for the next four weeks with a weekly checklist.",
+      "expected_outcome": "file_gen",
+      "success_criteria": ["Uses file_gen", "Selects PDF", "Returns a terminal downloadable artifact"]
+    },
+    {
+      "id": "file-download-xlsx",
+      "category": "file_gen",
+      "coverage": "file_download",
+      "prompt": "Turn these expenses into a downloadable XLSX workbook: rent 1200, food 350, travel 90.",
+      "expected_outcome": "file_gen",
+      "success_criteria": ["Uses file_gen", "Selects XLSX", "Preserves every supplied value"]
+    },
+    {
+      "id": "memory-explicit-remember",
+      "category": "memory_update",
+      "coverage": "memory_explicit",
+      "prompt": "Remember that my portfolio project is a Supabase-backed AI study assistant.",
+      "expected_outcome": "memory_update",
+      "success_criteria": ["Uses memory_update only for the explicit request", "Stores only the user-supplied project fact", "Does not widen scope or content"]
+    },
+    {
+      "id": "memory-explicit-chat-scope",
+      "category": "memory_update",
+      "coverage": "memory_explicit",
+      "prompt": "Save for this chat only that I want all examples in TypeScript.",
+      "expected_outcome": "memory_update",
+      "success_criteria": ["Uses memory_update", "Uses chat scope", "Stores only the explicit preference"]
+    },
+    {
+      "id": "normal-latest-linguistic",
+      "category": "normal_text",
+      "coverage": "danger_latest",
+      "prompt": "Explain the difference between the words latest and last in English.",
+      "expected_outcome": "normal_text",
+      "success_criteria": ["Answers as ordinary text", "Does not use web_surf merely because latest appears"]
+    },
+    {
+      "id": "normal-html-image-element",
+      "category": "normal_text",
+      "coverage": "danger_html_image",
+      "prompt": "Explain what the HTML <img> element does and show a small example.",
+      "expected_outcome": "normal_text",
+      "success_criteria": ["Explains HTML", "Does not use image_gen"]
+    },
+    {
+      "id": "normal-explain-image-generation",
+      "category": "normal_text",
+      "coverage": "danger_explain_image",
+      "prompt": "Explain how diffusion-based image generation works at a high level.",
+      "expected_outcome": "normal_text",
+      "success_criteria": ["Explains the concept", "Does not use image_gen"]
+    },
+    {
+      "id": "normal-explain-web-search",
+      "category": "normal_text",
+      "coverage": "danger_explain_web",
+      "prompt": "Explain how a web search engine builds an inverted index.",
+      "expected_outcome": "normal_text",
+      "success_criteria": ["Explains the concept", "Does not use web_surf"]
+    },
+    {
+      "id": "normal-websearch-code",
+      "category": "normal_text",
+      "coverage": "danger_websearch_code",
+      "prompt": "Why does this TypeScript type fail: interface WebSearch { query: string }?",
+      "expected_outcome": "normal_text",
+      "success_criteria": ["Treats WebSearch as code", "Does not use web_surf"]
+    },
+    {
+      "id": "normal-generate-image-label",
+      "category": "normal_text",
+      "coverage": "danger_button_label",
+      "prompt": "Suggest accessible aria-label text for a button whose visible label is Generate image.",
+      "expected_outcome": "normal_text",
+      "success_criteria": ["Answers with copy guidance", "Does not use image_gen"]
+    },
+    {
+      "id": "normal-metaphorical-visualize",
+      "category": "normal_text",
+      "coverage": "danger_visualize",
+      "prompt": "Help me visualize how recursion unwinds using a short written analogy.",
+      "expected_outcome": "normal_text",
+      "success_criteria": ["Uses prose", "Does not use image_gen or chart_gen"]
+    },
+    {
+      "id": "normal-generate-prose",
+      "category": "normal_text",
+      "coverage": "danger_generate_prose",
+      "prompt": "Generate three concise thesis statements about renewable energy.",
+      "expected_outcome": "normal_text",
+      "success_criteria": ["Returns prose", "Does not use file_gen"]
+    },
+    {
+      "id": "normal-file-analysis",
+      "category": "normal_text",
+      "coverage": "context_file_analysis",
+      "prompt": "Summarize the uploaded PDF and list the action items.",
+      "requires_context": ["file_references"],
+      "expected_outcome": "normal_text",
+      "success_criteria": ["Answers from uploaded context", "Does not call file_gen", "Does not invent missing sections"]
+    },
+    {
+      "id": "normal-vision-analysis",
+      "category": "normal_text",
+      "coverage": "context_image_analysis",
+      "prompt": "Read the error shown in this screenshot and explain the next step.",
+      "requires_context": ["image_attachments"],
+      "expected_outcome": "normal_text",
+      "success_criteria": ["Uses the attached image as input", "Does not call image_gen", "Answers as ordinary text"]
+    },
+    {
+      "id": "clarify-ambiguous-entity",
+      "category": "clarification",
+      "coverage": "clarify_ambiguous_entity",
+      "prompt": "Search for the latest update about Jordan.",
+      "expected_outcome": "clarify",
+      "success_criteria": ["Asks which Jordan is meant", "Does not call a tool before resolving material ambiguity"]
+    },
+    {
+      "id": "clarify-missing-edit-target",
+      "category": "clarification",
+      "coverage": "clarify_missing_edit_target",
+      "prompt": "Edit the image to make the background blue.",
+      "expected_outcome": "clarify",
+      "success_criteria": ["Asks the user to provide or identify the image", "Does not generate a replacement image"]
+    },
+    {
+      "id": "clarify-unresolved-reference",
+      "category": "clarification",
+      "coverage": "clarify_unresolved_reference",
+      "prompt": "Make a chart of those numbers.",
+      "expected_outcome": "clarify",
+      "success_criteria": ["Asks which numbers are intended", "Does not invent chart data"]
+    },
+    {
+      "id": "clarify-insufficient-file-info",
+      "category": "clarification",
+      "coverage": "clarify_insufficient_tool_info",
+      "prompt": "Create the downloadable file for me.",
+      "expected_outcome": "clarify",
+      "success_criteria": ["Asks for the content and desired format", "Does not call file_gen with invented requirements"]
     }
   ]
 }

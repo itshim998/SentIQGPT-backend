@@ -1,8 +1,8 @@
 # Model-native request cost model
 
-These are structural call counts for the normal request path. They do not require live provider billing.
+These are primary logical answer-model call counts for the successful request path with WebSurf V2 enabled. They do not include safety-model checks, provider attempts, embeddings, optional continuation, or background work.
 
-| Request shape | Text-model calls | Tool calls |
+| Request shape | Primary answer-model calls | Tool calls |
 | --- | ---: | ---: |
 | Ordinary Fast chat | 1 | 0 |
 | Ordinary Intuitive chat | 1 | 0 |
@@ -15,7 +15,20 @@ These are structural call counts for the normal request path. They do not requir
 | Manual image generation | 0 | 1 |
 | Ambiguous request requiring clarification | 1 | 0 |
 
-The clarification row is an ordinary assistant text response. The user's answer starts a new ordinary turn. Terminal tools do not trigger a post-tool text continuation. Automatic memory writes store the validated tool payload directly, without a classifier or summarizer call. Automatic WebSurf disables tools during its single synthesis continuation.
+The clarification row is an ordinary assistant text response. The user's answer starts a new ordinary turn. Terminal tools do not trigger a post-tool text continuation. Automatic memory writes do not run the legacy memory classifier or summarizer. Automatic WebSurf disables SentIQ tools during its single synthesis continuation.
+
+When `SENTIQ_WEBSURF_V2_ENABLED` is false, the legacy retrieval branch asks Tavily for its generated answer and sets `skipLLMSynthesis: true`. In that configuration, automatic WebSurf is one answer-model selection call plus one retrieval tool call, while manual WebSurf has no answer-model call.
+
+## Additional and optional provider cost
+
+- Every Node-to-Python model request first calls the safety model for input classification. A streaming text response also receives a final output-safety call and can trigger periodic background output checks.
+- A truncated ordinary non-WebSurf response can make one bounded continuation call.
+- Intuitive context can make one conversation-compression call after its message threshold, one semantic-query embedding call, and bounded embedding-backfill calls. Intuitive automatic memory storage can also block on one embedding call.
+- File generation makes one artifact-model call on the happy path and can make one additional artifact-model call after primary generation, parsing, rendering, or validation failure.
+- Provider key rotation and pre-output fallback can create multiple provider attempts inside one logical answer-model call. A WebSurf synthesis fallback is therefore not necessarily one provider invocation.
+- Eligible new conversations can schedule one title-generation call. Conversation-capsule refresh can schedule one summary call, and a threshold-crossing workspace refresh can add another.
+
+These paths must be measured separately from the primary user-turn decision cost. Reflection is not part of the current request path.
 
 ## Controlled enablement
 
