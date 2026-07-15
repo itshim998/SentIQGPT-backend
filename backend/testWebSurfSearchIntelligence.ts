@@ -5,7 +5,6 @@ import {
   buildWebSurfSearchPlan,
   executeWebSurfSearchIntelligence,
   getWebSurfSearchCacheTtl,
-  needsWebSurfClarification,
 } from "./tools/webSearch/webSurfSearchIntelligence";
 import { isWebSurfV2SearchIntelligenceEnabled, prepareWebSurfV2 } from "./tools/webSearch/webSurfV2";
 import type { SearchResult, WebSearchResult } from "./tools/webSearch/types";
@@ -54,7 +53,6 @@ async function main(): Promise<void> {
   assert.equal(buildWebSurfSearchPlan("Latest FIFA 2026 game update", { now: NOW }).primaryEntity, "EA Sports FC 26", "game cue resolves FIFA 2026 to the game");
   assert.equal(buildWebSurfSearchPlan("Latest FIFA World Cup 2026 update", { now: NOW }).primaryEntity, "2026 FIFA World Cup", "World Cup wording resolves directly to tournament");
   assert.equal(buildWebSurfSearchPlan("Latest Java update", { now: NOW }).category, "software", "Java update resolves to software context");
-  assert.equal(needsWebSurfClarification(buildWebSurfSearchPlan("Latest Mercury news", { now: NOW })), true, "balanced generic entity remains eligible for the existing clarification path");
 
   const fifaOfficial = source("FIFA World Cup 2026 official match centre", "https://www.fifa.com/worldcup/matches");
   const bbcResults = source("FIFA World Cup latest results and current stage", "https://www.bbc.com/sport/football/world-cup", { publishedAt: "2026-07-12" });

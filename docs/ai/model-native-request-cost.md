@@ -30,6 +30,12 @@ When `SENTIQ_WEBSURF_V2_ENABLED` is false, the legacy retrieval branch asks Tavi
 
 These paths must be measured separately from the primary user-turn decision cost. Reflection is not part of the current request path.
 
+## Image retry boundary
+
+Image retries reuse a stable request key and deterministic Pollinations seed. Cross-provider fallback is allowed only after a definitive provider refusal, such as a supported 4xx response or 429. Timeouts, transport failures, 5xx responses, malformed successful responses, and response-body read failures are indeterminate because generation may already have occurred; the router stops instead of trying another provider.
+
+Image providers do not offer a shared cross-provider idempotency contract. The existing successful-response lookup and unique assistant-message persistence guard prevent duplicate persisted results, but concurrent application replicas can still incur duplicate provider work before either result is saved.
+
 ## Controlled enablement
 
 Repository defaults remain off. A controlled environment must set `SENTIQ_MODEL_TOOL_REGISTRY_ENABLED=true`, enable the transport for every serving provider (`SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED=true` and, when Gemini fallback must retain tools, `SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED=true`), then enable only the approved product tools:

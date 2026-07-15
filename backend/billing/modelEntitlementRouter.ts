@@ -45,6 +45,17 @@ export function getPremiumTextRoute(): ModelRoute {
   };
 }
 
+export function getGeminiStandardCapabilityRoute(): ModelRoute {
+  return {
+    feature: "premium_text",
+    provider: "gemini",
+    model: "gemini-standard",
+    adapterModelOverride: "gemini-standard",
+    safeModelLabel: "Standard",
+    route: "standard",
+  };
+}
+
 export function getLiteTextRoute(): ModelRoute {
   const model = readModel("SENTIQ_MODEL_LITE_TEXT", "gemini:gemini-lite");
   return {
@@ -57,6 +68,17 @@ export function getLiteTextRoute(): ModelRoute {
   };
 }
 
+export function getGeminiLiteCapabilityRoute(): ModelRoute {
+  return {
+    feature: "lite_text",
+    provider: "gemini",
+    model: "gemini-lite",
+    adapterModelOverride: "gemini-lite",
+    safeModelLabel: "Lite",
+    route: "lite",
+  };
+}
+
 export function getAdvancedReasoningRoute(): ModelRoute {
   const model = readModel("SENTIQ_MODEL_ADVANCED_REASONING", "groq:gpt-oss-120b");
   return {
@@ -64,6 +86,17 @@ export function getAdvancedReasoningRoute(): ModelRoute {
     provider: model.provider || "pollinations",
     model: model.model,
     adapterModelOverride: model.adapterModelOverride,
+    safeModelLabel: "Advanced reasoning",
+    route: "advanced_reasoning",
+  };
+}
+
+export function getGeminiAdvancedReasoningCapabilityRoute(): ModelRoute {
+  return {
+    feature: "advanced_reasoning",
+    provider: "gemini",
+    model: "reasoning",
+    adapterModelOverride: "reasoning",
     safeModelLabel: "Advanced reasoning",
     route: "advanced_reasoning",
   };

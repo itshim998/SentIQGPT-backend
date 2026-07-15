@@ -317,6 +317,7 @@ export async function callMathModelRaw(args: {
 
   const result = await callLLMAdapterDetailed({
     ...call,
+    required_capabilities: args.imageAttachments?.length ? ["image_input"] : [],
     max_output_tokens: args.maxOutputTokens ?? SOLVER_MAX_OUTPUT_TOKENS,
     timeout_ms: args.timeoutMs ?? 180_000,
     skip_wrappers: true,
@@ -345,6 +346,7 @@ export async function callMathModelRaw(args: {
       });
       const continuationResult = await callLLMAdapterDetailed({
         ...continuationCall,
+        required_capabilities: args.imageAttachments?.length ? ["image_input"] : [],
         max_output_tokens: CONTINUATION_MAX_OUTPUT_TOKENS,
         timeout_ms: args.timeoutMs ?? 180_000,
         skip_wrappers: true,

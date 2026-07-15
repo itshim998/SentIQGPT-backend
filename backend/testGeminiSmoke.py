@@ -103,25 +103,6 @@ def case_forced_gemini_pollinations():
     return f"model={result.get('model_used')} fallback={result.get('fallback')} preview={sanitize_preview(result.get('text', ''))}"
 
 
-def case_google_search(allow_skip_if_unsupported: bool):
-    require_gemini_keys()
-    if not adapter.GEMINI_GOOGLE_SEARCH_ENABLED:
-        if allow_skip_if_unsupported:
-            raise SkipSmoke("GEMINI_GOOGLE_SEARCH_ENABLED=false; enable only after free-tier access is confirmed.")
-        raise RuntimeError("GEMINI_GOOGLE_SEARCH_ENABLED=false")
-
-    try:
-        text, model = adapter._invoke_gemini_attempt_chain(
-            "Using Google Search grounding, answer briefly: what is today's date?",
-            [adapter.GeminiAttempt(adapter.GEMINI_WEB_MODEL, google_search=True)],
-        )
-    except Exception as exc:
-        if allow_skip_if_unsupported:
-            raise SkipSmoke(f"google_search unsupported or unavailable: {adapter._redact_secrets(exc)}")
-        raise
-    return f"model={model} preview={sanitize_preview(text)}"
-
-
 CASES = {
     "flash-lite-text": lambda args: case_flash_lite_text(),
     "gemma-31b-text": lambda args: case_gemma_31b_text(),
@@ -129,14 +110,12 @@ CASES = {
     "stream": lambda args: case_stream(),
     "forced-groq-fallback": lambda args: case_forced_groq_fallback(),
     "forced-gemini-pollinations": lambda args: case_forced_gemini_pollinations(),
-    "google-search": lambda args: case_google_search(args.allow_skip_if_unsupported),
 }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Opt-in live Gemini/Gemma smoke tests.")
     parser.add_argument("--case", required=True, choices=sorted(CASES))
-    parser.add_argument("--allow-skip-if-unsupported", action="store_true")
     args = parser.parse_args()
 
     try:

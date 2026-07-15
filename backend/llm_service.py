@@ -21,7 +21,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 import uvicorn
 import requests
 
@@ -50,7 +50,6 @@ from llm_adapter import (
     GEMINI_REASONING_BACKUP_MODEL,
     GEMINI_WEB_MODEL,
     GEMINI_WEB_BACKUP_MODEL,
-    GEMINI_GOOGLE_SEARCH_ENABLED,
     get_gemini_key_health_snapshot,
     GROQ_MODEL,
     GROQ_CHAT_MODEL,
@@ -405,6 +404,11 @@ class LLMInvokeRequest(BaseModel):
     image_attachments: Optional[list[dict[str, Any]]] = None
     budget_policy: Optional[dict[str, Any]] = None
     sentiq_tool_request: Optional[dict[str, Any]] = None
+    required_capabilities: Optional[list[Literal[
+        "image_input",
+        "sentiq_tools_buffered",
+        "sentiq_tools_streaming",
+    ]]] = None
 
 
 class LLMInvokeResponse(BaseModel):
@@ -790,7 +794,6 @@ async def health_details():
         "gemini_reasoning_backup_model": GEMINI_REASONING_BACKUP_MODEL,
         "gemini_web_model": GEMINI_WEB_MODEL,
         "gemini_web_backup_model": GEMINI_WEB_BACKUP_MODEL,
-        "gemini_google_search_enabled": GEMINI_GOOGLE_SEARCH_ENABLED,
         "gemini_key_pool": get_gemini_key_health_snapshot(),
         "embedding_model": EMBEDDING_MODEL,
         "groq_model": GROQ_MODEL,
@@ -860,6 +863,7 @@ async def invoke_llm(request: LLMInvokeRequest):
             request.budget_policy,
             request.execution_mode,
             request.sentiq_tool_request,
+            request.required_capabilities,
         )
         # Resolve the actual provider (not just the prefer hint)
         from llm_adapter import resolve_model_override, get_provider_for_task
@@ -1017,6 +1021,7 @@ async def stream_llm(request: LLMInvokeRequest):
                 skip_wrappers=bool(request.skip_wrappers),
                 budget_policy=request.budget_policy,
                 sentiq_tool_request=request.sentiq_tool_request,
+                required_capabilities=request.required_capabilities,
             ):
                 if not capacity_event_sent:
                     telemetry = get_current_groq_call_telemetry()

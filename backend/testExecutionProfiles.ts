@@ -127,10 +127,10 @@ assert.match(
 );
 
 const llmAdapterSource = readFileSync(resolve(process.cwd(), "llm_adapter.py"), "utf8");
-assert.match(
+assert.doesNotMatch(
   llmAdapterSource,
-  /\{"type": "browser_search"\}, \{"type": "code_interpreter"\}/,
-  "Groq GPT-OSS interactive calls should offer browser-search and code-interpreter tools",
+  /browser_search|code_interpreter/,
+  "ordinary Groq calls must not expose provider-native tools or guidance",
 );
 
 async function main() {

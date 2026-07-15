@@ -1,6 +1,7 @@
 import type { ExecutionMode } from "./executionProfile";
 
 export interface CapabilityModelSelection {
+  readonly provider: "groq" | "gemini";
   readonly model: string;
   readonly source: "capability";
   readonly fallback_reason?: string;
@@ -29,9 +30,10 @@ export async function selectModelForCapabilities(args: {
   void args.isGuest;
   void args.signal;
 
-  const requiresMultimodalContext = Boolean(args.options?.hasImage || args.options?.hasFile);
+  const requiresMultimodalContext = Boolean(args.options?.hasImage);
   return {
-    model: requiresMultimodalContext ? "gemini-search" : "gpt-oss-120b",
+    provider: requiresMultimodalContext ? "gemini" : "groq",
+    model: requiresMultimodalContext ? "gemini-standard" : "gpt-oss-120b",
     source: "capability",
     fallback_reason: requiresMultimodalContext ? "input_capability" : "default_text_model",
   };

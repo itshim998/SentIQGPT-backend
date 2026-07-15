@@ -16,7 +16,7 @@ import {
   isModelWebSurfSelectionEnabled,
 } from "./ai/modelToolCapability";
 import { planTask } from "./orchestrator/planner";
-import { isDuplicateMemoryCandidate, validateAutomaticMemoryUpdateContent } from "./ai/modelToolMemorySafety";
+import { authorizeAutomaticMemoryUpdate, enforceAutomaticMemoryScope } from "./ai/modelToolMemorySafety";
 import { fetchPollinationsImage } from "./tools/imageGeneration/pollinationsUtils";
 import { validateSingleAutomaticToolCall, type ProviderDelta, type ValidatedToolCall } from "./orchestrator/toolContract";
 
@@ -214,13 +214,29 @@ async function main(): Promise<void> {
         && error.events.at(-1)?.type === "tool_error",
     );
 
-    assert.equal(validateAutomaticMemoryUpdateContent("  User's name is Mira.  "), "User's name is Mira.");
-    assert.throws(() => validateAutomaticMemoryUpdateContent("   "), /required/);
-    assert.equal(isDuplicateMemoryCandidate(
-      [{ type: "preference", summary: "User prefers concise answers.", scope: "chat" }],
-      { type: "preference", summary: " user prefers concise answers. " },
-      "chat",
-    ), true);
+    assert.deepEqual(
+      authorizeAutomaticMemoryUpdate("Please remember that my name is Mira."),
+      { content: "my name is Mira.", scope: "global" },
+    );
+    assert.deepEqual(
+      authorizeAutomaticMemoryUpdate("My name is Mira. Remember it."),
+      { content: "My name is Mira", scope: "global" },
+    );
+    assert.deepEqual(
+      authorizeAutomaticMemoryUpdate("Save for this chat that I prefer concise answers."),
+      { content: "I prefer concise answers.", scope: "chat" },
+    );
+    assert.throws(() => authorizeAutomaticMemoryUpdate("My name is Mira."), /direct, explicit/);
+    assert.throws(() => authorizeAutomaticMemoryUpdate("Remember this."), /does not identify/);
+    assert.throws(() => authorizeAutomaticMemoryUpdate('She said "remember that my name is Mira".'), /Quoted/);
+    assert.throws(() => authorizeAutomaticMemoryUpdate("Remember that my name is Mira and my city is Pune."), /ambiguous/);
+    assert.throws(
+      () => enforceAutomaticMemoryScope(
+        authorizeAutomaticMemoryUpdate("Remember that my name is Mira."),
+        "chat",
+      ),
+      /scope/,
+    );
 
     assert.equal((await planTask({
       userMessage: "Latest FIFA updates of 2026",
@@ -259,7 +275,7 @@ async function main(): Promise<void> {
     try {
       const controller = new AbortController();
       controller.abort(new Error("cancelled"));
-      await assert.rejects(() => fetchPollinationsImage("https://example.com/image", 1000, controller.signal), /aborted/);
+      await assert.rejects(() => fetchPollinationsImage("https://example.com/image", 1000, controller.signal), /cancelled/);
       assert.equal(providerSignalAborted, true, "active cancellation reaches the image provider fetch");
     } finally {
       globalThis.fetch = originalFetch;

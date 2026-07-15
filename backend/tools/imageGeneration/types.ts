@@ -12,6 +12,39 @@ export interface ImageProviderResult {
   readonly base64?: string;
 }
 
+export type ImageProviderFailureOutcome = "definitive" | "indeterminate";
+
+export class ImageProviderFailure extends Error {
+  constructor(
+    message: string,
+    readonly outcome: ImageProviderFailureOutcome,
+    readonly statusCode?: number,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "ImageProviderFailure";
+  }
+}
+
+export interface ImageProviderRequestContext {
+  /** Stable across retries and request replays. Never log this value. */
+  readonly requestKey: string;
+}
+
+export function failureOutcomeForHttpStatus(status: number): ImageProviderFailureOutcome {
+  return status >= 400 && status < 500 && status !== 408 ? "definitive" : "indeterminate";
+}
+
+export function asImageProviderFailure(error: unknown): ImageProviderFailure {
+  if (error instanceof ImageProviderFailure) return error;
+  return new ImageProviderFailure(
+    error instanceof Error ? error.message : String(error),
+    "indeterminate",
+    undefined,
+    { cause: error },
+  );
+}
+
 /**
  * Contract every image provider must satisfy.
  *
@@ -25,7 +58,12 @@ export interface ImageProvider {
   /** Returns true when the provider has the credentials it needs. */
   isAvailable(): boolean;
   /** Generate an image. Throws on failure. */
-  generate(prompt: string, size?: string, signal?: AbortSignal): Promise<ImageProviderResult>;
+  generate(
+    prompt: string,
+    size?: string,
+    signal?: AbortSignal,
+    context?: ImageProviderRequestContext,
+  ): Promise<ImageProviderResult>;
 }
 
 /**

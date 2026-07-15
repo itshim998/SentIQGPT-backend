@@ -61,7 +61,11 @@ function normalizeHostname(hostname: string): string {
   return hostname.trim().replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
 }
 
-const NON_PUBLIC_ADDRESSES = new BlockList();
+// Node's BlockList may normalize IPv4 checks through IPv4-mapped IPv6. Keeping
+// the families separate prevents an IPv6 mapped-address rule from matching
+// every ordinary IPv4 address.
+const NON_PUBLIC_IPV4_ADDRESSES = new BlockList();
+const NON_PUBLIC_IPV6_ADDRESSES = new BlockList();
 
 for (const [network, prefix] of [
   ["0.0.0.0", 8],
@@ -80,13 +84,12 @@ for (const [network, prefix] of [
   ["224.0.0.0", 4],
   ["240.0.0.0", 4],
 ] as const) {
-  NON_PUBLIC_ADDRESSES.addSubnet(network, prefix, "ipv4");
+  NON_PUBLIC_IPV4_ADDRESSES.addSubnet(network, prefix, "ipv4");
 }
 
 for (const [network, prefix] of [
   ["::", 128],
   ["::1", 128],
-  ["::ffff:0:0", 96],
   ["64:ff9b:1::", 48],
   ["100::", 64],
   ["2001:db8::", 32],
@@ -94,14 +97,30 @@ for (const [network, prefix] of [
   ["fe80::", 10],
   ["ff00::", 8],
 ] as const) {
-  NON_PUBLIC_ADDRESSES.addSubnet(network, prefix, "ipv6");
+  NON_PUBLIC_IPV6_ADDRESSES.addSubnet(network, prefix, "ipv6");
+}
+
+function extractMappedIPv4(address: string): string | null {
+  const normalized = address.toLowerCase();
+  if (!normalized.startsWith("::ffff:")) return null;
+  const suffix = normalized.slice("::ffff:".length);
+  if (isIP(suffix) === 4) return suffix;
+  const groups = suffix.split(":");
+  if (groups.length !== 2 || groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return null;
+  const high = Number.parseInt(groups[0], 16);
+  const low = Number.parseInt(groups[1], 16);
+  return `${high >>> 8}.${high & 0xff}.${low >>> 8}.${low & 0xff}`;
 }
 
 export function isPrivateOrInternalAddress(address: string): boolean {
   const normalized = normalizeHostname(address);
   const family = isIP(normalized);
-  if (family === 4) return NON_PUBLIC_ADDRESSES.check(normalized, "ipv4");
-  if (family === 6) return NON_PUBLIC_ADDRESSES.check(normalized, "ipv6");
+  if (family === 4) return NON_PUBLIC_IPV4_ADDRESSES.check(normalized, "ipv4");
+  if (family === 6) {
+    const mapped = extractMappedIPv4(normalized);
+    if (mapped) return NON_PUBLIC_IPV4_ADDRESSES.check(mapped, "ipv4");
+    return NON_PUBLIC_IPV6_ADDRESSES.check(normalized, "ipv6");
+  }
   return false;
 }
 

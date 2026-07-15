@@ -4,7 +4,12 @@
 // Requires HUGGINGFACE_API_TOKEN in environment.
 // Returns the image as base64.
 
-import type { ImageProvider, ImageProviderResult } from "../types";
+import {
+  ImageProviderFailure,
+  failureOutcomeForHttpStatus,
+  type ImageProvider,
+  type ImageProviderResult,
+} from "../types";
 
 const HF_MODEL = "stabilityai/stable-diffusion-xl-base-1.0";
 const HF_TIMEOUT_MS = 60_000;
@@ -43,13 +48,27 @@ export class HuggingFaceProvider implements ImageProvider {
       );
 
       if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`HuggingFace returned ${response.status}: ${errText}`);
+        throw new ImageProviderFailure(
+          `HuggingFace returned HTTP ${response.status}`,
+          failureOutcomeForHttpStatus(response.status),
+          response.status,
+        );
       }
 
       const arrayBuffer = await response.arrayBuffer();
       const base64 = Buffer.from(arrayBuffer).toString("base64");
       return { base64 };
+    } catch (error) {
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error ? signal.reason : new Error("Image generation aborted");
+      }
+      if (error instanceof ImageProviderFailure) throw error;
+      throw new ImageProviderFailure(
+        controller.signal.aborted ? "HuggingFace request timed out" : "HuggingFace transport or response read failed",
+        "indeterminate",
+        undefined,
+        { cause: error },
+      );
     } finally {
       clearTimeout(timeout);
       signal?.removeEventListener("abort", abortFromParent);

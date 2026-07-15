@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 import multer from "multer";
 import { existsSync } from "fs";
 import { resolve as pathResolve } from "path";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 
 bootProfiler.mark("process.start");
 
@@ -88,8 +88,10 @@ import {
   getUserMemoryUsageBytes,
   getUserMemories,
   incrementUserMemoryUsage,
+  insertAutomaticMemoryOnce,
   insertMemory,
   repairUserMemoryUsage,
+  type AutomaticMemoryInsertResult,
   type MemoryRow,
 } from "./services/memoryService";
 import {
@@ -125,7 +127,10 @@ import { orchestrate } from "./orchestrator/aiOrchestrator";
 import { executeAutomaticModelToolCalls } from "./orchestrator/toolExecutor";
 import { consumeModelTurnStream } from "./ai/modelToolExecution";
 import {
+  deriveRequiredModelCapabilities,
+  getAutomaticSentIQToolsForRoute,
   getEnabledAutomaticSentIQTools,
+  type RequiredModelCapability,
 } from "./ai/modelToolCapability";
 
 import { selectModelForCapabilities } from "./orchestrator/capabilityModelSelector";
@@ -163,7 +168,12 @@ import { runWithRequestBudgetContext } from "./context/requestBudgetContext";
 import { callMathModelRaw, streamMathModelRaw } from "./ai/mathVerifier";
 import { registerBillingRoutes } from "./billing/billingRoutes";
 import { buildBillingIdentity, getAnonymousIdHeaderName } from "./billing/anonymousIdentity";
-import { BillingQuotaError, BillingQuotaService, buildQuotaErrorPayload } from "./billing/quotaService";
+import {
+  BillingQuotaError,
+  BillingQuotaService,
+  ModelCapabilityUnavailableError,
+  buildQuotaErrorPayload,
+} from "./billing/quotaService";
 import type { BillingIdentity, UsageReservation } from "./billing/entitlementTypes";
 import { getImageModelForPlan } from "./billing/modelEntitlementRouter";
 import {
@@ -510,12 +520,14 @@ async function reserveTextBilling(args: {
   readonly conversationId?: string | null;
   readonly clientRequestId?: string | null;
   readonly route: string;
+  readonly requiredCapabilities?: readonly RequiredModelCapability[];
 }): Promise<UsageReservation> {
   return billingQuotaService.reserveTextRoute({
     identity: args.identity,
     requestId: args.requestId,
     conversationId: args.conversationId,
     clientRequestId: args.clientRequestId,
+    requiredCapabilities: args.requiredCapabilities,
     metadata: {
       endpoint: "chat",
       route: args.route,
@@ -529,12 +541,14 @@ async function reserveAdvancedBilling(args: {
   readonly conversationId?: string | null;
   readonly clientRequestId?: string | null;
   readonly route: string;
+  readonly requiredCapabilities?: readonly RequiredModelCapability[];
 }): Promise<UsageReservation> {
   return billingQuotaService.reserveAdvancedReasoning({
     identity: args.identity,
     requestId: args.requestId,
     conversationId: args.conversationId,
     clientRequestId: args.clientRequestId,
+    requiredCapabilities: args.requiredCapabilities,
     metadata: {
       endpoint: "chat",
       route: args.route,
@@ -1704,6 +1718,45 @@ async function insertMemoryOrThrow(
   return data as MemoryRow;
 }
 
+async function insertAutomaticMemoryOrThrow(
+  userDb: any,
+  userId: string,
+  memory: {
+    type?: string;
+    summary?: string;
+    importance?: number;
+    embedding?: readonly number[] | null;
+    scope?: MemoryScope;
+    chat_id?: string | null;
+    automatic_idempotency_key: string;
+  },
+  scope: string,
+): Promise<AutomaticMemoryInsertResult> {
+  logDbEvent(`${scope}.automatic-memory-insert.start`, userId, { type: memory.type || null });
+  const { data, error } = await insertAutomaticMemoryOnce(userDb, {
+    userId,
+    type: memory.type,
+    summary: memory.summary,
+    importance: memory.importance,
+    embedding: memory.embedding,
+    embedding_model: Array.isArray(memory.embedding) && memory.embedding.length > 0 ? MEMORY_EMBEDDING_MODEL : null,
+    embedding_created_at: Array.isArray(memory.embedding) && memory.embedding.length > 0 ? new Date().toISOString() : null,
+    scope: memory.scope,
+    chat_id: memory.chat_id ?? null,
+    automaticIdempotencyKey: memory.automatic_idempotency_key,
+  });
+  if (error) {
+    logDbFailure(`${scope}.automatic-memory-insert`, userId, error, { type: memory.type || null });
+    throw new Error(error.message);
+  }
+  if (!data?.id) throw new Error("Failed to create automatic memory");
+  logDbEvent(`${scope}.automatic-memory-insert.ok`, userId, {
+    type: memory.type || null,
+    deduplicated: String(data.deduplicated),
+  });
+  return data;
+}
+
 async function listMemoriesOrThrow(
   userDb: any,
   userId: string,
@@ -2786,6 +2839,7 @@ app.post(
           conversationId: requestedConversationId,
           clientRequestId: parsed.data.clientRequestId,
           route: "guest.math",
+          requiredCapabilities: guestContext.imageAttachments.length ? ["image_input"] : [],
         });
         let mathResult: Awaited<ReturnType<typeof callMathModelRaw>>;
         try {
@@ -2850,6 +2904,11 @@ app.post(
         conversationId: requestedConversationId,
         clientRequestId: parsed.data.clientRequestId,
         route: "guest.chat",
+        requiredCapabilities: deriveRequiredModelCapabilities({
+          hasImageInput: guestContext.imageAttachments.length > 0,
+          automaticToolsRequested: false,
+          streaming: false,
+        }),
       });
       const guestChatModelOverride = guestReservation.adapterModelOverride;
       let guestResult: Awaited<ReturnType<typeof handleChat>>;
@@ -2873,6 +2932,11 @@ app.post(
           webSurfSourceIds: guestWebSurfV2?.synthesisSourceIds,
           webSurfAnswerPlan: guestWebSurfV2?.answerIntelligence?.plan,
           webSurfAnswerSources: guestWebSurfV2?.answerIntelligence?.sources,
+          requiredCapabilities: deriveRequiredModelCapabilities({
+            hasImageInput: guestContext.imageAttachments.length > 0,
+            automaticToolsRequested: false,
+            streaming: false,
+          }),
         });
         await commitTextBilling(guestReservation, "guest.chat");
       } catch (error) {
@@ -2995,6 +3059,7 @@ app.post(
         conversationId: activeConversationId,
         clientRequestId: parsed.data.clientRequestId,
         route: "reasoning",
+        requiredCapabilities: reasoningContext.imageAttachments.length ? ["image_input"] : [],
       });
       let result: Awaited<ReturnType<typeof handleChat>>;
       try {
@@ -3014,6 +3079,7 @@ app.post(
           userId,
           reasoningMode: true,
           reasoningEffort: executionProfile.model.reasoningEffort,
+          requiredCapabilities: reasoningContext.imageAttachments.length ? ["image_input"] : [],
         });
         await commitTextBilling(reasoningReservation, "reasoning");
       } catch (error) {
@@ -3117,35 +3183,31 @@ app.post(
     let responseAnswer = result.answer ?? result.reply;
     let responseMemory = result.memory;
     if (result.image?.success && result.image.persisted) assistantMessagePersisted = true;
-    if (userDb && result.memory && result.memory.stored === true && result.memory.deduplicated === true) {
-      const memoryScope = resolveMemoryScopeForRequest(result.memory, parsed.data.message);
-      responseMemory = {
-        ...result.memory,
-        persisted: true,
-        scope: memoryScope,
-        chat_id: memoryScope === "chat" ? activeConversationId : null,
-        source_conversation_id: activeConversationId ?? null,
-      };
-      if (result.route === "memory_update") {
-        responseReply = getMemoryConfirmationText(memoryScope);
-        responseAnswer = responseReply;
-      }
-    } else if (userDb && result.memory && result.memory.stored === true) {
-      const memoryScope = resolveMemoryScopeForRequest(result.memory, parsed.data.message);
+    if (userDb && result.memory && result.memory.stored === true) {
+      const memoryScope = result.memory.automatic_idempotency_key
+        ? (result.memory.scope === "chat" ? "chat" : "global")
+        : resolveMemoryScopeForRequest(result.memory, parsed.data.message);
       try {
-        const insertedMemory = await insertMemoryOrThrow(
-          userDb,
-          userId,
-          {
-            ...result.memory,
-            scope: memoryScope,
-            chat_id: memoryScope === "chat" ? activeConversationId : null,
-          },
-          "chat",
-        );
+        const automaticKey = result.memory.automatic_idempotency_key;
+        const insertInput = {
+          ...result.memory,
+          scope: memoryScope,
+          chat_id: memoryScope === "chat" ? activeConversationId : null,
+        };
+        const insertedMemory = automaticKey
+          ? await insertAutomaticMemoryOrThrow(
+              userDb,
+              userId,
+              { ...insertInput, automatic_idempotency_key: automaticKey },
+              "chat",
+            )
+          : await insertMemoryOrThrow(userDb, userId, insertInput, "chat");
         responseMemory = {
           ...result.memory,
           id: insertedMemory.id,
+          deduplicated: "deduplicated" in insertedMemory
+            ? Boolean((insertedMemory as AutomaticMemoryInsertResult).deduplicated)
+            : false,
           persisted: true,
           scope: insertedMemory.scope === "chat" ? "chat" : "global",
           chat_id: insertedMemory.chat_id ?? null,
@@ -3425,6 +3487,18 @@ app.post(
             await writeSseEvent("[DONE]");
             return;
           }
+          if (err instanceof ModelCapabilityUnavailableError) {
+            await writeSseJson({
+              type: "error",
+              code: err.code,
+              error: err.message,
+              partial,
+              streamed_chunks: metrics?.chunkCount ?? 0,
+              approx_tokens: metrics?.approxTokens ?? 0,
+            });
+            await writeSseEvent("[DONE]");
+            return;
+          }
           await writeSseJson({
             type: "error",
             code: explicitCode ?? (partial ? "response_interrupted" : "backend_unavailable"),
@@ -3474,7 +3548,7 @@ app.post(
     }
 
     // ── Safety gate: chart requests MUST go through the orchestrator ──
-    // The streaming path does not support tool execution (charts, images, etc.).
+    // Explicit manual routes are resolved before the general streaming turn.
     // If the message is a chart request, redirect to the orchestrator and return
     // the result as a single SSE JSON payload so the frontend can render it.
     const normalizedRecentMessages = collapseAdjacentDuplicateMessages(
@@ -3554,6 +3628,7 @@ app.post(
               conversationId: requestedConversationId,
               clientRequestId: parsed.data.clientRequestId,
               route: "guest.math.stream",
+              requiredCapabilities: parsed.data.context?.image_attachments?.length ? ["image_input"] : [],
             });
             await writeSseJson({ type: "route", route: "math_reasoning" });
             let guestMathCommitted = false;
@@ -3690,6 +3765,7 @@ app.post(
             conversationId: requestedConversationId,
             clientRequestId: parsed.data.clientRequestId,
             route: "guest.reasoning.stream",
+            requiredCapabilities: guestReasoningContext.imageAttachments.length ? ["image_input"] : [],
           });
           let guestReasoningCommitted = false;
           try {
@@ -3709,6 +3785,7 @@ app.post(
             reasoningMode: true,
             reasoningEffort: executionProfile.model.reasoningEffort,
             signal: requestAbortController.signal,
+            requiredCapabilities: guestReasoningContext.imageAttachments.length ? ["image_input"] : [],
           });
 
           if (!clientDisconnected) {
@@ -3783,6 +3860,11 @@ app.post(
         conversationId: requestedConversationId,
         clientRequestId: parsed.data.clientRequestId,
         route: "guest.general.stream",
+        requiredCapabilities: deriveRequiredModelCapabilities({
+          hasImageInput: guestCtx.imageAttachments.length > 0,
+          automaticToolsRequested: !hasEffectiveWebSearchMode && getEnabledAutomaticSentIQTools().length > 0,
+          streaming: true,
+        }),
       });
       const guestGeneralModelOverride = guestGeneralReservation.adapterModelOverride;
       const streamMetrics = createStreamMetrics(
@@ -3871,12 +3953,20 @@ app.post(
           webSurfAnswerSources: guestWebSurfV2?.answerIntelligence?.sources,
         });
         guestGeneralCallForRecovery = call;
-        const automaticTools = guestWebSurfV2 ? [] : getEnabledAutomaticSentIQTools();
+        const automaticTools = guestWebSurfV2
+          ? []
+          : getAutomaticSentIQToolsForRoute(guestGeneralReservation, true);
+        const requiredCapabilities = deriveRequiredModelCapabilities({
+          hasImageInput: guestCtx.imageAttachments.length > 0,
+          automaticToolsRequested: automaticTools.length > 0,
+          streaming: true,
+        });
         const adapterStream = await callLLMAdapterTurnStream({
           ...call,
           signal: requestAbortController.signal,
           sentiq_tool_context: automaticTools.length > 0 ? { authenticated: false, executionMode: executionProfile.mode } : undefined,
           sentiq_allowed_tool_names: automaticTools,
+          required_capabilities: requiredCapabilities,
         });
         let fullReply = "";
 
@@ -4556,16 +4646,12 @@ app.post(
       source_conversation_id?: string | null;
       failure_reason?: string;
       deduplicated?: boolean;
+      automatic_idempotency_key?: string;
     }): Promise<boolean> => {
       if (!memory || memory.stored !== true) return true;
-      const normalizedScope = resolveMemoryScopeForRequest(memory, parsed.data.message);
-      if (memory.deduplicated === true) {
-        memory.persisted = true;
-        memory.scope = normalizedScope;
-        memory.chat_id = normalizedScope === "chat" ? activeConversationId ?? memory.chat_id ?? null : null;
-        memory.source_conversation_id = activeConversationId ?? null;
-        return true;
-      }
+      const normalizedScope = memory.automatic_idempotency_key
+        ? (memory.scope === "chat" ? "chat" : "global")
+        : resolveMemoryScopeForRequest(memory, parsed.data.message);
       if (!userDb) {
         sync.persisted = false;
         sync.deferred = true;
@@ -4577,17 +4663,22 @@ app.post(
       }
       const memoryChatId = normalizedScope === "chat" ? activeConversationId ?? memory.chat_id ?? null : null;
       try {
-        const insertedMemory = await insertMemoryOrThrow(
-          userDb,
-          userId,
-          {
-            ...memory,
-            scope: normalizedScope,
-            chat_id: memoryChatId,
-          },
-          "chat.stream",
-        );
+        const insertInput = { ...memory, scope: normalizedScope, chat_id: memoryChatId };
+        const insertedMemory = memory.automatic_idempotency_key
+          ? await insertAutomaticMemoryOrThrow(
+              userDb,
+              userId,
+              {
+                ...insertInput,
+                automatic_idempotency_key: memory.automatic_idempotency_key,
+              },
+              "chat.stream",
+            )
+          : await insertMemoryOrThrow(userDb, userId, insertInput, "chat.stream");
         memory.id = insertedMemory.id;
+        memory.deduplicated = "deduplicated" in insertedMemory
+          ? Boolean((insertedMemory as AutomaticMemoryInsertResult).deduplicated)
+          : false;
         memory.scope = (insertedMemory.scope === "chat" ? "chat" : "global");
         memory.chat_id = insertedMemory.chat_id ?? null;
         memory.persisted = true;
@@ -4817,6 +4908,7 @@ app.post(
             conversationId: activeConversationId,
             clientRequestId: parsed.data.clientRequestId,
             route: "reasoning.math.stream",
+            requiredCapabilities: parsed.data.context?.image_attachments?.length ? ["image_input"] : [],
           });
           let mathReservationCompleted = false;
           try {
@@ -4961,6 +5053,7 @@ app.post(
           conversationId: activeConversationId,
           clientRequestId: parsed.data.clientRequestId,
           route: "reasoning.stream",
+          requiredCapabilities: reasoningContext.imageAttachments.length ? ["image_input"] : [],
         });
         let reasoningReservationCompleted = false;
         let result: Awaited<ReturnType<typeof handleChat>>;
@@ -4982,6 +5075,7 @@ app.post(
           reasoningMode: true,
           reasoningEffort: executionProfile.model.reasoningEffort,
           signal: requestAbortController.signal,
+          requiredCapabilities: reasoningContext.imageAttachments.length ? ["image_input"] : [],
         });
         let reply = result.reply;
         const unavailableReason = getUnavailableReplyReason(reply);
@@ -5110,12 +5204,19 @@ app.post(
       isGuest,
       signal: requestAbortController.signal,
     });
+    const requestedAutomaticTools = webSurfV2 ? [] : getEnabledAutomaticSentIQTools();
+    const requiredCapabilities = deriveRequiredModelCapabilities({
+      hasImageInput: hasImage,
+      automaticToolsRequested: requestedAutomaticTools.length > 0,
+      streaming: true,
+    });
     const directReservation = await reserveTextBilling({
       identity: billingIdentity,
       requestId: `${billingRequestId}:direct-stream`,
       conversationId: activeConversationId,
       clientRequestId: parsed.data.clientRequestId,
       route: "stream",
+      requiredCapabilities,
     });
     const modelOverride = directReservation.adapterModelOverride;
     if (routedModel.fallback_reason) {
@@ -5210,7 +5311,9 @@ app.post(
       stopHeartbeat = modelOverride === "openai-large"
         ? startStreamHeartbeat(10_000, "openai-large")
         : () => {};
-      const automaticTools = webSurfV2 ? [] : getEnabledAutomaticSentIQTools();
+      const automaticTools = requestedAutomaticTools.length > 0
+        ? getAutomaticSentIQToolsForRoute(directReservation, true)
+        : [];
       const adapterStream = await callLLMAdapterTurnStream({
         ...streamCall,
         sentiq_tool_context: automaticTools.length > 0 ? {
@@ -5218,6 +5321,7 @@ app.post(
           executionMode: executionProfile.mode,
         } : undefined,
         sentiq_allowed_tool_names: automaticTools,
+        required_capabilities: requiredCapabilities,
       });
       let fullReply = "";
 
@@ -6027,6 +6131,9 @@ app.post(
       res.status(400).json({ error: "Image prompt rejected by safety filter." });
       return;
     }
+    // Manual image generation resolves deterministic references before any
+    // provider call. This clarification is separate from automatic semantic
+    // tool routing and remains part of the public manual-image contract.
     if (promptResolution.needsClarification) {
       res.status(409).json({
         error: promptResolution.candidates.length > 0
@@ -6042,11 +6149,6 @@ app.post(
         `[IMAGE] prompt resolved original="${parsed.data.prompt.slice(0, 80)}" ` +
         `resolved="${providerPrompt.slice(0, 140)}" subject="${promptResolution.subject ?? ""}" ` +
         `source=${promptResolution.source ?? "none"} confidence=${promptResolution.confidence.toFixed(2)}`,
-      );
-    } else if (promptResolution.needsClarification) {
-      console.log(
-        `[IMAGE] prompt reference unresolved original="${parsed.data.prompt.slice(0, 80)}" ` +
-        `candidates=${promptResolution.candidates.join(" | ")}`,
       );
     }
     let userDb: any = null;
@@ -6132,12 +6234,21 @@ app.post(
     req.once("aborted", abortImageRequest);
     res.once("close", abortImageRequest);
     try {
+      const imageRequestKey = createHash("sha256")
+        .update(userId)
+        .update("\0")
+        .update(conversationId || "no-conversation")
+        .update("\0")
+        .update(clientRequestId || providerPrompt)
+        .update("\0manual_image_generation")
+        .digest("hex");
       result = await routeImageGeneration({
         prompt: providerPrompt,
         size: parsed.data.size,
         userId,
         preferredModel,
         signal: imageAbortController.signal,
+        requestKey: imageRequestKey,
       });
     } catch (error) {
       await releaseBillingReservation(committedImageReservation);
@@ -7559,6 +7670,14 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     console.warn(`${LOG_PREFIX} Billing quota error: ${err.code} feature=${err.feature}`);
     if (!res.headersSent && !res.writableEnded) {
       res.status(err.statusCode).json(quotaErrorToPublicResponse(err));
+    }
+    return;
+  }
+
+  if (err instanceof ModelCapabilityUnavailableError) {
+    console.warn(`${LOG_PREFIX} Model capability unavailable`);
+    if (!res.headersSent && !res.writableEnded) {
+      res.status(err.statusCode).json({ error: err.message, code: err.code });
     }
     return;
   }

@@ -160,7 +160,6 @@ def main() -> int:
             max_output_tokens=2500,
             reasoning_effort="low",
             execution_mode="fast",
-            enable_builtin_tools=True,
         )
         list(adapter._call_groq_stream(
             "Write down the algorithm of quick sort.",
@@ -169,7 +168,6 @@ def main() -> int:
             max_output_tokens=3500,
             reasoning_effort="medium",
             execution_mode="intuitive",
-            enable_builtin_tools=True,
         ))
     finally:
         adapter.GROQ_MODULE = original_module
@@ -190,24 +188,18 @@ def main() -> int:
         print(f"FAIL | Groq completion caps were {completion_caps}, expected [2500, 3500]")
         failures += 1
 
-    expected_tools = [{"type": "browser_search"}, {"type": "code_interpreter"}]
     tool_calls = [call.get("tools") for call in fake_client.completions.calls[:2]]
-    if tool_calls == [expected_tools, expected_tools]:
-        print("PASS | Groq interactive buffered and streaming calls offer supported built-in tools")
+    if tool_calls == [None, None]:
+        print("PASS | Ordinary Groq buffered and streaming calls attach no provider-native tools")
     else:
         print(f"FAIL | Groq built-in tool configuration was {tool_calls}")
         failures += 1
 
     system_prompts = [call.get("messages", [{}])[0].get("content", "") for call in fake_client.completions.calls[:2]]
-    if "live, recent, rapidly changing" in system_prompts[0] and "stable textbook, coding, or algorithm" in system_prompts[0]:
-        print("PASS | Fast Groq tool guidance is selective")
+    if system_prompts == [adapter.GPT_OSS_SYSTEM_PROMPT, adapter.GPT_OSS_SYSTEM_PROMPT]:
+        print("PASS | Ordinary Groq prompts contain no provider-native tool guidance")
     else:
-        print(f"FAIL | Fast Groq tool guidance was {system_prompts[0]!r}")
-        failures += 1
-    if "research, news, market, product, legal, medical" in system_prompts[1] and "stable textbook, coding, or algorithm" in system_prompts[1]:
-        print("PASS | Intuitive Groq tool guidance is selective")
-    else:
-        print(f"FAIL | Intuitive Groq tool guidance was {system_prompts[1]!r}")
+        print(f"FAIL | Ordinary Groq system prompts were {system_prompts!r}")
         failures += 1
 
     if failures:

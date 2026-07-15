@@ -1108,16 +1108,35 @@ async function verifyShardMigrationsRpc(): Promise<void> {
   }
 }
 
+async function verifyAutomaticMemoryIdempotencyMigration(): Promise<void> {
+  const expectedVersion = "20260715120000";
+  const shardIds: DatabaseId[] = [2, 3, 4];
+  await Promise.all(shardIds.map(async (id) => {
+    const { data, error } = await clientByDatabaseId[id]
+      .rpc("get_automatic_memory_idempotency_schema_version");
+    if (error || data !== expectedVersion) {
+      throw new Error(
+        `Shard DB ${id} is missing automatic memory idempotency migration ${expectedVersion}. ` +
+        `code=${error?.code ?? "version_mismatch"}`,
+      );
+    }
+  }));
+}
+
 export async function verifyShardMigrations(): Promise<void> {
   const mode = readStartupVerifierMode();
   bootProfiler.mark(`verifyShardMigrations.mode.${mode}`);
 
   if (mode === "legacy") {
-    return verifyShardMigrationsLegacy();
+    await verifyShardMigrationsLegacy();
+    await verifyAutomaticMemoryIdempotencyMigration();
+    return;
   }
 
   if (mode === "rpc") {
-    return verifyShardMigrationsRpc();
+    await verifyShardMigrationsRpc();
+    await verifyAutomaticMemoryIdempotencyMigration();
+    return;
   }
 
   try {
@@ -1131,4 +1150,5 @@ export async function verifyShardMigrations(): Promise<void> {
     bootProfiler.mark("verifyShardMigrations.rpc-unavailable.fallback-legacy");
     await verifyShardMigrationsLegacy();
   }
+  await verifyAutomaticMemoryIdempotencyMigration();
 }

@@ -349,10 +349,6 @@ export function buildWebSurfSearchPlan(query: string, options: WebSurfPlannerOpt
   };
 }
 
-export function needsWebSurfClarification(plan: WebSurfSearchPlan): boolean {
-  return plan.ambiguityConfidence < 0.62 && plan.category === "general";
-}
-
 type PlannedSearchResult = {
   readonly query: WebSurfSearchPlanQuery;
   readonly result: SearchResult;

@@ -112,6 +112,8 @@ export interface OrchestratorResponse {
     source_conversation_id?: string | null;
     failure_reason?: string;
     deduplicated?: boolean;
+    /** Server-only and non-enumerable; never serialize into public responses or logs. */
+    automatic_idempotency_key?: string;
   };
   /** Web search payload (for structured rendering) */
   readonly web_search?: {

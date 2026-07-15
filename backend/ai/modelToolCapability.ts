@@ -2,6 +2,16 @@ import type { SentIQToolName } from "../orchestrator/toolContract";
 
 export type LLMProviderKind = "groq" | "gemini" | "gemma" | "pollinations" | "unknown";
 
+export type RequiredModelCapability =
+  | "image_input"
+  | "sentiq_tools_buffered"
+  | "sentiq_tools_streaming";
+
+export interface ModelCapabilityRoute {
+  readonly provider: string;
+  readonly model: string;
+}
+
 export interface SentIQToolCapability {
   readonly provider: LLMProviderKind;
   readonly buffered: boolean;
@@ -24,6 +34,60 @@ export function getSentIQToolCapability(provider: LLMProviderKind): SentIQToolCa
 export function canUseSentIQTools(provider: LLMProviderKind, streaming: boolean): boolean {
   const capability = getSentIQToolCapability(provider);
   return streaming ? capability.streaming : capability.buffered;
+}
+
+export function normalizeRouteProvider(route: ModelCapabilityRoute): LLMProviderKind {
+  const provider = route.provider.trim().toLowerCase();
+  const model = route.model.trim().toLowerCase();
+  if (provider === "gemini" && model.includes("gemma")) return "gemma";
+  if (provider === "groq" || provider === "gemini" || provider === "gemma" || provider === "pollinations") {
+    return provider;
+  }
+  return "unknown";
+}
+
+export function routeSupportsCapability(
+  route: ModelCapabilityRoute,
+  capability: RequiredModelCapability,
+): boolean {
+  const provider = normalizeRouteProvider(route);
+  if (capability === "image_input") return provider === "gemini";
+  if (capability === "sentiq_tools_buffered") return canUseSentIQTools(provider, false);
+  return canUseSentIQTools(provider, true);
+}
+
+export function routeSupportsCapabilities(
+  route: ModelCapabilityRoute,
+  requiredCapabilities: readonly RequiredModelCapability[],
+): boolean {
+  return requiredCapabilities.every((capability) => routeSupportsCapability(route, capability));
+}
+
+export function routeCanServeRequiredCapabilities(
+  route: ModelCapabilityRoute,
+  requiredCapabilities: readonly RequiredModelCapability[],
+): boolean {
+  if (!routeSupportsCapabilities(route, requiredCapabilities)) return false;
+  const requiresTools = requiredCapabilities.some((capability) => capability.startsWith("sentiq_tools_"));
+  if (!requiresTools) return true;
+  if (!isModelToolRegistryEnabled()) return false;
+  const provider = normalizeRouteProvider(route);
+  if (provider === "groq") return isGroqSentIQToolTransportEnabled();
+  if (provider === "gemini") return isGeminiSentIQToolTransportEnabled();
+  return false;
+}
+
+export function deriveRequiredModelCapabilities(args: {
+  readonly hasImageInput?: boolean;
+  readonly automaticToolsRequested?: boolean;
+  readonly streaming?: boolean;
+}): readonly RequiredModelCapability[] {
+  const requirements: RequiredModelCapability[] = [];
+  if (args.hasImageInput) requirements.push("image_input");
+  if (args.automaticToolsRequested) {
+    requirements.push(args.streaming ? "sentiq_tools_streaming" : "sentiq_tools_buffered");
+  }
+  return requirements;
 }
 
 export function isModelToolRegistryEnabled(
@@ -84,4 +148,17 @@ export function getEnabledAutomaticSentIQTools(): readonly SentIQToolName[] {
     ...(isModelFileSelectionEnabled() ? ["file_gen" as const] : []),
     ...(isModelMemorySelectionEnabled() ? ["memory_update" as const] : []),
   ];
+}
+
+export function getAutomaticSentIQToolsForRoute(
+  route: ModelCapabilityRoute,
+  streaming: boolean,
+): readonly SentIQToolName[] {
+  const tools = getEnabledAutomaticSentIQTools();
+  if (tools.length === 0) return [];
+  const provider = normalizeRouteProvider(route);
+  if (!canUseSentIQTools(provider, streaming)) return [];
+  if (provider === "groq" && !isGroqSentIQToolTransportEnabled()) return [];
+  if (provider === "gemini" && !isGeminiSentIQToolTransportEnabled()) return [];
+  return tools;
 }

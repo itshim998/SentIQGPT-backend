@@ -50,7 +50,15 @@ assert(imageRouter.includes("function removeQueuedItem"), "queued image jobs can
 assert(imageRouter.includes("readonly userId?: string"), "image route input accepts user id");
 assert(imageRouter.includes("readonly signal?: AbortSignal"), "image route input accepts abort signal");
 assert(server.includes("userId,\n      });"), "image endpoint passes user id into image routing");
-assert(toolExecutor.includes("routeImageGeneration({ prompt: input, userId: ctx.userId, signal, preferredModel"), "orchestrator image tool passes user, signal, and image model preference");
+assert(
+  toolExecutor.includes("result = await routeImageGeneration({")
+    && toolExecutor.includes("prompt: input,")
+    && toolExecutor.includes("userId: ctx.userId,")
+    && toolExecutor.includes("signal,")
+    && toolExecutor.includes("preferredModel: preferredModel as any,")
+    && toolExecutor.includes("requestKey,"),
+  "orchestrator image tool passes user, signal, model preference, and stable request key",
+);
 
 const getUserConversationsBlock = functionBlock(
   conversationService,

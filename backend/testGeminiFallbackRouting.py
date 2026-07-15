@@ -270,18 +270,14 @@ def test_gemini_lite_falls_to_pollinations_after_gemma_failures():
     assert_equal(result.get("model_used"), adapter.POLLINATIONS_LITE_MODEL, "lite Pollinations model")
 
 
-def test_web_attempts_google_search_gate():
-    with patched(GEMINI_GOOGLE_SEARCH_ENABLED=True):
-        attempts = adapter._web_gemini_attempts()
+def test_web_attempts_are_synthesis_only():
+    attempts = adapter._web_gemini_attempts()
     assert_equal(
-        [(attempt.model, attempt.google_search) for attempt in attempts[:2]],
-        [(adapter.GEMINI_WEB_MODEL, True), (adapter.GEMINI_WEB_BACKUP_MODEL, True)],
-        "web grounding attempts first when enabled",
+        [attempt.model for attempt in attempts[:2]],
+        [adapter.GEMINI_WEB_MODEL, adapter.GEMINI_WEB_BACKUP_MODEL],
+        "web synthesis keeps model fallback without native grounding",
     )
-
-    with patched(GEMINI_GOOGLE_SEARCH_ENABLED=False):
-        attempts = adapter._web_gemini_attempts()
-    assert_true(all(not attempt.google_search for attempt in attempts), "web grounding disabled by default")
+    assert_true(all(not hasattr(attempt, "google_search") for attempt in attempts), "ordinary Gemini attempts cannot request Google Search")
 
 
 def test_public_sanitizer_omits_internal_chain_fields():
@@ -300,7 +296,7 @@ TESTS = [
     test_gemini_execution_mode_config,
     test_reasoning_fallback_order,
     test_gemini_lite_falls_to_pollinations_after_gemma_failures,
-    test_web_attempts_google_search_gate,
+    test_web_attempts_are_synthesis_only,
     test_public_sanitizer_omits_internal_chain_fields,
 ]
 

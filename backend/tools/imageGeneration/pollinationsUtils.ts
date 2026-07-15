@@ -11,6 +11,9 @@
 //
 // Without a key, Pollinations free tier is used (strict rate limits → 429).
 
+import { createHash } from "node:crypto";
+import { ImageProviderFailure, failureOutcomeForHttpStatus } from "./types";
+
 const QUALITY_SUFFIX = "cinematic lighting, ultra detailed, sharp focus, 8k";
 
 /**
@@ -43,15 +46,25 @@ export function buildPollinationsUrl(
   prompt: string,
   model: string,
   size?: string,
+  requestKey = prompt,
 ): string {
   const [width, height] = (size || "1024x1024").split("x").map(Number);
   const encoded = encodeURIComponent(prompt);
+  const seedHex = createHash("sha256")
+    .update(requestKey)
+    .update("\0")
+    .update(model)
+    .update("\0")
+    .update(prompt)
+    .digest("hex")
+    .slice(0, 8);
+  const seed = (Number.parseInt(seedHex, 16) % 2147483646) + 1;
 
   let url =
     `https://gen.pollinations.ai/image/${encoded}` +
     `?model=${encodeURIComponent(model)}` +
     `&width=${width || 1024}&height=${height || 1024}` +
-    `&nologo=true&seed=${Date.now() % 2147483647}`;
+    `&nologo=true&seed=${seed}`;
 
   const apiKey = getPollinationsApiKey();
   if (apiKey) {
@@ -87,17 +100,32 @@ export async function fetchPollinationsImage(
     });
 
     if (!response.ok) {
-      throw new Error(`Pollinations returned HTTP ${response.status}`);
+      throw new ImageProviderFailure(
+        `Pollinations returned HTTP ${response.status}`,
+        failureOutcomeForHttpStatus(response.status),
+        response.status,
+      );
     }
 
     // Verify the response is actually an image
     const contentType = response.headers.get("content-type") || "";
     if (!contentType.startsWith("image/")) {
-      throw new Error(`Expected image content-type, got: ${contentType}`);
+      throw new ImageProviderFailure(`Expected image content-type, got: ${contentType}`, "indeterminate");
     }
 
     const arrayBuffer = await response.arrayBuffer();
     return Buffer.from(arrayBuffer).toString("base64");
+  } catch (error) {
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error("Image generation aborted");
+    }
+    if (error instanceof ImageProviderFailure) throw error;
+    throw new ImageProviderFailure(
+      controller.signal.aborted ? "Pollinations request timed out" : "Pollinations transport failed",
+      "indeterminate",
+      undefined,
+      { cause: error },
+    );
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", abortFromParent);

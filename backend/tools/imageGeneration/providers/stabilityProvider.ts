@@ -4,7 +4,12 @@
 // Requires STABILITY_API_KEY in environment.
 // Returns the image as base64.
 
-import type { ImageProvider, ImageProviderResult } from "../types";
+import {
+  ImageProviderFailure,
+  failureOutcomeForHttpStatus,
+  type ImageProvider,
+  type ImageProviderResult,
+} from "../types";
 
 const STABILITY_ENGINE = "stable-diffusion-xl-1024-v1-0";
 const STABILITY_TIMEOUT_MS = 60_000;
@@ -67,8 +72,11 @@ export class StabilityProvider implements ImageProvider {
       );
 
       if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Stability AI returned ${response.status}: ${errText}`);
+        throw new ImageProviderFailure(
+          `Stability AI returned HTTP ${response.status}`,
+          failureOutcomeForHttpStatus(response.status),
+          response.status,
+        );
       }
 
       const data = (await response.json()) as {
@@ -77,10 +85,21 @@ export class StabilityProvider implements ImageProvider {
 
       const artifact = data.artifacts?.[0];
       if (!artifact?.base64) {
-        throw new Error("Stability AI returned no image data");
+        throw new ImageProviderFailure("Stability AI returned no image data", "indeterminate");
       }
 
       return { base64: artifact.base64 };
+    } catch (error) {
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error ? signal.reason : new Error("Image generation aborted");
+      }
+      if (error instanceof ImageProviderFailure) throw error;
+      throw new ImageProviderFailure(
+        controller.signal.aborted ? "Stability AI request timed out" : "Stability AI transport or response read failed",
+        "indeterminate",
+        undefined,
+        { cause: error },
+      );
     } finally {
       clearTimeout(timeout);
       signal?.removeEventListener("abort", abortFromParent);

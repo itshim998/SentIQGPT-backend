@@ -36,6 +36,14 @@ export type InsertMemoryInput = {
   chat_id?: string | null;
 };
 
+export type InsertAutomaticMemoryInput = InsertMemoryInput & {
+  automaticIdempotencyKey: string;
+};
+
+export type AutomaticMemoryInsertResult = MemoryRow & {
+  deduplicated: boolean;
+};
+
 function normalizeEmbedding(value: unknown): number[] | null {
   if (!Array.isArray(value) || value.length === 0) return null;
   const vector = value
@@ -79,6 +87,27 @@ export async function insertMemory(userDb: any, data: InsertMemoryInput) {
 
   return {
     data: result.data as MemoryRow | null,
+    error: result.error,
+  };
+}
+
+export async function insertAutomaticMemoryOnce(userDb: any, data: InsertAutomaticMemoryInput) {
+  const normalizedScope: MemoryScope = data.scope === "chat" ? "chat" : "global";
+  const result = await userDb.rpc("insert_automatic_memory_once", {
+    p_user_id: data.userId,
+    p_type: data.type,
+    p_summary: data.summary,
+    p_importance: data.importance,
+    p_embedding: normalizeEmbedding(data.embedding),
+    p_embedding_model: data.embedding_model || null,
+    p_embedding_created_at: data.embedding_created_at || null,
+    p_scope: normalizedScope,
+    p_chat_id: normalizedScope === "chat" ? data.chat_id ?? null : null,
+    p_automatic_idempotency_key: data.automaticIdempotencyKey,
+  });
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  return {
+    data: (row ?? null) as AutomaticMemoryInsertResult | null,
     error: result.error,
   };
 }

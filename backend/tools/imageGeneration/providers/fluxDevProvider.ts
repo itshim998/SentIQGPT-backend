@@ -4,7 +4,7 @@
 // Higher quality, slightly slower.
 // Requires POLLINATIONS_API_KEY (or legacy FLUX_API_KEY) in environment.
 
-import type { ImageProvider, ImageProviderResult } from "../types";
+import type { ImageProvider, ImageProviderRequestContext, ImageProviderResult } from "../types";
 import { enhancePrompt, buildPollinationsUrl, fetchPollinationsImage, getPollinationsApiKey } from "../pollinationsUtils";
 
 const FLUX_DEV_TIMEOUT_MS = 45_000;
@@ -16,9 +16,9 @@ export class FluxDevProvider implements ImageProvider {
     return Boolean(getPollinationsApiKey());
   }
 
-  async generate(prompt: string, size?: string, signal?: AbortSignal): Promise<ImageProviderResult> {
+  async generate(prompt: string, size?: string, signal?: AbortSignal, context?: ImageProviderRequestContext): Promise<ImageProviderResult> {
     const enhanced = enhancePrompt(prompt);
-    const imageUrl = buildPollinationsUrl(enhanced, "flux", size);
+    const imageUrl = buildPollinationsUrl(enhanced, "flux", size, context?.requestKey);
     const base64 = await fetchPollinationsImage(imageUrl, FLUX_DEV_TIMEOUT_MS, signal);
     return { base64 };
   }

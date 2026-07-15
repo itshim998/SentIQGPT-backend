@@ -137,7 +137,6 @@ GEMINI_REASONING_BACKUP_MODEL = os.getenv("GEMINI_REASONING_BACKUP_MODEL", "gemi
 GEMINI_WEB_MODEL = os.getenv("GEMINI_WEB_MODEL", "gemini-2.5-flash-lite")
 GEMINI_WEB_BACKUP_MODEL = os.getenv("GEMINI_WEB_BACKUP_MODEL", "gemini-2.5-flash")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", GEMINI_STANDARD_MODEL)
-GEMINI_GOOGLE_SEARCH_ENABLED = _parse_bool_env("GEMINI_GOOGLE_SEARCH_ENABLED", False)
 SENTIQ_MODEL_TOOL_REGISTRY_ENABLED = _parse_bool_env("SENTIQ_MODEL_TOOL_REGISTRY_ENABLED", False)
 SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = _parse_bool_env("SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED", False)
 SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED = _parse_bool_env("SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", False)
@@ -930,7 +929,6 @@ _gemini_configure_lock = threading.Lock()
 @dataclass(frozen=True)
 class GeminiAttempt:
     model: str
-    google_search: bool = False
     high_thinking: bool = False
 
 
@@ -948,6 +946,36 @@ def get_sentiq_tool_capability(provider: str, model: Optional[str], streaming: b
         return {"provider": "gemini", "supported": enabled, "streaming": enabled, "reason": "google_function_transport" if enabled else "transport_disabled"}
     reason = "text_only_model" if _is_gemma_model(model) else "text_only_transport"
     return {"provider": normalized_provider or "unknown", "supported": False, "streaming": False, "reason": reason}
+
+
+REQUIRED_MODEL_CAPABILITIES = {
+    "image_input",
+    "sentiq_tools_buffered",
+    "sentiq_tools_streaming",
+}
+
+
+def _route_supports_required_capabilities(
+    provider: str,
+    model: Optional[str],
+    required_capabilities: Optional[list[str]],
+    *,
+    streaming: bool,
+) -> bool:
+    required = set(required_capabilities or [])
+    if not required.issubset(REQUIRED_MODEL_CAPABILITIES):
+        return False
+    normalized_provider = (provider or "").strip().lower()
+    if "image_input" in required and (normalized_provider != "gemini" or _is_gemma_model(model)):
+        return False
+    if "sentiq_tools_buffered" in required:
+        if not get_sentiq_tool_capability(normalized_provider, model, False).get("supported"):
+            return False
+    if "sentiq_tools_streaming" in required:
+        capability = get_sentiq_tool_capability(normalized_provider, model, True)
+        if not capability.get("supported") or not capability.get("streaming"):
+            return False
+    return True
 
 
 def _sentiq_tool_request_for_route(
@@ -1078,11 +1106,30 @@ def _get_google_genai_client(api_key: str):
     return GOOGLE_GENAI_MODULE.Client(api_key=api_key)
 
 
+def _build_gemini_contents(
+    prompt: str,
+    image_attachments: Optional[list[dict[str, Any]]],
+) -> Any:
+    if not image_attachments:
+        return prompt
+    import base64 as b64mod
+
+    parts: list[Any] = [prompt]
+    for image in image_attachments:
+        raw = b64mod.b64decode(str(image.get("base64") or ""), validate=True)
+        mime_type = str(image.get("mime_type") or "image/jpeg")
+        part_type = getattr(GOOGLE_GENAI_TYPES_MODULE, "Part", None) if GOOGLE_GENAI_TYPES_MODULE else None
+        if part_type is not None and hasattr(part_type, "from_bytes"):
+            parts.append(part_type.from_bytes(data=raw, mime_type=mime_type))
+        else:
+            parts.append({"inline_data": {"mime_type": mime_type, "data": raw}})
+    return parts
+
+
 def _build_google_genai_config(
     *,
     model: Optional[str] = None,
     execution_mode: Optional[str] = None,
-    google_search: bool = False,
     high_thinking: bool = False,
     max_output_tokens: Optional[int] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
@@ -1099,12 +1146,6 @@ def _build_google_genai_config(
         policy = str(sentiq_tool_request.get("tool_choice_policy") or "").strip()
         if policy:
             kwargs["system_instruction"] = policy
-    elif google_search:
-        kwargs["tools"] = [
-            GOOGLE_GENAI_TYPES_MODULE.Tool(
-                google_search=GOOGLE_GENAI_TYPES_MODULE.GoogleSearch(),
-            )
-        ]
     if high_thinking and hasattr(GOOGLE_GENAI_TYPES_MODULE, "ThinkingConfig"):
         thinking_budget = GEMINI_HIGH_THINKING_BUDGET
         if isinstance(max_output_tokens, int) and max_output_tokens > 0:
@@ -1136,11 +1177,11 @@ def _call_gemini(
     api_key: str,
     model: Optional[str] = None,
     *,
-    google_search: bool = False,
     high_thinking: bool = False,
     max_output_tokens: Optional[int] = None,
     execution_mode: Optional[str] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
 ) -> Any:
     resolved_model = model or GEMINI_STANDARD_MODEL
     if not api_key:
@@ -1153,12 +1194,14 @@ def _call_gemini(
         config = _build_google_genai_config(
             model=resolved_model,
             execution_mode=execution_mode,
-            google_search=google_search,
             high_thinking=high_thinking,
             max_output_tokens=max_output_tokens,
             sentiq_tool_request=sentiq_tool_request,
         )
-        kwargs: dict[str, Any] = {"model": resolved_model, "contents": prompt}
+        kwargs: dict[str, Any] = {
+            "model": resolved_model,
+            "contents": _build_gemini_contents(prompt, image_attachments),
+        }
         if config is not None:
             kwargs["config"] = config
         resp = _run_gemini_with_timeout(
@@ -1169,8 +1212,10 @@ def _call_gemini(
 
     if sentiq_tool_request:
         raise RuntimeError("Google GenAI SDK is required for Gemini SentIQ tool transport")
-    if google_search or _is_gemma_model(resolved_model):
-        raise RuntimeError("Google GenAI SDK is required for Gemma and google_search")
+    if image_attachments:
+        raise RuntimeError("Google GenAI SDK is required for Gemini image input")
+    if _is_gemma_model(resolved_model):
+        raise RuntimeError("Google GenAI SDK is required for Gemma")
     if not GENAI_MODULE:
         raise RuntimeError("Gemini SDK not installed")
 
@@ -1200,11 +1245,11 @@ def _call_gemini_stream(
     api_key: str,
     model: Optional[str] = None,
     *,
-    google_search: bool = False,
     high_thinking: bool = False,
     max_output_tokens: Optional[int] = None,
     execution_mode: Optional[str] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
 ):
     """Streaming variant - yields text chunks."""
     resolved_model = model or GEMINI_STANDARD_MODEL
@@ -1218,12 +1263,14 @@ def _call_gemini_stream(
         config = _build_google_genai_config(
             model=resolved_model,
             execution_mode=execution_mode,
-            google_search=google_search,
             high_thinking=high_thinking,
             max_output_tokens=max_output_tokens,
             sentiq_tool_request=sentiq_tool_request,
         )
-        kwargs: dict[str, Any] = {"model": resolved_model, "contents": prompt}
+        kwargs: dict[str, Any] = {
+            "model": resolved_model,
+            "contents": _build_gemini_contents(prompt, image_attachments),
+        }
         if config is not None:
             kwargs["config"] = config
         response = _run_gemini_with_timeout(
@@ -1268,8 +1315,10 @@ def _call_gemini_stream(
 
     if sentiq_tool_request:
         raise RuntimeError("Google GenAI SDK is required for Gemini SentIQ tool transport")
-    if google_search or _is_gemma_model(resolved_model):
-        raise RuntimeError("Google GenAI SDK is required for Gemma and google_search")
+    if image_attachments:
+        raise RuntimeError("Google GenAI SDK is required for Gemini image input")
+    if _is_gemma_model(resolved_model):
+        raise RuntimeError("Google GenAI SDK is required for Gemma")
     if not GENAI_MODULE:
         raise RuntimeError("Gemini SDK not installed")
 
@@ -1311,11 +1360,11 @@ def _invoke_gemini(
     prompt: str,
     model_override: Optional[str] = None,
     *,
-    google_search: bool = False,
     high_thinking: bool = False,
     max_output_tokens: Optional[int] = None,
     execution_mode: Optional[str] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
 ) -> Any:
     """Try Gemini/Gemma keys with rotation, cooldown, and invalid-key disable."""
     if not GEMINI_KEY_RECORDS:
@@ -1333,18 +1382,17 @@ def _invoke_gemini(
                 prompt,
                 record.key,
                 resolved_model,
-                google_search=google_search,
                 high_thinking=high_thinking,
                 max_output_tokens=max_output_tokens,
                 execution_mode=execution_mode,
                 sentiq_tool_request=sentiq_tool_request,
+                image_attachments=image_attachments,
             )
             _record_gemini_success(record, resolved_model)
             logger.info(
-                "Gemini key #%d model=%s succeeded google_search=%s",
+                "Gemini key #%d model=%s succeeded",
                 record.index,
                 resolved_model,
-                "true" if google_search else "false",
             )
             return result
         except Exception as e:
@@ -1364,26 +1412,29 @@ def _invoke_gemini_attempt_chain(
     max_output_tokens: Optional[int] = None,
     execution_mode: Optional[str] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
+    required_capabilities: Optional[list[str]] = None,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
 ) -> tuple[Any, str]:
     last_error: Optional[Exception] = None
     for attempt in attempts:
+        if not _route_supports_required_capabilities("gemini", attempt.model, required_capabilities, streaming=False):
+            continue
         try:
             result = _invoke_gemini(
                 prompt,
                 attempt.model,
-                google_search=attempt.google_search,
                 high_thinking=attempt.high_thinking,
                 max_output_tokens=max_output_tokens,
                 execution_mode=execution_mode,
                 sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "gemini", attempt.model),
+                image_attachments=image_attachments,
             )
             return result, attempt.model
         except Exception as e:
             last_error = e
             logger.warning(
-                "[Fallback] Gemini/Gemma attempt failed model=%s google_search=%s class=%s error=%s",
+                "[Fallback] Gemini/Gemma attempt failed model=%s class=%s error=%s",
                 attempt.model,
-                "true" if attempt.google_search else "false",
                 _classify_gemini_error(e),
                 _redact_secrets(e),
             )
@@ -1397,9 +1448,13 @@ def _stream_gemini_attempt_chain(
     max_output_tokens: Optional[int] = None,
     execution_mode: Optional[str] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
+    required_capabilities: Optional[list[str]] = None,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
 ):
     last_error: Optional[Exception] = None
     for attempt in attempts:
+        if not _route_supports_required_capabilities("gemini", attempt.model, required_capabilities, streaming=True):
+            continue
         emitted_text = False
         records_to_try = _get_round_robin_gemini_records(attempt.model)
         for record in records_to_try:
@@ -1408,13 +1463,13 @@ def _stream_gemini_attempt_chain(
                     prompt,
                     record.key,
                     attempt.model,
-                    google_search=attempt.google_search,
                     high_thinking=attempt.high_thinking,
                     max_output_tokens=max_output_tokens,
                     execution_mode=execution_mode,
                     sentiq_tool_request=_sentiq_tool_request_for_route(
                         sentiq_tool_request, "gemini", attempt.model, streaming=True
                     ),
+                    image_attachments=image_attachments,
                 ):
                     if chunk:
                         emitted_text = True
@@ -1435,9 +1490,9 @@ def _stream_gemini_attempt_chain(
 
 def _dedupe_gemini_attempts(attempts: list[GeminiAttempt]) -> list[GeminiAttempt]:
     deduped: list[GeminiAttempt] = []
-    seen: set[tuple[str, bool, bool]] = set()
+    seen: set[tuple[str, bool]] = set()
     for attempt in attempts:
-        key = (attempt.model, attempt.google_search, attempt.high_thinking)
+        key = (attempt.model, attempt.high_thinking)
         if key in seen:
             continue
         seen.add(key)
@@ -1471,20 +1526,13 @@ def _reasoning_gemini_attempts() -> list[GeminiAttempt]:
 
 
 def _web_gemini_attempts() -> list[GeminiAttempt]:
-    attempts: list[GeminiAttempt] = []
-    if GEMINI_GOOGLE_SEARCH_ENABLED:
-        attempts.extend([
-            GeminiAttempt(GEMINI_WEB_MODEL, google_search=True),
-            GeminiAttempt(GEMINI_WEB_BACKUP_MODEL, google_search=True),
-        ])
-    attempts.extend([
+    return _dedupe_gemini_attempts([
         GeminiAttempt(GEMINI_WEB_MODEL),
         GeminiAttempt(GEMINI_WEB_BACKUP_MODEL),
         GeminiAttempt(GEMINI_STANDARD_MODEL),
         GeminiAttempt(GEMMA_PRIMARY_MODEL),
         GeminiAttempt(GEMMA_SECONDARY_MODEL),
     ])
-    return _dedupe_gemini_attempts(attempts)
 
 
 def _is_reasoning_request(task: str, provider: str, model: Optional[str], skip_wrappers: bool) -> bool:
@@ -1497,15 +1545,6 @@ def _is_lite_model(model: Optional[str], model_override: Optional[str]) -> bool:
         (model_override or "").strip().lower(),
     }
     return GEMINI_LITE_ALIAS in values or GEMINI_LITE_MODEL.lower() in values
-
-
-def _should_use_google_search_for_gemini(task: str, model: Optional[str]) -> bool:
-    if task != "web_search_synthesis" or not GEMINI_GOOGLE_SEARCH_ENABLED:
-        return False
-    return (model or "").strip().lower() in {
-        GEMINI_WEB_MODEL.lower(),
-        GEMINI_WEB_BACKUP_MODEL.lower(),
-    }
 
 
 def _call_gemini_vision(prompt: str, image_base64: str, mime_type: str, api_key: str, model: Optional[str] = None) -> str:
@@ -1772,33 +1811,12 @@ def _normalize_gpt_oss_reasoning_effort(reasoning_effort: Optional[str]) -> str:
 
 
 def _gpt_oss_system_prompt(
-    execution_mode: Optional[str],
-    enable_builtin_tools: bool,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
 ) -> str:
     if sentiq_tool_request:
         policy = str(sentiq_tool_request.get("tool_choice_policy") or "").strip()
         return GPT_OSS_SYSTEM_PROMPT + (f" {policy}" if policy else "")
-    if not enable_builtin_tools:
-        return GPT_OSS_SYSTEM_PROMPT
-    if _normalize_execution_mode(execution_mode) == "intuitive":
-        tool_instruction = (
-            " Verify factual, current, or external-source claims with browser search when useful, especially for "
-            "recent, research, news, market, product, legal, medical, or other high-stakes queries. "
-            "Do not search for stable textbook, coding, or algorithm questions unless it materially improves accuracy."
-        )
-    else:
-        tool_instruction = (
-            " Use browser search whenever live, recent, rapidly changing, or externally verifiable information is required. "
-            "Do not search for stable textbook, coding, or algorithm questions unless it materially improves accuracy."
-        )
-    return GPT_OSS_SYSTEM_PROMPT + tool_instruction
-
-
-def _gpt_oss_builtin_tools(enable_builtin_tools: bool) -> Optional[list[dict[str, str]]]:
-    if not enable_builtin_tools:
-        return None
-    return [{"type": "browser_search"}, {"type": "code_interpreter"}]
+    return GPT_OSS_SYSTEM_PROMPT
 
 def _call_groq(
     prompt: str,
@@ -1808,7 +1826,6 @@ def _call_groq(
     reasoning_effort: Optional[str] = None,
     response_format_json: bool = False,
     execution_mode: Optional[str] = None,
-    enable_builtin_tools: bool = False,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
 ) -> Any:
     if not GROQ_MODULE:
@@ -1842,7 +1859,7 @@ def _call_groq(
         request_kwargs: dict[str, Any] = {
             "model": resolved_model,
             "messages": [
-                {"role": "system", "content": _gpt_oss_system_prompt(execution_mode, enable_builtin_tools, sentiq_tool_request)},
+                {"role": "system", "content": _gpt_oss_system_prompt(sentiq_tool_request)},
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.9,
@@ -1856,10 +1873,6 @@ def _call_groq(
         if sentiq_tools:
             request_kwargs["tools"] = sentiq_tools
             request_kwargs["tool_choice"] = "auto"
-        else:
-            builtin_tools = _gpt_oss_builtin_tools(enable_builtin_tools)
-            if builtin_tools:
-                request_kwargs["tools"] = builtin_tools
         raw_response = client.chat.completions.with_raw_response.create(
             **request_kwargs,
         )
@@ -1885,7 +1898,6 @@ def _call_groq_stream(
     max_output_tokens: Optional[int] = None,
     reasoning_effort: Optional[str] = None,
     execution_mode: Optional[str] = None,
-    enable_builtin_tools: bool = False,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
 ):
     if not GROQ_MODULE:
@@ -1903,7 +1915,7 @@ def _call_groq_stream(
     request_kwargs: dict[str, Any] = {
         "model": resolved_model,
         "messages": [
-            {"role": "system", "content": _gpt_oss_system_prompt(execution_mode, enable_builtin_tools, sentiq_tool_request)},
+            {"role": "system", "content": _gpt_oss_system_prompt(sentiq_tool_request)},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.9,
@@ -1917,10 +1929,6 @@ def _call_groq_stream(
     if sentiq_tools:
         request_kwargs["tools"] = sentiq_tools
         request_kwargs["tool_choice"] = "auto"
-    else:
-        builtin_tools = _gpt_oss_builtin_tools(enable_builtin_tools)
-        if builtin_tools:
-            request_kwargs["tools"] = builtin_tools
     raw_response = client.chat.completions.with_raw_response.create(**request_kwargs)
     completion = raw_response.parse()
     _capture_groq_telemetry(raw_response.headers)
@@ -1966,7 +1974,6 @@ def _invoke_groq(
     reasoning_effort: Optional[str] = None,
     response_format_json: bool = False,
     execution_mode: Optional[str] = None,
-    enable_builtin_tools: bool = False,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
 ) -> Any:
     """Try Groq keys with smart rotation (skip recently failed keys)."""
@@ -1986,7 +1993,6 @@ def _invoke_groq(
                 reasoning_effort,
                 response_format_json=response_format_json,
                 execution_mode=execution_mode,
-                enable_builtin_tools=enable_builtin_tools,
                 sentiq_tool_request=sentiq_tool_request,
             )
             logger.info("Groq key #%d succeeded", idx)
@@ -2472,6 +2478,7 @@ def call_llm_router(
     budget_policy: Optional[dict[str, Any]] = None,
     execution_mode: Optional[str] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
+    required_capabilities: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """
     Route an LLM call to the correct provider based on task.
@@ -2536,6 +2543,18 @@ def call_llm_router(
         if sentiq_tool_request:
             payload["assistant_turn"] = assistant_turn
         return payload
+
+    if not _route_supports_required_capabilities(
+        provider,
+        model,
+        required_capabilities,
+        streaming=False,
+    ):
+        return _build_response_payload(
+            "",
+            error="capability_unavailable",
+            error_detail="The selected route cannot preserve the required request capabilities.",
+        )
 
     if use_simulation:
         actual_model_used = "simulation"
@@ -2611,6 +2630,8 @@ def call_llm_router(
             max_output_tokens=max_output_tokens,
             execution_mode=execution_mode,
             sentiq_tool_request=sentiq_tool_request,
+            required_capabilities=required_capabilities,
+            image_attachments=image_attachments,
         )
         actual_model_used = used_model
         payload = _build_response_payload(fallback_result)
@@ -2623,6 +2644,10 @@ def call_llm_router(
         reason: str,
     ) -> dict[str, Any]:
         nonlocal actual_model_used, fallback_triggered, fallback_reason, finish_reason, truncated
+        if not _route_supports_required_capabilities(
+            "pollinations", pollinations_model, required_capabilities, streaming=False
+        ):
+            raise RuntimeError("Pollinations route does not satisfy required capabilities")
         fallback_triggered = True
         fallback_reason = reason
         actual_model_used = pollinations_model
@@ -2664,7 +2689,6 @@ def call_llm_router(
                     effective_reasoning_effort,
                     response_format_json=False,
                     execution_mode=execution_mode,
-                    enable_builtin_tools=task in CHATLIKE_TASKS and not bool(groq_sentiq_tool_request),
                     sentiq_tool_request=groq_sentiq_tool_request,
                 )
             finally:
@@ -2673,11 +2697,11 @@ def call_llm_router(
             result = _invoke_gemini(
                 effective_prompt,
                 resolved_override,
-                google_search=_should_use_google_search_for_gemini(task, resolved_override or model),
                 high_thinking=_is_gemma_model(resolved_override or model) and bool(skip_wrappers),
                 max_output_tokens=max_output_tokens,
                 execution_mode=execution_mode,
                 sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "gemini", resolved_override or model),
+                image_attachments=image_attachments,
             )
 
         if _looks_like_provider_error_payload(result):
@@ -2789,6 +2813,7 @@ def call_llm_router(
                     max_output_tokens=max_output_tokens,
                     execution_mode=execution_mode,
                     sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "gemini", GEMINI_FAST_MODEL),
+                    image_attachments=image_attachments,
                 )
                 payload = _build_response_payload(fallback_result)
                 if cache_enabled:
@@ -2894,6 +2919,7 @@ def stream_llm_router(
     budget_policy: Optional[dict[str, Any]] = None,
     execution_mode: Optional[str] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
+    required_capabilities: Optional[list[str]] = None,
 ):
     """
     Streaming variant — yields text chunks.
@@ -2911,6 +2937,13 @@ def stream_llm_router(
     model = resolved_override or _default_model_for_provider(provider)
     gemini_stream_attempts: Optional[list[GeminiAttempt]] = None
     stream_reasoning_request = _is_reasoning_request(task, provider, model, skip_wrappers)
+    if not _route_supports_required_capabilities(
+        provider,
+        model,
+        required_capabilities,
+        streaming=True,
+    ):
+        raise RuntimeError("The selected route cannot preserve the required request capabilities")
     
     logger.info(
         "[Router] model=%s provider=%s task=%s override=%s stream=true prompt_chars=%d",
@@ -2947,7 +2980,6 @@ def stream_llm_router(
                             max_output_tokens=max_output_tokens,
                             reasoning_effort=effective_reasoning_effort,
                             execution_mode=execution_mode,
-                            enable_builtin_tools=task in CHATLIKE_TASKS and not bool(groq_sentiq_tool_request),
                             sentiq_tool_request=groq_sentiq_tool_request,
                         ):
                             if chunk:
@@ -3068,7 +3100,6 @@ def stream_llm_router(
             gemini_stream_attempts = [
                 GeminiAttempt(
                     model,
-                    google_search=_should_use_google_search_for_gemini(task, model),
                     high_thinking=_is_gemma_model(model) and bool(skip_wrappers),
                 )
             ]
@@ -3080,6 +3111,8 @@ def stream_llm_router(
             max_output_tokens=max_output_tokens,
             execution_mode=execution_mode,
             sentiq_tool_request=sentiq_tool_request,
+            required_capabilities=required_capabilities,
+            image_attachments=image_attachments,
         )
         return
     except Exception as gemini_stream_error:
@@ -3093,6 +3126,10 @@ def stream_llm_router(
             if task == "web_search_synthesis"
             else GENERAL_CHAT_MODEL
         )
+        if not _route_supports_required_capabilities(
+            "pollinations", pollinations_model, required_capabilities, streaming=True
+        ):
+            raise RuntimeError("No capable streaming fallback route is available")
         yield from _call_pollinations_stream(
             prompt,
             pollinations_model,

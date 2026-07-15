@@ -28,7 +28,13 @@
 // Requires POLLINATIONS_API_KEY (or legacy FLUX_API_KEY) for Pollinations providers.
 // If ALL providers fail, returns a structured error - never crashes.
 
-import type { ImageProvider, ImageGenerationResult } from "./types";
+import { createHash } from "node:crypto";
+import {
+  ImageProviderFailure,
+  asImageProviderFailure,
+  type ImageProvider,
+  type ImageGenerationResult,
+} from "./types";
 import { ZimageProvider } from "./providers/zimageProvider";
 import { FluxDevProvider } from "./providers/fluxDevProvider";
 import { PollinationsProvider } from "./providers/pollinationsProvider";
@@ -138,6 +144,7 @@ function setCooldown(name: string): void {
 // ==============================
 
 function is429(err: unknown): boolean {
+  if (err instanceof ImageProviderFailure && err.statusCode === 429) return true;
   const msg = err instanceof Error ? err.message : String(err);
   return msg.includes("429") || msg.toLowerCase().includes("rate limit");
 }
@@ -184,6 +191,7 @@ interface QueueItem {
     readonly userId?: string;
     readonly signal?: AbortSignal;
     readonly preferredModel?: ImageModelPreference;
+    readonly requestKey?: string;
   };
   userKey: string;
   resolve: (result: ImageGenerationResult) => void;
@@ -282,6 +290,7 @@ export async function routeImageGeneration(args: {
   readonly userId?: string;
   readonly signal?: AbortSignal;
   readonly preferredModel?: ImageModelPreference;
+  readonly requestKey?: string;
 }): Promise<ImageGenerationResult> {
   if (!args.prompt.trim()) {
     return { success: false, prompt: args.prompt, error: "Prompt is required" };
@@ -336,14 +345,24 @@ export async function routeImageGeneration(args: {
 async function executeImageGeneration(args: {
   readonly prompt: string;
   readonly size?: string;
+  readonly userId?: string;
   readonly signal?: AbortSignal;
   readonly preferredModel?: ImageModelPreference;
+  readonly requestKey?: string;
+  readonly providers?: readonly ImageProvider[];
 }): Promise<ImageGenerationResult> {
   throwIfAborted(args.signal);
   const errors: string[] = [];
   const startTime = Date.now();
   const providerMode = selectImageProviderMode(args.prompt, args.preferredModel);
-  const selectedProviders = getProvidersForMode(providerMode, args.preferredModel);
+  const selectedProviders = args.providers ?? getProvidersForMode(providerMode, args.preferredModel);
+  const requestKey = args.requestKey?.trim() || createHash("sha256")
+    .update(args.userId?.trim() || "anonymous")
+    .update("\0")
+    .update(args.size || "1024x1024")
+    .update("\0")
+    .update(args.prompt)
+    .digest("hex");
   console.log(
     `[IMAGE] routing prompt="${args.prompt.slice(0, 60)}..." mode=${providerMode} preferred=${args.preferredModel ?? "none"} primary=${selectedProviders[0]?.name ?? "none"} providers=${selectedProviders.length}`,
   );
@@ -368,7 +387,12 @@ async function executeImageGeneration(args: {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         console.log(`[IMAGE] provider=${provider.name} attempt=${attempt}`);
-        const result = await provider.generate(args.prompt, args.size, args.signal);
+        const result = await provider.generate(
+          args.prompt,
+          args.size,
+          args.signal,
+          { requestKey },
+        );
         throwIfAborted(args.signal);
         const elapsed = Date.now() - startTime;
         console.log(`[IMAGE] provider=${provider.name} success duration=${elapsed}ms`);
@@ -380,18 +404,30 @@ async function executeImageGeneration(args: {
           prompt: args.prompt,
         };
       } catch (err) {
+        throwIfAborted(args.signal);
+        const failure = asImageProviderFailure(err);
         const message = err instanceof Error ? err.message : String(err);
 
-        if (is429(err) && attempt === 1) {
+        if (is429(failure) && attempt === 1) {
           console.log(`[IMAGE] provider=${provider.name} got 429, retrying in 1s`);
           await sleep(1000, args.signal);
           continue; // retry once
         }
 
         // Final failure for this provider
-        if (is429(err)) setCooldown(provider.name);
-        console.log(`[IMAGE] provider=${provider.name} failed error="${message}"`);
+        if (is429(failure)) setCooldown(provider.name);
+        console.log(`[IMAGE] provider=${provider.name} failed outcome=${failure.outcome} error="${message}"`);
         errors.push(`${provider.name}: ${message}`);
+        if (failure.outcome === "indeterminate") {
+          // A timeout, transport/5xx failure, malformed success, or body-read
+          // failure may have created an image already. Cross-provider retry is
+          // unsafe because providers offer no shared idempotency contract.
+          return {
+            success: false,
+            prompt: args.prompt,
+            error: "Image provider outcome was indeterminate; cross-provider fallback stopped.",
+          };
+        }
         break; // move to next provider
       }
     }
@@ -405,4 +441,17 @@ async function executeImageGeneration(args: {
     prompt: args.prompt,
     error: `All image providers failed. ${errors.join(" | ")}`,
   };
+}
+
+/** Offline-test seam for retry-disposition validation. */
+export async function executeImageGenerationWithProviders(args: {
+  readonly prompt: string;
+  readonly size?: string;
+  readonly userId?: string;
+  readonly signal?: AbortSignal;
+  readonly preferredModel?: ImageModelPreference;
+  readonly requestKey: string;
+  readonly providers: readonly ImageProvider[];
+}): Promise<ImageGenerationResult> {
+  return executeImageGeneration(args);
 }

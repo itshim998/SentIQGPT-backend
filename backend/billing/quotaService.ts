@@ -1,6 +1,30 @@
 import { BillingRepository } from "./billingRepository";
 import type { BillingIdentity, BillingPlanCode, BillableFeature, UsageReservation } from "./entitlementTypes";
-import { getAdvancedReasoningRoute, getLiteTextRoute, getPremiumTextRoute, type ModelRoute } from "./modelEntitlementRouter";
+import {
+  getAdvancedReasoningRoute,
+  getGeminiAdvancedReasoningCapabilityRoute,
+  getGeminiLiteCapabilityRoute,
+  getGeminiStandardCapabilityRoute,
+  getLiteTextRoute,
+  getPremiumTextRoute,
+  type ModelRoute,
+} from "./modelEntitlementRouter";
+import {
+  routeCanServeRequiredCapabilities,
+  type RequiredModelCapability,
+} from "../ai/modelToolCapability";
+
+export class ModelCapabilityUnavailableError extends Error {
+  readonly statusCode = 503;
+  readonly code = "model_capability_unavailable";
+  readonly requiredCapabilities: readonly RequiredModelCapability[];
+
+  constructor(requiredCapabilities: readonly RequiredModelCapability[]) {
+    super("A compatible model is temporarily unavailable for this request. Please try again later.");
+    this.name = "ModelCapabilityUnavailableError";
+    this.requiredCapabilities = [...requiredCapabilities];
+  }
+}
 
 export class BillingQuotaError extends Error {
   readonly statusCode: number;
@@ -152,8 +176,16 @@ export class BillingQuotaService {
     readonly conversationId?: string | null;
     readonly clientRequestId?: string | null;
     readonly metadata?: Record<string, unknown>;
+    readonly requiredCapabilities?: readonly RequiredModelCapability[];
   }): Promise<UsageReservation> {
-    const standard = getPremiumTextRoute();
+    const requiredCapabilities = args.requiredCapabilities ?? [];
+    const configuredStandard = getPremiumTextRoute();
+    const standard = routeCanServeRequiredCapabilities(configuredStandard, requiredCapabilities)
+      ? configuredStandard
+      : getGeminiStandardCapabilityRoute();
+    if (!routeCanServeRequiredCapabilities(standard, requiredCapabilities)) {
+      throw new ModelCapabilityUnavailableError(requiredCapabilities);
+    }
     try {
       return await this.reserveFeature({
         ...args,
@@ -164,7 +196,13 @@ export class BillingQuotaService {
       if (!(error instanceof BillingQuotaError) || error.code !== "quota_exceeded") {
         throw error;
       }
-      const lite = getLiteTextRoute();
+      const configuredLite = getLiteTextRoute();
+      const lite = routeCanServeRequiredCapabilities(configuredLite, requiredCapabilities)
+        ? configuredLite
+        : getGeminiLiteCapabilityRoute();
+      if (!routeCanServeRequiredCapabilities(lite, requiredCapabilities)) {
+        throw new ModelCapabilityUnavailableError(requiredCapabilities);
+      }
       return this.reserveFeature({
         ...args,
         requestId: `${args.requestId}:lite`,
@@ -185,8 +223,16 @@ export class BillingQuotaService {
     readonly conversationId?: string | null;
     readonly clientRequestId?: string | null;
     readonly metadata?: Record<string, unknown>;
+    readonly requiredCapabilities?: readonly RequiredModelCapability[];
   }): Promise<UsageReservation> {
-    const route = getAdvancedReasoningRoute();
+    const requiredCapabilities = args.requiredCapabilities ?? [];
+    const configuredRoute = getAdvancedReasoningRoute();
+    const route = routeCanServeRequiredCapabilities(configuredRoute, requiredCapabilities)
+      ? configuredRoute
+      : getGeminiAdvancedReasoningCapabilityRoute();
+    if (!routeCanServeRequiredCapabilities(route, requiredCapabilities)) {
+      throw new ModelCapabilityUnavailableError(requiredCapabilities);
+    }
     return this.reserveFeature({
       ...args,
       feature: "advanced_reasoning",

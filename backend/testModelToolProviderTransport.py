@@ -107,6 +107,31 @@ def test_capabilities_and_cache_dimensions():
         thread.assert_called_once()
 
 
+def test_gemini_multimodal_contents_and_hard_capabilities():
+    with patch.object(adapter, "GOOGLE_GENAI_TYPES_MODULE", None):
+        contents = adapter._build_gemini_contents("Describe this image", [{
+            "filename": "sample.png",
+            "mime_type": "image/png",
+            "base64": "aGk=",
+            "size_bytes": 2,
+        }])
+    assert contents[0] == "Describe this image"
+    assert contents[1]["inline_data"]["mime_type"] == "image/png"
+    assert contents[1]["inline_data"]["data"] == b"hi"
+    assert adapter._route_supports_required_capabilities(
+        "gemini", adapter.GEMINI_STANDARD_MODEL, ["image_input"], streaming=False
+    ) is True
+    assert adapter._route_supports_required_capabilities(
+        "groq", adapter.GROQ_CHAT_MODEL, ["image_input"], streaming=False
+    ) is False
+    assert adapter._route_supports_required_capabilities(
+        "gemini", adapter.GEMMA_PRIMARY_MODEL, ["image_input"], streaming=False
+    ) is False
+    assert adapter._route_supports_required_capabilities(
+        "pollinations", "mistral", ["image_input"], streaming=False
+    ) is False
+
+
 def test_groq_buffered_and_fragmented_stream_transport():
     function = SimpleNamespace(name="web_surf", arguments='{"query":"latest release"}')
     message = SimpleNamespace(content=None, tool_calls=[SimpleNamespace(id="groq_1", function=function)])
@@ -127,14 +152,12 @@ def test_groq_buffered_and_fragmented_stream_transport():
             "Find the latest release",
             "test-key",
             adapter.GROQ_CHAT_MODEL,
-            enable_builtin_tools=True,
             sentiq_tool_request=TOOL_REQUEST,
         )
         events = list(adapter._call_groq_stream(
             "Find the latest release",
             "test-key",
             adapter.GROQ_CHAT_MODEL,
-            enable_builtin_tools=True,
             sentiq_tool_request=TOOL_REQUEST,
         ))
         text_events = list(adapter._call_groq_stream(
@@ -206,10 +229,6 @@ class FakeGeminiTypes:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    class GoogleSearch:
-        pass
-
-
 def test_gemini_buffered_and_stream_transport():
     function_call = SimpleNamespace(id="gemini_1", name="web_surf", args={"query": "latest release"})
     buffered = SimpleNamespace(function_calls=[function_call], text="")
@@ -242,14 +261,12 @@ def test_gemini_buffered_and_stream_transport():
             "Find the latest release",
             "test-key",
             adapter.GEMINI_STANDARD_MODEL,
-            google_search=True,
             sentiq_tool_request=TOOL_REQUEST,
         )
         events = list(adapter._call_gemini_stream(
             "Find the latest release",
             "test-key",
             adapter.GEMINI_STANDARD_MODEL,
-            google_search=True,
             sentiq_tool_request=TOOL_REQUEST,
         ))
         text_events = list(adapter._call_gemini_stream(
@@ -316,13 +333,11 @@ def test_capability_aware_fallbacks():
             "Find the latest release",
             [adapter.GeminiAttempt(adapter.GEMMA_PRIMARY_MODEL), adapter.GeminiAttempt(adapter.GEMINI_STANDARD_MODEL)],
             sentiq_tool_request=TOOL_REQUEST,
+            required_capabilities=["sentiq_tools_buffered"],
         )
     assert model == adapter.GEMINI_STANDARD_MODEL
     assert result["kind"] == "tool_calls"
-    assert seen_requests == [
-        (adapter.GEMMA_PRIMARY_MODEL, None),
-        (adapter.GEMINI_STANDARD_MODEL, TOOL_REQUEST),
-    ]
+    assert seen_requests == [(adapter.GEMINI_STANDARD_MODEL, TOOL_REQUEST)]
 
     fallback_called = {"value": False}
 
@@ -352,6 +367,7 @@ def test_capability_aware_fallbacks():
             "Find the latest release",
             model_override=adapter.GROQ_CHAT_MODEL,
             sentiq_tool_request=TOOL_REQUEST,
+            required_capabilities=["sentiq_tools_streaming"],
         ))
     assert fallback_called["value"] is True
     assert events[0]["kind"] == "tool_call_start"
@@ -395,6 +411,7 @@ def test_stream_fallback_stops_after_tool_selection():
 
 def main() -> int:
     test_capabilities_and_cache_dimensions()
+    test_gemini_multimodal_contents_and_hard_capabilities()
     test_groq_buffered_and_fragmented_stream_transport()
     test_gemini_buffered_and_stream_transport()
     test_capability_aware_fallbacks()

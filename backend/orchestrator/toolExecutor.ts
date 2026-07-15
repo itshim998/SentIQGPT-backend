@@ -17,7 +17,7 @@ import { selectImageModelForCapabilities, selectModelForCapabilities } from "./c
 import type { SearchResult } from "../tools/webSearch/types";
 import { INTUITIVE_PROFILE, type ExecutionProfile } from "./executionProfile";
 import { BillingQuotaError, BillingQuotaService } from "../billing/quotaService";
-import { getImageModelForPlan } from "../billing/modelEntitlementRouter";
+import { getGeminiStandardCapabilityRoute, getImageModelForPlan } from "../billing/modelEntitlementRouter";
 import type { UsageReservation } from "../billing/entitlementTypes";
 import {
   findExistingAssistantImageMessage,
@@ -25,12 +25,17 @@ import {
 } from "../services/generatedImagePersistenceService";
 import { getImageStorageDatabase } from "../dbRouter";
 import { commitImageQuotaSuccess, getQuotaInfo } from "../middleware/imageQuota";
-import { getEnabledAutomaticSentIQTools } from "../ai/modelToolCapability";
+import {
+  deriveRequiredModelCapabilities,
+  getAutomaticSentIQToolsForRoute,
+  getEnabledAutomaticSentIQTools,
+  routeSupportsCapabilities,
+} from "../ai/modelToolCapability";
 import type { ToolLifecycleEvent, ValidatedToolCall } from "./toolContract";
 import { AutomaticToolDispatchError, dispatchAutomaticModelToolCall } from "../ai/modelToolExecution";
 import type { GeneratedFileFormat } from "../tools/fileGeneration/types";
 import { getConversationMessageByClientRequestId } from "../services/conversationService";
-import { isDuplicateMemoryCandidate, validateAutomaticMemoryUpdateContent } from "../ai/modelToolMemorySafety";
+import { authorizeAutomaticMemoryUpdate, enforceAutomaticMemoryScope } from "../ai/modelToolMemorySafety";
 
 // ==============================
 // Types
@@ -113,6 +118,8 @@ export interface StepResult {
     source_conversation_id?: string | null;
     failure_reason?: string;
     deduplicated?: boolean;
+    /** Server-only and non-enumerable; never serialize into public responses or logs. */
+    automatic_idempotency_key?: string;
   };
   /** Web search payload (web_search) */
   readonly web_search?: {
@@ -191,28 +198,6 @@ function safeWebSearchFailureMessage(error?: string): string {
   return "Web search is temporarily unavailable. Please try again later.";
 }
 
-async function hasPersistedDuplicateMemory(
-  ctx: BuiltContext,
-  candidate: { type?: string; summary?: string },
-  scope: "global" | "chat",
-): Promise<boolean> {
-  if (!ctx.userDb || !ctx.userId || !candidate.type || !candidate.summary) return false;
-  try {
-    let query = ctx.userDb
-      .from("memories")
-      .select("id")
-      .eq("user_id", ctx.userId)
-      .eq("type", candidate.type)
-      .eq("summary", candidate.summary)
-      .eq("scope", scope);
-    if (scope === "chat") query = query.eq("chat_id", ctx.conversationId || "");
-    const result = await query.limit(1).maybeSingle();
-    return Boolean(result.data?.id) && !result.error;
-  } catch {
-    return false;
-  }
-}
-
 function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
   throw signal.reason instanceof Error
@@ -255,6 +240,14 @@ async function execConversation(
     isGuest: ctx.userId === "guest",
     signal,
   });
+  const requestedAutomaticTools = !priorContext && !webSurfEvidence && !ctx.webSearchMode
+    ? getEnabledAutomaticSentIQTools()
+    : [];
+  const requiredCapabilities = deriveRequiredModelCapabilities({
+    hasImageInput: hasImages,
+    automaticToolsRequested: requestedAutomaticTools.length > 0,
+    streaming: false,
+  });
   const reservation = ctx.billingIdentity
     ? await billingQuotaService.reserveTextRoute({
         identity: ctx.billingIdentity,
@@ -262,16 +255,24 @@ async function execConversation(
         conversationId: ctx.conversationId,
         clientRequestId: ctx.billingRequestId,
         metadata: { endpoint: "orchestrator", tool: "conversation", routed_model: routedModel.model },
+        requiredCapabilities,
       })
     : null;
-  const modelOverride = reservation?.adapterModelOverride ?? routedModel.model;
+  const unreservedRoute = routeSupportsCapabilities(
+    { provider: routedModel.provider, model: routedModel.model },
+    requiredCapabilities,
+  )
+    ? { provider: routedModel.provider, model: routedModel.model, adapterModelOverride: routedModel.model }
+    : getGeminiStandardCapabilityRoute();
+  const finalRoute = reservation ?? unreservedRoute;
+  const modelOverride = finalRoute.adapterModelOverride;
 
   if (routedModel.fallback_reason) {
     console.log(`[ModelSelector] conversation capability=${routedModel.fallback_reason}`);
   }
   
-  const automaticTools = !priorContext && !webSurfEvidence && !ctx.webSearchMode
-    ? getEnabledAutomaticSentIQTools()
+  const automaticTools = requestedAutomaticTools.length > 0
+    ? getAutomaticSentIQToolsForRoute(finalRoute, false)
     : [];
   let result: Awaited<ReturnType<typeof handleChat>>;
   try {
@@ -303,6 +304,7 @@ async function execConversation(
         executionMode: profile.mode,
       } : undefined,
       allowedModelTools: automaticTools,
+      requiredCapabilities,
     });
     if (result.tool_calls) {
       if (reservation) {
@@ -357,7 +359,7 @@ export async function executeAutomaticModelToolCalls(
         signal,
         onFileToken,
       ),
-      executeMemory: (content, type, scope) => execAutomaticMemoryUpdate(content, type, scope, ctx, profile, signal),
+      executeMemory: (_content, type, scope) => execAutomaticMemoryUpdate(originalUserRequest, type, scope, ctx, profile, signal),
       isFailure: (result, call) => Boolean(result.error)
         || result.image?.success === false
         || result.chart?.success === false
@@ -444,7 +446,21 @@ async function execImageGeneration(
 
   let result: Awaited<ReturnType<typeof routeImageGeneration>>;
   try {
-    result = await routeImageGeneration({ prompt: input, userId: ctx.userId, signal, preferredModel: preferredModel as any });
+    const requestKey = createHash("sha256")
+      .update(ctx.userId || "guest")
+      .update("\0")
+      .update(ctx.conversationId || "no-conversation")
+      .update("\0")
+      .update(ctx.clientRequestId || ctx.billingRequestId || input)
+      .update("\0image_gen")
+      .digest("hex");
+    result = await routeImageGeneration({
+      prompt: input,
+      userId: ctx.userId,
+      signal,
+      preferredModel: preferredModel as any,
+      requestKey,
+    });
     if (result.success && committedReservation) {
       await billingQuotaService.commit(committedReservation, { endpoint: "orchestrator", tool: "image_generation" });
     } else if (!result.success) {
@@ -508,7 +524,7 @@ async function execImageGeneration(
 }
 
 async function execAutomaticMemoryUpdate(
-  content: string,
+  originalUserMessage: string,
   type: "identity" | "preference" | "project",
   scope: "global" | "chat",
   ctx: BuiltContext,
@@ -519,19 +535,37 @@ async function execAutomaticMemoryUpdate(
   if (!ctx.userId || ctx.userId === "guest" || !ctx.userDb || !ctx.conversationId) {
     throw new Error("Memory updates require an authenticated conversation.");
   }
-  const safeContent = validateAutomaticMemoryUpdateContent(content);
+  if (!ctx.clientRequestId?.trim()) {
+    throw new Error("Automatic memory updates require a client request ID.");
+  }
+  const authorization = enforceAutomaticMemoryScope(
+    authorizeAutomaticMemoryUpdate(originalUserMessage),
+    scope,
+  );
   const candidate = await prepareModelSelectedMemory({
-    content: safeContent,
+    content: authorization.content,
     type,
     generateEmbedding: profile.persistence.blockOnMemoryEmbedding,
   });
   throwIfAborted(signal);
-  const deduplicated = isDuplicateMemoryCandidate(ctx.memories ?? [], candidate, scope)
-    || await hasPersistedDuplicateMemory(ctx, candidate, scope);
+  const automaticIdempotencyKey = createHash("sha256")
+    .update(ctx.userId)
+    .update("\0")
+    .update(ctx.conversationId)
+    .update("\0")
+    .update(ctx.clientRequestId)
+    .update("\0memory_update")
+    .digest("hex");
+  const memory = { stored: true as const, ...candidate, scope: authorization.scope, deduplicated: false };
+  Object.defineProperty(memory, "automatic_idempotency_key", {
+    value: automaticIdempotencyKey,
+    enumerable: false,
+    writable: false,
+  });
   return {
     step: 0,
     tool: "memory_update",
-    memory: { stored: true, ...candidate, scope, deduplicated },
+    memory,
   };
 }
 

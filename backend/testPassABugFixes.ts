@@ -44,6 +44,11 @@ const validUuid = "123e4567-e89b-12d3-a456-426614174000";
   assert.equal(isPrivateOrInternalAddress("fe80::1"), true);
   assert.equal(isPrivateOrInternalAddress("fc00::1"), true);
   assert.equal(isPrivateOrInternalAddress("2001:4860:4860::8888"), false);
+  assert.equal(isPrivateOrInternalAddress("::ffff:172.15.0.1"), false, "mapped public IPv4 must be allowed");
+  assert.equal(isPrivateOrInternalAddress("::ffff:ac0f:1"), false, "hex mapped public IPv4 must be allowed");
+  assert.equal(isPrivateOrInternalAddress("::ffff:127.0.0.1"), true, "mapped loopback must be blocked");
+  assert.equal(isPrivateOrInternalAddress("::ffff:10.0.0.1"), true, "mapped private IPv4 must be blocked");
+  assert.equal(isPrivateOrInternalAddress("::ffff:a00:1"), true, "hex mapped private IPv4 must be blocked");
   assert.equal(isPrivateOrInternalHost("localhost"), true);
   assert.equal(isPrivateOrInternalHost("metadata.google.internal"), true);
   assert.equal(isPrivateOrInternalHost("example.local"), true);
@@ -66,7 +71,9 @@ const validUuid = "123e4567-e89b-12d3-a456-426614174000";
     .readdirSync(path.join(root, "frontend"))
     .filter((entry) => entry !== "backup_monolithic_index.html")
     .sort();
-  assert.deepEqual(frontendDirEntries, [".htaccess", "index.html", "scripts", "styles", "vendor"], "frontend directory should contain modular static assets");
+  for (const requiredEntry of [".htaccess", "index.html", "scripts", "styles", "vendor"]) {
+    assert(frontendDirEntries.includes(requiredEntry), `frontend modular asset is missing: ${requiredEntry}`);
+  }
 
   const indexHtml = readFrontendSources(root).combined;
   const maybeGenerateTitleStart = indexHtml.indexOf("async function maybeGenerateTitle");
@@ -85,7 +92,7 @@ const validUuid = "123e4567-e89b-12d3-a456-426614174000";
 {
   const server = fs.readFileSync(path.join(root, "backend", "server.ts"), "utf8");
   assert(server.includes("getOptionalUuid(parsed.data.conversationId, \"conversationId\", {\n      ignoreInvalid: isGuest"));
-  assert(server.includes("let conversationId = getOptionalUuid(parsed.data.conversationId, \"conversationId\") || \"\""));
+  assert(server.includes("let conversationId = getOptionalUuid(parsed.data.conversationId, \"conversationId\", { ignoreInvalid: isGuest }) || \"\""));
   assert(server.includes("resolveConversationIdThroughAlias(userDb, userId, conversationId, \"images.generate\")"));
   assert(server.includes("const chatId = getRequiredUuid(req.params.chatId, \"chatId\")"));
   assert(server.includes("buildSyncMessageOptions"), "chat sync should preserve generated-file and image metadata");

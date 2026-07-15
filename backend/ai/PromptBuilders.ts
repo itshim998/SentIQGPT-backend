@@ -32,7 +32,7 @@ import {
   type ToolAvailabilityContext,
 } from "../orchestrator/toolContract";
 import { ToolCallStreamAccumulator, type RawProviderDelta } from "./modelToolTransport";
-import { isModelToolRegistryEnabled } from "./modelToolCapability";
+import { isModelToolRegistryEnabled, type RequiredModelCapability } from "./modelToolCapability";
 import type {
   WebSurfAnswerPlan,
   WebSurfAnswerSourceContext,
@@ -113,6 +113,7 @@ export interface LLMAdapterCall {
   readonly execution_mode?: ExecutionMode;
   readonly skip_wrappers?: boolean;
   readonly image_attachments?: readonly ImageAttachment[];
+  readonly required_capabilities?: readonly RequiredModelCapability[];
   readonly budget_class?: OutputBudgetClass;
   readonly auxiliary_budget?: AuxiliaryOutputKind;
   readonly request_complexity?: RequestComplexity;
@@ -342,6 +343,7 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
         execution_mode: call.execution_mode,
         skip_wrappers: call.skip_wrappers,
         image_attachments: call.image_attachments,
+        required_capabilities: call.required_capabilities,
         budget_policy: prepared.budgetPolicy,
         sentiq_tool_request: sentiqToolRequest,
       }),
@@ -459,6 +461,7 @@ async function callLLMAdapterTextStreamLegacy(
         execution_mode: call.execution_mode,
         skip_wrappers: call.skip_wrappers,
         image_attachments: call.image_attachments,
+        required_capabilities: call.required_capabilities,
         budget_policy: prepared.budgetPolicy,
       }),
       signal: abort.signal,
@@ -674,6 +677,7 @@ export async function callLLMAdapterTurnStream(
         execution_mode: call.execution_mode,
         skip_wrappers: call.skip_wrappers,
         image_attachments: call.image_attachments,
+        required_capabilities: call.required_capabilities,
         budget_policy: prepared.budgetPolicy,
         sentiq_tool_request: sentiqToolRequest,
       }),
@@ -850,6 +854,7 @@ export function callLLMAdapterSync(call: LLMAdapterCall): Promise<string> {
         reasoning_effort: call.reasoning_effort,
         execution_mode: call.execution_mode,
         image_attachments: call.image_attachments,
+        required_capabilities: call.required_capabilities,
         max_output_tokens: call.max_output_tokens,
         budget_policy: prepared.budgetPolicy,
       })

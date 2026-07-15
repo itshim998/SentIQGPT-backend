@@ -10,6 +10,7 @@ import { PRODUCT_DISCLAIMER } from "../branding";
 import type { WebSurfAnswerPlan, WebSurfAnswerSourceContext } from "../tools/webSearch/webSurfAnswerIntelligence";
 import { normalizeWebSurfAnswerOutput } from "../tools/webSearch/webSurfOutputGuard";
 import type { SentIQToolName, ToolAvailabilityContext, ValidatedToolCall } from "../orchestrator/toolContract";
+import { deriveRequiredModelCapabilities, type RequiredModelCapability } from "./modelToolCapability";
 
 const REASONING_MAX_OUTPUT_TOKENS = 2600;
 const CONTINUATION_MAX_OUTPUT_TOKENS = 1800;
@@ -99,6 +100,7 @@ export async function handleChat(args: {
   readonly executionMode?: "fast" | "intuitive";
   readonly modelToolContext?: ToolAvailabilityContext;
   readonly allowedModelTools?: readonly SentIQToolName[];
+  readonly requiredCapabilities?: readonly RequiredModelCapability[];
 }): Promise<ChatResponse> {
   if (!args.userMessage.trim()) {
     throw new Error("userMessage must be a non-empty string.");
@@ -150,6 +152,11 @@ export async function handleChat(args: {
       execution_mode: args.executionMode,
       sentiq_tool_context: args.modelToolContext,
       sentiq_allowed_tool_names: args.allowedModelTools,
+      required_capabilities: args.requiredCapabilities ?? deriveRequiredModelCapabilities({
+        hasImageInput: (args.imageAttachments?.length ?? 0) > 0,
+        automaticToolsRequested: (args.allowedModelTools?.length ?? 0) > 0,
+        streaming: false,
+      }),
     });
     if (result.assistant_turn?.kind === "tool_calls") {
       return {
