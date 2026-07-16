@@ -88,6 +88,9 @@ export class ToolCallStreamAccumulator {
         return [{ kind: "tool_argument_delta", id: pending.id, text: raw.text, index: pending.index }];
       }
       case "done": {
+        if (!this.startedToolCall && !this.emittedText) {
+          throw new Error("Provider completed without assistant text or a tool call.");
+        }
         this.finished = true;
         const output: ProviderDelta[] = [];
         if (this.startedToolCall) {

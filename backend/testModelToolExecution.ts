@@ -6,7 +6,9 @@ import {
   AutomaticToolDispatchError,
   consumeModelTurnStream,
   dispatchAutomaticModelToolCall,
+  ModelTurnProgressTracker,
 } from "./ai/modelToolExecution";
+import { assertNoUnbackedToolCompletionClaim } from "./ai/modelToolCompletionClaims";
 import {
   getEnabledAutomaticSentIQTools,
   isModelChartSelectionEnabled,
@@ -76,6 +78,35 @@ async function main(): Promise<void> {
     ]), (text) => { visible.push(text); });
     assert.deepEqual(textTurn, { kind: "assistant_text", text: "ordinary answer" });
     assert.deepEqual(visible, ["ordinary ", "answer"]);
+    const validatedVisible: string[] = [];
+    await consumeModelTurnStream(streamOf([
+      { kind: "text_delta", text: "ordinary " },
+      { kind: "text_delta", text: "answer" },
+      { kind: "done" },
+    ]), (text) => { validatedVisible.push(text); }, undefined, {
+      validateAssistantText: assertNoUnbackedToolCompletionClaim,
+    });
+    assert.deepEqual(validatedVisible, ["ordinary answer"], "claim validation occurs before text becomes visible");
+    await assert.rejects(
+      () => consumeModelTurnStream(streamOf([
+        { kind: "text_delta", text: "I searched the web and found it." },
+        { kind: "done" },
+      ]), () => assert.fail("an unbacked completion claim must not become visible"), undefined, {
+        validateAssistantText: assertNoUnbackedToolCompletionClaim,
+      }),
+      /without a corresponding tool result/,
+    );
+    assert.doesNotThrow(() => assertNoUnbackedToolCompletionClaim("I can explain how web search works."));
+    assert.doesNotThrow(() => assertNoUnbackedToolCompletionClaim("I have not searched the web."));
+
+    const progress = new ModelTurnProgressTracker();
+    assert.equal(progress.canRecover(), true);
+    progress.advance("tool_selection_started");
+    assert.equal(progress.canRecover(), false);
+    progress.advance("validated_selection_accepted");
+    progress.advance("execution_started");
+    assert.equal(progress.state, "execution_started");
+    assert.throws(() => progress.advance("visible_text_started"), /move backward|cannot mix/);
     for (const question of [
       "Which Jordan do you mean?",
       "Which earlier report should I use?",

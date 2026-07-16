@@ -7,6 +7,8 @@ export type RequiredModelCapability =
   | "sentiq_tools_buffered"
   | "sentiq_tools_streaming";
 
+export type ToolTransportMode = "none" | "buffered" | "streaming";
+
 export interface ModelCapabilityRoute {
   readonly provider: string;
   readonly model: string;
@@ -16,6 +18,15 @@ export interface SentIQToolCapability {
   readonly provider: LLMProviderKind;
   readonly buffered: boolean;
   readonly streaming: boolean;
+  readonly reason: string;
+}
+
+export interface ModelToolTransportDecision {
+  readonly provider: LLMProviderKind;
+  readonly model: string;
+  readonly requestedMode: Exclude<ToolTransportMode, "none">;
+  readonly mode: ToolTransportMode;
+  readonly supported: boolean;
   readonly reason: string;
 }
 
@@ -31,6 +42,22 @@ export const SENTIQ_MODEL_TOOL_ENV = Object.freeze({
   diagnostics: "SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED",
 } as const);
 
+export const CANONICAL_SENTIQ_MODEL_TOOL_ENV_NAMES = Object.freeze(
+  Object.values(SENTIQ_MODEL_TOOL_ENV),
+);
+
+export const OBSOLETE_SENTIQ_MODEL_TOOL_ENV_NAMES = Object.freeze([
+  "SENTIQ_MODEL_TOOLS_REGISTRY_ENABLED",
+  "SENTIQ_GROQ_MODEL_TOOL_TRANSPORT_ENABLED",
+  "SENTIQ_GEMINI_MODEL_TOOL_TRANSPORT_ENABLED",
+  "SENTIQ_MODEL_WEB_SURF_SELECTION_ENABLED",
+  "SENTIQ_WEBSURF_MODEL_SELECTION_ENABLED",
+  "SENTIQ_IMAGE_MODEL_SELECTION_ENABLED",
+  "SENTIQ_CHART_MODEL_SELECTION_ENABLED",
+  "SENTIQ_FILE_MODEL_SELECTION_ENABLED",
+  "SENTIQ_MEMORY_MODEL_SELECTION_ENABLED",
+] as const);
+
 export interface ModelToolRuntimeSnapshot {
   readonly registryEnabled: boolean;
   readonly groqTransportEnabled: boolean;
@@ -45,7 +72,7 @@ export interface ModelToolRuntimeSnapshot {
 
 const CAPABILITIES: Readonly<Record<LLMProviderKind, SentIQToolCapability>> = {
   groq: { provider: "groq", buffered: true, streaming: true, reason: "openai_function_transport" },
-  gemini: { provider: "gemini", buffered: true, streaming: true, reason: "google_function_transport" },
+  gemini: { provider: "gemini", buffered: true, streaming: false, reason: "google_genai_buffered_function_transport" },
   gemma: { provider: "gemma", buffered: false, streaming: false, reason: "text_only_model" },
   pollinations: { provider: "pollinations", buffered: false, streaming: false, reason: "text_only_transport" },
   unknown: { provider: "unknown", buffered: false, streaming: false, reason: "capability_not_declared" },
@@ -69,6 +96,39 @@ export function getSentIQToolCapability(provider: LLMProviderKind): SentIQToolCa
 export function canUseSentIQTools(provider: LLMProviderKind, streaming: boolean): boolean {
   const capability = getSentIQToolCapability(provider);
   return streaming ? capability.streaming : capability.buffered;
+}
+
+export function resolveModelToolTransport(
+  route: ModelCapabilityRoute,
+  requestedMode: Exclude<ToolTransportMode, "none">,
+): ModelToolTransportDecision {
+  const provider = normalizeRouteProvider(route);
+  const capability = getSentIQToolCapability(provider);
+  const transportEnabled = provider === "groq"
+    ? isGroqSentIQToolTransportEnabled()
+    : provider === "gemini"
+      ? isGeminiSentIQToolTransportEnabled()
+      : false;
+  if (!isModelToolRegistryEnabled()) {
+    return { provider, model: route.model, requestedMode, mode: "none", supported: false, reason: "registry_disabled" };
+  }
+  if (!transportEnabled) {
+    return { provider, model: route.model, requestedMode, mode: "none", supported: false, reason: "transport_disabled" };
+  }
+  if (requestedMode === "streaming" && capability.streaming) {
+    return { provider, model: route.model, requestedMode, mode: "streaming", supported: true, reason: capability.reason };
+  }
+  if (capability.buffered) {
+    return {
+      provider,
+      model: route.model,
+      requestedMode,
+      mode: "buffered",
+      supported: true,
+      reason: requestedMode === "streaming" ? "buffered_tool_bridge" : capability.reason,
+    };
+  }
+  return { provider, model: route.model, requestedMode, mode: "none", supported: false, reason: capability.reason };
 }
 
 export function normalizeRouteProvider(route: ModelCapabilityRoute): LLMProviderKind {
@@ -117,13 +177,47 @@ export function deriveRequiredModelCapabilities(args: {
   readonly hasImageInput?: boolean;
   readonly automaticToolsRequested?: boolean;
   readonly streaming?: boolean;
+  readonly toolTransportMode?: Exclude<ToolTransportMode, "none">;
 }): readonly RequiredModelCapability[] {
   const requirements: RequiredModelCapability[] = [];
   if (args.hasImageInput) requirements.push("image_input");
   if (args.automaticToolsRequested) {
-    requirements.push(args.streaming ? "sentiq_tools_streaming" : "sentiq_tools_buffered");
+    const mode = args.toolTransportMode ?? (args.streaming ? "streaming" : "buffered");
+    requirements.push(mode === "streaming" ? "sentiq_tools_streaming" : "sentiq_tools_buffered");
   }
   return requirements;
+}
+
+export function findObsoleteModelToolEnvironmentNames(
+  env: NodeJS.ProcessEnv = process.env,
+): readonly string[] {
+  const canonical = new Set<string>(CANONICAL_SENTIQ_MODEL_TOOL_ENV_NAMES);
+  const obsolete = new Set<string>(OBSOLETE_SENTIQ_MODEL_TOOL_ENV_NAMES);
+  const editDistance = (left: string, right: string): number => {
+    const row = Array.from({ length: right.length + 1 }, (_, index) => index);
+    for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+      let diagonal = row[0];
+      row[0] = leftIndex;
+      for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+        const previous = row[rightIndex];
+        row[rightIndex] = Math.min(
+          row[rightIndex] + 1,
+          row[rightIndex - 1] + 1,
+          diagonal + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+        );
+        diagonal = previous;
+      }
+    }
+    return row[right.length];
+  };
+  return Object.keys(env)
+    .filter((name) => {
+      if (canonical.has(name) || typeof env[name] !== "string") return false;
+      if (obsolete.has(name)) return true;
+      if (!name.startsWith("SENTIQ_") || !name.includes("MODEL")) return false;
+      return CANONICAL_SENTIQ_MODEL_TOOL_ENV_NAMES.some((expected) => editDistance(name, expected) <= 3);
+    })
+    .sort();
 }
 
 export function isModelToolRegistryEnabled(
@@ -213,9 +307,6 @@ export function getAutomaticSentIQToolsForRoute(
 ): readonly SentIQToolName[] {
   const tools = getEnabledAutomaticSentIQTools();
   if (tools.length === 0) return [];
-  const provider = normalizeRouteProvider(route);
-  if (!canUseSentIQTools(provider, streaming)) return [];
-  if (provider === "groq" && !isGroqSentIQToolTransportEnabled()) return [];
-  if (provider === "gemini" && !isGeminiSentIQToolTransportEnabled()) return [];
-  return tools;
+  const decision = resolveModelToolTransport(route, streaming ? "streaming" : "buffered");
+  return decision.supported ? tools : [];
 }

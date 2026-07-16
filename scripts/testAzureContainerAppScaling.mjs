@@ -117,6 +117,24 @@ assert.throws(
 );
 
 const workflow = fs.readFileSync(".github/workflows/azure-container-apps.yml", "utf8");
+const canonicalModelToolVariables = [
+  "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED",
+  "SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED",
+  "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED",
+  "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED",
+  "SENTIQ_MODEL_IMAGE_SELECTION_ENABLED",
+  "SENTIQ_MODEL_CHART_SELECTION_ENABLED",
+  "SENTIQ_MODEL_FILE_SELECTION_ENABLED",
+  "SENTIQ_MODEL_MEMORY_SELECTION_ENABLED",
+  "SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED",
+];
+for (const name of canonicalModelToolVariables) {
+  assert.equal(
+    workflow.match(new RegExp(`\\b${name}\\b`, "g"))?.length,
+    2,
+    `${name} must be validated by both normal and rollback deployments`,
+  );
+}
 assert.match(workflow, /SENTIQ_CONTAINER_MIN_REPLICAS: \$\{\{ vars\.SENTIQ_CONTAINER_MIN_REPLICAS \|\| '0' \}\}/);
 assert.match(workflow, /SENTIQ_CONTAINER_MAX_REPLICAS: \$\{\{ vars\.SENTIQ_CONTAINER_MAX_REPLICAS \|\| '1' \}\}/);
 assert.match(workflow, /SENTIQ_CONTAINER_COOLDOWN_SECONDS: \$\{\{ vars\.SENTIQ_CONTAINER_COOLDOWN_SECONDS \|\| '900' \}\}/);

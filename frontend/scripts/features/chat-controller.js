@@ -25,6 +25,7 @@ import {
 import { PRODUCT_NAME, STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "../shared/brand.js";
 import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 import { resolveLiveComposerAction } from "./live/live-composer-state.js";
+import { reduceToolLifecycleState } from "./tool-lifecycle-reducer.mjs";
 import {
   cleanWebSurfPresentationText,
   collectWebSurfCitationIds,
@@ -9562,23 +9563,20 @@ import {
               },
               onToolLifecycle(event) {
                 if (isRequestStale(targetChatId, requestId)) return;
-                const activityByTool = {
-                  web_surf: "web_search",
-                  image_gen: "image_generation",
-                  chart_gen: "chart_generation",
-                  file_gen: "file_generation",
-                  memory_update: "memory_update",
-                };
-                if (event.type === "tool_selected" || event.type === "tool_started") {
-                  const confirmedMode = activityByTool[event.tool] || "thinking";
-                  state.activityMode = confirmedMode;
-                  streamBubble?.setActivityMode?.(confirmedMode);
-                  updateActivityIndicator(confirmedMode, { chatId: targetChatId, withTimer: confirmedMode === "web_search" });
-                  return;
-                }
-                if (event.type === "tool_error") {
-                  state.activityMode = "thinking";
-                  streamBubble?.setActivityMode?.("thinking");
+                const lifecycle = reduceToolLifecycleState(
+                  { activityMode: state.activityMode || "thinking", status: "idle", tool: null, callId: null },
+                  event,
+                );
+                state.activityMode = lifecycle.activityMode;
+                streamBubble?.setActivityMode?.(lifecycle.activityMode);
+                if (lifecycle.status === "selected" || lifecycle.status === "running") {
+                  updateActivityIndicator(lifecycle.activityMode, {
+                    chatId: targetChatId,
+                    withTimer: lifecycle.activityMode === "web_search",
+                  });
+                } else if (lifecycle.status === "succeeded") {
+                  hideActivityIndicator(targetChatId);
+                } else if (lifecycle.status === "failed") {
                   updateActivityIndicator("thinking", { chatId: targetChatId });
                 }
               },

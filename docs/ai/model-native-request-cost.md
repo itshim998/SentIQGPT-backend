@@ -30,6 +30,8 @@ When `SENTIQ_WEBSURF_V2_ENABLED` is false, the legacy retrieval branch asks Tavi
 
 These paths must be measured separately from the primary user-turn decision cost. Reflection is not part of the current request path.
 
+Groq GPT-OSS automatic-tool turns can use the streaming local-function transport. Gemini automatic-tool turns use buffered `google-genai` function calling; their normalized text or single validated function call is then emitted through the existing SSE lifecycle. Ordinary Gemini text remains eligible for provider streaming. A pre-output Groq streaming failure may recover once through the Gemini buffered function transport. Recovery is forbidden after visible text or tool selection begins.
+
 ## Image retry boundary
 
 Image retries reuse a stable request key and deterministic Pollinations seed. Cross-provider fallback is allowed only after a definitive provider refusal, such as a supported 4xx response or 429. Timeouts, transport failures, 5xx responses, malformed successful responses, and response-body read failures are indeterminate because generation may already have occurred; the router stops instead of trying another provider.
@@ -49,3 +51,9 @@ Repository defaults remain off. A controlled environment must set `SENTIQ_MODEL_
 Turning the registry or a selection flag off leaves ordinary chat and explicit manual controls available. It does not reactivate any keyword router. Real `.env` values are a deployment decision and are not changed by this pass.
 
 For a controlled diagnosis, set `SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED=true` temporarily. Node, FastAPI, and the Groq/Gemini payload builders then log only provider/model identifiers, flag booleans, streaming mode, allowed-tool counts/names, declaration presence, and tool-choice mode. Prompts, credentials, memory contents, and raw provider payloads are never logged. Return the flag to `false` after verification.
+
+## Release verification
+
+Run `npm run verify:model-native-tools` for the safe offline release gate. It checks configuration and deployment surfaces, Node/Python capability parity, provider serialization and parsing, recovery states, executor safety, frontend lifecycle replay, compilation and syntax, focused integrations, the golden evaluation, and `git diff --check`.
+
+Live provider and executor work is opt-in: `npm run verify:model-native-tools -- --live`. The live mode first requires the full offline gate to pass, then enables the nine canonical flags only in child-process memory. It runs five selection prompts, three ordinary-text negative prompts, one logical Tavily retrieval, one bounded image-provider path, one deterministic chart, and disposable file and memory flows. It does not edit `.env`, deploy, run Deep Research, write personal memory, or apply migrations.

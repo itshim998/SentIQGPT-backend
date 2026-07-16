@@ -1,0 +1,16 @@
+[
+  { "alias": "gpt-oss-120b", "provider": "groq", "model": "gpt-oss-120b", "buffered": true, "streaming": true },
+  { "alias": "openai/gpt-oss-120b", "provider": "groq", "model": "openai/gpt-oss-120b", "buffered": true, "streaming": true },
+  { "alias": "groq:gpt-oss-120b", "provider": "groq", "model": "groq:gpt-oss-120b", "buffered": true, "streaming": true },
+  { "alias": "groq:openai/gpt-oss-120b", "provider": "groq", "model": "groq:openai/gpt-oss-120b", "buffered": true, "streaming": true },
+  { "alias": "gemini-lite", "provider": "gemini", "model": "gemini-lite", "buffered": true, "streaming": false },
+  { "alias": "gemini-standard", "provider": "gemini", "model": "gemini-standard", "buffered": true, "streaming": false },
+  { "alias": "gemini:gemini-lite", "provider": "gemini", "model": "gemini:gemini-lite", "buffered": true, "streaming": false },
+  { "alias": "gemini:gemini-standard", "provider": "gemini", "model": "gemini:gemini-standard", "buffered": true, "streaming": false },
+  { "alias": "gemini-3.1-flash-lite", "provider": "gemini", "model": "gemini-3.1-flash-lite", "buffered": true, "streaming": false },
+  { "alias": "gemini:gemini-3.1-flash-lite", "provider": "gemini", "model": "gemini:gemini-3.1-flash-lite", "buffered": true, "streaming": false },
+  { "alias": "gemma-4-31b-it", "provider": "gemini", "model": "gemma-4-31b-it", "buffered": false, "streaming": false },
+  { "alias": "gemini:gemma-4-31b-it", "provider": "gemini", "model": "gemini:gemma-4-31b-it", "buffered": false, "streaming": false },
+  { "alias": "groq:llama-3.3-70b-versatile", "provider": "groq", "model": "groq:llama-3.3-70b-versatile", "buffered": false, "streaming": false },
+  { "alias": "pollinations:mistral", "provider": "pollinations", "model": "pollinations:mistral", "buffered": false, "streaming": false }
+]

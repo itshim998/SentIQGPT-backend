@@ -35,6 +35,10 @@ async function main(): Promise<void> {
   assert.equal(routeSupportsCapabilities(
     { provider: "gemini", model: "gemini-standard" },
     ["image_input", "sentiq_tools_streaming"],
+  ), false);
+  assert.equal(routeSupportsCapabilities(
+    { provider: "gemini", model: "gemini-standard" },
+    ["image_input", "sentiq_tools_buffered"],
   ), true);
   assert.equal(routeSupportsCapabilities(
     { provider: "gemini", model: "gemma-4-31b-it" },
@@ -91,7 +95,7 @@ async function main(): Promise<void> {
     const toolRoute = await downgradeService.reserveTextRoute({
       identity: { userId: "22222222-2222-2222-2222-222222222222", anonymousKeyHash: null, isGuest: false },
       requestId: "capability-tools",
-      requiredCapabilities: ["sentiq_tools_streaming"],
+      requiredCapabilities: ["sentiq_tools_buffered"],
     });
     assert.equal(toolRoute.route, "lite");
     assert.equal(toolRoute.provider, "gemini", "an incapable configured Lite route must be skipped");

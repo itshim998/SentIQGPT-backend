@@ -40,19 +40,9 @@ import requests as _requests_lib
 # ==============================
 # Optional SDK imports
 # ==============================
-GENAI_MODULE = None
 GOOGLE_GENAI_MODULE = None
 GOOGLE_GENAI_TYPES_MODULE = None
 GROQ_MODULE = None
-
-for name in ["google.generativeai", "google.genai", "genai"]:
-    try:
-        spec = importlib.util.find_spec(name)
-        if spec:
-            GENAI_MODULE = importlib.import_module(name)
-            break
-    except Exception:
-        pass
 
 try:
     spec = importlib.util.find_spec("google.genai")
@@ -141,6 +131,28 @@ SENTIQ_MODEL_TOOL_REGISTRY_ENABLED = _parse_bool_env("SENTIQ_MODEL_TOOL_REGISTRY
 SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = _parse_bool_env("SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED", False)
 SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED = _parse_bool_env("SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", False)
 SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED = _parse_bool_env("SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED", False)
+CANONICAL_SENTIQ_MODEL_TOOL_ENV_NAMES = (
+    "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED",
+    "SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED",
+    "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED",
+    "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED",
+    "SENTIQ_MODEL_IMAGE_SELECTION_ENABLED",
+    "SENTIQ_MODEL_CHART_SELECTION_ENABLED",
+    "SENTIQ_MODEL_FILE_SELECTION_ENABLED",
+    "SENTIQ_MODEL_MEMORY_SELECTION_ENABLED",
+    "SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED",
+)
+OBSOLETE_SENTIQ_MODEL_TOOL_ENV_NAMES = (
+    "SENTIQ_MODEL_TOOLS_REGISTRY_ENABLED",
+    "SENTIQ_GROQ_MODEL_TOOL_TRANSPORT_ENABLED",
+    "SENTIQ_GEMINI_MODEL_TOOL_TRANSPORT_ENABLED",
+    "SENTIQ_MODEL_WEB_SURF_SELECTION_ENABLED",
+    "SENTIQ_WEBSURF_MODEL_SELECTION_ENABLED",
+    "SENTIQ_IMAGE_MODEL_SELECTION_ENABLED",
+    "SENTIQ_CHART_MODEL_SELECTION_ENABLED",
+    "SENTIQ_FILE_MODEL_SELECTION_ENABLED",
+    "SENTIQ_MEMORY_MODEL_SELECTION_ENABLED",
+)
 GEMINI_TIMEOUT_MS = _parse_int_env("GEMINI_TIMEOUT_MS", 45_000)
 GEMINI_KEY_COOLDOWN_MS = _parse_int_env("GEMINI_KEY_COOLDOWN_MS", 60_000)
 GEMINI_429_COOLDOWN_MS = _parse_int_env("GEMINI_429_COOLDOWN_MS", 180_000)
@@ -258,6 +270,57 @@ if not logger.handlers:
     h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(h)
 logger.setLevel(logging.INFO)
+
+
+def _edit_distance(left: str, right: str) -> int:
+    row = list(range(len(right) + 1))
+    for left_index, left_character in enumerate(left, 1):
+        diagonal = row[0]
+        row[0] = left_index
+        for right_index, right_character in enumerate(right, 1):
+            previous = row[right_index]
+            row[right_index] = min(
+                row[right_index] + 1,
+                row[right_index - 1] + 1,
+                diagonal + (0 if left_character == right_character else 1),
+            )
+            diagonal = previous
+    return row[-1]
+
+
+def _find_noncanonical_model_tool_env() -> list[str]:
+    canonical = set(CANONICAL_SENTIQ_MODEL_TOOL_ENV_NAMES)
+    obsolete = set(OBSOLETE_SENTIQ_MODEL_TOOL_ENV_NAMES)
+    output: list[str] = []
+    for name in os.environ:
+        if name in canonical:
+            continue
+        if name in obsolete or (
+            name.startswith("SENTIQ_")
+            and "MODEL" in name
+            and any(_edit_distance(name, expected) <= 3 for expected in canonical)
+        ):
+            output.append(name)
+    return sorted(output)
+
+
+_noncanonical_model_tool_env = _find_noncanonical_model_tool_env()
+if _noncanonical_model_tool_env:
+    logger.warning(
+        "Non-canonical model-tool environment variables are ignored: %s",
+        ", ".join(_noncanonical_model_tool_env),
+    )
+logger.info("[ModelToolRuntime] %s", json.dumps({
+    "canonical_flags": {
+        name: _parse_bool_env(name, False)
+        for name in CANONICAL_SENTIQ_MODEL_TOOL_ENV_NAMES
+    },
+    "registry_enabled": SENTIQ_MODEL_TOOL_REGISTRY_ENABLED,
+    "groq_transport_enabled": SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
+    "gemini_transport_enabled": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,
+    "google_genai_sdk_available": bool(GOOGLE_GENAI_MODULE and GOOGLE_GENAI_TYPES_MODULE),
+    "gemini_sdk_path": "google_genai" if GOOGLE_GENAI_MODULE and GOOGLE_GENAI_TYPES_MODULE else "unavailable",
+}, separators=(",", ":"), sort_keys=True))
 
 # ==============================
 # Rate Limiter (per-provider buckets)
@@ -940,7 +1003,10 @@ class GeminiAttempt:
 
 
 def _is_gemma_model(model: Optional[str]) -> bool:
-    return (model or "").strip().lower().startswith("gemma")
+    normalized = (model or "").strip().lower()
+    if normalized.startswith("gemini:"):
+        normalized = normalized[len("gemini:"):]
+    return normalized.startswith("gemma")
 
 
 def get_sentiq_tool_capability(provider: str, model: Optional[str], streaming: bool = False) -> dict[str, Any]:
@@ -955,7 +1021,13 @@ def get_sentiq_tool_capability(provider: str, model: Optional[str], streaming: b
             and bool(GOOGLE_GENAI_MODULE)
             and bool(GOOGLE_GENAI_TYPES_MODULE)
         )
-        return {"provider": "gemini", "supported": enabled, "streaming": enabled, "reason": "google_function_transport" if enabled else "transport_disabled"}
+        supported = enabled and not streaming
+        return {
+            "provider": "gemini",
+            "supported": supported,
+            "streaming": False,
+            "reason": "google_genai_buffered_function_transport" if enabled else "transport_disabled",
+        }
     reason = "text_only_model" if _is_gemma_model(model) else "text_only_transport"
     return {"provider": normalized_provider or "unknown", "supported": False, "streaming": False, "reason": reason}
 
@@ -991,6 +1063,8 @@ def _log_sentiq_tool_diagnostic(
     sentiq_tool_request: Optional[dict[str, Any]],
     declarations_attached: bool,
     tool_choice_mode: str,
+    sdk_path: Optional[str] = None,
+    provider_outcome: Optional[str] = None,
 ) -> None:
     if not SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED:
         return
@@ -1009,6 +1083,8 @@ def _log_sentiq_tool_diagnostic(
         "allowed_tool_names": tool_names,
         "tool_declarations_attached": declarations_attached,
         "tool_choice_mode": tool_choice_mode,
+        "sdk_path": sdk_path,
+        "provider_outcome": provider_outcome,
     }, separators=(",", ":"), sort_keys=True))
 
 
@@ -1017,6 +1093,65 @@ REQUIRED_MODEL_CAPABILITIES = {
     "sentiq_tools_buffered",
     "sentiq_tools_streaming",
 }
+TOOL_TRANSPORT_MODES = {"none", "buffered", "streaming"}
+
+
+class ModelToolCapabilityUnavailableError(RuntimeError):
+    code = "model_tool_capability_unavailable"
+
+
+def _validate_tool_transport_contract(
+    sentiq_tool_request: Optional[dict[str, Any]],
+    required_capabilities: Optional[list[str]],
+    tool_transport_mode: Optional[str],
+) -> str:
+    mode = (tool_transport_mode or "none").strip().lower()
+    if mode not in TOOL_TRANSPORT_MODES:
+        raise ModelToolCapabilityUnavailableError("Unknown SentIQ tool transport mode")
+    has_tools = isinstance(sentiq_tool_request, dict) and isinstance(sentiq_tool_request.get("tools"), list)
+    required = set(required_capabilities or [])
+    if not has_tools:
+        if mode != "none":
+            raise ModelToolCapabilityUnavailableError("A SentIQ tool transport mode requires tool declarations")
+        return mode
+    if mode == "none":
+        raise ModelToolCapabilityUnavailableError("SentIQ tool declarations require an explicit transport mode")
+    expected = "sentiq_tools_streaming" if mode == "streaming" else "sentiq_tools_buffered"
+    if expected not in required:
+        raise ModelToolCapabilityUnavailableError("SentIQ tool transport mode does not match required capabilities")
+    if mode == "streaming" and "sentiq_tools_buffered" in required:
+        raise ModelToolCapabilityUnavailableError("A tool request cannot require conflicting transport modes")
+    if mode == "buffered" and "sentiq_tools_streaming" in required:
+        raise ModelToolCapabilityUnavailableError("A tool request cannot require conflicting transport modes")
+    return mode
+
+
+def _buffered_tool_capabilities(required_capabilities: Optional[list[str]]) -> list[str]:
+    output = [capability for capability in (required_capabilities or []) if capability != "sentiq_tools_streaming"]
+    if "sentiq_tools_buffered" not in output:
+        output.append("sentiq_tools_buffered")
+    return output
+
+
+def _assistant_turn_as_stream(turn: dict[str, Any]):
+    if turn.get("kind") == "tool_calls":
+        for index, call in enumerate(turn.get("calls") or []):
+            call_id = str(call.get("id") or f"gemini_call_{index}")
+            name = str(call.get("name") or "")
+            arguments = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
+            yield {"kind": "tool_call_start", "id": call_id, "name": name, "index": index}
+            yield {
+                "kind": "tool_argument_delta",
+                "id": call_id,
+                "text": json.dumps(arguments, separators=(",", ":"), sort_keys=True),
+                "index": index,
+            }
+        yield {"kind": "done", "finishReason": "tool_calls"}
+        return
+    text = str(turn.get("text") or "")
+    if text:
+        yield {"kind": "text_delta", "text": text}
+    yield {"kind": "done", "finishReason": "stop"}
 
 
 def _route_supports_required_capabilities(
@@ -1074,8 +1209,10 @@ def _serialize_openai_sentiq_tools(request: dict[str, Any]) -> list[dict[str, An
     return serialized
 
 
-def _serialize_gemini_sentiq_tools(request: dict[str, Any]) -> list[dict[str, Any]]:
-    declarations: list[dict[str, Any]] = []
+def _serialize_gemini_sentiq_tools(request: dict[str, Any]) -> list[Any]:
+    if not GOOGLE_GENAI_TYPES_MODULE:
+        return []
+    declarations: list[Any] = []
     for tool in request.get("tools") or []:
         if not isinstance(tool, dict):
             continue
@@ -1083,12 +1220,12 @@ def _serialize_gemini_sentiq_tools(request: dict[str, Any]) -> list[dict[str, An
         input_schema = tool.get("input_schema")
         if not name or not isinstance(input_schema, dict):
             continue
-        declarations.append({
-            "name": name,
-            "description": str(tool.get("description") or "").strip(),
-            "parameters": input_schema,
-        })
-    return [{"function_declarations": declarations}] if declarations else []
+        declarations.append(GOOGLE_GENAI_TYPES_MODULE.FunctionDeclaration(
+            name=name,
+            description=str(tool.get("description") or "").strip(),
+            parameters_json_schema=input_schema,
+        ))
+    return [GOOGLE_GENAI_TYPES_MODULE.Tool(function_declarations=declarations)] if declarations else []
 
 
 def _assistant_text_turn(text: Any) -> dict[str, Any]:
@@ -1115,6 +1252,16 @@ def _gemini_function_calls(value: Any) -> list[Any]:
     calls = getattr(value, "function_calls", None)
     if calls:
         return list(calls)
+    candidates = getattr(value, "candidates", None) or []
+    for candidate in candidates:
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", None) or []:
+            call = getattr(part, "function_call", None)
+            if call is not None:
+                calls = list(calls or [])
+                calls.append(call)
+    if calls:
+        return list(calls)
     return []
 
 
@@ -1131,7 +1278,11 @@ def _gemini_assistant_turn(response: Any) -> dict[str, Any]:
                 "index": index,
             })
         return {"kind": "tool_calls", "calls": calls}
-    return _assistant_text_turn(getattr(response, "text", str(response)))
+    try:
+        text = getattr(response, "text", "") or ""
+    except Exception:
+        text = ""
+    return _assistant_text_turn(text)
 
 
 def _normalize_execution_mode(execution_mode: Optional[str]) -> str:
@@ -1208,6 +1359,8 @@ def _build_google_genai_config(
             sentiq_tool_request=sentiq_tool_request,
             declarations_attached=False,
             tool_choice_mode="none",
+            sdk_path="unavailable",
+            provider_outcome="not_invoked",
         )
         return None
 
@@ -1216,7 +1369,15 @@ def _build_google_genai_config(
         kwargs["max_output_tokens"] = max_output_tokens
     sentiq_tools = _serialize_gemini_sentiq_tools(sentiq_tool_request) if sentiq_tool_request else []
     if sentiq_tools:
+        if streaming:
+            raise RuntimeError("Gemini SentIQ tool turns require the buffered Google GenAI transport")
         kwargs["tools"] = sentiq_tools
+        kwargs["automatic_function_calling"] = GOOGLE_GENAI_TYPES_MODULE.AutomaticFunctionCallingConfig(
+            disable=True,
+        )
+        kwargs["tool_config"] = GOOGLE_GENAI_TYPES_MODULE.ToolConfig(
+            function_calling_config=GOOGLE_GENAI_TYPES_MODULE.FunctionCallingConfig(mode="AUTO"),
+        )
         policy = str(sentiq_tool_request.get("tool_choice_policy") or "").strip()
         if policy:
             kwargs["system_instruction"] = policy
@@ -1228,6 +1389,8 @@ def _build_google_genai_config(
         sentiq_tool_request=sentiq_tool_request,
         declarations_attached=bool(sentiq_tools),
         tool_choice_mode="auto" if sentiq_tools else "none",
+        sdk_path="google_genai",
+        provider_outcome="pending",
     )
     if high_thinking and hasattr(GOOGLE_GENAI_TYPES_MODULE, "ThinkingConfig"):
         thinking_budget = GEMINI_HIGH_THINKING_BUDGET
@@ -1272,56 +1435,45 @@ def _call_gemini(
     if not gemini_bucket.consume():
         raise RuntimeError("Gemini rate limit exceeded")
 
-    if GOOGLE_GENAI_MODULE:
-        client = _get_google_genai_client(api_key)
-        config = _build_google_genai_config(
-            model=resolved_model,
-            execution_mode=execution_mode,
-            high_thinking=high_thinking,
-            max_output_tokens=max_output_tokens,
-            sentiq_tool_request=sentiq_tool_request,
-            streaming=False,
-        )
-        kwargs: dict[str, Any] = {
-            "model": resolved_model,
-            "contents": _build_gemini_contents(prompt, image_attachments),
-        }
-        if config is not None:
-            kwargs["config"] = config
-        resp = _run_gemini_with_timeout(
-            lambda: client.models.generate_content(**kwargs),
-            f"Gemini generate_content model={resolved_model}",
-        )
-        return _gemini_assistant_turn(resp) if sentiq_tool_request else getattr(resp, "text", str(resp))
-
-    if sentiq_tool_request:
-        raise RuntimeError("Google GenAI SDK is required for Gemini SentIQ tool transport")
-    if image_attachments:
-        raise RuntimeError("Google GenAI SDK is required for Gemini image input")
-    if _is_gemma_model(resolved_model):
-        raise RuntimeError("Google GenAI SDK is required for Gemma")
-    if not GENAI_MODULE:
-        raise RuntimeError("Gemini SDK not installed")
-
-    with _gemini_configure_lock:
-        if hasattr(GENAI_MODULE, "configure"):
-            GENAI_MODULE.configure(api_key=api_key)
-        model_obj = GENAI_MODULE.GenerativeModel(resolved_model)
-
-    def _generate_legacy_content():
-        try:
-            kwargs: dict[str, Any] = {"request_options": {"timeout": _GEMINI_TIMEOUT_SECONDS}}
-            if isinstance(max_output_tokens, int) and max_output_tokens > 0:
-                kwargs["generation_config"] = {"max_output_tokens": max_output_tokens}
-            return model_obj.generate_content(prompt, **kwargs)
-        except TypeError:
-            return model_obj.generate_content(prompt)
-
-    resp = _run_gemini_with_timeout(
-        _generate_legacy_content,
-        f"Gemini legacy generate_content model={resolved_model}",
+    if not GOOGLE_GENAI_MODULE or not GOOGLE_GENAI_TYPES_MODULE:
+        raise RuntimeError("Google GenAI SDK is required for Gemini")
+    client = _get_google_genai_client(api_key)
+    config = _build_google_genai_config(
+        model=resolved_model,
+        execution_mode=execution_mode,
+        high_thinking=high_thinking,
+        max_output_tokens=max_output_tokens,
+        sentiq_tool_request=sentiq_tool_request,
+        streaming=False,
     )
-    return getattr(resp, "text", str(resp))
+    kwargs: dict[str, Any] = {
+        "model": resolved_model,
+        "contents": _build_gemini_contents(prompt, image_attachments),
+    }
+    if config is not None:
+        kwargs["config"] = config
+    resp = _run_gemini_with_timeout(
+        lambda: client.models.generate_content(**kwargs),
+        f"Gemini generate_content model={resolved_model}",
+    )
+    if sentiq_tool_request:
+        turn = _gemini_assistant_turn(resp)
+        _log_sentiq_tool_diagnostic(
+            boundary="gemini_provider_outcome",
+            provider="gemini",
+            model=resolved_model,
+            streaming=False,
+            sentiq_tool_request=sentiq_tool_request,
+            declarations_attached=True,
+            tool_choice_mode="auto",
+            sdk_path="google_genai",
+            provider_outcome="function_call" if turn.get("kind") == "tool_calls" else "text",
+        )
+        return turn
+    try:
+        return getattr(resp, "text", "") or ""
+    except Exception:
+        return ""
 
 
 def _call_gemini_stream(
@@ -1341,6 +1493,9 @@ def _call_gemini_stream(
         raise RuntimeError("Gemini API key is empty")
     if not gemini_bucket.consume():
         raise RuntimeError("Gemini rate limit exceeded")
+
+    if sentiq_tool_request:
+        raise RuntimeError("Gemini SentIQ tool turns require the buffered Google GenAI transport")
 
     if GOOGLE_GENAI_MODULE:
         client = _get_google_genai_client(api_key)
@@ -1363,9 +1518,6 @@ def _call_gemini_stream(
             f"Gemini stream start model={resolved_model}",
         )
         iterator = iter(response)
-        emitted_function_calls: set[tuple[str, str]] = set()
-        next_call_index = 0
-        emitted_sentiq_outcome = False
         while True:
             chunk = _run_gemini_with_timeout(
                 lambda: _next_gemini_stream_chunk(iterator),
@@ -1373,72 +1525,11 @@ def _call_gemini_stream(
             )
             if chunk is _GEMINI_STREAM_END:
                 break
-            function_calls = _gemini_function_calls(chunk) if sentiq_tool_request else []
-            for function_call in function_calls:
-                name = str(getattr(function_call, "name", "") or "")
-                args = getattr(function_call, "args", None)
-                args_object = args if isinstance(args, dict) else {}
-                args_text = json.dumps(args_object, separators=(",", ":"), sort_keys=True)
-                fingerprint = (name, args_text)
-                if fingerprint in emitted_function_calls:
-                    continue
-                emitted_function_calls.add(fingerprint)
-                call_id = str(getattr(function_call, "id", "") or f"gemini_call_{next_call_index}")
-                yield {"kind": "tool_call_start", "id": call_id, "name": name, "index": next_call_index}
-                yield {"kind": "tool_argument_delta", "id": call_id, "text": args_text, "index": next_call_index}
-                emitted_sentiq_outcome = True
-                next_call_index += 1
             text = getattr(chunk, "text", "")
             if text:
-                emitted_sentiq_outcome = True
-                yield {"kind": "text_delta", "text": text} if sentiq_tool_request else text
-        if sentiq_tool_request:
-            if not emitted_sentiq_outcome:
-                raise RuntimeError("Gemini stream produced neither assistant text nor a tool call")
-            yield {"kind": "done"}
+                yield text
         return
-
-    if sentiq_tool_request:
-        raise RuntimeError("Google GenAI SDK is required for Gemini SentIQ tool transport")
-    if image_attachments:
-        raise RuntimeError("Google GenAI SDK is required for Gemini image input")
-    if _is_gemma_model(resolved_model):
-        raise RuntimeError("Google GenAI SDK is required for Gemma")
-    if not GENAI_MODULE:
-        raise RuntimeError("Gemini SDK not installed")
-
-    with _gemini_configure_lock:
-        if hasattr(GENAI_MODULE, "configure"):
-            GENAI_MODULE.configure(api_key=api_key)
-        model_obj = GENAI_MODULE.GenerativeModel(resolved_model)
-
-    def _generate_legacy_stream():
-        try:
-            kwargs: dict[str, Any] = {
-                "stream": True,
-                "request_options": {"timeout": _GEMINI_TIMEOUT_SECONDS},
-            }
-            if isinstance(max_output_tokens, int) and max_output_tokens > 0:
-                kwargs["generation_config"] = {"max_output_tokens": max_output_tokens}
-            return model_obj.generate_content(prompt, **kwargs)
-        except TypeError:
-            return model_obj.generate_content(prompt, stream=True)
-
-    response = _run_gemini_with_timeout(
-        _generate_legacy_stream,
-        f"Gemini legacy stream start model={resolved_model}",
-    )
-    iterator = iter(response)
-    while True:
-        chunk = _run_gemini_with_timeout(
-            lambda: _next_gemini_stream_chunk(iterator),
-            f"Gemini legacy stream chunk model={resolved_model}",
-        )
-        if chunk is _GEMINI_STREAM_END:
-            break
-        text = getattr(chunk, "text", "")
-        if text:
-            yield text
+    raise RuntimeError("Google GenAI SDK is required for Gemini streaming")
 
 
 def _invoke_gemini(
@@ -1634,8 +1725,8 @@ def _is_lite_model(model: Optional[str], model_override: Optional[str]) -> bool:
 
 def _call_gemini_vision(prompt: str, image_base64: str, mime_type: str, api_key: str, model: Optional[str] = None) -> str:
     """Send a text + image multimodal request to Gemini Vision."""
-    if not GENAI_MODULE:
-        raise RuntimeError("Gemini SDK not installed")
+    if not GOOGLE_GENAI_MODULE or not GOOGLE_GENAI_TYPES_MODULE:
+        raise RuntimeError("Google GenAI SDK not installed")
     if not api_key:
         raise RuntimeError("Gemini API key is empty")
     if not gemini_bucket.consume():
@@ -1650,30 +1741,19 @@ def _call_gemini_vision(prompt: str, image_base64: str, mime_type: str, api_key:
     if len(raw_bytes) > 20 * 1024 * 1024:
         raise RuntimeError("Image too large for vision analysis (max 20MB)")
 
-    with _gemini_configure_lock:
-        if hasattr(GENAI_MODULE, "configure"):
-            GENAI_MODULE.configure(api_key=api_key)
-        model_obj = GENAI_MODULE.GenerativeModel(model or GEMINI_VISION_MODEL)
-
-    content_parts = [
-        prompt,
-        {"inline_data": {"mime_type": mime_type, "data": image_base64}},
-    ]
-
-    def _generate_vision_content():
-        try:
-            return model_obj.generate_content(
-                content_parts,
-                request_options={"timeout": _GEMINI_TIMEOUT_SECONDS},
-            )
-        except TypeError:
-            return model_obj.generate_content(content_parts)
-
+    client = _get_google_genai_client(api_key)
+    content_parts = [prompt, GOOGLE_GENAI_TYPES_MODULE.Part.from_bytes(data=raw_bytes, mime_type=mime_type)]
     resp = _run_gemini_with_timeout(
-        _generate_vision_content,
+        lambda: client.models.generate_content(
+            model=model or GEMINI_VISION_MODEL,
+            contents=content_parts,
+        ),
         f"Gemini vision generate_content model={model or GEMINI_VISION_MODEL}",
     )
-    return getattr(resp, "text", str(resp))
+    try:
+        return getattr(resp, "text", "") or ""
+    except Exception:
+        return ""
 
 
 def _invoke_gemini_vision(prompt: str, image_base64: str, mime_type: str, model_override: Optional[str] = None) -> str:
@@ -1883,7 +1963,21 @@ def _release_groq_capacity_reservation(reservation: int) -> None:
 
 
 def _is_gpt_oss_model(model: Optional[str]) -> bool:
-    return (model or "").strip().lower() in GPT_OSS_LOGICAL_MODELS
+    normalized = (model or "").strip().lower()
+    if normalized.startswith("groq:"):
+        normalized = normalized[len("groq:"):]
+    return normalized in GPT_OSS_LOGICAL_MODELS
+
+
+logger.info("[ModelToolCapability] %s", json.dumps({
+    "groq_model": GROQ_CHAT_MODEL,
+    "groq_buffered": bool(get_sentiq_tool_capability("groq", GROQ_CHAT_MODEL, False).get("supported")),
+    "groq_streaming": bool(get_sentiq_tool_capability("groq", GROQ_CHAT_MODEL, True).get("streaming")),
+    "gemini_model": GEMINI_STANDARD_MODEL,
+    "gemini_buffered": bool(get_sentiq_tool_capability("gemini", GEMINI_STANDARD_MODEL, False).get("supported")),
+    "gemini_streaming": False,
+    "gemini_sdk_path": "google_genai" if GOOGLE_GENAI_MODULE and GOOGLE_GENAI_TYPES_MODULE else "unavailable",
+}, separators=(",", ":"), sort_keys=True))
 
 def _gpt_oss_max_tokens(max_output_tokens: Optional[int]) -> int:
     if isinstance(max_output_tokens, int) and max_output_tokens > 0:
@@ -2582,6 +2676,7 @@ def call_llm_router(
     execution_mode: Optional[str] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
     required_capabilities: Optional[list[str]] = None,
+    tool_transport_mode: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Route an LLM call to the correct provider based on task.
@@ -2608,6 +2703,11 @@ def call_llm_router(
     default_provider = prefer or get_provider_for_task(task)
     provider, resolved_override = resolve_model_override(model_override, default_provider)
     model = resolved_override or _default_model_for_provider(provider)
+    resolved_tool_transport_mode = _validate_tool_transport_contract(
+        sentiq_tool_request,
+        required_capabilities,
+        tool_transport_mode,
+    )
     _log_sentiq_tool_diagnostic(
         boundary="python_route_resolution",
         provider=provider,
@@ -2616,6 +2716,8 @@ def call_llm_router(
         sentiq_tool_request=sentiq_tool_request,
         declarations_attached=False,
         tool_choice_mode="pending" if sentiq_tool_request else "none",
+        sdk_path="google_genai" if provider == "gemini" else "groq_sdk" if provider == "groq" else "http",
+        provider_outcome="pending",
     )
     actual_model_used = model
     fallback_triggered = False
@@ -2656,7 +2758,7 @@ def call_llm_router(
             payload["assistant_turn"] = assistant_turn
         return payload
 
-    if not _route_supports_required_capabilities(
+    if resolved_tool_transport_mode == "streaming" or not _route_supports_required_capabilities(
         provider,
         model,
         required_capabilities,
@@ -2664,7 +2766,7 @@ def call_llm_router(
     ):
         return _build_response_payload(
             "",
-            error="capability_unavailable",
+            error="model_tool_capability_unavailable",
             error_detail="The selected route cannot preserve the required request capabilities.",
         )
 
@@ -3032,6 +3134,7 @@ def stream_llm_router(
     execution_mode: Optional[str] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
     required_capabilities: Optional[list[str]] = None,
+    tool_transport_mode: Optional[str] = None,
 ):
     """
     Streaming variant — yields text chunks.
@@ -3047,6 +3150,11 @@ def stream_llm_router(
     ) if task in CHATLIKE_TASKS else reasoning_effort
     provider, resolved_override = resolve_model_override(model_override, "pollinations")
     model = resolved_override or _default_model_for_provider(provider)
+    resolved_tool_transport_mode = _validate_tool_transport_contract(
+        sentiq_tool_request,
+        required_capabilities,
+        tool_transport_mode,
+    )
     _log_sentiq_tool_diagnostic(
         boundary="python_route_resolution",
         provider=provider,
@@ -3055,16 +3163,18 @@ def stream_llm_router(
         sentiq_tool_request=sentiq_tool_request,
         declarations_attached=False,
         tool_choice_mode="pending" if sentiq_tool_request else "none",
+        sdk_path="google_genai" if provider == "gemini" else "groq_sdk" if provider == "groq" else "http",
+        provider_outcome="pending",
     )
     gemini_stream_attempts: Optional[list[GeminiAttempt]] = None
     stream_reasoning_request = _is_reasoning_request(task, provider, model, skip_wrappers)
-    if not _route_supports_required_capabilities(
+    if resolved_tool_transport_mode == "buffered" or not _route_supports_required_capabilities(
         provider,
         model,
         required_capabilities,
         streaming=True,
     ):
-        raise RuntimeError("The selected route cannot preserve the required request capabilities")
+        raise ModelToolCapabilityUnavailableError("The selected route cannot preserve the required request capabilities")
     
     logger.info(
         "[Router] model=%s provider=%s task=%s override=%s stream=true prompt_chars=%d",
@@ -3210,7 +3320,40 @@ def stream_llm_router(
                 gemini_stream_attempts = [GeminiAttempt(GEMINI_FAST_MODEL)]
                 model = GEMINI_FAST_MODEL
 
-    # --- Gemini streaming path ---
+    # A Groq tool stream may recover only before any visible output or tool
+    # selection. Gemini tool transport is intentionally buffered, so preserve
+    # the registry and normalize the buffered turn back into provider deltas.
+    if sentiq_tool_request:
+        if not GEMINI_KEY_RECORDS:
+            raise ModelToolCapabilityUnavailableError("No capable buffered tool fallback route is available")
+        if gemini_stream_attempts is None:
+            gemini_stream_attempts = _lite_gemini_attempts() if _is_lite_model(model, model_override) else [
+                GeminiAttempt(model, high_thinking=False),
+            ]
+        try:
+            buffered_turn, used_model = _invoke_gemini_attempt_chain(
+                prompt,
+                gemini_stream_attempts,
+                max_output_tokens=max_output_tokens,
+                execution_mode=execution_mode,
+                sentiq_tool_request=sentiq_tool_request,
+                required_capabilities=_buffered_tool_capabilities(required_capabilities),
+                image_attachments=image_attachments,
+            )
+            logger.info(
+                "[Fallback] capability-preserving Gemini buffered tool turn succeeded model=%s",
+                used_model,
+            )
+            yield from _assistant_turn_as_stream(buffered_turn)
+            return
+        except Exception as buffered_tool_error:
+            logger.warning(
+                "Gemini buffered tool fallback failed before output: %s",
+                _redact_secrets(buffered_tool_error),
+            )
+            raise ModelToolCapabilityUnavailableError("No capable buffered tool fallback route is available") from buffered_tool_error
+
+    # --- Gemini text streaming path ---
     if not GEMINI_KEY_RECORDS:
         raise RuntimeError("No Gemini API keys configured")
 

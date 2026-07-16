@@ -2,6 +2,7 @@ import {
   buildChatPrompt,
   callLLMAdapterDetailed,
   getDemoFallbackResponse,
+  ModelToolTransportError,
 } from "./PromptBuilders";
 import type { ChatContext, ImageAttachment } from "./PromptBuilders";
 import type { RouteEvidenceItem } from "../orchestrator/contextComposer";
@@ -174,7 +175,8 @@ export async function handleChat(args: {
     truncated = result.truncated ?? false;
     adapterError = result.error;
     finishReason = result.finish_reason;
-  } catch {
+  } catch (error) {
+    if (error instanceof ModelToolTransportError) throw error;
     raw = args.reasoningMode ? RAW_REASONING_FALLBACK : getDemoFallbackResponse("chat");
   }
 

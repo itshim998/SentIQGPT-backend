@@ -49,6 +49,7 @@ import {
   callLLMAdapterStream,
   callLLMAdapterTurnStream,
   buildTitleGeneratePrompt,
+  ModelToolTransportError,
   strictParseJsonObject,
 } from "./ai/PromptBuilders";
 import type { ImageAttachment, LLMAdapterCall } from "./ai/PromptBuilders";
@@ -125,11 +126,15 @@ import {
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
 import { executeAutomaticModelToolCalls } from "./orchestrator/toolExecutor";
-import { consumeModelTurnStream } from "./ai/modelToolExecution";
+import { consumeModelTurnStream, ModelTurnProgressTracker } from "./ai/modelToolExecution";
+import { assertNoUnbackedToolCompletionClaim } from "./ai/modelToolCompletionClaims";
 import {
   deriveRequiredModelCapabilities,
+  findObsoleteModelToolEnvironmentNames,
   getAutomaticSentIQToolsForRoute,
   getEnabledAutomaticSentIQTools,
+  getModelToolRuntimeSnapshot,
+  resolveModelToolTransport,
   type RequiredModelCapability,
 } from "./ai/modelToolCapability";
 
@@ -191,6 +196,17 @@ import {
 
 const app = express();
 bootProfiler.mark("express.app.created");
+const obsoleteModelToolEnvironmentNames = findObsoleteModelToolEnvironmentNames();
+if (obsoleteModelToolEnvironmentNames.length > 0) {
+  console.warn(
+    `${LOG_PREFIX} WARNING: obsolete model-tool environment variables are ignored: ${obsoleteModelToolEnvironmentNames.join(", ")}`,
+  );
+}
+console.info(JSON.stringify({
+  scope: "model_tool_startup",
+  event: "runtime_flags",
+  ...getModelToolRuntimeSnapshot(),
+}));
 const billingQuotaService = new BillingQuotaService();
 bootProfiler.mark("billingQuotaService.created");
 const geminiLiveConfig = loadGeminiLiveConfig();
@@ -3470,7 +3486,10 @@ app.post(
       const rawErrorCode = err && typeof err === "object" && typeof (err as { code?: unknown }).code === "string"
         ? (err as { code: string }).code
         : undefined;
-      const explicitCode = rawErrorCode === "websurf_retrieval_failed" ? rawErrorCode : undefined;
+      const explicitCode = rawErrorCode === "websurf_retrieval_failed"
+        || rawErrorCode === "model_tool_capability_unavailable"
+        ? rawErrorCode
+        : undefined;
       console.error(`[Stream] error: ${message}`);
       if (!clientDisconnected) {
         try {
@@ -3502,9 +3521,11 @@ app.post(
           await writeSseJson({
             type: "error",
             code: explicitCode ?? (partial ? "response_interrupted" : "backend_unavailable"),
-            error: partial
-              ? "The response was interrupted. Your partial answer has been preserved."
-              : `${PRODUCT_NAME} could not finish that response. Please try again.`,
+            error: explicitCode === "model_tool_capability_unavailable"
+              ? "A compatible tool-capable model is temporarily unavailable. Please try again later."
+              : partial
+                ? "The response was interrupted. Your partial answer has been preserved."
+                : `${PRODUCT_NAME} could not finish that response. Please try again.`,
             partial,
             streamed_chunks: metrics?.chunkCount ?? 0,
             approx_tokens: metrics?.approxTokens ?? 0,
@@ -3863,7 +3884,7 @@ app.post(
         requiredCapabilities: deriveRequiredModelCapabilities({
           hasImageInput: guestCtx.imageAttachments.length > 0,
           automaticToolsRequested: !hasEffectiveWebSearchMode && getEnabledAutomaticSentIQTools().length > 0,
-          streaming: true,
+          streaming: false,
         }),
       });
       const guestGeneralModelOverride = guestGeneralReservation.adapterModelOverride;
@@ -3887,6 +3908,7 @@ app.post(
       let guestCitationStream: WebSurfCitationStream | undefined;
       let guestOutputGuard: WebSurfOutputGuardStream | undefined;
       let guestAutomaticToolAccepted = false;
+      const guestTurnProgress = new ModelTurnProgressTracker();
       try {
         const streamStart = Date.now();
         if (webSurfV2Enabled && hasEffectiveWebSearchMode) {
@@ -3956,10 +3978,13 @@ app.post(
         const automaticTools = guestWebSurfV2
           ? []
           : getAutomaticSentIQToolsForRoute(guestGeneralReservation, true);
+        const toolTransport = automaticTools.length > 0
+          ? resolveModelToolTransport(guestGeneralReservation, "streaming")
+          : null;
         const requiredCapabilities = deriveRequiredModelCapabilities({
           hasImageInput: guestCtx.imageAttachments.length > 0,
           automaticToolsRequested: automaticTools.length > 0,
-          streaming: true,
+          toolTransportMode: toolTransport?.mode === "streaming" ? "streaming" : "buffered",
         });
         const adapterStream = await callLLMAdapterTurnStream({
           ...call,
@@ -3967,6 +3992,7 @@ app.post(
           sentiq_tool_context: automaticTools.length > 0 ? { authenticated: false, executionMode: executionProfile.mode } : undefined,
           sentiq_allowed_tool_names: automaticTools,
           required_capabilities: requiredCapabilities,
+          tool_transport_mode: toolTransport?.mode ?? "none",
         });
         let fullReply = "";
 
@@ -3979,9 +4005,12 @@ app.post(
               recordStreamChunk(streamMetrics, visible);
               await writeSseJson({ type: "token", text: visible });
             }
+        }, (progress) => guestTurnProgress.advance(progress), {
+          validateAssistantText: assertNoUnbackedToolCompletionClaim,
         });
         if (turn.kind === "tool_calls") {
           guestAutomaticToolAccepted = true;
+          guestTurnProgress.advance("execution_started");
           await commitTextBilling(guestGeneralReservation, "guest.general.stream.tool-selected");
           const toolResult = await executeAutomaticModelToolCalls(
             turn.calls,
@@ -4068,7 +4097,13 @@ app.post(
           await sendStreamError(err, streamMetrics);
           return;
         }
-        if (!guestAutomaticToolAccepted && streamMetrics.chunkCount === 0 && !clientDisconnected && guestGeneralCallForRecovery) {
+        if (
+          guestTurnProgress.canRecover()
+          && streamMetrics.chunkCount === 0
+          && !clientDisconnected
+          && guestGeneralCallForRecovery
+          && (!err || typeof err !== "object" || (err as { code?: string }).code !== "model_tool_capability_unavailable")
+        ) {
           try {
             const fallbackText = await recoverBufferedStreamText({
               route: "guest.general",
@@ -5205,10 +5240,10 @@ app.post(
       signal: requestAbortController.signal,
     });
     const requestedAutomaticTools = webSurfV2 ? [] : getEnabledAutomaticSentIQTools();
-    const requiredCapabilities = deriveRequiredModelCapabilities({
+    const billingRequiredCapabilities = deriveRequiredModelCapabilities({
       hasImageInput: hasImage,
       automaticToolsRequested: requestedAutomaticTools.length > 0,
-      streaming: true,
+      streaming: false,
     });
     const directReservation = await reserveTextBilling({
       identity: billingIdentity,
@@ -5216,7 +5251,7 @@ app.post(
       conversationId: activeConversationId,
       clientRequestId: parsed.data.clientRequestId,
       route: "stream",
-      requiredCapabilities,
+      requiredCapabilities: billingRequiredCapabilities,
     });
     const modelOverride = directReservation.adapterModelOverride;
     if (routedModel.fallback_reason) {
@@ -5278,6 +5313,7 @@ app.post(
 
     let stopHeartbeat = () => {};
     let automaticToolAccepted = false;
+    const modelTurnProgress = new ModelTurnProgressTracker();
     const call = buildChatPrompt({
       userMessage: effectiveUserMessage,
       recentMessages: ctx.recentMessages,
@@ -5314,14 +5350,26 @@ app.post(
       const automaticTools = requestedAutomaticTools.length > 0
         ? getAutomaticSentIQToolsForRoute(directReservation, true)
         : [];
+      if (requestedAutomaticTools.length > 0 && automaticTools.length === 0) {
+        throw new ModelCapabilityUnavailableError(billingRequiredCapabilities);
+      }
+      const toolTransport = automaticTools.length > 0
+        ? resolveModelToolTransport(directReservation, "streaming")
+        : null;
+      const invocationRequiredCapabilities = deriveRequiredModelCapabilities({
+        hasImageInput: hasImage,
+        automaticToolsRequested: automaticTools.length > 0,
+        toolTransportMode: toolTransport?.mode === "streaming" ? "streaming" : "buffered",
+      });
       const adapterStream = await callLLMAdapterTurnStream({
         ...streamCall,
         sentiq_tool_context: automaticTools.length > 0 ? {
           authenticated: !isGuest,
           executionMode: executionProfile.mode,
         } : undefined,
-        sentiq_allowed_tool_names: automaticTools,
-        required_capabilities: requiredCapabilities,
+          sentiq_allowed_tool_names: automaticTools,
+          required_capabilities: invocationRequiredCapabilities,
+          tool_transport_mode: toolTransport?.mode ?? "none",
       });
       let fullReply = "";
 
@@ -5333,9 +5381,12 @@ app.post(
             recordStreamChunk(streamMetrics, visible);
             await writeSseJson({ type: "token", text: visible });
           }
+      }, (progress) => modelTurnProgress.advance(progress), {
+        validateAssistantText: assertNoUnbackedToolCompletionClaim,
       });
       if (turn.kind === "tool_calls") {
         automaticToolAccepted = true;
+        modelTurnProgress.advance("execution_started");
         await commitTextBilling(directReservation, "stream.tool-selected");
         const toolResult = await executeAutomaticModelToolCalls(
           turn.calls,
@@ -5459,7 +5510,12 @@ app.post(
         await sendStreamError(err, streamMetrics);
         return;
       }
-      if (!automaticToolAccepted && streamMetrics.chunkCount === 0 && !clientDisconnected) {
+      if (
+        modelTurnProgress.canRecover()
+        && streamMetrics.chunkCount === 0
+        && !clientDisconnected
+        && (!err || typeof err !== "object" || (err as { code?: string }).code !== "model_tool_capability_unavailable")
+      ) {
         try {
           const fallbackText = await recoverBufferedStreamText({
             route: "stream",
@@ -7678,6 +7734,17 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     console.warn(`${LOG_PREFIX} Model capability unavailable`);
     if (!res.headersSent && !res.writableEnded) {
       res.status(err.statusCode).json({ error: err.message, code: err.code });
+    }
+    return;
+  }
+
+  if (err instanceof ModelToolTransportError || (err as { code?: string }).code === "model_tool_capability_unavailable") {
+    console.warn(`${LOG_PREFIX} Model tool transport unavailable`);
+    if (!res.headersSent && !res.writableEnded) {
+      res.status(503).json({
+        error: "A compatible tool-capable model is temporarily unavailable. Please try again later.",
+        code: "model_tool_capability_unavailable",
+      });
     }
     return;
   }

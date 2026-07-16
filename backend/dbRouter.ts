@@ -1108,7 +1108,7 @@ async function verifyShardMigrationsRpc(): Promise<void> {
   }
 }
 
-async function verifyAutomaticMemoryIdempotencyMigration(): Promise<void> {
+export async function verifyAutomaticMemoryIdempotencyMigration(): Promise<void> {
   const expectedVersion = "20260715120000";
   const shardIds: DatabaseId[] = [2, 3, 4];
   await Promise.all(shardIds.map(async (id) => {

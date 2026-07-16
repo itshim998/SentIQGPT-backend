@@ -20,7 +20,7 @@ from datetime import date
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Any, Literal, Optional
 import uvicorn
 import requests
@@ -66,6 +66,12 @@ from llm_adapter import (
     SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
     SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,
     SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED,
+    CANONICAL_SENTIQ_MODEL_TOOL_ENV_NAMES,
+    GOOGLE_GENAI_MODULE,
+    GOOGLE_GENAI_TYPES_MODULE,
+    ModelToolCapabilityUnavailableError,
+    get_sentiq_tool_capability,
+    _get_google_genai_client,
     _safe_sentiq_tool_names,
     # Safety model imports
     call_safety_model,
@@ -121,6 +127,7 @@ def log_model_tool_gateway_diagnostic(
         "provider": provider,
         "resolved_model": resolved_model,
         "streaming": streaming,
+        "tool_transport_mode": request.tool_transport_mode,
         "registry_enabled": SENTIQ_MODEL_TOOL_REGISTRY_ENABLED,
         "groq_transport_enabled": SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
         "gemini_transport_enabled": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,
@@ -128,6 +135,7 @@ def log_model_tool_gateway_diagnostic(
         "allowed_tool_names": tool_names,
         "tool_declarations_attached": bool(tool_names),
         "tool_choice_mode": "auto" if tool_names else "none",
+        "sdk_path": "google_genai" if provider == "gemini" else "groq_sdk" if provider == "groq" else "http",
     }, separators=(",", ":"), sort_keys=True))
 
 _user_db_cache_lock = threading.Lock()
@@ -438,11 +446,38 @@ class LLMInvokeRequest(BaseModel):
     image_attachments: Optional[list[dict[str, Any]]] = None
     budget_policy: Optional[dict[str, Any]] = None
     sentiq_tool_request: Optional[dict[str, Any]] = None
+    tool_transport_mode: Literal["none", "buffered", "streaming"] = "none"
     required_capabilities: Optional[list[Literal[
         "image_input",
         "sentiq_tools_buffered",
         "sentiq_tools_streaming",
     ]]] = None
+
+    @model_validator(mode="after")
+    def validate_tool_transport(self):
+        has_tools = isinstance(self.sentiq_tool_request, dict) and isinstance(
+            self.sentiq_tool_request.get("tools"), list
+        )
+        required = set(self.required_capabilities or [])
+        if not has_tools:
+            if self.tool_transport_mode != "none":
+                raise ValueError("tool_transport_mode requires sentiq_tool_request")
+            return self
+        if self.tool_transport_mode == "none":
+            raise ValueError("sentiq_tool_request requires tool_transport_mode")
+        expected = (
+            "sentiq_tools_streaming"
+            if self.tool_transport_mode == "streaming"
+            else "sentiq_tools_buffered"
+        )
+        conflicting = (
+            "sentiq_tools_buffered"
+            if self.tool_transport_mode == "streaming"
+            else "sentiq_tools_streaming"
+        )
+        if expected not in required or conflicting in required:
+            raise ValueError("tool_transport_mode must match required_capabilities")
+        return self
 
 
 class LLMInvokeResponse(BaseModel):
@@ -819,6 +854,21 @@ async def health_details():
         "system": PRODUCT_NAME,
         "gemini_keys_configured": len(GEMINI_API_KEYS),
         "groq_keys_configured": len(GROQ_API_KEYS),
+        "model_tool_runtime": {
+            "canonical_flags": {
+                name: os.getenv(name, "false").strip().lower() in {"1", "true", "yes", "on"}
+                for name in CANONICAL_SENTIQ_MODEL_TOOL_ENV_NAMES
+            },
+            "registry_enabled": SENTIQ_MODEL_TOOL_REGISTRY_ENABLED,
+            "groq_transport_enabled": SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
+            "gemini_transport_enabled": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,
+            "google_genai_sdk_available": bool(GOOGLE_GENAI_MODULE and GOOGLE_GENAI_TYPES_MODULE),
+            "gemini_sdk_path": "google_genai" if GOOGLE_GENAI_MODULE and GOOGLE_GENAI_TYPES_MODULE else "unavailable",
+            "groq_buffered_capable": bool(get_sentiq_tool_capability("groq", GROQ_CHAT_MODEL, False).get("supported")),
+            "groq_streaming_capable": bool(get_sentiq_tool_capability("groq", GROQ_CHAT_MODEL, True).get("streaming")),
+            "gemini_buffered_capable": bool(get_sentiq_tool_capability("gemini", GEMINI_STANDARD_MODEL, False).get("supported")),
+            "gemini_streaming_capable": False,
+        },
         "gemini_model": GEMINI_MODEL,
         "gemini_standard_model": GEMINI_STANDARD_MODEL,
         "gemini_lite_model": GEMINI_LITE_MODEL,
@@ -899,6 +949,7 @@ async def invoke_llm(request: LLMInvokeRequest):
             request.execution_mode,
             request.sentiq_tool_request,
             request.required_capabilities,
+            request.tool_transport_mode,
         )
         # Resolve the actual provider (not just the prefer hint)
         from llm_adapter import resolve_model_override, get_provider_for_task
@@ -1058,6 +1109,7 @@ async def stream_llm(request: LLMInvokeRequest):
                 budget_policy=request.budget_policy,
                 sentiq_tool_request=request.sentiq_tool_request,
                 required_capabilities=request.required_capabilities,
+                tool_transport_mode=request.tool_transport_mode,
             ):
                 if not capacity_event_sent:
                     telemetry = get_current_groq_call_telemetry()
@@ -1105,6 +1157,9 @@ async def stream_llm(request: LLMInvokeRequest):
                         yield f"event: error\ndata: {json.dumps({'code': code, 'message': 'Response blocked due to safety concerns'})}\n\n"
                         return
             yield "data: [DONE]\n\n"
+        except ModelToolCapabilityUnavailableError as e:
+            logger.error("Streaming tool capability unavailable: %s", e)
+            yield f"event: error\ndata: {json.dumps({'code': e.code, 'message': str(e)})}\n\n"
         except Exception as e:
             logger.error("Streaming failed: %s", e)
             yield f"data: {json.dumps({'error': 'LLM stream failed'})}\n\n"
@@ -1174,15 +1229,20 @@ _embed_lock = threading.Lock()
 
 def _generate_embedding(text: str, api_key: str) -> list:
     """Generate a vector embedding using the Gemini embedding API."""
-    import google.generativeai as genai
+    if not GOOGLE_GENAI_MODULE or not GOOGLE_GENAI_TYPES_MODULE:
+        raise RuntimeError("Google GenAI SDK is required for embeddings")
     with _embed_lock:
-        genai.configure(api_key=api_key)
-    result = genai.embed_content(
-        model=f"models/{EMBEDDING_MODEL}",
-        content=text,
-        task_type="retrieval_document",
+        client = _get_google_genai_client(api_key)
+    result = client.models.embed_content(
+        model=EMBEDDING_MODEL,
+        contents=text,
+        config=GOOGLE_GENAI_TYPES_MODULE.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
     )
-    return result["embedding"]
+    embeddings = getattr(result, "embeddings", None) or []
+    values = getattr(embeddings[0], "values", None) if embeddings else None
+    if not isinstance(values, list) or not values:
+        raise RuntimeError("Gemini embedding response was empty")
+    return [float(value) for value in values]
 
 
 def _embedding_model_missing(error: Exception) -> bool:

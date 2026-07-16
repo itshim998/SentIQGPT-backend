@@ -135,7 +135,7 @@ export class TavilyProvider implements WebSearchProvider {
         if (isRateLimit || isAuthError) {
           keyManager.markFailed(apiKey, isRateLimit);
           console.log(
-            `[Tavily] key ${apiKey.slice(0, 8)}... failed with ${isRateLimit ? "rate limit" : "auth error"}, trying next...`
+            `[Tavily] credential failed with ${isRateLimit ? "rate limit" : "auth error"}, trying next...`
           );
         } else {
           // Non-recoverable error (e.g., network failure)

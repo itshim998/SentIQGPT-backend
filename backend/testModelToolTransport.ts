@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   buildLLMGatewayRequestBody,
   buildNodeModelToolDiagnostic,
@@ -10,11 +11,14 @@ import {
   getEnabledAutomaticSentIQTools,
   getModelToolRuntimeSnapshot,
   getSentIQToolCapability,
+  findObsoleteModelToolEnvironmentNames,
   isGeminiSentIQToolTransportEnabled,
   isGroqSentIQToolModel,
   isGroqSentIQToolTransportEnabled,
   isModelToolDiagnosticsEnabled,
   isModelToolRegistryEnabled,
+  resolveModelToolTransport,
+  routeSupportsCapability,
   SENTIQ_MODEL_TOOL_ENV,
 } from "./ai/modelToolCapability";
 import { ToolCallStreamAccumulator, normalizeBufferedProviderResult } from "./ai/modelToolTransport";
@@ -53,9 +57,27 @@ assert.deepEqual(getSentIQToolCapability("groq"), {
   streaming: true,
   reason: "openai_function_transport",
 });
-assert.equal(canUseSentIQTools("gemini", true), true);
+assert.equal(canUseSentIQTools("gemini", false), true);
+assert.equal(canUseSentIQTools("gemini", true), false);
 assert.equal(canUseSentIQTools("gemma", false), false);
 assert.equal(canUseSentIQTools("pollinations", true), false);
+
+const parityFixtures = JSON.parse(
+  readFileSync("backend/fixtures/modelToolCapabilityParity.json", "utf8"),
+) as Array<{ alias: string; provider: string; model: string; buffered: boolean; streaming: boolean }>;
+for (const fixture of parityFixtures) {
+  const route = { provider: fixture.provider, model: fixture.model };
+  assert.equal(
+    routeSupportsCapability(route, "sentiq_tools_buffered"),
+    fixture.buffered,
+    `${fixture.alias} buffered capability must match the parity fixture`,
+  );
+  assert.equal(
+    routeSupportsCapability(route, "sentiq_tools_streaming"),
+    fixture.streaming,
+    `${fixture.alias} streaming capability must match the parity fixture`,
+  );
+}
 
 const previousModelToolEnvironment = new Map(
   Object.values(SENTIQ_MODEL_TOOL_ENV).map((name) => [name, process.env[name]] as const),
@@ -76,6 +98,17 @@ try {
     getAutomaticSentIQToolsForRoute({ provider: "gemini", model: "gemini-standard" }, true),
     expectedAuthenticatedTools,
   );
+  assert.deepEqual(resolveModelToolTransport(
+    { provider: "gemini", model: "gemini-standard" },
+    "streaming",
+  ), {
+    provider: "gemini",
+    model: "gemini-standard",
+    requestedMode: "streaming",
+    mode: "buffered",
+    supported: true,
+    reason: "buffered_tool_bridge",
+  });
   assert.deepEqual(
     getAutomaticSentIQToolsForRoute({ provider: "gemini", model: "gemini-3.1-flash-lite" }, false),
     expectedAuthenticatedTools,
@@ -95,25 +128,33 @@ try {
     diagnosticsEnabled: true,
   });
   for (const executionMode of ["fast", "intuitive"] as const) {
-    const call = {
+    const streamingCall = {
       prompt: "ordinary authenticated request",
       task: "chat" as const,
       user_id: "user-1",
       sentiq_tool_context: { authenticated: true, executionMode },
       sentiq_allowed_tool_names: expectedAuthenticatedTools,
       required_capabilities: ["sentiq_tools_streaming"] as const,
+      tool_transport_mode: "streaming" as const,
     };
-    const toolRequest = buildSentIQToolTransportRequest(call, true);
+    const toolRequest = buildSentIQToolTransportRequest(streamingCall, true);
     assert.deepEqual(toolRequest?.allowed_tool_names, expectedAuthenticatedTools);
-    const bufferedBody = buildLLMGatewayRequestBody(call, { sentiqToolRequest: toolRequest });
-    const streamingBody = buildLLMGatewayRequestBody(call, { sentiqToolRequest: toolRequest });
+    const bufferedCall = {
+      ...streamingCall,
+      required_capabilities: ["sentiq_tools_buffered"] as const,
+      tool_transport_mode: "buffered" as const,
+    };
+    const bufferedBody = buildLLMGatewayRequestBody(bufferedCall, { sentiqToolRequest: toolRequest });
+    const streamingBody = buildLLMGatewayRequestBody(streamingCall, { sentiqToolRequest: toolRequest });
     assert.deepEqual(bufferedBody.sentiq_tool_request, toolRequest);
     assert.deepEqual(streamingBody.sentiq_tool_request, toolRequest);
-    assert.deepEqual(bufferedBody.required_capabilities, ["sentiq_tools_streaming"]);
-    assert.deepEqual(streamingBody.required_capabilities, bufferedBody.required_capabilities);
+    assert.deepEqual(bufferedBody.required_capabilities, ["sentiq_tools_buffered"]);
+    assert.deepEqual(streamingBody.required_capabilities, ["sentiq_tools_streaming"]);
+    assert.equal(bufferedBody.tool_transport_mode, "buffered");
+    assert.equal(streamingBody.tool_transport_mode, "streaming");
     const diagnostic = buildNodeModelToolDiagnostic({
       boundary: "node_stream_request",
-      call: { ...call, model_override: "groq:gpt-oss-120b" },
+      call: { ...streamingCall, model_override: "groq:gpt-oss-120b" },
       request: toolRequest,
       streaming: true,
     });
@@ -129,6 +170,13 @@ try {
     else process.env[name] = value;
   }
 }
+
+assert.deepEqual(findObsoleteModelToolEnvironmentNames({
+  SENTIQ_GROQ_MODEL_TOOL_TRANSPORT_ENABLED: "true",
+  SENTIQ_MODEL_TOOL_REGISTRY_ENABLE: "true",
+  SENTIQ_MODEL_TOOL_REGISTRY_ENABLED: "true",
+  SENTIQ_IMAGE_STORAGE_DB: "1",
+}), ["SENTIQ_GROQ_MODEL_TOOL_TRANSPORT_ENABLED", "SENTIQ_MODEL_TOOL_REGISTRY_ENABLE"]);
 
 assert.equal(buildSentIQToolTransportRequest({ prompt: "hello", task: "chat" }, false), undefined);
 assert.equal(buildSentIQToolTransportRequest({ prompt: "classify", task: "memory_classify" }, true), undefined);
@@ -227,6 +275,10 @@ assert.throws(
     index: 0,
   }),
   /unavailable/,
+);
+assert.throws(
+  () => new ToolCallStreamAccumulator(guest, ["web_surf"]).push({ kind: "done" }),
+  /without assistant text or a tool call/,
 );
 
 console.log("Model tool capability and transport checks passed.");

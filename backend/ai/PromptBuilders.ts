@@ -32,11 +32,13 @@ import {
   type ToolAvailabilityContext,
 } from "../orchestrator/toolContract";
 import { ToolCallStreamAccumulator, type RawProviderDelta } from "./modelToolTransport";
+import { assertNoUnbackedToolCompletionClaim } from "./modelToolCompletionClaims";
 import {
   getModelToolRuntimeSnapshot,
   isModelToolDiagnosticsEnabled,
   isModelToolRegistryEnabled,
   type RequiredModelCapability,
+  type ToolTransportMode,
 } from "./modelToolCapability";
 import type {
   WebSurfAnswerPlan,
@@ -119,6 +121,8 @@ export interface LLMAdapterCall {
   readonly skip_wrappers?: boolean;
   readonly image_attachments?: readonly ImageAttachment[];
   readonly required_capabilities?: readonly RequiredModelCapability[];
+  /** Server-selected provider transport. Tool-bearing requests must never infer this in Python. */
+  readonly tool_transport_mode?: ToolTransportMode;
   readonly budget_class?: OutputBudgetClass;
   readonly auxiliary_budget?: AuxiliaryOutputKind;
   readonly request_complexity?: RequestComplexity;
@@ -169,6 +173,15 @@ export interface LLMAdapterResult {
   readonly error_detail?: string | null;
 }
 
+export class ModelToolTransportError extends Error {
+  readonly code = "model_tool_capability_unavailable";
+
+  constructor(message = "A compatible tool-capable model is temporarily unavailable. Please try again later.") {
+    super(message);
+    this.name = "ModelToolTransportError";
+  }
+}
+
 export interface SentIQToolTransportRequest {
   readonly registry_version: string;
   readonly allowed_tool_fingerprint: string;
@@ -200,6 +213,7 @@ export function buildNodeModelToolDiagnostic(args: {
     resolved_model: modelOverride,
     task: args.call.task,
     streaming: args.streaming,
+    tool_transport_mode: args.call.tool_transport_mode ?? (args.request ? (args.streaming ? "streaming" : "buffered") : "none"),
     registry_enabled: flags.registryEnabled,
     groq_transport_enabled: flags.groqTransportEnabled,
     gemini_transport_enabled: flags.geminiTransportEnabled,
@@ -280,6 +294,7 @@ export function buildLLMGatewayRequestBody(
     skip_wrappers: call.skip_wrappers,
     image_attachments: call.image_attachments,
     required_capabilities: call.required_capabilities,
+    tool_transport_mode: call.tool_transport_mode ?? (sentiqToolRequest ? "buffered" : "none"),
     budget_policy: options.budgetPolicy,
     sentiq_tool_request: sentiqToolRequest,
   };
@@ -399,6 +414,10 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
   const sentiqToolRequest = buildSentIQToolTransportRequest(call);
+  call = {
+    ...call,
+    tool_transport_mode: sentiqToolRequest ? (call.tool_transport_mode ?? "buffered") : "none",
+  };
   logNodeModelToolDiagnostic({
     boundary: "node_buffered_request",
     call,
@@ -474,6 +493,9 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
       error_detail: null,
     };
   }
+  if (sentiqToolRequest && data.result.error) {
+    throw new ModelToolTransportError();
+  }
   recordGroqCapacitySnapshot(data.result.telemetry?.capacity);
   const assistantTurn = data.result.assistant_turn
     ? normalizeAssistantTurn(
@@ -482,6 +504,16 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
       sentiqToolRequest?.allowed_tool_names,
     )
     : { kind: "assistant_text" as const, text: typeof data.result.text === "string" ? data.result.text : "" };
+  if (sentiqToolRequest && assistantTurn.kind === "assistant_text" && !assistantTurn.text.trim()) {
+    throw new ModelToolTransportError();
+  }
+  if (sentiqToolRequest && assistantTurn.kind === "assistant_text") {
+    try {
+      assertNoUnbackedToolCompletionClaim(assistantTurn.text);
+    } catch {
+      throw new ModelToolTransportError();
+    }
+  }
   return {
     text: assistantTurn.kind === "assistant_text" ? assistantTurn.text : "",
     assistant_turn: assistantTurn,
@@ -715,6 +747,46 @@ function textStreamToProviderDeltas(stream: ReadableStream<string>): ReadableStr
   });
 }
 
+function bufferedTurnProviderEvents(turn: AssistantTurn): ProviderDelta[] {
+  return turn.kind === "tool_calls"
+    ? [{ kind: "tool_calls_complete", calls: turn.calls }, { kind: "done", finishReason: "tool_calls" }]
+    : [
+        ...(turn.text ? [{ kind: "text_delta", text: turn.text } as const] : []),
+        { kind: "done", finishReason: "stop" },
+      ];
+}
+
+function bufferedTurnToProviderDeltas(turn: AssistantTurn): ReadableStream<ProviderDelta> {
+  const events = bufferedTurnProviderEvents(turn);
+  return new ReadableStream<ProviderDelta>({
+    start(controller) {
+      for (const event of events) controller.enqueue(event);
+      controller.close();
+    },
+  });
+}
+
+function asBufferedToolRecoveryCall(call: LLMAdapterCall): LLMAdapterCall {
+  const required = (call.required_capabilities ?? [])
+    .filter((capability) => capability !== "sentiq_tools_streaming");
+  if (!required.includes("sentiq_tools_buffered")) required.push("sentiq_tools_buffered");
+  return {
+    ...call,
+    required_capabilities: required,
+    tool_transport_mode: "buffered",
+  };
+}
+
+async function recoverBufferedToolTurn(call: LLMAdapterCall): Promise<AssistantTurn> {
+  try {
+    const result = await callLLMAdapterDetailed(asBufferedToolRecoveryCall(call));
+    return result.assistant_turn ?? { kind: "assistant_text", text: result.text };
+  } catch (error) {
+    if (error instanceof ModelToolTransportError) throw error;
+    throw new ModelToolTransportError();
+  }
+}
+
 export async function callLLMAdapterTurnStream(
   call: LLMAdapterCall,
 ): Promise<ReadableStream<ProviderDelta>> {
@@ -728,9 +800,21 @@ export async function callLLMAdapterTurnStream(
     return textStreamToProviderDeltas(await callLLMAdapterTextStreamLegacy(call));
   }
 
+  const toolTransportMode = call.tool_transport_mode ?? "streaming";
+  if (toolTransportMode === "none") {
+    throw new ModelToolTransportError();
+  }
+  if (toolTransportMode === "buffered") {
+    const result = await callLLMAdapterDetailed({ ...call, tool_transport_mode: "buffered" });
+    return bufferedTurnToProviderDeltas(
+      result.assistant_turn ?? { kind: "assistant_text", text: result.text },
+    );
+  }
+
   await waitForInternalGatewayReady();
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
+  call = { ...call, tool_transport_mode: "streaming" };
   const sentiqToolRequest = buildSentIQToolTransportRequest(call);
   logNodeModelToolDiagnostic({
     boundary: "node_stream_request",
@@ -754,15 +838,16 @@ export async function callLLMAdapterTurnStream(
     });
   } catch (error) {
     abort.cleanup();
-    throw error;
+    return bufferedTurnToProviderDeltas(await recoverBufferedToolTurn(call));
   }
   if (!response.ok) {
     abort.cleanup();
-    throw new Error(`LLM stream error (${response.status}): ${await response.text()}`);
+    await response.text().catch(() => "");
+    return bufferedTurnToProviderDeltas(await recoverBufferedToolTurn(call));
   }
   if (!response.body) {
     abort.cleanup();
-    throw new Error("No response body for streaming");
+    return bufferedTurnToProviderDeltas(await recoverBufferedToolTurn(call));
   }
 
   const source = response.body.getReader();
@@ -774,8 +859,11 @@ export async function callLLMAdapterTurnStream(
   const queue: ProviderDelta[] = [];
   let buffer = "";
   let normalizedDone = false;
+  let providerOutcomeStarted = false;
+  let recoveryAttempted = false;
 
   const queueRaw = (delta: RawProviderDelta) => {
+    if (delta.kind === "text_delta" || delta.kind === "tool_call_start") providerOutcomeStarted = true;
     if (delta.kind === "done") normalizedDone = true;
     queue.push(...accumulator.push(delta));
   };
@@ -846,6 +934,18 @@ export async function callLLMAdapterTurnStream(
       } catch (error) {
         abort.cleanup();
         await source.cancel(error).catch(() => undefined);
+        if (!providerOutcomeStarted && !recoveryAttempted) {
+          recoveryAttempted = true;
+          try {
+            const recovered = await recoverBufferedToolTurn(call);
+            for (const event of bufferedTurnProviderEvents(recovered)) controller.enqueue(event);
+            controller.close();
+            return;
+          } catch (recoveryError) {
+            controller.error(recoveryError);
+            return;
+          }
+        }
         controller.error(error);
       }
     },
