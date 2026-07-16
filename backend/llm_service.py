@@ -39,6 +39,7 @@ from llm_adapter import (
     stream_llm_router,
     get_current_groq_call_telemetry,
     get_provider_for_task,
+    resolve_model_route,
     GEMINI_API_KEYS,
     GROQ_API_KEYS,
     GEMINI_MODEL,
@@ -61,6 +62,11 @@ from llm_adapter import (
     POLLINATIONS_STREAM_IDLE_TIMEOUT,
     POLLINATIONS_API_KEY,
     STRICT_JSON_TASKS,
+    SENTIQ_MODEL_TOOL_REGISTRY_ENABLED,
+    SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
+    SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,
+    SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED,
+    _safe_sentiq_tool_names,
     # Safety model imports
     call_safety_model,
     is_safe_content,
@@ -95,6 +101,34 @@ GUEST_TEXT_MODEL_OVERRIDE = "gpt-oss-120b"
 USER_DB_CACHE_TTL_SECONDS = 300
 INTERNAL_SERVICE_TOKEN = os.getenv("SENTIQ_INTERNAL_SERVICE_TOKEN", "").strip()
 UNSAFE_INTERNAL_ENDPOINTS_ENABLED = os.getenv("SENTIQ_ENABLE_UNSAFE_INTERNAL_ENDPOINTS") == "true"
+
+
+def log_model_tool_gateway_diagnostic(
+    request: "LLMInvokeRequest",
+    effective_model_override: Optional[str],
+    *,
+    streaming: bool,
+) -> None:
+    if not SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED:
+        return
+    default_provider = request.prefer or get_provider_for_task(request.task)
+    provider, resolved_model = resolve_model_route(effective_model_override, default_provider)
+    tool_names = _safe_sentiq_tool_names(request.sentiq_tool_request)
+    logger.info("[ModelToolDiagnostic] %s", json.dumps({
+        "scope": "model_tool_transport",
+        "event": "diagnostic",
+        "boundary": "fastapi_stream_receipt" if streaming else "fastapi_buffered_receipt",
+        "provider": provider,
+        "resolved_model": resolved_model,
+        "streaming": streaming,
+        "registry_enabled": SENTIQ_MODEL_TOOL_REGISTRY_ENABLED,
+        "groq_transport_enabled": SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
+        "gemini_transport_enabled": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,
+        "allowed_tool_count": len(tool_names),
+        "allowed_tool_names": tool_names,
+        "tool_declarations_attached": bool(tool_names),
+        "tool_choice_mode": "auto" if tool_names else "none",
+    }, separators=(",", ":"), sort_keys=True))
 
 _user_db_cache_lock = threading.Lock()
 _user_db_cache: dict[str, tuple[int, float]] = {}
@@ -848,6 +882,7 @@ async def invoke_llm(request: LLMInvokeRequest):
                 assigned_db,
                 request.task,
             )
+        log_model_tool_gateway_diagnostic(request, effective_model_override, streaming=False)
         result = await run_in_threadpool(
             call_llm_router,
             request.prompt,
@@ -1002,6 +1037,7 @@ async def stream_llm(request: LLMInvokeRequest):
                     assigned_db,
                     request.task,
                 )
+            log_model_tool_gateway_diagnostic(request, effective_model_override, streaming=True)
             
             # ── OUTPUT SAFETY MONITOR ──
             # Skip for chart generation to prevent false positives on code/data

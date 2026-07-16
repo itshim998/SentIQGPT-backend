@@ -7,6 +7,9 @@ export const MAX_TOOL_ARGUMENT_BYTES = 16 * 1024;
 export const MAX_TOOL_CALLS_PER_TURN = 4;
 
 export const SENTIQ_TOOL_CHOICE_POLICY = [
+  "The available SentIQ tools are real executable capabilities.",
+  "When the user explicitly requests an available tool, or satisfying the request genuinely requires one, call the appropriate tool instead of denying the capability or merely narrating that you will use it.",
+  "Never claim that you searched, generated, created, or saved something unless you return the corresponding tool call; only a successful tool result confirms completion.",
   "Answer normally when no SentIQ tool is genuinely required.",
   "Do not call a tool merely because a keyword appears.",
   "Use the original user request as the tool argument when it is already suitable.",

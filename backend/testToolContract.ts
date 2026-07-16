@@ -22,6 +22,10 @@ assert.deepEqual(
 assert.doesNotMatch(SENTIQ_TOOL_CHOICE_POLICY, /route\s+by\s+(keyword|regex)/i, "policy must not instruct heuristic routing");
 assert.match(SENTIQ_TOOL_CHOICE_POLICY, /Do not call a tool merely because a keyword appears/i);
 assert.match(SENTIQ_TOOL_CHOICE_POLICY, /ask a concise conversational clarification/i);
+assert.match(SENTIQ_TOOL_CHOICE_POLICY, /real executable capabilities/i);
+assert.match(SENTIQ_TOOL_CHOICE_POLICY, /instead of denying the capability or merely narrating/i);
+assert.match(SENTIQ_TOOL_CHOICE_POLICY, /Never claim that you searched, generated, created, or saved/i);
+assert.match(SENTIQ_TOOL_CHOICE_POLICY, /only a successful tool result confirms completion/i);
 
 assert.deepEqual(
   getAvailableToolDefinitions(guest).map((tool) => tool.name),

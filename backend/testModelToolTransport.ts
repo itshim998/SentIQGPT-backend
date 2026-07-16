@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
-import { buildSentIQToolTransportRequest } from "./ai/PromptBuilders";
+import {
+  buildLLMGatewayRequestBody,
+  buildNodeModelToolDiagnostic,
+  buildSentIQToolTransportRequest,
+} from "./ai/PromptBuilders";
 import {
   canUseSentIQTools,
+  getAutomaticSentIQToolsForRoute,
+  getEnabledAutomaticSentIQTools,
+  getModelToolRuntimeSnapshot,
   getSentIQToolCapability,
   isGeminiSentIQToolTransportEnabled,
+  isGroqSentIQToolModel,
   isGroqSentIQToolTransportEnabled,
+  isModelToolDiagnosticsEnabled,
   isModelToolRegistryEnabled,
+  SENTIQ_MODEL_TOOL_ENV,
 } from "./ai/modelToolCapability";
 import { ToolCallStreamAccumulator, normalizeBufferedProviderResult } from "./ai/modelToolTransport";
 
@@ -16,6 +26,26 @@ assert.equal(isModelToolRegistryEnabled(undefined), false);
 assert.equal(isGroqSentIQToolTransportEnabled(undefined), false);
 assert.equal(isGeminiSentIQToolTransportEnabled(undefined), false);
 assert.equal(isModelToolRegistryEnabled("TRUE"), true);
+assert.equal(isModelToolDiagnosticsEnabled(undefined), false);
+assert.deepEqual(
+  Object.values(SENTIQ_MODEL_TOOL_ENV).filter((name) => name !== SENTIQ_MODEL_TOOL_ENV.diagnostics),
+  [
+    "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED",
+    "SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED",
+    "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED",
+    "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED",
+    "SENTIQ_MODEL_IMAGE_SELECTION_ENABLED",
+    "SENTIQ_MODEL_CHART_SELECTION_ENABLED",
+    "SENTIQ_MODEL_FILE_SELECTION_ENABLED",
+    "SENTIQ_MODEL_MEMORY_SELECTION_ENABLED",
+  ],
+  "runtime uses one canonical name for every model-tool gate",
+);
+assert.equal(SENTIQ_MODEL_TOOL_ENV.diagnostics, "SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED");
+assert.equal(isGroqSentIQToolModel("gpt-oss-120b"), true);
+assert.equal(isGroqSentIQToolModel("openai/gpt-oss-120b"), true);
+assert.equal(isGroqSentIQToolModel("groq:openai/gpt-oss-120b"), true);
+assert.equal(isGroqSentIQToolModel("llama-3.3-70b-versatile"), false);
 
 assert.deepEqual(getSentIQToolCapability("groq"), {
   provider: "groq",
@@ -26,6 +56,79 @@ assert.deepEqual(getSentIQToolCapability("groq"), {
 assert.equal(canUseSentIQTools("gemini", true), true);
 assert.equal(canUseSentIQTools("gemma", false), false);
 assert.equal(canUseSentIQTools("pollinations", true), false);
+
+const previousModelToolEnvironment = new Map(
+  Object.values(SENTIQ_MODEL_TOOL_ENV).map((name) => [name, process.env[name]] as const),
+);
+try {
+  for (const name of Object.values(SENTIQ_MODEL_TOOL_ENV)) process.env[name] = "true";
+  const expectedAuthenticatedTools = ["web_surf", "image_gen", "chart_gen", "file_gen", "memory_update"] as const;
+  assert.deepEqual(getEnabledAutomaticSentIQTools(), expectedAuthenticatedTools);
+  assert.deepEqual(
+    getAutomaticSentIQToolsForRoute({ provider: "groq", model: "gpt-oss-120b" }, true),
+    expectedAuthenticatedTools,
+  );
+  assert.deepEqual(
+    getAutomaticSentIQToolsForRoute({ provider: "groq", model: "openai/gpt-oss-120b" }, false),
+    expectedAuthenticatedTools,
+  );
+  assert.deepEqual(
+    getAutomaticSentIQToolsForRoute({ provider: "gemini", model: "gemini-standard" }, true),
+    expectedAuthenticatedTools,
+  );
+  assert.deepEqual(
+    getAutomaticSentIQToolsForRoute({ provider: "gemini", model: "gemini-3.1-flash-lite" }, false),
+    expectedAuthenticatedTools,
+  );
+  assert.deepEqual(getAutomaticSentIQToolsForRoute({ provider: "gemini", model: "gemma-4-31b-it" }, true), []);
+  assert.deepEqual(getAutomaticSentIQToolsForRoute({ provider: "pollinations", model: "mistral" }, false), []);
+  assert.deepEqual(getAutomaticSentIQToolsForRoute({ provider: "groq", model: "llama-3.3-70b-versatile" }, true), []);
+  assert.deepEqual(getModelToolRuntimeSnapshot(), {
+    registryEnabled: true,
+    groqTransportEnabled: true,
+    geminiTransportEnabled: true,
+    webSurfSelectionEnabled: true,
+    imageSelectionEnabled: true,
+    chartSelectionEnabled: true,
+    fileSelectionEnabled: true,
+    memorySelectionEnabled: true,
+    diagnosticsEnabled: true,
+  });
+  for (const executionMode of ["fast", "intuitive"] as const) {
+    const call = {
+      prompt: "ordinary authenticated request",
+      task: "chat" as const,
+      user_id: "user-1",
+      sentiq_tool_context: { authenticated: true, executionMode },
+      sentiq_allowed_tool_names: expectedAuthenticatedTools,
+      required_capabilities: ["sentiq_tools_streaming"] as const,
+    };
+    const toolRequest = buildSentIQToolTransportRequest(call, true);
+    assert.deepEqual(toolRequest?.allowed_tool_names, expectedAuthenticatedTools);
+    const bufferedBody = buildLLMGatewayRequestBody(call, { sentiqToolRequest: toolRequest });
+    const streamingBody = buildLLMGatewayRequestBody(call, { sentiqToolRequest: toolRequest });
+    assert.deepEqual(bufferedBody.sentiq_tool_request, toolRequest);
+    assert.deepEqual(streamingBody.sentiq_tool_request, toolRequest);
+    assert.deepEqual(bufferedBody.required_capabilities, ["sentiq_tools_streaming"]);
+    assert.deepEqual(streamingBody.required_capabilities, bufferedBody.required_capabilities);
+    const diagnostic = buildNodeModelToolDiagnostic({
+      boundary: "node_stream_request",
+      call: { ...call, model_override: "groq:gpt-oss-120b" },
+      request: toolRequest,
+      streaming: true,
+    });
+    assert.equal(diagnostic.provider, "groq");
+    assert.equal(diagnostic.resolved_model, "groq:gpt-oss-120b");
+    assert.deepEqual(diagnostic.allowed_tool_names, expectedAuthenticatedTools);
+    assert.equal("prompt" in diagnostic, false);
+    assert.equal("user_id" in diagnostic, false);
+  }
+} finally {
+  for (const [name, value] of previousModelToolEnvironment) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+}
 
 assert.equal(buildSentIQToolTransportRequest({ prompt: "hello", task: "chat" }, false), undefined);
 assert.equal(buildSentIQToolTransportRequest({ prompt: "classify", task: "memory_classify" }, true), undefined);
@@ -52,6 +155,34 @@ assert.equal(normalizeBufferedProviderResult({
   kind: "tool_calls",
   calls: [{ id: "buffered_1", name: "image_gen", arguments: '{"prompt":"A lighthouse"}' }],
 }, guest).kind, "tool_calls");
+
+const explicitToolFixtures = [
+  {
+    userRequest: "Use WebSurf to find the latest verified update.",
+    call: { id: "fixture_web", name: "web_surf", arguments: { query: "latest verified update" } },
+  },
+  {
+    userRequest: "Generate an image of a lighthouse.",
+    call: { id: "fixture_image", name: "image_gen", arguments: { prompt: "A lighthouse" } },
+  },
+  {
+    userRequest: "Create a bar chart for this data.",
+    call: { id: "fixture_chart", name: "chart_gen", arguments: { request: "Create the requested bar chart" } },
+  },
+  {
+    userRequest: "Create a downloadable PDF report.",
+    call: { id: "fixture_file", name: "file_gen", arguments: { request: "Create the requested report", format: "pdf" } },
+  },
+  {
+    userRequest: "Remember that I prefer concise answers.",
+    call: { id: "fixture_memory", name: "memory_update", arguments: { content: "The user prefers concise answers.", type: "preference", scope: "global" } },
+  },
+] as const;
+for (const fixture of explicitToolFixtures) {
+  const normalized = normalizeBufferedProviderResult({ kind: "tool_calls", calls: [fixture.call] }, authenticated);
+  assert.equal(normalized.kind, "tool_calls", `${fixture.userRequest} normalizes as a model tool call`);
+  assert.equal(normalized.kind === "tool_calls" ? normalized.calls[0]?.name : undefined, fixture.call.name);
+}
 
 const stream = new ToolCallStreamAccumulator(authenticated, ["file_gen"]);
 assert.deepEqual(stream.push({ kind: "tool_call_start", id: "stream_1", name: "file_gen", index: 0 }), [

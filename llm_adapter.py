@@ -140,6 +140,7 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", GEMINI_STANDARD_MODEL)
 SENTIQ_MODEL_TOOL_REGISTRY_ENABLED = _parse_bool_env("SENTIQ_MODEL_TOOL_REGISTRY_ENABLED", False)
 SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = _parse_bool_env("SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED", False)
 SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED = _parse_bool_env("SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", False)
+SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED = _parse_bool_env("SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED", False)
 GEMINI_TIMEOUT_MS = _parse_int_env("GEMINI_TIMEOUT_MS", 45_000)
 GEMINI_KEY_COOLDOWN_MS = _parse_int_env("GEMINI_KEY_COOLDOWN_MS", 60_000)
 GEMINI_429_COOLDOWN_MS = _parse_int_env("GEMINI_429_COOLDOWN_MS", 180_000)
@@ -799,6 +800,12 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
 
     return default_provider, model_override
 
+
+def resolve_model_route(model_override: Optional[str], default_provider: str) -> tuple[str, str]:
+    """Resolve a route to the concrete provider/model pair used for diagnostics."""
+    provider, resolved_model = resolve_model_override(model_override, default_provider)
+    return provider, resolved_model or _default_model_for_provider(provider)
+
 # ==============================
 # Simulation (safe dev mode)
 # ==============================
@@ -942,10 +949,67 @@ def get_sentiq_tool_capability(provider: str, model: Optional[str], streaming: b
         enabled = SENTIQ_MODEL_TOOL_REGISTRY_ENABLED and SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED
         return {"provider": "groq", "supported": enabled, "streaming": enabled, "reason": "openai_function_transport" if enabled else "transport_disabled"}
     if normalized_provider == "gemini" and not _is_gemma_model(model):
-        enabled = SENTIQ_MODEL_TOOL_REGISTRY_ENABLED and SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED and bool(GOOGLE_GENAI_MODULE)
+        enabled = (
+            SENTIQ_MODEL_TOOL_REGISTRY_ENABLED
+            and SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED
+            and bool(GOOGLE_GENAI_MODULE)
+            and bool(GOOGLE_GENAI_TYPES_MODULE)
+        )
         return {"provider": "gemini", "supported": enabled, "streaming": enabled, "reason": "google_function_transport" if enabled else "transport_disabled"}
     reason = "text_only_model" if _is_gemma_model(model) else "text_only_transport"
     return {"provider": normalized_provider or "unknown", "supported": False, "streaming": False, "reason": reason}
+
+
+CANONICAL_SENTIQ_TOOL_NAMES = {
+    "web_surf",
+    "image_gen",
+    "chart_gen",
+    "file_gen",
+    "memory_update",
+}
+
+
+def _safe_sentiq_tool_names(request: Optional[dict[str, Any]]) -> list[str]:
+    if not isinstance(request, dict):
+        return []
+    names: list[str] = []
+    for tool in request.get("tools") or []:
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name") or "").strip()
+        if name in CANONICAL_SENTIQ_TOOL_NAMES and name not in names:
+            names.append(name)
+    return names
+
+
+def _log_sentiq_tool_diagnostic(
+    *,
+    boundary: str,
+    provider: str,
+    model: Optional[str],
+    streaming: bool,
+    sentiq_tool_request: Optional[dict[str, Any]],
+    declarations_attached: bool,
+    tool_choice_mode: str,
+) -> None:
+    if not SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED:
+        return
+    tool_names = _safe_sentiq_tool_names(sentiq_tool_request)
+    logger.info("[ModelToolDiagnostic] %s", json.dumps({
+        "scope": "model_tool_transport",
+        "event": "diagnostic",
+        "boundary": boundary,
+        "provider": (provider or "unknown").strip().lower(),
+        "resolved_model": model or None,
+        "streaming": streaming,
+        "registry_enabled": SENTIQ_MODEL_TOOL_REGISTRY_ENABLED,
+        "groq_transport_enabled": SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
+        "gemini_transport_enabled": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,
+        "allowed_tool_count": len(tool_names),
+        "allowed_tool_names": tool_names,
+        "tool_declarations_attached": declarations_attached,
+        "tool_choice_mode": tool_choice_mode,
+    }, separators=(",", ":"), sort_keys=True))
 
 
 REQUIRED_MODEL_CAPABILITIES = {
@@ -1133,8 +1197,18 @@ def _build_google_genai_config(
     high_thinking: bool = False,
     max_output_tokens: Optional[int] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
+    streaming: bool = False,
 ) -> Any:
     if not GOOGLE_GENAI_TYPES_MODULE:
+        _log_sentiq_tool_diagnostic(
+            boundary="gemini_provider_payload",
+            provider="gemini",
+            model=model,
+            streaming=streaming,
+            sentiq_tool_request=sentiq_tool_request,
+            declarations_attached=False,
+            tool_choice_mode="none",
+        )
         return None
 
     kwargs: dict[str, Any] = {}
@@ -1146,6 +1220,15 @@ def _build_google_genai_config(
         policy = str(sentiq_tool_request.get("tool_choice_policy") or "").strip()
         if policy:
             kwargs["system_instruction"] = policy
+    _log_sentiq_tool_diagnostic(
+        boundary="gemini_provider_payload",
+        provider="gemini",
+        model=model,
+        streaming=streaming,
+        sentiq_tool_request=sentiq_tool_request,
+        declarations_attached=bool(sentiq_tools),
+        tool_choice_mode="auto" if sentiq_tools else "none",
+    )
     if high_thinking and hasattr(GOOGLE_GENAI_TYPES_MODULE, "ThinkingConfig"):
         thinking_budget = GEMINI_HIGH_THINKING_BUDGET
         if isinstance(max_output_tokens, int) and max_output_tokens > 0:
@@ -1197,6 +1280,7 @@ def _call_gemini(
             high_thinking=high_thinking,
             max_output_tokens=max_output_tokens,
             sentiq_tool_request=sentiq_tool_request,
+            streaming=False,
         )
         kwargs: dict[str, Any] = {
             "model": resolved_model,
@@ -1266,6 +1350,7 @@ def _call_gemini_stream(
             high_thinking=high_thinking,
             max_output_tokens=max_output_tokens,
             sentiq_tool_request=sentiq_tool_request,
+            streaming=True,
         )
         kwargs: dict[str, Any] = {
             "model": resolved_model,
@@ -1873,6 +1958,15 @@ def _call_groq(
         if sentiq_tools:
             request_kwargs["tools"] = sentiq_tools
             request_kwargs["tool_choice"] = "auto"
+        _log_sentiq_tool_diagnostic(
+            boundary="groq_provider_payload",
+            provider="groq",
+            model=resolved_model,
+            streaming=False,
+            sentiq_tool_request=sentiq_tool_request,
+            declarations_attached=bool(sentiq_tools),
+            tool_choice_mode=str(request_kwargs.get("tool_choice") or "none"),
+        )
         raw_response = client.chat.completions.with_raw_response.create(
             **request_kwargs,
         )
@@ -1929,6 +2023,15 @@ def _call_groq_stream(
     if sentiq_tools:
         request_kwargs["tools"] = sentiq_tools
         request_kwargs["tool_choice"] = "auto"
+    _log_sentiq_tool_diagnostic(
+        boundary="groq_provider_payload",
+        provider="groq",
+        model=resolved_model,
+        streaming=True,
+        sentiq_tool_request=sentiq_tool_request,
+        declarations_attached=bool(sentiq_tools),
+        tool_choice_mode=str(request_kwargs.get("tool_choice") or "none"),
+    )
     raw_response = client.chat.completions.with_raw_response.create(**request_kwargs)
     completion = raw_response.parse()
     _capture_groq_telemetry(raw_response.headers)
@@ -2505,6 +2608,15 @@ def call_llm_router(
     default_provider = prefer or get_provider_for_task(task)
     provider, resolved_override = resolve_model_override(model_override, default_provider)
     model = resolved_override or _default_model_for_provider(provider)
+    _log_sentiq_tool_diagnostic(
+        boundary="python_route_resolution",
+        provider=provider,
+        model=model,
+        streaming=False,
+        sentiq_tool_request=sentiq_tool_request,
+        declarations_attached=False,
+        tool_choice_mode="pending" if sentiq_tool_request else "none",
+    )
     actual_model_used = model
     fallback_triggered = False
     fallback_reason = None
@@ -2935,6 +3047,15 @@ def stream_llm_router(
     ) if task in CHATLIKE_TASKS else reasoning_effort
     provider, resolved_override = resolve_model_override(model_override, "pollinations")
     model = resolved_override or _default_model_for_provider(provider)
+    _log_sentiq_tool_diagnostic(
+        boundary="python_route_resolution",
+        provider=provider,
+        model=model,
+        streaming=True,
+        sentiq_tool_request=sentiq_tool_request,
+        declarations_attached=False,
+        tool_choice_mode="pending" if sentiq_tool_request else "none",
+    )
     gemini_stream_attempts: Optional[list[GeminiAttempt]] = None
     stream_reasoning_request = _is_reasoning_request(task, provider, model, skip_wrappers)
     if not _route_supports_required_capabilities(

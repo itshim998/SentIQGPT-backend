@@ -32,7 +32,12 @@ import {
   type ToolAvailabilityContext,
 } from "../orchestrator/toolContract";
 import { ToolCallStreamAccumulator, type RawProviderDelta } from "./modelToolTransport";
-import { isModelToolRegistryEnabled, type RequiredModelCapability } from "./modelToolCapability";
+import {
+  getModelToolRuntimeSnapshot,
+  isModelToolDiagnosticsEnabled,
+  isModelToolRegistryEnabled,
+  type RequiredModelCapability,
+} from "./modelToolCapability";
 import type {
   WebSurfAnswerPlan,
   WebSurfAnswerSourceContext,
@@ -164,13 +169,58 @@ export interface LLMAdapterResult {
   readonly error_detail?: string | null;
 }
 
-interface SentIQToolTransportRequest {
+export interface SentIQToolTransportRequest {
   readonly registry_version: string;
   readonly allowed_tool_fingerprint: string;
   readonly tool_choice_policy: string;
   readonly tools: ReturnType<typeof getProviderToolDefinitions>;
   readonly allowed_tool_names: readonly SentIQToolName[];
   readonly availability_context: ToolAvailabilityContext;
+}
+
+export function buildNodeModelToolDiagnostic(args: {
+  readonly boundary: "node_buffered_request" | "node_stream_request";
+  readonly call: LLMAdapterCall;
+  readonly request?: SentIQToolTransportRequest;
+  readonly streaming: boolean;
+}): Record<string, unknown> {
+  const flags = getModelToolRuntimeSnapshot();
+  const allowedToolNames = args.request?.allowed_tool_names ?? [];
+  const modelOverride = args.call.model_override?.trim() || null;
+  const normalizedModel = modelOverride?.toLowerCase() ?? "";
+  const provider = args.call.prefer
+    ?? (normalizedModel.includes(":") ? normalizedModel.split(":", 1)[0] : null)
+    ?? (normalizedModel === "gpt-oss-120b" || normalizedModel === "openai/gpt-oss-120b" ? "groq" : null)
+    ?? (normalizedModel.startsWith("gemini") || normalizedModel.startsWith("gemma") ? "gemini" : null);
+  return {
+    scope: "model_tool_transport",
+    event: "diagnostic",
+    boundary: args.boundary,
+    provider,
+    resolved_model: modelOverride,
+    task: args.call.task,
+    streaming: args.streaming,
+    registry_enabled: flags.registryEnabled,
+    groq_transport_enabled: flags.groqTransportEnabled,
+    gemini_transport_enabled: flags.geminiTransportEnabled,
+    selection_enabled: {
+      web_surf: flags.webSurfSelectionEnabled,
+      image_gen: flags.imageSelectionEnabled,
+      chart_gen: flags.chartSelectionEnabled,
+      file_gen: flags.fileSelectionEnabled,
+      memory_update: flags.memorySelectionEnabled,
+    },
+    allowed_tool_count: allowedToolNames.length,
+    allowed_tool_names: allowedToolNames,
+    tool_declarations_attached: Boolean(args.request?.tools.length),
+    tool_choice_mode: args.request ? "auto" : "none",
+    required_capabilities: args.call.required_capabilities ?? [],
+  };
+}
+
+function logNodeModelToolDiagnostic(args: Parameters<typeof buildNodeModelToolDiagnostic>[0]): void {
+  if (!isModelToolDiagnosticsEnabled()) return;
+  console.info(JSON.stringify(buildNodeModelToolDiagnostic(args)));
 }
 
 // Only the ordinary answer turn is eligible. Auxiliary "general" calls (for
@@ -205,6 +255,33 @@ export function buildSentIQToolTransportRequest(
     tools,
     allowed_tool_names: tools.map((tool) => tool.name),
     availability_context: availabilityContext,
+  };
+}
+
+export function buildLLMGatewayRequestBody(
+  call: LLMAdapterCall,
+  options: {
+    readonly budgetPolicy?: InternalBudgetPolicy;
+    readonly sentiqToolRequest?: SentIQToolTransportRequest;
+  } = {},
+): Record<string, unknown> {
+  const sentiqToolRequest = options.sentiqToolRequest ?? buildSentIQToolTransportRequest(call);
+  return {
+    prompt: call.prompt,
+    task: call.task,
+    use_simulation: call.use_simulation ?? false,
+    prefer: call.prefer,
+    model_override: call.model_override,
+    user_id: call.user_id,
+    safety_mode: call.safety_mode,
+    max_output_tokens: call.max_output_tokens,
+    reasoning_effort: call.reasoning_effort,
+    execution_mode: call.execution_mode,
+    skip_wrappers: call.skip_wrappers,
+    image_attachments: call.image_attachments,
+    required_capabilities: call.required_capabilities,
+    budget_policy: options.budgetPolicy,
+    sentiq_tool_request: sentiqToolRequest,
   };
 }
 
@@ -322,6 +399,12 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
   const sentiqToolRequest = buildSentIQToolTransportRequest(call);
+  logNodeModelToolDiagnostic({
+    boundary: "node_buffered_request",
+    call,
+    request: sentiqToolRequest,
+    streaming: false,
+  });
   const url = getInternalGatewayUrl("/llm/invoke");
   const abort = createAdapterAbortSignal(call.signal, call.timeout_ms ?? 90_000);
 
@@ -330,23 +413,10 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
     response = await fetch(url, {
       method: "POST",
       headers: getInternalGatewayHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        prompt: call.prompt,
-        task: call.task,
-        use_simulation: call.use_simulation ?? false,
-        prefer: call.prefer,
-        model_override: call.model_override,
-        user_id: call.user_id,
-        safety_mode: call.safety_mode,
-        max_output_tokens: call.max_output_tokens,
-        reasoning_effort: call.reasoning_effort,
-        execution_mode: call.execution_mode,
-        skip_wrappers: call.skip_wrappers,
-        image_attachments: call.image_attachments,
-        required_capabilities: call.required_capabilities,
-        budget_policy: prepared.budgetPolicy,
-        sentiq_tool_request: sentiqToolRequest,
-      }),
+      body: JSON.stringify(buildLLMGatewayRequestBody(call, {
+        budgetPolicy: prepared.budgetPolicy,
+        sentiqToolRequest,
+      })),
       signal: abort.signal,
     });
   } finally {
@@ -648,7 +718,13 @@ function textStreamToProviderDeltas(stream: ReadableStream<string>): ReadableStr
 export async function callLLMAdapterTurnStream(
   call: LLMAdapterCall,
 ): Promise<ReadableStream<ProviderDelta>> {
-  if (!buildSentIQToolTransportRequest(call)) {
+  const initialToolRequest = buildSentIQToolTransportRequest(call);
+  if (!initialToolRequest) {
+    logNodeModelToolDiagnostic({
+      boundary: "node_stream_request",
+      call,
+      streaming: true,
+    });
     return textStreamToProviderDeltas(await callLLMAdapterTextStreamLegacy(call));
   }
 
@@ -656,6 +732,12 @@ export async function callLLMAdapterTurnStream(
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
   const sentiqToolRequest = buildSentIQToolTransportRequest(call);
+  logNodeModelToolDiagnostic({
+    boundary: "node_stream_request",
+    call,
+    request: sentiqToolRequest,
+    streaming: true,
+  });
   if (!sentiqToolRequest) return textStreamToProviderDeltas(await callLLMAdapterTextStreamLegacy(call));
 
   const abort = createAdapterAbortSignal(call.signal, call.timeout_ms ?? 120_000);
@@ -664,23 +746,10 @@ export async function callLLMAdapterTurnStream(
     response = await fetch(getInternalGatewayUrl("/llm/stream"), {
       method: "POST",
       headers: getInternalGatewayHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        prompt: call.prompt,
-        task: call.task,
-        use_simulation: call.use_simulation ?? false,
-        prefer: call.prefer,
-        model_override: call.model_override,
-        user_id: call.user_id,
-        safety_mode: call.safety_mode,
-        max_output_tokens: call.max_output_tokens,
-        reasoning_effort: call.reasoning_effort,
-        execution_mode: call.execution_mode,
-        skip_wrappers: call.skip_wrappers,
-        image_attachments: call.image_attachments,
-        required_capabilities: call.required_capabilities,
-        budget_policy: prepared.budgetPolicy,
-        sentiq_tool_request: sentiqToolRequest,
-      }),
+      body: JSON.stringify(buildLLMGatewayRequestBody(call, {
+        budgetPolicy: prepared.budgetPolicy,
+        sentiqToolRequest,
+      })),
       signal: abort.signal,
     });
   } catch (error) {
@@ -788,7 +857,14 @@ export async function callLLMAdapterTurnStream(
 }
 
 export async function callLLMAdapterStream(call: LLMAdapterCall): Promise<ReadableStream<string>> {
-  if (!buildSentIQToolTransportRequest(call)) return callLLMAdapterTextStreamLegacy(call);
+  if (!buildSentIQToolTransportRequest(call)) {
+    logNodeModelToolDiagnostic({
+      boundary: "node_stream_request",
+      call,
+      streaming: true,
+    });
+    return callLLMAdapterTextStreamLegacy(call);
+  }
   const events = await callLLMAdapterTurnStream(call);
   const reader = events.getReader();
   return new ReadableStream<string>({

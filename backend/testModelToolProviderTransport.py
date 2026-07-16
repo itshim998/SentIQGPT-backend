@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,7 @@ import llm_adapter as adapter
 
 
 TOOL_REQUEST = {
-    "registry_version": "2026-07-pass1-v1",
+    "registry_version": "2026-07-pass5-v1",
     "allowed_tool_fingerprint": "guest-tools",
     "tool_choice_policy": "Answer normally unless a tool is genuinely required.",
     "allowed_tool_names": ["web_surf", "image_gen"],
@@ -69,8 +70,11 @@ def test_capabilities_and_cache_dimensions():
         adapter, "SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED", True
     ), patch.object(adapter, "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", True), patch.object(
         adapter, "GOOGLE_GENAI_MODULE", object()
+    ), patch.object(
+        adapter, "GOOGLE_GENAI_TYPES_MODULE", object()
     ):
         assert adapter.get_sentiq_tool_capability("groq", adapter.GROQ_CHAT_MODEL)["supported"] is True
+        assert adapter.get_sentiq_tool_capability("groq", "gpt-oss-120b")["supported"] is True
         assert adapter.get_sentiq_tool_capability("gemini", adapter.GEMINI_STANDARD_MODEL)["supported"] is True
         assert adapter.get_sentiq_tool_capability("gemini", adapter.GEMMA_PRIMARY_MODEL)["supported"] is False
         assert adapter.get_sentiq_tool_capability("pollinations", "openai-large")["supported"] is False
@@ -78,6 +82,30 @@ def test_capabilities_and_cache_dimensions():
         assert adapter._sentiq_tool_request_for_route(TOOL_REQUEST, "gemini", adapter.GEMINI_STANDARD_MODEL) is TOOL_REQUEST
         assert adapter._sentiq_tool_request_for_route(TOOL_REQUEST, "gemini", adapter.GEMMA_PRIMARY_MODEL) is None
         assert adapter._sentiq_tool_request_for_route(TOOL_REQUEST, "pollinations", "openai-large") is None
+        assert adapter.resolve_model_override("gpt-oss-120b", "gemini") == ("groq", adapter.GROQ_CHAT_MODEL)
+        assert adapter.resolve_model_override("openai/gpt-oss-120b", "gemini") == ("groq", adapter.GROQ_CHAT_MODEL)
+        assert adapter.resolve_model_override("groq:gpt-oss-120b", "gemini") == ("groq", adapter.GROQ_CHAT_MODEL)
+        assert adapter.resolve_model_override("gemini-standard", "groq") == ("gemini", adapter.GEMINI_STANDARD_MODEL)
+        assert adapter.resolve_model_override("gemini-lite", "groq") == ("gemini", adapter.GEMINI_LITE_MODEL)
+
+    with patch.object(adapter, "SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED", True), patch.object(
+        adapter.logger, "info"
+    ) as log_info:
+        adapter._log_sentiq_tool_diagnostic(
+            boundary="test_boundary",
+            provider="groq",
+            model=adapter.GROQ_CHAT_MODEL,
+            streaming=True,
+            sentiq_tool_request=TOOL_REQUEST,
+            declarations_attached=True,
+            tool_choice_mode="auto",
+        )
+    diagnostic = json.loads(log_info.call_args.args[1])
+    assert diagnostic["allowed_tool_names"] == ["web_surf"]
+    assert diagnostic["allowed_tool_count"] == 1
+    assert diagnostic["tool_declarations_attached"] is True
+    assert "prompt" not in diagnostic
+    assert "api_key" not in diagnostic
 
     base = adapter._cache_key("hello", "chat", "model", "groq")
     registry = adapter._cache_key(
@@ -105,6 +133,41 @@ def test_capabilities_and_cache_dimensions():
         adapter._cache_set("text", {"assistant_turn": {"kind": "assistant_text", "text": "safe"}})
         assert len(writes) == 1
         thread.assert_called_once()
+
+    with patch.object(adapter, "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED", True), patch.object(
+        adapter, "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", True
+    ), patch.object(adapter, "GOOGLE_GENAI_MODULE", object()), patch.object(
+        adapter, "GOOGLE_GENAI_TYPES_MODULE", None
+    ):
+        assert adapter.get_sentiq_tool_capability(
+            "gemini", adapter.GEMINI_STANDARD_MODEL
+        )["supported"] is False
+
+
+def test_fastapi_request_schema_retains_tool_transport():
+    from backend import llm_service as gateway
+
+    request = gateway.LLMInvokeRequest.model_validate({
+        "prompt": "safe fixture prompt",
+        "task": "chat",
+        "model_override": "gpt-oss-120b",
+        "user_id": "11111111-1111-1111-1111-111111111111",
+        "execution_mode": "fast",
+        "required_capabilities": ["sentiq_tools_streaming"],
+        "sentiq_tool_request": TOOL_REQUEST,
+    })
+    assert request.sentiq_tool_request == TOOL_REQUEST
+    assert request.required_capabilities == ["sentiq_tools_streaming"]
+    with patch.object(gateway, "SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED", True), patch.object(
+        gateway.logger, "info"
+    ) as log_info:
+        gateway.log_model_tool_gateway_diagnostic(request, request.model_override, streaming=True)
+    diagnostic = json.loads(log_info.call_args.args[1])
+    assert diagnostic["boundary"] == "fastapi_stream_receipt"
+    assert diagnostic["provider"] == "groq"
+    assert diagnostic["allowed_tool_names"] == ["web_surf"]
+    assert "prompt" not in diagnostic
+    assert "user_id" not in diagnostic
 
 
 def test_gemini_multimodal_contents_and_hard_capabilities():
@@ -299,6 +362,7 @@ def test_gemini_buffered_and_stream_transport():
         }]}]
         assert all(not isinstance(tool, FakeGeminiTypes.Tool) for tool in config["tools"])
         assert config["system_instruction"] == TOOL_REQUEST["tool_choice_policy"]
+        assert "google_search" not in config
     assert events == [
         {"kind": "tool_call_start", "id": "gemini_2", "name": "web_surf", "index": 0},
         {"kind": "tool_argument_delta", "id": "gemini_2", "text": '{"query":"latest release"}', "index": 0},
@@ -328,6 +392,8 @@ def test_capability_aware_fallbacks():
         adapter, "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED", True
     ), patch.object(adapter, "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", True), patch.object(
         adapter, "GOOGLE_GENAI_MODULE", object()
+    ), patch.object(
+        adapter, "GOOGLE_GENAI_TYPES_MODULE", object()
     ):
         result, model = adapter._invoke_gemini_attempt_chain(
             "Find the latest release",
@@ -411,6 +477,7 @@ def test_stream_fallback_stops_after_tool_selection():
 
 def main() -> int:
     test_capabilities_and_cache_dimensions()
+    test_fastapi_request_schema_retains_tool_transport()
     test_gemini_multimodal_contents_and_hard_capabilities()
     test_groq_buffered_and_fragmented_stream_transport()
     test_gemini_buffered_and_stream_transport()

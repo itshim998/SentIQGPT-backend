@@ -17,6 +17,18 @@ async function main(): Promise<void> {
     ["sentiq_tools_buffered"],
   ), true);
   assert.equal(routeSupportsCapabilities(
+    { provider: "groq", model: "openai/gpt-oss-120b" },
+    ["sentiq_tools_streaming"],
+  ), true);
+  assert.equal(routeSupportsCapabilities(
+    { provider: "groq", model: "groq:openai/gpt-oss-120b" },
+    ["sentiq_tools_streaming"],
+  ), true);
+  assert.equal(routeSupportsCapabilities(
+    { provider: "groq", model: "llama-3.3-70b-versatile" },
+    ["sentiq_tools_streaming"],
+  ), false);
+  assert.equal(routeSupportsCapabilities(
     { provider: "groq", model: "gpt-oss-120b" },
     ["image_input"],
   ), false);

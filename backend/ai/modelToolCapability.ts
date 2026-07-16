@@ -19,6 +19,30 @@ export interface SentIQToolCapability {
   readonly reason: string;
 }
 
+export const SENTIQ_MODEL_TOOL_ENV = Object.freeze({
+  registry: "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED",
+  groqTransport: "SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED",
+  geminiTransport: "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED",
+  webSurfSelection: "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED",
+  imageSelection: "SENTIQ_MODEL_IMAGE_SELECTION_ENABLED",
+  chartSelection: "SENTIQ_MODEL_CHART_SELECTION_ENABLED",
+  fileSelection: "SENTIQ_MODEL_FILE_SELECTION_ENABLED",
+  memorySelection: "SENTIQ_MODEL_MEMORY_SELECTION_ENABLED",
+  diagnostics: "SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED",
+} as const);
+
+export interface ModelToolRuntimeSnapshot {
+  readonly registryEnabled: boolean;
+  readonly groqTransportEnabled: boolean;
+  readonly geminiTransportEnabled: boolean;
+  readonly webSurfSelectionEnabled: boolean;
+  readonly imageSelectionEnabled: boolean;
+  readonly chartSelectionEnabled: boolean;
+  readonly fileSelectionEnabled: boolean;
+  readonly memorySelectionEnabled: boolean;
+  readonly diagnosticsEnabled: boolean;
+}
+
 const CAPABILITIES: Readonly<Record<LLMProviderKind, SentIQToolCapability>> = {
   groq: { provider: "groq", buffered: true, streaming: true, reason: "openai_function_transport" },
   gemini: { provider: "gemini", buffered: true, streaming: true, reason: "google_function_transport" },
@@ -26,6 +50,17 @@ const CAPABILITIES: Readonly<Record<LLMProviderKind, SentIQToolCapability>> = {
   pollinations: { provider: "pollinations", buffered: false, streaming: false, reason: "text_only_transport" },
   unknown: { provider: "unknown", buffered: false, streaming: false, reason: "capability_not_declared" },
 };
+
+const GROQ_SENTIQ_TOOL_MODELS = new Set([
+  "gpt-oss-120b",
+  "openai/gpt-oss-120b",
+]);
+
+export function isGroqSentIQToolModel(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  const withoutProvider = normalized.startsWith("groq:") ? normalized.slice("groq:".length) : normalized;
+  return GROQ_SENTIQ_TOOL_MODELS.has(withoutProvider);
+}
 
 export function getSentIQToolCapability(provider: LLMProviderKind): SentIQToolCapability {
   return CAPABILITIES[provider];
@@ -40,7 +75,8 @@ export function normalizeRouteProvider(route: ModelCapabilityRoute): LLMProvider
   const provider = route.provider.trim().toLowerCase();
   const model = route.model.trim().toLowerCase();
   if (provider === "gemini" && model.includes("gemma")) return "gemma";
-  if (provider === "groq" || provider === "gemini" || provider === "gemma" || provider === "pollinations") {
+  if (provider === "groq") return isGroqSentIQToolModel(model) ? "groq" : "unknown";
+  if (provider === "gemini" || provider === "gemma" || provider === "pollinations") {
     return provider;
   }
   return "unknown";
@@ -91,62 +127,83 @@ export function deriveRequiredModelCapabilities(args: {
 }
 
 export function isModelToolRegistryEnabled(
-  value = process.env.SENTIQ_MODEL_TOOL_REGISTRY_ENABLED,
+  value = process.env[SENTIQ_MODEL_TOOL_ENV.registry],
 ): boolean {
   return value?.trim().toLowerCase() === "true";
 }
 
 export function isGroqSentIQToolTransportEnabled(
-  value = process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
+  value = process.env[SENTIQ_MODEL_TOOL_ENV.groqTransport],
 ): boolean {
   return value?.trim().toLowerCase() === "true";
 }
 
 export function isGeminiSentIQToolTransportEnabled(
-  value = process.env.SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,
+  value = process.env[SENTIQ_MODEL_TOOL_ENV.geminiTransport],
 ): boolean {
   return value?.trim().toLowerCase() === "true";
 }
 
 export function isModelWebSurfSelectionEnabled(
-  value = process.env.SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED,
+  value = process.env[SENTIQ_MODEL_TOOL_ENV.webSurfSelection],
 ): boolean {
   return value?.trim().toLowerCase() === "true";
 }
 
 export function isModelImageSelectionEnabled(
-  value = process.env.SENTIQ_MODEL_IMAGE_SELECTION_ENABLED,
+  value = process.env[SENTIQ_MODEL_TOOL_ENV.imageSelection],
 ): boolean {
   return value?.trim().toLowerCase() === "true";
 }
 
 export function isModelChartSelectionEnabled(
-  value = process.env.SENTIQ_MODEL_CHART_SELECTION_ENABLED,
+  value = process.env[SENTIQ_MODEL_TOOL_ENV.chartSelection],
 ): boolean {
   return value?.trim().toLowerCase() === "true";
 }
 
 export function isModelFileSelectionEnabled(
-  value = process.env.SENTIQ_MODEL_FILE_SELECTION_ENABLED,
+  value = process.env[SENTIQ_MODEL_TOOL_ENV.fileSelection],
 ): boolean {
   return value?.trim().toLowerCase() === "true";
 }
 
 export function isModelMemorySelectionEnabled(
-  value = process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED,
+  value = process.env[SENTIQ_MODEL_TOOL_ENV.memorySelection],
 ): boolean {
   return value?.trim().toLowerCase() === "true";
 }
 
+export function isModelToolDiagnosticsEnabled(
+  value = process.env[SENTIQ_MODEL_TOOL_ENV.diagnostics],
+): boolean {
+  return value?.trim().toLowerCase() === "true";
+}
+
+export function getModelToolRuntimeSnapshot(): ModelToolRuntimeSnapshot {
+  return {
+    registryEnabled: isModelToolRegistryEnabled(),
+    groqTransportEnabled: isGroqSentIQToolTransportEnabled(),
+    geminiTransportEnabled: isGeminiSentIQToolTransportEnabled(),
+    webSurfSelectionEnabled: isModelWebSurfSelectionEnabled(),
+    imageSelectionEnabled: isModelImageSelectionEnabled(),
+    chartSelectionEnabled: isModelChartSelectionEnabled(),
+    fileSelectionEnabled: isModelFileSelectionEnabled(),
+    memorySelectionEnabled: isModelMemorySelectionEnabled(),
+    diagnosticsEnabled: isModelToolDiagnosticsEnabled(),
+  };
+}
+
 export function getEnabledAutomaticSentIQTools(): readonly SentIQToolName[] {
-  if (!isModelToolRegistryEnabled()) return [];
-  if (!isGroqSentIQToolTransportEnabled() && !isGeminiSentIQToolTransportEnabled()) return [];
+  const flags = getModelToolRuntimeSnapshot();
+  if (!flags.registryEnabled) return [];
+  if (!flags.groqTransportEnabled && !flags.geminiTransportEnabled) return [];
   return [
-    ...(isModelWebSurfSelectionEnabled() ? ["web_surf" as const] : []),
-    ...(isModelImageSelectionEnabled() ? ["image_gen" as const] : []),
-    ...(isModelChartSelectionEnabled() ? ["chart_gen" as const] : []),
-    ...(isModelFileSelectionEnabled() ? ["file_gen" as const] : []),
-    ...(isModelMemorySelectionEnabled() ? ["memory_update" as const] : []),
+    ...(flags.webSurfSelectionEnabled ? ["web_surf" as const] : []),
+    ...(flags.imageSelectionEnabled ? ["image_gen" as const] : []),
+    ...(flags.chartSelectionEnabled ? ["chart_gen" as const] : []),
+    ...(flags.fileSelectionEnabled ? ["file_gen" as const] : []),
+    ...(flags.memorySelectionEnabled ? ["memory_update" as const] : []),
   ];
 }
 

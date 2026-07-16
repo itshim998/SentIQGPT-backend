@@ -47,3 +47,5 @@ Repository defaults remain off. A controlled environment must set `SENTIQ_MODEL_
 - `SENTIQ_MODEL_MEMORY_SELECTION_ENABLED=true`
 
 Turning the registry or a selection flag off leaves ordinary chat and explicit manual controls available. It does not reactivate any keyword router. Real `.env` values are a deployment decision and are not changed by this pass.
+
+For a controlled diagnosis, set `SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED=true` temporarily. Node, FastAPI, and the Groq/Gemini payload builders then log only provider/model identifiers, flag booleans, streaming mode, allowed-tool counts/names, declaration presence, and tool-choice mode. Prompts, credentials, memory contents, and raw provider payloads are never logged. Return the flag to `false` after verification.
