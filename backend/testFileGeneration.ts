@@ -6,6 +6,8 @@ import {
   resolveFileGenerationIntent,
 } from "./tools/fileGeneration/fileDetector";
 import type { LLMAdapterResult } from "./ai/PromptBuilders";
+import { buildContextFast } from "./context/contextBuilder";
+import { FAST_PROFILE } from "./orchestrator/executionProfile";
 
 type RouteFileGeneration = typeof import("./tools/fileGeneration/fileGenerator").routeFileGeneration;
 
@@ -82,6 +84,60 @@ async function testMinimaxFallbackAndMetadata(): Promise<void> {
   assert.match(result.fallback_reason || "", /json|parse|Unexpected/i);
   assert.equal(savedMetadata?.fileName, "project-summary.txt");
   assert.equal(savedMetadata?.storagePath, "00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000002/file-1/doc.txt");
+}
+
+async function testLiveChatContextHandoffToPdfGeneration(): Promise<void> {
+  const userDb = {};
+  const userId = "00000000-0000-4000-8000-000000000021";
+  const conversationId = "00000000-0000-4000-8000-000000000022";
+  const userMessage = "Create a downloadable PDF containing a one-page Operating Systems study checklist.";
+  const context = await buildContextFast(
+    {
+      recent_messages: [{ role: "user", content: userMessage }],
+      userMessage,
+      conversationId,
+      clientRequestId: "request-file-context-handoff",
+    },
+    userDb as any,
+    userId,
+    { profile: FAST_PROFILE },
+  );
+
+  assert.equal(context.userDb, userDb, "the live context must retain the resolved database for file execution");
+  const result = await routeFileGeneration(
+    {
+      userMessage,
+      requestedFormat: "pdf",
+      userId: context.userId || "",
+      conversationId: context.conversationId || "",
+      userDb: context.userDb,
+    },
+    {},
+    {
+      callModel: async () => llmResult(JSON.stringify({
+        title: "Operating Systems Study Checklist",
+        format: "pdf",
+        sections: [{
+          heading: "Core topics",
+          bullets: ["Processes and threads", "Memory management", "File systems"],
+        }],
+      }), "minimax"),
+      uploadFile: async (_client, params) => ({
+        success: true,
+        fileId: "file-context-handoff",
+        fileUrl: "/api/generated-files/file-context-handoff/download",
+        storagePath: `${params.userId}/${params.chatId}/file-context-handoff/v1/doc.pdf`,
+        storageBucket: "sentiq-generated-files-private",
+        fileSizeBytes: params.buffer.length,
+      }),
+      saveMetadata: async () => undefined,
+      storageDb: {},
+    },
+  );
+
+  assert.equal(result.success, true, "the production calling convention must reach PDF rendering and storage");
+  assert.equal(result.format, "pdf");
+  assert.equal(result.file_id, "file-context-handoff");
 }
 
 async function testXlsxRendererValidation(): Promise<void> {
@@ -541,6 +597,7 @@ async function main(): Promise<void> {
   installSupabaseEnvForImports();
   ({ routeFileGeneration } = await import("./tools/fileGeneration/fileGenerator"));
   await testFileIntentDetection();
+  await testLiveChatContextHandoffToPdfGeneration();
   await testMinimaxFallbackAndMetadata();
   await testXlsxRendererValidation();
   await testDocxRepairsSlideShape();

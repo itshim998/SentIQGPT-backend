@@ -142,17 +142,26 @@ async function main() {
     },
   };
 
-  await buildContextFast(
+  const fastContext = await buildContextFast(
     {
       recent_messages: [{ role: "user", content: "Do you remember this local preference?" }],
       memories: [{ type: "preference", summary: "User prefers concise answers.", importance: 8 }],
       userMessage: "Do you remember this local preference?",
+      conversationId: "00000000-0000-4000-8000-000000000101",
+      clientRequestId: "request-context-handoff",
     },
     throwingDb as any,
     "user-1",
     { profile: FAST_PROFILE },
   );
   assert.equal(cloudMemoryTouched, false, "fast profile skips cloud memory fetch in fast context");
+  assert.equal(
+    fastContext.userDb,
+    throwingDb,
+    "fast context preserves the resolved database passed separately by the live chat route",
+  );
+  assert.equal(fastContext.conversationId, "00000000-0000-4000-8000-000000000101");
+  assert.equal(fastContext.clientRequestId, "request-context-handoff");
 
   console.log("PASS | Execution profile regression checks passed.");
 }
