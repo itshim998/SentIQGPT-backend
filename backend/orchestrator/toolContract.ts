@@ -2,16 +2,21 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ExecutionMode } from "./executionProfile";
 
-export const SENTIQ_TOOL_REGISTRY_VERSION = "2026-07-pass5-v1";
+export const SENTIQ_TOOL_REGISTRY_VERSION = "2026-07-pass5-v2";
 export const MAX_TOOL_ARGUMENT_BYTES = 16 * 1024;
 export const MAX_TOOL_CALLS_PER_TURN = 4;
 
 export const SENTIQ_TOOL_CHOICE_POLICY = [
   "The available SentIQ tools are real executable capabilities.",
-  "When the user explicitly requests an available tool, or satisfying the request genuinely requires one, call the appropriate tool instead of denying the capability or merely narrating that you will use it.",
+  "Call exactly one appropriate tool when the user explicitly requests an available capability or satisfying the request genuinely requires it.",
+  "An explicit request for a downloadable file must call file_gen; do not answer with the requested file contents only as chat text.",
+  "An explicit request to remember durable identity, preference, or project information must call memory_update; do not merely say it was remembered.",
+  "An explicit request to generate a new image must call image_gen.",
+  "An explicit request to create a chart must call chart_gen, and a request for current or externally verified web information must call web_surf.",
+  "Do not deny these capabilities or say that you cannot create files, save memories, generate images, create charts, search the web, or use tools when the corresponding tool is available.",
   "Never claim that you searched, generated, created, or saved something unless you return the corresponding tool call; only a successful tool result confirms completion.",
-  "Answer normally when no SentIQ tool is genuinely required.",
-  "Do not call a tool merely because a keyword appears.",
+  "Answer normally when no SentIQ tool is genuinely required, including ordinary questions that merely discuss files, memory, images, charts, web search, or how those features work.",
+  "Do not call a tool merely because a keyword appears or because the user asks for ordinary text that does not require an executable capability.",
   "Use the original user request as the tool argument when it is already suitable.",
   "Refine an argument only as needed for execution, preserving every material user constraint.",
   "Do not invent material facts, entities, dates, identities, scope, or requirements.",
@@ -97,8 +102,8 @@ const schemas = {
   file_gen: z.object({ request: boundedText, format: fileFormat.optional() }).strict(),
   memory_update: z.object({
     content: boundedText,
-    type: z.enum(["identity", "preference", "project"]),
-    scope: z.enum(["global", "chat"]),
+    type: z.enum(["identity", "preference", "project"]).optional(),
+    scope: z.enum(["global", "chat"]).optional(),
   }).strict(),
 } as const;
 
@@ -150,7 +155,7 @@ export const SENTIQ_TOOL_REGISTRY: readonly ToolDefinition[] = [
   }),
   definition({
     name: "image_gen",
-    description: "Generate an image when the user asks for a new visual asset.",
+    description: "Generate a new image or visual asset. Use this for explicit image-generation requests instead of describing an image in chat text.",
     inputSchema: objectSchema({ prompt: stringProperty("The image the user wants generated.") }, ["prompt"]),
     resultSchema: objectSchema({ image: { type: "object" } }, ["image"]),
     authorization: "entitled",
@@ -170,7 +175,7 @@ export const SENTIQ_TOOL_REGISTRY: readonly ToolDefinition[] = [
   }),
   definition({
     name: "file_gen",
-    description: "Create a downloadable file explicitly requested by the user.",
+    description: "Create and return a downloadable file, such as a PDF, TXT, DOCX, PPTX, XLSX, or HTML file. Use this whenever the user explicitly asks for a downloadable file instead of returning only chat text.",
     inputSchema: objectSchema({
       request: stringProperty("The requested file and its material content constraints."),
       format: stringProperty("Optional supported output format.", { enum: fileFormat.options }),
@@ -183,12 +188,12 @@ export const SENTIQ_TOOL_REGISTRY: readonly ToolDefinition[] = [
   }),
   definition({
     name: "memory_update",
-    description: "Store an explicit user request to remember durable identity, preference, or project information.",
+    description: "Persist durable identity, preference, or project information when the user explicitly asks SentIQ to remember or save it. The server controls authorization, scope, and persistence.",
     inputSchema: objectSchema({
-      content: stringProperty("A concise durable fact the user explicitly asked SentIQ to remember."),
-      type: stringProperty("The durable memory category.", { enum: ["identity", "preference", "project"] }),
-      scope: stringProperty("Use chat only when the user limits the memory to this chat; otherwise use global.", { enum: ["global", "chat"] }),
-    }, ["content", "type", "scope"]),
+      content: stringProperty("The durable fact the user explicitly asked SentIQ to remember. Preserve the user's requested meaning."),
+      type: stringProperty("Optional memory category when it is clear from the request. The server infers it when omitted.", { enum: ["identity", "preference", "project"] }),
+      scope: stringProperty("Optional requested scope. Use chat only when the user limits the memory to this chat; otherwise the server defaults to global.", { enum: ["global", "chat"] }),
+    }, ["content"]),
     resultSchema: objectSchema({ memory: { type: "object" } }, ["memory"]),
     authorization: "authenticated",
     handoff: "terminal_structured",

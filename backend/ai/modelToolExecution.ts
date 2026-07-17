@@ -7,6 +7,26 @@ import {
   type ToolLifecycleEvent,
   type ValidatedToolCall,
 } from "../orchestrator/toolContract";
+import { isModelToolDiagnosticsEnabled } from "./modelToolCapability";
+
+function logExecutionDiagnostic(args: {
+  readonly outcome: "validation_error" | ToolLifecycleEvent["type"];
+  readonly context: ToolAvailabilityContext;
+  readonly call?: ValidatedToolCall;
+  readonly code?: string;
+}): void {
+  if (!isModelToolDiagnosticsEnabled()) return;
+  console.info(JSON.stringify({
+    scope: "model_tool_execution",
+    event: "diagnostic",
+    boundary: "node_tool_execution",
+    outcome: args.outcome,
+    selected_tool: args.call?.name ?? null,
+    call_id: args.call?.id ?? null,
+    execution_mode: args.context.executionMode ?? null,
+    code: args.code ?? null,
+  }));
+}
 
 export class AutomaticToolDispatchError extends Error {
   constructor(
@@ -67,16 +87,25 @@ export async function dispatchAutomaticModelToolCall<T>(args: {
   executeImage: (prompt: string, call: ValidatedToolCall) => Promise<T>;
   executeChart: (request: string, call: ValidatedToolCall) => Promise<T>;
   executeFile: (request: string, format: string | undefined, call: ValidatedToolCall) => Promise<T>;
-  executeMemory: (content: string, type: "identity" | "preference" | "project", scope: "global" | "chat", call: ValidatedToolCall) => Promise<T>;
+  executeMemory: (content: string, type: "identity" | "preference" | "project" | undefined, scope: "global" | "chat" | undefined, call: ValidatedToolCall) => Promise<T>;
   isFailure?: (result: T, call: ValidatedToolCall) => boolean;
   onLifecycleEvent?: (event: ToolLifecycleEvent) => void | Promise<void>;
 }): Promise<{ call: ValidatedToolCall; result: T; events: readonly ToolLifecycleEvent[] }> {
-  const call = validateSingleAutomaticToolCall(args.calls, args.context, args.allowedTools);
+  let call: ValidatedToolCall;
+  try {
+    call = validateSingleAutomaticToolCall(args.calls, args.context, args.allowedTools);
+  } catch (error) {
+    logExecutionDiagnostic({ outcome: "validation_error", context: args.context, code: "validation_failed" });
+    throw error;
+  }
   const events: ToolLifecycleEvent[] = [
     { type: "tool_selected", tool: call.name, call_id: call.id },
     { type: "tool_started", tool: call.name, call_id: call.id },
   ];
-  for (const event of events) await args.onLifecycleEvent?.(event);
+  for (const event of events) {
+    logExecutionDiagnostic({ outcome: event.type, context: args.context, call, code: event.code });
+    await args.onLifecycleEvent?.(event);
+  }
   try {
     let result: T;
     switch (call.name) {
@@ -99,8 +128,12 @@ export async function dispatchAutomaticModelToolCall<T>(args: {
       case "memory_update":
         result = await args.executeMemory(
           String(call.arguments.content),
-          call.arguments.type as "identity" | "preference" | "project",
-          call.arguments.scope as "global" | "chat",
+          typeof call.arguments.type === "string"
+            ? call.arguments.type as "identity" | "preference" | "project"
+            : undefined,
+          typeof call.arguments.scope === "string"
+            ? call.arguments.scope as "global" | "chat"
+            : undefined,
           call,
         );
         break;
@@ -109,6 +142,7 @@ export async function dispatchAutomaticModelToolCall<T>(args: {
       ? { type: "tool_error", tool: call.name, call_id: call.id, code: "execution_failed" }
       : { type: "tool_result", tool: call.name, call_id: call.id };
     events.push(terminalEvent);
+    logExecutionDiagnostic({ outcome: terminalEvent.type, context: args.context, call, code: terminalEvent.code });
     await args.onLifecycleEvent?.(terminalEvent);
     return { call, result, events };
   } catch (error) {
@@ -119,6 +153,7 @@ export async function dispatchAutomaticModelToolCall<T>(args: {
       code: "execution_failed",
     };
     events.push(terminalEvent);
+    logExecutionDiagnostic({ outcome: terminalEvent.type, context: args.context, call, code: terminalEvent.code });
     await args.onLifecycleEvent?.(terminalEvent);
     throw new AutomaticToolDispatchError(call, events, error);
   }

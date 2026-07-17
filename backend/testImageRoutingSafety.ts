@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import {
   executeImageGenerationWithProviders,
+  getImageProviderOrder,
 } from "./tools/imageGeneration/imageRouter";
+import { getImageModelForPlan } from "./billing/modelEntitlementRouter";
 import { buildPollinationsUrl } from "./tools/imageGeneration/pollinationsUtils";
 import {
   ImageProviderFailure,
@@ -22,6 +24,27 @@ function provider(
 }
 
 async function main(): Promise<void> {
+  const previousNormalModel = process.env.SENTIQ_IMAGE_MODEL_NORMAL;
+  const previousCoreModel = process.env.SENTIQ_IMAGE_MODEL_TEXT_CORE;
+  const previousPremiumModel = process.env.SENTIQ_IMAGE_MODEL_TEXT_PREMIUM;
+  delete process.env.SENTIQ_IMAGE_MODEL_NORMAL;
+  delete process.env.SENTIQ_IMAGE_MODEL_TEXT_CORE;
+  delete process.env.SENTIQ_IMAGE_MODEL_TEXT_PREMIUM;
+  try {
+    assert.equal(getImageModelForPlan("free", "a puppy in snow").model, "flux");
+    assert.equal(getImageModelForPlan("free", "a poster with a title").model, "flux");
+    assert.equal(getImageModelForPlan("premium", "a poster with a title").model, "flux");
+    assert.equal(getImageProviderOrder("a puppy in snow")[0], "flux");
+    assert.equal(getImageProviderOrder("a detailed poster with text")[0], "flux");
+    assert.deepEqual(getImageProviderOrder("a poster", "gptimage").slice(0, 2), ["gptimage", "flux"]);
+  } finally {
+    if (previousNormalModel === undefined) delete process.env.SENTIQ_IMAGE_MODEL_NORMAL;
+    else process.env.SENTIQ_IMAGE_MODEL_NORMAL = previousNormalModel;
+    if (previousCoreModel === undefined) delete process.env.SENTIQ_IMAGE_MODEL_TEXT_CORE;
+    else process.env.SENTIQ_IMAGE_MODEL_TEXT_CORE = previousCoreModel;
+    if (previousPremiumModel === undefined) delete process.env.SENTIQ_IMAGE_MODEL_TEXT_PREMIUM;
+    else process.env.SENTIQ_IMAGE_MODEL_TEXT_PREMIUM = previousPremiumModel;
+  }
   assert.equal(failureOutcomeForHttpStatus(400), "definitive");
   assert.equal(failureOutcomeForHttpStatus(429), "definitive");
   assert.equal(failureOutcomeForHttpStatus(408), "indeterminate");
@@ -70,22 +93,22 @@ async function main(): Promise<void> {
   assert.equal(rateLimitAttempts, 2, "429 receives one safe same-provider retry");
   assert.equal(rateLimitFallbackCalls, 1, "429 may fall back after the definitive refusal repeats");
 
-  let forbiddenCalls = 0;
+  let fallbackCalls = 0;
   const indeterminate = await executeImageGenerationWithProviders({
     prompt: "simple icon",
     requestKey: "stable-request",
     providers: [
-      provider("timeout", async () => {
+      provider("gptimage", async () => {
         throw new ImageProviderFailure("timed out", "indeterminate");
       }),
-      provider("must-not-run", async () => {
-        forbiddenCalls += 1;
-        return { base64: "duplicate-risk" };
+      provider("flux", async () => {
+        fallbackCalls += 1;
+        return { base64: "image" };
       }),
     ],
   });
-  assert.equal(indeterminate.success, false);
-  assert.equal(forbiddenCalls, 0, "indeterminate outcomes must stop cross-provider fallback");
+  assert.equal(indeterminate.success, true);
+  assert.equal(fallbackCalls, 1, "a gptimage timeout must not prevent Flux fallback");
 
   const controller = new AbortController();
   controller.abort(new Error("user cancelled"));

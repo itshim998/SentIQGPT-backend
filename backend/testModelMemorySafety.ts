@@ -50,6 +50,7 @@ async function main(): Promise<void> {
 
   const executor = readFileSync("backend/orchestrator/toolExecutor.ts", "utf8");
   assert.match(executor, /executeMemory: \(_content, type, scope\)/, "model content must be ignored");
+  assert.match(executor, /resolveAutomaticMemoryUpdate/, "scope and missing category defaults stay server-controlled");
   assert.match(executor, /Object\.defineProperty\(memory, "automatic_idempotency_key"/);
   assert.match(executor, /enumerable: false/);
   const server = readFileSync("backend/server.ts", "utf8");

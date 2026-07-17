@@ -212,6 +212,7 @@ export function buildNodeModelToolDiagnostic(args: {
     provider,
     resolved_model: modelOverride,
     task: args.call.task,
+    execution_mode: args.call.execution_mode ?? args.request?.availability_context.executionMode ?? null,
     streaming: args.streaming,
     tool_transport_mode: args.call.tool_transport_mode ?? (args.request ? (args.streaming ? "streaming" : "buffered") : "none"),
     registry_enabled: flags.registryEnabled,

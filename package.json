@@ -50,6 +50,7 @@
     "verify:model-native-executors-live": "ts-node --project tsconfig.backend.json backend/verifyModelNativeExecutors.ts",
     "verify:model-native-memory-migration-live": "ts-node --project tsconfig.backend.json backend/verifyAutomaticMemoryMigrationLive.ts",
     "verify:model-native-stack-startup-live": "node scripts/verifyModelNativeStackStartupLive.mjs",
+    "verify:model-native-chat-pipeline-live": "node scripts/verifyModelNativeChatPipelineLive.mjs",
     "verify:model-native-tools": "node scripts/verifyModelNativeTools.mjs",
     "test:priority4-contracts": "ts-node --project tsconfig.backend.json backend/testPriority4Contracts.ts",
     "test:phase0": "ts-node --project tsconfig.backend.json backend/testPhase0EmergencyStabilization.ts",

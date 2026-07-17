@@ -35,7 +35,7 @@ import type { ToolLifecycleEvent, ValidatedToolCall } from "./toolContract";
 import { AutomaticToolDispatchError, dispatchAutomaticModelToolCall } from "../ai/modelToolExecution";
 import type { GeneratedFileFormat } from "../tools/fileGeneration/types";
 import { getConversationMessageByClientRequestId } from "../services/conversationService";
-import { authorizeAutomaticMemoryUpdate, enforceAutomaticMemoryScope } from "../ai/modelToolMemorySafety";
+import { resolveAutomaticMemoryUpdate } from "../ai/modelToolMemorySafety";
 
 // ==============================
 // Types
@@ -525,8 +525,8 @@ async function execImageGeneration(
 
 async function execAutomaticMemoryUpdate(
   originalUserMessage: string,
-  type: "identity" | "preference" | "project",
-  scope: "global" | "chat",
+  type: "identity" | "preference" | "project" | undefined,
+  scope: "global" | "chat" | undefined,
   ctx: BuiltContext,
   profile: ExecutionProfile,
   signal?: AbortSignal,
@@ -538,13 +538,14 @@ async function execAutomaticMemoryUpdate(
   if (!ctx.clientRequestId?.trim()) {
     throw new Error("Automatic memory updates require a client request ID.");
   }
-  const authorization = enforceAutomaticMemoryScope(
-    authorizeAutomaticMemoryUpdate(originalUserMessage),
-    scope,
-  );
+  const authorization = resolveAutomaticMemoryUpdate({
+    originalUserMessage,
+    modelType: type,
+    modelScope: scope,
+  });
   const candidate = await prepareModelSelectedMemory({
     content: authorization.content,
-    type,
+    type: authorization.type,
     generateEmbedding: profile.persistence.blockOnMemoryEmbedding,
   });
   throwIfAborted(signal);

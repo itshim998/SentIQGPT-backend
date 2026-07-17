@@ -18,7 +18,12 @@ import {
   isModelWebSurfSelectionEnabled,
 } from "./ai/modelToolCapability";
 import { planTask } from "./orchestrator/planner";
-import { authorizeAutomaticMemoryUpdate, enforceAutomaticMemoryScope } from "./ai/modelToolMemorySafety";
+import {
+  authorizeAutomaticMemoryUpdate,
+  enforceAutomaticMemoryScope,
+  inferAutomaticMemoryType,
+  resolveAutomaticMemoryUpdate,
+} from "./ai/modelToolMemorySafety";
 import { fetchPollinationsImage } from "./tools/imageGeneration/pollinationsUtils";
 import { validateSingleAutomaticToolCall, type ProviderDelta, type ValidatedToolCall } from "./orchestrator/toolContract";
 
@@ -256,6 +261,19 @@ async function main(): Promise<void> {
     assert.deepEqual(
       authorizeAutomaticMemoryUpdate("Save for this chat that I prefer concise answers."),
       { content: "I prefer concise answers.", scope: "chat" },
+    );
+    assert.equal(inferAutomaticMemoryType("my preferred report style is concise bullet points."), "preference");
+    assert.equal(inferAutomaticMemoryType("I am working on the Atlas launch project."), "project");
+    assert.equal(inferAutomaticMemoryType("my name is Mira."), "identity");
+    assert.deepEqual(
+      resolveAutomaticMemoryUpdate({
+        originalUserMessage: "Remember globally that my preferred report style is concise bullet points.",
+      }),
+      {
+        content: "my preferred report style is concise bullet points.",
+        scope: "global",
+        type: "preference",
+      },
     );
     assert.throws(() => authorizeAutomaticMemoryUpdate("My name is Mira."), /direct, explicit/);
     assert.throws(() => authorizeAutomaticMemoryUpdate("Remember this."), /does not identify/);

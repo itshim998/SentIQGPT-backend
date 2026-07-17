@@ -3,18 +3,17 @@
 // Sequential fallback router with per-provider cooldowns, retry, and queue.
 // Tries each provider in priority order; returns as soon as one succeeds.
 //
-// Provider chain (standard):
-//   1. zimage                     (primary - Pollinations CDN)
-//   2. HuggingFace SDXL           (requires HUGGINGFACE_API_TOKEN)
-//   3. FLUX.2 Dev                 (Pollinations fallback)
+// Provider chain (standard and automatic default):
+//   1. Flux                       (primary - Pollinations CDN)
+//   2. zimage                     (Pollinations fallback)
+//   3. HuggingFace SDXL           (requires HUGGINGFACE_API_TOKEN)
 //   4. Z-Image Turbo              (Pollinations fallback)
 //
 // Provider chain (complex):
-//   1. wan-image                 (complex prompt primary)
+//   1. Flux                       (primary)
 //   2. zimage                     (fallback)
-//   3. FLUX.2 Dev                 (fallback)
-//   4. HuggingFace SDXL           (fallback)
-//   5. Z-Image Turbo              (fallback)
+//   3. HuggingFace SDXL           (fallback)
+//   4. Z-Image Turbo              (fallback)
 //
 // Features:
 //   - Fair in-process queue with per-user limits and bounded concurrency
@@ -36,7 +35,7 @@ import {
   type ImageGenerationResult,
 } from "./types";
 import { ZimageProvider } from "./providers/zimageProvider";
-import { FluxDevProvider } from "./providers/fluxDevProvider";
+import { FluxSchnellProvider } from "./providers/fluxSchnellProvider";
 import { PollinationsProvider } from "./providers/pollinationsProvider";
 import { HuggingFaceProvider } from "./providers/huggingfaceProvider";
 import { GptImageProvider } from "./providers/gptImageProvider";
@@ -47,19 +46,18 @@ import { GptImageProvider } from "./providers/gptImageProvider";
 
 // Standard providers (simple/moderate prompts)
 const standardProviders: readonly ImageProvider[] = [
-  new ZimageProvider(),          // 1. zimage (primary)
-  new HuggingFaceProvider(),     // 2. HuggingFace SDXL (fast fallback with API key)
-  new FluxDevProvider(),          // 3. Pollinations FLUX
-  new PollinationsProvider(),     // 4. Pollinations Z-Image Turbo
+  new FluxSchnellProvider(),      // 1. Pollinations Flux (reliable production default)
+  new ZimageProvider(),           // 2. Pollinations zimage fallback
+  new HuggingFaceProvider(),      // 3. HuggingFace SDXL fallback with API key
+  new PollinationsProvider(),     // 4. Pollinations Z-Image Turbo fallback
 ];
 
 // Complex providers (text, spatial, multi-element prompts)
 const complexProviders: readonly ImageProvider[] = [
-  new GptImageProvider(),         // 1. wan-image (complex prompt primary)
-  new ZimageProvider(),           // 2. zimage (fallback)
-  new FluxDevProvider(),          // 3. FLUX (fallback)
-  new HuggingFaceProvider(),      // 4. HuggingFace SDXL (fallback)
-  new PollinationsProvider(),     // 5. Z-Image Turbo (fallback)
+  new FluxSchnellProvider(),      // 1. Pollinations Flux (also primary for complex prompts)
+  new ZimageProvider(),           // 2. zimage fallback
+  new HuggingFaceProvider(),      // 3. HuggingFace SDXL fallback
+  new PollinationsProvider(),     // 4. Z-Image Turbo fallback
 ];
 
 // ==============================
@@ -93,7 +91,7 @@ export function detectPromptComplexity(prompt: string): boolean {
   return matchCount >= 1;
 }
 
-export type ImageModelPreference = "zimage" | "wan-image" | "gptimage" | "gptimage-large";
+export type ImageModelPreference = "flux" | "zimage" | "wan-image" | "gptimage" | "gptimage-large";
 
 export function selectImageProviderMode(
   prompt: string,
@@ -112,13 +110,21 @@ function getProvidersForMode(mode: "standard" | "complex", preferredModel?: Imag
   if (preferredModel === "gptimage" || preferredModel === "gptimage-large" || preferredModel === "wan-image") {
     return [
       new GptImageProvider(preferredModel),
+      new FluxSchnellProvider(),
       new ZimageProvider(),
-      new FluxDevProvider(),
       new HuggingFaceProvider(),
       new PollinationsProvider(),
     ];
   }
   return complexProviders;
+}
+
+export function getImageProviderOrder(
+  prompt: string,
+  preferredModel?: ImageModelPreference,
+): readonly string[] {
+  return getProvidersForMode(selectImageProviderMode(prompt, preferredModel), preferredModel)
+    .map((provider) => provider.name);
 }
 
 // ==============================
@@ -418,16 +424,9 @@ async function executeImageGeneration(args: {
         if (is429(failure)) setCooldown(provider.name);
         console.log(`[IMAGE] provider=${provider.name} failed outcome=${failure.outcome} error="${message}"`);
         errors.push(`${provider.name}: ${message}`);
-        if (failure.outcome === "indeterminate") {
-          // A timeout, transport/5xx failure, malformed success, or body-read
-          // failure may have created an image already. Cross-provider retry is
-          // unsafe because providers offer no shared idempotency contract.
-          return {
-            success: false,
-            prompt: args.prompt,
-            error: "Image provider outcome was indeterminate; cross-provider fallback stopped.",
-          };
-        }
+        // The request lifecycle accepts and persists only the first successful
+        // result. A timeout from an optional provider must not prevent a later
+        // working provider (notably Flux) from completing the user request.
         break; // move to next provider
       }
     }

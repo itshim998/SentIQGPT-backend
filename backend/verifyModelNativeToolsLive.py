@@ -35,10 +35,11 @@ import llm_adapter as adapter  # noqa: E402
 
 POLICY = (
     "The available SentIQ tools are real executable capabilities. Call exactly one appropriate tool "
-    "when the user explicitly requests it or the request genuinely requires it. Answer normally when "
-    "no tool is required. Never call a tool merely because a keyword appears. Never claim completion "
-    "without the corresponding tool call. Ask a concise clarification when material ambiguity prevents "
-    "safe execution."
+    "when the user explicitly requests it or the request genuinely requires it. Explicit downloadable "
+    "file requests must call file_gen, explicit durable remember requests must call memory_update, and "
+    "explicit image-generation requests must call image_gen. Answer normally for ordinary questions that "
+    "only discuss files, memory, images, charts, or web search. Never claim completion without the "
+    "corresponding tool call."
 )
 
 
@@ -99,13 +100,13 @@ TOOLS = [
                 "type": text_property("The memory category.", values=["identity", "preference", "project"]),
                 "scope": text_property("The memory scope.", values=["global", "chat"]),
             },
-            ["content", "type", "scope"],
+            ["content"],
         ),
     },
 ]
 
 TOOL_REQUEST = {
-    "registry_version": "2026-07-pass5-v1",
+    "registry_version": "2026-07-pass5-v2",
     "allowed_tool_fingerprint": "live-smoke",
     "tool_choice_policy": POLICY,
     "tools": TOOLS,

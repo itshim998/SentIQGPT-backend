@@ -236,9 +236,13 @@ def test_groq_buffered_and_fragmented_stream_transport():
         groq_chunk(call_id="groq_2", name="web_surf", arguments='{"query":"lat'),
         groq_chunk(arguments='est release"}', finish_reason="tool_calls"),
     ]
+    streamed_fragmented_name = [
+        groq_chunk(call_id="groq_3", name="web_", arguments='{"query":"latest '),
+        groq_chunk(name="surf", arguments='release"}', finish_reason="tool_calls"),
+    ]
     streamed_text = [groq_chunk(content="ordinary", finish_reason="stop", include_tool_call=False)]
     streamed_empty = [groq_chunk(finish_reason="stop", include_tool_call=False)]
-    completions = FakeCompletions([buffered, streamed_tools, streamed_text, streamed_empty])
+    completions = FakeCompletions([buffered, streamed_tools, streamed_fragmented_name, streamed_text, streamed_empty])
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
     with patch.object(adapter, "GROQ_MODULE", object()), patch.object(
@@ -251,6 +255,12 @@ def test_groq_buffered_and_fragmented_stream_transport():
             sentiq_tool_request=TOOL_REQUEST,
         )
         events = list(adapter._call_groq_stream(
+            "Find the latest release",
+            "test-key",
+            adapter.GROQ_CHAT_MODEL,
+            sentiq_tool_request=TOOL_REQUEST,
+        ))
+        fragmented_name_events = list(adapter._call_groq_stream(
             "Find the latest release",
             "test-key",
             adapter.GROQ_CHAT_MODEL,
@@ -302,6 +312,11 @@ def test_groq_buffered_and_fragmented_stream_transport():
         {"kind": "tool_argument_delta", "id": "groq_2", "text": 'est release"}', "index": 0},
         {"kind": "done", "finishReason": "tool_calls"},
     ]
+    assert fragmented_name_events == [
+        {"kind": "tool_call_start", "id": "groq_3", "name": "web_surf", "index": 0},
+        {"kind": "tool_argument_delta", "id": "groq_3", "text": '{"query":"latest release"}', "index": 0},
+        {"kind": "done", "finishReason": "tool_calls"},
+    ]
     assert text_events == [
         {"kind": "text_delta", "text": "ordinary"},
         {"kind": "done", "finishReason": "stop"},
@@ -314,6 +329,45 @@ def test_groq_buffered_and_fragmented_stream_transport():
         SimpleNamespace(id="multi_2", function=SimpleNamespace(name="image_gen", arguments='{"prompt":"two"}')),
     ]))
     assert [call["name"] for call in multiple["calls"]] == ["web_surf", "image_gen"]
+
+
+def test_tool_router_skips_answer_wrapper_and_cache():
+    seen_prompts = []
+
+    def invoke_gemini(prompt, *_args, **_kwargs):
+        seen_prompts.append(prompt)
+        return {
+            "kind": "tool_calls",
+            "calls": [{
+                "id": "gemini_tool_1",
+                "name": "web_surf",
+                "arguments": {"query": "latest release"},
+                "index": 0,
+            }],
+        }
+
+    with patch.object(adapter, "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED", True), patch.object(
+        adapter, "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", True
+    ), patch.object(adapter, "GOOGLE_GENAI_MODULE", object()), patch.object(
+        adapter, "GOOGLE_GENAI_TYPES_MODULE", object()
+    ), patch.object(adapter, "_invoke_gemini", side_effect=invoke_gemini), patch.object(
+        adapter, "_cache_get"
+    ) as cache_get, patch.object(adapter, "_cache_set") as cache_set:
+        result = adapter.call_llm_router(
+            "SYSTEM: SentIQ context\n\nCURRENT USER MESSAGE:\nCreate a downloadable file.",
+            task="chat",
+            model_override="gemini-standard",
+            execution_mode="intuitive",
+            sentiq_tool_request=TOOL_REQUEST,
+            required_capabilities=["sentiq_tools_buffered"],
+            tool_transport_mode="buffered",
+        )
+
+    assert result["assistant_turn"]["kind"] == "tool_calls"
+    assert seen_prompts == ["SYSTEM: SentIQ context\n\nCURRENT USER MESSAGE:\nCreate a downloadable file."]
+    assert not seen_prompts[0].startswith("SYSTEM: Return only the final user-facing answer.")
+    cache_get.assert_not_called()
+    cache_set.assert_not_called()
 
 
 class FakeGeminiTypes:
@@ -534,6 +588,7 @@ def main() -> int:
     test_fastapi_request_schema_retains_tool_transport()
     test_gemini_multimodal_contents_and_hard_capabilities()
     test_groq_buffered_and_fragmented_stream_transport()
+    test_tool_router_skips_answer_wrapper_and_cache()
     test_gemini_buffered_tool_and_text_stream_transport()
     test_capability_aware_fallbacks()
     test_stream_fallback_stops_after_tool_selection()

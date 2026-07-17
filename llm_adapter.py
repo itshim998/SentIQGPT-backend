@@ -33,6 +33,7 @@ import importlib
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from collections import OrderedDict
+from collections.abc import Mapping
 from typing import Any, Optional
 
 import requests as _requests_lib
@@ -1065,6 +1066,7 @@ def _log_sentiq_tool_diagnostic(
     tool_choice_mode: str,
     sdk_path: Optional[str] = None,
     provider_outcome: Optional[str] = None,
+    selected_tool: Optional[str] = None,
 ) -> None:
     if not SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED:
         return
@@ -1085,6 +1087,7 @@ def _log_sentiq_tool_diagnostic(
         "tool_choice_mode": tool_choice_mode,
         "sdk_path": sdk_path,
         "provider_outcome": provider_outcome,
+        "selected_tool": selected_tool if selected_tool in CANONICAL_SENTIQ_TOOL_NAMES else None,
     }, separators=(",", ":"), sort_keys=True))
 
 
@@ -1274,7 +1277,7 @@ def _gemini_assistant_turn(response: Any) -> dict[str, Any]:
             calls.append({
                 "id": str(getattr(call, "id", "") or f"gemini_call_{index}"),
                 "name": str(getattr(call, "name", "") or ""),
-                "arguments": args if isinstance(args, dict) else {},
+                "arguments": dict(args) if isinstance(args, Mapping) else {},
                 "index": index,
             })
         return {"kind": "tool_calls", "calls": calls}
@@ -1468,6 +1471,7 @@ def _call_gemini(
             tool_choice_mode="auto",
             sdk_path="google_genai",
             provider_outcome="function_call" if turn.get("kind") == "tool_calls" else "text",
+            selected_tool=(turn.get("calls") or [{}])[0].get("name") if turn.get("kind") == "tool_calls" else None,
         )
         return turn
     try:
@@ -1994,7 +1998,7 @@ def _gpt_oss_system_prompt(
 ) -> str:
     if sentiq_tool_request:
         policy = str(sentiq_tool_request.get("tool_choice_policy") or "").strip()
-        return GPT_OSS_SYSTEM_PROMPT + (f" {policy}" if policy else "")
+        return GPT_OSS_SYSTEM_PROMPT + (f"\n\nSENTIQ TOOL POLICY:\n{policy}" if policy else "")
     return GPT_OSS_SYSTEM_PROMPT
 
 def _call_groq(
@@ -2067,7 +2071,22 @@ def _call_groq(
         response = raw_response.parse()
         _capture_groq_telemetry(raw_response.headers, response)
         message = response.choices[0].message
-        return _openai_assistant_turn(message) if sentiq_tool_request else message.content or ""
+        if sentiq_tool_request:
+            turn = _openai_assistant_turn(message)
+            _log_sentiq_tool_diagnostic(
+                boundary="groq_provider_outcome",
+                provider="groq",
+                model=resolved_model,
+                streaming=False,
+                sentiq_tool_request=sentiq_tool_request,
+                declarations_attached=bool(sentiq_tools),
+                tool_choice_mode="auto",
+                sdk_path="groq_sdk",
+                provider_outcome="function_call" if turn.get("kind") == "tool_calls" else "text",
+                selected_tool=(turn.get("calls") or [{}])[0].get("name") if turn.get("kind") == "tool_calls" else None,
+            )
+            return turn
+        return message.content or ""
 
     raw_response = client.chat.completions.with_raw_response.create(
         model=resolved_model,
@@ -2129,7 +2148,7 @@ def _call_groq_stream(
     raw_response = client.chat.completions.with_raw_response.create(**request_kwargs)
     completion = raw_response.parse()
     _capture_groq_telemetry(raw_response.headers)
-    tool_call_state: dict[int, dict[str, str]] = {}
+    tool_call_state: dict[int, dict[str, Any]] = {}
     finish_reason: Optional[str] = None
     emitted_sentiq_outcome = False
     for chunk in completion:
@@ -2146,22 +2165,73 @@ def _call_groq_stream(
             for raw_call in getattr(delta, "tool_calls", None) or []:
                 index = int(getattr(raw_call, "index", 0) or 0)
                 function = getattr(raw_call, "function", None)
-                call_id = str(getattr(raw_call, "id", "") or tool_call_state.get(index, {}).get("id") or f"groq_call_{index}")
-                name = str(getattr(function, "name", "") or tool_call_state.get(index, {}).get("name") or "")
-                if index not in tool_call_state:
-                    tool_call_state[index] = {"id": call_id, "name": name}
+                state = tool_call_state.setdefault(index, {
+                    "id": "",
+                    "name": "",
+                    "arguments": "",
+                    "started": False,
+                })
+                raw_id = str(getattr(raw_call, "id", "") or "")
+                if raw_id:
+                    state["id"] = raw_id
+                raw_name = str(getattr(function, "name", "") or "")
+                if raw_name:
+                    current_name = str(state.get("name") or "")
+                    if not current_name or raw_name in CANONICAL_SENTIQ_TOOL_NAMES:
+                        state["name"] = raw_name
+                    elif current_name not in CANONICAL_SENTIQ_TOOL_NAMES and raw_name != current_name:
+                        combined = current_name + raw_name
+                        state["name"] = combined if any(
+                            name.startswith(combined) for name in CANONICAL_SENTIQ_TOOL_NAMES
+                        ) else raw_name
+                arguments_delta = str(getattr(function, "arguments", None) or "")
+                if arguments_delta:
+                    state["arguments"] = str(state.get("arguments") or "") + arguments_delta
+                name = str(state.get("name") or "")
+                if not state.get("started") and name in CANONICAL_SENTIQ_TOOL_NAMES:
+                    call_id = str(state.get("id") or f"groq_call_{index}")
+                    state["id"] = call_id
+                    state["started"] = True
                     yield {"kind": "tool_call_start", "id": call_id, "name": name, "index": index}
                     emitted_sentiq_outcome = True
-                arguments_delta = getattr(function, "arguments", None)
-                if arguments_delta:
-                    yield {"kind": "tool_argument_delta", "id": call_id, "text": str(arguments_delta), "index": index}
+                    buffered_arguments = str(state.get("arguments") or "")
+                    if buffered_arguments:
+                        yield {
+                            "kind": "tool_argument_delta",
+                            "id": call_id,
+                            "text": buffered_arguments,
+                            "index": index,
+                        }
+                        state["arguments"] = ""
+                elif state.get("started") and arguments_delta:
+                    yield {
+                        "kind": "tool_argument_delta",
+                        "id": str(state.get("id") or f"groq_call_{index}"),
+                        "text": arguments_delta,
+                        "index": index,
+                    }
+                    state["arguments"] = ""
         text = getattr(delta, "content", None)
         if text:
             emitted_sentiq_outcome = True
             yield {"kind": "text_delta", "text": text} if sentiq_tool_request else text
     if sentiq_tool_request:
+        if any(not state.get("started") for state in tool_call_state.values()):
+            raise RuntimeError("Groq stream produced an incomplete SentIQ tool call")
         if not emitted_sentiq_outcome:
             raise RuntimeError("Groq stream produced neither assistant text nor a tool call")
+        _log_sentiq_tool_diagnostic(
+            boundary="groq_provider_outcome",
+            provider="groq",
+            model=resolved_model,
+            streaming=True,
+            sentiq_tool_request=sentiq_tool_request,
+            declarations_attached=bool(sentiq_tools),
+            tool_choice_mode="auto",
+            sdk_path="groq_sdk",
+            provider_outcome="function_call" if tool_call_state else "text",
+            selected_tool=next((str(state.get("name") or "") for state in tool_call_state.values()), None),
+        )
         yield {"kind": "done", "finishReason": finish_reason} if finish_reason else {"kind": "done"}
 
 def _invoke_groq(
@@ -2795,7 +2865,9 @@ def call_llm_router(
         str(sentiq_tool_request.get("tool_choice_policy") or "") if sentiq_tool_request else None,
         get_sentiq_tool_capability(provider, model).get("reason") if sentiq_tool_request else None,
     )
-    cache_enabled = True
+    # Tool-bearing turns are decisions with side effects. Never reuse either a
+    # narrated non-call or a prior selection from the ordinary response cache.
+    cache_enabled = sentiq_tool_request is None
     cached = _cache_get(key) if cache_enabled else None
     if cached is not None:
         logger.info("Cache hit for task=%s provider=%s", task, provider)
@@ -2817,7 +2889,9 @@ def call_llm_router(
     # Enforce JSON if needed
     effective_prompt = prompt
     if task in CHATLIKE_TASKS:
-        if not skip_wrappers and not _is_gpt_oss_model(model):
+        # The answer-only JSON/plain-text wrapper conflicts with provider-native
+        # function calling. The SentIQ prompt and safety path remain intact.
+        if not sentiq_tool_request and not skip_wrappers and not _is_gpt_oss_model(model):
             if _should_request_worked_explanation(prompt=prompt, task=task, model_override=resolved_override or model_override):
                 effective_prompt = _wrap_explanation_prompt(prompt)
             else:

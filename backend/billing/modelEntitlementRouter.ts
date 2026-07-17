@@ -109,7 +109,7 @@ export function imagePromptNeedsTextRendering(prompt: string): boolean {
 export function getImageModelForPlan(planCode: BillingPlanCode, prompt: string): ModelRoute {
   const needsText = imagePromptNeedsTextRendering(prompt);
   if (!needsText) {
-    const model = readModel("SENTIQ_IMAGE_MODEL_NORMAL", "pollinations:zimage");
+    const model = readModel("SENTIQ_IMAGE_MODEL_NORMAL", "pollinations:flux");
     return {
       feature: "image_generation",
       provider: model.provider || "pollinations",
@@ -123,7 +123,7 @@ export function getImageModelForPlan(planCode: BillingPlanCode, prompt: string):
   const premium = planCode === "premium" || planCode === "pro";
   const model = readModel(
     premium ? "SENTIQ_IMAGE_MODEL_TEXT_PREMIUM" : "SENTIQ_IMAGE_MODEL_TEXT_CORE",
-    premium ? "pollinations:gptimage-large" : "pollinations:gptimage",
+    "pollinations:flux",
   );
   return {
     feature: "image_generation",

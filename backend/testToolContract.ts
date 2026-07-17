@@ -23,7 +23,10 @@ assert.doesNotMatch(SENTIQ_TOOL_CHOICE_POLICY, /route\s+by\s+(keyword|regex)/i, 
 assert.match(SENTIQ_TOOL_CHOICE_POLICY, /Do not call a tool merely because a keyword appears/i);
 assert.match(SENTIQ_TOOL_CHOICE_POLICY, /ask a concise conversational clarification/i);
 assert.match(SENTIQ_TOOL_CHOICE_POLICY, /real executable capabilities/i);
-assert.match(SENTIQ_TOOL_CHOICE_POLICY, /instead of denying the capability or merely narrating/i);
+assert.match(SENTIQ_TOOL_CHOICE_POLICY, /downloadable file must call file_gen/i);
+assert.match(SENTIQ_TOOL_CHOICE_POLICY, /remember durable.*must call memory_update/i);
+assert.match(SENTIQ_TOOL_CHOICE_POLICY, /generate a new image must call image_gen/i);
+assert.match(SENTIQ_TOOL_CHOICE_POLICY, /ordinary questions that merely discuss files, memory, images, charts, web search/i);
 assert.match(SENTIQ_TOOL_CHOICE_POLICY, /Never claim that you searched, generated, created, or saved/i);
 assert.match(SENTIQ_TOOL_CHOICE_POLICY, /only a successful tool result confirms completion/i);
 
@@ -73,9 +76,9 @@ assert.throws(() => validateModelToolCalls([
 assert.throws(() => validateModelToolCalls([
   { id: "call_5", name: "file_gen", arguments: { request: "Make it", format: "exe" } },
 ], authenticated), /Invalid enum value/);
-assert.throws(() => validateModelToolCalls([
+assert.deepEqual(validateModelToolCalls([
   { id: "call_memory_missing_type", name: "memory_update", arguments: { content: "User prefers concise answers.", scope: "global" } },
-], authenticated), /Required/);
+], authenticated)[0]?.arguments, { content: "User prefers concise answers.", scope: "global" });
 assert.equal(validateModelToolCalls([
   { id: "call_memory", name: "memory_update", arguments: { content: "User prefers concise answers.", type: "preference", scope: "global" } },
 ], authenticated)[0]?.name, "memory_update");

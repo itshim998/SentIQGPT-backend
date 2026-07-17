@@ -68,7 +68,7 @@ if (rows.every((row) => row.status === "PASS") && live) {
   const liveEnvironment = { ...process.env, ...canonicalLiveEnvironment };
   const liveChecks = [
     ["live_stack_startup_readiness", npm, ["run", "verify:model-native-stack-startup-live"]],
-    ["live_provider_selection", python, ["backend/verifyModelNativeToolsLive.py"]],
+    ["live_chat_pipeline", npm, ["run", "verify:model-native-chat-pipeline-live"]],
     ["live_executor_matrix", npm, ["run", "verify:model-native-executors-live"]],
     ["live_memory_migration_prerequisite", npm, ["run", "verify:model-native-memory-migration-live"]],
   ];

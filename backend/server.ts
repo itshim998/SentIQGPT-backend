@@ -3989,6 +3989,7 @@ app.post(
         const adapterStream = await callLLMAdapterTurnStream({
           ...call,
           signal: requestAbortController.signal,
+          execution_mode: executionProfile.mode,
           sentiq_tool_context: automaticTools.length > 0 ? { authenticated: false, executionMode: executionProfile.mode } : undefined,
           sentiq_allowed_tool_names: automaticTools,
           required_capabilities: requiredCapabilities,
@@ -5363,6 +5364,7 @@ app.post(
       });
       const adapterStream = await callLLMAdapterTurnStream({
         ...streamCall,
+        execution_mode: executionProfile.mode,
         sentiq_tool_context: automaticTools.length > 0 ? {
           authenticated: !isGuest,
           executionMode: executionProfile.mode,
