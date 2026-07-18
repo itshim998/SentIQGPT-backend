@@ -13,6 +13,24 @@ import {
   routeCanServeRequiredCapabilities,
   type RequiredModelCapability,
 } from "../ai/modelToolCapability";
+import {
+  attachTokenAllowanceAccounting,
+  getTokenAllowanceAccounting,
+} from "../context/requestBudgetContext";
+import { TEXT_TOKEN_POLICY_VERSION } from "./planCatalog";
+import { HttpError } from "../httpErrors";
+
+const STANDARD_TOKEN_RESERVATION = 16_000;
+const LITE_TOKEN_RESERVATION = 12_000;
+const MINIMUM_MEANINGFUL_TOKEN_RESERVATION = 256;
+
+function isTextTokenFeature(feature: BillableFeature): feature is "premium_text" | "lite_text" {
+  return feature === "premium_text" || feature === "lite_text";
+}
+
+function logQuotaLifecycle(event: string, fields: Record<string, unknown>): void {
+  console.info(JSON.stringify({ scope: "token_quota", event, ...fields }));
+}
 
 export class ModelCapabilityUnavailableError extends Error {
   readonly statusCode = 503;
@@ -124,13 +142,21 @@ export class BillingQuotaService {
     const result = await this.repository.reserveUsage({
       identity: args.identity,
       feature: args.feature,
-      units: args.units ?? 1,
+      units: args.units ?? (args.feature === "premium_text"
+        ? STANDARD_TOKEN_RESERVATION
+        : args.feature === "lite_text"
+          ? LITE_TOKEN_RESERVATION
+          : 1),
       requestId: args.requestId,
       metadata: {
         ...(args.metadata ?? {}),
         safe_model_label: args.route.safeModelLabel,
         conversation_id: args.conversationId ?? null,
         client_request_id: args.clientRequestId ?? args.requestId,
+        ...(isTextTokenFeature(args.feature) ? {
+          quota_policy_version: TEXT_TOKEN_POLICY_VERSION,
+          minimum_tokens: MINIMUM_MEANINGFUL_TOKEN_RESERVATION,
+        } : {}),
       },
     });
 
@@ -140,8 +166,8 @@ export class BillingQuotaService {
       const remaining = normalizeNumber(result?.remaining);
       const resetAt = typeof result?.reset_at === "string" ? result.reset_at : null;
       throw new BillingQuotaError(
-        args.feature === "lite_text"
-          ? "You've used today's free AI messages. Upgrade to Essential for INR 99/month or come back after the reset."
+        isTextTokenFeature(args.feature)
+          ? `You do not have enough ${args.feature === "lite_text" ? "Lite" : "Standard"} tokens remaining for this request. Your allowance will refresh automatically.`
           : `${args.route.safeModelLabel} limit reached.`,
         {
           code: "quota_exceeded",
@@ -155,7 +181,15 @@ export class BillingQuotaService {
       );
     }
 
-    return {
+    if (isTextTokenFeature(args.feature) && !Number.isFinite(Number(result?.reservation_units))) {
+      await this.repository.releaseReservation(args.requestId).catch(() => undefined);
+      throw new HttpError(503, "Token allowances are temporarily unavailable. Please try again shortly.", {
+        code: "token_policy_migration_required",
+        expose: true,
+      });
+    }
+
+    const reservation = {
       requestId: args.requestId,
       feature: args.feature,
       planCode: normalizePlanCode(result?.plan_code),
@@ -166,8 +200,26 @@ export class BillingQuotaService {
       route: args.route.route,
       remaining: normalizeNumber(result?.remaining),
       limit: normalizeNumber(result?.limit),
+      reservedUnits: normalizeNumber(result?.reservation_units, args.units ?? 1),
       resetAt: typeof result?.reset_at === "string" ? result.reset_at : null,
     };
+    if (isTextTokenFeature(args.feature)) {
+      attachTokenAllowanceAccounting({
+        feature: args.feature,
+        requestId: args.requestId,
+        planCode: reservation.planCode,
+        windowIdentity: typeof result?.window_identity === "string" ? result.window_identity : null,
+        reservedTokens: reservation.reservedUnits,
+      });
+      logQuotaLifecycle("reserved", {
+        allowance_class: args.feature === "lite_text" ? "lite" : "standard",
+        plan_policy: TEXT_TOKEN_POLICY_VERSION,
+        window_identity: typeof result?.window_identity === "string" ? result.window_identity : null,
+        reserved_tokens: reservation.reservedUnits,
+        idempotent: normalizeBoolean(result?.idempotent),
+      });
+    }
+    return reservation;
   }
 
   async reserveTextRoute(args: {
@@ -241,20 +293,69 @@ export class BillingQuotaService {
   }
 
   async commit(reservation: UsageReservation, metadata: Record<string, unknown> = {}): Promise<void> {
-    await this.repository.commitReservation({
+    const accounting = isTextTokenFeature(reservation.feature)
+      ? getTokenAllowanceAccounting(reservation.requestId)
+      : null;
+    if (accounting && accounting.successfulCalls === 0) {
+      await this.release(reservation, "no_successful_model_call");
+      return;
+    }
+    const actualTokens = accounting
+      ? Math.max(1, accounting.inputTokens + accounting.outputTokens)
+      : undefined;
+    const result = await this.repository.commitReservation({
       requestId: reservation.requestId,
       provider: reservation.provider,
       model: reservation.model,
       route: reservation.route,
       metadata: {
         safe_model_label: reservation.safeModelLabel,
+        ...(actualTokens !== undefined ? {
+          actual_token_units: actualTokens,
+          input_tokens: accounting?.inputTokens ?? 0,
+          output_tokens: accounting?.outputTokens ?? 0,
+          successful_model_calls: accounting?.successfulCalls ?? 0,
+          usage_reported_calls: accounting?.reportedCalls ?? 0,
+          usage_estimated_calls: accounting?.estimatedCalls ?? 0,
+          quota_policy_version: TEXT_TOKEN_POLICY_VERSION,
+        } : {}),
         ...metadata,
       },
     });
+    if (accounting) {
+      const settledTokens = normalizeNumber(result?.settled_units, actualTokens ?? 0);
+      logQuotaLifecycle("settled", {
+        allowance_class: reservation.feature === "lite_text" ? "lite" : "standard",
+        plan_policy: TEXT_TOKEN_POLICY_VERSION,
+        window_identity: accounting.windowIdentity,
+        reserved_tokens: accounting.reservedTokens,
+        actual_settled_tokens: settledTokens,
+        reported_calls: accounting.reportedCalls,
+        estimated_calls: accounting.estimatedCalls,
+        released_tokens: normalizeNumber(
+          result?.released_units,
+          Math.max(0, accounting.reservedTokens - settledTokens),
+        ),
+        idempotent: normalizeBoolean(result?.idempotent),
+      });
+    }
   }
 
-  async release(reservation: UsageReservation | null | undefined): Promise<void> {
+  async release(reservation: UsageReservation | null | undefined, reason = "unchargeable_failure"): Promise<void> {
     if (!reservation) return;
-    await this.repository.releaseReservation(reservation.requestId);
+    const result = await this.repository.releaseReservation(reservation.requestId);
+    if (isTextTokenFeature(reservation.feature)) {
+      const accounting = getTokenAllowanceAccounting(reservation.requestId);
+      logQuotaLifecycle("released", {
+        allowance_class: reservation.feature === "lite_text" ? "lite" : "standard",
+        plan_policy: TEXT_TOKEN_POLICY_VERSION,
+        window_identity: accounting?.windowIdentity ?? null,
+        reserved_tokens: accounting?.reservedTokens ?? reservation.reservedUnits,
+        actual_settled_tokens: 0,
+        released_tokens: accounting?.reservedTokens ?? reservation.reservedUnits,
+        failure_release_reason: reason,
+        idempotent: normalizeBoolean(result?.idempotent),
+      });
+    }
   }
 }

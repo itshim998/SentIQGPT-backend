@@ -169,7 +169,7 @@ import { getOptionalUuid, getRequiredUuid } from "./validation/uuid";
 import { ZodError } from "zod";
 import { collapseAdjacentDuplicateMessages } from "./context/messageDeduper";
 import { resolveContextReferences } from "./context/referenceResolver";
-import { runWithRequestBudgetContext } from "./context/requestBudgetContext";
+import { getTokenAllowanceAccounting, runWithRequestBudgetContext } from "./context/requestBudgetContext";
 import { callMathModelRaw, streamMathModelRaw } from "./ai/mathVerifier";
 import { registerBillingRoutes } from "./billing/billingRoutes";
 import { buildBillingIdentity, getAnonymousIdHeaderName } from "./billing/anonymousIdentity";
@@ -4012,7 +4012,26 @@ app.post(
         if (turn.kind === "tool_calls") {
           guestAutomaticToolAccepted = true;
           guestTurnProgress.advance("execution_started");
-          await commitTextBilling(guestGeneralReservation, "guest.general.stream.tool-selected");
+          const requestsFileGeneration = turn.calls.some((call) => call.name === "file_gen");
+          const tokenAccounting = getTokenAllowanceAccounting(guestGeneralReservation.requestId);
+          const affordableArtifactTokens = tokenAccounting
+            ? tokenAccounting.reservedTokens - tokenAccounting.inputTokens - tokenAccounting.outputTokens
+            : 0;
+          if (requestsFileGeneration
+              && (guestGeneralReservation.feature !== "premium_text" || affordableArtifactTokens < 2_048)) {
+            await releaseBillingReservation(guestGeneralReservation);
+            throw new BillingQuotaError(
+              "You do not have enough Standard tokens remaining for this request. Your allowance will refresh automatically.",
+              {
+                code: "quota_exceeded",
+                feature: "premium_text",
+                planCode: guestGeneralReservation.planCode,
+                resetAt: guestGeneralReservation.resetAt,
+                limit: guestGeneralReservation.limit,
+                remaining: guestGeneralReservation.remaining,
+              },
+            );
+          }
           const toolResult = await executeAutomaticModelToolCalls(
             turn.calls,
             effectiveUserMessage,
@@ -4021,6 +4040,16 @@ app.post(
             requestAbortController.signal,
             async (event) => writeSseJson(event),
           );
+          const deliveredUsableResult = toolResult.file?.success === true
+            || toolResult.image?.success === true
+            || toolResult.chart?.success === true
+            || (toolResult.tool === "web_search" && Boolean(toolResult.reply?.trim()))
+            || (toolResult.tool === "memory_update" && toolResult.memory?.stored === true);
+          if (deliveredUsableResult && !clientDisconnected) {
+            await commitTextBilling(guestGeneralReservation, `guest.general.stream.${toolResult.tool}`);
+          } else {
+            await releaseBillingReservation(guestGeneralReservation);
+          }
           if (toolResult.reply && !toolResult.image) {
             await streamBufferedAnswer(toolResult.reply, undefined, false, streamMetrics);
           }
@@ -4095,6 +4124,7 @@ app.post(
         console.log(`[Stream] guest live stream completed in ${Date.now() - streamStart}ms`);
       } catch (err) {
         if (guestAutomaticToolAccepted) {
+          await releaseBillingReservation(guestGeneralReservation);
           await sendStreamError(err, streamMetrics);
           return;
         }

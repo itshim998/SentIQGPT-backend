@@ -96,7 +96,10 @@ LLM_SERVICE_HOST = os.getenv("LLM_SERVICE_HOST", "0.0.0.0")
 LLM_SERVICE_PORT = int(os.getenv("LLM_SERVICE_PORT", "3002"))
 RUNTIME_ENV = os.getenv("NODE_ENV", os.getenv("RUNTIME_ENV", "development")).strip().lower()
 REQUESTS_PER_DAY = 50
-PYTHON_LLM_QUOTA_ENFORCEMENT = os.getenv("SENTIQ_PYTHON_LLM_QUOTA_ENFORCEMENT", "false").strip().lower() == "true"
+# Standard/Lite allowance enforcement is authoritative in the Node billing
+# reservation ledger. Keep the legacy usage_logs helpers for rollback only;
+# they must not re-enable message-count charging through an old environment flag.
+PYTHON_LLM_QUOTA_ENFORCEMENT = False
 SUPABASE_REST_TIMEOUT_SECONDS = 15
 SUPABASE_ERROR_BODY_LIMIT = 400
 CONTROL_DB_NUMBER = 1

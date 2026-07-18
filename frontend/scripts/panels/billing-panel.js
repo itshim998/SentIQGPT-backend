@@ -2,6 +2,7 @@
 // Billing Panel
 // ================================================================
 import { PRODUCT_NAME } from "../shared/brand.js";
+import { calculateUsagePercent, formatCompactTokenNumber } from "./billing-usage-format.js";
 
 (function () {
   const API = window.SentIQAPI;
@@ -34,6 +35,9 @@ import { PRODUCT_NAME } from "../shared/brand.js";
       remaining: Number(quota.remaining || 0),
       limit: Number(quota.limit || 0),
       resetAt: quota.reset_at || null,
+      windowStart: quota.window_start || null,
+      available: quota.available !== false,
+      isTokenPool: feature === "premium_text" || feature === "lite_text",
     };
   }
 
@@ -43,21 +47,27 @@ import { PRODUCT_NAME } from "../shared/brand.js";
   }
 
   function usageText(quota) {
-    if (!quota.limit) return "Not available";
+    if (!quota.available || !quota.limit) return "Not available";
     const left = Math.max(0, quota.remaining);
+    if (quota.isTokenPool) {
+      return `${formatCompactTokenNumber(left)} / ${formatCompactTokenNumber(quota.limit)} left`;
+    }
     return `${left}/${quota.limit} left`;
   }
 
   function renderMeter(feature, quota) {
-    const used = Math.max(0, quota.used + quota.reserved);
-    const percent = quota.limit > 0 ? Math.min(100, Math.round((used / quota.limit) * 100)) : 0;
+    const percent = calculateUsagePercent(quota.limit, quota.remaining);
+    const tokenDescription = quota.isTokenPool
+      ? '<span class="billing-meter-description">Counts model input and generated output within your rolling allowance.</span>'
+      : "";
     return `
-      <div class="billing-meter" data-feature="${feature}">
+      <div class="billing-meter" data-feature="${feature}" ${quota.isTokenPool ? 'aria-description="Counts model input and generated output within your rolling allowance."' : ""}>
         <div class="billing-meter-row">
           <span>${escapeHtml(quota.label)}</span>
           <strong>${escapeHtml(usageText(quota))}</strong>
         </div>
         <div class="billing-meter-track" aria-hidden="true"><span style="width:${percent}%"></span></div>
+        ${tokenDescription}
       </div>
     `;
   }

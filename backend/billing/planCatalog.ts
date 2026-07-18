@@ -2,6 +2,18 @@ import type { BillingMode, BillingPlan, BillingPlanCode, BillableFeature, Featur
 
 const INR = "INR";
 
+export const TEXT_TOKEN_POLICY_VERSION = "standard-lite-tokens-v1";
+
+export const TEXT_TOKEN_PLAN_POLICY: Readonly<Record<BillingPlanCode, {
+  readonly standardTokens: number;
+  readonly liteTokens: number;
+}>> = Object.freeze({
+  free: Object.freeze({ standardTokens: 25_000, liteTokens: 50_000 }),
+  student_core: Object.freeze({ standardTokens: 100_000, liteTokens: 175_000 }),
+  premium: Object.freeze({ standardTokens: 180_000, liteTokens: 325_000 }),
+  pro: Object.freeze({ standardTokens: 300_000, liteTokens: 550_000 }),
+});
+
 function readBillingMode(): BillingMode {
   const raw = (process.env.SENTIQ_BILLING_MODE || "disabled").trim();
   if (raw === "manual" || raw === "razorpay_test" || raw === "razorpay_live") return raw;
@@ -80,8 +92,8 @@ export function getPlanCatalog(): readonly BillingPlan[] {
       entitlements: {
         safeLabels,
         quotas: buildQuotas({
-          premiumText: quota(10, 8 * 60 * 60, "Standard messages"),
-          liteText: quota(40, 24 * 60 * 60, "Lite messages"),
+          premiumText: quota(TEXT_TOKEN_PLAN_POLICY.free.standardTokens, 8 * 60 * 60, "Standard tokens"),
+          liteText: quota(TEXT_TOKEN_PLAN_POLICY.free.liteTokens, 24 * 60 * 60, "Lite tokens"),
           imageGeneration: quota(2, 24 * 60 * 60, "Images"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_FREE_DAILY", 0), 24 * 60 * 60, "Advanced reasoning"),
           deepResearch: quota(7, 2592000, "Deep Researches"),
@@ -102,8 +114,8 @@ export function getPlanCatalog(): readonly BillingPlan[] {
       entitlements: {
         safeLabels,
         quotas: buildQuotas({
-          premiumText: quota(50, 8 * 60 * 60, "Standard messages"),
-          liteText: quota(160, 24 * 60 * 60, "Lite messages"),
+          premiumText: quota(TEXT_TOKEN_PLAN_POLICY.student_core.standardTokens, 8 * 60 * 60, "Standard tokens"),
+          liteText: quota(TEXT_TOKEN_PLAN_POLICY.student_core.liteTokens, 24 * 60 * 60, "Lite tokens"),
           imageGeneration: quota(4, 12 * 60 * 60, "Images"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_STUDENT_CORE_DAILY", 3), 24 * 60 * 60, "Advanced reasoning"),
           deepResearch: quota(15, 2592000, "Deep Researches"),
@@ -124,8 +136,8 @@ export function getPlanCatalog(): readonly BillingPlan[] {
       entitlements: {
         safeLabels,
         quotas: buildQuotas({
-          premiumText: quota(75, 8 * 60 * 60, "Standard messages"),
-          liteText: quota(260, 24 * 60 * 60, "Lite messages"),
+          premiumText: quota(TEXT_TOKEN_PLAN_POLICY.premium.standardTokens, 8 * 60 * 60, "Standard tokens"),
+          liteText: quota(TEXT_TOKEN_PLAN_POLICY.premium.liteTokens, 24 * 60 * 60, "Lite tokens"),
           imageGeneration: quota(8, 12 * 60 * 60, "Images"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_PREMIUM_DAILY", 8), 24 * 60 * 60, "Advanced reasoning"),
           deepResearch: quota(30, 2592000, "Deep Researches"),
@@ -146,8 +158,8 @@ export function getPlanCatalog(): readonly BillingPlan[] {
       entitlements: {
         safeLabels,
         quotas: buildQuotas({
-          premiumText: quota(100, 6 * 60 * 60, "Standard messages"),
-          liteText: quota(400, 24 * 60 * 60, "Lite messages"),
+          premiumText: quota(TEXT_TOKEN_PLAN_POLICY.pro.standardTokens, 6 * 60 * 60, "Standard tokens"),
+          liteText: quota(TEXT_TOKEN_PLAN_POLICY.pro.liteTokens, 24 * 60 * 60, "Lite tokens"),
           imageGeneration: quota(12, 12 * 60 * 60, "Images"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_PRO_DAILY", 20), 24 * 60 * 60, "Advanced reasoning"),
           deepResearch: quota(50, 2592000, "Deep Researches"),
@@ -189,6 +201,9 @@ export function toPublicPlan(plan: BillingPlan) {
               label: quotaValue.label,
               limit: quotaValue.limit,
               window_seconds: quotaValue.windowSeconds,
+              ...(feature === "premium_text" || feature === "lite_text"
+                ? { policy_version: TEXT_TOKEN_POLICY_VERSION, unit: "tokens" }
+                : { unit: "count" }),
             },
           ]),
       ),

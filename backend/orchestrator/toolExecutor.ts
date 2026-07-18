@@ -33,6 +33,7 @@ import {
 } from "../ai/modelToolCapability";
 import type { ToolLifecycleEvent, ValidatedToolCall } from "./toolContract";
 import { AutomaticToolDispatchError, dispatchAutomaticModelToolCall } from "../ai/modelToolExecution";
+import { getTokenAllowanceAccounting } from "../context/requestBudgetContext";
 import type { GeneratedFileFormat } from "../tools/fileGeneration/types";
 import { getConversationMessageByClientRequestId } from "../services/conversationService";
 import { resolveAutomaticMemoryUpdate } from "../ai/modelToolMemorySafety";
@@ -307,10 +308,41 @@ async function execConversation(
       requiredCapabilities,
     });
     if (result.tool_calls) {
-      if (reservation) {
-        await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "conversation", outcome: "tool_selected" });
+      const requestsFileGeneration = result.tool_calls.some((call) => call.name === "file_gen");
+      const tokenAccounting = reservation ? getTokenAllowanceAccounting(reservation.requestId) : null;
+      const affordableArtifactTokens = tokenAccounting
+        ? tokenAccounting.reservedTokens - tokenAccounting.inputTokens - tokenAccounting.outputTokens
+        : 0;
+      if (requestsFileGeneration && (reservation?.feature !== "premium_text" || affordableArtifactTokens < 2_048)) {
+        await releaseBillingReservation(reservation);
+        throw new BillingQuotaError(
+          "You do not have enough Standard tokens remaining for this request. Your allowance will refresh automatically.",
+          {
+            code: "quota_exceeded",
+            feature: "premium_text",
+            planCode: reservation?.planCode,
+            resetAt: reservation?.resetAt,
+            limit: reservation?.limit,
+            remaining: reservation?.remaining,
+          },
+        );
       }
-      return executeAutomaticModelToolCalls(result.tool_calls, input, ctx, profile, signal);
+      const toolResult = await executeAutomaticModelToolCalls(result.tool_calls, input, ctx, profile, signal);
+      const deliveredUsableResult = toolResult.file?.success === true
+        || toolResult.image?.success === true
+        || toolResult.chart?.success === true
+        || (toolResult.tool === "web_search" && Boolean(toolResult.reply?.trim()))
+        || (toolResult.tool === "memory_update" && toolResult.memory?.stored === true);
+      if (reservation && deliveredUsableResult) {
+        await billingQuotaService.commit(reservation, {
+          endpoint: "orchestrator",
+          tool: toolResult.tool,
+          outcome: "tool_completed",
+        });
+      } else if (reservation) {
+        await releaseBillingReservation(reservation);
+      }
+      return toolResult;
     }
     if (reservation) {
       await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "conversation" });

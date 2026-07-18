@@ -31,7 +31,16 @@ function toFallbackUsageSummary(identity: BillingIdentity) {
           limit: quota.limit,
           remaining: quota.limit,
           window_seconds: quota.windowSeconds,
+          window_start: null,
           reset_at: null,
+          available: quota.limit > 0,
+          ...(feature === "premium_text" || feature === "lite_text" ? {
+            allowance_class: feature === "premium_text" ? "standard" : "lite",
+            token_limit: quota.limit,
+            tokens_consumed: 0,
+            tokens_remaining: quota.limit,
+            policy_version: "standard-lite-tokens-v1",
+          } : {}),
         },
       ])),
   };

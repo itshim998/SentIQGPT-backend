@@ -58,6 +58,7 @@
     "eval:golden": "ts-node --project tsconfig.backend.json backend/evalGoldenPrompts.ts",
     "billing:seed-plans": "ts-node --project tsconfig.backend.json backend/billing/seedPlans.ts",
     "billing:test-quota": "ts-node --project tsconfig.backend.json backend/billing/testQuota.ts",
+    "billing:test-token-allowances": "ts-node --project tsconfig.backend.json backend/billing/testTokenAllowances.ts && node --no-warnings frontend/tests/billing-token-usage.test.mjs",
     "billing:verify-razorpay-config": "ts-node --project tsconfig.backend.json backend/billing/verifyRazorpayConfig.ts"
   },
   "dependencies": {

@@ -69,5 +69,6 @@ export interface UsageReservation {
   readonly route: "standard" | "lite" | "advanced_reasoning" | "image" | "deep_research";
   readonly remaining: number;
   readonly limit: number;
+  readonly reservedUnits: number;
   readonly resetAt: string | null;
 }

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getControlDatabase } from "../dbRouter";
-import { getPlanCatalog } from "./planCatalog";
+import { getPlanCatalog, TEXT_TOKEN_POLICY_VERSION } from "./planCatalog";
 import type { BillingIdentity, BillingPlanCode, BillableFeature } from "./entitlementTypes";
 
 type SupabaseError = {
@@ -59,6 +59,9 @@ export class BillingRepository {
                 limit: quota.limit,
                 window_seconds: quota.windowSeconds,
                 label: quota.label,
+                ...(feature === "premium_text" || feature === "lite_text"
+                  ? { policy_version: TEXT_TOKEN_POLICY_VERSION, unit: "tokens" }
+                  : { unit: "count" }),
               },
             ])),
             safe_labels: {
@@ -140,13 +143,14 @@ export class BillingRepository {
     return data;
   }
 
-  async releaseReservation(requestId: string): Promise<void> {
-    const { error } = await this.db.rpc("release_usage_reservation", {
+  async releaseReservation(requestId: string): Promise<any> {
+    const { data, error } = await this.db.rpc("release_usage_reservation", {
       p_request_id: requestId,
     });
     if (error) {
       throw new BillingRepositoryError(`Failed to release usage reservation: ${formatSupabaseError(error)}`);
     }
+    return data;
   }
 
   async grantPlan(args: {

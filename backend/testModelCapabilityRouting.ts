@@ -69,7 +69,7 @@ async function main(): Promise<void> {
     const capableRepository = {
       reserveUsage: async (input: ReservationInput) => {
         calls.push(input);
-        return { reserved: true, plan_code: "premium", remaining: 9, limit: 10 };
+        return { reserved: true, plan_code: "premium", remaining: 9, limit: 10, reservation_units: 1 };
       },
     };
     const service = new BillingQuotaService(capableRepository as any);
@@ -88,7 +88,7 @@ async function main(): Promise<void> {
         downgradeCalls.push(input);
         return input.feature === "premium_text"
           ? { reserved: false, plan_code: "free", remaining: 0, limit: 0, reset_at: "later" }
-          : { reserved: true, plan_code: "free", remaining: 4, limit: 5 };
+          : { reserved: true, plan_code: "free", remaining: 4, limit: 5, reservation_units: 1 };
       },
     };
     const downgradeService = new BillingQuotaService(downgradeRepository as any);
