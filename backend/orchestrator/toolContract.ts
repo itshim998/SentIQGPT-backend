@@ -237,16 +237,82 @@ export function getAllowedToolFingerprint(tools: readonly ProviderToolDefinition
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 
+const TOOL_ARGUMENT_WRAPPER_KEYS = new Set(["arguments", "args", "input", "parameters"]);
+
+function extractSingleJsonObject(value: string): string | null {
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let end = -1;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+    } else if (character === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0) {
+        end = index + 1;
+        break;
+      }
+    }
+  }
+  if (start < 0 || end <= start) return null;
+  const trailing = value.slice(end);
+  if (trailing.includes("{")) return null;
+  return value.slice(start, end);
+}
+
+function unwrapToolArgumentEnvelope(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length === 1 && TOOL_ARGUMENT_WRAPPER_KEYS.has(keys[0])) return record[keys[0]];
+  if (keys.length === 1 && keys[0] === "function" && record.function && typeof record.function === "object") {
+    const fn = record.function as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(fn, "arguments")) return fn.arguments;
+  }
+  return value;
+}
+
 function parseArguments(value: unknown): unknown {
-  if (typeof value !== "string") return value;
-  if (Buffer.byteLength(value, "utf8") > MAX_TOOL_ARGUMENT_BYTES) {
-    throw new Error("Tool arguments exceed the allowed size.");
+  let current = value;
+  for (let depth = 0; depth < 4; depth += 1) {
+    current = unwrapToolArgumentEnvelope(current);
+    if (typeof current !== "string") return current;
+    const cleaned = current.trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+    if (Buffer.byteLength(cleaned, "utf8") > MAX_TOOL_ARGUMENT_BYTES) {
+      throw new Error("Tool arguments exceed the allowed size.");
+    }
+    try {
+      current = JSON.parse(cleaned);
+    } catch {
+      const extracted = extractSingleJsonObject(cleaned);
+      if (!extracted) throw new Error("Tool arguments must be valid JSON.");
+      try {
+        current = JSON.parse(extracted);
+      } catch {
+        throw new Error("Tool arguments must be valid JSON.");
+      }
+    }
   }
-  try {
-    return JSON.parse(value);
-  } catch {
-    throw new Error("Tool arguments must be valid JSON.");
-  }
+  current = unwrapToolArgumentEnvelope(current);
+  if (typeof current === "string") throw new Error("Tool arguments are nested too deeply.");
+  return current;
 }
 
 export function validateModelToolCalls(

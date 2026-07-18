@@ -1,5 +1,5 @@
 import assert from "assert";
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import {
   detectGeneratedFileFormat,
@@ -10,8 +10,12 @@ import { buildContextFast } from "./context/contextBuilder";
 import { FAST_PROFILE } from "./orchestrator/executionProfile";
 
 type RouteFileGeneration = typeof import("./tools/fileGeneration/fileGenerator").routeFileGeneration;
+type ParseGeneratedFileSpec = typeof import("./tools/fileGeneration/fileGenerator").parseGeneratedFileSpec;
+type RenderPdf = typeof import("./tools/fileGeneration/fileGenerator").renderPdf;
 
 let routeFileGeneration: RouteFileGeneration;
+let parseGeneratedFileSpec: ParseGeneratedFileSpec;
+let renderPdf: RenderPdf;
 
 function installSupabaseEnvForImports(): void {
   for (const id of [1, 2, 3, 4]) {
@@ -138,6 +142,163 @@ async function testLiveChatContextHandoffToPdfGeneration(): Promise<void> {
   assert.equal(result.success, true, "the production calling convention must reach PDF rendering and storage");
   assert.equal(result.format, "pdf");
   assert.equal(result.file_id, "file-context-handoff");
+}
+
+function countOccurrences(value: string, needle: string): number {
+  return value.split(needle).length - 1;
+}
+
+async function testStructuredPdfNormalizationAndComposition(): Promise<void> {
+  const nativeSpec = {
+    title: "Present Awareness: A Full Month Plan",
+    subtitle: "A practical rhythm for reconnecting with the world around you",
+    introduction: "Use this plan gently. Notice what is here, then return without judging distraction.",
+    format: "pdf",
+    sections: [...Array.from({ length: 4 }, (_, weekIndex) => ({
+      heading: `Week ${weekIndex + 1}: ${["Arrive", "Notice", "Participate", "Continue"][weekIndex]}`,
+      body: [`This week develops present awareness through ordinary activities and a short evening review.`],
+      subsections: Array.from({ length: 7 }, (_, dayIndex) => ({
+        heading: `Day ${weekIndex * 7 + dayIndex + 1}: ${["Orient to the room", "Listen outward", "Walk with attention", "Share a meal", "Observe colour", "Join an activity", "Review the day"][dayIndex]}`,
+        body: [`Spend ten minutes noticing concrete details in your surroundings. Name what changed, what stayed steady, and one way you participated in the present world.`],
+        bullets: [
+          "Anchor: identify five visible objects and three sounds.",
+          "Action: complete one small task with your phone out of reach.",
+          "Reflection: write one sentence about what you noticed.",
+        ],
+      })),
+      ...(weekIndex === 2 ? { page_break_before: true } : {}),
+    })), {
+      heading: "Review and continuation",
+      body: ["Keep the practices that made daily life feel more vivid and connected."],
+      subsections: [],
+      tables: [{
+        caption: "Monthly review",
+        headers: ["Question", "Notes"],
+        rows: [
+          ["Which outward anchors worked best?", "Record two dependable choices."],
+          ["When did connection feel easiest?", "Note the setting and people involved."],
+        ],
+      }],
+      callout: "Continuation checklist: choose three practices, schedule them, and review again in two weeks.",
+    }],
+    blocks: [{
+      type: "paragraph",
+      text: "Legitimate JSON example for journaling: {\"present\": true, \"next_step\": \"look outward\"}. Keep this source text visible.",
+    }],
+  };
+
+  const variants: unknown[] = [
+    nativeSpec,
+    JSON.stringify(nativeSpec),
+    JSON.stringify(JSON.stringify(nativeSpec)),
+    { response: { data: JSON.stringify(nativeSpec), provider_error: "must never be visible" } },
+    `Here is the requested document specification:\n${JSON.stringify(nativeSpec)}\nEnd of specification.`,
+  ];
+  for (const variant of variants) {
+    const parsed = parseGeneratedFileSpec(variant, "pdf");
+    assert.equal(parsed.title, nativeSpec.title);
+    assert.equal(parsed.sections?.length, 5);
+  }
+  assert.throws(
+    () => parseGeneratedFileSpec("I could not create the document. provider_error=bad_request", "pdf"),
+    /invalid structured document specification/i,
+    "malformed model output must be rejected rather than printed",
+  );
+
+  const reproductionPrompt = "Generate a .pdf file containing a full month plan on how to improve my awareness about the present, instead of delving inside the mind, disconnected from the present world.";
+  const uploadedPdfs: Buffer[] = [];
+  const result = await routeFileGeneration(
+    {
+      userMessage: reproductionPrompt,
+      requestedFormat: "pdf",
+      userId: "00000000-0000-4000-8000-000000000031",
+      conversationId: "00000000-0000-4000-8000-000000000032",
+      userDb: {},
+      storageDb: {},
+    },
+    {},
+    {
+      callModel: async () => llmResult(JSON.stringify({
+        response: JSON.stringify(nativeSpec),
+        provider: "test-provider",
+        provider_error: "must never be rendered",
+      }), "minimax"),
+      uploadFile: async (_client, params) => {
+        uploadedPdfs.push(params.buffer);
+        return {
+          success: true,
+          fileId: "month-plan-pdf",
+          fileUrl: "/api/generated-files/month-plan-pdf/download",
+          storagePath: "u/c/month-plan-pdf/v1/month-plan.pdf",
+          storageBucket: "sentiq-generated-files-private",
+          fileSizeBytes: params.buffer.length,
+        };
+      },
+      saveMetadata: async () => undefined,
+      storageDb: {},
+    },
+  );
+  assert.equal(result.success, true, "the exact reproduction path should generate and persist a PDF");
+  const uploadedPdf = uploadedPdfs[0];
+  assert(uploadedPdf && uploadedPdf.length > 5_000, "the generated PDF should have a substantial valid buffer");
+  assert.equal(uploadedPdf.subarray(0, 5).toString(), "%PDF-");
+
+  const { PDFParse } = await import("pdf-parse");
+  const parser = new PDFParse({ data: uploadedPdf });
+  const extracted = await parser.getText({ pageJoiner: "\n---PAGE---\n" });
+  assert.ok(extracted.total >= 4, `the month plan should span multiple readable pages, got ${extracted.total}`);
+  assert.match(extracted.text, /Present Awareness: A Full Month Plan/);
+  assert.match(extracted.text, /Week 1: Arrive/);
+  assert.match(extracted.text, /Day 28: Review the day/);
+  assert.match(extracted.text, /Continuation checklist/);
+  assert.match(extracted.text, /\{"present": true, "next_step": "look outward"\}/, "intentional JSON source text should remain visible");
+  assert.ok(
+    countOccurrences(extracted.text, nativeSpec.title) <= extracted.total,
+    "the title may appear in page headers but wrapped payloads must not duplicate the document body",
+  );
+  assert.doesNotMatch(extracted.text, /provider_error|test-provider|\"sections\"|\"format\"\s*:/, "wrappers and schema fields must not become visible content");
+  for (const page of extracted.pages) {
+    assert.ok(page.text.replace(/Generated by SentIQ Chat|Page \d+ of \d+/g, "").trim().length > 40, `page ${page.num} should not be blank or obviously truncated`);
+  }
+  const screenshots = await parser.getScreenshot({ partial: [1, extracted.total], desiredWidth: 480, imageDataUrl: false, imageBuffer: true });
+  assert.equal(screenshots.pages.length, 2, "first and last pages should render to images");
+  for (const page of screenshots.pages) {
+    assert.ok(page.data.length > 1_000 && page.width > 0 && page.height > 0, `page ${page.pageNumber} screenshot should be non-empty`);
+  }
+  const qaOutput = process.env.SENTIQ_PDF_QA_OUTPUT?.trim();
+  if (qaOutput) {
+    writeFileSync(`${qaOutput}.pdf`, uploadedPdf);
+    screenshots.pages.forEach((page) => writeFileSync(`${qaOutput}-page-${page.pageNumber}.png`, page.data));
+  }
+  await parser.destroy();
+}
+
+async function testPdfLongContentAndUnicode(): Promise<void> {
+  const longHeading = "A deliberately long subsection heading that must wrap cleanly and stay with the related activity below it rather than sitting alone at the bottom of a page";
+  const longItem = "Observe the environment without rushing: notice changing light, nearby movement, texture, temperature, and sound; then choose one concrete action that reconnects you with the people or place around you.";
+  const rendered = await renderPdf({
+    title: "Unicode and Layout Check",
+    subtitle: "Curly quotes “like this”, an em dash — plus café and naïve text",
+    sections: [{
+      heading: longHeading,
+      body: Array.from({ length: 18 }, (_, index) => `Paragraph ${index + 1}: ${longItem}`),
+      bullets: Array.from({ length: 12 }, (_, index) => `${longItem} Item ${index + 1}.`),
+      page_break_after: true,
+    }, {
+      heading: "After the explicit page break",
+      body: ["This concluding block verifies that explicit breaks preserve content and do not create a blank trailing page."],
+    }],
+  });
+  const { PDFParse } = await import("pdf-parse");
+  const parser = new PDFParse({ data: rendered.buffer });
+  const extracted = await parser.getText();
+  await parser.destroy();
+  assert.ok(extracted.total >= 2);
+  assert.match(extracted.text, /Unicode and Layout Check/);
+  assert.match(extracted.text, /After the explicit page break/);
+  assert.match(extracted.text, /café and naïve/);
+  assert.match(extracted.text, /Paragraph 18/);
+  assert.match(extracted.text, /Item 12/);
 }
 
 async function testXlsxRendererValidation(): Promise<void> {
@@ -373,6 +534,7 @@ async function testMarkdownTableXlsxRepair(): Promise<void> {
 }
 
 async function testFallbackFailureIsStructured(): Promise<void> {
+  let modelCalls = 0;
   const result = await routeFileGeneration(
     {
       userMessage: "Create a .pdf roadmap brief",
@@ -383,7 +545,10 @@ async function testFallbackFailureIsStructured(): Promise<void> {
     },
     {},
     {
-      callModel: async () => llmResult("nope", "minimax"),
+      callModel: async () => {
+        modelCalls += 1;
+        return llmResult("nope", "minimax");
+      },
       uploadFile: async () => {
         throw new Error("upload should not be called after render failure");
       },
@@ -394,6 +559,7 @@ async function testFallbackFailureIsStructured(): Promise<void> {
 
   assert.equal(result.success, false);
   assert.equal(result.format, "pdf");
+  assert.equal(modelCalls, 2, "malformed PDF content should receive one bounded regeneration attempt");
   assert.match(result.error || "", /failed after fallback/i);
 }
 
@@ -595,9 +761,11 @@ function testStorageApiSourceGuards(): void {
 
 async function main(): Promise<void> {
   installSupabaseEnvForImports();
-  ({ routeFileGeneration } = await import("./tools/fileGeneration/fileGenerator"));
+  ({ routeFileGeneration, parseGeneratedFileSpec, renderPdf } = await import("./tools/fileGeneration/fileGenerator"));
   await testFileIntentDetection();
   await testLiveChatContextHandoffToPdfGeneration();
+  await testStructuredPdfNormalizationAndComposition();
+  await testPdfLongContentAndUnicode();
   await testMinimaxFallbackAndMetadata();
   await testXlsxRendererValidation();
   await testDocxRepairsSlideShape();

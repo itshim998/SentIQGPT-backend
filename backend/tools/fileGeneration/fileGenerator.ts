@@ -1,6 +1,5 @@
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
-import PDFDocument from "pdfkit";
 import pptxgen from "pptxgenjs";
 import {
   Document,
@@ -11,7 +10,6 @@ import {
 } from "docx";
 import {
   callLLMAdapterDetailed,
-  strictParseJsonObject,
   type LLMAdapterResult,
 } from "../../ai/PromptBuilders";
 import { getGeneratedFileStorageDatabase } from "../../dbRouter";
@@ -20,6 +18,7 @@ import {
   saveGeneratedFileMetadata,
   uploadGeneratedFile,
 } from "./fileStorageService";
+import { composePdf, normalizePdfDocument } from "./pdfDocument";
 import { detectGeneratedFileFormat } from "./fileDetector";
 import type {
   FileGenerationRequest,
@@ -46,6 +45,21 @@ type GeneratedSection = {
   readonly heading?: string;
   readonly body?: readonly string[];
   readonly bullets?: readonly string[];
+  readonly ordered?: readonly string[];
+  readonly numbered?: readonly string[];
+  readonly subsections?: readonly GeneratedSection[];
+  readonly tables?: readonly GeneratedTable[];
+  readonly callout?: string;
+  readonly note?: string;
+  readonly page_break_before?: boolean;
+  readonly page_break_after?: boolean;
+};
+
+type GeneratedTable = {
+  readonly caption?: string;
+  readonly headers?: readonly string[];
+  readonly columns?: readonly string[];
+  readonly rows?: readonly (readonly unknown[] | Record<string, unknown>)[];
 };
 
 type GeneratedSlide = {
@@ -62,10 +76,14 @@ type GeneratedSheet = {
 
 export type GeneratedFileSpec = {
   readonly title?: string;
+  readonly subtitle?: string;
+  readonly introduction?: string;
+  readonly intro?: string;
   readonly format?: string;
   readonly html?: string;
   readonly text?: string;
   readonly sections?: readonly GeneratedSection[];
+  readonly blocks?: readonly Record<string, unknown>[];
   readonly slides?: readonly GeneratedSlide[];
   readonly sheets?: readonly GeneratedSheet[];
   readonly columns?: readonly string[];
@@ -77,6 +95,8 @@ export type RenderedFile = {
   readonly preview: GeneratedFilePreview;
   readonly html?: string;
   readonly text?: string;
+  readonly usedBasicFallback?: boolean;
+  readonly fallbackReason?: string;
 };
 
 type FileGeneratorDependencies = {
@@ -157,10 +177,29 @@ function stripJsonFence(raw: string): string {
 function extractJsonObject(raw: string): string {
   const cleaned = stripJsonFence(raw);
   if (cleaned.startsWith("{") && cleaned.endsWith("}")) return cleaned;
-  const firstBrace = cleaned.indexOf("{");
-  const lastBrace = cleaned.lastIndexOf("}");
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    return cleaned.slice(firstBrace, lastBrace + 1);
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < cleaned.length; index += 1) {
+    const character = cleaned[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+    } else if (character === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) return cleaned.slice(start, index + 1);
+    }
   }
   return cleaned;
 }
@@ -200,24 +239,57 @@ function specFromRawText(raw: string, format: GeneratedFileFormat): GeneratedFil
   return { format, text: cleaned, title: inferTitleFromText(cleaned) };
 }
 
-function parseModelSpec(raw: string, format: GeneratedFileFormat): GeneratedFileSpec {
-  const cleaned = stripJsonFence(raw);
+const FILE_SPEC_KEYS = new Set(["title", "subtitle", "introduction", "intro", "format", "html", "text", "sections", "blocks", "slides", "sheets", "columns", "rows"]);
+const FILE_SPEC_WRAPPER_KEYS = ["document", "spec", "result", "data", "response", "content", "arguments", "input"] as const;
 
-  if (format === "html" && /^(?:<!doctype html|<html[\s>]|<[\w-]+[\s>])/i.test(cleaned)) {
+function hasFileSpecShape(value: Record<string, unknown>): boolean {
+  return Object.keys(value).some((key) => FILE_SPEC_KEYS.has(key));
+}
+
+function unwrapFileSpec(value: unknown): unknown {
+  let current = value;
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (typeof current === "string") {
+      const cleaned = stripJsonFence(current);
+      try {
+        current = JSON.parse(cleaned);
+        continue;
+      } catch {
+        const extracted = extractJsonObject(cleaned);
+        if (extracted === cleaned) return current;
+        try {
+          current = JSON.parse(extracted);
+          continue;
+        } catch {
+          return current;
+        }
+      }
+    }
+    if (!current || typeof current !== "object" || Array.isArray(current)) return current;
+    const record = current as Record<string, unknown>;
+    if (hasFileSpecShape(record)) return record;
+    const wrapper = FILE_SPEC_WRAPPER_KEYS.find((key) => Object.prototype.hasOwnProperty.call(record, key));
+    if (!wrapper) return record;
+    current = record[wrapper];
+  }
+  return current;
+}
+
+export function parseGeneratedFileSpec(raw: unknown, format: GeneratedFileFormat): GeneratedFileSpec {
+  const cleaned = typeof raw === "string" ? stripJsonFence(raw) : raw;
+
+  if (format === "html" && typeof cleaned === "string" && /^(?:<!doctype html|<html[\s>]|<[\w-]+[\s>])/i.test(cleaned)) {
     return { format, html: cleaned };
   }
 
-  let parsed: GeneratedFileSpec;
-  try {
-    parsed = strictParseJsonObject(cleaned) as GeneratedFileSpec;
-  } catch {
-    try {
-      parsed = strictParseJsonObject(extractJsonObject(cleaned)) as GeneratedFileSpec;
-    } catch {
-      parsed = specFromRawText(cleaned, format);
-    }
+  const unwrapped = unwrapFileSpec(cleaned);
+  if (unwrapped && typeof unwrapped === "object" && !Array.isArray(unwrapped)) {
+    return unwrapped as GeneratedFileSpec;
   }
-  return parsed;
+  if (typeof unwrapped === "string" && format !== "pdf" && format !== "docx") {
+    return specFromRawText(unwrapped, format);
+  }
+  throw new Error("Model returned an invalid structured document specification");
 }
 
 function buildModelPrompt(userMessage: string, format: GeneratedFileFormat): string {
@@ -243,8 +315,11 @@ function buildModelPrompt(userMessage: string, format: GeneratedFileFormat): str
       "Create document-ready prose with headings, paragraphs, and optional bullets.",
     ].join("\n"),
     pdf: [
-      'Schema: {"title":"short title","format":"pdf","sections":[{"heading":"...","body":["paragraph"],"bullets":["point"]}]}',
-      "Create PDF-ready prose with headings, paragraphs, and optional bullets.",
+      'Schema: {"title":"short title","subtitle":"optional purpose","introduction":"optional short guidance","format":"pdf","sections":[{"heading":"...","body":["paragraph"],"subsections":[{"heading":"...","body":["paragraph"],"bullets":["point"],"ordered":["step"]}],"bullets":["point"],"ordered":["step"],"tables":[{"caption":"optional","headers":["Column"],"rows":[["value"]]}],"callout":"optional","page_break_before":false}]}',
+      "Create a complete, document-ready hierarchy. Use prose, lists, and simple tables only when they suit the content.",
+      "For plans, schedules, study guides, and reports, group related items into clear sections; use subsections for individually readable days, topics, or work items.",
+      "Include a practical introduction and a concluding review, checklist, or continuation section when the request supports them.",
+      "Do not emit coordinates, styling, drawing commands, renderer code, tool schemas, or provider metadata.",
     ].join("\n"),
     pptx: [
       'Schema: {"title":"short title","format":"pptx","slides":[{"title":"...","bullets":["point"],"notes":"optional speaker note"}]}',
@@ -295,7 +370,7 @@ async function invokeFileModel(
   }
 
   return {
-    spec: parseModelSpec(result.text, format),
+    spec: parseGeneratedFileSpec(result.text, format),
     result,
   };
 }
@@ -485,7 +560,7 @@ function limitSpecForFormat(spec: GeneratedFileSpec, format: GeneratedFileFormat
       }),
     };
   }
-  if (format === "docx" || format === "pdf") {
+  if (format === "docx") {
     return {
       ...spec,
       sections: getArray(spec.sections).slice(0, MAX_SECTIONS).map((section) => {
@@ -519,8 +594,10 @@ export function repairSpecForFormat(spec: GeneratedFileSpec, format: GeneratedFi
   let repaired: GeneratedFileSpec;
   switch (format) {
     case "docx":
-    case "pdf":
       repaired = repairDocumentSectionsFromText(repairDocumentSectionsFromSlides(normalized));
+      break;
+    case "pdf":
+      repaired = repairDocumentSectionsFromSlides(normalized);
       break;
     case "pptx":
       repaired = repairSlidesFromText(repairSlidesFromDocumentSections(normalized));
@@ -637,37 +714,19 @@ export async function renderDocx(spec: GeneratedFileSpec): Promise<RenderedFile>
 }
 
 export async function renderPdf(spec: GeneratedFileSpec): Promise<RenderedFile> {
-  const lines = collectDocumentLines(spec);
-  const buffer = await new Promise<Buffer>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const doc = new PDFDocument({ margin: 54, size: "A4" });
-    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
-    doc.on("error", reject);
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-
-    doc.fontSize(20).text(lines[0] || "Document", { align: "left" });
-    doc.moveDown();
-    for (const line of lines.slice(1)) {
-      if (!line) {
-        doc.moveDown(0.7);
-      } else if (line.startsWith("- ")) {
-        doc.fontSize(11).text(`- ${line.slice(2)}`, { indent: 16 });
-      } else {
-        doc.fontSize(11).text(line, { paragraphGap: 6 });
-      }
-    }
-    doc.end();
-  });
-
-  const text = lines.join("\n");
+  const document = normalizePdfDocument(spec);
+  const composed = await composePdf(document);
+  const text = composed.text;
   return {
-    buffer,
+    buffer: composed.buffer,
     text,
+    usedBasicFallback: composed.usedBasicFallback,
+    fallbackReason: composed.fallbackReason,
     preview: {
       text: clampPreviewText(text),
       document: {
-        title: lines[0] || "Document",
-        section_count: getArray(spec.sections).length || undefined,
+        title: document.title,
+        section_count: document.blocks.filter((block) => block.type === "heading" && block.level === 2).length || undefined,
         word_count: countWords(text),
       },
     },
@@ -1014,8 +1073,8 @@ export async function routeFileGeneration(
     rendered = primary.rendered;
     llmResult = primary.llm;
     generatedSpec = primary.spec;
-    fallback = primary.llm.fallback === true;
-    fallbackReason = primary.llm.fallback_reason ?? null;
+    fallback = primary.llm.fallback === true || primary.rendered.usedBasicFallback === true;
+    fallbackReason = primary.rendered.fallbackReason ?? primary.llm.fallback_reason ?? null;
   } catch (primaryError) {
     fallback = true;
     fallbackReason = primaryError instanceof Error ? primaryError.message : String(primaryError);
@@ -1027,8 +1086,9 @@ export async function routeFileGeneration(
       llmResult = {
         ...secondary.llm,
         fallback: true,
-        fallback_reason: fallbackReason,
+        fallback_reason: secondary.rendered.fallbackReason ?? fallbackReason,
       };
+      fallbackReason = secondary.rendered.fallbackReason ?? fallbackReason;
     } catch (secondaryError) {
       const secondaryMessage = secondaryError instanceof Error ? secondaryError.message : String(secondaryError);
       return {

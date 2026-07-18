@@ -61,6 +61,27 @@ assert.deepEqual(calls[0], {
   index: 0,
 });
 
+const nativeFileArguments = { request: "Create the requested month plan", format: "pdf" };
+for (const [id, argumentsValue] of [
+  ["native_file_args", nativeFileArguments],
+  ["string_file_args", JSON.stringify(nativeFileArguments)],
+  ["double_file_args", JSON.stringify(JSON.stringify(nativeFileArguments))],
+  ["wrapped_file_args", { arguments: JSON.stringify(nativeFileArguments) }],
+  ["function_file_args", { function: { arguments: JSON.stringify(nativeFileArguments) } }],
+  ["surrounded_file_args", `The requested tool data follows:\n${JSON.stringify(nativeFileArguments)}\nEnd tool data.`],
+] as const) {
+  assert.deepEqual(
+    validateModelToolCalls([{ id, name: "file_gen", arguments: argumentsValue }], authenticated)[0]?.arguments,
+    nativeFileArguments,
+    `${id} should normalize to the provider-neutral file arguments`,
+  );
+}
+assert.throws(() => validateModelToolCalls([{
+  id: "metadata_file_args",
+  name: "file_gen",
+  arguments: { request: "Create it", format: "pdf", provider: "internal" },
+}], authenticated), /unrecognized key/i, "provider metadata must not cross the validated tool boundary");
+
 assert.throws(() => validateModelToolCalls([
   { id: "call_2", name: "file_gen", arguments: { request: "Make a PDF", format: "pdf" } },
 ], guest), /unavailable/);
