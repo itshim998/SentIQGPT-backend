@@ -238,6 +238,7 @@ export function getAllowedToolFingerprint(tools: readonly ProviderToolDefinition
 }
 
 const TOOL_ARGUMENT_WRAPPER_KEYS = new Set(["arguments", "args", "input", "parameters"]);
+const TOOL_ARGUMENT_METADATA_KEYS = new Set(["id", "index", "name", "provider", "type"]);
 
 function extractSingleJsonObject(value: string): string | null {
   let start = -1;
@@ -278,8 +279,19 @@ function unwrapToolArgumentEnvelope(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record);
-  if (keys.length === 1 && TOOL_ARGUMENT_WRAPPER_KEYS.has(keys[0])) return record[keys[0]];
-  if (keys.length === 1 && keys[0] === "function" && record.function && typeof record.function === "object") {
+  const wrapperKeys = keys.filter((key) => TOOL_ARGUMENT_WRAPPER_KEYS.has(key));
+  if (
+    wrapperKeys.length === 1 &&
+    keys.every((key) => TOOL_ARGUMENT_WRAPPER_KEYS.has(key) || TOOL_ARGUMENT_METADATA_KEYS.has(key))
+  ) {
+    return record[wrapperKeys[0]];
+  }
+  if (
+    keys.includes("function") &&
+    keys.every((key) => key === "function" || TOOL_ARGUMENT_METADATA_KEYS.has(key)) &&
+    record.function &&
+    typeof record.function === "object"
+  ) {
     const fn = record.function as Record<string, unknown>;
     if (Object.prototype.hasOwnProperty.call(fn, "arguments")) return fn.arguments;
   }

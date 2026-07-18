@@ -67,7 +67,9 @@ for (const [id, argumentsValue] of [
   ["string_file_args", JSON.stringify(nativeFileArguments)],
   ["double_file_args", JSON.stringify(JSON.stringify(nativeFileArguments))],
   ["wrapped_file_args", { arguments: JSON.stringify(nativeFileArguments) }],
+  ["metadata_wrapped_file_args", { type: "function", provider: "fixture", arguments: JSON.stringify(nativeFileArguments) }],
   ["function_file_args", { function: { arguments: JSON.stringify(nativeFileArguments) } }],
+  ["metadata_function_file_args", { type: "function", provider: "fixture", function: { arguments: JSON.stringify(nativeFileArguments) } }],
   ["surrounded_file_args", `The requested tool data follows:\n${JSON.stringify(nativeFileArguments)}\nEnd tool data.`],
 ] as const) {
   assert.deepEqual(

@@ -56,8 +56,39 @@ function cleanInline(value: unknown, maxLength = 8_000): string {
 }
 
 function cleanStringArray(value: unknown, limit = 80): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.slice(0, limit).map((item) => cleanInline(item)).filter(Boolean);
+  const values = Array.isArray(value) ? value.slice(0, limit) : typeof value === "string" ? [value] : [];
+  return values.map((item) => cleanInline(item)).filter(Boolean);
+}
+
+const SERIALIZED_DOCUMENT_KEYS = new Set([
+  "arguments", "blocks", "document", "format", "input", "response", "sections", "slides", "spec", "sheets", "title",
+]);
+
+function looksLikeSerializedDocumentPayload(value: string, documentTitle: string): boolean {
+  let current: unknown = value.trim();
+  for (let depth = 0; depth < 3 && typeof current === "string"; depth += 1) {
+    if (!/^(?:\{[\s\S]*\}|"[\s\S]*")$/.test(current.trim())) return false;
+    try {
+      current = JSON.parse(current);
+    } catch {
+      return false;
+    }
+  }
+  const record = asRecord(current);
+  if (!record) return false;
+  const matched = Object.keys(record).filter((key) => SERIALIZED_DOCUMENT_KEYS.has(key));
+  const hasContentShape = ["blocks", "sections", "slides", "sheets"].some((key) => Object.prototype.hasOwnProperty.call(record, key));
+  const hasWrapper = ["arguments", "document", "input", "response", "spec"].some((key) => Object.prototype.hasOwnProperty.call(record, key));
+  const payloadTitle = cleanInline(record.title, 500);
+  return hasWrapper ||
+    (hasContentShape && matched.length >= 3) ||
+    (hasContentShape && Boolean(payloadTitle) && payloadTitle === documentTitle);
+}
+
+function validateVisibleText(value: string, documentTitle: string): void {
+  if (looksLikeSerializedDocumentPayload(value, documentTitle)) {
+    throw new Error("PDF document contains a serialized document payload");
+  }
 }
 
 function normalizeTable(value: unknown): Extract<PdfDocumentBlock, { type: "table" }> | null {
@@ -180,19 +211,55 @@ export function normalizePdfDocument(specValue: unknown): NormalizedPdfDocument 
   const title = cleanInline(spec.title, 500);
   if (!title) throw new Error("PDF document title is required");
   const blocks: PdfDocumentBlock[] = [];
-  for (const section of Array.isArray(spec.sections) ? spec.sections : []) appendSection(blocks, section);
+  const rawSections = Array.isArray(spec.sections)
+    ? spec.sections
+    : Array.isArray(spec.section)
+      ? spec.section
+      : spec.section !== undefined
+        ? [spec.section]
+        : [];
+  for (const section of rawSections) {
+    if (typeof section === "string") {
+      appendSection(blocks, {
+        heading: section,
+        body: spec.body,
+        bullets: spec.bullets ?? spec.bullet,
+      });
+    } else {
+      appendSection(blocks, section);
+    }
+  }
+  if (rawSections.length === 0 && (spec.body !== undefined || spec.bullets !== undefined || spec.bullet !== undefined)) {
+    appendSection(blocks, {
+      body: spec.body,
+      bullets: spec.bullets ?? spec.bullet,
+    });
+  }
   for (const block of Array.isArray(spec.blocks) ? spec.blocks : []) appendDirectBlock(blocks, block);
   if (blocks.length === 0 && typeof spec.text === "string" && spec.text.trim()) {
     blocks.push({ type: "paragraph", text: cleanText(spec.text) });
   }
   const meaningfulBlocks = blocks.filter((block) => block.type !== "page_break");
   if (meaningfulBlocks.length === 0) throw new Error("PDF document content is required");
-  return {
+  const document = {
     title,
     subtitle: cleanInline(spec.subtitle, 1_000) || undefined,
     introduction: cleanText(spec.introduction ?? spec.intro, 10_000) || undefined,
     blocks: blocks.slice(0, MAX_BLOCKS),
   };
+  validateVisibleText(document.title, document.title);
+  if (document.subtitle) validateVisibleText(document.subtitle, document.title);
+  if (document.introduction) validateVisibleText(document.introduction, document.title);
+  for (const block of document.blocks) {
+    if (block.type === "heading" || block.type === "paragraph" || block.type === "callout") validateVisibleText(block.text, document.title);
+    else if (block.type === "list") block.items.forEach((item) => validateVisibleText(item, document.title));
+    else if (block.type === "table") {
+      if (block.caption) validateVisibleText(block.caption, document.title);
+      block.headers.forEach((header) => validateVisibleText(header, document.title));
+      block.rows.forEach((row) => row.forEach((cell) => validateVisibleText(cell, document.title)));
+    }
+  }
+  return document;
 }
 
 function collectPdfText(document: NormalizedPdfDocument): string {
@@ -225,6 +292,10 @@ function contentWidth(doc: PDFKit.PDFDocument): number {
 
 function contentBottom(doc: PDFKit.PDFDocument): number {
   return doc.page.height - doc.page.margins.bottom;
+}
+
+function usablePageHeight(doc: PDFKit.PDFDocument): number {
+  return contentBottom(doc) - doc.page.margins.top;
 }
 
 function ensureSpace(doc: PDFKit.PDFDocument, height: number): void {
@@ -299,7 +370,7 @@ function renderList(doc: PDFKit.PDFDocument, fonts: PdfFonts, block: Extract<Pdf
   block.items.forEach((item, index) => {
     doc.font(fonts.regular).fontSize(10.4);
     const height = doc.heightOfString(item, { width, lineGap: 3.2 });
-    ensureSpace(doc, Math.min(Math.max(height + 7, 26), 90));
+    ensureSpace(doc, Math.min(Math.max(height + 7, 26), usablePageHeight(doc)));
     const y = doc.y;
     doc.fillColor(ACCENT_COLOR);
     if (block.ordered) doc.font(fonts.bold).text(`${index + 1}.`, left, y, { width: markerWidth - 4, align: "right", lineBreak: false });
@@ -319,15 +390,15 @@ function drawTableRow(
   doc.font(header ? fonts.bold : fonts.regular).fontSize(header ? 9.1 : 8.8);
   const padding = 6;
   const heights = cells.map((cell, index) => doc.heightOfString(cell, { width: widths[index] - padding * 2, lineGap: 2 }));
-  const rowHeight = Math.min(110, Math.max(header ? 27 : 24, ...heights.map((height) => height + padding * 2)));
-  ensureSpace(doc, Math.min(rowHeight, 110));
+  const rowHeight = Math.max(header ? 27 : 24, ...heights.map((height) => height + padding * 2));
+  ensureSpace(doc, rowHeight);
   const y = doc.y;
   doc.rect(left, y, widths.reduce((sum, width) => sum + width, 0), rowHeight).fill(header ? TABLE_HEADER_COLOR : PAGE_COLOR);
   let x = left;
   cells.forEach((cell, index) => {
     doc.rect(x, y, widths[index], rowHeight).strokeColor(BORDER_COLOR).lineWidth(0.5).stroke();
     doc.font(header ? fonts.bold : fonts.regular).fillColor(header ? TITLE_COLOR : TEXT_COLOR).fontSize(header ? 9.1 : 8.8)
-      .text(cell, x + padding, y + padding, { width: widths[index] - padding * 2, height: rowHeight - padding * 2, lineGap: 2, ellipsis: true });
+      .text(cell, x + padding, y + padding, { width: widths[index] - padding * 2, height: rowHeight - padding * 2, lineGap: 2 });
     x += widths[index];
   });
   doc.y = y + rowHeight;
@@ -346,7 +417,16 @@ function renderTable(doc: PDFKit.PDFDocument, fonts: PdfFonts, block: Extract<Pd
   for (const row of block.rows) {
     doc.font(fonts.regular).fontSize(8.8);
     const estimated = Math.max(...row.map((cell, index) => doc.heightOfString(cell, { width: widths[index] - 12, lineGap: 2 }) + 12), 24);
-    if (doc.y + Math.min(estimated, 110) > contentBottom(doc)) {
+    if (estimated > usablePageHeight(doc) - 40) {
+      if (doc.y + 42 > contentBottom(doc)) doc.addPage();
+      row.forEach((cell, index) => {
+        if (!cell) return;
+        renderHeading(doc, fonts, { type: "heading", level: 3, text: block.headers[index] || `Column ${index + 1}` });
+        renderParagraph(doc, fonts, cell);
+      });
+      continue;
+    }
+    if (doc.y + estimated > contentBottom(doc)) {
       doc.addPage();
       drawTableRow(doc, fonts, block.headers, widths, true);
     }
@@ -360,7 +440,14 @@ function renderCallout(doc: PDFKit.PDFDocument, fonts: PdfFonts, text: string): 
   doc.font(fonts.regular).fontSize(10.2);
   const textHeight = doc.heightOfString(text, { width: width - 26, lineGap: 3.2 });
   const boxHeight = textHeight + 20;
-  ensureSpace(doc, Math.min(boxHeight, 100));
+  if (boxHeight > usablePageHeight(doc) - 20) {
+    ensureSpace(doc, 40);
+    doc.strokeColor(ACCENT_COLOR).lineWidth(2).moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.margins.left + 48, doc.y).stroke();
+    doc.moveDown(0.5);
+    renderParagraph(doc, fonts, text);
+    return;
+  }
+  ensureSpace(doc, boxHeight);
   const y = doc.y;
   doc.roundedRect(doc.page.margins.left, y, width, boxHeight, 5).fill(ACCENT_LIGHT);
   doc.rect(doc.page.margins.left, y, 4, boxHeight).fill(ACCENT_COLOR);

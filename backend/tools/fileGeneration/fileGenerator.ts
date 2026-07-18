@@ -82,7 +82,11 @@ export type GeneratedFileSpec = {
   readonly format?: string;
   readonly html?: string;
   readonly text?: string;
+  readonly section?: GeneratedSection | string | readonly GeneratedSection[];
   readonly sections?: readonly GeneratedSection[];
+  readonly body?: string | readonly string[];
+  readonly bullet?: string | readonly string[];
+  readonly bullets?: string | readonly string[];
   readonly blocks?: readonly Record<string, unknown>[];
   readonly slides?: readonly GeneratedSlide[];
   readonly sheets?: readonly GeneratedSheet[];
@@ -239,11 +243,18 @@ function specFromRawText(raw: string, format: GeneratedFileFormat): GeneratedFil
   return { format, text: cleaned, title: inferTitleFromText(cleaned) };
 }
 
-const FILE_SPEC_KEYS = new Set(["title", "subtitle", "introduction", "intro", "format", "html", "text", "sections", "blocks", "slides", "sheets", "columns", "rows"]);
+const FILE_SPEC_KEYS = new Set(["title", "subtitle", "introduction", "intro", "format", "html", "text", "section", "sections", "body", "bullet", "bullets", "blocks", "slides", "sheets", "columns", "rows"]);
 const FILE_SPEC_WRAPPER_KEYS = ["document", "spec", "result", "data", "response", "content", "arguments", "input"] as const;
 
 function hasFileSpecShape(value: Record<string, unknown>): boolean {
-  return Object.keys(value).some((key) => FILE_SPEC_KEYS.has(key));
+  const keys = Object.keys(value);
+  if (!keys.some((key) => FILE_SPEC_KEYS.has(key))) return false;
+  if (Object.prototype.hasOwnProperty.call(value, "title")) return true;
+  if (["section", "sections", "blocks", "slides", "sheets", "columns", "rows"].some((key) => Object.prototype.hasOwnProperty.call(value, key))) {
+    return true;
+  }
+  const hasWrapper = FILE_SPEC_WRAPPER_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value, key));
+  return !hasWrapper && ["html", "text", "body", "bullet", "bullets"].some((key) => Object.prototype.hasOwnProperty.call(value, key));
 }
 
 function unwrapFileSpec(value: unknown): unknown {
