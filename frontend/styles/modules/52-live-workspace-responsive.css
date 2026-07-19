@@ -245,6 +245,10 @@
     margin: 0 16px max(10px, env(safe-area-inset-bottom));
   }
 
+  #live-beta-panel[data-live-connection-tone="fallback"] .live-workspace-controls {
+    display: none;
+  }
+
   #live-beta-panel .live-workspace-transcript-host[open] {
     grid-column: 1 / -1;
     grid-row: 2 / -1;
