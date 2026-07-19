@@ -5,6 +5,8 @@ const behaviorSource = await readFile(new URL("../scripts/features/progressive-d
 const domRefsSource = await readFile(new URL("../scripts/features/chat/dom-refs.js", import.meta.url), "utf8");
 const importsSource = await readFile(new URL("../styles/modules/12-reduced-motion.css", import.meta.url), "utf8");
 const cssSource = await readFile(new URL("../styles/modules/55-progressive-disclosure.css", import.meta.url), "utf8");
+const responsiveCssSource = await readFile(new URL("../styles/modules/56-progressive-disclosure-responsive.css", import.meta.url), "utf8");
+const combinedCssSource = `${cssSource}\n${responsiveCssSource}`;
 const messageActionsSource = await readFile(new URL("../scripts/features/message-action-behaviour.js", import.meta.url), "utf8");
 const accountSource = await readFile(new URL("../styles/modules/19-account-surface.css", import.meta.url), "utf8");
 const toolSheetSource = await readFile(new URL("../styles/modules/26-tool-action-sheet.css", import.meta.url), "utf8");
@@ -30,6 +32,9 @@ for (const token of [
   "window.visualViewport",
   "requestAnimationFrame",
   "MutationObserver",
+  "setAttributeIfChanged",
+  "sentiq-account-panel-home",
+  "document.body.appendChild(accountPanel)",
 ]) assert.ok(behaviorSource.includes(token), `Behavior missing ${token}`);
 
 for (const forbidden of [
@@ -50,6 +55,7 @@ assert.ok(
   "Disclosure must initialize after the central UI state bridge",
 );
 assert.ok(importsSource.includes('@import url("./55-progressive-disclosure.css");'));
+assert.ok(importsSource.includes('@import url("./56-progressive-disclosure-responsive.css");'));
 
 for (const token of [
   'data-progressive-disclosure-version="9.2"',
@@ -62,11 +68,12 @@ for (const token of [
   ".sentiq-secondary-action-sheet:not([hidden])",
   ".sentiq-secondary-action-panel",
   ".progressive-account-backdrop:not([hidden])",
+  'body > #account-panel[data-progressive-account-sheet="true"]',
   "safe-area-inset-bottom",
   "--sentiq-progressive-viewport-height",
   "prefers-reduced-motion: reduce",
   "forced-colors: active",
-]) assert.ok(cssSource.includes(token), `Disclosure CSS missing ${token}`);
+]) assert.ok(combinedCssSource.includes(token), `Disclosure CSS missing ${token}`);
 
 assert.ok(messageActionsSource.includes("message-actions-trigger"), "Existing message disclosure remains available");
 assert.ok(messageActionsSource.includes("focusin"), "Keyboard interaction must keep actions reachable");
@@ -83,5 +90,8 @@ const mobileSheetRules = (cssSource.match(/@media \(hover: none\)[\s\S]*?@media 
 assert.ok(mobileSheetRules.includes("display: inline-grid"), "Relevant mobile surfaces need an explicit action trigger");
 assert.ok(mobileSheetRules.includes("position: fixed"), "Mobile actions need a sheet layer");
 assert.ok(mobileSheetRules.includes("overscroll-behavior: contain"), "Mobile sheet scrolling must stay contained");
+
+const directAttributeWrites = behaviorSource.match(/\.setAttribute\("(?:aria-hidden|data-progressive-mobile-access)"/g) || [];
+assert.equal(directAttributeWrites.length, 0, "Observed disclosure attributes must use guarded writes");
 
 console.log("Pass 9.2 progressive disclosure phase gate passed.");
