@@ -35,6 +35,7 @@ function initializeUIStateBridge() {
   const composer = chatInput?.closest(".chat-input-wrapper");
   const filePreview = document.getElementById("file-preview-area");
   const scrollRegion = document.querySelector(".chat-scroll-region");
+  const historyScroller = chatMessages instanceof HTMLElement ? chatMessages : scrollRegion;
   const livePanel = document.getElementById("live-beta-panel");
   const accountButton = document.getElementById("account-btn");
   const authUserChip = document.getElementById("auth-user-chip");
@@ -105,9 +106,9 @@ function initializeUIStateBridge() {
   }
 
   function isReadingHistory(hasMessages) {
-    if (!hasMessages || !(scrollRegion instanceof HTMLElement)) return false;
-    const distanceFromEnd = scrollRegion.scrollHeight - scrollRegion.clientHeight - scrollRegion.scrollTop;
-    return distanceFromEnd > Math.max(96, scrollRegion.clientHeight * 0.14);
+    if (!hasMessages || !(historyScroller instanceof HTMLElement)) return false;
+    const distanceFromEnd = historyScroller.scrollHeight - historyScroller.clientHeight - historyScroller.scrollTop;
+    return distanceFromEnd > Math.max(96, historyScroller.clientHeight * 0.14);
   }
 
   function liveIsActive() {
@@ -164,7 +165,7 @@ function initializeUIStateBridge() {
   }
 
   chatInput?.addEventListener("input", () => schedule("composer-input"), { passive: true });
-  scrollRegion?.addEventListener("scroll", () => schedule("history-scroll"), { passive: true });
+  historyScroller?.addEventListener("scroll", () => schedule("history-scroll"), { passive: true });
   window.addEventListener("resize", () => schedule("viewport-resize"), { passive: true });
   window.addEventListener("pageshow", () => schedule("page-show"), { passive: true });
   document.addEventListener("visibilitychange", () => schedule("visibility-change"));
@@ -220,10 +221,10 @@ function initializeUIStateBridge() {
     });
   });
 
-  if (typeof ResizeObserver === "function" && scrollRegion instanceof HTMLElement) {
+  if (typeof ResizeObserver === "function" && historyScroller instanceof HTMLElement) {
     const resizeObserver = new ResizeObserver(() => schedule("history-resize"));
-    resizeObserver.observe(scrollRegion);
-    if (chatMessages instanceof HTMLElement) resizeObserver.observe(chatMessages);
+    resizeObserver.observe(historyScroller);
+    if (scrollRegion instanceof HTMLElement && scrollRegion !== historyScroller) resizeObserver.observe(scrollRegion);
   }
 
   window.SentIQUIStateBridge = Object.freeze({
