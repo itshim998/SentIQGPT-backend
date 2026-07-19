@@ -17,6 +17,9 @@
 @import url("./33-message-actions.css");
 @import url("./34-long-answer-reading.css");
 @import url("./35-websurf-presentation.css");
+@import url("./36-deep-research-workspace.css");
+@import url("./37-deep-research-report.css");
+@import url("./38-deep-research-responsive.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
