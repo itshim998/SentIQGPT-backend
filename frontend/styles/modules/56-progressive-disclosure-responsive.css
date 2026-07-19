@@ -1,0 +1,56 @@
+/* SentIQ Liquid Glass V4 — Pass 9.2 mobile disclosure placement */
+
+@media (hover: none), (pointer: coarse), (max-width: 768px) {
+  body > #account-panel[data-progressive-account-sheet="true"] {
+    position: fixed !important;
+    top: auto !important;
+    left: 12px !important;
+    right: 12px !important;
+    bottom: max(10px, env(safe-area-inset-bottom)) !important;
+    width: auto !important;
+    max-width: 520px;
+    max-height: min(64vh, calc(var(--sentiq-progressive-viewport-height, 100dvh) - 34px));
+    margin-inline: auto;
+    padding-top: 17px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: 20px;
+    transform: translateY(18px) scale(0.985);
+    transform-origin: bottom center;
+    z-index: 248;
+  }
+
+  body > #account-panel[data-progressive-account-sheet="true"].visible,
+  body > #account-panel[data-progressive-account-sheet="true"][aria-hidden="false"] {
+    transform: translateY(0) scale(1);
+  }
+
+  body > #account-panel[data-progressive-account-sheet="true"]::before {
+    top: 7px;
+  }
+
+  body.sentiq-account-sheet-open > .progressive-account-backdrop {
+    z-index: 247;
+  }
+
+  body.sentiq-account-sheet-open > #account-panel .account-panel-item {
+    min-height: 48px;
+  }
+}
+
+@media (max-width: 420px) {
+  body > #account-panel[data-progressive-account-sheet="true"] {
+    left: 8px !important;
+    right: 8px !important;
+    bottom: max(6px, env(safe-area-inset-bottom)) !important;
+    max-height: min(72vh, calc(var(--sentiq-progressive-viewport-height, 100dvh) - 18px));
+    border-radius: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body > #account-panel[data-progressive-account-sheet="true"] {
+    transition: none !important;
+  }
+}
