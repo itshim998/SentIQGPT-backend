@@ -34,6 +34,7 @@
 @import url("./50-authentication-responsive.css");
 @import url("./51-live-workspace.css");
 @import url("./52-live-workspace-responsive.css");
+@import url("./53-live-entry-control.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
