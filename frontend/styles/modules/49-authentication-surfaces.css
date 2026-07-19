@@ -1,0 +1,472 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Pass 8.3
+   Authentication surfaces
+   ============================================================ */
+
+body.auth-sensitive-surface-open .app-container.auth-blurred {
+  filter: blur(2px) saturate(0.88);
+  transform: none;
+}
+
+#auth-modal.authentication-surface-root,
+#name-modal.authentication-surface-root {
+  background: rgba(3, 5, 10, 0.78);
+  backdrop-filter: blur(5px) saturate(88%);
+  -webkit-backdrop-filter: blur(5px) saturate(88%);
+}
+
+#auth-modal .authentication-surface,
+#name-modal .authentication-surface {
+  --adaptive-panel-surface-width: 468px;
+  max-height: min(88dvh, 760px);
+  border-color: rgba(215, 218, 228, 0.1);
+  background: rgba(12, 15, 21, 0.985);
+  box-shadow:
+    0 22px 56px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+#auth-modal .authentication-surface::before,
+#auth-modal .authentication-surface::after,
+#name-modal .authentication-surface::before,
+#name-modal .authentication-surface::after {
+  display: none;
+}
+
+#auth-modal .adaptive-panel-header,
+#name-modal .adaptive-panel-header {
+  min-height: 58px;
+  padding: 13px 15px 12px 18px;
+  border-bottom-color: rgba(215, 218, 228, 0.065);
+  background: rgba(12, 15, 21, 0.98);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+#auth-modal .adaptive-panel-title,
+#name-modal .adaptive-panel-title {
+  color: rgba(242, 243, 247, 0.96);
+  font-size: 0.94rem;
+  font-weight: 640;
+}
+
+#auth-modal .adaptive-panel-close,
+#name-modal .adaptive-panel-close {
+  border-color: transparent;
+  background: transparent;
+}
+
+#auth-modal .adaptive-panel-close:hover,
+#auth-modal .adaptive-panel-close:focus-visible,
+#name-modal .adaptive-panel-close:hover,
+#name-modal .adaptive-panel-close:focus-visible {
+  border-color: rgba(215, 218, 228, 0.09);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+#auth-modal .authentication-surface-body,
+#name-modal .name-modal-body {
+  min-height: 0;
+  padding: 24px 28px 26px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+#auth-modal .auth-modal-copy,
+#name-modal .auth-modal-copy {
+  margin-bottom: 22px;
+  text-align: left;
+}
+
+#auth-modal .auth-modal-copy h2,
+#name-modal .auth-modal-copy h2 {
+  margin: 0 0 7px;
+  color: rgba(248, 248, 250, 0.985);
+  font-size: clamp(1.45rem, 4vw, 1.72rem);
+  font-weight: 670;
+  letter-spacing: -0.035em;
+  line-height: 1.18;
+}
+
+#auth-modal .auth-modal-copy p,
+#name-modal .auth-modal-copy p {
+  max-width: 46ch;
+  margin: 0;
+  color: rgba(151, 159, 176, 0.84);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+#auth-modal .authentication-form {
+  gap: 0;
+}
+
+#auth-modal .auth-oauth-group {
+  gap: 11px;
+}
+
+#auth-modal .authentication-method-heading,
+#auth-modal .authentication-route-header {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+#auth-modal .authentication-method-heading span,
+#auth-modal .authentication-route-header strong {
+  color: rgba(229, 231, 237, 0.95);
+  font-size: 0.76rem;
+  font-weight: 640;
+  line-height: 1.35;
+}
+
+#auth-modal .authentication-method-heading small,
+#auth-modal .authentication-route-header small {
+  color: rgba(128, 137, 154, 0.8);
+  font-size: 0.69rem;
+  line-height: 1.45;
+}
+
+#auth-modal .authentication-google-route {
+  min-height: 48px;
+  justify-content: flex-start;
+  padding: 11px 15px;
+  border-color: rgba(215, 218, 228, 0.12);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: none;
+  color: rgba(239, 240, 244, 0.98);
+  font-size: 0.82rem;
+  font-weight: 620;
+}
+
+#auth-modal .authentication-google-route:hover:not(:disabled),
+#auth-modal .authentication-google-route:focus-visible {
+  border-color: rgba(201, 193, 232, 0.22);
+  background: rgba(255, 255, 255, 0.065);
+  box-shadow: none;
+  transform: none;
+}
+
+#auth-modal .auth-google-mark {
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  box-shadow: none;
+}
+
+#auth-modal .auth-divider {
+  margin: 3px 0 1px;
+  gap: 10px;
+  color: rgba(112, 121, 139, 0.76);
+  font-size: 0.64rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+#auth-modal .auth-divider span:first-child,
+#auth-modal .auth-divider span:last-child {
+  background: rgba(215, 218, 228, 0.075);
+}
+
+#auth-modal .authentication-email-path {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 17px;
+  border-top: 1px solid rgba(215, 218, 228, 0.065);
+}
+
+#auth-modal .authentication-route-header {
+  margin-bottom: 1px;
+}
+
+#auth-modal .auth-field {
+  gap: 7px;
+}
+
+#auth-modal .auth-field label {
+  color: rgba(176, 181, 194, 0.88);
+  font-size: 0.72rem;
+  font-weight: 580;
+}
+
+#auth-modal .auth-field input,
+#name-modal .auth-field input {
+  min-height: 46px;
+  padding: 11px 13px;
+  border-color: rgba(215, 218, 228, 0.105);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(243, 244, 247, 0.98);
+  font-size: 0.84rem;
+  box-shadow: none;
+}
+
+#auth-modal .auth-field input::placeholder,
+#name-modal .auth-field input::placeholder {
+  color: rgba(120, 128, 145, 0.68);
+}
+
+#auth-modal .auth-field input:hover,
+#name-modal .auth-field input:hover {
+  border-color: rgba(215, 218, 228, 0.16);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+#auth-modal .auth-field input:focus,
+#name-modal .auth-field input:focus {
+  border-color: rgba(174, 157, 233, 0.52);
+  background: rgba(255, 255, 255, 0.047);
+  box-shadow: 0 0 0 3px rgba(149, 123, 232, 0.085);
+}
+
+#auth-modal .auth-field input[aria-invalid="true"] {
+  border-color: rgba(230, 123, 137, 0.64);
+  background: rgba(122, 35, 50, 0.08);
+  box-shadow: 0 0 0 3px rgba(215, 83, 103, 0.075);
+}
+
+#auth-modal .auth-password-wrap input {
+  padding-right: 50px;
+}
+
+#auth-modal .auth-password-toggle {
+  right: 7px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: rgba(132, 141, 158, 0.9);
+}
+
+#auth-modal .auth-password-toggle:hover,
+#auth-modal .auth-password-toggle:focus-visible,
+#auth-modal .auth-password-toggle[aria-pressed="true"] {
+  border-color: rgba(215, 218, 228, 0.09);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(231, 232, 238, 0.96);
+}
+
+#auth-modal .authentication-password-feedback {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: -3px;
+}
+
+#auth-modal .authentication-password-feedback[hidden] {
+  display: none;
+}
+
+#auth-modal .authentication-password-feedback-row {
+  min-height: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(118, 127, 144, 0.82);
+  font-size: 0.65rem;
+  line-height: 1.35;
+}
+
+#auth-modal .authentication-caps-lock {
+  color: rgba(238, 190, 111, 0.94);
+  font-weight: 620;
+}
+
+#auth-modal .authentication-password-meter {
+  display: none;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  height: 3px;
+}
+
+#auth-modal .authentication-password-feedback[data-password-view="strength"] .authentication-password-meter {
+  display: grid;
+}
+
+#auth-modal .authentication-password-meter i {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+#auth-modal .authentication-password-feedback[data-strength="1"] .authentication-password-meter i:nth-child(-n + 1),
+#auth-modal .authentication-password-feedback[data-strength="2"] .authentication-password-meter i:nth-child(-n + 2),
+#auth-modal .authentication-password-feedback[data-strength="3"] .authentication-password-meter i:nth-child(-n + 3),
+#auth-modal .authentication-password-feedback[data-strength="4"] .authentication-password-meter i:nth-child(-n + 4) {
+  background: rgba(172, 154, 232, 0.8);
+}
+
+#auth-modal .authentication-password-feedback[data-strength="1"] .authentication-password-meter i:nth-child(1) {
+  background: rgba(224, 132, 143, 0.82);
+}
+
+#auth-modal .authentication-password-feedback p {
+  margin: 0;
+  color: rgba(112, 121, 138, 0.78);
+  font-size: 0.64rem;
+  line-height: 1.45;
+}
+
+#auth-modal .auth-link-row {
+  min-height: 24px;
+  align-items: center;
+  margin: -2px 0 0;
+}
+
+#auth-modal .auth-inline-link,
+#auth-modal .auth-switch button,
+#name-modal .auth-inline-link {
+  color: rgba(187, 171, 238, 0.94);
+  font-size: 0.72rem;
+  font-weight: 560;
+}
+
+#auth-modal .auth-inline-link:hover,
+#auth-modal .auth-inline-link:focus-visible,
+#auth-modal .auth-switch button:hover,
+#auth-modal .auth-switch button:focus-visible,
+#name-modal .auth-inline-link:hover,
+#name-modal .auth-inline-link:focus-visible {
+  color: rgba(234, 230, 247, 0.98);
+}
+
+#auth-modal .auth-status,
+#name-modal .auth-status {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: rgba(154, 162, 178, 0.9);
+  font-size: 0.72rem;
+  line-height: 1.48;
+  text-align: left;
+  opacity: 1;
+  transform: none;
+}
+
+#auth-modal .auth-status.is-visible,
+#auth-modal .auth-status:not(:empty),
+#name-modal .auth-status.is-visible,
+#name-modal .auth-status:not(:empty) {
+  min-height: 40px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 11px;
+  border: 1px solid rgba(215, 218, 228, 0.08);
+  background: rgba(255, 255, 255, 0.028);
+}
+
+#auth-modal .auth-status.is-visible::before,
+#auth-modal .auth-status:not(:empty)::before,
+#name-modal .auth-status.is-visible::before,
+#name-modal .auth-status:not(:empty)::before {
+  content: "i";
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 0.62rem;
+  font-weight: 720;
+  line-height: 1;
+}
+
+#auth-modal .auth-status.is-error,
+#name-modal .auth-status.is-error {
+  border-color: rgba(235, 123, 139, 0.2);
+  background: rgba(137, 39, 56, 0.1);
+  color: rgba(255, 184, 194, 0.96);
+}
+
+#auth-modal .auth-status.is-error::before,
+#name-modal .auth-status.is-error::before {
+  content: "!";
+}
+
+#auth-modal .auth-status.is-success,
+#name-modal .auth-status.is-success {
+  border-color: rgba(116, 201, 155, 0.17);
+  background: rgba(39, 120, 78, 0.08);
+  color: rgba(179, 231, 200, 0.94);
+}
+
+#auth-modal .auth-status.is-success::before,
+#name-modal .auth-status.is-success::before {
+  content: "✓";
+  font-size: 0.58rem;
+}
+
+#auth-modal .auth-submit-btn,
+#name-modal .auth-submit-btn {
+  min-height: 44px;
+  margin-top: 1px;
+  padding: 10px 15px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 650;
+  box-shadow: none;
+}
+
+#auth-modal .auth-submit-btn:hover:not(:disabled),
+#name-modal .auth-submit-btn:hover:not(:disabled) {
+  transform: none;
+}
+
+#auth-modal .auth-switch {
+  margin-top: 1px;
+  color: rgba(132, 140, 156, 0.82);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+#name-modal .name-modal-actions {
+  gap: 13px;
+}
+
+#name-modal .auth-form {
+  gap: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #auth-modal .auth-modal-body.auth-view-transition,
+  #auth-modal .auth-google-btn,
+  #auth-modal .auth-submit-btn,
+  #auth-modal .auth-status,
+  #name-modal .auth-submit-btn {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  #auth-modal.authentication-surface-root,
+  #name-modal.authentication-surface-root,
+  #auth-modal .authentication-surface,
+  #name-modal .authentication-surface,
+  #auth-modal .authentication-google-route,
+  #auth-modal .auth-field input,
+  #name-modal .auth-field input,
+  #auth-modal .auth-status,
+  #name-modal .auth-status {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+    forced-color-adjust: auto;
+  }
+}
