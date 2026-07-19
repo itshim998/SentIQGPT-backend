@@ -5,6 +5,7 @@
 @import url("./21-contextual-starter-chips.css");
 @import url("./22-home-position-composer.css");
 @import url("./23-advanced-liquid-composer.css");
+@import url("./24-sentiq-lens.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
