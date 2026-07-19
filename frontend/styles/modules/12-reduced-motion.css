@@ -15,6 +15,7 @@
 @import url("./31-compact-user-messages.css");
 @import url("./32-identity-metadata.css");
 @import url("./33-message-actions.css");
+@import url("./34-long-answer-reading.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {

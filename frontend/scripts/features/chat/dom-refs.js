@@ -1,6 +1,7 @@
 import "../compact-user-messages.js";
 import "../identity-metadata.js";
 import "../message-action-behaviour.js";
+import "../long-answer-reading.js";
 
 export function getChatDomRefs(doc = document) {
   return {
