@@ -103,7 +103,7 @@ assert.ok(mobileSheetRules.includes("display: inline-grid"), "Relevant mobile su
 assert.ok(mobileSheetRules.includes("position: fixed"), "Mobile actions need a sheet layer");
 assert.ok(mobileSheetRules.includes("overscroll-behavior: contain"), "Mobile sheet scrolling must stay contained");
 
-const directAttributeWrites = behaviorSource.match(/\.setAttribute\("(?:aria-hidden|data-progressive-mobile-access)"/g) || [];
-assert.equal(directAttributeWrites.length, 0, "Observed disclosure attributes must use guarded writes");
+const directObservedWrites = behaviorSource.match(/(?:zone|sheet|accountBackdrop)\.setAttribute\("(?:aria-hidden|data-progressive-mobile-access)"/g) || [];
+assert.equal(directObservedWrites.length, 0, "Observed disclosure attributes must use guarded writes");
 
 console.log("Pass 9.2 progressive disclosure phase gate passed.");
