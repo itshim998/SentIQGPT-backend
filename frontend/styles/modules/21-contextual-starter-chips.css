@@ -1,0 +1,152 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 4.2
+   Contextual starter chips
+   ============================================================ */
+
+.chat-input-wrapper > .contextual-starter-chips {
+  width: auto;
+  max-width: min(100%, 560px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-self: center;
+  margin: 9px auto 0;
+  padding: 0 8px;
+  opacity: 0.9;
+}
+
+.main-content:not(.is-empty-chat) .chat-input-wrapper > .contextual-starter-chips {
+  display: none !important;
+}
+
+.chat-input-wrapper > .contextual-starter-chips .starter-action-btn {
+  min-height: 32px;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.022);
+  color: rgba(151, 159, 175, 0.9);
+  box-shadow: none;
+  font-size: 0.72rem;
+  font-weight: 590;
+  line-height: 1;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  transition:
+    border-color var(--transition),
+    background-color var(--transition),
+    color var(--transition),
+    opacity var(--transition),
+    transform var(--transition);
+}
+
+.chat-input-wrapper > .contextual-starter-chips .starter-action-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(174, 181, 195, 0.8);
+}
+
+.chat-input-wrapper > .contextual-starter-chips .starter-action-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.chat-input-wrapper > .contextual-starter-chips .starter-action-btn:hover,
+.chat-input-wrapper > .contextual-starter-chips .starter-action-btn:focus-visible {
+  border-color: rgba(210, 197, 255, 0.105);
+  background: rgba(149, 123, 232, 0.055);
+  color: rgba(237, 239, 245, 0.96);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(149, 123, 232, 0.035);
+  transform: translateY(-1px);
+}
+
+.chat-input-wrapper > .contextual-starter-chips .starter-action-btn:hover .starter-action-icon,
+.chat-input-wrapper > .contextual-starter-chips .starter-action-btn:focus-visible .starter-action-icon {
+  color: rgba(210, 197, 255, 0.9);
+}
+
+.chat-input-wrapper > .contextual-starter-chips .starter-action-btn:active {
+  transform: translateY(0) scale(0.99);
+}
+
+.chat-input-wrapper > .contextual-starter-chips .starter-action-btn:disabled,
+.chat-input-wrapper > .contextual-starter-chips .starter-action-btn[aria-disabled="true"] {
+  border-color: rgba(255, 255, 255, 0.03);
+  background: transparent;
+  color: rgba(115, 123, 139, 0.52);
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+}
+
+.chat-input-wrapper > .contextual-starter-chips .starter-action-create[data-capability="image"] {
+  border-color: rgba(210, 197, 255, 0.075);
+  color: rgba(196, 181, 253, 0.88);
+}
+
+.welcome-screen .starter-actions {
+  display: none !important;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .chat-input-wrapper > .contextual-starter-chips .starter-action-btn {
+    min-height: var(--sentiq-touch-target-min);
+    padding-right: 12px;
+    padding-left: 10px;
+  }
+}
+
+@media (max-width: 768px) {
+  .chat-input-wrapper > .contextual-starter-chips {
+    max-width: min(100%, calc(100vw - 32px));
+    gap: 5px;
+    margin-top: 8px;
+    padding: 0 2px;
+  }
+
+  .chat-input-wrapper > .contextual-starter-chips .starter-action-btn {
+    font-size: 0.7rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .chat-input-wrapper > .contextual-starter-chips {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .chat-input-wrapper > .contextual-starter-chips::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .chat-input-wrapper > .contextual-starter-chips .starter-action-btn,
+  .chat-input-wrapper > .contextual-starter-chips .starter-action-icon {
+    border-color: ButtonText;
+    background: Canvas;
+    color: ButtonText;
+    box-shadow: none;
+  }
+
+  .chat-input-wrapper > .contextual-starter-chips .starter-action-btn:disabled {
+    color: GrayText;
+  }
+}
