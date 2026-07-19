@@ -1,6 +1,7 @@
 @import url("./17-liquid-sidebar.css");
 @import url("./18-intelligent-rail.css");
 @import url("./19-account-surface.css");
+@import url("./20-welcome-composition.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
