@@ -1,0 +1,263 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Pass 8.4
+   SentIQ Live responsive layouts
+   ============================================================ */
+
+@media (min-width: 641px) and (max-width: 1024px) {
+  #live-beta-panel.live-workspace-v84 {
+    align-items: center;
+    justify-content: center;
+    padding:
+      max(18px, env(safe-area-inset-top))
+      max(18px, env(safe-area-inset-right))
+      max(18px, env(safe-area-inset-bottom))
+      max(18px, env(safe-area-inset-left));
+  }
+
+  #live-beta-panel .live-workspace-surface {
+    width: min(484px, calc(100% - 36px));
+    height: auto;
+    max-height: min(88dvh, 760px);
+    margin: 0;
+    border-width: 1px;
+    border-radius: 25px;
+    animation: adaptivePanelEnter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
+@media (max-width: 640px) {
+  #live-beta-panel.live-workspace-v84 {
+    align-items: stretch;
+    justify-content: stretch;
+    padding: 0;
+    background: rgba(2, 4, 8, 0.88);
+  }
+
+  #live-beta-panel .live-workspace-surface {
+    width: 100%;
+    height: 100dvh;
+    max-width: none;
+    max-height: 100dvh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  #live-beta-panel .live-workspace-header {
+    min-height: calc(62px + env(safe-area-inset-top));
+    padding:
+      max(14px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      11px
+      max(16px, env(safe-area-inset-left));
+  }
+
+  #live-beta-panel .live-workspace-voice-object {
+    width: 172px;
+    height: 172px;
+    margin: clamp(20px, 5.5dvh, 38px) auto 16px;
+  }
+
+  #live-beta-panel .live-beta-orb {
+    width: 104px;
+    height: 104px;
+  }
+
+  #live-beta-panel .live-workspace-connection {
+    margin-right: max(18px, env(safe-area-inset-right));
+    margin-bottom: 16px;
+    margin-left: max(18px, env(safe-area-inset-left));
+  }
+
+  #live-beta-panel .live-workspace-controls {
+    margin:
+      auto
+      max(14px, env(safe-area-inset-right))
+      max(16px, calc(env(safe-area-inset-bottom) + 12px))
+      max(14px, env(safe-area-inset-left));
+    padding: 8px;
+  }
+
+  #live-beta-panel .live-beta-control {
+    min-height: 50px;
+    padding-inline: 8px;
+  }
+
+  #live-beta-panel .live-workspace-fallback-actions {
+    margin:
+      -2px
+      max(16px, env(safe-area-inset-right))
+      max(18px, calc(env(safe-area-inset-bottom) + 12px))
+      max(16px, env(safe-area-inset-left));
+  }
+
+  #live-beta-panel .live-workspace-transcript-host[open] {
+    inset: calc(62px + env(safe-area-inset-top)) 0 0;
+    padding: 0;
+    align-items: stretch;
+  }
+
+  #live-beta-panel .live-workspace-transcript-sheet {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-width: 1px 0 0;
+    border-radius: 22px 22px 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  #live-beta-panel .live-workspace-transcript-header {
+    min-height: 64px;
+    padding-right: max(13px, env(safe-area-inset-right));
+    padding-left: max(17px, env(safe-area-inset-left));
+  }
+
+  #live-beta-panel .live-beta-transcript {
+    padding-right: max(17px, env(safe-area-inset-right));
+    padding-bottom: max(24px, calc(env(safe-area-inset-bottom) + 16px));
+    padding-left: max(17px, env(safe-area-inset-left));
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (max-width: 390px) {
+  #live-beta-panel .live-workspace-header {
+    grid-template-columns: minmax(0, 1fr) 36px;
+  }
+
+  #live-beta-panel .live-beta-remaining {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: start;
+    margin-top: -4px;
+  }
+
+  #live-beta-panel .adaptive-panel-generated-close {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  #live-beta-panel .live-workspace-voice-object {
+    width: 154px;
+    height: 154px;
+  }
+
+  #live-beta-panel .live-beta-orb {
+    width: 96px;
+    height: 96px;
+  }
+
+  #live-beta-panel .live-workspace-controls {
+    gap: 5px;
+  }
+
+  #live-beta-panel .live-beta-control {
+    min-height: 48px;
+    gap: 5px;
+    font-size: 0.66rem;
+  }
+
+  #live-beta-panel .live-beta-control svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  #live-beta-panel .live-workspace-chat-fallback {
+    margin-top: 8px;
+    margin-left: 0;
+  }
+
+  #live-beta-panel .live-beta-retry,
+  #live-beta-panel .live-workspace-chat-fallback {
+    width: 100%;
+  }
+}
+
+@media (max-height: 660px) and (max-width: 640px) {
+  #live-beta-panel .live-workspace-voice-object {
+    width: 132px;
+    height: 132px;
+    margin-top: 12px;
+    margin-bottom: 10px;
+  }
+
+  #live-beta-panel .live-beta-orbit-one {
+    inset: 4px;
+  }
+
+  #live-beta-panel .live-beta-orbit-two {
+    inset: 18px;
+  }
+
+  #live-beta-panel .live-beta-orb {
+    width: 82px;
+    height: 82px;
+  }
+
+  #live-beta-panel .live-workspace-connection {
+    min-height: 0;
+    margin-bottom: 10px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  #live-beta-panel .live-beta-message {
+    margin-top: 4px;
+    font-size: 0.7rem;
+  }
+
+  #live-beta-panel .live-workspace-controls {
+    margin-bottom: max(10px, calc(env(safe-area-inset-bottom) + 8px));
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) and (max-width: 920px) {
+  #live-beta-panel .live-workspace-surface {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.82fr) minmax(240px, 1.18fr);
+    grid-template-rows: auto 1fr auto;
+  }
+
+  #live-beta-panel .live-workspace-header {
+    grid-column: 1 / -1;
+  }
+
+  #live-beta-panel .live-workspace-voice-object {
+    grid-column: 1;
+    grid-row: 2 / span 2;
+    align-self: center;
+    width: 138px;
+    height: 138px;
+    margin: 12px auto;
+  }
+
+  #live-beta-panel .live-workspace-connection {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: end;
+    margin: 14px 16px 8px;
+  }
+
+  #live-beta-panel .live-workspace-controls,
+  #live-beta-panel .live-workspace-fallback-actions {
+    grid-column: 2;
+    grid-row: 3;
+    margin: 0 16px max(10px, env(safe-area-inset-bottom));
+  }
+
+  #live-beta-panel .live-workspace-transcript-host[open] {
+    grid-column: 1 / -1;
+    grid-row: 2 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #live-beta-panel .live-workspace-surface,
+  #live-beta-panel .live-workspace-transcript-sheet,
+  #live-beta-panel .live-beta-control,
+  #live-beta-panel .live-workspace-chat-fallback,
+  #live-beta-panel .live-beta-retry {
+    animation: none !important;
+    transition: none !important;
+  }
+}
