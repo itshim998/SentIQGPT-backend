@@ -148,6 +148,9 @@ function initializeLiveSurface() {
     fallbackActions.append(chatFallback);
   }
 
+  const transcriptBackgroundState = new Map();
+  const transcriptBackgroundNodes = [header, visual, connection, controls, fallbackActions]
+    .filter((node) => node instanceof HTMLElement);
   let pendingComposerFocus = false;
 
   function fallbackCopy(state) {
@@ -165,11 +168,44 @@ function initializeLiveSurface() {
     transcript.dataset.empty = hasTranscript ? "false" : "true";
   }
 
+  function setTranscriptBackgroundInert(active) {
+    transcriptBackgroundNodes.forEach((node) => {
+      if (active) {
+        if (!transcriptBackgroundState.has(node)) {
+          transcriptBackgroundState.set(node, {
+            inert: Boolean(node.inert),
+            hadInert: node.hasAttribute("inert"),
+            ariaHidden: node.getAttribute("aria-hidden"),
+          });
+        }
+        node.inert = true;
+        node.setAttribute("inert", "");
+        node.setAttribute("aria-hidden", "true");
+        return;
+      }
+
+      const previous = transcriptBackgroundState.get(node);
+      if (!previous) return;
+      node.inert = previous.inert;
+      if (previous.hadInert) node.setAttribute("inert", "");
+      else node.removeAttribute("inert");
+      if (previous.ariaHidden === null) node.removeAttribute("aria-hidden");
+      else node.setAttribute("aria-hidden", previous.ariaHidden);
+      transcriptBackgroundState.delete(node);
+    });
+  }
+
   function syncTranscriptState(options = {}) {
     const open = transcriptWrap.open;
     panel.classList.toggle("live-transcript-open", open);
     transcriptToggle?.setAttribute("aria-expanded", open ? "true" : "false");
     transcriptToggle?.setAttribute("aria-label", open ? "Hide transcript" : "Show transcript");
+    if (transcriptSheet instanceof HTMLElement) {
+      transcriptSheet.inert = !open;
+      transcriptSheet.toggleAttribute("inert", !open);
+      transcriptSheet.setAttribute("aria-hidden", open ? "false" : "true");
+    }
+    setTranscriptBackgroundInert(open);
     syncTranscriptEmptyState();
     if (open && options.focusClose && transcriptClose instanceof HTMLElement) {
       window.requestAnimationFrame(() => transcriptClose.focus({ preventScroll: true }));
@@ -206,6 +242,20 @@ function initializeLiveSurface() {
   transcriptWrap.addEventListener("click", (event) => {
     if (event.target === transcriptWrap) closeTranscript({ restoreFocus: true });
   });
+
+  document.addEventListener("keydown", (event) => {
+    if (!transcriptWrap.open || panel.hidden || panel.getAttribute("aria-hidden") === "true") return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeTranscript({ restoreFocus: true });
+      return;
+    }
+    if (event.key !== "Tab") return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (transcriptClose instanceof HTMLElement) transcriptClose.focus({ preventScroll: true });
+  }, true);
 
   chatFallback?.addEventListener("click", () => {
     pendingComposerFocus = true;
