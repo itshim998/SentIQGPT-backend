@@ -24,6 +24,8 @@
 @import url("./40-image-chart-results.css");
 @import url("./41-generated-file-results.css");
 @import url("./42-semantic-activity-progress.css");
+@import url("./43-failure-recovery.css");
+@import url("./44-failure-recovery-composer.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
