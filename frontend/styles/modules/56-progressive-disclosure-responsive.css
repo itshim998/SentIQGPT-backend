@@ -1,5 +1,9 @@
 /* SentIQ Liquid Glass V4 — Pass 9.2 mobile disclosure placement */
 
+.message[data-progressive-disclosure-version="9.2"] [data-progressive-zone="message"] {
+  min-width: 0;
+}
+
 @media (hover: none), (pointer: coarse), (max-width: 768px) {
   body > #account-panel[data-progressive-account-sheet="true"] {
     position: fixed !important;
