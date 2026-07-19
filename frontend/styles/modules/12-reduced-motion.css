@@ -32,6 +32,8 @@
 @import url("./48-settings-workspace-responsive.css");
 @import url("./49-authentication-surfaces.css");
 @import url("./50-authentication-responsive.css");
+@import url("./51-live-workspace.css");
+@import url("./52-live-workspace-responsive.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
