@@ -5,6 +5,7 @@ import "../long-answer-reading.js";
 import "../websurf-presentation-refinement.js";
 import "../deep-research-workspace.js";
 import "../asset-result-presentation.js";
+import "../semantic-activity-progress.js";
 
 export function getChatDomRefs(doc = document) {
   return {

@@ -23,6 +23,7 @@
 @import url("./39-asset-result-foundation.css");
 @import url("./40-image-chart-results.css");
 @import url("./41-generated-file-results.css");
+@import url("./42-semantic-activity-progress.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {

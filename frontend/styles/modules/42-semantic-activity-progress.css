@@ -1,0 +1,198 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 7.4
+   Restrained semantic thinking and tool activity
+   ============================================================ */
+
+.chat-messages .response-inline-loader.semantic-activity-progress {
+  width: fit-content;
+  min-height: 30px;
+  gap: 10px;
+  margin: 2px 0 8px;
+  padding: 5px 10px 5px 7px;
+  border: 1px solid rgba(184, 176, 213, 0.12);
+  border-radius: 999px;
+  background: rgba(19, 20, 30, 0.42);
+  color: rgba(198, 202, 214, 0.82);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.025);
+  font-size: 0.76rem;
+  font-weight: 570;
+  letter-spacing: 0.005em;
+  line-height: 1.2;
+  backdrop-filter: blur(10px) saturate(112%);
+  -webkit-backdrop-filter: blur(10px) saturate(112%);
+}
+
+.chat-messages .response-inline-loader.semantic-activity-progress .response-inline-spinner,
+.chat-messages .semantic-activity-mark {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  animation: none;
+}
+
+.chat-messages .response-inline-loader.semantic-activity-progress .response-inline-spinner::before,
+.chat-messages .response-inline-loader.semantic-activity-progress .response-inline-spinner::after,
+.chat-messages .semantic-activity-mark::before,
+.chat-messages .semantic-activity-mark::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+}
+
+.chat-messages .response-inline-loader.semantic-activity-progress .response-inline-spinner::before,
+.chat-messages .semantic-activity-mark::before {
+  inset: 3px;
+  border: 1px solid rgba(190, 173, 235, 0.46);
+}
+
+.chat-messages .response-inline-loader.semantic-activity-progress .response-inline-spinner::after,
+.chat-messages .semantic-activity-mark::after {
+  top: 1px;
+  left: 7px;
+  width: 3px;
+  height: 3px;
+  background: rgba(205, 190, 244, 0.9);
+  box-shadow: 0 0 7px rgba(164, 137, 226, 0.28);
+  transform-origin: 1.5px 7px;
+  animation: semanticActivityOrbit 1.55s linear infinite;
+}
+
+.chat-messages [data-semantic-activity-state="reading-files"] .response-inline-spinner::before,
+.chat-messages [data-semantic-activity-state="preparing-document"] .response-inline-spinner::before,
+.chat-messages [data-semantic-activity-state="reading-files"] .semantic-activity-mark::before,
+.chat-messages [data-semantic-activity-state="preparing-document"] .semantic-activity-mark::before {
+  border-radius: 3px;
+}
+
+.chat-messages [data-semantic-activity-state="searching"] .response-inline-spinner::before,
+.chat-messages [data-semantic-activity-state="comparing-sources"] .response-inline-spinner::before,
+.chat-messages [data-semantic-activity-state="searching"] .semantic-activity-mark::before,
+.chat-messages [data-semantic-activity-state="comparing-sources"] .semantic-activity-mark::before {
+  border-color: rgba(154, 190, 217, 0.5);
+}
+
+.chat-messages [data-semantic-activity-state="creating-image"] .response-inline-spinner::before,
+.chat-messages [data-semantic-activity-state="creating-image"] .semantic-activity-mark::before {
+  border-color: rgba(194, 163, 229, 0.5);
+}
+
+.chat-messages [data-semantic-activity-state="generating-chart"] .response-inline-spinner::before,
+.chat-messages [data-semantic-activity-state="generating-chart"] .semantic-activity-mark::before {
+  border-radius: 2px;
+  transform: rotate(45deg) scale(0.78);
+}
+
+.chat-messages .semantic-activity-copy {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.chat-messages .sentiq-loader-host:has(.semantic-legacy-loader) {
+  min-height: 36px;
+}
+
+.chat-messages .sentiq-loader.semantic-legacy-loader {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  filter: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transform: none;
+}
+
+.chat-messages .sentiq-loader.semantic-legacy-loader::before,
+.chat-messages .sentiq-loader.semantic-legacy-loader::after,
+.chat-messages .sentiq-loader.semantic-legacy-loader > :not(.semantic-legacy-progress) {
+  display: none !important;
+}
+
+.chat-messages .semantic-legacy-progress,
+.chat-messages .semantic-surface-progress {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 28px;
+  gap: 9px;
+  padding: 5px 9px 5px 7px;
+  border: 1px solid rgba(184, 176, 213, 0.12);
+  border-radius: 999px;
+  background: rgba(17, 19, 28, 0.62);
+  color: rgba(198, 202, 214, 0.82);
+  font-size: 0.72rem;
+  font-weight: 570;
+  line-height: 1.2;
+}
+
+.chat-messages .semantic-surface-progress {
+  position: relative;
+  z-index: 3;
+  margin: 8px 10px 10px;
+}
+
+.chat-messages .image-generation-frame > .semantic-surface-progress {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  margin: 0;
+  background: rgba(10, 12, 20, 0.72);
+  backdrop-filter: blur(12px) saturate(115%);
+  -webkit-backdrop-filter: blur(12px) saturate(115%);
+}
+
+.chat-messages .message-chart-container > .semantic-surface-progress,
+.chat-messages .generated-file-panel > .semantic-surface-progress {
+  justify-self: start;
+}
+
+@keyframes semanticActivityOrbit {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 480px) {
+  .chat-messages .response-inline-loader.semantic-activity-progress,
+  .chat-messages .semantic-legacy-progress,
+  .chat-messages .semantic-surface-progress {
+    max-width: calc(100% - 20px);
+    font-size: 0.72rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-messages .response-inline-loader.semantic-activity-progress .response-inline-spinner::after,
+  .chat-messages .semantic-activity-mark::after {
+    animation: none;
+    opacity: 0.86;
+  }
+}
+
+@media (forced-colors: active) {
+  .chat-messages .response-inline-loader.semantic-activity-progress,
+  .chat-messages .semantic-legacy-progress,
+  .chat-messages .semantic-surface-progress {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: auto;
+  }
+
+  .chat-messages .response-inline-loader.semantic-activity-progress .response-inline-spinner::before,
+  .chat-messages .semantic-activity-mark::before {
+    border-color: CanvasText;
+  }
+
+  .chat-messages .response-inline-loader.semantic-activity-progress .response-inline-spinner::after,
+  .chat-messages .semantic-activity-mark::after {
+    background: Highlight;
+    box-shadow: none;
+  }
+}
