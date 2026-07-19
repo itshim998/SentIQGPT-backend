@@ -300,3 +300,211 @@ body::after {
     box-shadow: none;
   }
 }
+
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 2.2
+   Workspace depth hierarchy
+
+   Establishes four visual planes without changing component geometry:
+   shell, floating workspace, recessed document stream, and foreground
+   composer. Navigation, messages, and composer controls retain their
+   dedicated later-pass styling.
+   ============================================================ */
+
+.main-content {
+  --sentiq-workspace-document-width: min(1080px, calc(100% - 48px));
+  min-width: 0;
+}
+
+.main-content > .main-content-glow {
+  z-index: 0;
+}
+
+.main-content > .welcome-screen,
+.main-content > .chat-scroll-region {
+  z-index: 2;
+}
+
+.main-content > .chat-input-wrapper {
+  z-index: 4;
+}
+
+.main-content > .auth-actions {
+  z-index: 5;
+}
+
+.chat-scroll-region {
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.main-content:not(.is-empty-chat) .chat-scroll-region::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: var(--sentiq-workspace-document-width);
+  transform: translateX(-50%);
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.008) 8%,
+      rgba(255, 255, 255, 0.018) 50%,
+      rgba(255, 255, 255, 0.008) 92%,
+      transparent 100%);
+  border-inline: 1px solid rgba(255, 255, 255, 0.024);
+  box-shadow:
+    inset 24px 0 48px rgba(0, 0, 0, 0.045),
+    inset -24px 0 48px rgba(0, 0, 0, 0.045);
+  opacity: 0.72;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 7%, #000 91%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 7%, #000 91%, transparent 100%);
+}
+
+.main-content:not(.is-empty-chat) .chat-scroll-region::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 124px;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent 0%, rgba(5, 7, 12, 0.32) 48%, rgba(5, 7, 12, 0.78) 100%);
+  opacity: 0.82;
+}
+
+.chat-scroll-region > .chat-messages {
+  position: relative;
+  z-index: 1;
+}
+
+.chat-scroll-region > .scroll-anchor-pill {
+  z-index: 3;
+}
+
+.chat-input-wrapper {
+  isolation: isolate;
+}
+
+.chat-input-wrapper::after {
+  content: "";
+  position: absolute;
+  top: -20px;
+  right: -72px;
+  bottom: 0;
+  left: -72px;
+  z-index: -2;
+  pointer-events: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.026);
+  background:
+    linear-gradient(180deg,
+      transparent 0%,
+      rgba(5, 7, 12, 0.32) 24%,
+      rgba(5, 7, 12, 0.76) 62%,
+      rgba(5, 7, 12, 0.94) 100%);
+  opacity: 0.88;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 13%, #000 87%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 13%, #000 87%, transparent 100%);
+}
+
+.main-content.is-empty-chat .chat-input-wrapper::after {
+  top: -30px;
+  border-top-color: rgba(210, 197, 255, 0.032);
+  opacity: 0.54;
+}
+
+@media (min-width: 769px) {
+  .sidebar {
+    position: relative;
+    z-index: 3;
+  }
+
+  .main-content {
+    margin: 8px 8px 8px 6px;
+    border: 1px solid var(--sentiq-glass-quiet-border);
+    border-radius: 22px;
+    box-shadow:
+      -18px 0 52px rgba(0, 0, 0, 0.1),
+      0 28px 86px rgba(0, 0, 0, 0.34),
+      0 0 0 1px rgba(210, 197, 255, 0.018),
+      inset 0 1px 0 rgba(255, 255, 255, 0.035),
+      inset 1px 0 0 rgba(255, 255, 255, 0.018);
+  }
+
+  .app-container.sidebar-collapsed .main-content {
+    margin-left: 8px;
+  }
+}
+
+@media (min-width: 1440px) {
+  .main-content {
+    --sentiq-workspace-document-width: min(1120px, calc(100% - 72px));
+    margin: 10px 10px 10px 8px;
+    border-radius: 24px;
+  }
+}
+
+@media (max-width: 768px) {
+  .main-content {
+    --sentiq-workspace-document-width: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.012);
+  }
+
+  .main-content:not(.is-empty-chat) .chat-scroll-region::before {
+    width: 100%;
+    border-inline: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.014) 50%, transparent);
+    box-shadow: none;
+    opacity: 0.54;
+  }
+
+  .main-content:not(.is-empty-chat) .chat-scroll-region::after {
+    height: 92px;
+    opacity: 0.72;
+  }
+
+  .chat-input-wrapper::after {
+    top: -14px;
+    right: -18px;
+    left: -18px;
+    border-top-color: rgba(255, 255, 255, 0.022);
+    opacity: 0.76;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .main-content.is-empty-chat .chat-input-wrapper::after {
+    top: -22px;
+    opacity: 0.42;
+  }
+}
+
+@media (max-width: 480px) {
+  .main-content:not(.is-empty-chat) .chat-scroll-region::before {
+    opacity: 0.42;
+  }
+
+  .chat-input-wrapper::after {
+    right: -12px;
+    left: -12px;
+  }
+}
+
+@media (forced-colors: active) {
+  .main-content {
+    border: 1px solid CanvasText;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .main-content:not(.is-empty-chat) .chat-scroll-region::before,
+  .main-content:not(.is-empty-chat) .chat-scroll-region::after,
+  .chat-input-wrapper::after {
+    display: none !important;
+  }
+}
