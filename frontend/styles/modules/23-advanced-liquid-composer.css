@@ -1,0 +1,451 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 5.1
+   Advanced liquid composer structure
+   ============================================================ */
+
+:root {
+  --sentiq-composer-control-size: 42px;
+  --sentiq-composer-grid-gap: 9px;
+  --sentiq-composer-capsule-radius: 27px;
+  --sentiq-composer-field-min-height: 44px;
+  --sentiq-composer-field-max-height: 168px;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] {
+  max-width: min(calc(var(--sentiq-composer-max-width) + (var(--content-padding) * 2)), 100%);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns:
+    var(--sentiq-composer-control-size)
+    minmax(0, 1fr)
+    auto
+    var(--sentiq-composer-control-size);
+  grid-template-areas:
+    "attachments attachments attachments attachments"
+    ". mode mode ."
+    "plus field execution action";
+  align-items: end;
+  gap: 7px var(--sentiq-composer-grid-gap);
+  min-height: 66px;
+  padding: 10px 11px;
+  overflow: visible;
+  border: 1px solid rgba(218, 211, 244, 0.11);
+  border-radius: var(--sentiq-composer-capsule-radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 38%),
+    radial-gradient(circle at 16% 0%, rgba(157, 132, 232, 0.055), transparent 34%),
+    rgba(12, 15, 23, 0.84);
+  -webkit-backdrop-filter: blur(22px) saturate(118%);
+  backdrop-filter: blur(22px) saturate(118%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18),
+    0 18px 52px rgba(0, 0, 0, 0.24);
+  transition:
+    height 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 220ms ease,
+    transform 180ms ease;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background:
+    linear-gradient(105deg, transparent 10%, rgba(255, 255, 255, 0.028) 44%, transparent 66%);
+  opacity: 0.62;
+  pointer-events: none;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:hover:not(.is-response-locked) {
+  border-color: rgba(218, 211, 244, 0.15);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.16),
+    0 20px 56px rgba(0, 0, 0, 0.27);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:focus-within {
+  border-color: rgba(191, 174, 244, 0.38);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.042), transparent 40%),
+    radial-gradient(circle at 18% 0%, rgba(157, 132, 232, 0.085), transparent 38%),
+    rgba(13, 16, 25, 0.9);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    0 0 0 3px rgba(149, 123, 232, 0.075),
+    0 22px 64px rgba(0, 0, 0, 0.3);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area.composer-size-transitioning {
+  will-change: height;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .file-preview-area {
+  grid-area: attachments;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 252px));
+  align-items: start;
+  justify-content: start;
+  gap: 8px;
+  max-height: min(176px, 30vh);
+  margin: 0;
+  padding: 2px 2px 6px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .file-preview-area[hidden] {
+  display: none !important;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-attachment {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  background:
+    linear-gradient(135deg, rgba(149, 123, 232, 0.07), transparent 58%),
+    rgba(255, 255, 255, 0.035);
+  border-color: rgba(218, 211, 244, 0.095);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-mode-pill {
+  grid-area: mode;
+  justify-self: start;
+  min-width: 0;
+  max-width: min(100%, 360px);
+  height: 30px;
+  margin: 0;
+  padding: 0 4px 0 9px;
+  border-color: rgba(218, 211, 244, 0.1);
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: none;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-mode-pill-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .input-tools {
+  grid-area: plus;
+  align-self: end;
+  display: grid;
+  place-items: center;
+  width: var(--sentiq-composer-control-size);
+  height: var(--sentiq-composer-control-size);
+  padding: 0;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn,
+.chat-input-wrapper[data-composer-version="5.1"] .btn-send,
+.chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice {
+  width: var(--sentiq-composer-control-size);
+  height: var(--sentiq-composer-control-size);
+  min-width: var(--sentiq-composer-control-size);
+  min-height: var(--sentiq-composer-control-size);
+  padding: 0;
+  border-radius: 999px;
+  transform: none;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn {
+  border: 1px solid rgba(218, 211, 244, 0.09);
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(190, 196, 209, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn:hover,
+.chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn:focus-visible,
+.chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn.active {
+  border-color: rgba(203, 190, 247, 0.19);
+  background: rgba(149, 123, 232, 0.095);
+  color: rgba(244, 241, 255, 0.96);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn svg {
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn.active svg {
+  transform: rotate(45deg);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper {
+  grid-area: field;
+  align-self: stretch;
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+  min-height: var(--sentiq-composer-field-min-height);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper textarea {
+  field-sizing: content;
+  width: 100%;
+  height: auto;
+  min-height: var(--sentiq-composer-field-min-height);
+  max-height: var(--sentiq-composer-field-max-height);
+  margin: 0;
+  padding: 10px 2px 8px;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  color: rgba(240, 242, 247, 0.97);
+  caret-color: rgba(196, 181, 253, 0.96);
+  font-size: 0.96rem;
+  line-height: 1.48;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(196, 181, 253, 0.24) transparent;
+  transition: color 160ms ease, opacity 160ms ease;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper textarea::placeholder {
+  color: rgba(139, 147, 164, 0.78);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-hint-overlay {
+  left: 2px;
+  right: 4px;
+  color: rgba(151, 159, 175, 0.72);
+  font-size: 0.93rem;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .execution-mode-control {
+  grid-area: execution;
+  align-self: end;
+  height: var(--sentiq-composer-control-size);
+  padding: 0;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle {
+  min-width: 86px;
+  height: var(--sentiq-composer-control-size);
+  padding: 0 11px;
+  border: 1px solid rgba(218, 211, 244, 0.085);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(178, 185, 199, 0.92);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle:hover,
+.chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle:focus-visible,
+.chat-input-wrapper[data-composer-version="5.1"] .execution-mode-control.open .execution-mode-toggle {
+  border-color: rgba(203, 190, 247, 0.18);
+  background: rgba(149, 123, 232, 0.075);
+  color: rgba(241, 239, 249, 0.96);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle:focus-visible,
+.chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn:focus-visible,
+.chat-input-wrapper[data-composer-version="5.1"] .btn-send:focus-visible,
+.chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice:focus-visible {
+  outline: 2px solid rgba(196, 181, 253, 0.5);
+  outline-offset: 2px;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .execution-mode-menu,
+.chat-input-wrapper[data-composer-version="5.1"] .composer-action-menu {
+  border-color: rgba(218, 211, 244, 0.11);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 42%),
+    rgba(11, 14, 22, 0.94);
+  -webkit-backdrop-filter: blur(24px) saturate(122%);
+  backdrop-filter: blur(24px) saturate(122%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 22px 56px rgba(0, 0, 0, 0.42);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-action-option:hover,
+.chat-input-wrapper[data-composer-version="5.1"] .composer-action-option:focus-visible {
+  transform: none;
+  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(218, 211, 244, 0.07);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .btn-send,
+.chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice {
+  grid-area: action;
+  align-self: end;
+  justify-self: end;
+  border: 1px solid rgba(213, 204, 246, 0.15);
+  background:
+    linear-gradient(145deg, rgba(160, 136, 232, 0.94), rgba(103, 77, 177, 0.96));
+  color: #fff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.19),
+    0 8px 20px rgba(76, 55, 132, 0.22);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice[hidden],
+.chat-input-wrapper[data-composer-version="5.1"] .btn-send[hidden] {
+  display: none !important;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .btn-send:hover:not(:disabled),
+.chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 11px 24px rgba(76, 55, 132, 0.27);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .btn-send:active:not(:disabled),
+.chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .btn-send.is-stop {
+  border-color: rgba(255, 201, 201, 0.18);
+  background: rgba(146, 65, 74, 0.92);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 8px 18px rgba(93, 35, 43, 0.2);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area.is-response-locked {
+  min-height: 66px;
+  border-color: rgba(193, 177, 239, 0.22);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 40%),
+    rgba(12, 15, 23, 0.88);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 18px 52px rgba(0, 0, 0, 0.24);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area.is-response-locked::before {
+  opacity: 0.42;
+  animation-duration: 4.2s;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area.is-response-locked .btn-send.is-stop {
+  width: var(--sentiq-composer-control-size);
+  height: var(--sentiq-composer-control-size);
+  opacity: 1;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-drop-overlay {
+  inset: 6px;
+  border-radius: calc(var(--sentiq-composer-capsule-radius) - 7px);
+}
+
+@media (max-width: 640px) {
+  :root {
+    --sentiq-composer-control-size: 40px;
+    --sentiq-composer-grid-gap: 7px;
+    --sentiq-composer-capsule-radius: 24px;
+    --sentiq-composer-field-max-height: 144px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
+    grid-template-columns:
+      var(--sentiq-composer-control-size)
+      minmax(0, 1fr)
+      auto
+      var(--sentiq-composer-control-size);
+    gap: 6px var(--sentiq-composer-grid-gap);
+    min-height: 62px;
+    padding: 9px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle {
+    min-width: 72px;
+    padding: 0 8px;
+    font-size: 0.73rem;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper textarea {
+    padding-top: 9px;
+    padding-bottom: 7px;
+    font-size: 0.94rem;
+    line-height: 1.44;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .file-preview-area {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: min(158px, 27vh);
+    padding-right: 0;
+    padding-left: 0;
+  }
+}
+
+@media (max-width: 390px) {
+  :root {
+    --sentiq-composer-control-size: 38px;
+    --sentiq-composer-grid-gap: 6px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
+    min-height: 58px;
+    padding: 8px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle {
+    min-width: 66px;
+    padding: 0 7px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-hint-prefix {
+    display: none;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  :root {
+    --sentiq-composer-control-size: 44px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn,
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle,
+  .chat-input-wrapper[data-composer-version="5.1"] .btn-send,
+  .chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice {
+    min-width: var(--sentiq-touch-target-min);
+    min-height: var(--sentiq-touch-target-min);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area,
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn svg {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area,
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn,
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle,
+  .chat-input-wrapper[data-composer-version="5.1"] .btn-send,
+  .chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice,
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-attachment {
+    border: 1px solid ButtonText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area::after,
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area.is-response-locked::before {
+    display: none;
+  }
+}

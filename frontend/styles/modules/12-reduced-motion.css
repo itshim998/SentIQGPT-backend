@@ -4,6 +4,7 @@
 @import url("./20-welcome-composition.css");
 @import url("./21-contextual-starter-chips.css");
 @import url("./22-home-position-composer.css");
+@import url("./23-advanced-liquid-composer.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
