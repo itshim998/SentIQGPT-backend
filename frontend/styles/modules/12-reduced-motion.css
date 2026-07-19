@@ -28,8 +28,7 @@
 @import url("./44-failure-recovery-composer.css");
 @import url("./45-adaptive-panel-foundation.css");
 @import url("./46-adaptive-panel-responsive.css");
-@import url("./47-settings-workspace.css");
-@import url("./48-settings-workspace-responsive.css");
+@import url("./47-settings-billing-workspace.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
