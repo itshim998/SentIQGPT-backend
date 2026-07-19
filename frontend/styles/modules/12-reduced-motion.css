@@ -6,6 +6,7 @@
 @import url("./22-home-position-composer.css");
 @import url("./23-advanced-liquid-composer.css");
 @import url("./24-sentiq-lens.css");
+@import url("./25-context-aware-controls.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {

@@ -2,6 +2,7 @@ import "../welcome-composition.js";
 import "../contextual-starter-actions.js";
 import "../home-position-composer.js";
 import "../advanced-liquid-composer.js";
+import "../context-aware-composer.js";
 import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "../../shared/brand.js";
 
 export const DEFAULT_IMAGE_ANALYSIS_PROMPT = "Analyze this image. Describe what it shows, read any visible text, and explain any important details.";

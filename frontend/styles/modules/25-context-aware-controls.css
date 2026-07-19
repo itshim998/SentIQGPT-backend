@@ -1,0 +1,277 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 5.3
+   Context-aware composer controls
+   ============================================================ */
+
+.chat-input-wrapper[data-composer-context-version="5.3"] > .chat-input-area {
+  --sentiq-composer-status-width: 108px;
+}
+
+/* One authoritative tool-mode indicator remains visible. */
+.chat-input-wrapper[data-composer-context-version="5.3"] .composer-mode-pill.is-context-suppressed {
+  display: none !important;
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"] .composer-mode-pill.is-context-primary {
+  border-color: rgba(203, 190, 247, 0.15);
+  background:
+    linear-gradient(180deg, rgba(149, 123, 232, 0.055), rgba(149, 123, 232, 0.02)),
+    rgba(255, 255, 255, 0.025);
+  color: rgba(224, 218, 244, 0.94);
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"]
+  > .chat-input-area.composer-has-readiness.composer-has-primary-mode
+  .composer-mode-pill.is-context-primary {
+  max-width: calc(100% - var(--sentiq-composer-status-width) - 12px);
+}
+
+/* Readiness occupies the unused end of the mode row, so controls never jump. */
+.chat-input-wrapper[data-composer-context-version="5.3"] .composer-action-status {
+  grid-area: mode;
+  align-self: center;
+  justify-self: end;
+  z-index: 2;
+  max-width: var(--sentiq-composer-status-width);
+  overflow: hidden;
+  color: rgba(157, 165, 180, 0.86);
+  font-size: 0.69rem;
+  font-weight: 620;
+  line-height: 1.2;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: color 170ms ease, opacity 170ms ease;
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"] .composer-action-status[hidden] {
+  display: none !important;
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"]
+  > .chat-input-area[data-file-state="uploading"]
+  .composer-action-status {
+  color: rgba(196, 202, 216, 0.88);
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"]
+  > .chat-input-area[data-file-state="failed"]
+  .composer-action-status {
+  color: rgba(248, 186, 190, 0.9);
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"]
+  > .chat-input-area[data-file-state="ready"]
+  .composer-action-status {
+  color: rgba(201, 191, 236, 0.9);
+}
+
+/* Empty/pristine state: Live owns the primary action only when interactive. */
+.chat-input-wrapper[data-composer-context-version="5.3"]
+  > .chat-input-area[data-composer-context="empty-live"]
+  .btn-live-voice[data-context-primary="true"] {
+  border-color: rgba(215, 205, 248, 0.2);
+  background:
+    linear-gradient(145deg, rgba(151, 127, 222, 0.9), rgba(91, 69, 154, 0.95));
+  color: #fff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.17),
+    0 8px 19px rgba(53, 40, 92, 0.2);
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"]
+  > .chat-input-area[data-composer-context="empty-live"]
+  .btn-live-voice.is-disabled {
+  border-color: rgba(218, 211, 244, 0.09);
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(145, 151, 166, 0.76);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+/* Text or sendable context makes Send the clear primary action. */
+.chat-input-wrapper[data-composer-context-version="5.3"]
+  > .chat-input-area:is(
+    [data-composer-context="text"],
+    [data-composer-context="tool"],
+    [data-composer-context="selected-context"],
+    [data-composer-context="files-ready"]
+  )
+  .btn-send:not(:disabled):not(.is-stop) {
+  border-color: rgba(219, 210, 249, 0.2);
+  background:
+    linear-gradient(145deg, rgba(154, 130, 226, 0.94), rgba(98, 74, 166, 0.97));
+  color: #fff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.19),
+    0 8px 20px rgba(58, 43, 99, 0.22);
+}
+
+/* Streaming preserves fixed geometry while making Stop unmistakable. */
+.chat-input-wrapper[data-composer-context-version="5.3"]
+  > .chat-input-area[data-composer-context="streaming"]
+  .btn-send.is-stop {
+  border-color: rgba(248, 196, 200, 0.2);
+  background: rgba(137, 61, 70, 0.93);
+  color: rgba(255, 245, 246, 0.98);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 8px 18px rgba(77, 31, 38, 0.2);
+}
+
+/* Upload/readiness states communicate why Send is or is not available. */
+.chat-input-wrapper[data-composer-context-version="5.3"]
+  > .chat-input-area[data-composer-context="files-uploading"]
+  .btn-send:not(.is-stop) {
+  border-color: rgba(196, 202, 216, 0.13);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(173, 180, 194, 0.78);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  cursor: progress;
+  opacity: 1;
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"]
+  > .chat-input-area[data-composer-context="files-failed"]
+  .btn-send:not(.is-stop) {
+  border-color: rgba(248, 170, 178, 0.18);
+  background: rgba(111, 48, 57, 0.34);
+  color: rgba(242, 194, 199, 0.78);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"]
+  > .chat-input-area[data-composer-context="files-need-prompt"]
+  .btn-send:not(.is-stop) {
+  border-color: rgba(218, 211, 244, 0.09);
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(150, 157, 171, 0.78);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  opacity: 1;
+}
+
+/* Selected text remains outside the textarea and reads as a compact context strip. */
+.chat-input-wrapper[data-composer-context-version="5.3"].composer-has-selected-context .selected-context-bar {
+  grid-template-columns: 2px minmax(0, 1fr) 32px;
+  gap: 9px;
+  min-height: 43px;
+  margin: 0 11px 7px;
+  padding: 7px 7px 7px 10px;
+  border-color: rgba(203, 190, 247, 0.13);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(149, 123, 232, 0.065), transparent 48%),
+    rgba(12, 15, 23, 0.82);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.035),
+    0 9px 24px rgba(0, 0, 0, 0.16);
+  animation: none;
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"].composer-has-selected-context .selected-context-accent {
+  min-height: 30px;
+  background: rgba(180, 162, 238, 0.72);
+  box-shadow: none;
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"].composer-has-selected-context .selected-context-copy {
+  gap: 2px;
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"].composer-has-selected-context .selected-context-label {
+  color: rgba(197, 185, 234, 0.83);
+  font-size: 0.64rem;
+  font-weight: 680;
+  letter-spacing: 0.035em;
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"].composer-has-selected-context .selected-context-text {
+  color: rgba(190, 196, 209, 0.9);
+  font-size: 0.77rem;
+  line-height: 1.34;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+}
+
+.chat-input-wrapper[data-composer-context-version="5.3"].composer-has-selected-context .selected-context-remove {
+  width: 32px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.028);
+}
+
+@media (max-width: 640px) {
+  .chat-input-wrapper[data-composer-context-version="5.3"] > .chat-input-area {
+    --sentiq-composer-status-width: 92px;
+  }
+
+  .chat-input-wrapper[data-composer-context-version="5.3"] .composer-action-status {
+    font-size: 0.65rem;
+  }
+
+  .chat-input-wrapper[data-composer-context-version="5.3"].composer-has-selected-context .selected-context-bar {
+    grid-template-columns: 2px minmax(0, 1fr) 34px;
+    min-height: 44px;
+    margin: 0 6px 6px;
+    padding: 7px 6px 7px 8px;
+    border-radius: 13px;
+  }
+
+  .chat-input-wrapper[data-composer-context-version="5.3"].composer-has-selected-context .selected-context-text {
+    font-size: 0.75rem;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .chat-input-wrapper[data-composer-context-version="5.3"].composer-has-selected-context .selected-context-remove {
+    width: 34px;
+    height: 34px;
+  }
+}
+
+@media (max-width: 390px) {
+  .chat-input-wrapper[data-composer-context-version="5.3"] > .chat-input-area {
+    --sentiq-composer-status-width: 82px;
+  }
+
+  .chat-input-wrapper[data-composer-context-version="5.3"] .composer-action-status {
+    font-size: 0.62rem;
+  }
+
+  .chat-input-wrapper[data-composer-context-version="5.3"].composer-has-selected-context .selected-context-label {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-input-wrapper[data-composer-context-version="5.3"] .composer-action-status,
+  .chat-input-wrapper[data-composer-context-version="5.3"] .selected-context-bar {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .chat-input-wrapper[data-composer-context-version="5.3"] .composer-action-status {
+    color: CanvasText;
+  }
+
+  .chat-input-wrapper[data-composer-context-version="5.3"].composer-has-selected-context .selected-context-bar,
+  .chat-input-wrapper[data-composer-context-version="5.3"] .composer-mode-pill.is-context-primary {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+  }
+
+  .chat-input-wrapper[data-composer-context-version="5.3"]
+    > .chat-input-area:is(
+      [data-composer-context="files-uploading"],
+      [data-composer-context="files-failed"],
+      [data-composer-context="files-need-prompt"]
+    )
+    .btn-send:not(.is-stop) {
+    border: 1px solid GrayText;
+    background: Canvas;
+    color: GrayText;
+  }
+}
