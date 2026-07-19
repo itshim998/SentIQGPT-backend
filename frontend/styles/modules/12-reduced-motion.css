@@ -2,6 +2,7 @@
 @import url("./18-intelligent-rail.css");
 @import url("./19-account-surface.css");
 @import url("./20-welcome-composition.css");
+@import url("./21-contextual-starter-chips.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
