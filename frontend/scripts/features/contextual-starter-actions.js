@@ -101,7 +101,11 @@ function initializeContextualStarterActions() {
     const imageAvailable = signedIn
       && isElementVisible(imageGenerationButton)
       && !imageGenerationButton?.disabled;
-    const researchAvailable = Boolean(webSearchButton && !webSearchButton.disabled);
+    const researchAvailable = Boolean(
+      webSearchButton
+      && isElementVisible(webSearchButton)
+      && !webSearchButton.disabled,
+    );
     const composerAvailable = !chatInput.disabled;
     const attachAvailable = Boolean(fileInput && !fileInput.disabled && !fileAttachButton?.disabled);
     return { signedIn, imageAvailable, researchAvailable, composerAvailable, attachAvailable };
@@ -146,7 +150,8 @@ function initializeContextualStarterActions() {
   }
 
   starterActions.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-contextual-action]");
+    const target = event.target instanceof Element ? event.target : null;
+    const button = target?.closest("[data-contextual-action]");
     if (!button || button.disabled || !starterActions.contains(button)) return;
 
     const action = button.dataset.contextualAction;
