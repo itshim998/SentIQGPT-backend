@@ -127,6 +127,7 @@ for (const token of [
 for (const token of [
   "composer-input",
   "history-scroll",
+  "historyScroller",
   "sentiq-auth-changed",
   "data-attachment-state",
   "data-deep-research-status",
