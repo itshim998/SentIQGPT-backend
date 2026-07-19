@@ -1,0 +1,124 @@
+/* SentIQ Liquid Glass V4 — Phase 5.5 responsive and accessibility states */
+
+@keyframes attachmentProgressSweep {
+  from { transform: translateX(-115%); }
+  to { transform: translateX(340%); }
+}
+
+@media (max-width: 640px) {
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .file-preview-area {
+    display: flex;
+    grid-template-columns: none;
+    flex-wrap: nowrap;
+    gap: 8px;
+    width: 100%;
+    max-height: none;
+    padding: 2px 1px 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: inline proximity;
+    scroll-padding-inline: 1px;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment {
+    flex: 0 0 min(246px, calc(100vw - 74px));
+    width: min(246px, calc(100vw - 74px));
+    min-width: min(246px, calc(100vw - 74px));
+    scroll-snap-align: start;
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .file-preview-area.has-multiple-attachments {
+    padding-right: 22px;
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"].composer-has-selected-context .selected-context-bar {
+    min-height: 54px;
+    margin: 0 5px 7px;
+    padding-right: 6px;
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"].composer-has-selected-context .selected-context-text {
+    font-size: 0.74rem;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"].composer-has-selected-context .selected-context-bar.is-preview-expanded .selected-context-text {
+    max-height: min(150px, 25vh);
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment-remove {
+    min-width: 34px;
+    min-height: 34px;
+  }
+}
+
+@media (max-width: 390px) {
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment {
+    flex-basis: min(228px, calc(100vw - 58px));
+    width: min(228px, calc(100vw - 58px));
+    min-width: min(228px, calc(100vw - 58px));
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"].composer-has-selected-context .selected-context-label {
+    display: block;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment {
+    grid-template-columns: 44px minmax(0, 1fr) auto 44px;
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment-remove,
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment-retry,
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .selected-context-expand {
+    min-height: 44px;
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment-remove {
+    min-width: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment,
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment-progress-track {
+    transition: none;
+    animation: none;
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment-progress-track {
+    width: 100%;
+    transform: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment,
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment-visual,
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment-remove,
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment-retry,
+  .chat-input-wrapper[data-attachment-context-version="5.5"].composer-has-selected-context .selected-context-bar {
+    border: 1px solid ButtonText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment-progress {
+    border: 1px solid ButtonText;
+    background: Canvas;
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment-progress-track {
+    background: Highlight;
+  }
+
+  .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment-visual::after,
+  .chat-input-wrapper[data-attachment-context-version="5.5"].composer-has-selected-context .selected-context-copy::after {
+    display: none;
+  }
+}
