@@ -96,7 +96,7 @@
   color: rgba(196, 181, 253, 0.88);
 }
 
-.welcome-screen .starter-actions {
+.welcome-screen .starter-actions.contextual-starter-chips {
   display: none !important;
 }
 
