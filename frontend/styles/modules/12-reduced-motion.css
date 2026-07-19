@@ -26,6 +26,8 @@
 @import url("./42-semantic-activity-progress.css");
 @import url("./43-failure-recovery.css");
 @import url("./44-failure-recovery-composer.css");
+@import url("./45-adaptive-panel-foundation.css");
+@import url("./46-adaptive-panel-responsive.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {

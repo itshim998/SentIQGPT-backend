@@ -1,3 +1,4 @@
+import "../adaptive-panel-framework.js";
 import "../compact-user-messages.js";
 import "../identity-metadata.js";
 import "../message-action-behaviour.js";
