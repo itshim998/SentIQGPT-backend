@@ -1,12 +1,13 @@
 /* ============================================================
    SentIQ Chat V4 — Canonical Design Tokens and Base Reset
 
-   Phase 1.1 establishes this file as the source of truth for
-   visual primitives. Legacy override layers temporarily repeat
-   some values; Phase 1.2 will remove those duplicate declarations.
+   Phase 1.2 establishes this file as the authoritative source for
+   visual primitives. The higher-specificity html:root selector keeps
+   legacy :root declarations in late refinement layers non-authoritative
+   until those large stylesheets are decomposed in later cleanup passes.
    ============================================================ */
 
-:root {
+html:root {
   /* Typography */
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -143,8 +144,8 @@
   --sentiq-space-10: 40px;
   --sentiq-space-12: 48px;
 
-  /* Three-depth liquid glass system. These are introduced in Phase 1.1
-     and remain unused until their component passes are implemented. */
+  /* Three-depth liquid glass system. These remain unused until
+     their component-specific passes are implemented. */
   --sentiq-glass-quiet-bg: rgba(255, 255, 255, 0.028);
   --sentiq-glass-quiet-border: rgba(255, 255, 255, 0.058);
   --sentiq-glass-quiet-filter: blur(12px) saturate(106%);
@@ -226,6 +227,7 @@ body::before {
   z-index: 0;
   opacity: 0.9;
 }
+
 body::after {
   content: '';
   position: fixed;
