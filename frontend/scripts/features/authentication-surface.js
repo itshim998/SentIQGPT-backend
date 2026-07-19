@@ -40,6 +40,18 @@ function isElementVisible(element) {
   }
 }
 
+function setText(element, value) {
+  if (!(element instanceof HTMLElement)) return;
+  const next = String(value ?? "");
+  if (element.textContent !== next) element.textContent = next;
+}
+
+function setHidden(element, hidden) {
+  if (!(element instanceof HTMLElement)) return;
+  const next = Boolean(hidden);
+  if (element.hidden !== next) element.hidden = next;
+}
+
 function appendDescribedBy(element, id) {
   if (!(element instanceof HTMLElement) || !id) return;
   const ids = new Set((element.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean));
@@ -151,7 +163,7 @@ function initializeAuthenticationSurface() {
   }
 
   const dividerLabel = divider?.querySelector("span:nth-child(2)");
-  if (dividerLabel) dividerLabel.textContent = "or continue with email";
+  setText(dividerLabel, "or continue with email");
 
   let emailPath = form.querySelector(".authentication-email-path");
   if (!emailPath) {
@@ -238,11 +250,11 @@ function initializeAuthenticationSurface() {
     passwordFeedback.dataset.passwordView = showStrength ? "strength" : "visibility";
     passwordFeedback.dataset.strength = String(showStrength ? strength.level : 0);
     if (passwordState) {
-      passwordState.textContent = showStrength
+      setText(passwordState, showStrength
         ? strength.label
-        : (visible ? "Password is visible" : "Password is hidden");
+        : (visible ? "Password is visible" : "Password is hidden"));
     }
-    if (passwordHelp) passwordHelp.textContent = AUTH_VIEW_COPY[view]?.passwordHint || "";
+    setText(passwordHelp, AUTH_VIEW_COPY[view]?.passwordHint || "");
     if (passwordToggle instanceof HTMLButtonElement) {
       passwordToggle.setAttribute("aria-pressed", visible ? "true" : "false");
       passwordToggle.title = visible ? "Hide password" : "Show password";
@@ -256,14 +268,14 @@ function initializeAuthenticationSurface() {
     form.dataset.authenticationView = view;
     surface.dataset.authenticationView = view;
 
-    if (emailPathTitle) emailPathTitle.textContent = copy.emailTitle;
-    if (emailPathDescription) emailPathDescription.textContent = copy.emailDescription;
+    setText(emailPathTitle, copy.emailTitle);
+    setText(emailPathDescription, copy.emailDescription);
     if (googleLabel && isElementVisible(oauthGroup)) {
-      googleLabel.textContent = view === "signup" ? "Sign up with Google" : "Continue with Google";
+      setText(googleLabel, view === "signup" ? "Sign up with Google" : "Continue with Google");
     }
 
     const passwordIsUsed = view !== "forgot-password-request" && isElementVisible(passwordField || passwordInput);
-    passwordFeedback?.toggleAttribute("hidden", !passwordIsUsed);
+    setHidden(passwordFeedback, !passwordIsUsed);
     if (view === "login") passwordInput.autocomplete = "current-password";
     if (view === "signup" || view === "password-recovery") passwordInput.autocomplete = "new-password";
 
@@ -283,7 +295,10 @@ function initializeAuthenticationSurface() {
   function syncViewportHeight() {
     const viewport = window.visualViewport;
     const height = viewport?.height || window.innerHeight;
-    modal.style.setProperty("--authentication-viewport-height", `${Math.max(320, Math.round(height))}px`);
+    const next = `${Math.max(320, Math.round(height))}px`;
+    if (modal.style.getPropertyValue("--authentication-viewport-height") !== next) {
+      modal.style.setProperty("--authentication-viewport-height", next);
+    }
   }
 
   function keepFocusedControlVisible() {
@@ -299,7 +314,7 @@ function initializeAuthenticationSurface() {
   function setCapsLock(event) {
     if (!(capsLock instanceof HTMLElement) || typeof event.getModifierState !== "function") return;
     const active = event.getModifierState("CapsLock");
-    capsLock.hidden = !active;
+    setHidden(capsLock, !active);
     passwordFeedback?.classList.toggle("has-caps-lock", active);
   }
 
@@ -315,7 +330,7 @@ function initializeAuthenticationSurface() {
   passwordInput.addEventListener("keydown", setCapsLock);
   passwordInput.addEventListener("keyup", setCapsLock);
   passwordInput.addEventListener("blur", () => {
-    if (capsLock instanceof HTMLElement) capsLock.hidden = true;
+    setHidden(capsLock, true);
     passwordFeedback?.classList.remove("has-caps-lock");
   });
   passwordToggle?.addEventListener("click", () => {
