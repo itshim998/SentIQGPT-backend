@@ -1,4 +1,3 @@
-import "../settings-workspace.js";
 import "../adaptive-panel-framework.js";
 import "../compact-user-messages.js";
 import "../identity-metadata.js";
