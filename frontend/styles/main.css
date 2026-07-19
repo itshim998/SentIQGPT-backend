@@ -14,3 +14,289 @@
 @import url("./modules/15-deep-research.css");
 @import url("./modules/16-live-beta.css");
 @import url("./modules/12-reduced-motion.css");
+
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 2.1
+   Global application canvas and atmospheric shell
+
+   This layer intentionally affects only the page canvas, app shell,
+   and main-content atmosphere. Component surfaces are handled in
+   their dedicated later passes.
+   ============================================================ */
+
+html {
+  background: #05060a;
+}
+
+body {
+  background:
+    radial-gradient(ellipse 78% 46% at 50% -22%, rgba(149, 123, 232, 0.085), transparent 70%),
+    linear-gradient(180deg, #07080d 0%, #080a10 46%, #05060a 100%);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: -10%;
+  display: block !important;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 56% 42% at 43% 4%, rgba(149, 123, 232, 0.16) 0%, rgba(149, 123, 232, 0.055) 38%, transparent 74%),
+    radial-gradient(ellipse 38% 30% at 88% 14%, rgba(139, 207, 241, 0.055) 0%, transparent 76%),
+    radial-gradient(ellipse 44% 34% at 12% 96%, rgba(85, 64, 152, 0.065) 0%, transparent 74%);
+  background-size: 100% 100%;
+  background-position: center;
+  opacity: 0.76;
+  transform: translateZ(0) scale(1);
+  animation: none;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  display: block !important;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 17%, transparent 74%, rgba(0, 0, 0, 0.36)),
+    radial-gradient(ellipse at center, transparent 42%, rgba(0, 0, 0, 0.5) 100%);
+  opacity: 0.94;
+}
+
+.app-container {
+  isolation: isolate;
+  overflow: hidden;
+  background: transparent;
+}
+
+.app-container::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.016), transparent 108px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.01), transparent 18%, transparent 82%, rgba(255, 255, 255, 0.008));
+  opacity: 0.78;
+}
+
+.app-container::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  z-index: 300;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(210, 197, 255, 0.16) 42%, rgba(139, 207, 241, 0.08) 64%, transparent);
+  opacity: 0.58;
+}
+
+.main-content {
+  z-index: 1;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent 118px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.008), transparent 18%, transparent 82%, rgba(0, 0, 0, 0.045)),
+    rgba(5, 7, 12, 0.34);
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.024),
+    inset 0 1px 0 rgba(255, 255, 255, 0.012);
+}
+
+.main-content::before,
+.main-content::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  animation: none;
+}
+
+.main-content::before {
+  background:
+    radial-gradient(ellipse 86% 58% at 50% -12%, rgba(149, 123, 232, 0.14) 0%, rgba(149, 123, 232, 0.052) 38%, transparent 74%),
+    radial-gradient(ellipse 44% 32% at 98% 14%, rgba(139, 207, 241, 0.035) 0%, transparent 78%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.01), transparent 38%, rgba(4, 5, 9, 0.18) 100%);
+  opacity: 0.88;
+}
+
+.main-content::after {
+  background:
+    radial-gradient(ellipse at 50% 56%, transparent 0%, transparent 61%, rgba(0, 0, 0, 0.28) 100%),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.1), transparent 13%, transparent 87%, rgba(0, 0, 0, 0.12));
+  opacity: 0.92;
+}
+
+.main-content-glow {
+  display: block !important;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.main-content-glow::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -2%;
+  width: clamp(520px, 56vw, 920px);
+  height: clamp(360px, 46vw, 720px);
+  transform: translate(-50%, -34%);
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(149, 123, 232, 0.16) 0%, rgba(149, 123, 232, 0.064) 34%, rgba(139, 207, 241, 0.018) 53%, transparent 76%);
+  filter: blur(34px);
+  opacity: 0.34;
+  transition:
+    top 0.7s var(--sentiq-motion-ease-emphasized),
+    width 0.7s var(--sentiq-motion-ease-emphasized),
+    height 0.7s var(--sentiq-motion-ease-emphasized),
+    opacity 0.5s var(--sentiq-motion-ease-standard),
+    transform 0.7s var(--sentiq-motion-ease-emphasized);
+}
+
+.main-content-glow::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: min(76%, 900px);
+  height: 1px;
+  transform: translateX(-50%);
+  background: linear-gradient(90deg, transparent, rgba(210, 197, 255, 0.14), rgba(139, 207, 241, 0.06), transparent);
+  opacity: 0.52;
+}
+
+.main-content.is-empty-chat .main-content-glow::before {
+  top: 29%;
+  width: clamp(620px, 72vw, 1220px);
+  height: clamp(500px, 58vw, 900px);
+  transform: translate(-50%, -50%);
+  opacity: 0.62;
+}
+
+@keyframes sentiqShellBreathe {
+  from {
+    opacity: 0.68;
+    transform: translate3d(-0.35%, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0.82;
+    transform: translate3d(0.35%, 0.45%, 0) scale(1.018);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) and (min-width: 769px) {
+  body::before {
+    animation: sentiqShellBreathe 34s ease-in-out infinite alternate;
+    will-change: opacity, transform;
+  }
+}
+
+@media (max-width: 768px) {
+  body::before {
+    inset: -18%;
+    background:
+      radial-gradient(ellipse 74% 48% at 48% 4%, rgba(149, 123, 232, 0.13) 0%, rgba(149, 123, 232, 0.042) 42%, transparent 76%),
+      radial-gradient(ellipse 52% 34% at 96% 12%, rgba(139, 207, 241, 0.04) 0%, transparent 78%);
+    opacity: 0.68;
+    animation: none;
+  }
+
+  .app-container::before {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent 82px);
+    opacity: 0.64;
+  }
+
+  .main-content {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.01), transparent 94px),
+      rgba(5, 7, 12, 0.38);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.012);
+  }
+
+  .main-content::before {
+    background:
+      radial-gradient(ellipse 118% 54% at 50% -8%, rgba(149, 123, 232, 0.105) 0%, rgba(149, 123, 232, 0.038) 40%, transparent 76%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.008), transparent 34%, rgba(4, 5, 9, 0.2) 100%);
+    opacity: 0.76;
+  }
+
+  .main-content::after {
+    opacity: 0.8;
+  }
+
+  .main-content-glow::before {
+    top: -4%;
+    width: 122vw;
+    height: min(78vh, 720px);
+    transform: translate(-50%, -36%);
+    filter: blur(30px);
+    opacity: 0.24;
+  }
+
+  .main-content.is-empty-chat .main-content-glow::before {
+    top: 25%;
+    width: 132vw;
+    height: min(86vh, 820px);
+    transform: translate(-50%, -50%);
+    opacity: 0.46;
+  }
+
+  .main-content-glow::after {
+    width: 72%;
+    opacity: 0.4;
+  }
+}
+
+@media (max-width: 480px) {
+  body::after {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent 14%, transparent 78%, rgba(0, 0, 0, 0.34)),
+      radial-gradient(ellipse at center, transparent 52%, rgba(0, 0, 0, 0.42) 100%);
+  }
+
+  .app-container::after {
+    opacity: 0.42;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before {
+    animation: none !important;
+    transform: none !important;
+    will-change: auto;
+  }
+
+  .main-content-glow::before {
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  body,
+  .app-container,
+  .main-content {
+    background: Canvas;
+  }
+
+  body::before,
+  body::after,
+  .app-container::before,
+  .app-container::after,
+  .main-content::before,
+  .main-content::after,
+  .main-content-glow {
+    display: none !important;
+  }
+
+  .main-content {
+    box-shadow: none;
+  }
+}
