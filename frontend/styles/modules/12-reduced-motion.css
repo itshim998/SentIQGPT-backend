@@ -13,6 +13,7 @@
 @import url("./29-execution-mode-selector.css");
 @import url("./30-open-document-responses.css");
 @import url("./31-compact-user-messages.css");
+@import url("./32-identity-metadata.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {

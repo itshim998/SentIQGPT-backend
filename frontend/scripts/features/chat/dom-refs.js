@@ -1,4 +1,5 @@
 import "../compact-user-messages.js";
+import "../identity-metadata.js";
 
 export function getChatDomRefs(doc = document) {
   return {
