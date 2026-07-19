@@ -1,0 +1,549 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Pass 8.4
+   SentIQ Live workspace
+   ============================================================ */
+
+#live-beta-panel.live-workspace-v84 {
+  --live-accent: 166, 149, 231;
+  --live-accent-solid: rgba(186, 173, 236, 0.96);
+  background: rgba(2, 4, 8, 0.78);
+  backdrop-filter: blur(10px) saturate(92%);
+  -webkit-backdrop-filter: blur(10px) saturate(92%);
+}
+
+#live-beta-panel.live-workspace-v84[data-state="listening"] {
+  --live-accent: 100, 196, 161;
+  --live-accent-solid: rgba(151, 225, 195, 0.96);
+}
+
+#live-beta-panel.live-workspace-v84[data-state="speaking"] {
+  --live-accent: 169, 151, 230;
+  --live-accent-solid: rgba(202, 189, 244, 0.98);
+}
+
+#live-beta-panel.live-workspace-v84[data-state="thinking"],
+#live-beta-panel.live-workspace-v84[data-state="connecting"] {
+  --live-accent: 116, 161, 215;
+  --live-accent-solid: rgba(164, 198, 235, 0.96);
+}
+
+#live-beta-panel.live-workspace-v84[data-state="muted"],
+#live-beta-panel.live-workspace-v84[data-state="quota_denied"],
+#live-beta-panel.live-workspace-v84[data-state="mic_blocked"],
+#live-beta-panel.live-workspace-v84[data-state="unavailable"] {
+  --live-accent: 205, 162, 96;
+  --live-accent-solid: rgba(231, 195, 138, 0.96);
+}
+
+#live-beta-panel.live-workspace-v84[data-state="error"],
+#live-beta-panel.live-workspace-v84[data-state="websocket_failed"],
+#live-beta-panel.live-workspace-v84[data-state="audio_failed"] {
+  --live-accent: 213, 111, 130;
+  --live-accent-solid: rgba(242, 163, 178, 0.96);
+}
+
+#live-beta-panel .live-workspace-surface {
+  --adaptive-panel-surface-width: 484px;
+  position: relative;
+  width: min(484px, calc(100% - 24px));
+  max-height: min(84dvh, 760px);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(214, 216, 226, 0.095);
+  border-radius: 25px;
+  background: rgba(10, 13, 19, 0.985);
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+#live-beta-panel .live-workspace-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 36px;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 13px 15px 12px 19px;
+  border-bottom: 1px solid rgba(214, 216, 226, 0.065);
+  background: rgba(10, 13, 19, 0.98);
+}
+
+#live-beta-panel .live-workspace-header > div {
+  min-width: 0;
+}
+
+#live-beta-panel .live-beta-eyebrow {
+  display: block;
+  margin-bottom: 2px;
+  color: rgba(127, 136, 153, 0.78);
+  font-size: 0.61rem;
+  font-weight: 680;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+#live-beta-panel .live-workspace-header h2 {
+  margin: 0;
+  color: rgba(246, 246, 249, 0.985);
+  font-size: 1rem;
+  font-weight: 660;
+  letter-spacing: -0.026em;
+  line-height: 1.3;
+}
+
+#live-beta-panel .live-beta-remaining {
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid rgba(214, 216, 226, 0.075);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  color: rgba(146, 154, 170, 0.88);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+#live-beta-panel .adaptive-panel-generated-close {
+  border-color: transparent;
+  background: transparent;
+}
+
+#live-beta-panel .adaptive-panel-generated-close:hover,
+#live-beta-panel .adaptive-panel-generated-close:focus-visible {
+  border-color: rgba(214, 216, 226, 0.09);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+#live-beta-panel .live-workspace-voice-object {
+  position: relative;
+  display: grid;
+  width: 190px;
+  height: 190px;
+  margin: 28px auto 17px;
+  place-items: center;
+  isolation: isolate;
+}
+
+#live-beta-panel .live-beta-orbit,
+#live-beta-panel .live-beta-orb {
+  border-radius: 50%;
+}
+
+#live-beta-panel .live-beta-orbit {
+  border: 1px solid rgba(var(--live-accent), 0.16);
+  box-shadow: none;
+  animation: sentiq-live-calm-ring 4.8s ease-in-out infinite;
+}
+
+#live-beta-panel .live-beta-orbit-one {
+  inset: 7px;
+}
+
+#live-beta-panel .live-beta-orbit-two {
+  inset: 25px;
+  border-color: rgba(var(--live-accent), 0.11);
+  animation-delay: -2.4s;
+}
+
+#live-beta-panel .live-beta-orb {
+  width: 112px;
+  height: 112px;
+  border: 1px solid rgba(var(--live-accent), 0.22);
+  background:
+    radial-gradient(circle at 38% 32%, rgba(255, 255, 255, 0.14), transparent 26%),
+    linear-gradient(145deg, rgba(var(--live-accent), 0.28), rgba(18, 23, 34, 0.96) 66%);
+  box-shadow:
+    0 16px 38px rgba(0, 0, 0, 0.34),
+    0 0 38px rgba(var(--live-accent), 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    inset 0 -14px 28px rgba(0, 0, 0, 0.22);
+  animation: sentiq-live-calm-core 3.2s ease-in-out infinite;
+}
+
+#live-beta-panel .live-beta-wave {
+  height: 34px;
+  gap: 4px;
+}
+
+#live-beta-panel .live-beta-wave i {
+  width: 3px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--live-accent-solid);
+  box-shadow: none;
+  animation: none;
+  opacity: 0.82;
+}
+
+#live-beta-panel .live-beta-wave i:nth-child(2),
+#live-beta-panel .live-beta-wave i:nth-child(4) {
+  height: 16px;
+}
+
+#live-beta-panel .live-beta-wave i:nth-child(3) {
+  height: 23px;
+}
+
+#live-beta-panel[data-state="speaking"] .live-beta-wave i,
+#live-beta-panel[data-state="listening"] .live-beta-wave i {
+  animation: sentiq-live-calm-wave 0.95s ease-in-out infinite;
+}
+
+#live-beta-panel[data-state="speaking"] .live-beta-wave i:nth-child(2),
+#live-beta-panel[data-state="listening"] .live-beta-wave i:nth-child(2),
+#live-beta-panel[data-state="speaking"] .live-beta-wave i:nth-child(4),
+#live-beta-panel[data-state="listening"] .live-beta-wave i:nth-child(4) {
+  animation-delay: -0.28s;
+}
+
+#live-beta-panel[data-state="speaking"] .live-beta-wave i:nth-child(3),
+#live-beta-panel[data-state="listening"] .live-beta-wave i:nth-child(3) {
+  animation-delay: -0.5s;
+}
+
+#live-beta-panel[data-state="muted"] .live-beta-orb,
+#live-beta-panel[data-live-connection-tone="fallback"] .live-beta-orb,
+#live-beta-panel[data-state="ended"] .live-beta-orb {
+  animation: none;
+  filter: saturate(0.45);
+  opacity: 0.72;
+}
+
+#live-beta-panel .live-workspace-connection {
+  min-height: 74px;
+  margin: 0 28px 18px;
+  padding: 14px 16px 13px;
+  border: 1px solid rgba(214, 216, 226, 0.065);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.022);
+  text-align: center;
+}
+
+#live-beta-panel .live-beta-state-row {
+  justify-content: center;
+  gap: 8px;
+}
+
+#live-beta-panel .live-beta-state-row strong {
+  color: rgba(239, 240, 244, 0.97);
+  font-size: 0.91rem;
+  font-weight: 650;
+  letter-spacing: -0.012em;
+}
+
+#live-beta-panel .live-beta-state-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--live-accent-solid);
+  box-shadow: 0 0 0 4px rgba(var(--live-accent), 0.09);
+}
+
+#live-beta-panel .live-beta-message {
+  min-height: 0;
+  margin: 7px auto 0;
+  color: rgba(139, 147, 164, 0.88);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+#live-beta-panel .live-workspace-controls {
+  justify-content: center;
+  gap: 9px;
+  margin: 0 20px 20px;
+  padding: 10px;
+  border: 1px solid rgba(214, 216, 226, 0.065);
+  border-radius: 17px;
+  background: rgba(255, 255, 255, 0.022);
+}
+
+#live-beta-panel .live-beta-control {
+  min-width: 0;
+  min-height: 48px;
+  flex: 1 1 0;
+  padding: 0 11px;
+  border-color: transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: rgba(202, 205, 215, 0.92);
+  box-shadow: none;
+  font-size: 0.72rem;
+  font-weight: 620;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+#live-beta-panel .live-beta-control svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
+}
+
+#live-beta-panel .live-beta-control:hover:not(:disabled),
+#live-beta-panel .live-beta-control:focus-visible {
+  border-color: rgba(214, 216, 226, 0.075);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(245, 245, 248, 0.98);
+  box-shadow: none;
+  outline: none;
+  transform: none;
+}
+
+#live-beta-panel .live-beta-control:focus-visible,
+#live-beta-panel .live-workspace-transcript-close:focus-visible,
+#live-beta-panel .live-workspace-chat-fallback:focus-visible,
+#live-beta-panel .live-beta-retry:focus-visible {
+  box-shadow: 0 0 0 3px rgba(var(--live-accent), 0.12);
+}
+
+#live-beta-panel .live-beta-control[aria-pressed="true"] {
+  border-color: rgba(var(--live-accent), 0.16);
+  background: rgba(var(--live-accent), 0.1);
+  color: var(--live-accent-solid);
+}
+
+#live-beta-panel .live-beta-control-end {
+  border-color: rgba(215, 102, 121, 0.075);
+  background: rgba(146, 47, 64, 0.075);
+  color: rgba(243, 177, 188, 0.96);
+}
+
+#live-beta-panel .live-beta-control-end:hover:not(:disabled),
+#live-beta-panel .live-beta-control-end:focus-visible {
+  border-color: rgba(228, 117, 136, 0.16);
+  background: rgba(166, 54, 72, 0.13);
+  color: rgba(255, 211, 218, 0.98);
+}
+
+#live-beta-panel .live-workspace-transcript-host:not([open]) {
+  display: none;
+}
+
+#live-beta-panel .live-workspace-transcript-host[open] {
+  position: absolute;
+  z-index: 12;
+  inset: 64px 0 0;
+  display: flex;
+  align-items: flex-end;
+  margin: 0;
+  padding: 18px;
+  border: 0;
+  border-radius: 0;
+  background: rgba(2, 4, 8, 0.68);
+}
+
+#live-beta-panel .live-workspace-transcript-host > summary {
+  display: none;
+}
+
+#live-beta-panel .live-workspace-transcript-sheet {
+  width: 100%;
+  max-height: min(72%, 470px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(214, 216, 226, 0.085);
+  border-radius: 20px;
+  background: rgba(13, 16, 23, 0.995);
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.42);
+}
+
+#live-beta-panel .live-workspace-transcript-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 60px;
+  padding: 12px 13px 11px 16px;
+  border-bottom: 1px solid rgba(214, 216, 226, 0.065);
+}
+
+#live-beta-panel .live-workspace-transcript-header > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#live-beta-panel .live-workspace-transcript-header strong {
+  color: rgba(241, 242, 246, 0.98);
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+#live-beta-panel .live-workspace-transcript-header span {
+  color: rgba(125, 134, 151, 0.82);
+  font-size: 0.66rem;
+  line-height: 1.4;
+}
+
+#live-beta-panel .live-workspace-transcript-close {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(145, 153, 169, 0.9);
+  cursor: pointer;
+}
+
+#live-beta-panel .live-workspace-transcript-close:hover {
+  border-color: rgba(214, 216, 226, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(240, 241, 245, 0.98);
+}
+
+#live-beta-panel .live-workspace-transcript-close svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+#live-beta-panel .live-beta-transcript {
+  min-height: 120px;
+  max-height: none;
+  flex: 1 1 auto;
+  padding: 15px 17px 20px;
+  color: rgba(207, 210, 220, 0.9);
+  font-size: 0.77rem;
+  line-height: 1.55;
+  scrollbar-gutter: stable;
+}
+
+#live-beta-panel .live-beta-transcript-line {
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 10px;
+}
+
+#live-beta-panel .live-beta-transcript-role {
+  color: var(--live-accent-solid);
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+#live-beta-panel .live-workspace-transcript-empty {
+  margin: 0;
+  padding: 22px 17px 4px;
+  color: rgba(126, 135, 151, 0.82);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+#live-beta-panel .live-workspace-transcript-empty[hidden] {
+  display: none;
+}
+
+#live-beta-panel .live-workspace-fallback-actions {
+  margin: -6px 20px 20px;
+  padding: 14px;
+  border: 1px solid rgba(var(--live-accent), 0.12);
+  border-radius: 15px;
+  background: rgba(var(--live-accent), 0.055);
+  text-align: center;
+}
+
+#live-beta-panel .live-workspace-fallback-actions[hidden],
+#live-beta-panel .live-workspace-chat-fallback[hidden] {
+  display: none;
+}
+
+#live-beta-panel .live-workspace-fallback-note {
+  margin: 0 0 11px;
+  color: rgba(182, 187, 198, 0.9);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+#live-beta-panel .live-beta-retry,
+#live-beta-panel .live-workspace-chat-fallback {
+  min-height: 42px;
+  margin: 0;
+  padding: 0 15px;
+  border-radius: 11px;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 630;
+  cursor: pointer;
+}
+
+#live-beta-panel .live-beta-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(214, 216, 226, 0.09);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(224, 226, 233, 0.96);
+}
+
+#live-beta-panel .live-beta-retry[hidden] {
+  display: none;
+}
+
+#live-beta-panel .live-workspace-chat-fallback {
+  margin-left: 8px;
+  border: 1px solid rgba(var(--live-accent), 0.2);
+  background: rgba(var(--live-accent), 0.13);
+  color: rgba(242, 240, 249, 0.98);
+}
+
+#live-beta-panel .live-beta-retry:hover,
+#live-beta-panel .live-workspace-chat-fallback:hover {
+  filter: brightness(1.08);
+}
+
+@keyframes sentiq-live-calm-ring {
+  0%, 100% { transform: scale(0.985); opacity: 0.46; }
+  50% { transform: scale(1.01); opacity: 0.78; }
+}
+
+@keyframes sentiq-live-calm-core {
+  0%, 100% { transform: scale(0.985); }
+  50% { transform: scale(1.018); }
+}
+
+@keyframes sentiq-live-calm-wave {
+  0%, 100% { transform: scaleY(0.68); opacity: 0.62; }
+  50% { transform: scaleY(1.08); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #live-beta-panel .live-beta-orbit,
+  #live-beta-panel .live-beta-orb,
+  #live-beta-panel .live-beta-wave i {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  #live-beta-panel .live-beta-orbit-one { opacity: 0.66; }
+  #live-beta-panel .live-beta-orbit-two { opacity: 0.4; }
+  #live-beta-panel .live-beta-wave i { opacity: 0.9; }
+}
+
+@media (forced-colors: active) {
+  #live-beta-panel.live-workspace-v84,
+  #live-beta-panel .live-workspace-surface,
+  #live-beta-panel .live-workspace-header,
+  #live-beta-panel .live-workspace-connection,
+  #live-beta-panel .live-workspace-controls,
+  #live-beta-panel .live-workspace-transcript-sheet,
+  #live-beta-panel .live-workspace-fallback-actions,
+  #live-beta-panel .live-beta-control,
+  #live-beta-panel .live-beta-retry,
+  #live-beta-panel .live-workspace-chat-fallback {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+    forced-color-adjust: auto;
+  }
+}
