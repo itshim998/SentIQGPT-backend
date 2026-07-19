@@ -1,3 +1,5 @@
+import "../compact-user-messages.js";
+
 export function getChatDomRefs(doc = document) {
   return {
     chatMessages: doc.getElementById("chat-messages"),
