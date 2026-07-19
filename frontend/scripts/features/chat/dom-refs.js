@@ -1,8 +1,8 @@
 import "../authentication-surface.js";
 import "../settings-workspace.js";
+import "../live-surface.js";
 import "../adaptive-panel-framework.js";
 import "../panel-focus-recovery.js";
-import "../live-surface.js";
 import "../compact-user-messages.js";
 import "../identity-metadata.js";
 import "../message-action-behaviour.js";
