@@ -1,0 +1,327 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 3.2
+   Collapsed intelligent rail
+
+   Preserves the highest-value navigation actions in a compact desktop
+   rail while keeping the existing sidebar state, events, and content.
+   ============================================================ */
+
+@media (min-width: 769px) {
+  .app-container.sidebar-collapsed .sidebar {
+    width: 64px;
+    overflow: visible;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.024), transparent 96px),
+      linear-gradient(180deg, rgba(13, 16, 24, 0.82), rgba(7, 10, 16, 0.76));
+    box-shadow:
+      12px 0 40px rgba(0, 0, 0, 0.12),
+      inset -1px 0 0 rgba(255, 255, 255, 0.032),
+      inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  }
+
+  .app-container.sidebar-collapsed .sidebar::before {
+    background:
+      radial-gradient(circle at 50% 3%, rgba(149, 123, 232, 0.09), transparent 116px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.012), transparent 72%);
+  }
+
+  .app-container.sidebar-collapsed .sidebar::after {
+    top: 3%;
+    bottom: 3%;
+    opacity: 0.58;
+  }
+
+  .app-container.sidebar-collapsed .sidebar-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 9px;
+    padding: 13px 10px 12px;
+    border-bottom-color: rgba(255, 255, 255, 0.028);
+  }
+
+  .app-container.sidebar-collapsed .sidebar-title-row {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 0;
+  }
+
+  .app-container.sidebar-collapsed .logo {
+    position: relative;
+    display: grid;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    overflow: hidden;
+    border: 1px solid rgba(210, 197, 255, 0.1);
+    border-radius: 12px;
+    background:
+      linear-gradient(145deg, rgba(210, 197, 255, 0.1), rgba(149, 123, 232, 0.035)),
+      rgba(255, 255, 255, 0.018);
+    color: transparent;
+    font-size: 0;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.045),
+      0 8px 24px rgba(0, 0, 0, 0.1);
+  }
+
+  .app-container.sidebar-collapsed .logo::before {
+    content: "S";
+    color: rgba(232, 226, 255, 0.96);
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 720;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    text-shadow: 0 0 16px rgba(149, 123, 232, 0.16);
+  }
+
+  .app-container.sidebar-collapsed .logo-accent {
+    display: none;
+  }
+
+  .app-container.sidebar-collapsed .sidebar-collapse-btn,
+  .app-container.sidebar-collapsed .btn-new-chat,
+  .app-container.sidebar-collapsed .account-btn,
+  .app-container.sidebar-collapsed .btn-settings {
+    position: relative;
+    display: inline-flex;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-radius: 11px;
+    background: transparent;
+    color: rgba(174, 181, 195, 0.8);
+    box-shadow: none;
+    font-size: 0;
+  }
+
+  .app-container.sidebar-collapsed .sidebar-collapse-btn {
+    order: 2;
+    background: rgba(255, 255, 255, 0.022);
+    border-color: rgba(255, 255, 255, 0.032);
+  }
+
+  .app-container.sidebar-collapsed .btn-new-chat {
+    margin: 0;
+  }
+
+  .app-container.sidebar-collapsed .btn-new-chat svg {
+    box-sizing: border-box;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    color: rgba(210, 197, 255, 0.92);
+  }
+
+  .app-container.sidebar-collapsed .sidebar-collapse-btn:hover,
+  .app-container.sidebar-collapsed .sidebar-collapse-btn:focus-visible,
+  .app-container.sidebar-collapsed .btn-new-chat:hover,
+  .app-container.sidebar-collapsed .btn-new-chat:focus-visible,
+  .app-container.sidebar-collapsed .account-btn:hover,
+  .app-container.sidebar-collapsed .account-btn:focus-visible,
+  .app-container.sidebar-collapsed .btn-settings:hover,
+  .app-container.sidebar-collapsed .btn-settings:focus-visible {
+    border-color: rgba(210, 197, 255, 0.085);
+    background: rgba(255, 255, 255, 0.045);
+    color: rgba(244, 246, 251, 0.96);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+    transform: none;
+  }
+
+  .app-container.sidebar-collapsed .sidebar-conversations {
+    display: flex;
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    padding: 14px 0;
+    align-items: center;
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+
+  .app-container.sidebar-collapsed .sidebar-label,
+  .app-container.sidebar-collapsed .chat-search-input,
+  .app-container.sidebar-collapsed .chat-list-empty {
+    display: none;
+  }
+
+  .app-container.sidebar-collapsed .chat-list {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    overflow: visible;
+  }
+
+  .app-container.sidebar-collapsed .chat-list-item {
+    display: none;
+  }
+
+  .app-container.sidebar-collapsed .chat-list-item.active {
+    position: relative;
+    display: flex;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+    margin: 0 auto;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+    border: 1px solid rgba(210, 197, 255, 0.075);
+    border-radius: 11px;
+    background:
+      radial-gradient(circle at 50% 42%, rgba(210, 197, 255, 0.14), transparent 62%),
+      rgba(149, 123, 232, 0.045);
+    color: rgba(226, 218, 255, 0.95);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.028),
+      0 8px 20px rgba(0, 0, 0, 0.08);
+  }
+
+  .app-container.sidebar-collapsed .chat-list-item.active::before {
+    content: "";
+    position: static;
+    width: 9px;
+    height: 9px;
+    border: 2px solid currentColor;
+    border-radius: 50%;
+    background: rgba(149, 123, 232, 0.2);
+    box-shadow:
+      0 0 0 4px rgba(149, 123, 232, 0.055),
+      0 0 14px rgba(149, 123, 232, 0.16);
+  }
+
+  .app-container.sidebar-collapsed .chat-list-item.active::after {
+    content: "";
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 4px;
+    height: 4px;
+    border: 1px solid rgba(8, 10, 16, 0.9);
+    border-radius: 50%;
+    background: rgba(196, 181, 253, 0.95);
+  }
+
+  .app-container.sidebar-collapsed .chat-list-item-title {
+    position: absolute;
+    top: 50%;
+    left: calc(100% + 12px);
+    z-index: 260;
+    width: max-content;
+    max-width: min(280px, calc(100vw - 112px));
+    padding: 7px 10px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 9px;
+    background: rgba(12, 15, 23, 0.96);
+    color: rgba(239, 241, 247, 0.96);
+    box-shadow:
+      0 14px 34px rgba(0, 0, 0, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-4px, -50%);
+    transition:
+      opacity var(--transition),
+      transform var(--transition);
+    font-size: 0.75rem;
+    font-weight: 560;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .app-container.sidebar-collapsed .chat-list-item.active:hover .chat-list-item-title,
+  .app-container.sidebar-collapsed .chat-list-item.active:focus-within .chat-list-item-title {
+    padding-left: 10px;
+    opacity: 1;
+    transform: translate(0, -50%);
+  }
+
+  .app-container.sidebar-collapsed .chat-rename-btn,
+  .app-container.sidebar-collapsed .chat-delete-btn,
+  .app-container.sidebar-collapsed .chat-rename-input {
+    display: none;
+  }
+
+  .app-container.sidebar-collapsed .sidebar-footer {
+    display: flex;
+    width: 100%;
+    padding: 10px 0 max(12px, env(safe-area-inset-bottom));
+    align-items: center;
+    justify-content: center;
+    border-top-color: rgba(255, 255, 255, 0.028);
+    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.06));
+  }
+
+  .app-container.sidebar-collapsed .account-btn-name,
+  .app-container.sidebar-collapsed .account-btn-chevron {
+    display: none;
+  }
+
+  .app-container.sidebar-collapsed .account-btn::before {
+    content: "";
+    width: 20px;
+    height: 20px;
+    border: 1px solid rgba(210, 197, 255, 0.1);
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 50% 36%, rgba(232, 226, 255, 0.86) 0 18%, transparent 20%),
+      radial-gradient(ellipse at 50% 82%, rgba(196, 181, 253, 0.72) 0 30%, transparent 32%),
+      rgba(149, 123, 232, 0.08);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  }
+
+  .app-container.sidebar-collapsed .btn-settings svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .app-container.sidebar-collapsed .account-panel {
+    right: auto;
+    bottom: 8px;
+    left: calc(100% + 10px);
+    width: min(248px, calc(100vw - 92px));
+    transform-origin: bottom left;
+  }
+
+  .app-container.sidebar-collapsed .main-content {
+    margin-left: 8px;
+  }
+}
+
+@media (forced-colors: active) and (min-width: 769px) {
+  .app-container.sidebar-collapsed .logo,
+  .app-container.sidebar-collapsed .sidebar-collapse-btn,
+  .app-container.sidebar-collapsed .btn-new-chat,
+  .app-container.sidebar-collapsed .chat-list-item.active,
+  .app-container.sidebar-collapsed .account-btn,
+  .app-container.sidebar-collapsed .btn-settings {
+    border: 1px solid ButtonText;
+    background: Canvas;
+    color: ButtonText;
+    box-shadow: none;
+  }
+
+  .app-container.sidebar-collapsed .chat-list-item-title {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+  }
+}
