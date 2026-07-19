@@ -53,7 +53,7 @@ for (const token of [
   'setPanelState("connecting"',
   'setPanelState("listening"',
   'setPanelState("speaking"',
-  'setPanelState("muted"',
+  'muted ? "muted" : "listening"',
   'setAttribute("aria-pressed", muted ? "true" : "false")',
   'setAttribute("aria-expanded", transcriptWrap.open ? "true" : "false")',
   "finishSession(\"client_end\")",
