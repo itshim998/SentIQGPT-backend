@@ -20,6 +20,9 @@
 @import url("./36-deep-research-workspace.css");
 @import url("./37-deep-research-report.css");
 @import url("./38-deep-research-responsive.css");
+@import url("./39-asset-result-foundation.css");
+@import url("./40-image-chart-results.css");
+@import url("./41-generated-file-results.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
