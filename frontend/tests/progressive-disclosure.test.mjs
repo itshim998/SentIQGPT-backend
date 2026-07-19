@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const behaviorSource = await readFile(new URL("../scripts/features/progressive-disclosure.js", import.meta.url), "utf8");
 const domRefsSource = await readFile(new URL("../scripts/features/chat/dom-refs.js", import.meta.url), "utf8");
+const controllerSource = await readFile(new URL("../scripts/features/chat-controller.js", import.meta.url), "utf8");
 const importsSource = await readFile(new URL("../styles/modules/12-reduced-motion.css", import.meta.url), "utf8");
 const cssSource = await readFile(new URL("../styles/modules/55-progressive-disclosure.css", import.meta.url), "utf8");
 const responsiveCssSource = await readFile(new URL("../styles/modules/56-progressive-disclosure-responsive.css", import.meta.url), "utf8");
@@ -81,10 +82,21 @@ assert.ok(messageActionsSource.includes("Escape"), "Existing message action esca
 assert.ok(accountSource.includes(".account-panel"), "Account controls remain in the account surface");
 assert.ok(toolSheetSource.includes(".composer-action-menu"), "Composer secondary controls retain their existing sheet");
 
+for (const token of [
+  "accountBtn?.addEventListener",
+  "accountUpgradeBtn?.addEventListener",
+  "accountPersonalizationBtn?.addEventListener",
+  "accountSupportBtn?.addEventListener",
+  "accountSignoutBtn?.addEventListener",
+  "accountPanel.contains(event.target)",
+  "accountBtn.contains(event.target)",
+]) assert.ok(controllerSource.includes(token), `Account relocation compatibility missing ${token}`);
+
 const desktopDisclosureRules = (cssSource.match(/@media \(hover: hover\)[\s\S]*?@media \(hover: none\)/) || [""])[0];
 assert.ok(desktopDisclosureRules.includes("opacity: 0"), "Desktop secondary controls should start calm");
 assert.ok(desktopDisclosureRules.includes("opacity: 1"), "Desktop interaction must reveal controls");
 assert.ok(desktopDisclosureRules.includes("focus-within"), "Keyboard focus must reveal controls");
+assert.ok(desktopDisclosureRules.includes("deep-research-cancel-btn"), "Running research must keep cancellation reachable");
 
 const mobileSheetRules = (cssSource.match(/@media \(hover: none\)[\s\S]*?@media \(max-width: 420px\)/) || [""])[0];
 assert.ok(mobileSheetRules.includes("display: inline-grid"), "Relevant mobile surfaces need an explicit action trigger");
