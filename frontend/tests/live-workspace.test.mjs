@@ -19,6 +19,9 @@ for (const token of [
   "Continue in chat",
   "LIVE_FAILURE_STATES",
   "LIVE_RETRYABLE_STATES",
+  "setTranscriptBackgroundInert",
+  'toggleAttribute("inert", !open)',
+  "stopImmediatePropagation",
   "queueMicrotask",
   "sentiq-panel-closed",
   "SentIQPanels?.sync?.()",
@@ -61,6 +64,10 @@ for (const token of [
 
 assert.ok(domRefs.includes('import "../panel-focus-recovery.js";'));
 assert.ok(domRefs.includes('import "../live-surface.js";'));
+assert.ok(
+  domRefs.indexOf('import "../live-surface.js";') < domRefs.indexOf('import "../adaptive-panel-framework.js";'),
+  "Transcript Escape handling must register before the parent panel Escape trap",
+);
 assert.ok(imports.includes('@import url("./51-live-workspace.css");'));
 assert.ok(imports.includes('@import url("./52-live-workspace-responsive.css");'));
 
