@@ -1,3 +1,4 @@
+import "../ui-state-runtime.js";
 import "../authentication-surface.js";
 import "../settings-workspace.js";
 import "../live-surface.js";
@@ -12,6 +13,7 @@ import "../deep-research-workspace.js";
 import "../asset-result-presentation.js";
 import "../semantic-activity-progress.js";
 import "../failure-recovery.js";
+import "../ui-state-bridge.js";
 
 export function getChatDomRefs(doc = document) {
   return {
