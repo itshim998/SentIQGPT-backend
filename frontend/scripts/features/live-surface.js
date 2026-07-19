@@ -187,6 +187,7 @@ function initializeLiveSurface() {
   function syncLiveState() {
     const state = panel.dataset.state || "connecting";
     const failure = LIVE_FAILURE_STATES.has(state);
+    const panelClosed = panel.hidden || panel.getAttribute("aria-hidden") === "true";
     panel.dataset.liveConnectionTone = failure ? "fallback" : state;
     setHidden(fallbackActions, !failure);
     setText(fallbackNote, fallbackCopy(state));
@@ -194,7 +195,7 @@ function initializeLiveSurface() {
     if (retryButton instanceof HTMLElement && !LIVE_RETRYABLE_STATES.has(state)) {
       setHidden(retryButton, true);
     }
-    if (!failure) closeTranscript();
+    if (failure || panelClosed) closeTranscript();
   }
 
   transcriptToggle?.addEventListener("click", () => {
