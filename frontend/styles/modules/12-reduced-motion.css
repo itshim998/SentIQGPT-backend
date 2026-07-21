@@ -50,6 +50,8 @@
 @import url("./66-mobile-composer-responsive.css");
 @import url("./67-touch-interaction-language.css");
 @import url("./68-touch-overflow-responsive.css");
+@import url("./69-mobile-glass-budget.css");
+@import url("./70-mobile-glass-budget-responsive.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
