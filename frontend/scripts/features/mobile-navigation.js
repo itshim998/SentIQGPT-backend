@@ -42,6 +42,9 @@ function initializeMobileNavigation() {
   const inertSnapshots = new Map();
   const boundBackdrops = new WeakSet();
   const subscribers = new Set();
+  const defer = typeof window.queueMicrotask === "function"
+    ? window.queueMicrotask.bind(window)
+    : (callback) => Promise.resolve().then(callback);
 
   let lastOpen = false;
   let lastMobile = false;
@@ -300,7 +303,7 @@ function initializeMobileNavigation() {
     if (currentBackdrop?.classList.contains("visible")) currentBackdrop.click();
     else if (sidebarToggle.getAttribute("aria-expanded") === "true") sidebarToggle.click();
 
-    window.queueMicrotask(() => {
+    defer(() => {
       if (!sidebar.classList.contains("open")) return;
       sidebar.classList.remove("open");
       sidebarToggle.setAttribute("aria-expanded", "false");
@@ -420,12 +423,12 @@ function initializeMobileNavigation() {
   updateViewportHeight();
   sidebarToggle.addEventListener("click", () => {
     if (isOpen()) restoreFocusOnClose = true;
-    window.queueMicrotask(() => sync("toggle"));
+    defer(() => sync("toggle"));
   }, { capture: true });
   document.addEventListener("keydown", handleKeydown, { capture: true });
   document.addEventListener("touchmove", handleOutsideTouchMove, { passive: false });
   media?.addEventListener?.("change", handleViewportChange);
-  window.addEventListener("resize", updateViewportHeight, { passive: true });
+  window.addEventListener("resize", handleViewportChange, { passive: true });
   window.visualViewport?.addEventListener?.("resize", updateViewportHeight, { passive: true });
   window.addEventListener("orientationchange", handleViewportChange, { passive: true });
 
