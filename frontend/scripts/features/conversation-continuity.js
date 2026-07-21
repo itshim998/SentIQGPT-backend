@@ -18,8 +18,9 @@ import { createContinuityConfirmationDialog } from "./conversation-continuity-di
 const REGISTRY_PREFIX = "conversation_continuity:v1:";
 const LAST_ACTIVE_CHAT_PREFIX = "last_active_chat_id:";
 const GUEST_CONVERSATION_ID = "guest-current";
-const SAVE_DELAY_MS = 180;
-const SCROLL_SAVE_DELAY_MS = 140;
+const DRAFT_SAVE_DELAY_MS = 180;
+const REGISTRY_SAVE_DELAY_MS = 180;
+const SCROLL_SAVE_DELAY_MS = 120;
 const ACTIVITY_REFRESH_MS = 2500;
 const TRANSIENT_ACTIVITY_GRACE_MS = 15_000;
 const RESTORE_WINDOW_MS = 2400;
@@ -49,7 +50,8 @@ function initializeConversationContinuity() {
   let registryLoaded = false;
   let registryLoadPromise = null;
   let persistPromise = Promise.resolve();
-  let saveTimer = 0;
+  let draftSaveTimer = 0;
+  let registryPersistTimer = 0;
   let scrollSaveTimer = 0;
   let activationTimer = 0;
   let activityTimer = 0;
@@ -97,15 +99,15 @@ function initializeConversationContinuity() {
     return registryLoadPromise;
   }
 
-  function queuePersist(delay = SAVE_DELAY_MS) {
+  function queuePersist(delay = REGISTRY_SAVE_DELAY_MS) {
     pendingPersist = true;
-    window.clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => { void persistRegistry(); }, Math.max(0, delay));
+    window.clearTimeout(registryPersistTimer);
+    registryPersistTimer = window.setTimeout(() => { void persistRegistry(); }, Math.max(0, delay));
   }
 
   async function persistRegistry() {
-    window.clearTimeout(saveTimer);
-    saveTimer = 0;
+    window.clearTimeout(registryPersistTimer);
+    registryPersistTimer = 0;
     if (!pendingPersist) return persistPromise;
     pendingPersist = false;
     const targetScope = scope;
@@ -137,15 +139,11 @@ function initializeConversationContinuity() {
     const active = executionModeMenu?.querySelector(
       "[data-execution-mode].active, [data-execution-mode][aria-checked='true'], [data-execution-mode][aria-selected='true']",
     );
-    const mode = active?.getAttribute("data-execution-mode");
-    return mode === "intuitive" ? "intuitive" : "fast";
+    return active?.getAttribute("data-execution-mode") === "intuitive" ? "intuitive" : "fast";
   }
 
   function readModeSnapshot() {
-    return {
-      toolMode: readToolMode(),
-      executionMode: readExecutionMode(),
-    };
+    return { toolMode: readToolMode(), executionMode: readExecutionMode() };
   }
 
   function hasAttachments() {
@@ -166,22 +164,51 @@ function initializeConversationContinuity() {
     });
   }
 
-  function saveDraftFor(conversationId = currentConversationId) {
-    if (restoring || !conversationId) return;
-    registry = updateRegistryDraft(registry, conversationId, currentDraftRecord());
-    queuePersist();
-    decorateConversationList();
+  function sameDraft(left, right) {
+    const a = normalizeDraftRecord(left);
+    const b = normalizeDraftRecord(right);
+    return a.text === b.text
+      && a.mode.toolMode === b.mode.toolMode
+      && a.mode.executionMode === b.mode.executionMode;
   }
 
-  function captureReadingFor(conversationId = currentConversationId) {
-    if (!conversationId || !chatMessages || applyingScroll) return;
+  function sameReading(left, right) {
+    if (!left || !right) return false;
+    return Boolean(
+      left.atBottom === right.atBottom
+      && left.anchorFromEnd === right.anchorFromEnd
+      && Math.abs(Number(left.anchorOffset || 0) - Number(right.anchorOffset || 0)) < 2
+      && Math.abs(Number(left.ratio || 0) - Number(right.ratio || 0)) < 0.002
+      && Math.abs(Number(left.scrollTop || 0) - Number(right.scrollTop || 0)) < 2
+    );
+  }
+
+  function commitDraft(conversationId, record) {
+    if (restoring || !conversationId) return false;
+    const normalized = normalizeDraftRecord(record);
+    const existing = registry.drafts[conversationId] || normalizeDraftRecord();
+    const existingHasContent = draftRecordHasContent(existing);
+    const nextHasContent = draftRecordHasContent(normalized);
+    if (sameDraft(existing, normalized) && existingHasContent === nextHasContent) return false;
+    registry = updateRegistryDraft(registry, conversationId, normalized);
+    queuePersist();
+    decorateConversationList();
+    return true;
+  }
+
+  function saveDraftFor(conversationId = currentConversationId) {
+    return commitDraft(conversationId, currentDraftRecord());
+  }
+
+  function buildReadingRecord() {
+    if (!chatMessages) return null;
     const messages = [...chatMessages.querySelectorAll(".message")];
     const scrollTop = chatMessages.scrollTop;
     const anchorIndex = messages.findIndex((message) => (
       message.offsetTop + message.offsetHeight > scrollTop + 1
     ));
     const anchor = anchorIndex >= 0 ? messages[anchorIndex] : null;
-    const record = captureReadingRecord({
+    return captureReadingRecord({
       scrollTop,
       scrollHeight: chatMessages.scrollHeight,
       clientHeight: chatMessages.clientHeight,
@@ -189,25 +216,39 @@ function initializeConversationContinuity() {
       anchorOffset: anchor ? scrollTop - anchor.offsetTop : 0,
       updatedAt: Date.now(),
     });
-    registry = updateRegistryReading(registry, conversationId, record);
-    queuePersist();
   }
 
-  function scheduleDraftSave(delay = SAVE_DELAY_MS) {
-    window.clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => saveDraftFor(), delay);
+  function commitReading(conversationId, record) {
+    if (!conversationId || !record || applyingScroll) return false;
+    if (sameReading(registry.reading[conversationId], record)) return false;
+    registry = updateRegistryReading(registry, conversationId, record);
+    queuePersist();
+    return true;
+  }
+
+  function captureReadingFor(conversationId = currentConversationId) {
+    return commitReading(conversationId, buildReadingRecord());
+  }
+
+  function scheduleDraftSave(delay = DRAFT_SAVE_DELAY_MS) {
+    const conversationId = currentConversationId;
+    const record = currentDraftRecord();
+    window.clearTimeout(draftSaveTimer);
+    draftSaveTimer = window.setTimeout(() => commitDraft(conversationId, record), Math.max(0, delay));
   }
 
   function scheduleReadingSave() {
     if (applyingScroll || !currentConversationId) return;
+    const conversationId = currentConversationId;
+    const record = buildReadingRecord();
     window.clearTimeout(scrollSaveTimer);
-    scrollSaveTimer = window.setTimeout(() => captureReadingFor(), SCROLL_SAVE_DELAY_MS);
+    scrollSaveTimer = window.setTimeout(() => commitReading(conversationId, record), SCROLL_SAVE_DELAY_MS);
   }
 
   async function flushCurrent() {
-    window.clearTimeout(saveTimer);
+    window.clearTimeout(draftSaveTimer);
     window.clearTimeout(scrollSaveTimer);
-    saveTimer = 0;
+    draftSaveTimer = 0;
     scrollSaveTimer = 0;
     saveDraftFor();
     captureReadingFor();
@@ -258,9 +299,7 @@ function initializeConversationContinuity() {
   function restoreExecutionMode(executionMode) {
     const target = executionMode === "intuitive" ? "intuitive" : "fast";
     const option = executionModeMenu?.querySelector(`[data-execution-mode="${target}"]`);
-    if (option instanceof HTMLButtonElement && !option.disabled && readExecutionMode() !== target) {
-      option.click();
-    }
+    if (option instanceof HTMLButtonElement && !option.disabled && readExecutionMode() !== target) option.click();
   }
 
   function restoreReadingPosition(conversationId, sequence) {
@@ -268,17 +307,14 @@ function initializeConversationContinuity() {
     const record = registry.reading[conversationId];
     if (!record) return;
     const messages = [...chatMessages.querySelectorAll(".message")];
-    const anchorIndex = record.anchorFromEnd === null
-      ? -1
-      : messages.length - 1 - record.anchorFromEnd;
+    const anchorIndex = record.anchorFromEnd === null ? -1 : messages.length - 1 - record.anchorFromEnd;
     const anchor = anchorIndex >= 0 && anchorIndex < messages.length ? messages[anchorIndex] : null;
-    const nextScrollTop = resolveRestoredScrollTop(record, {
+    applyingScroll = true;
+    chatMessages.scrollTop = resolveRestoredScrollTop(record, {
       scrollHeight: chatMessages.scrollHeight,
       clientHeight: chatMessages.clientHeight,
       anchorOffsetTop: anchor?.offsetTop,
     });
-    applyingScroll = true;
-    chatMessages.scrollTop = nextScrollTop;
     window.requestAnimationFrame(() => { applyingScroll = false; });
   }
 
@@ -311,24 +347,28 @@ function initializeConversationContinuity() {
     await loadRegistry();
     if (previousId) await moveContinuityAcrossAlias(previousId, conversationId);
     const sequence = ++restoreSequence;
-    const record = registry.drafts[conversationId] || normalizeDraftRecord();
+    const storedRecord = registry.drafts[conversationId] || null;
     restoring = true;
     if (chatInput) {
-      chatInput.value = record.text;
+      chatInput.value = storedRecord?.text || "";
       chatInput.dispatchEvent(new Event("input", { bubbles: true }));
-      chatInput.dataset.continuityDraft = record.text.trim() ? "restored" : "empty";
+      chatInput.dataset.continuityDraft = storedRecord?.text.trim() ? "restored" : "empty";
     }
-    restoreToolMode(record.mode.toolMode);
-    restoreExecutionMode(record.mode.executionMode);
+    restoreToolMode(storedRecord?.mode.toolMode || "none");
+    if (storedRecord) restoreExecutionMode(storedRecord.mode.executionMode);
     restoring = false;
     restoreWindowUntil = Date.now() + RESTORE_WINDOW_MS;
     scheduleReadingRestore(conversationId, sequence);
     document.documentElement.dataset.continuityConversation = conversationId;
     document.dispatchEvent(new CustomEvent("sentiq-conversation-continuity-restored", {
-      detail: { conversationId, hasDraft: draftRecordHasContent(record), mode: record.mode },
+      detail: {
+        conversationId,
+        hasDraft: Boolean(storedRecord && draftRecordHasContent(storedRecord)),
+        mode: storedRecord?.mode || null,
+      },
     }));
     listeners.forEach((listener) => {
-      try { listener({ conversationId, record, registry }); } catch { /* subscriber isolation */ }
+      try { listener({ conversationId, record: storedRecord, registry }); } catch { /* subscriber isolation */ }
     });
   }
 
@@ -353,13 +393,8 @@ function initializeConversationContinuity() {
       return;
     }
     const previousId = currentConversationId;
-    if (previousId) {
-      saveDraftFor(previousId);
-      captureReadingFor(previousId);
-    } else if (chatInput?.value) {
-      registry = updateRegistryDraft(registry, nextId, currentDraftRecord());
-      queuePersist();
-    }
+    if (previousId) saveDraftFor(previousId);
+    else if (chatInput?.value) commitDraft(nextId, currentDraftRecord());
     currentConversationId = nextId;
     await restoreConversation(nextId, previousId);
     void refreshConversationActivities();
@@ -370,9 +405,22 @@ function initializeConversationContinuity() {
     activationTimer = window.setTimeout(() => { void reconcileActiveConversation(); }, Math.max(0, delay));
   }
 
+  function transientActivity(type, updatedAt = Date.now()) {
+    const label = type === "research" ? "Researching" : type === "syncing" ? "Syncing" : "Generating";
+    return { type, label, updatedAt };
+  }
+
   function markTransientActivity(conversationId, type) {
-    if (!conversationId || !["streaming", "research"].includes(type)) return;
-    transientActivities.set(conversationId, { type, updatedAt: Date.now() });
+    if (!conversationId || !["streaming", "research", "syncing"].includes(type)) return;
+    const activity = transientActivity(type);
+    transientActivities.set(conversationId, { activity, type, updatedAt: activity.updatedAt });
+    decorateConversationList();
+  }
+
+  function clearTransientActivity(conversationId, type = "") {
+    const entry = transientActivities.get(conversationId);
+    if (!entry || (type && entry.type !== type)) return;
+    transientActivities.delete(conversationId);
     decorateConversationList();
   }
 
@@ -447,12 +495,6 @@ function initializeConversationContinuity() {
         if (persistedIds.has(conversationId)) continue;
         if (now - Number(entry.updatedAt || 0) > TRANSIENT_ACTIVITY_GRACE_MS) {
           transientActivities.delete(conversationId);
-        } else if (!entry.activity && entry.type) {
-          const label = entry.type === "research" ? "Researching" : "Generating";
-          transientActivities.set(conversationId, {
-            ...entry,
-            activity: { type: entry.type, label, updatedAt: entry.updatedAt },
-          });
         }
       }
       decorateConversationList();
@@ -478,15 +520,13 @@ function initializeConversationContinuity() {
 
   function stopForegroundStreamingBeforeNavigation() {
     if (!sendButton?.classList.contains("is-stop")) return false;
-    if (currentConversationId) markTransientActivity(currentConversationId, "streaming");
     sendButton.click();
     document.documentElement.dataset.continuityStreamingIsolation = "stopped-before-navigation";
     return true;
   }
 
   function currentDiscardRisk(options = {}) {
-    const record = currentDraftRecord();
-    return draftRecordIsMeaningful(record, {
+    return draftRecordIsMeaningful(currentDraftRecord(), {
       hasAttachments: options.includeNonPersistent !== false && hasAttachments(),
       hasSelectionContext: options.includeNonPersistent !== false && hasSelectionContext(),
     });
@@ -496,19 +536,18 @@ function initializeConversationContinuity() {
     return draftRecordIsMeaningful(registry.drafts[conversationId]);
   }
 
-  function guardRequest(control) {
-    if (!(control instanceof HTMLElement)) return null;
-    const deleteButton = control.closest(".chat-delete-btn");
+  function guardRequest(target) {
+    if (!(target instanceof HTMLElement)) return null;
+    const deleteButton = target.closest(".chat-delete-btn");
     if (deleteButton) {
       const item = deleteButton.closest(".chat-list-item[data-id]");
       const conversationId = item?.getAttribute("data-id") || "";
       const active = item?.classList.contains("active");
-      const risky = storedDraftRisk(conversationId) || (active && currentDiscardRisk());
       return {
         control: deleteButton,
         kind: "delete",
         conversationId,
-        risky,
+        risky: storedDraftRisk(conversationId) || (active && currentDiscardRisk()),
         title: "Delete this conversation and its draft?",
         message: "The conversation, its saved reading position, and any unsent draft in it will be removed.",
         confirmLabel: "Delete conversation",
@@ -516,14 +555,13 @@ function initializeConversationContinuity() {
       };
     }
 
-    if (control.closest("#new-chat-btn")) {
-      const guestTextWillBeDiscarded = !isSignedInScope() && currentDiscardRisk({ includeNonPersistent: false });
-      const risky = guestTextWillBeDiscarded || hasAttachments() || hasSelectionContext();
+    if (target.closest("#new-chat-btn")) {
+      const guestContentWillBeDiscarded = !isSignedInScope() && currentDiscardRisk({ includeNonPersistent: false });
       return {
         control: newChatButton,
         kind: "new-chat",
         conversationId: currentConversationId,
-        risky,
+        risky: guestContentWillBeDiscarded || hasAttachments() || hasSelectionContext(),
         title: "Start a new conversation?",
         message: isSignedInScope()
           ? "Your typed draft is saved with this conversation, but attached files or selected context cannot move to the new chat."
@@ -532,7 +570,7 @@ function initializeConversationContinuity() {
       };
     }
 
-    const logout = control.closest("#auth-logout-btn, #auth-menu-logout-btn, #account-signout-btn");
+    const logout = target.closest("#auth-logout-btn, #auth-menu-logout-btn, #account-signout-btn");
     if (logout) {
       return {
         control: logout,
@@ -545,8 +583,8 @@ function initializeConversationContinuity() {
       };
     }
 
-    const chatItem = control.closest(".chat-list-item[data-id]");
-    if (chatItem && !control.closest(".chat-rename-btn, .chat-delete-btn, .chat-rename-input")) {
+    const chatItem = target.closest(".chat-list-item[data-id]");
+    if (chatItem && !target.closest(".chat-rename-btn, .chat-delete-btn, .chat-rename-input")) {
       const conversationId = chatItem.getAttribute("data-id") || "";
       if (!conversationId || conversationId === currentConversationId || chatItem.classList.contains("active")) return null;
       return {
@@ -562,51 +600,55 @@ function initializeConversationContinuity() {
     return null;
   }
 
+  function scheduleDeletedConversationCleanup(conversationId) {
+    if (!conversationId) return;
+    window.setTimeout(async () => {
+      const chat = await Storage.getChat?.(conversationId).catch(() => null);
+      if (chat) return;
+      registry = removeConversationContinuity(registry, conversationId);
+      queuePersist(0);
+      decorateConversationList();
+    }, 420);
+  }
+
+  function prepareNavigation(request) {
+    saveDraftFor();
+    captureReadingFor();
+    stopForegroundStreamingBeforeNavigation();
+    if (request.kind === "new-chat" && !isSignedInScope()) {
+      registry = removeConversationContinuity(registry, GUEST_CONVERSATION_ID);
+      queuePersist(0);
+    }
+  }
+
   async function replayGuardedAction(request) {
     if (!request?.control?.isConnected) return;
     guardInProgress = true;
     try {
       await flushCurrent();
-      if (request.kind === "delete") {
-        registry = removeConversationContinuity(registry, request.conversationId);
-        queuePersist(0);
-      }
-      if (request.kind === "new-chat" && !isSignedInScope()) {
-        registry = removeConversationContinuity(registry, GUEST_CONVERSATION_ID);
-        queuePersist(0);
-      }
-      stopForegroundStreamingBeforeNavigation();
+      prepareNavigation(request);
       replayBypass.add(request.control);
       request.control.click();
-      scheduleActivation(request.kind === "new-chat" ? 260 : 100);
-      window.setTimeout(() => void refreshConversationActivities(), 120);
+      if (request.kind === "delete") scheduleDeletedConversationCleanup(request.conversationId);
+      scheduleActivation(request.kind === "new-chat" ? 320 : 100);
+      window.setTimeout(() => void refreshConversationActivities(), 160);
     } finally {
       guardInProgress = false;
     }
   }
 
   function handleGuardedClick(event) {
-    if (!(event.target instanceof Element) || confirmation.isOpen()) return;
-    const control = event.target.closest("#new-chat-btn, #auth-logout-btn, #auth-menu-logout-btn, #account-signout-btn, .chat-list-item[data-id]");
-    if (!(control instanceof HTMLElement)) return;
-    if (replayBypass.has(control)) {
-      replayBypass.delete(control);
-      return;
-    }
+    if (!(event.target instanceof HTMLElement) || confirmation.isOpen()) return;
     const request = guardRequest(event.target);
     if (!request) return;
+    if (replayBypass.has(request.control)) {
+      replayBypass.delete(request.control);
+      return;
+    }
     if (!request.risky) {
-      void flushCurrent();
-      stopForegroundStreamingBeforeNavigation();
-      if (request.kind === "delete") {
-        registry = removeConversationContinuity(registry, request.conversationId);
-        queuePersist(0);
-      }
-      if (request.kind === "new-chat" && !isSignedInScope()) {
-        registry = removeConversationContinuity(registry, GUEST_CONVERSATION_ID);
-        queuePersist(0);
-      }
-      scheduleActivation(request.kind === "new-chat" ? 260 : 100);
+      prepareNavigation(request);
+      if (request.kind === "delete") scheduleDeletedConversationCleanup(request.conversationId);
+      scheduleActivation(request.kind === "new-chat" ? 320 : 100);
       return;
     }
     event.preventDefault();
@@ -663,12 +705,12 @@ function initializeConversationContinuity() {
   });
   document.addEventListener("sentiq-ui-state-change", (event) => {
     const state = event.detail || {};
-    if (currentConversationId && (state.primary === "streaming" || state.facts?.streaming)) {
-      markTransientActivity(currentConversationId, "streaming");
-    }
-    if (currentConversationId && (state.primary === "background-task" || state.facts?.backgroundTask)) {
-      markTransientActivity(currentConversationId, "research");
-    }
+    const streaming = Boolean(state.primary === "streaming" || state.facts?.streaming);
+    const backgroundTask = Boolean(state.primary === "background-task" || state.facts?.backgroundTask);
+    if (currentConversationId && streaming) markTransientActivity(currentConversationId, "streaming");
+    else if (currentConversationId) clearTransientActivity(currentConversationId, "streaming");
+    if (currentConversationId && backgroundTask) markTransientActivity(currentConversationId, "research");
+    else if (currentConversationId) clearTransientActivity(currentConversationId, "research");
     scheduleActivation(20);
   });
   window.addEventListener("sentiq-billing-refresh", () => void refreshConversationActivities());
@@ -676,6 +718,7 @@ function initializeConversationContinuity() {
     scheduleActivation(80);
     void refreshConversationActivities();
   });
+  window.addEventListener("pagehide", () => { void flushCurrent(); });
   window.addEventListener("beforeunload", (event) => {
     saveDraftFor();
     captureReadingFor();
@@ -695,7 +738,12 @@ function initializeConversationContinuity() {
     new MutationObserver(() => {
       decorateConversationList();
       scheduleActivation(25);
-    }).observe(chatList, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "data-id"] });
+    }).observe(chatList, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "data-id"],
+    });
   }
   if (chatMessages) {
     new MutationObserver(() => {
@@ -741,7 +789,11 @@ function initializeConversationContinuity() {
       if (typeof listener !== "function") return () => {};
       listeners.add(listener);
       if (options.emitCurrent !== false) {
-        listener({ conversationId: currentConversationId, record: registry.drafts[currentConversationId] || null, registry });
+        listener({
+          conversationId: currentConversationId,
+          record: registry.drafts[currentConversationId] || null,
+          registry,
+        });
       }
       return () => listeners.delete(listener);
     },
