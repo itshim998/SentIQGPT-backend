@@ -38,6 +38,8 @@
 @import url("./54-central-ui-state.css");
 @import url("./55-progressive-disclosure.css");
 @import url("./56-progressive-disclosure-responsive.css");
+@import url("./57-capability-awareness.css");
+@import url("./58-capability-awareness-responsive.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
