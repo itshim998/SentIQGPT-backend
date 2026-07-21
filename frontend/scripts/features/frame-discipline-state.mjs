@@ -156,6 +156,7 @@ export function createFrameCoordinator(options = {}) {
   let pendingReads = new Map();
   let pendingWrites = new Map();
   const timers = new Map();
+  const activeDebounces = new Set();
   let frameHandle = 0;
   let flushing = false;
   let phase = "idle";
@@ -207,6 +208,12 @@ export function createFrameCoordinator(options = {}) {
     ensureFrame();
   }
 
+  function flushNow(timestamp = 0) {
+    if (frameHandle) cancelFrame(frameHandle);
+    frameHandle = 0;
+    flush(timestamp);
+  }
+
   function scheduleRead(domain, key, read, write) {
     if (typeof read !== "function") return () => {};
     const taskKey = createFrameTaskKey(domain, key);
@@ -225,11 +232,15 @@ export function createFrameCoordinator(options = {}) {
 
   function debounce(domain, key, callback, delay = 0) {
     const taskKey = createFrameTaskKey(domain, key);
+    if (activeDebounces.has(taskKey)) return () => {};
     const previous = timers.get(taskKey);
     if (previous) clearTimer(previous);
     const handle = setTimer(() => {
       timers.delete(taskKey);
-      scheduleWrite(domain, key, callback);
+      scheduleWrite(domain, key, () => {
+        activeDebounces.add(taskKey);
+        try { callback(); } finally { activeDebounces.delete(taskKey); }
+      });
     }, Math.max(0, finiteNumber(delay, 0)));
     timers.set(taskKey, handle);
     return () => {
@@ -246,6 +257,7 @@ export function createFrameCoordinator(options = {}) {
     const timer = timers.get(taskKey);
     if (timer) clearTimer(timer);
     timers.delete(taskKey);
+    activeDebounces.delete(taskKey);
   }
 
   function destroy() {
@@ -255,6 +267,7 @@ export function createFrameCoordinator(options = {}) {
     pendingWrites.clear();
     timers.forEach((timer) => clearTimer(timer));
     timers.clear();
+    activeDebounces.clear();
     phase = "idle";
     flushing = false;
   }
@@ -265,7 +278,7 @@ export function createFrameCoordinator(options = {}) {
     write: scheduleWrite,
     debounce,
     cancel,
-    flushNow: flush,
+    flushNow,
     destroy,
     getState: () => Object.freeze({
       phase,
@@ -274,6 +287,7 @@ export function createFrameCoordinator(options = {}) {
       pendingReads: pendingReads.size,
       pendingWrites: pendingWrites.size,
       pendingDebounces: timers.size,
+      activeDebounces: activeDebounces.size,
       frameScheduled: Boolean(frameHandle),
     }),
   });
