@@ -124,6 +124,21 @@ assert.deepEqual(
   "documented state priority must match derivation order",
 );
 
+const missingQuotaContracts = deriveCapabilitySnapshot({
+  authKnown: true,
+  authenticated: true,
+  planKnown: true,
+  planError: false,
+  imageQuotaKnown: true,
+  imageQuota: { remaining: 30, limit: 30 },
+  deepResearchQuotaKnown: true,
+  deepResearchQuota: null,
+  liveKnown: true,
+  liveStatus: { available: true },
+});
+assert.equal(missingQuotaContracts.capabilities["image-generation"].state, "unavailable");
+assert.equal(missingQuotaContracts.capabilities["deep-research"].state, "unavailable");
+
 assert.deepEqual(normalizeQuota({ limit: 10, used: 3, reserved: 2 }), {
   available: null,
   remaining: 5,
