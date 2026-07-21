@@ -42,7 +42,7 @@
 }
 
 /* Layout changes may still occur once, but they are never tweened. */
-:root :is(
+:root[data-sentiq-motion-version="11.1"] :is(
   [data-sentiq-motion-family="layout"],
   .app-container,
   .main-content,
@@ -66,14 +66,14 @@
 }
 
 /* Collapsible content snaps its dimensions, then uses a small visual settle. */
-:root .thinking-content {
+:root[data-sentiq-motion-version="11.1"] .thinking-content {
   transform: translate3d(0, -4px, 0);
   transition-property: transform, opacity;
   transition-duration: var(--sentiq-motion-layout-duration, 220ms);
   transition-timing-function: var(--sentiq-motion-layout-ease, cubic-bezier(0.2, 0.7, 0.2, 1));
 }
 
-:root .thinking-panel[data-expanded="true"] .thinking-content {
+:root[data-sentiq-motion-version="11.1"] .thinking-panel[data-expanded="true"] .thinking-content {
   transform: translate3d(0, 0, 0);
 }
 
@@ -128,8 +128,8 @@
 }
 
 /* Loader and streaming reveals use transform + opacity instead of blur. */
-:root .sentiq-loader,
-:root .sentiq-loader.loader-exit,
+:root[data-sentiq-motion-version="11.1"] .sentiq-loader,
+:root[data-sentiq-motion-version="11.1"] .sentiq-loader.loader-exit,
 :root .sentiq-reveal-target,
 :root .sentiq-reveal-target.is-visible {
   filter: none;
