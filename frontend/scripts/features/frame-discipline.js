@@ -188,6 +188,7 @@ function initializeFrameDiscipline() {
 
   function handleChatScroll() {
     const userInitiated = performance.now() > programmaticScrollUntil;
+    if (userInitiated) scrollPinned = false;
     scheduleScrollAnchor("scroll", { userInitiated });
   }
 
@@ -232,12 +233,14 @@ function initializeFrameDiscipline() {
       scheduleSidebarMeasurement("viewport");
       scheduleAttachmentMeasurement("viewport");
     });
-    coordinator.debounce(
-      "viewport",
-      "settled",
-      () => scheduleViewportMeasurement("settled"),
-      FRAME_DISCIPLINE_DEFAULTS.viewportSettleMs,
-    );
+    if (reason !== "settled") {
+      coordinator.debounce(
+        "viewport",
+        "settled",
+        () => scheduleViewportMeasurement("settled"),
+        FRAME_DISCIPLINE_DEFAULTS.viewportSettleMs,
+      );
+    }
   }
 
   function readSidebarMetrics() {
@@ -276,15 +279,17 @@ function initializeFrameDiscipline() {
     coordinator.measure("sidebar", "measure", readSidebarMetrics, (metrics) => {
       applySidebarMetrics(metrics, reason);
     });
-    coordinator.debounce(
-      "sidebar",
-      "settled",
-      () => coordinator.measure("sidebar", "settled-measure", readSidebarMetrics, (metrics) => {
-        applySidebarMetrics(metrics, "settled");
-        coordinator.write("sidebar", "settled-state", () => setDataset(sidebar, "sentiqFrameTransition", "settled"));
-      }),
-      FRAME_DISCIPLINE_DEFAULTS.sidebarSettleMs,
-    );
+    if (reason !== "settled") {
+      coordinator.debounce(
+        "sidebar",
+        "settled",
+        () => coordinator.measure("sidebar", "settled-measure", readSidebarMetrics, (metrics) => {
+          applySidebarMetrics(metrics, "settled");
+          coordinator.write("sidebar", "settled-state", () => setDataset(sidebar, "sentiqFrameTransition", "settled"));
+        }),
+        FRAME_DISCIPLINE_DEFAULTS.sidebarSettleMs,
+      );
+    }
   }
 
   function readAttachmentMetrics() {
@@ -329,14 +334,16 @@ function initializeFrameDiscipline() {
       applyAttachmentMetrics(metrics, reason);
       scheduleScrollAnchor("attachment-layout");
     });
-    coordinator.debounce(
-      "attachments",
-      "settled",
-      () => coordinator.measure("attachments", "settled-measure", readAttachmentMetrics, (metrics) => {
-        applyAttachmentMetrics(metrics, "settled");
-      }),
-      FRAME_DISCIPLINE_DEFAULTS.attachmentSettleMs,
-    );
+    if (reason !== "settled") {
+      coordinator.debounce(
+        "attachments",
+        "settled",
+        () => coordinator.measure("attachments", "settled-measure", readAttachmentMetrics, (metrics) => {
+          applyAttachmentMetrics(metrics, "settled");
+        }),
+        FRAME_DISCIPLINE_DEFAULTS.attachmentSettleMs,
+      );
+    }
   }
 
   function mergeStreamSummary(next) {
@@ -376,8 +383,7 @@ function initializeFrameDiscipline() {
     if (typeof update !== "function") return false;
     coordinator.write("streaming", key || "external", () => {
       update();
-      const summary = summarizeMutationRecords([]);
-      pendingStreamSummary = Object.freeze({ ...summary, childList: 1, addedNodes: 1 });
+      mergeStreamSummary({ childList: 1, characterData: 0, attributes: 0, addedNodes: 1, removedNodes: 0 });
       scheduleStreamingFrame(options.reason || "scheduled-update");
     });
     return true;
