@@ -212,16 +212,14 @@
 }
 
 /* Reduced, slow-update, and data-saving policies resolve to static final states. */
-:root[data-sentiq-compositor-policy="reduced"] :is(
-  .sentiq-loader::before,
-  .sentiq-loader-shimmer::before,
-  .image-skeleton::after,
-  .chat-input-area.is-response-locked::before,
-  .streaming-new-text,
-  .streaming-rendered.streaming-render-pulse > :last-child,
-  .streaming-rendered.streaming-render-pulse:empty,
-  .live-beta-wave i
-) {
+:root[data-sentiq-compositor-policy="reduced"] .sentiq-loader::before,
+:root[data-sentiq-compositor-policy="reduced"] .sentiq-loader-shimmer::before,
+:root[data-sentiq-compositor-policy="reduced"] .image-skeleton::after,
+:root[data-sentiq-compositor-policy="reduced"] .chat-input-area.is-response-locked::before,
+:root[data-sentiq-compositor-policy="reduced"] .streaming-new-text,
+:root[data-sentiq-compositor-policy="reduced"] .streaming-rendered.streaming-render-pulse > :last-child,
+:root[data-sentiq-compositor-policy="reduced"] .streaming-rendered.streaming-render-pulse:empty,
+:root[data-sentiq-compositor-policy="reduced"] .live-beta-wave i {
   animation: none !important;
   will-change: auto;
 }
