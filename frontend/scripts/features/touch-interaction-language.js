@@ -94,7 +94,9 @@ function initializeTouchInteractionLanguage() {
     chrome.dataset.touchDragDiscoverable = "dismiss";
     chrome.setAttribute("aria-label", "Navigation sheet. Swipe down to close, or use the Close button.");
     const eyebrow = chrome.querySelector(".mobile-navigation-sheet-eyebrow");
-    if (eyebrow instanceof HTMLElement) eyebrow.textContent = "Swipe down to close";
+    if (eyebrow instanceof HTMLElement && eyebrow.textContent !== "Swipe down to close") {
+      eyebrow.textContent = "Swipe down to close";
+    }
   }
 
   function enhance(scope = document) {
@@ -263,7 +265,7 @@ function initializeTouchInteractionLanguage() {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ["hidden", "aria-hidden", "aria-disabled", "disabled", "class"],
+    attributeFilter: ["hidden", "aria-hidden", "aria-disabled", "disabled"],
   });
 
   window.SentIQTouchInteraction = Object.freeze({
