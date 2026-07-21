@@ -1,0 +1,189 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Pass 9.3
+   Capability-aware actions
+   ============================================================ */
+
+:root[data-capability-awareness-version="9.3"] {
+  --sentiq-capability-border: rgba(213, 206, 234, 0.13);
+  --sentiq-capability-surface: rgba(13, 16, 24, 0.975);
+  --sentiq-capability-copy: rgba(237, 238, 244, 0.97);
+  --sentiq-capability-muted: rgba(165, 171, 185, 0.88);
+  --sentiq-capability-focus: rgba(189, 171, 246, 0.72);
+  --sentiq-capability-warning: rgba(224, 184, 112, 0.9);
+}
+
+[data-capability-key][data-capability-available="false"] {
+  cursor: help;
+}
+
+:is(
+  .composer-action-option,
+  .starter-action-btn,
+  #live-beta-btn
+)[data-capability-available="false"] {
+  opacity: 0.62;
+  filter: saturate(0.72);
+}
+
+:is(
+  .composer-action-option,
+  .starter-action-btn,
+  #live-beta-btn
+)[data-capability-available="false"]:hover,
+:is(
+  .composer-action-option,
+  .starter-action-btn,
+  #live-beta-btn
+)[data-capability-available="false"]:focus-visible {
+  opacity: 0.82;
+  filter: none;
+}
+
+.composer-action-option[data-capability-available="false"] .composer-action-subtitle[data-capability-copy="reason"] {
+  color: var(--sentiq-capability-warning);
+  white-space: normal;
+}
+
+.composer-action-option[data-capability-state="checking"] .composer-action-subtitle[data-capability-copy="reason"] {
+  color: var(--sentiq-capability-muted);
+}
+
+[data-capability-key][data-capability-available="false"]:focus-visible {
+  outline: 2px solid var(--sentiq-capability-focus);
+  outline-offset: 2px;
+}
+
+.sentiq-capability-explanation {
+  position: fixed;
+  z-index: 460;
+  width: min(360px, calc(100vw - 24px));
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  overflow: hidden;
+  border: 1px solid var(--sentiq-capability-border);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.035), transparent 48%),
+    var(--sentiq-capability-surface);
+  color: var(--sentiq-capability-copy);
+  box-shadow:
+    0 22px 66px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  -webkit-backdrop-filter: blur(24px) saturate(1.08);
+  backdrop-filter: blur(24px) saturate(1.08);
+  transform-origin: top right;
+}
+
+.sentiq-capability-explanation[hidden] {
+  display: none;
+}
+
+.sentiq-capability-explanation[data-open="true"] {
+  animation: sentiq-capability-enter 150ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.sentiq-capability-explanation-copy {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.sentiq-capability-explanation strong {
+  color: var(--sentiq-capability-copy);
+  font-size: 0.86rem;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.sentiq-capability-explanation p {
+  margin: 0;
+  color: var(--sentiq-capability-muted);
+  font-size: 0.76rem;
+  font-weight: 480;
+  line-height: 1.5;
+}
+
+.sentiq-capability-explanation small {
+  color: rgba(188, 180, 215, 0.82);
+  font-size: 0.66rem;
+  font-weight: 560;
+  line-height: 1.4;
+}
+
+.sentiq-capability-explanation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sentiq-capability-explanation-action,
+.sentiq-capability-explanation-close {
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(224, 226, 234, 0.94);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 620;
+  cursor: pointer;
+}
+
+.sentiq-capability-explanation-action {
+  border-color: rgba(181, 159, 244, 0.22);
+  background: rgba(145, 118, 226, 0.14);
+  color: rgba(244, 241, 252, 0.98);
+}
+
+.sentiq-capability-explanation-action:hover,
+.sentiq-capability-explanation-action:focus-visible,
+.sentiq-capability-explanation-close:hover,
+.sentiq-capability-explanation-close:focus-visible {
+  border-color: rgba(205, 192, 247, 0.3);
+  background: rgba(167, 142, 235, 0.13);
+  outline: none;
+}
+
+.sentiq-capability-explanation-action:focus-visible,
+.sentiq-capability-explanation-close:focus-visible,
+.sentiq-capability-explanation:focus-visible {
+  box-shadow: 0 0 0 3px rgba(149, 123, 232, 0.16);
+}
+
+@keyframes sentiq-capability-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sentiq-capability-explanation[data-open="true"] {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  [data-capability-key][data-capability-available="false"] {
+    opacity: 1;
+    outline: 1px dashed GrayText;
+    outline-offset: 2px;
+  }
+
+  .sentiq-capability-explanation,
+  .sentiq-capability-explanation-action,
+  .sentiq-capability-explanation-close {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: auto;
+  }
+}
