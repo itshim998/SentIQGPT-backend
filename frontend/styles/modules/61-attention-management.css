@@ -68,6 +68,10 @@
   display: none;
 }
 
+.chat-list-item.has-attention-signal .conversation-activity-indicator {
+  display: none;
+}
+
 .sentiq-attention-status {
   position: fixed;
   top: max(14px, env(safe-area-inset-top));
