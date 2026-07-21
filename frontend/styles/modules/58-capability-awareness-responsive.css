@@ -1,0 +1,40 @@
+/* SentIQ Liquid Glass V4 — Pass 9.3 responsive capability explanations */
+
+@media (max-width: 640px), (pointer: coarse) {
+  .sentiq-capability-explanation {
+    right: 10px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    left: 10px;
+    width: auto;
+    max-height: min(56vh, calc(100dvh - 24px));
+    padding: 17px 16px max(16px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: 20px;
+    transform-origin: bottom center;
+  }
+
+  .sentiq-capability-explanation-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sentiq-capability-explanation-action[hidden] + .sentiq-capability-explanation-close {
+    grid-column: 1 / -1;
+  }
+
+  .sentiq-capability-explanation-action,
+  .sentiq-capability-explanation-close {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 380px) {
+  .sentiq-capability-explanation-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .sentiq-capability-explanation-action[hidden] + .sentiq-capability-explanation-close {
+    grid-column: auto;
+  }
+}
