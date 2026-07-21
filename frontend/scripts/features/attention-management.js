@@ -65,8 +65,8 @@ function initializeAttentionManagement() {
 
   function currentConversation() {
     return String(
-      window.SentIQConversationContinuity?.getConversationId?.()
-        || chatList?.querySelector(".chat-list-item.active[data-id]")?.getAttribute("data-id")
+      chatList?.querySelector(".chat-list-item.active[data-id]")?.getAttribute("data-id")
+        || window.SentIQConversationContinuity?.getConversationId?.()
         || activeConversationId
         || "",
     );
@@ -417,9 +417,9 @@ function initializeAttentionManagement() {
   function inspectDomNode(node) {
     const element = node instanceof Element ? node : node?.parentElement;
     if (!(element instanceof Element)) return;
-    const emit = domReady && Date.now() > domBaselineUntil;
-    collectImageResults(element, emit);
-    collectFileFailures(element, emit);
+    const imageEmit = domReady && Date.now() > domBaselineUntil;
+    collectImageResults(element, imageEmit);
+    collectFileFailures(element, domReady);
   }
 
   function resetScope(nextScope, reason = "scope-change") {
@@ -459,10 +459,10 @@ function initializeAttentionManagement() {
     }, OFFLINE_CONFIRM_DELAY_MS);
   }
 
-  function handleOnline() {
+  function handleOnline(options = {}) {
     window.clearTimeout(offlineTimer);
     offlineTimer = 0;
-    const recovered = offlineConfirmed;
+    const recovered = offlineConfirmed || options.explicit === true;
     offlineConfirmed = false;
     document.documentElement.dataset.sentiqConnectionState = "online";
     if (recovered) {
@@ -470,8 +470,8 @@ function initializeAttentionManagement() {
         kind: "connection-recovered",
         signature: `connection:${Date.now()}`,
         updatedAt: Date.now(),
-        source: "browser-network",
-      }, { force: true });
+        source: options.explicit ? "application-network" : "browser-network",
+      });
     }
     schedulePoll(80, "connection-recovered");
   }
@@ -497,9 +497,9 @@ function initializeAttentionManagement() {
   });
   window.addEventListener("pageshow", () => schedulePoll(60, "page-show"));
   window.addEventListener("offline", confirmOffline);
-  window.addEventListener("online", handleOnline);
-  window.addEventListener("sentiq-connection-recovered", handleOnline);
-  window.addEventListener("sentiq-network-recovered", handleOnline);
+  window.addEventListener("online", () => handleOnline());
+  window.addEventListener("sentiq-connection-recovered", () => handleOnline({ explicit: true }));
+  window.addEventListener("sentiq-network-recovered", () => handleOnline({ explicit: true }));
 
   if (chatList) {
     new MutationObserver((records) => {
@@ -543,6 +543,7 @@ function initializeAttentionManagement() {
   }
 
   createStatusRoot();
+  document.documentElement.dataset.sentiqConnectionState = offlineConfirmed ? "offline" : "online";
   baselineActiveDom();
   startPollLoop();
   void pollChats("initial-baseline");
