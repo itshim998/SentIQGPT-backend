@@ -7,6 +7,7 @@ import {
 } from "./mobile-rich-content-state.mjs";
 
 const MOBILE_QUERY = "(max-width: 768px)";
+const COARSE_POINTER_QUERY = "(pointer: coarse)";
 
 function initializeMobileRichContent() {
   if (typeof window === "undefined" || typeof document === "undefined") return;
@@ -15,6 +16,7 @@ function initializeMobileRichContent() {
   const root = document.documentElement;
   const body = document.body;
   const mobileMedia = window.matchMedia?.(MOBILE_QUERY) || null;
+  const coarsePointerMedia = window.matchMedia?.(COARSE_POINTER_QUERY) || null;
   const subscribers = new Set();
   let frame = 0;
   let lastSignature = "";
@@ -70,9 +72,10 @@ function initializeMobileRichContent() {
   function readState() {
     const viewport = getVisualViewport();
     return deriveMobileRichLayout({
-      width: mobileMedia?.matches ? viewport.width : (window.innerWidth || viewport.width),
+      width: viewport.width,
       height: viewport.height,
       orientation: getOrientation(viewport),
+      coarsePointer: Boolean(coarsePointerMedia?.matches),
       keyboardOpen: root.dataset.mobileComposerKeyboard === "open" || body.classList.contains("mobile-composer-keyboard-open"),
       ...readSafeArea(),
     });
@@ -129,6 +132,7 @@ function initializeMobileRichContent() {
   }
 
   mobileMedia?.addEventListener?.("change", () => update("mobile-breakpoint"));
+  coarsePointerMedia?.addEventListener?.("change", () => update("pointer-capability"));
   window.addEventListener("resize", () => update("resize"), { passive: true });
   window.addEventListener("orientationchange", () => update("orientation"), { passive: true });
   window.visualViewport?.addEventListener?.("resize", () => update("visual-viewport"), { passive: true });
