@@ -59,8 +59,23 @@ function initializeMobileComposer() {
     return { width, height, offsetTop };
   }
 
-  function getOrientationKey(width, height) {
-    return width > height ? "landscape" : "portrait";
+  function getPhysicalOrientation(snapshot) {
+    const screenOrientation = String(window.screen?.orientation?.type || "").toLowerCase();
+    if (screenOrientation.includes("landscape")) return "landscape";
+    if (screenOrientation.includes("portrait")) return "portrait";
+
+    const legacyOrientation = Number(window.orientation);
+    if (Number.isFinite(legacyOrientation)) {
+      return Math.abs(legacyOrientation) === 90 ? "landscape" : "portrait";
+    }
+
+    const screenWidth = Number(window.screen?.width) || 0;
+    const screenHeight = Number(window.screen?.height) || 0;
+    if (screenWidth > 0 && screenHeight > 0 && screenWidth !== screenHeight) {
+      return screenWidth > screenHeight ? "landscape" : "portrait";
+    }
+
+    return snapshot.width > snapshot.height ? "landscape" : "portrait";
   }
 
   function isTextareaFocused() {
@@ -89,7 +104,7 @@ function initializeMobileComposer() {
   }
 
   function getBaselineHeight(snapshot, textareaFocused) {
-    const orientation = getOrientationKey(snapshot.width, snapshot.height);
+    const orientation = getPhysicalOrientation(snapshot);
     const layoutHeight = Math.max(
       snapshot.height,
       window.innerHeight || 0,
@@ -215,9 +230,11 @@ function initializeMobileComposer() {
     const snapshot = getVisualViewportSnapshot();
     const textareaFocused = isTextareaFocused();
     const baselineHeight = getBaselineHeight(snapshot, textareaFocused);
+    const orientation = getPhysicalOrientation(snapshot);
     const nextState = deriveMobileComposerMetrics({
       visualWidth: snapshot.width,
       visualHeight: snapshot.height,
+      orientation,
       viewportTop: snapshot.offsetTop,
       baselineHeight,
       textareaFocused,
@@ -258,7 +275,7 @@ function initializeMobileComposer() {
     if (event.target !== chatInput) return;
     focusScrollSnapshot = captureScrollSnapshot();
     const snapshot = getVisualViewportSnapshot();
-    const orientation = getOrientationKey(snapshot.width, snapshot.height);
+    const orientation = getPhysicalOrientation(snapshot);
     baselines.set(orientation, Math.max(
       baselines.get(orientation) || 0,
       snapshot.height,
