@@ -105,6 +105,25 @@ assert.equal(apiFailure.capabilities["image-generation"].state, "unavailable");
 assert.equal(apiFailure.capabilities["deep-research"].state, "unavailable");
 assert.equal(apiFailure.capabilities.live.state, "unavailable");
 
+const imagePlanUnknown = deriveCapabilitySnapshot({
+  authKnown: true,
+  authenticated: true,
+  planKnown: true,
+  planError: true,
+  imageQuotaKnown: true,
+  imageQuota: { remaining: 30, limit: 30 },
+});
+assert.equal(
+  imagePlanUnknown.capabilities["image-generation"].state,
+  "unavailable",
+  "a process quota must not be mistaken for plan entitlement",
+);
+assert.deepEqual(
+  imagePlanUnknown.statePriority.slice(0, 2),
+  ["offline", "checking"],
+  "documented state priority must match derivation order",
+);
+
 assert.deepEqual(normalizeQuota({ limit: 10, used: 3, reserved: 2 }), {
   available: null,
   remaining: 5,
