@@ -1,5 +1,6 @@
 /* SentIQ Liquid Glass V4 — Phase 7.2 progress disclosure */
 
+import { toCompositorProgressScale } from "./compositor-safety-state.mjs";
 import {
   DEEP_RESEARCH_STAGES,
   buildDeepResearchDisclosureKey,
@@ -76,8 +77,15 @@ function enhanceProgress(card, percent, status) {
     setAttribute(bar, "aria-label", status === "completed" ? "Research complete" : "Deep Research progress");
   }
   const fill = card.querySelector(".deep-research-progress-fill");
-  if (fill && fill.style.getPropertyValue("--deep-research-progress") !== `${percent}%`) {
-    fill.style.setProperty("--deep-research-progress", `${percent}%`);
+  if (fill) {
+    const percentValue = `${percent}%`;
+    const scaleValue = String(toCompositorProgressScale(percent));
+    if (fill.style.getPropertyValue("--deep-research-progress") !== percentValue) {
+      fill.style.setProperty("--deep-research-progress", percentValue);
+    }
+    if (fill.style.getPropertyValue("--deep-research-progress-scale") !== scaleValue) {
+      fill.style.setProperty("--deep-research-progress-scale", scaleValue);
+    }
   }
   const text = card.querySelector(".deep-research-status-text");
   if (text) {
