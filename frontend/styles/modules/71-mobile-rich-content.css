@@ -1,0 +1,298 @@
+/* ============================================================
+   SentIQ Chat — Pass 10.5
+   Mobile rich-content foundations
+   ============================================================ */
+
+:root[data-mobile-rich-content-version="10.5"] {
+  --mobile-rich-viewport-width: 100vw;
+  --mobile-rich-viewport-height: 100dvh;
+  --mobile-rich-content-inline-size: 100vw;
+  --mobile-rich-media-max-height: 560px;
+  --mobile-rich-chart-min-inline-size: 500px;
+  --mobile-rich-safe-top: 0px;
+  --mobile-rich-safe-right: 0px;
+  --mobile-rich-safe-bottom: 0px;
+  --mobile-rich-safe-left: 0px;
+}
+
+@media (max-width: 768px) {
+  :root[data-mobile-rich-content-version="10.5"] :is(
+    .chat-messages,
+    .message,
+    .message-content,
+    .websurf-v2-presentation,
+    .generated-file-panel,
+    .image-generation-card,
+    .message-chart-container,
+    .billing-panel,
+    .billing-plans-workspace,
+    .billing-usage-workspace,
+    .live-workspace-transcript-sheet
+  ) {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Tables remain readable through contained horizontal panning. */
+  :root[data-mobile-rich-content-version="10.5"] :is(
+    .message-content table,
+    #settings-tab-billing table,
+    .billing-panel table
+  ) {
+    display: block;
+    width: 100%;
+    max-inline-size: min(100%, var(--mobile-rich-content-inline-size));
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scrollbar-gutter: stable both-edges;
+    scrollbar-width: thin;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] :is(
+    .message-content th,
+    .message-content td,
+    #settings-tab-billing th,
+    #settings-tab-billing td
+  ) {
+    min-inline-size: 8.5rem;
+    padding: 8px 10px;
+    vertical-align: top;
+    overflow-wrap: break-word;
+  }
+
+  /* Code preserves formatting while its own pane scrolls. */
+  :root[data-mobile-rich-content-version="10.5"] .code-block-wrap {
+    width: 100%;
+    max-inline-size: 100%;
+    margin-inline: 0;
+    contain: paint;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .code-block-header {
+    min-width: 0;
+    padding: 6px 10px 6px 12px;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .code-block-lang {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .code-block-wrap pre {
+    max-inline-size: 100%;
+    padding: 13px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scroll-padding-inline: 13px;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .code-block-wrap pre code {
+    display: block;
+    min-inline-size: max-content;
+    font-size: 0.79rem;
+    line-height: 1.5;
+  }
+
+  /* KaTeX gets an explicit horizontal reading lane instead of shrinking. */
+  :root[data-mobile-rich-content-version="10.5"] :is(
+    .message-content .math-display-shell,
+    .message-content .katex-display
+  ) {
+    max-inline-size: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+    scroll-padding-inline: 12px;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .message-content .math-display-shell {
+    margin: 14px 0;
+    padding: 12px 13px;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .message-content .katex-display > .katex {
+    min-inline-size: max-content;
+    font-size: 0.98em;
+  }
+
+  /* Source cards become a calm one-column reading list. */
+  :root[data-mobile-rich-content-version="10.5"] .websurf-v2-presentation > .websurf-v2-featured-sources {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 8px;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .websurf-v2-featured-card {
+    grid-template-columns: 72px minmax(0, 1fr) !important;
+    grid-template-rows: minmax(70px, auto) !important;
+    min-width: 0;
+    min-height: 70px !important;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .websurf-v2-featured-media {
+    width: 72px !important;
+    min-height: 70px !important;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .websurf-v2-source-explorer-detail {
+    grid-template-columns: minmax(0, 1fr) !important;
+    max-inline-size: 100%;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] :is(
+    .websurf-v2-featured-title,
+    .websurf-v2-explorer-title,
+    .websurf-v2-citation-menu-title,
+    .websurf-v2-citation-menu-publisher
+  ) {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* Generated media stays inside the visual viewport. */
+  :root[data-mobile-rich-content-version="10.5"] .image-generation-frame.asset-media-frame {
+    min-height: 0 !important;
+    max-height: var(--mobile-rich-media-max-height);
+    display: grid;
+    place-items: center;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .image-generation-frame.asset-media-frame .message-image {
+    width: 100%;
+    max-width: 100%;
+    max-height: var(--mobile-rich-media-max-height);
+    object-fit: contain;
+  }
+
+  /* Interactive charts retain label density in a contained horizontal viewport. */
+  :root[data-mobile-rich-content-version="10.5"] .message-chart-container .message-chart-frame {
+    width: calc(100% - 12px) !important;
+    min-height: 240px !important;
+    height: clamp(240px, 68vw, 340px) !important;
+    margin: 6px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .message-chart-container .message-chart-frame > :is(div, canvas, svg, iframe) {
+    min-inline-size: var(--mobile-rich-chart-min-inline-size);
+    max-block-size: 100%;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .message-chart-container .message-chart-image {
+    width: calc(100% - 12px) !important;
+    max-width: calc(100% - 12px) !important;
+    height: auto;
+    margin: 6px !important;
+    object-fit: contain;
+  }
+
+  /* Long filenames gain two useful lines without widening their result card. */
+  :root[data-mobile-rich-content-version="10.5"] :is(
+    .generated-file-title-wrap,
+    .generated-file-title,
+    .asset-file-metadata,
+    .composer-attachment-main,
+    .composer-attachment-name
+  ) {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .generated-file-title {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] .asset-file-metadata {
+    flex-wrap: wrap;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+
+  /* Billing rows become semantic stacked comparisons rather than squeezed tables. */
+  :root[data-mobile-rich-content-version="10.5"] :is(
+    #settings-modal .billing-panel,
+    #settings-modal .billing-plans-workspace,
+    #settings-modal .billing-usage-workspace,
+    #settings-modal .billing-plan-row,
+    #settings-modal .billing-plan-row > *
+  ) {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] #settings-modal .billing-plan-row p {
+    overflow-wrap: anywhere;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] #settings-modal .billing-plan-price {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Live transcript uses the actual visual viewport and wraps every utterance. */
+  :root[data-mobile-rich-content-version="10.5"] #live-beta-panel .live-workspace-surface {
+    height: var(--mobile-rich-viewport-height);
+    max-height: var(--mobile-rich-viewport-height);
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] #live-beta-panel .live-workspace-transcript-host[open] {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] #live-beta-panel .live-workspace-transcript-sheet {
+    min-height: 0;
+    max-height: 100%;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] #live-beta-panel .live-beta-transcript {
+    min-width: 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] #live-beta-panel .live-beta-transcript-line {
+    grid-template-columns: 50px minmax(0, 1fr);
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] #live-beta-panel .live-beta-transcript-line > * {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-mobile-rich-content-version="10.5"] :is(
+    .code-block-wrap,
+    .websurf-v2-featured-card,
+    .image-generation-card,
+    .message-chart-container,
+    .live-workspace-transcript-sheet
+  ) {
+    animation: none !important;
+    transition: none !important;
+  }
+}
