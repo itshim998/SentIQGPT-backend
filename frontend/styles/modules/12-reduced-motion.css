@@ -52,6 +52,8 @@
 @import url("./68-touch-overflow-responsive.css");
 @import url("./69-mobile-glass-budget.css");
 @import url("./70-mobile-glass-budget-responsive.css");
+@import url("./71-mobile-rich-content.css");
+@import url("./72-mobile-rich-content-responsive.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
