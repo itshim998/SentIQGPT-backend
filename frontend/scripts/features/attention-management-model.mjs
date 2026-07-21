@@ -24,6 +24,18 @@ const NON_RESPONSE_ARTIFACT_TYPES = new Set([
   "memory-update",
   "memory_update",
 ]);
+const FILE_ANALYSIS_TYPES = new Set([
+  "file",
+  "file-analysis",
+  "file_analysis",
+  "file-upload",
+  "file_upload",
+  "message-attachments",
+  "attachment-analysis",
+  "attachment_analysis",
+  "document-analysis",
+  "document_analysis",
+]);
 
 const SIGNAL_COPY = Object.freeze({
   "response-complete": Object.freeze({ title: "Response ready", shortLabel: "Ready", tone: "ready" }),
@@ -95,7 +107,11 @@ function hasImageArtifact(meta, status) {
 
 function isFileLikeType(type) {
   return /(?:^|[-_])(file|attachment|document)(?:$|[-_])/.test(type)
-    || ["file", "file-analysis", "file_upload", "message-attachments", "attachment-analysis"].includes(type);
+    || FILE_ANALYSIS_TYPES.has(type);
+}
+
+function isFileAnalysisType(type) {
+  return FILE_ANALYSIS_TYPES.has(type);
 }
 
 function isDeepResearchType(type) {
@@ -170,7 +186,7 @@ export function classifyMessageOutcome(message, now = Date.now()) {
     });
   }
 
-  if (isFileLikeType(type) && (meta.success === false || FAILED_STATUSES.has(status))) {
+  if (isFileAnalysisType(type) && (meta.success === false || FAILED_STATUSES.has(status))) {
     const identity = messageIdentity(message, meta, "file");
     return Object.freeze({
       kind: "file-analysis-failed",
