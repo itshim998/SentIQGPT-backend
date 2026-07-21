@@ -171,8 +171,17 @@ function upgradeCtaFor(facts, quota = null) {
   return facts.planCode && facts.planCode !== "pro" ? "upgrade" : null;
 }
 
+function hasQuotaSignal(quota) {
+  return Boolean(quota && (
+    quota.available !== null
+    || quota.remaining !== null
+    || quota.limit !== null
+    || quota.reason
+  ));
+}
+
 function strictQuota(...candidates) {
-  const quotas = candidates.filter(Boolean);
+  const quotas = candidates.filter(hasQuotaSignal);
   if (!quotas.length) return null;
   const unavailable = quotas.find((quota) => quota.available === false || quota.limit === 0);
   if (unavailable) return unavailable;
@@ -193,7 +202,7 @@ function deriveImageCapability(facts) {
   // The process-level image quota does not prove plan entitlement. If billing
   // cannot be resolved, keep the control blocked rather than claiming that an
   // IP-level slot means image generation is actually available.
-  if (facts.planError) {
+  if (facts.planError || !hasQuotaSignal(facts.imageBillingQuota)) {
     return record(key, "unavailable", "Image availability could not be checked right now. Try refreshing in a moment.", { label });
   }
 
@@ -243,7 +252,9 @@ function deriveDeepResearchCapability(facts) {
   if (!facts.authKnown) return record(key, "checking", "Checking sign-in status…", { label });
   if (!facts.authenticated) return record(key, "sign-in-required", "Sign in to start Deep Research and keep its report.", { label, cta: "sign-in" });
   if (!facts.planKnown) return record(key, "checking", "Checking Deep Research availability for your plan…", { label });
-  if (facts.planError && (!facts.deepResearchQuotaKnown || facts.deepResearchQuotaError || !facts.deepResearchQuota)) {
+  const researchQuotaAvailable = hasQuotaSignal(facts.deepResearchBillingQuota)
+    || (facts.deepResearchQuotaKnown && hasQuotaSignal(facts.deepResearchQuota));
+  if (!researchQuotaAvailable || (facts.planError && (!facts.deepResearchQuotaKnown || facts.deepResearchQuotaError))) {
     return record(key, "unavailable", "Deep Research availability could not be checked right now. Try refreshing in a moment.", { label });
   }
 
