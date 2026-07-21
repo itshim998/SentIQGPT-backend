@@ -1,0 +1,195 @@
+/* ============================================================
+   SentIQ Chat — Pass 10.5
+   Narrow, short, tall, landscape, keyboard, and notched layouts
+   ============================================================ */
+
+@media (max-width: 768px) {
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-width="narrow"] :is(
+    .message-content table,
+    #settings-tab-billing table
+  ) {
+    font-size: 0.78rem;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-width="narrow"] :is(
+    .message-content th,
+    .message-content td,
+    #settings-tab-billing th,
+    #settings-tab-billing td
+  ) {
+    min-inline-size: 7.5rem;
+    padding: 7px 8px;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-width="narrow"] .websurf-v2-featured-card {
+    grid-template-columns: 62px minmax(0, 1fr) !important;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-width="narrow"] .websurf-v2-featured-media {
+    width: 62px !important;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-width="narrow"] .message-chart-container .message-chart-frame {
+    min-height: 224px !important;
+    height: 250px !important;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-width="narrow"] #settings-modal .billing-plan-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "copy price"
+      "action action";
+    gap: 9px 10px;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-width="narrow"] #live-beta-panel .live-beta-transcript-line {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-height="short"][data-mobile-rich-orientation="portrait"] .websurf-v2-featured-sources {
+    display: flex !important;
+    gap: 8px;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-height="short"][data-mobile-rich-orientation="portrait"] .websurf-v2-featured-card {
+    flex: 0 0 min(82vw, 350px);
+    scroll-snap-align: start;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-height="short"] :is(
+    .code-block-wrap pre,
+    .message-content .math-display-shell
+  ) {
+    max-block-size: min(44dvh, 300px);
+    overflow-y: auto;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-height="short"] #live-beta-panel .live-workspace-transcript-header {
+    min-height: 52px;
+    padding-block: 8px;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-height="tall"] .message-chart-container .message-chart-frame {
+    height: clamp(280px, 74vw, 380px) !important;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-height="tall"] .image-generation-frame.asset-media-frame,
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-height="tall"] .image-generation-frame.asset-media-frame .message-image {
+    max-height: min(var(--mobile-rich-media-max-height), 72dvh);
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-orientation="landscape"] .websurf-v2-presentation > .websurf-v2-featured-sources {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-orientation="landscape"] .image-generation-frame.asset-media-frame,
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-orientation="landscape"] .image-generation-frame.asset-media-frame .message-image {
+    max-height: min(var(--mobile-rich-media-max-height), 66dvh);
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-orientation="landscape"] .message-chart-container .message-chart-frame {
+    min-height: 210px !important;
+    height: min(66dvh, 320px) !important;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-orientation="landscape"] #live-beta-panel .live-workspace-transcript-host[open] {
+    inset: calc(54px + max(env(safe-area-inset-top, 0px), var(--mobile-rich-safe-top))) 0 0;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-keyboard="open"] :is(
+    .image-generation-frame.asset-media-frame,
+    .image-generation-frame.asset-media-frame .message-image
+  ) {
+    max-height: min(var(--mobile-rich-media-max-height), 44dvh);
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-keyboard="open"] .message-chart-container .message-chart-frame {
+    min-height: 190px !important;
+    height: min(42dvh, 280px) !important;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-keyboard="open"] :is(
+    .code-block-wrap pre,
+    .message-content .math-display-shell,
+    .websurf-v2-source-explorer-detail
+  ) {
+    max-block-size: min(42dvh, 300px);
+    overflow-y: auto;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-keyboard="open"] .websurf-v2-featured-sources {
+    display: flex !important;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-keyboard="open"] .websurf-v2-featured-card {
+    flex: 0 0 min(82vw, 350px);
+    scroll-snap-align: start;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-safe-area="notched"] :is(
+    .websurf-v2-source-sheet-header,
+    .websurf-v2-source-explorer-detail,
+    #live-beta-panel .live-workspace-transcript-header,
+    #live-beta-panel .live-beta-transcript
+  ) {
+    padding-right: max(var(--mobile-rich-safe-right), env(safe-area-inset-right, 0px), 14px);
+    padding-left: max(var(--mobile-rich-safe-left), env(safe-area-inset-left, 0px), 14px);
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-safe-area="notched"] #live-beta-panel .live-workspace-transcript-sheet {
+    padding-bottom: max(var(--mobile-rich-safe-bottom), env(safe-area-inset-bottom, 0px));
+  }
+
+  :root[data-mobile-rich-content-version="10.5"][data-mobile-rich-safe-area="notched"] #settings-modal .settings-workspace-content {
+    padding-right: max(var(--mobile-rich-safe-right), env(safe-area-inset-right, 0px));
+    padding-left: max(var(--mobile-rich-safe-left), env(safe-area-inset-left, 0px));
+  }
+}
+
+@media (max-width: 360px) {
+  :root[data-mobile-rich-content-version="10.5"] #settings-modal .billing-plan-row {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "copy"
+      "price"
+      "action";
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] #settings-modal .billing-plan-price {
+    justify-self: start;
+    text-align: left;
+  }
+
+  :root[data-mobile-rich-content-version="10.5"] #settings-modal .billing-plan-action {
+    width: 100%;
+    justify-self: stretch;
+  }
+}
+
+@media (forced-colors: active) {
+  :root[data-mobile-rich-content-version="10.5"] :is(
+    .message-content table,
+    .code-block-wrap,
+    .message-content .math-display-shell,
+    .websurf-v2-featured-card,
+    .image-generation-card,
+    .message-chart-container,
+    .generated-file-panel,
+    #settings-modal .billing-plan-row,
+    #live-beta-panel .live-workspace-transcript-sheet
+  ) {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+  }
+}
