@@ -6,6 +6,7 @@ export const MAX_CONTINUITY_RECORDS = 80;
 export const MAX_DRAFT_CHARS = 12_000;
 export const READING_BOTTOM_THRESHOLD = 120;
 export const STREAMING_ACTIVITY_STALE_MS = 10 * 60 * 1000;
+export const RESEARCH_ACTIVITY_STALE_MS = 24 * 60 * 60 * 1000;
 
 const TOOL_MODES = new Set(["none", "image", "web-basic", "deep-research"]);
 const EXECUTION_MODES = new Set(["fast", "intuitive"]);
@@ -39,7 +40,8 @@ export function isMeaningfulText(value) {
   const text = asText(value).trim();
   if (!text) return false;
   const alphanumeric = text.match(/[\p{L}\p{N}]/gu) || [];
-  return alphanumeric.length >= 2 || text.includes("\n") || text.length >= 8;
+  const pictographic = /\p{Extended_Pictographic}/u.test(text);
+  return alphanumeric.length >= 2 || pictographic || text.includes("\n") || text.length >= 8;
 }
 
 export function normalizeDraftRecord(input = {}) {
@@ -139,28 +141,33 @@ function normalizeActivity(input = {}) {
   });
 }
 
-function messageActivity(message, now) {
-  const meta = asObject(message?.meta);
+function messageTimestamp(message, now) {
   const timestamp = Date.parse(message?.timestamp || message?.created_at || "");
-  const updatedAt = Number.isFinite(timestamp) ? timestamp : now;
-  if (meta.type === "deep-research" && meta.status === "running") {
-    return normalizeActivity({ type: "research", updatedAt });
-  }
-  const responseStatus = meta.responseStatus || meta.response_status;
-  if (meta.streaming === true || responseStatus === "generating") {
-    if (now - updatedAt <= STREAMING_ACTIVITY_STALE_MS) {
-      return normalizeActivity({ type: "streaming", updatedAt });
-    }
-  }
-  return null;
+  return Number.isFinite(timestamp) ? timestamp : now;
 }
 
 export function deriveConversationActivity(chat, now = Date.now()) {
   const source = asObject(chat);
   const messages = Array.isArray(source.messages) ? source.messages : [];
+  const settledReports = new Set();
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const activity = messageActivity(messages[index], now);
-    if (activity) return activity;
+    const message = messages[index];
+    const meta = asObject(message?.meta);
+    const updatedAt = messageTimestamp(message, now);
+    if (meta.type === "deep-research") {
+      const reportKey = String(meta.reportId || meta.report_id || "unscoped");
+      if (meta.status !== "running") {
+        settledReports.add(reportKey);
+      } else if (!settledReports.has(reportKey) && now - updatedAt <= RESEARCH_ACTIVITY_STALE_MS) {
+        return normalizeActivity({ type: "research", updatedAt });
+      }
+      continue;
+    }
+    const responseStatus = meta.responseStatus || meta.response_status;
+    if ((meta.streaming === true || responseStatus === "generating")
+      && now - updatedAt <= STREAMING_ACTIVITY_STALE_MS) {
+      return normalizeActivity({ type: "streaming", updatedAt });
+    }
   }
   if (source.pending_server_sync) {
     return normalizeActivity({ type: "syncing", updatedAt: Date.parse(source.updated || "") || now });
