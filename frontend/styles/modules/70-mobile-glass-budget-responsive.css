@@ -1,0 +1,168 @@
+/* ============================================================
+   SentIQ Chat — Pass 10.4
+   Mobile glass profiles and weak-device fallbacks
+   ============================================================ */
+
+@media (max-width: 768px) {
+  :root[data-mobile-glass-budget-profile="balanced"] {
+    --sentiq-mobile-glass-blur: 8px;
+    --sentiq-mobile-glass-saturation: 106%;
+    --sentiq-mobile-surface: rgba(11, 14, 21, 0.9);
+    --sentiq-mobile-surface-strong: rgba(9, 12, 18, 0.965);
+  }
+
+  :root[data-mobile-glass-budget-profile="constrained"] {
+    --sentiq-mobile-glass-blur: 4px;
+    --sentiq-mobile-glass-saturation: 102%;
+    --sentiq-mobile-surface: rgba(10, 13, 20, 0.94);
+    --sentiq-mobile-surface-strong: rgba(8, 11, 17, 0.985);
+    --sentiq-mobile-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  }
+
+  :root[data-mobile-glass-budget-profile="constrained"] body::before {
+    background: radial-gradient(ellipse 84% 46% at 50% -10%, rgba(149, 123, 232, 0.085), transparent 72%);
+    opacity: 0.48;
+  }
+
+  :root[data-mobile-glass-budget-profile="constrained"] :is(
+    .chat-input-area,
+    .sidebar[data-mobile-navigation-version="10.1"]
+  ) {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 88px);
+  }
+
+  :root[data-mobile-glass-budget-profile="opaque"] {
+    --sentiq-mobile-glass-blur: 0px;
+    --sentiq-mobile-glass-saturation: 100%;
+    --sentiq-mobile-surface: #0c0f16;
+    --sentiq-mobile-surface-strong: #090c12;
+    --sentiq-mobile-border: rgba(255, 255, 255, 0.085);
+    --sentiq-mobile-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+  }
+
+  :root[data-mobile-glass-budget-profile="opaque"] body {
+    background:
+      radial-gradient(ellipse 88% 42% at 50% -9%, rgba(117, 88, 198, 0.12), transparent 70%),
+      #070910;
+  }
+
+  :root[data-mobile-glass-budget-profile="opaque"] body::before {
+    background: radial-gradient(ellipse 80% 40% at 50% -8%, rgba(149, 123, 232, 0.07), transparent 72%);
+    opacity: 0.42;
+  }
+
+  :root[data-mobile-glass-budget-profile="opaque"] :is(
+    .sidebar,
+    .chat-input-area,
+    .composer-action-menu,
+    .execution-mode-menu,
+    .auth-menu-panel,
+    .account-panel,
+    .chat-actions-menu,
+    .deep-research-export-menu,
+    .websurf-v2-citation-menu,
+    .websurf-v2-source-explorer-detail,
+    .modal-container,
+    .auth-modal-body,
+    .settings-workspace,
+    .adaptive-panel,
+    .generated-file-panel,
+    .image-generation-card,
+    .message-chart-container,
+    .thinking-panel,
+    .toast
+  ) {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 96px);
+    background-color: var(--sentiq-mobile-surface-strong);
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  :root[data-mobile-glass-budget-profile="opaque"] :is(
+    .sidebar,
+    .chat-input-area,
+    .modal-container,
+    .adaptive-panel,
+    .generated-file-panel,
+    .image-generation-card,
+    .message-chart-container
+  ) {
+    box-shadow: var(--sentiq-mobile-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  }
+
+  :root[data-mobile-glass-atmosphere="static"] :is(
+    body::before,
+    .main-content-glow,
+    .composer-drop-orb
+  ) {
+    animation: none !important;
+    transform: none;
+  }
+}
+
+@media (max-width: 768px) and (orientation: landscape),
+       (max-width: 768px) and (max-height: 520px) {
+  :root[data-mobile-glass-budget-version="10.4"] {
+    --sentiq-mobile-glass-blur: min(4px, var(--sentiq-mobile-glass-blur));
+    --sentiq-mobile-shadow: 0 9px 22px rgba(0, 0, 0, 0.22);
+  }
+
+  :root[data-mobile-glass-budget-version="10.4"] body::before {
+    opacity: 0.4;
+  }
+
+  :root[data-mobile-glass-budget-version="10.4"] :is(
+    .sidebar,
+    .chat-input-area,
+    .modal-container,
+    .adaptive-panel,
+    .websurf-v2-source-explorer-detail
+  ) {
+    box-shadow: var(--sentiq-mobile-shadow);
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  @media (max-width: 768px) {
+    :root[data-mobile-glass-budget-version="10.4"] :is(
+      .sidebar,
+      .chat-input-area,
+      .composer-action-menu,
+      .execution-mode-menu,
+      .auth-menu-panel,
+      .account-panel,
+      .chat-actions-menu,
+      .deep-research-export-menu,
+      .websurf-v2-citation-menu,
+      .websurf-v2-source-explorer-detail,
+      .modal-container,
+      .auth-modal-body,
+      .settings-workspace,
+      .adaptive-panel,
+      .generated-file-panel,
+      .image-generation-card,
+      .message-chart-container,
+      .thinking-panel,
+      .toast
+    ) {
+      background-color: #0b0e15;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+  }
+}
+
+@media (forced-colors: active) {
+  :root[data-mobile-glass-budget-version="10.4"] :is(
+    .sidebar,
+    .chat-input-area,
+    .modal-container,
+    .adaptive-panel
+  ) {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+}
