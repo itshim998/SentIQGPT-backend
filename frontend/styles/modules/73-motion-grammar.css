@@ -82,10 +82,19 @@ html:root[data-sentiq-motion-version="11.1"] {
   .message.user,
   .message.assistant,
   .adaptive-panel-surface:not(#account-panel),
-  .sentiq-attention-status
+  .account-panel,
+  .sentiq-attention-status,
+  .toast,
+  .websurf-v2-featured-card,
+  .deep-research-card,
+  .image-generation-card,
+  .message-chart-container,
+  .generated-file-panel,
+  .failure-recovery-panel
 ) {
   animation-duration: var(--sentiq-motion-surface-enter-duration);
   animation-timing-function: var(--sentiq-motion-surface-enter-ease);
+  animation-iteration-count: 1;
 }
 
 :root[data-sentiq-motion-version="11.1"] [data-sentiq-motion-family="surface"][data-sentiq-motion-phase="enter"] {
@@ -110,14 +119,19 @@ html:root[data-sentiq-motion-version="11.1"] {
 
 /* Family 2 — Layout reposition */
 :root[data-sentiq-motion-version="11.1"] :is(
+  .app-container,
   .main-content,
+  .sidebar:not([data-mobile-navigation-version="10.1"]),
   .chat-input-wrapper,
   .chat-input-area,
   .composer-action-menu,
   .execution-mode-menu,
+  .composer-attachment,
   .scroll-anchor-pill,
   .settings-workspace,
-  .live-workspace-surface
+  .billing-plan-row,
+  .live-workspace-surface,
+  .websurf-v2-source-explorer-detail
 ) {
   transition-duration: var(--sentiq-motion-layout-duration);
   transition-timing-function: var(--sentiq-motion-layout-ease);
@@ -168,6 +182,16 @@ html:root[data-sentiq-motion-version="11.1"] {
 }
 
 /* Family 3 — Focus activation */
+:root[data-sentiq-motion-version="11.1"] :where(
+  button,
+  [role="button"],
+  a[href],
+  input,
+  textarea,
+  select,
+  summary,
+  [tabindex]:not([tabindex="-1"])
+),
 :root[data-sentiq-motion-version="11.1"] :is(
   .message-action-btn,
   .adaptive-panel-close,
@@ -245,20 +269,11 @@ html:root[data-sentiq-motion-version="11.1"] {
 }
 
 /* Slow-update devices use the same static policy as reduced motion. */
-:root[data-sentiq-motion-version="11.1"][data-sentiq-motion-policy="reduced"] :is(
-  [data-sentiq-motion-family],
-  .message.user,
-  .message.assistant,
-  .adaptive-panel-surface,
-  .sentiq-attention-status,
-  .sentiq-loader,
-  .response-inline-spinner,
-  .chat-cache-spinner,
-  .failure-recovery-panel,
-  .conversation-attention-marker,
-  .composer-attachment
-) {
-  animation: none !important;
+:root[data-sentiq-motion-version="11.1"][data-sentiq-motion-policy="reduced"] *,
+:root[data-sentiq-motion-version="11.1"][data-sentiq-motion-policy="reduced"] *::before,
+:root[data-sentiq-motion-version="11.1"][data-sentiq-motion-policy="reduced"] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
   transition-duration: 1ms !important;
   transition-delay: 0ms !important;
 }
@@ -268,20 +283,11 @@ html:root[data-sentiq-motion-version="11.1"] {
 }
 
 @media (prefers-reduced-motion: reduce), (update: slow) {
-  :root[data-sentiq-motion-version="11.1"] :is(
-    [data-sentiq-motion-family],
-    .message.user,
-    .message.assistant,
-    .adaptive-panel-surface,
-    .sentiq-attention-status,
-    .sentiq-loader,
-    .response-inline-spinner,
-    .chat-cache-spinner,
-    .failure-recovery-panel,
-    .conversation-attention-marker,
-    .composer-attachment
-  ) {
-    animation: none !important;
+  :root[data-sentiq-motion-version="11.1"] *,
+  :root[data-sentiq-motion-version="11.1"] *::before,
+  :root[data-sentiq-motion-version="11.1"] *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
     transition-delay: 0ms !important;
   }
