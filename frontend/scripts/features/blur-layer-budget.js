@@ -55,6 +55,19 @@ const MENU_PRIORITY_SELECTOR = [
   ".websurf-v2-citation-menu",
 ].join(",");
 
+const NEVER_BLUR_SELECTOR = [
+  ".sidebar-backdrop",
+  ".modal-backdrop",
+  ".modal-overlay",
+  ".settings-modal",
+  ".auth-modal",
+  ".name-modal",
+  ".adaptive-panel-backdrop",
+  ".conversation-continuity-dialog-backdrop",
+  ".image-lightbox",
+  ".live-beta-panel",
+].join(",");
+
 function initializeBlurLayerBudget() {
   if (typeof window === "undefined" || typeof document === "undefined") return;
   if (window.SentIQBlurLayerBudget?.version === BLUR_LAYER_BUDGET_VERSION) return;
@@ -173,7 +186,11 @@ function initializeBlurLayerBudget() {
     document.querySelectorAll('[data-sentiq-blur-candidate="true"]').forEach((element) => {
       if (element.isConnected) elements.add(element);
     });
-    return [...elements].filter((element) => element instanceof HTMLElement && element.isConnected);
+    return [...elements].filter((element) => (
+      element instanceof HTMLElement
+      && element.isConnected
+      && !element.matches(NEVER_BLUR_SELECTOR)
+    ));
   }
 
   function isVisible(element, style) {
