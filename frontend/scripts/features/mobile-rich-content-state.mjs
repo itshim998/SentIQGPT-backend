@@ -2,6 +2,8 @@
 
 export const MOBILE_RICH_CONTENT_VERSION = "10.5";
 export const MOBILE_RICH_BREAKPOINT_PX = 768;
+export const MOBILE_RICH_LANDSCAPE_MAX_PX = 960;
+export const MOBILE_RICH_LANDSCAPE_MAX_HEIGHT_PX = 520;
 export const MOBILE_RICH_NARROW_PX = 390;
 export const MOBILE_RICH_SHORT_PX = 560;
 export const MOBILE_RICH_TALL_PX = 780;
@@ -22,15 +24,25 @@ function normalizeOrientation(value, width, height) {
   return width > height ? "landscape" : "portrait";
 }
 
-export function isMobileRichViewport(width) {
-  return finiteNumber(width, Number.POSITIVE_INFINITY) <= MOBILE_RICH_BREAKPOINT_PX;
+export function isMobileRichViewport(width, options = {}) {
+  const resolvedWidth = finiteNumber(width, Number.POSITIVE_INFINITY);
+  if (resolvedWidth <= MOBILE_RICH_BREAKPOINT_PX) return true;
+  const resolvedHeight = Math.max(1, finiteNumber(options.height, Number.POSITIVE_INFINITY));
+  const orientation = normalizeOrientation(options.orientation, resolvedWidth, resolvedHeight);
+  return Boolean(
+    options.coarsePointer
+    && orientation === "landscape"
+    && resolvedWidth <= MOBILE_RICH_LANDSCAPE_MAX_PX
+    && resolvedHeight <= MOBILE_RICH_LANDSCAPE_MAX_HEIGHT_PX
+  );
 }
 
 export function deriveMobileRichLayout(input = {}) {
   const width = Math.max(1, finiteNumber(input.width, Number.POSITIVE_INFINITY));
   const height = Math.max(1, finiteNumber(input.height, Number.POSITIVE_INFINITY));
-  const mobile = isMobileRichViewport(width);
   const orientation = normalizeOrientation(input.orientation, width, height);
+  const coarsePointer = Boolean(input.coarsePointer);
+  const mobile = isMobileRichViewport(width, { height, orientation, coarsePointer });
   const keyboardOpen = mobile && Boolean(input.keyboardOpen);
   const safeAreaTop = normalizeInset(input.safeAreaTop);
   const safeAreaRight = normalizeInset(input.safeAreaRight);
