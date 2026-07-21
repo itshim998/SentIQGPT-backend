@@ -37,8 +37,13 @@ function initDeepResearchWorkspace() {
   function percentOf(card, status) {
     if (status === "completed") return 100;
     const fill = card.querySelector(".deep-research-progress-fill");
-    const width = Number.parseFloat(fill?.style.width || "");
-    return clampDeepResearchPercent(Number.isFinite(width) ? width : fill?.getAttribute("aria-valuenow"));
+    const percentValue = Number.parseFloat(fill?.style.getPropertyValue("--deep-research-progress") || "");
+    if (Number.isFinite(percentValue)) return clampDeepResearchPercent(percentValue);
+    const scaleValue = Number.parseFloat(fill?.style.getPropertyValue("--deep-research-progress-scale") || "");
+    if (Number.isFinite(scaleValue)) return clampDeepResearchPercent(scaleValue * 100);
+    const legacyWidth = Number.parseFloat(fill?.style.width || "");
+    if (Number.isFinite(legacyWidth)) return clampDeepResearchPercent(legacyWidth);
+    return clampDeepResearchPercent(card.querySelector(".deep-research-progress-bar")?.getAttribute("aria-valuenow"));
   }
 
   function phaseOf(card) {
