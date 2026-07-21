@@ -20,6 +20,7 @@ import "../conversation-continuity.js";
 import "../conversation-continuity-event-bridge.js";
 import "../attention-management.js";
 import "../mobile-navigation.js";
+import "../mobile-composer.js";
 
 export function getChatDomRefs(doc = document) {
   return {
