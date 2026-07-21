@@ -15,7 +15,15 @@ const COMPLETE_STATUSES = new Set(["complete", "completed", "success", "succeede
 const FAILED_STATUSES = new Set(["failed", "failure", "error", "errored", "unavailable"]);
 const PENDING_STATUSES = new Set(["running", "pending", "generating", "processing", "uploading", "queued", "started"]);
 const INTERRUPTED_STATUSES = new Set(["interrupted", "stopped", "cancelled", "canceled"]);
-const TEXT_MESSAGE_TYPES = new Set(["", "text", "assistant", "response", "message"]);
+const NON_RESPONSE_ARTIFACT_TYPES = new Set([
+  "generated-file",
+  "generated_file",
+  "chart",
+  "chart-generation",
+  "chart_generation",
+  "memory-update",
+  "memory_update",
+]);
 
 const SIGNAL_COPY = Object.freeze({
   "response-complete": Object.freeze({ title: "Response ready", shortLabel: "Ready", tone: "ready" }),
@@ -72,7 +80,7 @@ function messageIdentity(message, meta, fallbackKind) {
   );
 }
 
-function hasImageArtifact(meta, content) {
+function hasImageArtifact(meta, status) {
   return Boolean(
     meta.imageUrl
       || meta.image_url
@@ -81,7 +89,7 @@ function hasImageArtifact(meta, content) {
       || meta.image_id
       || meta.imageId
       || meta.success === true
-      || /\b(image|illustration|render)\b/i.test(content),
+      || COMPLETE_STATUSES.has(status),
   );
 }
 
@@ -96,6 +104,13 @@ function isDeepResearchType(type) {
 
 function isImageType(type) {
   return type === "image" || type === "image-generation" || type === "image_generation" || type === "generated-image";
+}
+
+function isNonResponseArtifactType(type) {
+  return NON_RESPONSE_ARTIFACT_TYPES.has(type)
+    || isDeepResearchType(type)
+    || isImageType(type)
+    || isFileLikeType(type);
 }
 
 export function normalizeAttentionSignal(input = {}) {
@@ -130,6 +145,7 @@ export function classifyMessageOutcome(message, now = Date.now()) {
   const status = statusOf(meta);
   const content = clean(message.content, 500);
   const updatedAt = timestampOf(message.timestamp || message.created_at || meta.updatedAt || meta.updated_at, now);
+  const pending = meta.streaming === true || PENDING_STATUSES.has(status);
 
   if (isDeepResearchType(type)) {
     if (!COMPLETE_STATUSES.has(status)) return null;
@@ -143,8 +159,8 @@ export function classifyMessageOutcome(message, now = Date.now()) {
   }
 
   if (isImageType(type)) {
-    if (meta.success === false || FAILED_STATUSES.has(status) || PENDING_STATUSES.has(status) || INTERRUPTED_STATUSES.has(status)) return null;
-    if (!hasImageArtifact(meta, content)) return null;
+    if (meta.success === false || FAILED_STATUSES.has(status) || pending || INTERRUPTED_STATUSES.has(status)) return null;
+    if (!hasImageArtifact(meta, status)) return null;
     const identity = messageIdentity(message, meta, "image");
     return Object.freeze({
       kind: "image-complete",
@@ -164,8 +180,8 @@ export function classifyMessageOutcome(message, now = Date.now()) {
     });
   }
 
-  if (message.role !== "assistant" || !content || !TEXT_MESSAGE_TYPES.has(type)) return null;
-  if (PENDING_STATUSES.has(status) || FAILED_STATUSES.has(status) || INTERRUPTED_STATUSES.has(status)) return null;
+  if (message.role !== "assistant" || !content || isNonResponseArtifactType(type)) return null;
+  if (pending || FAILED_STATUSES.has(status) || INTERRUPTED_STATUSES.has(status)) return null;
   const identity = messageIdentity(message, meta, "response");
   return Object.freeze({
     kind: "response-complete",
