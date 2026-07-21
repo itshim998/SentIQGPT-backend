@@ -188,8 +188,8 @@ export function deriveLatestChatOutcome(chat, now = Date.now()) {
 }
 
 export function deriveOutcomeSignal(previousOutcome, nextOutcome, context = {}) {
-  if (!previousOutcome || !nextOutcome) return null;
-  if (previousOutcome.signature === nextOutcome.signature) return null;
+  if (!nextOutcome) return null;
+  if (previousOutcome?.signature === nextOutcome.signature) return null;
   const active = Boolean(context.active);
   if (nextOutcome.kind === "response-complete" && active) return null;
   return normalizeAttentionSignal({
