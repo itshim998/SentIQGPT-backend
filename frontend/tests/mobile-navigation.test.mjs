@@ -77,6 +77,7 @@ for (const forbidden of ["localStorage", "sessionStorage", "fetch(", "Notificati
 
 for (const token of [
   'const MOBILE_QUERY = "(max-width: 768px)"',
+  'const defer = typeof window.queueMicrotask === "function"',
   'className = "mobile-navigation-sheet-chrome"',
   'class="mobile-navigation-sheet-grip"',
   'class="mobile-navigation-close"',
@@ -95,6 +96,7 @@ for (const token of [
   'if (chatMessages) chatMessages.scrollTop = snapshot.chatScrollTop',
   'document.addEventListener("touchmove", handleOutsideTouchMove, { passive: false })',
   'document.addEventListener("keydown", handleKeydown, { capture: true })',
+  'window.addEventListener("resize", handleViewportChange, { passive: true })',
   'window.visualViewport?.addEventListener?.("resize", updateViewportHeight',
   'new MutationObserver((records) =>',
   'window.SentIQMobileNavigation = Object.freeze',
