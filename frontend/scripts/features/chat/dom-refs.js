@@ -26,6 +26,7 @@ import "../mobile-glass-budget.js";
 import "../mobile-rich-content.js";
 import "../motion-grammar.js";
 import "../compositor-safety.js";
+import "../blur-layer-budget.js";
 
 export function getChatDomRefs(doc = document) {
   return {
