@@ -22,6 +22,7 @@ import "../attention-management.js";
 import "../mobile-navigation.js";
 import "../mobile-composer.js";
 import "../touch-interaction-language.js";
+import "../mobile-glass-budget.js";
 
 export function getChatDomRefs(doc = document) {
   return {
