@@ -169,19 +169,29 @@ for (const token of [
   'if (baselineReady)',
   'epoch !== scopeEpoch || currentScope() !== scope',
   'document.visibilityState === "hidden"',
+  'chatList?.querySelector(".chat-list-item.active[data-id]")',
   'sentiq-conversation-continuity-restored',
   'sentiq-conversation-activity-change',
   'sentiq-auth-changed',
   'scopeEpoch += 1',
   'baselineActiveDom()',
-  'Date.now() > domBaselineUntil',
+  'const imageEmit = domReady && Date.now() > domBaselineUntil',
+  'collectFileFailures(element, domReady)',
   'window.addEventListener("offline", confirmOffline)',
-  'window.addEventListener("online", handleOnline)',
+  'window.addEventListener("online", () => handleOnline())',
+  'handleOnline({ explicit: true })',
+  'document.documentElement.dataset.sentiqConnectionState = offlineConfirmed ? "offline" : "online"',
   'kind: "connection-recovered"',
   'kind: "file-analysis-failed"',
   'kind: "image-complete"',
   'window.SentIQAttentionManagement = Object.freeze',
 ]) assert.ok(runtimeSource.includes(token), `Attention runtime missing ${token}`);
+assert.equal(runtimeSource.includes('}, { force: true });'), false, "Connection recovery must remain deduplicated");
+assert.ok(
+  runtimeSource.indexOf('chatList?.querySelector(".chat-list-item.active[data-id]")')
+    < runtimeSource.indexOf('window.SentIQConversationContinuity?.getConversationId?.()'),
+  "The visibly active chat must win over a briefly stale continuity ID",
+);
 
 assert.ok(
   domRefsSource.indexOf('import "../conversation-continuity-event-bridge.js";')
