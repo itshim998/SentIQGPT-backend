@@ -76,7 +76,9 @@ for (const token of [
   "@keyframes sentiqCompositorTextEnter",
   "@keyframes sentiqCompositorOpacityPulse",
   "@keyframes sentiqCompositorLiveWave",
-  ".thinking-content",
+  ':root[data-sentiq-motion-version="11.1"] :is(',
+  ':root[data-sentiq-motion-version="11.1"] .thinking-content',
+  ':root[data-sentiq-motion-version="11.1"] .sentiq-loader',
   "transition-property: transform, opacity",
   "body::before",
   "animation: none",
@@ -84,7 +86,7 @@ for (const token of [
   "animation-name: sentiqCompositorSweep",
   ".image-skeleton::after",
   "contain: paint",
-  ".deep-research-progress-fill",
+  '.deep-research-card[data-deep-research-workspace-version="7.2"] .deep-research-progress-fill',
   "transform: scaleX(var(--deep-research-progress-scale, 0))",
   ".live-beta-wave i",
   "transform: scaleY(0.32)",
@@ -134,7 +136,7 @@ assert.equal((cssSource.match(/\binfinite\b/g) || []).length, 1, "Only the bound
 assert.ok(sidebarSource.includes("width var(--transition-slow)"));
 assert.ok(cssSource.includes("@media (min-width: 769px)"));
 assert.ok(messageSource.includes("max-height var(--transition-slow)"));
-assert.ok(cssSource.includes(".thinking-panel[data-expanded=\"true\"] .thinking-content"));
+assert.ok(cssSource.includes('.thinking-panel[data-expanded="true"] .thinking-content'));
 assert.ok(loaderSource.includes("background-position: 220% 0"));
 assert.ok(cssSource.includes("background-attachment: scroll"));
 assert.ok(composerSource.includes("background-position: 100% 50%"));
@@ -161,4 +163,4 @@ const reducedMotionRule = importSource.indexOf("@media (prefers-reduced-motion: 
 assert.ok(motionCssImport >= 0 && compositorCssImport > motionCssImport, "Compositor safety must be the final component layer");
 assert.ok(reducedMotionRule > compositorCssImport, "The global reduced-motion guard must remain last");
 
-console.log("Pass 11.2 compositor safety gate passed: transform/opacity motion, bounded progress, paint-heavy overrides, and reduced policies.");
+console.log("Pass 11.2 compositor safety gate passed: transform/opacity motion, bounded progress, paint-heavy overrides, cascade precedence, and reduced policies.");
