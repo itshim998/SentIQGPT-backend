@@ -55,6 +55,7 @@
 @import url("./71-mobile-rich-content.css");
 @import url("./72-mobile-rich-content-responsive.css");
 @import url("./73-motion-grammar.css");
+@import url("./74-compositor-safety.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
