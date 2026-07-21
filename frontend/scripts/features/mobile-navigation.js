@@ -34,10 +34,13 @@ function initializeMobileNavigation() {
     role: sidebar.getAttribute("role"),
     ariaModal: sidebar.getAttribute("aria-modal"),
     ariaLabel: sidebar.getAttribute("aria-label"),
+    ariaLabelledby: sidebar.getAttribute("aria-labelledby"),
     ariaHidden: sidebar.getAttribute("aria-hidden"),
+    tabIndex: sidebar.getAttribute("tabindex"),
     inert: sidebar.hasAttribute("inert"),
   };
   const inertSnapshots = new Map();
+  const boundBackdrops = new WeakSet();
   const subscribers = new Set();
 
   let lastOpen = false;
@@ -45,7 +48,6 @@ function initializeMobileNavigation() {
   let restoreFocusOnClose = false;
   let scrollSnapshot = null;
   let backdrop = null;
-  let backdropBound = false;
   let viewportFrame = 0;
   let focusFrame = 0;
   let gesture = null;
@@ -102,8 +104,8 @@ function initializeMobileNavigation() {
     const nextBackdrop = appContainer.querySelector(":scope > .sidebar-backdrop") || document.querySelector(".sidebar-backdrop");
     if (!(nextBackdrop instanceof HTMLElement)) return null;
     backdrop = nextBackdrop;
-    if (!backdropBound) {
-      backdropBound = true;
+    if (!boundBackdrops.has(backdrop)) {
+      boundBackdrops.add(backdrop);
       backdrop.addEventListener("click", () => {
         restoreFocusOnClose = true;
       }, { capture: true });
@@ -182,13 +184,12 @@ function initializeMobileNavigation() {
       y: window.scrollY,
       chatScrollTop: chatMessages?.scrollTop || 0,
       rootStyle: captureInlineStyle(root, ["overflow", "overscrollBehavior"]),
-      bodyStyle: captureInlineStyle(body, ["overflow", "overscrollBehavior", "touchAction"]),
+      bodyStyle: captureInlineStyle(body, ["overflow", "overscrollBehavior"]),
     };
     root.style.overflow = "hidden";
     root.style.overscrollBehavior = "none";
     body.style.overflow = "hidden";
     body.style.overscrollBehavior = "none";
-    body.style.touchAction = "none";
     body.classList.add("mobile-navigation-open");
   }
 
@@ -208,16 +209,19 @@ function initializeMobileNavigation() {
     });
   }
 
+  function restoreSidebarAttribute(name, value) {
+    if (value === null) sidebar.removeAttribute(name);
+    else sidebar.setAttribute(name, value);
+  }
+
   function setSheetAccessibility(state) {
     if (!state.mobile) {
-      if (originalSidebarAttributes.role === null) sidebar.removeAttribute("role");
-      else sidebar.setAttribute("role", originalSidebarAttributes.role);
-      if (originalSidebarAttributes.ariaModal === null) sidebar.removeAttribute("aria-modal");
-      else sidebar.setAttribute("aria-modal", originalSidebarAttributes.ariaModal);
-      if (originalSidebarAttributes.ariaLabel === null) sidebar.removeAttribute("aria-label");
-      else sidebar.setAttribute("aria-label", originalSidebarAttributes.ariaLabel);
-      if (originalSidebarAttributes.ariaHidden === null) sidebar.removeAttribute("aria-hidden");
-      else sidebar.setAttribute("aria-hidden", originalSidebarAttributes.ariaHidden);
+      restoreSidebarAttribute("role", originalSidebarAttributes.role);
+      restoreSidebarAttribute("aria-modal", originalSidebarAttributes.ariaModal);
+      restoreSidebarAttribute("aria-label", originalSidebarAttributes.ariaLabel);
+      restoreSidebarAttribute("aria-labelledby", originalSidebarAttributes.ariaLabelledby);
+      restoreSidebarAttribute("aria-hidden", originalSidebarAttributes.ariaHidden);
+      restoreSidebarAttribute("tabindex", originalSidebarAttributes.tabIndex);
       if (originalSidebarAttributes.inert) sidebar.setAttribute("inert", "");
       else sidebar.removeAttribute("inert");
       return;
@@ -227,6 +231,7 @@ function initializeMobileNavigation() {
     sidebar.setAttribute("aria-modal", state.ariaModal);
     sidebar.setAttribute("aria-labelledby", "mobile-navigation-sheet-title");
     sidebar.setAttribute("aria-hidden", state.sidebarHidden ? "true" : "false");
+    sidebar.setAttribute("tabindex", "-1");
     if (state.sidebarHidden) sidebar.setAttribute("inert", "");
     else sidebar.removeAttribute("inert");
   }
