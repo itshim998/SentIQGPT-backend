@@ -15,6 +15,7 @@ import "../semantic-activity-progress.js";
 import "../failure-recovery.js";
 import "../ui-state-bridge.js";
 import "../progressive-disclosure.js";
+import "../capability-awareness.js";
 
 export function getChatDomRefs(doc = document) {
   return {
