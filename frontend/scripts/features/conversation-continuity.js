@@ -49,6 +49,7 @@ function initializeConversationContinuity() {
   let registry = normalizeContinuityRegistry();
   let registryLoaded = false;
   let registryLoadPromise = null;
+  let registryLoadScope = "";
   let persistPromise = Promise.resolve();
   let draftSaveTimer = 0;
   let registryPersistTimer = 0;
@@ -80,10 +81,10 @@ function initializeConversationContinuity() {
   }
 
   async function loadRegistry(targetScope = scope) {
-    if (registryLoaded && targetScope === scope) return registry;
-    if (registryLoadPromise) return registryLoadPromise;
     const requestedScope = targetScope || "guest";
-    registryLoadPromise = Storage.getConfig(registryKey(requestedScope))
+    if (registryLoaded && requestedScope === scope) return registry;
+    if (registryLoadPromise && registryLoadScope === requestedScope) return registryLoadPromise;
+    const loadPromise = Storage.getConfig(registryKey(requestedScope))
       .then((value) => normalizeContinuityRegistry(value))
       .catch(() => normalizeContinuityRegistry())
       .then((value) => {
@@ -94,9 +95,14 @@ function initializeConversationContinuity() {
         return value;
       })
       .finally(() => {
-        registryLoadPromise = null;
+        if (registryLoadPromise === loadPromise) {
+          registryLoadPromise = null;
+          registryLoadScope = "";
+        }
       });
-    return registryLoadPromise;
+    registryLoadPromise = loadPromise;
+    registryLoadScope = requestedScope;
+    return loadPromise;
   }
 
   function queuePersist(delay = REGISTRY_SAVE_DELAY_MS) {
@@ -465,9 +471,11 @@ function initializeConversationContinuity() {
       const firstAction = item.querySelector(".chat-rename-btn, .chat-delete-btn");
       item.insertBefore(marker, firstAction || null);
     }
-    marker.querySelector(".conversation-activity-label").textContent = activity.label;
-    marker.setAttribute("aria-label", `${activity.label} in this conversation`);
-    marker.title = `${activity.label} in this conversation`;
+    const label = marker.querySelector(".conversation-activity-label");
+    if (label && label.textContent !== activity.label) label.textContent = activity.label;
+    const accessibleLabel = `${activity.label} in this conversation`;
+    if (marker.getAttribute("aria-label") !== accessibleLabel) marker.setAttribute("aria-label", accessibleLabel);
+    if (marker.title !== accessibleLabel) marker.title = accessibleLabel;
   }
 
   function decorateConversationList() {
@@ -726,9 +734,17 @@ function initializeConversationContinuity() {
   });
   window.addEventListener("pagehide", () => { void flushCurrent(); });
   window.addEventListener("beforeunload", (event) => {
+    const currentRecord = currentDraftRecord();
+    const existingRecord = registry.drafts[currentConversationId] || normalizeDraftRecord();
+    const existingHasContent = draftRecordHasContent(existingRecord);
+    const currentHasContent = draftRecordHasContent(currentRecord);
+    const draftWouldBeLost = currentConversationId
+      ? (!(sameDraft(existingRecord, currentRecord) && existingHasContent === currentHasContent)
+        && (existingHasContent || currentHasContent))
+      : draftRecordIsMeaningful(currentRecord);
     saveDraftFor();
     captureReadingFor();
-    if (!pendingPersist && !hasAttachments() && !hasSelectionContext()) return;
+    if (!draftWouldBeLost && !hasAttachments() && !hasSelectionContext()) return;
     event.preventDefault();
     event.returnValue = "";
   });
