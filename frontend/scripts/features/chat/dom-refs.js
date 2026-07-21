@@ -23,6 +23,7 @@ import "../mobile-navigation.js";
 import "../mobile-composer.js";
 import "../touch-interaction-language.js";
 import "../mobile-glass-budget.js";
+import "../mobile-rich-content.js";
 
 export function getChatDomRefs(doc = document) {
   return {
