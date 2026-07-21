@@ -191,26 +191,26 @@ html:root[data-sentiq-motion-version="11.1"] {
 :root[data-sentiq-motion-version="11.1"] :is(
   .response-inline-spinner,
   .chat-cache-spinner,
-  .semantic-activity-mark::after,
-  .semantic-activity-progress .response-inline-spinner::after,
-  .sentiq-loader::before,
-  .sentiq-loader-shimmer::before,
   .image-generation-pending-layer,
-  .asset-file-skeleton span,
-  [data-asset-result-version="7.3"].is-loading::after
-) {
+  .asset-file-skeleton span
+),
+:root[data-sentiq-motion-version="11.1"] .semantic-activity-mark::after,
+:root[data-sentiq-motion-version="11.1"] .semantic-activity-progress .response-inline-spinner::after,
+:root[data-sentiq-motion-version="11.1"] .sentiq-loader::before,
+:root[data-sentiq-motion-version="11.1"] .sentiq-loader-shimmer::before,
+:root[data-sentiq-motion-version="11.1"] [data-asset-result-version="7.3"].is-loading::after {
   animation-duration: var(--sentiq-motion-progress-duration);
   animation-timing-function: var(--sentiq-motion-progress-ease);
 }
 
 :root[data-sentiq-motion-version="11.1"] :is(
   .sentiq-loader.loader-chart .loader-chart-bar,
-  .sentiq-dot-grid::after,
   .sentiq-dot,
   #live-beta-panel .live-beta-orbit,
   #live-beta-panel .live-beta-orb,
   #live-beta-panel .live-beta-wave i
-) {
+),
+:root[data-sentiq-motion-version="11.1"] .sentiq-dot-grid::after {
   animation-duration: var(--sentiq-motion-progress-relaxed-duration);
   animation-timing-function: var(--sentiq-motion-progress-pulse-ease);
 }
