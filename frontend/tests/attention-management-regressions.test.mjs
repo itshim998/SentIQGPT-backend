@@ -45,11 +45,16 @@ assert.equal(classifyMessageOutcome({
 }, now), null, "unrequested chart artifact notifications must not add noise");
 
 const modelSource = await readFile(new URL("../scripts/features/attention-management-model.mjs", import.meta.url), "utf8");
+const cssSource = await readFile(new URL("../styles/modules/61-attention-management.css", import.meta.url), "utf8");
 for (const token of [
   "const pending = meta.streaming === true || PENDING_STATUSES.has(status)",
   "function isNonResponseArtifactType(type)",
   "if (!hasImageArtifact(meta, status)) return null",
   "isNonResponseArtifactType(type)",
 ]) assert.ok(modelSource.includes(token), `Attention outcome regression guard missing ${token}`);
+assert.ok(
+  cssSource.includes(".chat-list-item.has-attention-signal .conversation-activity-indicator"),
+  "A completed attention state must visually replace, not contradict, an older activity state",
+);
 
 console.log("Pass 9.5 attention outcome regression gate passed.");
