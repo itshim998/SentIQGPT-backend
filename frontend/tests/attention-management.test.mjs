@@ -103,7 +103,7 @@ const next = { kind: "response-complete", signature: "response:new", updatedAt: 
 assert.equal(deriveOutcomeSignal(previous, next, { chatId: "chat-a", active: true }), null);
 assert.equal(deriveOutcomeSignal(previous, next, { chatId: "chat-a", active: false }).kind, "response-complete");
 assert.equal(deriveOutcomeSignal(previous, research, { chatId: "chat-a", active: true }).kind, "research-complete");
-assert.equal(deriveOutcomeSignal(null, next, { chatId: "chat-a", active: false }), null, "initial baselines do not notify");
+assert.equal(deriveOutcomeSignal(null, next, { chatId: "chat-a", active: false }).kind, "response-complete", "the first outcome after a completed runtime baseline must notify");
 assert.equal(deriveOutcomeSignal(next, next, { chatId: "chat-a", active: false }), null, "unchanged snapshots do not notify");
 
 const signal = normalizeAttentionSignal({
