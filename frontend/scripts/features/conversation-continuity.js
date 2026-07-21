@@ -189,6 +189,7 @@ function initializeConversationContinuity() {
     const existing = registry.drafts[conversationId] || normalizeDraftRecord();
     const existingHasContent = draftRecordHasContent(existing);
     const nextHasContent = draftRecordHasContent(normalized);
+    if (!existingHasContent && !nextHasContent) return false;
     if (sameDraft(existing, normalized) && existingHasContent === nextHasContent) return false;
     registry = updateRegistryDraft(registry, conversationId, normalized);
     queuePersist();
@@ -413,7 +414,7 @@ function initializeConversationContinuity() {
   function markTransientActivity(conversationId, type) {
     if (!conversationId || !["streaming", "research", "syncing"].includes(type)) return;
     const activity = transientActivity(type);
-    transientActivities.set(conversationId, { activity, type, updatedAt: activity.updatedAt });
+    transientActivities.set(conversationId, { activity, type, source: "transient", updatedAt: activity.updatedAt });
     decorateConversationList();
   }
 
@@ -488,12 +489,12 @@ function initializeConversationContinuity() {
         const activity = deriveConversationActivity(chat, now);
         if (activity) {
           persistedIds.add(chat.id);
-          transientActivities.set(chat.id, { activity, type: activity.type, updatedAt: now });
+          transientActivities.set(chat.id, { activity, type: activity.type, source: "persisted", updatedAt: now });
         }
       }
       for (const [conversationId, entry] of transientActivities) {
         if (persistedIds.has(conversationId)) continue;
-        if (now - Number(entry.updatedAt || 0) > TRANSIENT_ACTIVITY_GRACE_MS) {
+        if (entry.source === "persisted" || now - Number(entry.updatedAt || 0) > TRANSIENT_ACTIVITY_GRACE_MS) {
           transientActivities.delete(conversationId);
         }
       }
@@ -600,15 +601,20 @@ function initializeConversationContinuity() {
     return null;
   }
 
-  function scheduleDeletedConversationCleanup(conversationId) {
+  function scheduleDeletedConversationCleanup(conversationId, attempt = 0) {
     if (!conversationId) return;
+    const delays = [420, 1200, 3000];
     window.setTimeout(async () => {
       const chat = await Storage.getChat?.(conversationId).catch(() => null);
+      if (chat && attempt < delays.length - 1) {
+        scheduleDeletedConversationCleanup(conversationId, attempt + 1);
+        return;
+      }
       if (chat) return;
       registry = removeConversationContinuity(registry, conversationId);
       queuePersist(0);
       decorateConversationList();
-    }, 420);
+    }, delays[Math.min(attempt, delays.length - 1)]);
   }
 
   function prepareNavigation(request) {
