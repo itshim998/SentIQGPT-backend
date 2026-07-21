@@ -86,6 +86,9 @@ function enhanceProgress(card, percent, status) {
     if (fill.style.getPropertyValue("--deep-research-progress-scale") !== scaleValue) {
       fill.style.setProperty("--deep-research-progress-scale", scaleValue);
     }
+    if (fill.style.getPropertyValue("width")) {
+      fill.style.removeProperty("width");
+    }
   }
   const text = card.querySelector(".deep-research-status-text");
   if (text) {
