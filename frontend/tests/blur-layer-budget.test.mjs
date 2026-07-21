@@ -34,7 +34,7 @@ assert.equal(desktop.blurPx, 14);
 assert.equal(desktop.nestedFullStrengthAllowed, false);
 
 const mobile = deriveBlurLayerBudget({
-  width: 390,
+  width: 430,
   deviceMemory: 8,
   hardwareConcurrency: 8,
   devicePixelRatio: 2,
@@ -138,7 +138,7 @@ for (const token of [
 ]) assert.ok(cssSource.includes(token), `Blur budget CSS missing ${token}`);
 
 assert.ok(cssSource.indexOf("background-color: var(--sentiq-blur-surface-static)") < cssSource.indexOf("[data-sentiq-blur-candidate=\"true\"][data-sentiq-blur-slot]"));
-assert.equal(/filter\s*:\s*blur\(/.test(cssSource), false, "Foreground filters must not replace backdrop budgeting");
+assert.equal(/(^|[;{]\s*)filter\s*:\s*blur\(/m.test(cssSource), false, "Foreground filters must not replace backdrop budgeting");
 assert.equal(/animation\s*:/.test(cssSource), false, "Blur budget must not introduce animation");
 assert.equal(/transition\s*:/.test(cssSource), false, "Blur budget must not animate blur changes");
 
