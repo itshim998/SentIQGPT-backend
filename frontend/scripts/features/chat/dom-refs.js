@@ -17,6 +17,7 @@ import "../ui-state-bridge.js";
 import "../progressive-disclosure.js";
 import "../capability-awareness.js";
 import "../conversation-continuity.js";
+import "../conversation-continuity-event-bridge.js";
 
 export function getChatDomRefs(doc = document) {
   return {
