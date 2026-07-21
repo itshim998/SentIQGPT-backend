@@ -148,7 +148,7 @@ export function classifyMessageOutcome(message, now = Date.now()) {
   const pending = meta.streaming === true || PENDING_STATUSES.has(status);
 
   if (isDeepResearchType(type)) {
-    if (!COMPLETE_STATUSES.has(status)) return null;
+    if (pending || !COMPLETE_STATUSES.has(status)) return null;
     const identity = messageIdentity(message, meta, "research");
     return Object.freeze({
       kind: "research-complete",
