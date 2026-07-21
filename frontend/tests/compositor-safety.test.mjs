@@ -149,9 +149,13 @@ assert.ok(liveSource.includes("50% { height: 31px"));
 
 assert.ok(progressSource.includes('import { toCompositorProgressScale } from "./compositor-safety-state.mjs"'));
 assert.ok(progressSource.includes('fill.style.setProperty("--deep-research-progress-scale", scaleValue)'));
+assert.ok(progressSource.includes('fill.style.removeProperty("width")'));
 assert.equal(/fill\.style\.width\s*=/.test(progressSource), false);
 assert.ok(workspaceSource.includes('getPropertyValue("--deep-research-progress-scale")'));
 assert.ok(workspaceSource.includes('getPropertyValue("--deep-research-progress")'));
+const legacyWidthRead = workspaceSource.indexOf('const legacyWidth = Number.parseFloat(fill?.style.width || "")');
+const transformedPercentRead = workspaceSource.indexOf('const percentValue = Number.parseFloat(fill?.style.getPropertyValue("--deep-research-progress")');
+assert.ok(legacyWidthRead >= 0 && transformedPercentRead > legacyWidthRead, "A fresh legacy width update must be migrated before stored transform progress is reused");
 
 const motionRuntimeImport = domRefsSource.indexOf('import "../motion-grammar.js";');
 const compositorRuntimeImport = domRefsSource.indexOf('import "../compositor-safety.js";');
@@ -163,4 +167,4 @@ const reducedMotionRule = importSource.indexOf("@media (prefers-reduced-motion: 
 assert.ok(motionCssImport >= 0 && compositorCssImport > motionCssImport, "Compositor safety must be the final component layer");
 assert.ok(reducedMotionRule > compositorCssImport, "The global reduced-motion guard must remain last");
 
-console.log("Pass 11.2 compositor safety gate passed: transform/opacity motion, bounded progress, paint-heavy overrides, cascade precedence, and reduced policies.");
+console.log("Pass 11.2 compositor safety gate passed: transform/opacity motion, bounded progress, paint-heavy overrides, cascade precedence, inline migration, and reduced policies.");
