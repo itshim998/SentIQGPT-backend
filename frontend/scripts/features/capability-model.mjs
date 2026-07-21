@@ -35,8 +35,8 @@ export const DEFAULT_CAPABILITY_FACTS = Object.freeze({
 });
 
 const STATE_PRIORITY = Object.freeze([
-  "checking",
   "offline",
+  "checking",
   "sign-in-required",
   "plan-restricted",
   "limit-reached",
@@ -190,7 +190,10 @@ function deriveImageCapability(facts) {
   if (!facts.authKnown) return record(key, "checking", "Checking sign-in status…", { label });
   if (!facts.authenticated) return record(key, "sign-in-required", "Sign in to generate and save images.", { label, cta: "sign-in" });
   if (!facts.planKnown) return record(key, "checking", "Checking image availability for your plan…", { label });
-  if (facts.planError && (!facts.imageQuotaKnown || facts.imageQuotaError || !facts.imageQuota)) {
+  // The process-level image quota does not prove plan entitlement. If billing
+  // cannot be resolved, keep the control blocked rather than claiming that an
+  // IP-level slot means image generation is actually available.
+  if (facts.planError) {
     return record(key, "unavailable", "Image availability could not be checked right now. Try refreshing in a moment.", { label });
   }
 
