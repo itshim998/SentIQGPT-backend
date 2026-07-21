@@ -19,6 +19,7 @@ import "../capability-awareness.js";
 import "../conversation-continuity.js";
 import "../conversation-continuity-event-bridge.js";
 import "../attention-management.js";
+import "../frame-discipline.js";
 import "../mobile-navigation.js";
 import "../mobile-composer.js";
 import "../touch-interaction-language.js";
