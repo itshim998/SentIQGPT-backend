@@ -193,7 +193,7 @@ function initializeTouchInteractionLanguage() {
   }
 
   function handlePointerDown(event) {
-    if (!touchMode || event.button > 0 || !isTouchLikePointer(event.pointerType, touchMode)) return;
+    if (!touchMode || event.button > 0 || !isTouchLikePointer(event.pointerType, !event.pointerType && touchMode)) return;
     const element = findInteractiveTarget(event.target);
     if (!element) return;
     clearPress("replace", { deferMenu: false });
@@ -255,10 +255,10 @@ function initializeTouchInteractionLanguage() {
 
   new MutationObserver((records) => {
     if (!touchMode) return;
-    const added = records.flatMap((record) => Array.from(record.addedNodes || []));
-    added.forEach((node) => {
-      if (node instanceof Element) scheduleEnhancement(node);
-    });
+    const relevant = records.some((record) => (
+      record.type === "attributes" || record.addedNodes.length > 0
+    ));
+    if (relevant) scheduleEnhancement(document);
   }).observe(document.body, {
     childList: true,
     subtree: true,
