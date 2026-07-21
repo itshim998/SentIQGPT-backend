@@ -144,6 +144,10 @@
     min-height: 70px !important;
   }
 
+  :root[data-mobile-rich-content-version="10.5"] .websurf-v2-featured-card.is-text-only {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
   :root[data-mobile-rich-content-version="10.5"] .websurf-v2-source-explorer-detail {
     grid-template-columns: minmax(0, 1fr) !important;
     max-inline-size: 100%;
@@ -188,7 +192,7 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  :root[data-mobile-rich-content-version="10.5"] .message-chart-container .message-chart-frame > :is(div, canvas, svg, iframe) {
+  :root[data-mobile-rich-content-version="10.5"] .message-chart-container .message-chart-frame :is(canvas, svg, iframe) {
     min-inline-size: var(--mobile-rich-chart-min-inline-size);
     max-block-size: 100%;
   }
@@ -252,8 +256,7 @@
 
   /* Live transcript uses the actual visual viewport and wraps every utterance. */
   :root[data-mobile-rich-content-version="10.5"] #live-beta-panel .live-workspace-surface {
-    height: var(--mobile-rich-viewport-height);
-    max-height: var(--mobile-rich-viewport-height);
+    max-height: min(var(--mobile-rich-viewport-height), 100dvh);
   }
 
   :root[data-mobile-rich-content-version="10.5"] #live-beta-panel .live-workspace-transcript-host[open] {
@@ -294,5 +297,12 @@
   ) {
     animation: none !important;
     transition: none !important;
+  }
+}
+
+@media (max-width: 640px) {
+  :root[data-mobile-rich-content-version="10.5"] #live-beta-panel .live-workspace-surface {
+    height: var(--mobile-rich-viewport-height);
+    max-height: var(--mobile-rich-viewport-height);
   }
 }
