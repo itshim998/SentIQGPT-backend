@@ -46,6 +46,17 @@ assert.equal(openPortrait.compact, true);
 assert.equal(openPortrait.safeAreaMode, "keyboard");
 assert.equal(openPortrait.textareaMaxHeight, 108);
 
+const shortPortrait = deriveMobileComposerMetrics({
+  visualWidth: 390,
+  visualHeight: 340,
+  orientation: "portrait",
+  baselineHeight: 844,
+  textareaFocused: true,
+  coarsePointer: true,
+});
+assert.equal(shortPortrait.orientation, "portrait", "keyboard shrink must not impersonate landscape orientation");
+assert.equal(shortPortrait.keyboardOpen, true);
+
 const openLandscape = deriveMobileComposerMetrics({
   visualWidth: 844,
   visualHeight: 250,
@@ -107,6 +118,7 @@ for (const forbidden of ["localStorage", "sessionStorage", "fetch(", "window.scr
 for (const token of [
   'window.visualViewport?.addEventListener?.("resize", handleViewportChange',
   'window.visualViewport?.addEventListener?.("scroll", handleViewportChange',
+  'getPhysicalOrientation(snapshot)',
   'focusScrollSnapshot = captureScrollSnapshot()',
   'restoreScrollSnapshot(scrollSnapshot)',
   'chatMessages.scrollTop = nextScrollTop',
