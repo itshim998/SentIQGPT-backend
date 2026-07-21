@@ -46,6 +46,8 @@
 @import url("./62-attention-management-responsive.css");
 @import url("./63-mobile-navigation.css");
 @import url("./64-mobile-navigation-responsive.css");
+@import url("./65-mobile-composer.css");
+@import url("./66-mobile-composer-responsive.css");
 
 /* Reduced-motion: kill all animations */
 @media (prefers-reduced-motion: reduce) {
