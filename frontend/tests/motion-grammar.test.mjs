@@ -93,14 +93,17 @@ for (const token of [
   'data-sentiq-motion-family="interrupt"',
   ".message.user",
   ".adaptive-panel-surface:not(#account-panel)",
+  ".websurf-v2-featured-card",
+  ".app-container",
   '.sidebar[data-mobile-navigation-version="10.1"]',
   ".thinking-content",
+  ':where(\n  button,',
   ".message-action-btn",
   ".semantic-activity-progress .response-inline-spinner::after",
   ".conversation-attention-marker",
   ".failure-recovery-panel",
-  'data-sentiq-motion-policy="reduced"',
-  "@media (prefers-reduced-motion: reduce), (update: slow)",
+  'data-sentiq-motion-policy="reduced"] *::before',
+  '@media (prefers-reduced-motion: reduce), (update: slow)',
 ]) assert.ok(cssSource.includes(token), `Motion family coverage missing ${token}`);
 
 assert.equal(cssSource.includes(":is(\n  .response-inline-spinner,\n  .chat-cache-spinner,\n  .semantic-activity-mark::after"), false, "Pseudo-elements must not be nested inside :is()");
