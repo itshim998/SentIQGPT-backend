@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import {
   MOBILE_RICH_CONTENT_VERSION,
   MOBILE_RICH_BREAKPOINT_PX,
+  MOBILE_RICH_LANDSCAPE_MAX_PX,
   deriveMobileRichLayout,
   isMobileRichViewport,
   serializeMobileRichLayout,
@@ -10,8 +11,11 @@ import {
 
 assert.equal(MOBILE_RICH_CONTENT_VERSION, "10.5");
 assert.equal(MOBILE_RICH_BREAKPOINT_PX, 768);
+assert.equal(MOBILE_RICH_LANDSCAPE_MAX_PX, 960);
 assert.equal(isMobileRichViewport(768), true);
 assert.equal(isMobileRichViewport(769), false);
+assert.equal(isMobileRichViewport(844, { height: 390, orientation: "landscape", coarsePointer: true }), true);
+assert.equal(isMobileRichViewport(844, { height: 390, orientation: "landscape", coarsePointer: false }), false);
 
 const narrow = deriveMobileRichLayout({ width: 360, height: 740 });
 assert.equal(narrow.widthClass, "narrow");
@@ -27,7 +31,7 @@ const tall = deriveMobileRichLayout({ width: 430, height: 900, orientation: "por
 assert.equal(tall.heightClass, "tall");
 assert.equal(tall.mediaMaxHeight, 620);
 
-const landscape = deriveMobileRichLayout({ width: 740, height: 390, orientation: "landscape" });
+const landscape = deriveMobileRichLayout({ width: 844, height: 390, orientation: "landscape", coarsePointer: true });
 assert.equal(landscape.orientation, "landscape");
 assert.equal(landscape.heightClass, "short");
 assert.equal(landscape.chartMinInlineSize, 600);
@@ -58,6 +62,8 @@ assert.notEqual(serializeMobileRichLayout(desktop), serializeMobileRichLayout(na
 const runtimeSource = await readFile(new URL("../scripts/features/mobile-rich-content.js", import.meta.url), "utf8");
 const foundationSource = await readFile(new URL("../styles/modules/71-mobile-rich-content.css", import.meta.url), "utf8");
 const responsiveSource = await readFile(new URL("../styles/modules/72-mobile-rich-content-responsive.css", import.meta.url), "utf8");
+const domRefsSource = await readFile(new URL("../scripts/features/chat/dom-refs.js", import.meta.url), "utf8");
+const importSource = await readFile(new URL("../styles/modules/12-reduced-motion.css", import.meta.url), "utf8");
 const combinedCss = `${foundationSource}\n${responsiveSource}`;
 
 for (const forbidden of ["localStorage", "sessionStorage", "fetch(", "setInterval(", "MutationObserver("]) {
@@ -66,8 +72,10 @@ for (const forbidden of ["localStorage", "sessionStorage", "fetch(", "setInterva
 
 for (const token of [
   'const MOBILE_QUERY = "(max-width: 768px)"',
+  'const COARSE_POINTER_QUERY = "(pointer: coarse)"',
   'safeAreaProbe.dataset.mobileRichSafeAreaProbe = "true"',
   'padding-top:env(safe-area-inset-top, 0px)',
+  'coarsePointer: Boolean(coarsePointerMedia?.matches)',
   'root.dataset.mobileComposerKeyboard === "open"',
   'document.addEventListener("sentiq-mobile-composer-change"',
   'document.dispatchEvent(new CustomEvent("sentiq-mobile-rich-content-change"',
@@ -90,11 +98,21 @@ for (const token of [
   'data-mobile-rich-orientation="landscape"',
   'data-mobile-rich-keyboard="open"',
   'data-mobile-rich-safe-area="notched"',
+  '(pointer: coarse) and (orientation: landscape) and (max-width: 960px)',
   'overflow-x: auto',
   'overscroll-behavior-inline: contain',
   'env(safe-area-inset-bottom, 0px)',
   'forced-colors: active',
 ]) assert.ok(combinedCss.includes(token), `Mobile rich-content CSS missing ${token}`);
+
+const glassRuntimeImport = domRefsSource.indexOf('import "../mobile-glass-budget.js";');
+const richRuntimeImport = domRefsSource.indexOf('import "../mobile-rich-content.js";');
+assert.ok(glassRuntimeImport >= 0 && richRuntimeImport > glassRuntimeImport, "Mobile rich-content runtime must load after mobile glass budgeting");
+
+const glassCssImport = importSource.indexOf('@import url("./70-mobile-glass-budget-responsive.css");');
+const richCssImport = importSource.indexOf('@import url("./71-mobile-rich-content.css");');
+const richResponsiveImport = importSource.indexOf('@import url("./72-mobile-rich-content-responsive.css");');
+assert.ok(glassCssImport >= 0 && richCssImport > glassCssImport && richResponsiveImport > richCssImport);
 
 assert.equal(/animation[^;]*infinite/i.test(combinedCss), false, "Pass 10.5 must not introduce continuous animation");
 console.log("Pass 10.5 mobile rich-content phase gate passed: narrow, short, tall, landscape, keyboard-open, and notched layouts.");
