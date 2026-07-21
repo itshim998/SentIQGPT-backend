@@ -1,0 +1,173 @@
+/* ============================================================
+   SentIQ Chat — Pass 10.3
+   Touch-safe overflow and compact responsive corrections
+   ============================================================ */
+
+:root[data-touch-interaction-version="10.3"] :is(
+  .chat-input-wrapper,
+  .chat-input-area,
+  .file-preview-area,
+  .composer-attachment,
+  .composer-attachment-name,
+  .composer-attachment-type,
+  .generated-file-panel,
+  .generated-file-title-wrap,
+  .generated-file-title,
+  .asset-file-metadata,
+  .message-content,
+  .websurf-v2-presentation,
+  .websurf-v2-presentation-answer,
+  .websurf-v2-featured-copy,
+  .websurf-v2-featured-title,
+  .websurf-v2-explorer-meta,
+  .websurf-v2-explorer-title,
+  .websurf-v2-citation-menu-link,
+  .websurf-v2-citation-menu-publisher,
+  .websurf-v2-citation-menu-title,
+  .deep-research-report-preview-text
+) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:root[data-touch-interaction-version="10.3"] :is(
+  .composer-attachment-name,
+  .generated-file-title,
+  .asset-file-metadata,
+  .websurf-v2-featured-title,
+  .websurf-v2-explorer-title,
+  .websurf-v2-citation-menu-publisher,
+  .websurf-v2-citation-menu-title,
+  .message-content a[href],
+  .deep-research-report-preview-text a[href]
+) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+:root[data-touch-interaction-version="10.3"] .composer-attachment-name,
+:root[data-touch-interaction-version="10.3"] .generated-file-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-touch-interaction-version="10.3"] .websurf-v2-citation-chip-label {
+  min-width: 0;
+  max-width: min(32ch, calc(100vw - 86px));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-touch-interaction-version="10.3"] :is(
+  .websurf-v2-citation,
+  .websurf-v2-publisher-chip,
+  .citation-chip,
+  .citation-marker,
+  .source-citation
+) {
+  max-width: min(100%, calc(100vw - 48px));
+  vertical-align: middle;
+}
+
+:root[data-touch-interaction-version="10.3"] :is(
+  .websurf-v2-citation-menu,
+  .websurf-v2-source-explorer-detail,
+  .deep-research-export-menu,
+  .composer-action-menu,
+  .execution-mode-menu,
+  .chat-actions-menu
+) {
+  max-inline-size: calc(100vw - 20px);
+  overflow-x: hidden;
+}
+
+@media (hover: none), (pointer: coarse) {
+  :root[data-touch-interaction-mode="touch"] :is(
+    .composer-attachment-remove,
+    .composer-attachment-retry,
+    .selected-context-remove,
+    .composer-mode-pill-dismiss,
+    .mobile-navigation-close,
+    .websurf-v2-source-sheet-close,
+    .deep-research-action-btn,
+    .deep-research-expand-btn,
+    .deep-research-export-item,
+    .websurf-v2-source-explorer-toggle,
+    .websurf-v2-citation-menu-link,
+    .websurf-v2-explorer-source,
+    .generated-file-action,
+    .asset-result-action,
+    .asset-result-retry,
+    .asset-overlay-action,
+    .chat-actions-overflow-btn,
+    .chat-actions-menu-btn,
+    .message-action-btn
+  ) {
+    min-height: 44px;
+  }
+
+  :root[data-touch-interaction-mode="touch"] :is(
+    .composer-attachment-remove,
+    .selected-context-remove,
+    .composer-mode-pill-dismiss,
+    .mobile-navigation-close,
+    .websurf-v2-source-sheet-close,
+    .deep-research-action-btn,
+    .asset-overlay-action,
+    .chat-actions-overflow-btn
+  ) {
+    min-width: 44px;
+  }
+
+  :root[data-touch-interaction-mode="touch"] .chat-input-wrapper[data-attachment-context-version="5.5"] .composer-attachment {
+    grid-template-columns: 44px minmax(0, 1fr) auto 44px;
+  }
+
+  :root[data-touch-interaction-mode="touch"] .chat-input-wrapper[data-attachment-context-version="5.5"].composer-has-selected-context .selected-context-bar {
+    grid-template-columns: 2px minmax(0, 1fr) 44px;
+  }
+
+  :root[data-touch-interaction-mode="touch"] .chat-actions-menu-btn {
+    height: auto;
+    padding-block: 9px;
+  }
+
+  :root[data-touch-interaction-mode="touch"] .websurf-v2-source-explorer-toggle {
+    padding-block: 9px;
+  }
+
+  :root[data-touch-interaction-mode="touch"] .websurf-v2-citation-menu-link,
+  :root[data-touch-interaction-mode="touch"] .websurf-v2-explorer-source {
+    align-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  :root[data-touch-interaction-version="10.3"] .generated-file-header.asset-result-header {
+    min-width: 0;
+  }
+
+  :root[data-touch-interaction-version="10.3"] .generated-file-title-wrap {
+    width: 100%;
+  }
+
+  :root[data-touch-interaction-version="10.3"] .asset-file-metadata {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, auto);
+    white-space: normal;
+  }
+
+  :root[data-touch-interaction-version="10.3"] .websurf-v2-citation-menu {
+    left: max(8px, env(safe-area-inset-left, 0px));
+    right: max(8px, env(safe-area-inset-right, 0px));
+    width: auto;
+  }
+}
+
+@media (forced-colors: active) {
+  :root[data-touch-interaction-version="10.3"] [data-touch-target="true"] {
+    forced-color-adjust: auto;
+  }
+}
