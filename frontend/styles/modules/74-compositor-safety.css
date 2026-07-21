@@ -15,7 +15,7 @@
   initial-value: 0;
 }
 
-:root[data-sentiq-compositor-version="11.2"] {
+:root {
   --sentiq-compositor-safe-properties: transform, opacity;
   --sentiq-compositor-enter-distance: 6px;
   --sentiq-compositor-scale-min: 0.985;
@@ -42,7 +42,7 @@
 }
 
 /* Layout changes may still occur once, but they are never tweened. */
-:root[data-sentiq-compositor-version="11.2"] :is(
+:root :is(
   [data-sentiq-motion-family="layout"],
   .app-container,
   .main-content,
@@ -60,34 +60,34 @@
 }
 
 @media (min-width: 769px) {
-  :root[data-sentiq-compositor-version="11.2"] .sidebar {
+  :root .sidebar {
     transition-property: transform, opacity;
   }
 }
 
 /* Collapsible content snaps its dimensions, then uses a small visual settle. */
-:root[data-sentiq-compositor-version="11.2"] .thinking-content {
+:root .thinking-content {
   transform: translate3d(0, -4px, 0);
   transition-property: transform, opacity;
   transition-duration: var(--sentiq-motion-layout-duration, 220ms);
   transition-timing-function: var(--sentiq-motion-layout-ease, cubic-bezier(0.2, 0.7, 0.2, 1));
 }
 
-:root[data-sentiq-compositor-version="11.2"] .thinking-panel[data-expanded="true"] .thinking-content {
+:root .thinking-panel[data-expanded="true"] .thinking-content {
   transform: translate3d(0, 0, 0);
 }
 
-:root[data-sentiq-compositor-version="11.2"] .deep-research-report-preview-container {
+:root .deep-research-report-preview-container {
   transform: translate3d(0, -2px, 0);
   transition-property: transform, opacity;
 }
 
-:root[data-sentiq-compositor-version="11.2"] .deep-research-report-preview-container.expanded {
+:root .deep-research-report-preview-container.expanded {
   transform: translate3d(0, 0, 0);
 }
 
 /* Interactive controls never tween shadow, filter, size, margin, or padding. */
-:root[data-sentiq-compositor-version="11.2"] :where(
+:root :where(
   button,
   [role="button"],
   a[href],
@@ -100,7 +100,7 @@
   transition-property: transform, opacity, color, background-color, border-color;
 }
 
-:root[data-sentiq-compositor-version="11.2"] :is(
+:root :is(
   .btn-new-chat,
   .chat-list-item,
   .message-image,
@@ -113,7 +113,7 @@
 }
 
 /* Full-screen surfaces may fade, but never animate filters or large paint effects. */
-:root[data-sentiq-compositor-version="11.2"] :is(
+:root :is(
   .modal-overlay,
   .live-beta-panel,
   .image-lightbox,
@@ -122,21 +122,21 @@
   transition-property: opacity;
 }
 
-:root[data-sentiq-compositor-version="11.2"] body::before {
+:root body::before {
   animation: none;
   will-change: auto;
 }
 
 /* Loader and streaming reveals use transform + opacity instead of blur. */
-:root[data-sentiq-compositor-version="11.2"] .sentiq-loader,
-:root[data-sentiq-compositor-version="11.2"] .sentiq-loader.loader-exit,
-:root[data-sentiq-compositor-version="11.2"] .sentiq-reveal-target,
-:root[data-sentiq-compositor-version="11.2"] .sentiq-reveal-target.is-visible {
+:root .sentiq-loader,
+:root .sentiq-loader.loader-exit,
+:root .sentiq-reveal-target,
+:root .sentiq-reveal-target.is-visible {
   filter: none;
   transition-property: transform, opacity;
 }
 
-:root[data-sentiq-compositor-version="11.2"] :is(
+:root :is(
   .streaming-new-text,
   .streaming-rendered.streaming-render-pulse > :last-child,
   .streaming-rendered.streaming-render-pulse:empty
@@ -146,8 +146,8 @@
 }
 
 /* Paint-heavy background-position sweeps become translated bounded layers. */
-:root[data-sentiq-compositor-version="11.2"] .sentiq-loader::before,
-:root[data-sentiq-compositor-version="11.2"] .sentiq-loader-shimmer::before {
+:root .sentiq-loader::before,
+:root .sentiq-loader-shimmer::before {
   inset: -12% -70%;
   background-size: 100% 100%;
   background-attachment: scroll;
@@ -156,14 +156,14 @@
   will-change: transform;
 }
 
-:root[data-sentiq-compositor-version="11.2"] .chat-input-area.is-response-locked::before {
+:root .chat-input-area.is-response-locked::before {
   background-size: 100% 100%;
   animation-name: sentiqCompositorOpacityPulse;
   will-change: opacity;
 }
 
 /* Large image skeletons move one narrow overlay instead of repainting a gradient. */
-:root[data-sentiq-compositor-version="11.2"] .image-skeleton {
+:root .image-skeleton {
   position: relative;
   overflow: hidden;
   background: rgba(139, 92, 246, 0.065);
@@ -172,7 +172,7 @@
   contain: paint;
 }
 
-:root[data-sentiq-compositor-version="11.2"] .image-skeleton::after {
+:root .image-skeleton::after {
   content: "";
   position: absolute;
   inset: 0 -62%;
@@ -184,22 +184,26 @@
 }
 
 /* Progress is a clamped 0..1 scale set by the progress workspace runtime. */
-:root[data-sentiq-compositor-version="11.2"] .deep-research-progress-bar {
+:root .deep-research-progress-bar {
   contain: paint;
 }
 
-:root[data-sentiq-compositor-version="11.2"] .deep-research-progress-fill {
+:root .deep-research-progress-fill {
   width: 100%;
   transform: scaleX(var(--deep-research-progress-scale, 0));
   transform-origin: left center;
   transition-property: transform;
   transition-duration: var(--sentiq-motion-layout-duration, 220ms);
   transition-timing-function: var(--sentiq-motion-layout-ease, cubic-bezier(0.2, 0.7, 0.2, 1));
+  will-change: auto;
+}
+
+:root .deep-research-card[aria-busy="true"] .deep-research-progress-fill {
   will-change: transform;
 }
 
 /* Voice bars retain a stable box and animate only their local transform. */
-:root[data-sentiq-compositor-version="11.2"] .live-beta-wave i {
+:root .live-beta-wave i {
   height: 31px;
   transform: scaleY(0.32);
   transform-origin: center;
@@ -207,7 +211,7 @@
   will-change: transform, opacity;
 }
 
-:root[data-sentiq-compositor-version="11.2"] .live-beta-orb {
+:root .live-beta-orb {
   transition-property: transform, opacity;
 }
 
