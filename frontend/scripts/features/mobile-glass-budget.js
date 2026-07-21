@@ -20,7 +20,7 @@ function initializeMobileGlassBudget() {
   const subscribers = new Set();
   let frame = 0;
   let lastSignature = "";
-  let currentState = deriveMobileGlassBudget({ width: window.innerWidth });
+  let currentState = deriveMobileGlassBudget(readCapabilities());
 
   function supportsBackdropFilter() {
     if (!window.CSS?.supports) return false;
@@ -99,6 +99,8 @@ function initializeMobileGlassBudget() {
     if (document.visibilityState === "visible") update("visibility");
   });
 
+  applyState(currentState, "initial");
+
   window.SentIQMobileGlassBudget = Object.freeze({
     version: MOBILE_GLASS_BUDGET_VERSION,
     getState: () => currentState,
@@ -114,8 +116,6 @@ function initializeMobileGlassBudget() {
       return () => subscribers.delete(listener);
     },
   });
-
-  update("initial");
 }
 
 if (document.readyState === "loading") {
