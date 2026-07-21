@@ -188,7 +188,7 @@
   contain: paint;
 }
 
-:root .deep-research-progress-fill {
+:root .deep-research-card[data-deep-research-workspace-version="7.2"] .deep-research-progress-fill {
   width: 100%;
   transform: scaleX(var(--deep-research-progress-scale, 0));
   transform-origin: left center;
@@ -198,7 +198,7 @@
   will-change: auto;
 }
 
-:root .deep-research-card[aria-busy="true"] .deep-research-progress-fill {
+:root .deep-research-card[data-deep-research-workspace-version="7.2"][aria-busy="true"] .deep-research-progress-fill {
   will-change: transform;
 }
 
