@@ -75,7 +75,9 @@ export function deriveMobileComposerMetrics(input = {}) {
   const visualHeight = Math.max(1, finiteNumber(input.visualHeight, 1));
   const viewportTop = Math.max(0, finiteNumber(input.viewportTop));
   const baselineHeight = Math.max(visualHeight, finiteNumber(input.baselineHeight, visualHeight));
-  const orientation = getMobileComposerOrientation(visualWidth, visualHeight);
+  const orientation = input.orientation === "landscape" || input.orientation === "portrait"
+    ? input.orientation
+    : getMobileComposerOrientation(visualWidth, visualHeight);
   const active = isMobileComposerViewport({
     width: visualWidth,
     height: visualHeight,
