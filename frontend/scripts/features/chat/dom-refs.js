@@ -18,6 +18,7 @@ import "../progressive-disclosure.js";
 import "../capability-awareness.js";
 import "../conversation-continuity.js";
 import "../conversation-continuity-event-bridge.js";
+import "../attention-management.js";
 
 export function getChatDomRefs(doc = document) {
   return {
