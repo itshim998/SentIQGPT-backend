@@ -33,7 +33,26 @@ function setData(element, key, value) {
 }
 
 function setText(element, value) {
-  if (element && element.textContent !== value) element.textContent = value;
+  const next = String(value ?? "");
+  if (element && element.textContent !== next) element.textContent = next;
+}
+
+function setAttribute(element, name, value) {
+  if (!element) return;
+  const next = String(value ?? "");
+  if (element.getAttribute(name) !== next) element.setAttribute(name, next);
+}
+
+function setHidden(element, hidden) {
+  if (!element) return;
+  const next = Boolean(hidden);
+  if (element.hidden !== next) element.hidden = next;
+}
+
+function setTitle(element, value) {
+  if (!element) return;
+  const next = String(value ?? "");
+  if (element.title !== next) element.title = next;
 }
 
 function resolveAttachmentStatus(card) {
@@ -112,25 +131,25 @@ function enrichAttachment(card) {
   }
 
   setText(statusNode, status === "processing" ? "Preparing" : status === "failed" ? "Needs attention" : "Ready");
-  progress.hidden = status !== "processing";
-  progress.setAttribute("aria-hidden", status === "processing" ? "false" : "true");
+  setHidden(progress, status !== "processing");
+  setAttribute(progress, "aria-hidden", status === "processing" ? "false" : "true");
 
-  if (name) name.title = identity.filename;
+  setTitle(name, identity.filename);
   ensureElementId(name, "attachment-name");
   ensureElementId(type, "attachment-type");
   ensureElementId(errorCopy, "attachment-error");
 
   const describedBy = [name?.id, type?.id, errorCopy?.id].filter(Boolean).join(" ");
-  if (describedBy && card.getAttribute("aria-describedby") !== describedBy) card.setAttribute("aria-describedby", describedBy);
+  if (describedBy) setAttribute(card, "aria-describedby", describedBy);
 
   if (remove) {
-    remove.title = `Remove ${identity.filename}`;
-    remove.setAttribute("aria-label", `Remove ${identity.filename}`);
+    setTitle(remove, `Remove ${identity.filename}`);
+    setAttribute(remove, "aria-label", `Remove ${identity.filename}`);
   }
   if (retry) {
-    retry.title = `Retry ${identity.filename}`;
-    retry.setAttribute("aria-label", `Retry ${identity.filename}`);
-    if (errorCopy?.id) retry.setAttribute("aria-describedby", errorCopy.id);
+    setTitle(retry, `Retry ${identity.filename}`);
+    setAttribute(retry, "aria-label", `Retry ${identity.filename}`);
+    if (errorCopy?.id) setAttribute(retry, "aria-describedby", errorCopy.id);
   }
 }
 
@@ -146,8 +165,8 @@ function initializeAttachmentContextSurface() {
   if (wrapper.dataset.attachmentContextVersion === ATTACHMENT_CONTEXT_VERSION) return;
 
   wrapper.dataset.attachmentContextVersion = ATTACHMENT_CONTEXT_VERSION;
-  shelf.setAttribute("role", "region");
-  shelf.setAttribute("aria-roledescription", "attachment shelf");
+  setAttribute(shelf, "role", "region");
+  setAttribute(shelf, "aria-roledescription", "attachment shelf");
 
   let expandButton = selectedCopy.querySelector(".selected-context-expand");
   if (!expandButton) {
@@ -160,23 +179,28 @@ function initializeAttachmentContextSurface() {
 
   let lastSelectedText = "";
   let syncFrame = 0;
+  let measureFrame = 0;
 
   function measureSelectedOverflow() {
+    measureFrame = 0;
     const currentText = String(selectedText.textContent || "").trim();
     const active = !selectedBar.hidden && selectedBar.getAttribute("aria-hidden") !== "true" && currentText.length > 0;
 
     if (!active) {
-      selectedBar.classList.remove("has-preview-overflow", "is-preview-expanded");
-      expandButton.hidden = true;
-      expandButton.setAttribute("aria-expanded", "false");
+      lastSelectedText = "";
+      setClass(selectedBar, "has-preview-overflow", false);
+      setClass(selectedBar, "is-preview-expanded", false);
+      setData(selectedBar, "previewOverflow", "false");
+      setHidden(expandButton, true);
+      setAttribute(expandButton, "aria-expanded", "false");
       return;
     }
 
     if (currentText !== lastSelectedText) {
       lastSelectedText = currentText;
-      selectedBar.classList.remove("is-preview-expanded");
+      setClass(selectedBar, "is-preview-expanded", false);
     }
-    selectedText.title = currentText;
+    setTitle(selectedText, currentText);
 
     const wasExpanded = selectedBar.classList.contains("is-preview-expanded");
     const overflows = wasExpanded
@@ -185,10 +209,15 @@ function initializeAttachmentContextSurface() {
 
     setData(selectedBar, "previewOverflow", overflows ? "true" : "false");
     setClass(selectedBar, "has-preview-overflow", overflows);
-    expandButton.hidden = !overflows;
-    expandButton.setAttribute("aria-expanded", wasExpanded ? "true" : "false");
-    expandButton.setAttribute("aria-label", wasExpanded ? "Collapse selected text preview" : "Expand selected text preview");
+    setHidden(expandButton, !overflows);
+    setAttribute(expandButton, "aria-expanded", wasExpanded ? "true" : "false");
+    setAttribute(expandButton, "aria-label", wasExpanded ? "Collapse selected text preview" : "Expand selected text preview");
     setText(expandButton, wasExpanded ? "Show less" : "Show more");
+  }
+
+  function scheduleMeasureSelectedOverflow() {
+    if (measureFrame) return;
+    measureFrame = window.requestAnimationFrame(measureSelectedOverflow);
   }
 
   function sync() {
@@ -196,9 +225,9 @@ function initializeAttachmentContextSurface() {
     const cards = Array.from(shelf.querySelectorAll(":scope > .composer-attachment"));
     cards.forEach(enrichAttachment);
     setData(shelf, "attachmentCount", cards.length);
-    shelf.setAttribute("aria-label", `${cards.length} ${cards.length === 1 ? "attachment" : "attachments"}`);
+    setAttribute(shelf, "aria-label", `${cards.length} ${cards.length === 1 ? "attachment" : "attachments"}`);
     setClass(shelf, "has-multiple-attachments", cards.length > 1);
-    window.requestAnimationFrame(measureSelectedOverflow);
+    scheduleMeasureSelectedOverflow();
   }
 
   function scheduleSync() {
@@ -209,8 +238,8 @@ function initializeAttachmentContextSurface() {
   expandButton.addEventListener("click", () => {
     const expanded = !selectedBar.classList.contains("is-preview-expanded");
     setClass(selectedBar, "is-preview-expanded", expanded);
-    expandButton.setAttribute("aria-expanded", expanded ? "true" : "false");
-    expandButton.setAttribute("aria-label", expanded ? "Collapse selected text preview" : "Expand selected text preview");
+    setAttribute(expandButton, "aria-expanded", expanded ? "true" : "false");
+    setAttribute(expandButton, "aria-label", expanded ? "Collapse selected text preview" : "Expand selected text preview");
     setText(expandButton, expanded ? "Show less" : "Show more");
   });
 
