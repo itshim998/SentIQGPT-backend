@@ -58,5 +58,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run frontend gate
-        run: npm run test:frontend
+      - name: Frontend syntax
+        run: npm run check:frontend-syntax
+
+      - name: Frontend bootstrap
+        run: npm run test:frontend-bootstrap
+
+      - name: Frontend file generation
+        run: npm run test:frontend-file-generation
+
+      - name: Frontend tool lifecycle
+        run: npm run test:frontend-tool-lifecycle
+
+      - name: Frontend billing
+        run: npm run test:frontend-billing
+
+      - name: Focused UI state
+        run: npm run test:frontend-ui-state
