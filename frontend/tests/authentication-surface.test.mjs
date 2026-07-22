@@ -26,7 +26,11 @@ for (const forbidden of ["fetch(", "localStorage", "sessionStorage", "SentIQAPI"
   assert.equal(behaviour.includes(forbidden), false, `authentication presentation must not own ${forbidden}`);
 }
 
-assert.ok(domRefs.startsWith('import "../authentication-surface.js";'));
+const uiStateImport = domRefs.indexOf('import "../ui-state-runtime.js";');
+const authenticationImport = domRefs.indexOf('import "../authentication-surface.js";');
+const settingsImport = domRefs.indexOf('import "../settings-workspace.js";');
+assert.ok(uiStateImport >= 0 && authenticationImport > uiStateImport, "Authentication presentation must initialize after central UI state");
+assert.ok(settingsImport > authenticationImport, "Settings identity surfaces must initialize after authentication presentation");
 assert.ok(imports.includes('@import url("./49-authentication-surfaces.css");'));
 assert.ok(imports.includes('@import url("./50-authentication-responsive.css");'));
 
