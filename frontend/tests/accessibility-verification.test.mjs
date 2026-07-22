@@ -129,7 +129,7 @@ assert.ok(adaptivePanels.includes("inertAround(activeModal.root)"));
 assert.ok(adaptivePanels.includes('event.key === "Escape"'));
 assert.ok(adaptivePanels.includes('event.key !== "Tab" || !entry.modal'));
 assert.ok(adaptivePanels.includes("restoreTarget.focus({ preventScroll: true })"));
-assert.ok(mobileNavigation.includes('sidebar.setAttribute("aria-modal", state.ariaModal)'));
+assert.ok(mobileNavigation.includes('setAttr(sidebar, "aria-modal", state.ariaModal)'));
 assert.ok(mobileNavigation.includes("setUnderlyingPageInert(true)"));
 assert.ok(mobileNavigation.includes('event.key === "Escape"'));
 assert.ok(mobileNavigation.includes('event.key !== "Tab" || !isOpen()'));
