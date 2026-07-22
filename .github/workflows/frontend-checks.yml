@@ -4,9 +4,18 @@ on:
   pull_request:
     paths:
       - "frontend/**"
-      - "scripts/minimizeFrontendStartupHang.mjs"
+      - "scripts/checkFrontendSyntax.mjs"
+      - "scripts/frontendBootstrapDomAliases.cjs"
+      - "scripts/runFrontendBootstrapCheck.mjs"
+      - "scripts/runFrontendChecks.mjs"
+      - "scripts/runFrontendUiStateTests.mjs"
+      - "scripts/testFrontendRuntimeSmoke.mjs"
+      - "backend/frontendSource.ts"
+      - "backend/testFrontendBootstrap.ts"
+      - "backend/testFrontendFileGeneration.ts"
       - "package.json"
       - "package-lock.json"
+      - "tsconfig.backend.json"
       - ".github/workflows/frontend-checks.yml"
   push:
     branches:
@@ -14,9 +23,18 @@ on:
       - "ui/**"
     paths:
       - "frontend/**"
-      - "scripts/minimizeFrontendStartupHang.mjs"
+      - "scripts/checkFrontendSyntax.mjs"
+      - "scripts/frontendBootstrapDomAliases.cjs"
+      - "scripts/runFrontendBootstrapCheck.mjs"
+      - "scripts/runFrontendChecks.mjs"
+      - "scripts/runFrontendUiStateTests.mjs"
+      - "scripts/testFrontendRuntimeSmoke.mjs"
+      - "backend/frontendSource.ts"
+      - "backend/testFrontendBootstrap.ts"
+      - "backend/testFrontendFileGeneration.ts"
       - "package.json"
       - "package-lock.json"
+      - "tsconfig.backend.json"
       - ".github/workflows/frontend-checks.yml"
   workflow_dispatch:
 
@@ -28,33 +46,83 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  startup-delta-debug:
-    name: Minimize blocked frontend startup
+  frontend-checks:
+    name: Syntax, lifecycle, UI state, billing, and runtime
     runs-on: ubuntu-latest
     timeout-minutes: 25
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+
       - name: Install dependencies
         run: npm ci
-      - name: Install browser diagnostic harness
-        run: npm install --no-save --ignore-scripts puppeteer-core@24.16.0
-      - name: Delta-debug DOM side effects
-        id: delta_debug
+
+      - name: Frontend syntax
+        run: npm run check:frontend-syntax
+
+      - name: Frontend bootstrap
+        id: frontend_bootstrap
         shell: bash
         run: |
           set -o pipefail
-          node scripts/minimizeFrontendStartupHang.mjs 2>&1 | tee frontend-startup-delta-debug.log
-      - name: Upload delta-debug result
-        if: always() && steps.delta_debug.outcome == 'failure'
+          npm run test:frontend-bootstrap 2>&1 | tee frontend-bootstrap.log
+
+      - name: Upload bootstrap failure log
+        if: failure() && steps.frontend_bootstrap.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-startup-delta-debug-${{ github.run_id }}
-          path: frontend-startup-delta-debug.log
+          name: frontend-bootstrap-failure-${{ github.run_id }}
+          path: frontend-bootstrap.log
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Frontend file generation
+        run: npm run test:frontend-file-generation
+
+      - name: Frontend tool lifecycle
+        run: npm run test:frontend-tool-lifecycle
+
+      - name: Frontend billing
+        run: npm run test:frontend-billing
+
+      - name: Focused UI state
+        id: frontend_ui_state
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:frontend-ui-state 2>&1 | tee frontend-ui-state.log
+
+      - name: Upload focused UI-state failure log
+        if: failure() && steps.frontend_ui_state.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-ui-state-failure-${{ github.run_id }}
+          path: frontend-ui-state.log
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Install browser smoke harness
+        run: npm install --no-save --package-lock=false --ignore-scripts puppeteer-core@24.16.0
+
+      - name: Chromium runtime smoke
+        id: frontend_runtime
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/testFrontendRuntimeSmoke.mjs 2>&1 | tee frontend-runtime.log
+
+      - name: Upload runtime failure log
+        if: failure() && steps.frontend_runtime.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-runtime-failure-${{ github.run_id }}
+          path: frontend-runtime.log
           if-no-files-found: error
           retention-days: 2
