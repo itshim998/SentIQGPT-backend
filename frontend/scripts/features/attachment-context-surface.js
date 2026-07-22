@@ -217,7 +217,9 @@ function initializeAttachmentContextSurface() {
 
   function scheduleMeasureSelectedOverflow() {
     if (measureFrame) return;
-    measureFrame = window.requestAnimationFrame(measureSelectedOverflow);
+    measureFrame = window.requestAnimationFrame(() => {
+      measureSelectedOverflow();
+    });
   }
 
   function sync() {
