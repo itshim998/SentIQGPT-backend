@@ -75,3 +75,22 @@ defineHarnessPrimitive("getClientRects", function getClientRects() {
   if (typeof this?.getBoundingClientRect !== "function") return [];
   return [this.getBoundingClientRect()];
 });
+defineHarnessPrimitive("append", function append(...nodes) {
+  nodes.forEach((node) => this?.appendChild?.(node));
+});
+defineHarnessPrimitive("before", function before(...nodes) {
+  const parent = this?.parentElement;
+  if (!parent || typeof parent.insertBefore !== "function") return;
+  nodes.forEach((node) => parent.insertBefore(node, this));
+});
+defineHarnessPrimitive("after", function after(...nodes) {
+  const parent = this?.parentElement;
+  if (!parent || typeof parent.appendChild !== "function") return;
+  nodes.forEach((node) => parent.appendChild(node));
+});
+defineHarnessPrimitive("replaceWith", function replaceWith(...nodes) {
+  const parent = this?.parentElement;
+  if (!parent) return;
+  nodes.forEach((node) => parent.insertBefore?.(node, this));
+  this.remove?.();
+});
