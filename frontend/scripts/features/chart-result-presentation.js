@@ -1,8 +1,8 @@
 /* SentIQ Liquid Glass V4 — Phase 7.3 chart results */
 
 import { ASSET_RESULT_VERSION, cleanAssetText, findMessageRetryControl } from "./asset-result-state.js";
+import { createUiIcon } from "./ui-icon-sprite.js";
 
-const EXPORT_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>';
 const legendSchedules = new WeakSet();
 
 function setAttributeIfChanged(element, name, value) {
@@ -155,7 +155,8 @@ function createChartImage(container, source) {
   const image = document.createElement("img");
   image.className = "message-chart-image";
   image.alt = "Generated chart";
-  image.loading = "eager";
+  image.loading = "lazy";
+  image.decoding = "async";
   image.addEventListener("load", () => enhanceChartResult(container), { once: true });
   image.addEventListener("error", () => {
     const error = document.createElement("div");
@@ -229,7 +230,11 @@ export function enhanceChartResult(container) {
     exportButton.className = "asset-result-action asset-chart-export";
     exportButton.title = "Export chart as PNG";
     exportButton.setAttribute("aria-label", "Export chart as PNG");
-    exportButton.innerHTML = `${EXPORT_ICON}<span>Export</span>`;
+    const icon = createUiIcon("download", { width: 18, height: 18 });
+    const label = document.createElement("span");
+    label.textContent = "Export";
+    if (icon) exportButton.appendChild(icon);
+    exportButton.appendChild(label);
     exportButton.addEventListener("click", () => exportChart(container, exportButton));
     actions.appendChild(exportButton);
   }
