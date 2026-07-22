@@ -17,7 +17,9 @@ const HTMLElementAliases = Object.freeze([
   "HTMLOptionElement",
   "HTMLSelectElement",
   "HTMLSpanElement",
+  "HTMLTemplateElement",
   "HTMLTextAreaElement",
+  "HTMLUListElement",
   "HTMLVideoElement",
 ]);
 
@@ -32,12 +34,13 @@ for (const constructorName of HTMLElementAliases) {
   });
 }
 
-if (!("SVGElement" in globalThis)) {
-  Object.defineProperty(globalThis, "SVGElement", {
+for (const constructorName of ["SVGElement", "DocumentFragment"]) {
+  if (constructorName in globalThis) continue;
+  Object.defineProperty(globalThis, constructorName, {
     configurable: true,
     enumerable: false,
     get() {
-      return globalThis.Element || globalThis.HTMLElement || class BootstrapSVGElement {};
+      return globalThis.Element || globalThis.HTMLElement || class BootstrapNode {};
     },
   });
 }
@@ -50,6 +53,13 @@ function defineHarnessPrimitive(name, value) {
     writable: true,
     value,
   });
+}
+
+function createHarnessNode(tagName = "") {
+  const Constructor = globalThis.HTMLElement || globalThis.Element;
+  const node = typeof Constructor === "function" ? new Constructor() : {};
+  node.tagName = String(tagName || "").toUpperCase();
+  return node;
 }
 
 // The legacy bootstrap harness uses lightweight object literals for document,
@@ -93,4 +103,18 @@ defineHarnessPrimitive("replaceWith", function replaceWith(...nodes) {
   if (!parent) return;
   nodes.forEach((node) => parent.insertBefore?.(node, this));
   this.remove?.();
+});
+defineHarnessPrimitive("createComment", function createComment(text = "") {
+  const node = createHarnessNode("#comment");
+  node.nodeType = 8;
+  node.textContent = String(text);
+  return node;
+});
+defineHarnessPrimitive("createDocumentFragment", function createDocumentFragment() {
+  const node = createHarnessNode("#document-fragment");
+  node.nodeType = 11;
+  return node;
+});
+defineHarnessPrimitive("createElementNS", function createElementNS(_namespace, tagName) {
+  return createHarnessNode(tagName);
 });
