@@ -100,7 +100,8 @@ const markSource = await readFile(new URL("../assets/sentiq-chat-mark.svg", impo
 for (const token of [
   "new MutationObserver",
   "document.fonts.ready",
-  "document.fonts.check",
+  "const fontSet = document.fonts",
+  "fontSet.check",
   "isInVisualViewport",
   "getBoundingClientRect",
   "window.visualViewport?.width",
