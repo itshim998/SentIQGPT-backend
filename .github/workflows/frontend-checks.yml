@@ -10,6 +10,8 @@ on:
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
       - "scripts/testFrontendRuntimeSmoke.mjs"
+      - "scripts/verifyFrontendDeployment.mjs"
+      - "scripts/testDeployedFrontendRuntime.mjs"
       - "backend/frontendSource.ts"
       - "backend/testFrontendBootstrap.ts"
       - "backend/testFrontendFileGeneration.ts"
@@ -29,6 +31,8 @@ on:
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
       - "scripts/testFrontendRuntimeSmoke.mjs"
+      - "scripts/verifyFrontendDeployment.mjs"
+      - "scripts/testDeployedFrontendRuntime.mjs"
       - "backend/frontendSource.ts"
       - "backend/testFrontendBootstrap.ts"
       - "backend/testFrontendFileGeneration.ts"
@@ -125,4 +129,40 @@ jobs:
           name: frontend-runtime-failure-${{ github.run_id }}
           path: frontend-runtime.log
           if-no-files-found: error
+          retention-days: 2
+
+      - name: Verify deployed branch revision
+        if: github.event_name == 'push' && github.ref == 'refs/heads/ui/sentiq-liquid-glass-v4'
+        id: frontend_deployment_verify
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/verifyFrontendDeployment.mjs 2>&1 | tee frontend-deployment-verify.log
+
+      - name: Upload deployment verification failure log
+        if: failure() && steps.frontend_deployment_verify.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-deployment-verification-failure-${{ github.run_id }}
+          path: frontend-deployment-verify.log
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Deployed Pages Chromium smoke
+        if: github.event_name == 'push' && github.ref == 'refs/heads/ui/sentiq-liquid-glass-v4'
+        id: frontend_deployed_runtime
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/testDeployedFrontendRuntime.mjs 2>&1 | tee frontend-deployed-runtime.log
+
+      - name: Upload deployed runtime failure evidence
+        if: failure() && steps.frontend_deployed_runtime.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-deployed-runtime-failure-${{ github.run_id }}
+          path: |
+            frontend-deployed-runtime.log
+            frontend-live-runtime-failure.png
+          if-no-files-found: warn
           retention-days: 2
