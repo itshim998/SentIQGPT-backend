@@ -285,9 +285,7 @@ import {
   let profileRefreshPromise = null;
   let profileRefreshUserId = "";
   let profileNameGatePromise = null;
-  let composerHintTimer = 0;
   let composerHintIndex = 0;
-  let composerHintCycleId = 0;
   let composerHintIntroConsumed = false;
   let composerResponseLocked = false;
   let liveVoiceStatus = {
@@ -1360,16 +1358,7 @@ import {
   }
 
   function clearComposerHintTimer() {
-    clearTimeout(composerHintTimer);
-    composerHintTimer = 0;
-  }
-
-  function cancelComposerHintAnimation() {
-    clearComposerHintTimer();
-    composerHintCycleId += 1;
-  }
-
-  function getBaseComposerPlaceholder() {
+    clearTimeout(compo  function getBaseComposerPlaceholder() {
     if (isNameCaptureRequired()) return "Add your name to continue...";
     if (imageMode) return "Describe the image you want to generate...";
     if (webSearchModeOverride) return "Ask about something current on the web...";
@@ -1391,67 +1380,30 @@ import {
     );
   }
 
+  function setComposerHintText(value) {
+    if (!composerHintText) return;
+    const next = String(value || "");
+    if (composerHintText.textContent !== next) composerHintText.textContent = next;
+  }
+
+  function setComposerHintVisible(visible) {
+    if (!composerHintOverlay) return;
+    const next = Boolean(visible);
+    if (composerHintOverlay.classList.contains("visible") !== next) {
+      composerHintOverlay.classList.toggle("visible", next);
+    }
+  }
+
   function syncComposerHint() {
     if (chatInput) {
-      chatInput.placeholder = getBaseComposerPlaceholder();
+      const placeholder = getBaseComposerPlaceholder();
+      if (chatInput.placeholder !== placeholder) chatInput.placeholder = placeholder;
     }
     if (!composerHintOverlay || !composerHintText) return;
 
-    if (!shouldShowComposerHint()) {
-      cancelComposerHintAnimation();
-      composerHintText.textContent = "";
-      composerHintOverlay.classList.remove("visible");
-      return;
-    }
-
-    composerHintOverlay.classList.add("visible");
-    if (prefersReducedMotion()) {
-      clearComposerHintTimer();
-      composerHintText.textContent = COMPOSER_HINTS[composerHintIndex % COMPOSER_HINTS.length];
-      return;
-    }
-
-    cancelComposerHintAnimation();
-    const runId = composerHintCycleId;
-    let hintIndex = composerHintIndex % COMPOSER_HINTS.length;
-    let charIndex = 0;
-    let deleting = false;
-
-    const step = () => {
-      if (runId !== composerHintCycleId) return;
-      if (!shouldShowComposerHint()) {
-        composerHintText.textContent = "";
-        composerHintOverlay.classList.remove("visible");
-        return;
-      }
-
-      const hint = COMPOSER_HINTS[hintIndex];
-      if (!deleting) {
-        charIndex = Math.min(charIndex + 1, hint.length);
-        composerHintText.textContent = hint.slice(0, charIndex);
-        if (charIndex < hint.length) {
-          composerHintTimer = window.setTimeout(step, 52);
-          return;
-        }
-        deleting = true;
-        composerHintTimer = window.setTimeout(step, 1200);
-        return;
-      }
-
-      charIndex = Math.max(charIndex - 1, 0);
-      composerHintText.textContent = hint.slice(0, charIndex);
-      if (charIndex > 0) {
-        composerHintTimer = window.setTimeout(step, 28);
-        return;
-      }
-
-      hintIndex = (hintIndex + 1) % COMPOSER_HINTS.length;
-      composerHintIndex = hintIndex;
-      deleting = false;
-      composerHintTimer = window.setTimeout(step, 220);
-    };
-
-    step();
+    const visible = shouldShowComposerHint();
+    setComposerHintVisible(visible);
+    setComposerHintText(visible ? (COMPOSER_HINTS[composerHintIndex % COMPOSER_HINTS.length] || "") : "");
   }
 
   function ensureNameCapture(message = "Add your name to continue.") {
