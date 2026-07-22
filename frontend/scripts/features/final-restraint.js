@@ -56,7 +56,6 @@ function applyFinalRestraintCopy() {
   setText("#auth-modal-subtitle", "Continue with Google or your email.");
   setText("#auth-forgot-btn", "Forgot password?");
   setText("#auth-switch-btn", "Create account");
-  hideElement("#auth-modal-title");
 
   setText("#name-modal-title", "Your name");
   setText(".name-modal-container .auth-modal-copy p", "Used for greetings and your account.");
