@@ -71,11 +71,8 @@ const stableHintBlock = `  function getBaseComposerPlaceholder() {
 
 `;
 
-const nextSource = source
-  .replace(oldDeclarations, nextDeclarations)
-  .slice(0, blockStart)
-  + stableHintBlock
-  + source.slice(blockEnd);
+const blockReplaced = source.slice(0, blockStart) + stableHintBlock + source.slice(blockEnd);
+const nextSource = blockReplaced.replace(oldDeclarations, nextDeclarations);
 
 for (const forbidden of [
   "composerHintTimer = window.setTimeout(step, 52)",
