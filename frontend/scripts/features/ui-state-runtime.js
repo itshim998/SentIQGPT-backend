@@ -31,6 +31,11 @@ function initializeUIStateRuntime() {
     if (element.getAttribute(name) !== next) element.setAttribute(name, next);
   }
 
+  function dispatchDocumentEvent(name, detail) {
+    if (typeof document.dispatchEvent !== "function" || typeof CustomEvent !== "function") return false;
+    return document.dispatchEvent(new CustomEvent(name, { detail }));
+  }
+
   function applyState(state) {
     targets().forEach((element) => {
       element.classList.remove(...stateClassNames);
@@ -45,20 +50,18 @@ function initializeUIStateRuntime() {
     });
 
     setAttribute(document.documentElement, "data-sentiq-ui-version", UI_STATE_VERSION);
-    document.dispatchEvent(new CustomEvent("sentiq-ui-state-change", {
-      detail: {
-        version: state.version,
-        revision: state.revision,
-        primary: state.primary,
-        previous: state.previous,
-        flags: state.flags,
-        auth: state.auth,
-        empty: state.empty,
-        busy: state.busy,
-        selectedTool: state.selectedTool,
-        transition: state.transition,
-      },
-    }));
+    dispatchDocumentEvent("sentiq-ui-state-change", {
+      version: state.version,
+      revision: state.revision,
+      primary: state.primary,
+      previous: state.previous,
+      flags: state.flags,
+      auth: state.auth,
+      empty: state.empty,
+      busy: state.busy,
+      selectedTool: state.selectedTool,
+      transition: state.transition,
+    });
   }
 
   store.subscribe(applyState);
@@ -90,9 +93,10 @@ function initializeUIStateRuntime() {
     },
   });
 
-  document.dispatchEvent(new CustomEvent("sentiq-ui-state-ready", {
-    detail: { version: UI_STATE_VERSION, state: store.getState().primary },
-  }));
+  dispatchDocumentEvent("sentiq-ui-state-ready", {
+    version: UI_STATE_VERSION,
+    state: store.getState().primary,
+  });
 }
 
 initializeUIStateRuntime();
