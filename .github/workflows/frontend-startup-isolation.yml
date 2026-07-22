@@ -1,0 +1,45 @@
+name: Frontend startup isolation
+
+on:
+  push:
+    branches:
+      - "ui/**"
+    paths:
+      - "frontend/scripts/features/chat/dom-refs.js"
+      - "scripts/isolateFrontendStartupHang.mjs"
+      - ".github/workflows/frontend-startup-isolation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-startup-isolation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --ignore-scripts puppeteer-core@24.16.0
+      - name: Complete DOM side-effect isolation
+        id: isolate
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/isolateFrontendStartupHang.mjs 2>&1 | tee frontend-startup-isolation.log
+      - name: Upload isolation result
+        if: always() && steps.isolate.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-complete-dom-isolation-${{ github.run_id }}
+          path: frontend-startup-isolation.log
+          if-no-files-found: error
+          retention-days: 2
