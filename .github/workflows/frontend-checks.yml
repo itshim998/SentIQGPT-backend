@@ -9,6 +9,7 @@ on:
       - "scripts/runFrontendBootstrapCheck.mjs"
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
+      - "scripts/testFrontendRuntimeSmoke.mjs"
       - "backend/frontendSource.ts"
       - "backend/testFrontendBootstrap.ts"
       - "backend/testFrontendFileGeneration.ts"
@@ -27,6 +28,7 @@ on:
       - "scripts/runFrontendBootstrapCheck.mjs"
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
+      - "scripts/testFrontendRuntimeSmoke.mjs"
       - "backend/frontendSource.ts"
       - "backend/testFrontendBootstrap.ts"
       - "backend/testFrontendFileGeneration.ts"
@@ -45,9 +47,9 @@ concurrency:
 
 jobs:
   frontend-checks:
-    name: Syntax, lifecycle, UI state, and billing
+    name: Syntax, lifecycle, UI state, billing, and runtime
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -103,5 +105,24 @@ jobs:
         with:
           name: frontend-ui-state-failure-${{ github.run_id }}
           path: frontend-ui-state.log
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Install browser smoke harness
+        run: npm install --no-save --ignore-scripts puppeteer-core@24.16.0
+
+      - name: Chromium runtime smoke
+        id: frontend_runtime
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/testFrontendRuntimeSmoke.mjs 2>&1 | tee frontend-runtime.log
+
+      - name: Upload runtime failure log
+        if: failure() && steps.frontend_runtime.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-runtime-failure-${{ github.run_id }}
+          path: frontend-runtime.log
           if-no-files-found: error
           retention-days: 2
