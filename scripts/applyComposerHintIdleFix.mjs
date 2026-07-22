@@ -1,8 +1,19 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const controllerPath = resolve("frontend/scripts/features/chat-controller.js");
-const source = readFileSync(controllerPath, "utf8");
+const controllerRelativePath = "frontend/scripts/features/chat-controller.js";
+const controllerPath = resolve(controllerRelativePath);
+const verifiedControllerBase = "be03466661999b3ec3f4abed13b0b5d7b90f1923";
+let source = readFileSync(controllerPath, "utf8");
+
+if (source.includes("clearTimeout(compo  function getBaseComposerPlaceholder()")) {
+  source = execFileSync("git", ["show", `${verifiedControllerBase}:${controllerRelativePath}`], {
+    encoding: "utf8",
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  console.log(`Recovered chat-controller.js from verified base ${verifiedControllerBase}.`);
+}
 
 const oldDeclarations = `  let composerHintTimer = 0;\n  let composerHintIndex = 0;\n  let composerHintCycleId = 0;\n  let composerHintIntroConsumed = false;`;
 const nextDeclarations = `  let composerHintIndex = 0;\n  let composerHintIntroConsumed = false;`;
@@ -79,12 +90,14 @@ for (const forbidden of [
   "composerHintTimer = window.setTimeout(step, 28)",
   "composerHintTimer = window.setTimeout(step, 220)",
   "function cancelComposerHintAnimation()",
+  "clearTimeout(compo  function",
 ]) {
-  if (nextSource.includes(forbidden)) throw new Error(`Legacy hint animation survived: ${forbidden}`);
+  if (nextSource.includes(forbidden)) throw new Error(`Legacy or malformed hint code survived: ${forbidden}`);
 }
 if (!nextSource.includes("function setComposerHintText(value)")) {
   throw new Error("Stable composer hint writer was not installed.");
 }
 
 writeFileSync(controllerPath, nextSource, "utf8");
-console.log("Applied stable composer hint policy to chat-controller.js.");
+execFileSync(process.execPath, ["--check", controllerPath], { stdio: "inherit" });
+console.log("Applied and syntax-verified stable composer hint policy to chat-controller.js.");
