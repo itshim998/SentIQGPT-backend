@@ -1,0 +1,353 @@
+/* ============================================================
+   SentIQ Chat — Phase 12.1
+   Accessibility verification and resilient interaction states
+   ============================================================ */
+
+html:root[data-accessibility-verification-version="12.1"] {
+  --sentiq-a11y-focus: #cfc4ff;
+  --sentiq-a11y-focus-strong: #eef2ff;
+  --sentiq-a11y-focus-offset: #06070b;
+  --sentiq-a11y-touch-target: 44px;
+  color-scheme: dark;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+
+.sentiq-skip-link {
+  position: fixed;
+  z-index: 100000;
+  inset-block-start: max(8px, env(safe-area-inset-top));
+  inset-inline-start: max(8px, env(safe-area-inset-left));
+  display: inline-flex;
+  min-block-size: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border: 2px solid var(--sentiq-a11y-focus-strong);
+  border-radius: 10px;
+  background: #0b0e16;
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-decoration: none;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+  transform: translateY(calc(-100% - max(16px, env(safe-area-inset-top))));
+}
+
+.sentiq-skip-link:focus,
+.sentiq-skip-link:focus-visible {
+  transform: none;
+  outline: 3px solid var(--sentiq-a11y-focus-strong) !important;
+  outline-offset: 2px !important;
+}
+
+.sentiq-a11y-announcer,
+.sr-only,
+.adaptive-panel-title-sr {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+:root[data-accessibility-verification-version="12.1"] :where(
+  button,
+  [role="button"],
+  a[href],
+  input,
+  textarea,
+  select,
+  summary,
+  [tabindex]:not([tabindex="-1"])
+):focus-visible {
+  outline: 2px solid var(--sentiq-a11y-focus) !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 1px var(--sentiq-a11y-focus-offset), 0 0 0 4px rgba(207, 196, 255, 0.22) !important;
+}
+
+:root[data-accessibility-verification-version="12.1"] :where(
+  .chat-list-item,
+  .composer-action-option,
+  .execution-mode-option,
+  .settings-workspace-nav-item,
+  .billing-plan-action,
+  .message-action-btn,
+  .generated-file-action,
+  .asset-result-action,
+  .websurf-v2-explorer-source,
+  .deep-research-action-btn
+):focus-visible {
+  position: relative;
+  z-index: 2;
+}
+
+:root[data-accessibility-verification-version="12.1"] :where(
+  .chat-messages,
+  .chat-list,
+  .settings-workspace-content,
+  .billing-panel,
+  .memory-list,
+  .live-beta-transcript,
+  .live-workspace-transcript-sheet,
+  .websurf-v2-source-explorer-detail,
+  .generated-file-body,
+  .message-code-scroll,
+  .message-table-scroll
+) {
+  scroll-padding-block: 12px;
+  scrollbar-gutter: stable;
+}
+
+:root[data-accessibility-verification-version="12.1"] :where(
+  .message,
+  .message-content,
+  .message-content > *,
+  .settings-workspace,
+  .settings-workspace-main,
+  .settings-workspace-content,
+  .settings-workspace-section,
+  .billing-panel,
+  .billing-plan-row,
+  .billing-plan-card,
+  .memory-list,
+  .memory-item,
+  .websurf-v2-presentation,
+  .websurf-v2-featured-card,
+  .websurf-v2-source-explorer-detail,
+  .deep-research-card,
+  .deep-research-report,
+  .generated-file-panel,
+  .generated-file-body,
+  .asset-result-card,
+  .live-workspace-surface,
+  .live-workspace-connection,
+  .composer-attachment,
+  .file-preview-area
+) {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+:root[data-accessibility-verification-version="12.1"] :where(
+  .message-content,
+  .selected-context-text,
+  .composer-attachment-name,
+  .generated-file-name,
+  .generated-file-description,
+  .asset-result-title,
+  .asset-result-meta,
+  .billing-plan-description,
+  .memory-item,
+  .websurf-v2-featured-title,
+  .websurf-v2-featured-excerpt,
+  .websurf-v2-explorer-source,
+  .live-beta-message,
+  .live-beta-transcript-line
+) {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+:root[data-accessibility-verification-version="12.1"] :where(
+  pre,
+  code,
+  table,
+  .katex-display,
+  svg,
+  canvas,
+  iframe,
+  img
+) {
+  max-inline-size: 100%;
+}
+
+:root[data-accessibility-verification-version="12.1"] :where(
+  .message-table-scroll,
+  .message-code-scroll,
+  .katex-display,
+  .mobile-chart-frame,
+  .websurf-v2-table-scroll
+) {
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+:root[data-accessibility-verification-version="12.1"] [role="dialog"][aria-modal="true"] {
+  max-inline-size: min(100%, calc(100vw - max(16px, env(safe-area-inset-left)) - max(16px, env(safe-area-inset-right))));
+  max-block-size: min(100%, calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom))));
+}
+
+@media (hover: none), (pointer: coarse) {
+  :root[data-accessibility-verification-version="12.1"] :where(
+    .adaptive-panel-close,
+    .mobile-navigation-close,
+    .modal-close,
+    .auth-password-toggle,
+    .composer-plus-btn,
+    .composer-mode-pill-dismiss,
+    .selected-context-remove,
+    .composer-attachment-remove,
+    .composer-attachment-retry,
+    .message-action-btn,
+    .chat-actions-overflow-btn,
+    .execution-mode-toggle,
+    .btn-send,
+    .live-beta-control,
+    .settings-tab,
+    .account-panel-item
+  ) {
+    min-inline-size: var(--sentiq-a11y-touch-target, 44px);
+    min-block-size: var(--sentiq-a11y-touch-target, 44px);
+    touch-action: manipulation;
+  }
+}
+
+/* At 200% browser zoom, desktop layouts enter these compact-width safeguards. */
+@media (max-width: 900px) {
+  :root[data-accessibility-verification-version="12.1"] :where(
+    .adaptive-panel-surface,
+    .modal-container,
+    .account-panel,
+    .composer-action-menu,
+    .execution-mode-menu,
+    .settings-workspace,
+    .live-workspace-surface
+  ) {
+    max-inline-size: calc(100vw - max(12px, env(safe-area-inset-left)) - max(12px, env(safe-area-inset-right)));
+  }
+
+  :root[data-accessibility-verification-version="12.1"] :where(
+    .settings-workspace,
+    .settings-workspace-main,
+    .settings-workspace-content,
+    .billing-plan-grid,
+    .billing-usage-grid,
+    .live-workspace-controls,
+    .message-action-bar,
+    .generated-file-actions,
+    .asset-result-actions
+  ) {
+    min-inline-size: 0;
+  }
+
+  :root[data-accessibility-verification-version="12.1"] :where(
+    .billing-plan-row,
+    .settings-workspace-section-heading,
+    .generated-file-header,
+    .asset-result-header,
+    .deep-research-report-header
+  ) {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 520px), (max-height: 520px) {
+  :root[data-accessibility-verification-version="12.1"] :where(
+    .adaptive-panel-root,
+    .modal-overlay,
+    .live-beta-panel
+  ) {
+    padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
+  }
+
+  :root[data-accessibility-verification-version="12.1"] :where(
+    [role="dialog"][aria-modal="true"],
+    .adaptive-panel-surface,
+    .modal-container,
+    .live-workspace-surface
+  ) {
+    inline-size: 100%;
+    max-inline-size: 100%;
+    max-block-size: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)));
+    overflow: auto;
+  }
+
+  :root[data-accessibility-verification-version="12.1"] :where(
+    .live-workspace-controls,
+    .name-modal-actions,
+    .settings-account-actions,
+    .generated-file-actions,
+    .asset-result-actions
+  ) {
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-contrast: more) {
+  html:root[data-accessibility-verification-version="12.1"] {
+    --text-primary: #ffffff;
+    --text-secondary: #d9deea;
+    --text-muted: #b8c0d0;
+    --border: rgba(255, 255, 255, 0.22);
+    --border-light: rgba(255, 255, 255, 0.34);
+    --sentiq-a11y-focus: #ffffff;
+    --sentiq-a11y-focus-strong: #ffffff;
+  }
+
+  :root[data-accessibility-verification-version="12.1"] :where(
+    .chat-input-area,
+    .message.assistant,
+    .adaptive-panel-surface,
+    .billing-plan-row,
+    .generated-file-panel,
+    .asset-result-card,
+    .websurf-v2-featured-card
+  ) {
+    border-color: rgba(255, 255, 255, 0.24) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (update: slow) {
+  .sentiq-skip-link {
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .sentiq-skip-link {
+    border: 2px solid LinkText;
+    background: Canvas;
+    color: LinkText;
+    box-shadow: none;
+    forced-color-adjust: auto;
+  }
+
+  :root[data-accessibility-verification-version="12.1"] :where(
+    button,
+    [role="button"],
+    a[href],
+    input,
+    textarea,
+    select,
+    summary,
+    [tabindex]:not([tabindex="-1"])
+  ):focus-visible {
+    outline: 3px solid Highlight !important;
+    outline-offset: 3px !important;
+    box-shadow: none !important;
+    forced-color-adjust: auto;
+  }
+
+  :root[data-accessibility-verification-version="12.1"] :where(
+    .adaptive-panel-surface,
+    .modal-container,
+    .chat-input-area,
+    .message.assistant,
+    .generated-file-panel,
+    .asset-result-card,
+    .websurf-v2-featured-card
+  ) {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+    forced-color-adjust: auto;
+  }
+}
