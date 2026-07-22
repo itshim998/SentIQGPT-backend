@@ -1,22 +1,18 @@
 name: Frontend idle trace
 
 on:
-  pull_request:
-    paths:
-      - "scripts/traceFrontendIdleChurn.mjs"
-      - "scripts/inspectComposerHintSource.mjs"
-      - ".github/workflows/frontend-idle-trace.yml"
   push:
     branches:
       - "ui/**"
     paths:
       - "scripts/traceFrontendIdleChurn.mjs"
       - "scripts/inspectComposerHintSource.mjs"
+      - "scripts/applyComposerHintIdleFix.mjs"
       - ".github/workflows/frontend-idle-trace.yml"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: frontend-idle-trace-${{ github.ref }}
@@ -28,17 +24,32 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ui/sentiq-liquid-glass-v4
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
       - run: npm ci
       - run: npm install --no-save --package-lock=false --ignore-scripts puppeteer-core@24.16.0
-      - name: Trace idle frames and mutations
+      - name: Apply stable composer hint policy
+        run: node scripts/applyComposerHintIdleFix.mjs
+      - name: Trace patched idle frames and mutations
         run: node scripts/traceFrontendIdleChurn.mjs > frontend-idle-trace.log
-      - name: Inspect composer hint source
+      - name: Inspect patched composer hint source
         run: node scripts/inspectComposerHintSource.mjs > composer-hint-source.log
-      - name: Upload idle trace
+      - name: Commit transformed controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/scripts/features/chat-controller.js
+          git diff --cached --quiet && { echo "No controller change produced"; exit 1; }
+          git commit -m "fix(ui): replace perpetual composer hint animation"
+          git push origin HEAD:ui/sentiq-liquid-glass-v4
+      - name: Upload patched idle trace
         uses: actions/upload-artifact@v4
         with:
           name: frontend-idle-trace-${{ github.run_id }}
