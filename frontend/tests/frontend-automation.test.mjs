@@ -12,6 +12,8 @@ import {
 const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
 const aggregateSource = await readFile(new URL("../../scripts/runFrontendChecks.mjs", import.meta.url), "utf8");
 const stateRunnerSource = await readFile(new URL("../../scripts/runFrontendUiStateTests.mjs", import.meta.url), "utf8");
+const bootstrapRunnerSource = await readFile(new URL("../../scripts/runFrontendBootstrapCheck.mjs", import.meta.url), "utf8");
+const bootstrapPreloadSource = await readFile(new URL("../../scripts/frontendBootstrapDomAliases.cjs", import.meta.url), "utf8");
 const workflowSource = await readFile(new URL("../../.github/workflows/frontend-checks.yml", import.meta.url), "utf8");
 
 assert.deepEqual(FRONTEND_CHECK_SEQUENCE, [
@@ -24,6 +26,7 @@ assert.deepEqual(FRONTEND_CHECK_SEQUENCE, [
 ]);
 
 assert.equal(packageJson.scripts["test:frontend"], "node scripts/runFrontendChecks.mjs");
+assert.equal(packageJson.scripts["test:frontend-bootstrap"], "node scripts/runFrontendBootstrapCheck.mjs");
 assert.equal(packageJson.scripts["test:frontend-ui-state"], "node scripts/runFrontendUiStateTests.mjs");
 assert.equal(packageJson.scripts["test:frontend-billing"], "node --no-warnings frontend/tests/billing-token-usage.test.mjs");
 for (const script of FRONTEND_CHECK_SEQUENCE) {
@@ -40,12 +43,13 @@ assert.ok(discovered.length >= 3, "Focused UI-state discovery should find the es
 assert.ok(discovered.includes("accessibility-verification.test.mjs"));
 assert.ok(discovered.includes("blur-layer-budget.test.mjs"));
 assert.ok(discovered.includes("ui-state-invariants.test.mjs"));
+assert.ok(discovered.includes("ui-state-runtime-contract.test.mjs"));
 assert.equal(discovered.includes("billing-token-usage.test.mjs"), false);
 assert.equal(discovered.includes("tool-lifecycle-reducer.test.mjs"), false);
 assert.deepEqual(discovered, [...discovered].sort((left, right) => left.localeCompare(right)));
 assert.equal(new Set(discovered).size, discovered.length);
 
-for (const source of [aggregateSource, stateRunnerSource]) {
+for (const source of [aggregateSource, stateRunnerSource, bootstrapRunnerSource]) {
   assert.ok(source.includes("spawnSync"));
   assert.ok(source.includes("shell: false"));
   assert.ok(source.includes('stdio: "inherit"'));
@@ -58,6 +62,29 @@ assert.ok(stateRunnerSource.includes("failures.push"));
 assert.ok(stateRunnerSource.includes("No focused frontend UI-state tests were discovered"));
 
 for (const token of [
+  'process.platform === "win32" ? "ts-node.cmd" : "ts-node"',
+  'scripts/frontendBootstrapDomAliases.cjs',
+  "--require=",
+  "domReadyListeners[0]();",
+  "for (const listener of domReadyListeners) listener();",
+  "occurrences !== 1",
+  "unlinkSync(generatedPath)",
+]) assert.ok(bootstrapRunnerSource.includes(token), `Bootstrap runner missing ${token}`);
+assert.equal(bootstrapRunnerSource.includes("--import="), false);
+
+for (const token of [
+  '"HTMLFormElement"',
+  '"HTMLInputElement"',
+  '"HTMLButtonElement"',
+  '"SVGElement"',
+  '"DocumentFragment"',
+  'defineHarnessPrimitive("getPropertyValue"',
+  'defineHarnessPrimitive("append"',
+  'defineHarnessPrimitive("createComment"',
+  'defineHarnessPrimitive("createElementNS"',
+]) assert.ok(bootstrapPreloadSource.includes(token), `Bootstrap preload missing ${token}`);
+
+for (const token of [
   "name: Frontend checks",
   "pull_request:",
   '      - "ui/**"',
@@ -66,14 +93,20 @@ for (const token of [
   "cancel-in-progress: true",
   "uses: actions/checkout@v4",
   "uses: actions/setup-node@v4",
+  "uses: actions/upload-artifact@v4",
   "node-version: 20",
   "cache: npm",
   "run: npm ci",
+  '      - "scripts/frontendBootstrapDomAliases.cjs"',
+  '      - "scripts/runFrontendBootstrapCheck.mjs"',
+  "frontend-bootstrap-failure-${{ github.run_id }}",
+  "frontend-ui-state-failure-${{ github.run_id }}",
+  "retention-days: 2",
 ]) assert.ok(workflowSource.includes(token), `Frontend workflow missing ${token}`);
 for (const script of FRONTEND_CHECK_SEQUENCE) {
-  assert.ok(workflowSource.includes(`run: npm run ${script}`), `Frontend workflow must expose ${script} as its own diagnostic step`);
+  assert.ok(workflowSource.includes(`npm run ${script}`), `Frontend workflow must expose ${script} in its own diagnostic step`);
 }
 assert.equal(workflowSource.includes("secrets."), false, "Frontend checks must remain secret-free");
 assert.equal(workflowSource.includes("pull_request_target"), false, "Untrusted pull requests must not run with elevated target-branch context");
 
-console.log("Pass 12.2 frontend automation contracts passed: local aggregation and CI diagnostics are deterministic, cross-platform, non-duplicating, least-privilege, and fail-closed.");
+console.log("Pass 12.2 frontend automation contracts passed: local aggregation, bootstrap adaptation, focused discovery, and CI diagnostics are deterministic, cross-platform, non-duplicating, least-privilege, and fail-closed.");
