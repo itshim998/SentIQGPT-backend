@@ -1357,8 +1357,7 @@ import {
       : "Ask a question, work through a file, or pick up a thread from earlier.";
   }
 
-  function clearComposerHintTimer() {
-    clearTimeout(compo  function getBaseComposerPlaceholder() {
+  function getBaseComposerPlaceholder() {
     if (isNameCaptureRequired()) return "Add your name to continue...";
     if (imageMode) return "Describe the image you want to generate...";
     if (webSearchModeOverride) return "Ask about something current on the web...";
