@@ -1,0 +1,240 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 6.5
+   Long-answer reading mode
+   ============================================================ */
+
+.message.assistant[data-reading-mode-version="6.5"][data-long-answer="true"] {
+  --sentiq-document-measure: 70ch;
+}
+
+.message.assistant[data-reading-mode-version="6.5"] > .message-content {
+  overflow-anchor: auto;
+}
+
+.message.assistant[data-reading-mode-version="6.5"][data-long-answer="true"] > :is(
+  .message-header,
+  .message-content,
+  .message-action-bar,
+  .response-trust-row,
+  .response-recovery-row,
+  .thinking-panel,
+  .message-error-wrap,
+  .message-actions-disclosure
+) {
+  width: min(100%, var(--sentiq-document-measure));
+  max-width: var(--sentiq-document-measure);
+  margin-inline: auto;
+}
+
+.message.assistant[data-reading-mode-version="6.5"][data-long-answer="true"] .message-content :is(
+  .code-block-wrap,
+  .math-display-shell,
+  table,
+  .message-image-container,
+  .image-generation-card,
+  .message-chart-container,
+  .generated-file-panel,
+  .websurf-v2-panel,
+  .websurf-v2-presentation,
+  .web-search-panel
+) {
+  max-width: 100%;
+}
+
+.message.assistant[data-reading-mode-version="6.5"][data-long-answer="true"] .message-content :is(
+  h1,
+  h2,
+  h3,
+  h4,
+  .long-answer-source-anchor,
+  .websurf-v2-source-explorer,
+  .web-search-details
+) {
+  scroll-margin-top: 22px;
+}
+
+.long-answer-source-nav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 34px;
+  margin: 0 0 1.1rem;
+  padding-bottom: 0.72rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.long-answer-source-jump,
+.long-answer-source-return {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  gap: 7px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.026);
+  color: var(--sentiq-text-muted, var(--text-muted));
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 610;
+  letter-spacing: 0.006em;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.long-answer-source-jump svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.long-answer-source-jump:hover,
+.long-answer-source-jump:focus-visible,
+.long-answer-source-return:hover,
+.long-answer-source-return:focus-visible {
+  border-color: rgba(190, 171, 239, 0.19);
+  background: rgba(149, 123, 232, 0.07);
+  color: var(--sentiq-text-primary, var(--text-primary));
+}
+
+.long-answer-source-jump:focus-visible,
+.long-answer-source-return:focus-visible {
+  outline: 2px solid rgba(190, 171, 239, 0.64);
+  outline-offset: 2px;
+}
+
+.long-answer-source-anchor {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 1px;
+  margin: 1.7rem 0 0.65rem;
+  outline: none;
+}
+
+.long-answer-source-return[hidden] {
+  display: none;
+}
+
+.chat-scroll-region[data-reading-mode-version="6.5"] .scroll-anchor-pill {
+  bottom: max(14px, env(safe-area-inset-bottom));
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  border-radius: 999px;
+  background: rgba(15, 18, 27, 0.82);
+  color: rgba(212, 217, 228, 0.9);
+  font-size: 0.72rem;
+  font-weight: 620;
+  letter-spacing: 0.008em;
+  box-shadow:
+    0 10px 26px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(14px) saturate(108%);
+  -webkit-backdrop-filter: blur(14px) saturate(108%);
+  transform: translateX(-50%) translateY(12px);
+  transition:
+    opacity 160ms ease,
+    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.chat-scroll-region[data-reading-mode-version="6.5"] .scroll-anchor-pill.visible {
+  transform: translateX(-50%) translateY(0);
+}
+
+.chat-scroll-region[data-reading-mode-version="6.5"] .scroll-anchor-pill:hover,
+.chat-scroll-region[data-reading-mode-version="6.5"] .scroll-anchor-pill:focus-visible {
+  border-color: rgba(190, 171, 239, 0.19);
+  background: rgba(21, 24, 35, 0.92);
+  color: var(--sentiq-text-heading, var(--text-heading));
+}
+
+.scroll-anchor-pill-icon {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.scroll-anchor-pill-dot {
+  width: 5px;
+  height: 5px;
+  display: none;
+  border-radius: 50%;
+  background: rgba(190, 171, 239, 0.86);
+}
+
+.scroll-anchor-pill[data-has-new-content="true"] .scroll-anchor-pill-dot {
+  display: block;
+}
+
+@media (max-width: 768px) {
+  .message.assistant[data-reading-mode-version="6.5"][data-long-answer="true"] {
+    --sentiq-document-measure: 100%;
+  }
+
+  .long-answer-source-nav {
+    margin-bottom: 0.92rem;
+    padding-bottom: 0.62rem;
+  }
+
+  .long-answer-source-jump,
+  .long-answer-source-return {
+    min-height: 40px;
+    padding-inline: 11px;
+  }
+
+  .chat-scroll-region[data-reading-mode-version="6.5"] .scroll-anchor-pill {
+    bottom: max(10px, env(safe-area-inset-bottom));
+    min-height: 42px;
+    padding: 8px 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .long-answer-source-jump,
+  .long-answer-source-return,
+  .chat-scroll-region[data-reading-mode-version="6.5"] .scroll-anchor-pill {
+    transition: none;
+    scroll-behavior: auto;
+  }
+}
+
+@media (forced-colors: active) {
+  .long-answer-source-nav {
+    border-bottom-color: CanvasText;
+  }
+
+  .long-answer-source-jump,
+  .long-answer-source-return,
+  .chat-scroll-region[data-reading-mode-version="6.5"] .scroll-anchor-pill {
+    border: 1px solid ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .long-answer-source-jump:focus-visible,
+  .long-answer-source-return:focus-visible,
+  .chat-scroll-region[data-reading-mode-version="6.5"] .scroll-anchor-pill:focus-visible {
+    outline: 2px solid Highlight;
+  }
+}

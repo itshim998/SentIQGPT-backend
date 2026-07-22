@@ -1,88 +1,84 @@
 /* ============================================================
-   SentIQ Chat v3 — Liquid Glass Design System
-   Inspired by HealthIQ's glassmorphism, gradient lighting,
-   and animation philosophy.
+   SentIQ Chat V4 — Canonical Design Tokens and Base Reset
+
+   Phase 1.2 establishes this file as the authoritative source for
+   visual primitives. The higher-specificity html:root selector keeps
+   legacy :root declarations in late refinement layers non-authoritative
+   until those large stylesheets are decomposed in later cleanup passes.
    ============================================================ */
-   
 
-:root {
-  /* Existing legacy-compatible tokens.
-     Current modules still consume these names directly; keep them stable. */
-
+html:root {
   /* Typography */
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
 
-  /* Purple palette */
-  --purple-300: #c4b5fd;
-  --purple-400: #a78bfa;
-  --purple-500: #8b5cf6;
-  --purple-600: #7c3aed;
-  --purple-700: #6d28d9;
-  --purple-800: #5b21b6;
+  /* Canonical purple palette */
+  --purple-300: #d2c5ff;
+  --purple-400: #b49ef3;
+  --purple-500: #8e75df;
+  --purple-600: #7358c6;
+  --purple-700: #554098;
+  --purple-800: #312557;
 
-  /* Backgrounds */
-  --bg-primary: #09090f;
-  --bg-secondary: rgba(255,255,255,0.03);
-  --bg-tertiary: rgba(255,255,255,0.06);
-  --bg-hover: rgba(255,255,255,0.08);
-  --bg-input: rgba(255,255,255,0.05);
-  --bg-glass: rgba(255,255,255,0.04);
-  --bg-glass-hover: rgba(255,255,255,0.07);
+  /* Canvas and legacy-compatible backgrounds */
+  --bg-primary: #06070b;
+  --bg-secondary: rgba(14, 17, 25, 0.68);
+  --bg-tertiary: rgba(20, 24, 34, 0.64);
+  --bg-hover: rgba(255, 255, 255, 0.048);
+  --bg-input: rgba(12, 15, 23, 0.82);
+  --bg-glass: rgba(11, 14, 21, 0.68);
+  --bg-glass-hover: rgba(18, 22, 32, 0.74);
 
-  /* Text */
-  --text-primary: #ececf1;
-  --text-secondary: #9494a8;
-  --text-muted: #5a5a72;
-  --text-heading: #f5f3ff;
+  /* Text hierarchy */
+  --text-primary: #f0f2f7;
+  --text-secondary: #aab1bf;
+  --text-muted: #737b8b;
+  --text-heading: #f7f5ff;
 
   /* Accent */
-  --accent: var(--purple-500);
-  --accent-hover: var(--purple-600);
-  --accent-glow: rgba(139,92,246,0.10);
-  --accent-glow-strong: rgba(139,92,246,0.18);
-  --accent-cool: #7dd3fc;
-  --accent-cool-glow: rgba(125,211,252,0.22);
+  --accent: #957be8;
+  --accent-hover: #a995ef;
+  --accent-glow: rgba(149, 123, 232, 0.075);
+  --accent-glow-strong: rgba(149, 123, 232, 0.12);
+  --accent-cool: #8bcff1;
+  --accent-cool-glow: rgba(139, 207, 241, 0.09);
 
-  /* Semantic */
-  --danger: #ef4444;
-  --success: #22c55e;
+  /* Semantic status */
+  --danger: #f87171;
+  --success: #34d399;
+  --warning: #fbbf24;
 
   /* Borders */
-  --border: rgba(255,255,255,0.08);
-  --border-light: rgba(255,255,255,0.12);
+  --border: rgba(255, 255, 255, 0.058);
+  --border-light: rgba(255, 255, 255, 0.094);
 
   /* Radii */
-  --radius: 12px;
+  --radius: 10px;
   --radius-sm: 8px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
 
-  /* Transitions */
-  --transition: 0.2s ease;
-  --transition-slow: 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  /* Motion */
+  --transition: 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
+  --transition-slow: 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Shadows */
-  --shadow-sm: 0 2px 8px rgba(0,0,0,0.4);
-  --shadow-md: 0 4px 20px rgba(0,0,0,0.5);
-  --shadow-lg: 0 8px 40px rgba(0,0,0,0.6);
-  --shadow-glow: 0 0 24px rgba(139,92,246,0.10);
+  --shadow-sm: 0 8px 20px rgba(0, 0, 0, 0.16);
+  --shadow-md: 0 18px 48px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 30px 90px rgba(0, 0, 0, 0.38);
+  --shadow-glow: 0 24px 70px rgba(72, 50, 132, 0.12);
 
-  /* Glass */
-  --glass-blur: blur(16px) saturate(120%);
-  --glass-bg: rgba(255,255,255,0.04);
-  --glass-border: rgba(255,255,255,0.1);
+  /* Legacy-compatible glass primitives */
+  --glass-blur: blur(18px) saturate(112%);
+  --glass-bg: rgba(11, 14, 21, 0.64);
+  --glass-border: rgba(255, 255, 255, 0.07);
 
   /* Layout */
   --sidebar-width: 280px;
-  --content-max-width: 860px;
-  --content-padding: 24px;
-  --message-indent: 38px;
-
-  /* Gemini-checkpoint foundation tokens.
-     These semantic aliases prepare later shell/composer/message/sidebar/panel passes
-     without changing current selectors, markup, or behavior in Phase 1. */
+  --content-max-width: 960px;
+  --content-padding: 30px;
+  --message-indent: 42px;
 
   /* Canvas backgrounds and ambient gradients */
   --sentiq-canvas-bg: var(--bg-primary);
@@ -118,7 +114,7 @@
   --sentiq-state-focus-low: var(--accent-glow);
   --sentiq-state-active-low: var(--accent-glow-strong);
 
-  /* Text hierarchy */
+  /* Text aliases */
   --sentiq-text-primary: var(--text-primary);
   --sentiq-text-secondary: var(--text-secondary);
   --sentiq-text-muted: var(--text-muted);
@@ -128,7 +124,7 @@
   --sentiq-text-faint: rgba(236,236,241,0.48);
   --sentiq-welcome-heading-gradient: linear-gradient(135deg, var(--text-heading) 0%, var(--purple-300) 52%, var(--accent-cool) 118%);
 
-  /* Later composer/message/sidebar/panel passes */
+  /* Component geometry */
   --sentiq-composer-radius: 32px;
   --sentiq-composer-max-width: 720px;
   --sentiq-document-stream-max-width: 760px;
@@ -137,17 +133,59 @@
   --sentiq-panel-radius: var(--radius-lg);
   --sentiq-panel-radius-contextual: 12px;
 
+  /* Spacing scale */
+  --sentiq-space-1: 4px;
+  --sentiq-space-2: 8px;
+  --sentiq-space-3: 12px;
+  --sentiq-space-4: 16px;
+  --sentiq-space-5: 20px;
+  --sentiq-space-6: 24px;
+  --sentiq-space-8: 32px;
+  --sentiq-space-10: 40px;
+  --sentiq-space-12: 48px;
+
+  /* Three-depth liquid glass system. These remain unused until
+     their component-specific passes are implemented. */
+  --sentiq-glass-quiet-bg: rgba(255, 255, 255, 0.028);
+  --sentiq-glass-quiet-border: rgba(255, 255, 255, 0.058);
+  --sentiq-glass-quiet-filter: blur(12px) saturate(106%);
+  --sentiq-glass-quiet-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+
+  --sentiq-glass-active-bg: rgba(25, 23, 38, 0.72);
+  --sentiq-glass-active-border: rgba(210, 197, 255, 0.13);
+  --sentiq-glass-active-filter: blur(18px) saturate(112%);
+  --sentiq-glass-active-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(149, 123, 232, 0.045);
+
+  --sentiq-glass-elevated-bg: rgba(11, 14, 21, 0.82);
+  --sentiq-glass-elevated-border: rgba(255, 255, 255, 0.09);
+  --sentiq-glass-elevated-filter: blur(26px) saturate(118%);
+  --sentiq-glass-elevated-shadow: 0 30px 90px rgba(0, 0, 0, 0.38);
+
+  /* Focus and selection */
+  --sentiq-focus-ring: 0 0 0 3px rgba(149, 123, 232, 0.14);
+  --sentiq-focus-border: rgba(210, 197, 255, 0.28);
+  --sentiq-selection-bg: rgba(149, 123, 232, 0.28);
+
   /* Mobile safe spacing and touch targets */
   --sentiq-mobile-safe-spacing: max(16px, env(safe-area-inset-bottom));
   --sentiq-mobile-composer-gap: 12px;
   --sentiq-touch-target-min: 44px;
 
   /* Motion duration and easing */
+  --sentiq-motion-duration-instant: 0.1s;
   --sentiq-motion-duration-fast: 0.16s;
   --sentiq-motion-duration-standard: 0.24s;
   --sentiq-motion-duration-slow: 0.35s;
   --sentiq-motion-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
   --sentiq-motion-ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Layering */
+  --sentiq-z-canvas: 0;
+  --sentiq-z-content: 10;
+  --sentiq-z-sticky: 40;
+  --sentiq-z-popover: 70;
+  --sentiq-z-modal: 100;
+  --sentiq-z-toast: 120;
 }
 
 /* ==============================
@@ -189,6 +227,7 @@ body::before {
   z-index: 0;
   opacity: 0.9;
 }
+
 body::after {
   content: '';
   position: fixed;

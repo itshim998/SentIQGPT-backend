@@ -1,0 +1,314 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 5.4
+   Elevated liquid tool action sheet
+   ============================================================ */
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu {
+  left: 0;
+  bottom: calc(100% + 12px);
+  width: min(356px, calc(100vw - 42px));
+  max-height: min(430px, calc(100vh - 150px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  padding: 9px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(196, 181, 253, 0.2) transparent;
+  border: 1px solid rgba(218, 211, 244, 0.14);
+  border-radius: 22px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.052), transparent 34%),
+    radial-gradient(circle at 14% 0%, rgba(158, 135, 226, 0.09), transparent 42%),
+    rgba(10, 13, 21, 0.955);
+  -webkit-backdrop-filter: blur(30px) saturate(124%);
+  backdrop-filter: blur(30px) saturate(124%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.24),
+    0 26px 72px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(10px) scale(0.982);
+  transform-origin: bottom left;
+  pointer-events: none;
+  transition:
+    opacity 180ms ease,
+    visibility 0s linear 180ms,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 30;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu::before {
+  content: "";
+  position: absolute;
+  inset: 1px 12px auto;
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
+  pointer-events: none;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu.open {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option {
+  position: relative;
+  width: 100%;
+  min-height: 68px;
+  display: grid !important;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  grid-template-areas: "icon copy state";
+  align-items: center;
+  column-gap: 11px;
+  row-gap: 3px;
+  padding: 10px 11px;
+  border: 1px solid transparent;
+  border-radius: 15px;
+  background: transparent;
+  color: var(--sentiq-text-primary, #f4f5f7);
+  text-align: left;
+  cursor: pointer;
+  opacity: 1;
+  transform: none;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option:hover:not(:disabled):not(.is-sheet-disabled),
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option:focus-visible:not(:disabled):not(.is-sheet-disabled) {
+  border-color: rgba(218, 211, 244, 0.105);
+  background:
+    linear-gradient(120deg, rgba(158, 135, 226, 0.055), transparent 52%),
+    rgba(255, 255, 255, 0.045);
+  color: rgba(248, 247, 252, 0.98);
+  outline: none;
+  transform: none;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option:focus-visible {
+  box-shadow: inset 0 0 0 1px rgba(196, 181, 253, 0.34);
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option:active:not(:disabled):not(.is-sheet-disabled) {
+  background: rgba(255, 255, 255, 0.055);
+  transform: none;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-icon {
+  grid-area: icon;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(218, 211, 244, 0.09);
+  border-radius: 12px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.045), transparent),
+    rgba(255, 255, 255, 0.025);
+  color: rgba(196, 181, 253, 0.88);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-copy {
+  grid-area: copy;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-title {
+  overflow: hidden;
+  color: rgba(242, 242, 247, 0.98);
+  font-size: 0.84rem;
+  font-weight: 670;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-subtitle {
+  display: block;
+  overflow: hidden;
+  color: rgba(157, 165, 180, 0.88);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-state {
+  grid-area: state;
+  align-self: center;
+  justify-self: end;
+  max-width: 104px;
+  padding: 4px 7px;
+  border: 1px solid rgba(218, 211, 244, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.027);
+  color: rgba(174, 181, 195, 0.86);
+  font-size: 0.63rem;
+  font-weight: 650;
+  line-height: 1.15;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-state[hidden] {
+  display: none !important;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option.is-sheet-active {
+  border-color: rgba(196, 181, 253, 0.17);
+  background:
+    linear-gradient(120deg, rgba(154, 129, 229, 0.105), transparent 58%),
+    rgba(255, 255, 255, 0.035);
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option.is-sheet-active .composer-action-icon {
+  border-color: rgba(196, 181, 253, 0.18);
+  background: rgba(149, 123, 232, 0.11);
+  color: rgba(224, 216, 250, 0.97);
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option.is-sheet-active .composer-action-state {
+  border-color: rgba(196, 181, 253, 0.15);
+  background: rgba(149, 123, 232, 0.09);
+  color: rgba(215, 205, 247, 0.94);
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option.is-sheet-disabled,
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option:disabled {
+  grid-template-areas:
+    "icon copy copy"
+    "icon state state";
+  cursor: not-allowed;
+  opacity: 0.74;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option.is-sheet-disabled .composer-action-icon,
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option:disabled .composer-action-icon {
+  color: rgba(143, 150, 165, 0.72);
+  filter: saturate(0.55);
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option.is-sheet-disabled .composer-action-state,
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option:disabled .composer-action-state {
+  justify-self: start;
+  max-width: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(184, 151, 157, 0.9);
+  font-size: 0.68rem;
+  font-weight: 560;
+  line-height: 1.3;
+  text-align: left;
+  white-space: normal;
+}
+
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-plus-btn.active {
+  border-color: rgba(203, 190, 247, 0.22);
+  background: rgba(149, 123, 232, 0.115);
+  color: rgba(247, 244, 255, 0.98);
+}
+
+@media (max-width: 640px) {
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu {
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 10px);
+    width: auto;
+    max-height: min(390px, calc(100vh - 128px));
+    padding: 8px;
+    border-radius: 20px;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option {
+    min-height: 64px;
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    column-gap: 10px;
+    padding: 9px 10px;
+    border-radius: 14px;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-state {
+    max-width: 88px;
+  }
+}
+
+@media (max-width: 390px) {
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu {
+    max-height: min(360px, calc(100vh - 112px));
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    column-gap: 9px;
+    padding: 8px 9px;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-title {
+    font-size: 0.81rem;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-subtitle {
+    font-size: 0.69rem;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option {
+    min-height: 66px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu,
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu,
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option,
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-icon,
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-state {
+    border: 1px solid ButtonText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option.is-sheet-disabled,
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option:disabled {
+    color: GrayText;
+  }
+}

@@ -1,0 +1,169 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Pass 8.3
+   Keyboard-safe authentication layouts
+   ============================================================ */
+
+@media (min-width: 641px) and (max-width: 1024px) {
+  #auth-modal.authentication-surface-root,
+  #name-modal.authentication-surface-root {
+    align-items: center;
+    justify-content: center;
+    padding:
+      max(18px, env(safe-area-inset-top))
+      max(18px, env(safe-area-inset-right))
+      max(18px, env(safe-area-inset-bottom))
+      max(18px, env(safe-area-inset-left));
+  }
+
+  #auth-modal .authentication-surface,
+  #name-modal .authentication-surface {
+    width: min(468px, calc(100% - 36px));
+    height: auto;
+    max-height: min(86dvh, 760px);
+    border-width: 1px;
+    border-radius: 22px;
+  }
+}
+
+@media (max-width: 640px) {
+  body.auth-sensitive-surface-open {
+    overflow: hidden;
+  }
+
+  #auth-modal.authentication-surface-root,
+  #name-modal.authentication-surface-root {
+    align-items: flex-end;
+    background: rgba(3, 5, 10, 0.84);
+  }
+
+  #auth-modal.authentication-surface-root .authentication-surface,
+  #name-modal.authentication-surface-root .authentication-surface {
+    width: 100%;
+    height: min(var(--authentication-viewport-height, 100dvh), 100dvh);
+    max-height: min(var(--authentication-viewport-height, 100dvh), 100dvh);
+    border: 0;
+    border-radius: 0;
+  }
+
+  #auth-modal .adaptive-panel-header,
+  #name-modal .adaptive-panel-header {
+    min-height: calc(58px + env(safe-area-inset-top));
+    padding:
+      max(13px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      11px
+      max(15px, env(safe-area-inset-left));
+  }
+
+  #auth-modal .adaptive-panel-header::before,
+  #name-modal .adaptive-panel-header::before {
+    display: none;
+  }
+
+  #auth-modal .authentication-surface-body,
+  #name-modal .name-modal-body {
+    flex: 1 1 auto;
+    padding:
+      20px
+      max(18px, env(safe-area-inset-right))
+      max(26px, calc(env(safe-area-inset-bottom) + 18px))
+      max(18px, env(safe-area-inset-left));
+    overflow-y: auto;
+    scroll-padding-block: 72px 40px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #auth-modal .auth-modal-copy,
+  #name-modal .auth-modal-copy {
+    margin-bottom: 19px;
+  }
+
+  #auth-modal .auth-modal-copy h2,
+  #name-modal .auth-modal-copy h2 {
+    font-size: 1.42rem;
+  }
+
+  #auth-modal .auth-modal-copy p,
+  #name-modal .auth-modal-copy p {
+    font-size: 0.78rem;
+  }
+
+  #auth-modal .authentication-email-path {
+    margin-top: 13px;
+    padding-top: 15px;
+  }
+
+  #auth-modal .auth-field input,
+  #name-modal .auth-field input {
+    min-height: 48px;
+    font-size: 16px;
+  }
+
+  #auth-modal .authentication-google-route,
+  #auth-modal .auth-submit-btn,
+  #name-modal .auth-submit-btn {
+    min-height: 48px;
+  }
+
+  #auth-modal .auth-password-toggle {
+    width: 38px;
+    height: 38px;
+  }
+
+  #auth-modal .auth-inline-link,
+  #auth-modal .auth-switch button,
+  #name-modal .auth-inline-link {
+    min-height: 28px;
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
+@media (max-width: 390px) {
+  #auth-modal .authentication-surface-body,
+  #name-modal .name-modal-body {
+    padding-right: 15px;
+    padding-left: 15px;
+  }
+
+  #auth-modal .authentication-method-heading small,
+  #auth-modal .authentication-route-header small,
+  #auth-modal .authentication-password-feedback p {
+    line-height: 1.4;
+  }
+
+  #auth-modal .authentication-password-feedback-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+}
+
+@media (max-height: 620px) and (max-width: 640px) {
+  #auth-modal .authentication-surface-body,
+  #name-modal .name-modal-body {
+    padding-top: 14px;
+    padding-bottom: max(18px, calc(env(safe-area-inset-bottom) + 12px));
+  }
+
+  #auth-modal .auth-modal-copy,
+  #name-modal .auth-modal-copy {
+    margin-bottom: 14px;
+  }
+
+  #auth-modal .auth-modal-copy p,
+  #name-modal .auth-modal-copy p {
+    display: none;
+  }
+
+  #auth-modal .authentication-email-path {
+    gap: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #auth-modal .authentication-surface-body,
+  #name-modal .name-modal-body {
+    scroll-behavior: auto;
+  }
+}

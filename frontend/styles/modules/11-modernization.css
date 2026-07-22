@@ -34,12 +34,6 @@
   --content-max-width: 900px;
 }
 
-*,
-*::before,
-*::after {
-  letter-spacing: 0 !important;
-}
-
 body {
   background:
     linear-gradient(180deg, #080a0f 0%, #0a0d13 48%, #080a0f 100%);
@@ -460,5 +454,223 @@ textarea:focus-visible {
 
   .composer-hint-prefix {
     display: none;
+  }
+}
+
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 2.3
+   Global spacing and typography
+   ============================================================ */
+
+html body {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-kerning: normal;
+  font-optical-sizing: auto;
+  line-height: 1.5;
+  letter-spacing: -0.006em;
+  text-rendering: optimizeLegibility;
+}
+
+html body .logo {
+  font-family: var(--font-display);
+  font-size: clamp(1.14rem, 1.2vw, 1.24rem);
+  font-weight: 720;
+  line-height: 1;
+  letter-spacing: -0.036em;
+}
+
+html body .welcome-eyebrow,
+html body .sidebar-label,
+html body .web-search-section-label {
+  font-size: 0.7rem;
+  font-weight: 680;
+  line-height: 1.25;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+html body .welcome-screen h2 {
+  font-family: var(--font-display);
+  font-size: clamp(2.24rem, 4.3vw, 3.7rem);
+  font-weight: 650;
+  line-height: 1.035;
+  letter-spacing: -0.048em;
+}
+
+html body .welcome-subtitle {
+  font-size: clamp(0.96rem, 1.05vw, 1.04rem);
+  line-height: 1.62;
+  letter-spacing: -0.008em;
+}
+
+html body .message-content {
+  font-size: clamp(0.97rem, 0.35vw + 0.92rem, 1.015rem);
+  font-weight: 400;
+  line-height: 1.76;
+  letter-spacing: -0.009em;
+}
+
+html body .message-content h1 {
+  font-size: clamp(1.5rem, 1.8vw, 1.72rem);
+  line-height: 1.18;
+  letter-spacing: -0.032em;
+}
+
+html body .message-content h2 {
+  font-size: clamp(1.28rem, 1.45vw, 1.48rem);
+  line-height: 1.22;
+  letter-spacing: -0.026em;
+}
+
+html body .message-content h3 {
+  font-size: clamp(1.12rem, 1.15vw, 1.24rem);
+  line-height: 1.28;
+  letter-spacing: -0.019em;
+}
+
+html body .message-content h4,
+html body .message-content h5,
+html body .message-content h6 {
+  font-size: 1rem;
+  line-height: 1.36;
+  letter-spacing: -0.012em;
+}
+
+html body .message-content h1,
+html body .message-content h2,
+html body .message-content h3,
+html body .message-content h4,
+html body .message-content h5,
+html body .message-content h6 {
+  font-family: var(--font-display);
+  font-weight: 650;
+  text-wrap: balance;
+}
+
+html body .message-sender,
+html body .file-chip-meta,
+html body .composer-attachment-type,
+html body .generated-preview-meta,
+html body .web-search-details-meta,
+html body .auth-welcome-note {
+  font-size: 0.73rem;
+  font-weight: 560;
+  line-height: 1.4;
+  letter-spacing: 0.012em;
+}
+
+html body .thinking-toggle,
+html body .loader-text,
+html body .file-analysis-status,
+html body .image-gen-label {
+  font-size: 0.78rem;
+  font-weight: 620;
+  line-height: 1.42;
+  letter-spacing: 0.006em;
+}
+
+html body button,
+html body input,
+html body textarea,
+html body select,
+html body .tool-btn,
+html body .composer-action-option,
+html body .execution-mode-option {
+  font-family: var(--font-sans);
+  letter-spacing: -0.004em;
+}
+
+html body .btn-new-chat,
+html body .auth-btn,
+html body .btn-primary,
+html body .btn-settings,
+html body .account-btn,
+html body .starter-action-btn {
+  font-size: 0.82rem;
+  font-weight: 620;
+  line-height: 1.25;
+}
+
+html body .composer-action-title,
+html body .generated-file-title,
+html body .web-search-title,
+html body .chat-load-error-title {
+  font-size: 0.84rem;
+  font-weight: 650;
+  line-height: 1.32;
+  letter-spacing: -0.008em;
+}
+
+html body .composer-action-subtitle,
+html body .web-search-source-title,
+html body .clarification-option-label {
+  font-size: 0.74rem;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+
+html body code,
+html body pre,
+html body kbd,
+html body samp,
+html body .katex,
+html body .katex-display {
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+}
+
+html body code,
+html body pre,
+html body kbd,
+html body samp {
+  font-family: var(--font-mono);
+}
+
+html body .message-content pre,
+html body .message-content code {
+  font-size: 0.88em;
+  line-height: 1.62;
+}
+
+html body .katex {
+  font-size: 1.01em;
+  line-height: 1.35;
+}
+
+html body .katex-display {
+  margin-block: 1.15em;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+@media (max-width: 768px) {
+  html body .welcome-screen h2 {
+    font-size: clamp(1.86rem, 8vw, 2.4rem);
+    line-height: 1.06;
+    letter-spacing: -0.041em;
+  }
+
+  html body .message-content {
+    font-size: 0.965rem;
+    line-height: 1.72;
+  }
+}
+
+@media (max-width: 480px) {
+  html body {
+    font-size: 15.5px;
+  }
+
+  html body .message-content h1 {
+    font-size: 1.42rem;
+  }
+
+  html body .message-content h2 {
+    font-size: 1.25rem;
+  }
+
+  html body .message-content h3 {
+    font-size: 1.1rem;
   }
 }

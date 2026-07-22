@@ -2,10 +2,66 @@
   "use strict";
 
   const PRODUCT_NAME = "SentIQ Chat";
+  const ASSET_LOADING_VERSION = "11.6";
+  const LOCAL_MARK_HREF = "assets/sentiq-chat-mark.svg";
+  const INTER_VARIABLE_STYLESHEET = "https://fonts.googleapis.com/css2?family=Inter:wght@300..700&display=swap";
   const limitedReasons = new Map();
   let isReady = false;
   let didFail = false;
   let readinessTimer = null;
+
+  function ensureLink(attributes) {
+    const selector = attributes.selector;
+    let link = selector ? document.head?.querySelector(selector) : null;
+    if (!link) {
+      link = document.createElement("link");
+      document.head?.appendChild(link);
+    }
+    Object.entries(attributes).forEach(([name, value]) => {
+      if (name === "selector" || value === undefined || value === null) return;
+      if (link.getAttribute(name) !== String(value)) link.setAttribute(name, String(value));
+    });
+    return link;
+  }
+
+  function optimizeHeadAssets() {
+    if (!document.head) return;
+
+    const primaryIcon = ensureLink({
+      selector: 'link[rel="icon"]',
+      rel: "icon",
+      type: "image/svg+xml",
+      href: LOCAL_MARK_HREF,
+    });
+    primaryIcon?.setAttribute("data-asset-loading-version", ASSET_LOADING_VERSION);
+
+    document.head.querySelectorAll('link[rel="shortcut icon"]').forEach((link) => link.remove());
+    ensureLink({
+      selector: 'link[rel="apple-touch-icon"]',
+      rel: "apple-touch-icon",
+      href: LOCAL_MARK_HREF,
+    })?.setAttribute("data-asset-loading-version", ASSET_LOADING_VERSION);
+
+    const fontStylesheet = document.head.querySelector('link[rel="stylesheet"][href*="fonts.googleapis.com/css2?family=Inter"]');
+    if (fontStylesheet) {
+      fontStylesheet.href = INTER_VARIABLE_STYLESHEET;
+      fontStylesheet.setAttribute("fetchpriority", "high");
+      fontStylesheet.setAttribute("data-font-request", "variable-300-700");
+      fontStylesheet.setAttribute("data-asset-loading-version", ASSET_LOADING_VERSION);
+    }
+
+    ensureLink({
+      selector: 'link[rel="modulepreload"][href="scripts/main.js"]',
+      rel: "modulepreload",
+      href: "scripts/main.js",
+      fetchpriority: "high",
+      "data-asset-loading-version": ASSET_LOADING_VERSION,
+    });
+
+    document.documentElement.dataset.headAssetLoadingVersion = ASSET_LOADING_VERSION;
+  }
+
+  optimizeHeadAssets();
 
   function getBanner() {
     return document.getElementById("compatibility-banner");

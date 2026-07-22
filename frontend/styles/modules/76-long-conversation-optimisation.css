@@ -1,0 +1,92 @@
+/* SentIQ Chat — Pass 11.5 long conversation optimisation */
+
+#chat-messages[data-long-conversation-version="11.5"] {
+  overflow-anchor: auto;
+}
+
+@supports (content-visibility: auto) {
+  #chat-messages[data-long-conversation-windowed="true"] > .message[data-long-conversation-window="buffer"],
+  #chat-messages[data-long-conversation-windowed="true"] > .message[data-long-conversation-window="deferred"] {
+    content-visibility: auto;
+    contain-intrinsic-size: auto var(--sentiq-message-intrinsic-size, 180px);
+  }
+
+  #chat-messages[data-long-conversation-windowed="true"] > .message[data-long-conversation-window="deferred"] {
+    contain: layout style;
+  }
+
+  #chat-list[data-history-windowed="true"] > [data-history-render="deferred"] {
+    content-visibility: auto;
+    contain-intrinsic-size: auto var(--sentiq-history-intrinsic-size, 52px);
+    contain: layout style;
+  }
+
+  #chat-messages [data-long-conversation-citation="11.5"][data-citation-render="collapsed"],
+  #chat-messages [data-long-conversation-citation="11.5"][data-citation-render="expanded"] {
+    content-visibility: auto;
+    contain-intrinsic-size: auto var(--sentiq-citation-intrinsic-size, 220px);
+  }
+}
+
+#chat-messages > .message[data-long-conversation-window] {
+  overflow-anchor: auto;
+}
+
+#chat-messages > .message[data-offscreen-render="deferred"] {
+  animation-play-state: paused;
+}
+
+#chat-messages > .message[data-offscreen-render="deferred"] :is(
+  .response-inline-spinner,
+  .deep-research-spinner,
+  .semantic-activity-orbit,
+  .thinking-panel-spinner
+) {
+  animation-play-state: paused !important;
+}
+
+#chat-messages :is(img, video, iframe)[data-media-frame-state="deferred"] {
+  content-visibility: auto;
+}
+
+#chat-messages img[data-media-decode="pending"] {
+  background: color-mix(in srgb, var(--surface-2, #111722) 88%, transparent);
+}
+
+#chat-messages img[data-media-decode="decoded"] {
+  background: transparent;
+}
+
+#chat-messages[data-conversation-rehydration="pending"] {
+  overflow-anchor: none;
+}
+
+#chat-messages[data-conversation-rehydration="restored"],
+#chat-messages[data-conversation-rehydration="fresh"] {
+  overflow-anchor: auto;
+}
+
+#chat-list[data-long-conversation-version="11.5"] > * {
+  contain-intrinsic-size: auto var(--sentiq-history-intrinsic-size, 52px);
+}
+
+#chat-list[data-history-windowed="true"] > [data-history-render="active"],
+#chat-list[data-history-windowed="true"] > [data-history-render="near"] {
+  content-visibility: visible;
+}
+
+@media (max-width: 768px) {
+  #chat-messages[data-long-conversation-windowed="true"] > .message[data-long-conversation-window="deferred"] {
+    contain-intrinsic-size: auto var(--sentiq-message-intrinsic-size, 156px);
+  }
+
+  #chat-messages [data-long-conversation-citation="11.5"] {
+    contain-intrinsic-size: auto var(--sentiq-citation-intrinsic-size, 188px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #chat-messages > .message[data-offscreen-render="deferred"] * {
+    animation: none !important;
+  }
+}

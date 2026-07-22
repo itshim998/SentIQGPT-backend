@@ -1,0 +1,304 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 6.2
+   Compact user messages
+   ============================================================ */
+
+:root {
+  --sentiq-user-message-max: 42rem;
+}
+
+/* The turn itself becomes the capsule; no nested sender card is introduced. */
+.chat-messages .message.user {
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: min(var(--sentiq-user-message-max), 76%);
+  margin:
+    20px
+    max(var(--content-padding), calc((100% - 1040px) / 2))
+    12px
+    auto;
+  padding: 11px 14px 12px;
+  overflow: hidden;
+  border: 1px solid rgba(218, 224, 238, 0.085);
+  border-radius: 20px 20px 7px 20px;
+  background:
+    linear-gradient(145deg, rgba(58, 65, 82, 0.72), rgba(32, 38, 51, 0.8));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    0 10px 26px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(12px) saturate(106%);
+  -webkit-backdrop-filter: blur(12px) saturate(106%);
+}
+
+/* The visual direction already communicates authorship. */
+.chat-messages .message.user > .message-header {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.chat-messages .message.user > .message-content {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding-left: 0;
+  color: rgba(244, 246, 250, 0.97);
+  font-size: 0.95rem;
+  line-height: 1.58;
+  letter-spacing: -0.004em;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.chat-messages .message.user .message-content p {
+  margin: 0 0 0.64rem;
+}
+
+.chat-messages .message.user .message-content p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-messages .message.user .message-content :is(ul, ol) {
+  margin: 0.5rem 0 0.68rem;
+  padding-left: 1.25rem;
+}
+
+.chat-messages .message.user .message-content li {
+  margin: 0.24rem 0;
+}
+
+.chat-messages .message.user .message-content li::marker {
+  color: rgba(211, 202, 241, 0.76);
+}
+
+.chat-messages .message.user .message-content :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0.8rem 0 0.42rem;
+  color: rgba(250, 250, 252, 0.98);
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 660;
+  line-height: 1.36;
+}
+
+.chat-messages .message.user .message-content > :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0;
+}
+
+.chat-messages .message.user .message-content blockquote {
+  margin: 0.65rem 0;
+  padding: 0.1rem 0 0.1rem 0.78rem;
+  border: 0;
+  border-left: 2px solid rgba(205, 190, 244, 0.32);
+  border-radius: 0;
+  background: transparent;
+  color: rgba(211, 217, 228, 0.9);
+}
+
+.chat-messages .message.user .message-content a {
+  color: rgba(223, 215, 252, 0.98);
+  text-decoration-color: rgba(223, 215, 252, 0.42);
+}
+
+.chat-messages .message.user .message-content :not(pre) > code {
+  padding: 0.1em 0.34em;
+  border: 1px solid rgba(222, 214, 254, 0.1);
+  border-radius: 5px;
+  background: rgba(8, 11, 18, 0.22);
+  color: rgba(235, 230, 255, 0.98);
+}
+
+.chat-messages .message.user .message-content :is(pre, table, .code-block-wrap, .math-display-shell) {
+  max-width: 100%;
+}
+
+.chat-messages .message.user .message-content :is(pre, table, .math-display-shell) {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Persisted attachments become compact supporting material inside the prompt. */
+.chat-messages .message.user .message-attachment-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
+  gap: 7px;
+  width: 100%;
+  margin: 0 0 9px;
+}
+
+.chat-messages .message.user .message-file-chip.message-attachment-card {
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  grid-template-columns: 26px minmax(0, 1fr);
+  padding: 7px 9px;
+  border-color: rgba(226, 230, 240, 0.075);
+  border-radius: 11px;
+  background: rgba(6, 9, 15, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.chat-messages .message.user .message-attachment-card svg {
+  width: 18px;
+  height: 18px;
+  color: rgba(211, 199, 248, 0.88);
+}
+
+.chat-messages .message.user .message-attachment-name {
+  color: rgba(244, 246, 250, 0.95);
+  font-size: 0.75rem;
+  font-weight: 640;
+}
+
+.chat-messages .message.user .message-attachment-type {
+  color: rgba(162, 170, 185, 0.82);
+  font-size: 0.61rem;
+  letter-spacing: 0.05em;
+}
+
+.chat-messages .message.user .message-file-chip:not(.message-attachment-card) {
+  max-width: 100%;
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border-color: rgba(226, 230, 240, 0.075);
+  border-radius: 11px;
+  background: rgba(6, 9, 15, 0.2);
+  color: rgba(223, 228, 237, 0.9);
+}
+
+.chat-messages .message.user .message-attachment-prompt {
+  margin: 2px 1px 0;
+}
+
+/* Selected context is identified without repeating it when it is the prompt itself. */
+.user-selected-context-indicator {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin: 0 0 9px;
+  padding: 0 1px 9px;
+  border-bottom: 1px solid rgba(226, 230, 240, 0.075);
+  color: rgba(184, 191, 204, 0.88);
+}
+
+.user-selected-context-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(205, 190, 244, 0.13);
+  border-radius: 6px;
+  background: rgba(149, 123, 232, 0.075);
+  color: rgba(218, 207, 250, 0.9);
+}
+
+.user-selected-context-icon svg {
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.user-selected-context-copy {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.user-selected-context-label {
+  flex: 0 0 auto;
+  color: rgba(215, 207, 239, 0.9);
+  font-size: 0.63rem;
+  font-weight: 690;
+  letter-spacing: 0.065em;
+  text-transform: uppercase;
+}
+
+.user-selected-context-excerpt {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(174, 181, 194, 0.84);
+  font-size: 0.7rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Preserve a clear conversational beat between compact prompts and open documents. */
+.chat-messages .message.user + .message.assistant {
+  margin-top: 4px;
+}
+
+.chat-messages .message.assistant + .message.user {
+  margin-top: 18px;
+}
+
+@media (max-width: 768px) {
+  .chat-messages .message.user {
+    max-width: min(86%, 38rem);
+    margin-right: clamp(16px, 4.5vw, 28px);
+    padding: 10px 13px 11px;
+    border-radius: 19px 19px 7px 19px;
+  }
+}
+
+@media (max-width: 560px) {
+  .chat-messages .message.user .message-attachment-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .chat-messages .message.user {
+    max-width: calc(100% - 44px);
+    margin-top: 16px;
+    margin-right: 14px;
+    margin-bottom: 10px;
+    padding: 9px 12px 10px;
+    border-radius: 18px 18px 6px 18px;
+  }
+
+  .chat-messages .message.user > .message-content {
+    font-size: 0.93rem;
+    line-height: 1.55;
+  }
+
+  .user-selected-context-copy {
+    display: grid;
+    gap: 2px;
+  }
+}
+
+@media (max-width: 370px) {
+  .chat-messages .message.user {
+    max-width: calc(100% - 32px);
+    margin-right: 10px;
+  }
+}
+
+@media (forced-colors: active) {
+  .chat-messages .message.user,
+  .chat-messages .message.user .message-file-chip,
+  .user-selected-context-icon {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+  }
+
+  .user-selected-context-indicator {
+    border-bottom-color: CanvasText;
+  }
+}

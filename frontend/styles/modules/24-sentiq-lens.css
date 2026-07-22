@@ -1,0 +1,259 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 5.2
+   SentIQ Lens focus treatment
+
+   Additive focus polish only. The capsule boundary gains neutral luminance,
+   while purple remains confined to the internal region that owns focus.
+   There is no pointer tracking, continuous motion, or external glow.
+   ============================================================ */
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
+  --sentiq-lens-control-opacity: 1;
+  --sentiq-lens-control-saturation: 1;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area::after {
+  background:
+    linear-gradient(
+      108deg,
+      transparent 8%,
+      rgba(255, 255, 255, 0.018) 31%,
+      rgba(255, 255, 255, 0.052) 48%,
+      rgba(255, 255, 255, 0.014) 64%,
+      transparent 82%
+    );
+  background-position: 50% 0;
+  background-size: 175% 100%;
+  opacity: 0.54;
+  transition:
+    background-position 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms ease;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:focus-within {
+  border-color: rgba(238, 234, 249, 0.19);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 40%),
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.026), transparent 38%),
+    rgba(13, 16, 25, 0.9);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.065),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.16),
+    0 21px 58px rgba(0, 0, 0, 0.29);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:focus-within::after {
+  opacity: 0.72;
+}
+
+/* Internal regions share the same restrained transition language. */
+.chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper,
+.chat-input-wrapper[data-composer-version="5.1"] .input-tools,
+.chat-input-wrapper[data-composer-version="5.1"] .execution-mode-control,
+.chat-input-wrapper[data-composer-version="5.1"] .btn-send,
+.chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice,
+.chat-input-wrapper[data-composer-version="5.1"] .composer-mode-pill,
+.chat-input-wrapper[data-composer-version="5.1"] .composer-attachment {
+  transition:
+    opacity 170ms ease,
+    filter 170ms ease,
+    border-color 170ms ease,
+    background-color 170ms ease,
+    box-shadow 190ms ease;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper {
+  border-radius: 17px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px transparent;
+}
+
+/* Message field owns focus. */
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:has(#chat-input:focus-visible) {
+  --sentiq-lens-control-opacity: 0.78;
+  --sentiq-lens-control-saturation: 0.76;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:has(#chat-input:focus-visible)::after {
+  background-position: 58% 0;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:has(#chat-input:focus-visible) .input-field-wrapper {
+  background:
+    linear-gradient(180deg, rgba(149, 123, 232, 0.035), rgba(149, 123, 232, 0.015));
+  box-shadow:
+    inset 0 0 0 1px rgba(196, 181, 253, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:has(#chat-input:focus-visible)
+  :is(.input-tools, .execution-mode-control, .btn-send:not([hidden]), .btn-live-voice:not([hidden])) {
+  opacity: var(--sentiq-lens-control-opacity);
+  filter: saturate(var(--sentiq-lens-control-saturation));
+}
+
+/* Plus action and its menu own focus. */
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:is(
+  .composer-menu-open,
+  :has(#composer-plus-btn:focus-visible),
+  :has(.composer-action-menu :focus-visible)
+)::after {
+  background-position: 35% 0;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:is(
+  .composer-menu-open,
+  :has(#composer-plus-btn:focus-visible),
+  :has(.composer-action-menu :focus-visible)
+) .composer-plus-btn {
+  outline: none;
+  border-color: rgba(203, 190, 247, 0.28);
+  background: rgba(149, 123, 232, 0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    0 0 0 2px rgba(149, 123, 232, 0.11);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:not(.is-response-locked):is(
+  .composer-menu-open,
+  :has(#composer-plus-btn:focus-visible),
+  :has(.composer-action-menu :focus-visible)
+)
+  :is(.input-field-wrapper, .execution-mode-control, .btn-send:not([hidden]), .btn-live-voice:not([hidden])) {
+  opacity: 0.82;
+  filter: saturate(0.82);
+}
+
+/* Execution selector and its list own focus. */
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:is(
+  .composer-execution-open,
+  :has(#execution-mode-toggle:focus-visible),
+  :has(.execution-mode-menu :focus-visible)
+)::after {
+  background-position: 69% 0;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:is(
+  .composer-execution-open,
+  :has(#execution-mode-toggle:focus-visible),
+  :has(.execution-mode-menu :focus-visible)
+) .execution-mode-toggle {
+  outline: none;
+  border-color: rgba(203, 190, 247, 0.27);
+  background: rgba(149, 123, 232, 0.085);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    0 0 0 2px rgba(149, 123, 232, 0.105);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:not(.is-response-locked):is(
+  .composer-execution-open,
+  :has(#execution-mode-toggle:focus-visible),
+  :has(.execution-mode-menu :focus-visible)
+)
+  :is(.input-tools, .input-field-wrapper, .btn-send:not([hidden]), .btn-live-voice:not([hidden])) {
+  opacity: 0.82;
+  filter: saturate(0.82);
+}
+
+/* Send, stop, or Live action owns focus without expanding its shadow. */
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:has(
+  :is(.btn-send, .btn-live-voice):focus-visible
+)::after {
+  background-position: 82% 0;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] :is(.btn-send, .btn-live-voice):focus-visible {
+  outline: none;
+  border-color: rgba(224, 216, 252, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 0 0 2px rgba(149, 123, 232, 0.12),
+    0 8px 20px rgba(45, 34, 76, 0.18);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:not(.is-response-locked):has(
+  :is(.btn-send, .btn-live-voice):focus-visible
+)
+  :is(.input-tools, .input-field-wrapper, .execution-mode-control) {
+  opacity: 0.82;
+  filter: saturate(0.82);
+}
+
+/* Secondary in-capsule actions receive only a local ring. */
+.chat-input-wrapper[data-composer-version="5.1"] .composer-mode-pill:has(.composer-mode-pill-dismiss:focus-visible),
+.chat-input-wrapper[data-composer-version="5.1"] .composer-attachment:has(
+  :is(.composer-attachment-remove, .composer-attachment-retry):focus-visible
+) {
+  border-color: rgba(203, 190, 247, 0.22);
+  box-shadow:
+    inset 0 0 0 1px rgba(149, 123, 232, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-mode-pill-dismiss:focus-visible,
+.chat-input-wrapper[data-composer-version="5.1"] .composer-attachment-remove:focus-visible,
+.chat-input-wrapper[data-composer-version="5.1"] .composer-attachment-retry:focus-visible {
+  outline: 2px solid rgba(196, 181, 253, 0.42);
+  outline-offset: 1px;
+}
+
+/* Menu choices remain locally legible; the capsule itself does not glow. */
+.chat-input-wrapper[data-composer-version="5.1"] .composer-action-option:focus-visible,
+.chat-input-wrapper[data-composer-version="5.1"] .execution-mode-option:focus-visible {
+  border-color: rgba(203, 190, 247, 0.16);
+  background: rgba(149, 123, 232, 0.065);
+  box-shadow: inset 0 0 0 1px rgba(149, 123, 232, 0.045);
+}
+
+/* Streaming keeps its established stable geometry and does not inherit Lens recession. */
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area.is-response-locked
+  :is(.input-tools, .input-field-wrapper, .execution-mode-control, .btn-send, .btn-live-voice) {
+  filter: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area::after,
+  .chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper,
+  .chat-input-wrapper[data-composer-version="5.1"] .input-tools,
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-control,
+  .chat-input-wrapper[data-composer-version="5.1"] .btn-send,
+  .chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice,
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-mode-pill,
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-attachment {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area::after {
+    display: none;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area:focus-within {
+    border-color: Highlight;
+    box-shadow: none;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper,
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-mode-pill,
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-attachment {
+    background: Canvas;
+    box-shadow: none;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] :is(
+    .composer-plus-btn,
+    .execution-mode-toggle,
+    .btn-send,
+    .btn-live-voice,
+    .composer-mode-pill-dismiss,
+    .composer-attachment-remove,
+    .composer-attachment-retry,
+    .composer-action-option,
+    .execution-mode-option
+  ):focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}

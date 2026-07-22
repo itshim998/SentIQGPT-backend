@@ -1,0 +1,194 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 6.4
+   Input-aware message actions
+   ============================================================ */
+
+.message-actions-disclosure {
+  display: none;
+  width: min(100%, var(--sentiq-document-measure));
+  max-width: var(--sentiq-document-measure);
+  margin: 0 auto;
+  justify-content: flex-end;
+}
+
+.message-actions-trigger {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.026);
+  color: rgba(173, 181, 196, 0.82);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
+}
+
+.message-actions-trigger svg {
+  width: 19px;
+  height: 19px;
+  fill: currentColor;
+}
+
+.message-actions-trigger:focus-visible {
+  outline: 2px solid rgba(190, 171, 239, 0.72);
+  outline-offset: 3px;
+  color: var(--sentiq-text-heading, var(--text-heading));
+}
+
+.message[data-message-actions-version="6.4"] .message-action-btn {
+  transform: none;
+}
+
+.message[data-message-actions-version="6.4"] .message-action-btn:hover,
+.message[data-message-actions-version="6.4"] .message-action-btn:active,
+.message[data-message-actions-version="6.4"] .message-action-btn:focus-visible {
+  transform: none;
+}
+
+.message[data-message-actions-version="6.4"] .message-action-btn:focus-visible,
+.message[data-message-actions-version="6.4"] [data-message-action-zone="context"]:is(button, a):focus-visible,
+.message[data-message-actions-version="6.4"] [data-message-action-zone="context"] :is(button, a):focus-visible {
+  outline: 2px solid rgba(190, 171, 239, 0.68);
+  outline-offset: 2px;
+}
+
+/* Fine-pointer desktop: reveal without removing controls from keyboard order. */
+@media (hover: hover) and (pointer: fine) and (min-width: 769px) {
+  .message[data-message-actions-version="6.4"] > .message-action-bar,
+  .message[data-message-actions-version="6.4"] [data-message-action-zone="context"] {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-3px);
+    transition:
+      opacity 150ms ease,
+      transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .message[data-message-actions-version="6.4"]:hover > .message-action-bar,
+  .message[data-message-actions-version="6.4"]:focus-within > .message-action-bar,
+  .message[data-message-actions-version="6.4"][data-message-actions-open="true"] > .message-action-bar,
+  .message[data-message-actions-version="6.4"]:hover [data-message-action-zone="context"],
+  .message[data-message-actions-version="6.4"]:focus-within [data-message-action-zone="context"],
+  .message[data-message-actions-version="6.4"][data-message-actions-open="true"] [data-message-action-zone="context"] {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+}
+
+/* Touch/coarse-pointer and compact layouts use explicit disclosure only. */
+@media (hover: none), (pointer: coarse), (max-width: 768px) {
+  .message[data-message-actions-version="6.4"] > .message-actions-disclosure {
+    display: flex;
+    margin-top: -8px;
+    margin-bottom: 2px;
+  }
+
+  .message[data-message-actions-version="6.4"] > .message-action-bar {
+    max-height: 0;
+    margin-top: 0;
+    padding-top: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-5px);
+    transition:
+      max-height 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      opacity 150ms ease,
+      transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      padding-top 180ms ease;
+  }
+
+  .message[data-message-actions-version="6.4"][data-message-actions-open="true"] > .message-action-bar {
+    max-height: 168px;
+    padding-top: 9px;
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+
+  .message[data-message-actions-version="6.4"] > .message-action-bar {
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+
+  .message[data-message-actions-version="6.4"] .message-action-btn {
+    min-height: 40px;
+    padding: 8px 11px;
+    opacity: 0.88;
+  }
+
+  .message[data-message-actions-version="6.4"] [data-message-action-zone="context"] {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease;
+  }
+
+  .message[data-message-actions-version="6.4"][data-message-actions-open="true"] [data-message-action-zone="context"] {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .message[data-message-actions-version="6.4"][data-message-actions-open="true"] .message-actions-trigger {
+    border-color: rgba(190, 171, 239, 0.22);
+    background: rgba(149, 123, 232, 0.095);
+    color: rgba(221, 211, 255, 0.96);
+  }
+
+  .message[data-message-actions-version="6.4"] :is(
+    .image-frame-download-btn,
+    .deep-research-action-btn,
+    [data-message-action-zone="context"]:is(button, a)
+  ) {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}
+
+@media (max-width: 480px) {
+  .message[data-message-actions-version="6.4"] > .message-actions-disclosure {
+    margin-top: -6px;
+  }
+
+  .message[data-message-actions-version="6.4"] > .message-action-bar {
+    gap: 6px;
+  }
+
+  .message[data-message-actions-version="6.4"] .message-action-btn {
+    padding-inline: 10px;
+    font-size: 0.72rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-actions-trigger,
+  .message[data-message-actions-version="6.4"] > .message-action-bar,
+  .message[data-message-actions-version="6.4"] [data-message-action-zone="context"] {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .message-actions-trigger,
+  .message[data-message-actions-version="6.4"] .message-action-btn {
+    border: 1px solid ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+    box-shadow: none;
+  }
+
+  .message-actions-trigger:focus-visible,
+  .message[data-message-actions-version="6.4"] .message-action-btn:focus-visible {
+    outline: 2px solid Highlight;
+  }
+}

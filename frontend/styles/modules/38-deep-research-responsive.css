@@ -1,0 +1,43 @@
+/* SentIQ Liquid Glass V4 — Phase 7.2 responsive and accessibility */
+
+@media (max-width: 640px) {
+  .deep-research-card[data-deep-research-workspace-version="7.2"] { padding: 15px; border-radius: 17px; }
+  .deep-research-workspace-header { position: relative; flex-wrap: wrap; row-gap: 6px; }
+  .deep-research-workspace-state { order: 3; width: calc(100% - 36px); margin-left: 35px; }
+  .deep-research-workspace-percent { position: absolute; top: 6px; right: 0; }
+  .deep-research-stage-rail { gap: 5px; margin-top: 16px; }
+  .deep-research-stage { justify-content: center; gap: 5px; padding: 8px 5px; }
+  .deep-research-stage-index { width: 18px; height: 18px; flex-basis: 18px; }
+  .deep-research-stage-label { font-size: .67rem; }
+  .deep-research-card[data-deep-research-workspace-version="7.2"] .deep-research-checklist,
+  .deep-research-progress-facts { grid-template-columns: 1fr; gap: 3px; }
+  .deep-research-card[data-deep-research-workspace-version="7.2"] .deep-research-item { padding: 6px 0; }
+  .deep-research-card[data-deep-research-workspace-version="7.2"] > .deep-research-report-actions { width: 100%; }
+  .deep-research-card[data-deep-research-workspace-version="7.2"] .deep-research-action-btn { min-width: 42px; min-height: 42px; }
+  .deep-research-card[data-deep-research-workspace-version="7.2"] .deep-research-export-menu { right: auto; left: 0; }
+  .deep-research-card[data-deep-research-workspace-version="7.2"] .deep-research-report-preview-text { max-width: 100%; font-size: .88rem; line-height: 1.68; }
+}
+
+@media (max-width: 380px) {
+  .deep-research-stage { flex-direction: column; gap: 3px; }
+  .deep-research-stage-label { max-width: 100%; font-size: .63rem; }
+  .deep-research-report-metadata { display: grid; gap: 4px; }
+  .deep-research-report-metadata span + span::before { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deep-research-card[data-deep-research-workspace-version="7.2"] .deep-research-progress-fill,
+  .deep-research-card[data-deep-research-workspace-version="7.2"] > .deep-research-report-preview-container,
+  .deep-research-progress-summary-chevron { transition: none; }
+}
+
+@media (forced-colors: active) {
+  .deep-research-card[data-deep-research-workspace-version="7.2"],
+  .deep-research-stage,
+  .deep-research-action-btn,
+  .deep-research-cancel-btn { border: 1px solid CanvasText; }
+  .deep-research-stage.is-active,
+  .deep-research-stage.is-paused { outline: 2px solid Highlight; outline-offset: 1px; }
+  .deep-research-workspace-state::before,
+  .deep-research-progress-fill { background: Highlight; }
+}

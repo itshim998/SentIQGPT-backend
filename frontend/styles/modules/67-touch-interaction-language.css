@@ -1,0 +1,132 @@
+/* ============================================================
+   SentIQ Chat — Pass 10.3
+   Touch targets, pressed feedback, and discoverable gestures
+   ============================================================ */
+
+:root[data-touch-interaction-version="10.3"] {
+  --sentiq-touch-target-min: 44px;
+  --sentiq-touch-press-scale: 0.975;
+}
+
+@media (hover: none), (pointer: coarse) {
+  :root[data-touch-interaction-mode="touch"] [data-touch-target="true"][data-touch-hitbox="minimum-box"] {
+    min-inline-size: var(--sentiq-touch-target-min);
+    min-block-size: var(--sentiq-touch-target-min);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :root[data-touch-interaction-mode="touch"] [data-touch-target="true"][data-touch-hitbox="expanded"] {
+    position: relative;
+    isolation: isolate;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :root[data-touch-interaction-mode="touch"] [data-touch-target="true"][data-touch-hitbox="expanded"]::after {
+    content: "";
+    position: absolute;
+    z-index: 2;
+    top: 50%;
+    left: 50%;
+    inline-size: max(100%, var(--sentiq-touch-target-min));
+    block-size: max(100%, var(--sentiq-touch-target-min));
+    border-radius: 14px;
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+  }
+
+  :root[data-touch-interaction-mode="touch"] [data-touch-target-eligible="false"]::after {
+    pointer-events: none;
+  }
+
+  :root[data-touch-interaction-mode="touch"] .is-touch-pressed {
+    transform: translateY(1px) scale(var(--sentiq-touch-press-scale)) !important;
+    filter: brightness(0.92);
+    transition-duration: 60ms !important;
+  }
+
+  :root[data-touch-interaction-mode="touch"] :is(
+    .composer-action-option,
+    .execution-mode-option,
+    .chat-actions-menu-btn,
+    .account-panel-item,
+    .websurf-v2-citation-menu-link,
+    .websurf-v2-explorer-source,
+    .generated-file-action,
+    .asset-result-action,
+    .deep-research-export-item
+  ).is-touch-pressed {
+    background: rgba(255, 255, 255, 0.085) !important;
+  }
+
+  :root[data-touch-interaction-mode="touch"] [data-touch-menu-under-finger="true"] {
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transition: none !important;
+  }
+
+  :root[data-touch-interaction-mode="touch"] :is(
+    .message-action-bar,
+    .generated-file-actions,
+    .asset-result-actions,
+    .deep-research-report-actions,
+    .chat-list-item-actions
+  ) {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+
+  :root[data-touch-interaction-mode="touch"] :is(
+    .message-action-btn,
+    .asset-overlay-action,
+    .image-frame-download-btn,
+    .chat-actions-overflow-btn
+  ) {
+    opacity: 1;
+  }
+
+  :root[data-touch-interaction-mode="touch"] .asset-image-overlay {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    pointer-events: auto;
+  }
+
+  :root[data-touch-interaction-mode="touch"] .mobile-navigation-sheet-chrome[data-touch-drag-discoverable="dismiss"] {
+    cursor: grab;
+  }
+
+  :root[data-touch-interaction-mode="touch"] .mobile-navigation-sheet-chrome[data-touch-drag-discoverable="dismiss"] .mobile-navigation-sheet-grip {
+    width: 64px;
+    height: 22px;
+  }
+
+  :root[data-touch-interaction-mode="touch"] .mobile-navigation-sheet-chrome[data-touch-drag-discoverable="dismiss"] .mobile-navigation-sheet-grip span {
+    width: 42px;
+    height: 5px;
+    background: rgba(214, 218, 228, 0.48);
+  }
+
+  :root[data-touch-interaction-mode="touch"] .mobile-navigation-sheet-chrome[data-touch-drag-discoverable="dismiss"] .mobile-navigation-sheet-eyebrow {
+    letter-spacing: 0.055em;
+    text-transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-touch-interaction-version="10.3"] .is-touch-pressed {
+    transform: none !important;
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :root[data-touch-interaction-version="10.3"] .is-touch-pressed {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+    filter: none;
+  }
+}

@@ -1,0 +1,119 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 6.3
+   Identity and metadata
+   ============================================================ */
+
+/* Ordinary authorship is communicated by alignment and response treatment. */
+.chat-messages .message.assistant > .message-header {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.chat-messages .message.assistant > .message-header .message-avatar {
+  display: none;
+}
+
+/* Operational states keep a quiet text marker when attribution adds meaning. */
+.chat-messages .message.assistant[data-identity-mode="compact"] > .message-header {
+  position: static;
+  width: min(100%, var(--sentiq-document-measure));
+  max-width: var(--sentiq-document-measure);
+  height: auto;
+  margin: 0 auto 10px;
+  padding: 0;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  white-space: normal;
+}
+
+.chat-messages .message.assistant[data-identity-mode="compact"] > .message-header .message-sender {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(175, 182, 196, 0.82);
+  font-size: 0.64rem;
+  font-weight: 680;
+  line-height: 1.3;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+}
+
+.chat-messages .message.assistant[data-identity-mode="compact"] > .message-header .message-sender::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(190, 171, 239, 0.68);
+  box-shadow: 0 0 0 3px rgba(149, 123, 232, 0.055);
+}
+
+.chat-messages .message.assistant[data-identity-kind="system"] > .message-header .message-sender::before {
+  background: rgba(251, 191, 36, 0.74);
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.055);
+}
+
+.chat-messages .message.assistant[data-identity-kind="tool-active"] > .message-header .message-sender::before {
+  background: rgba(196, 181, 253, 0.78);
+}
+
+/* Provider/model implementation details are not permanent chat identity. */
+.chat-messages .message.assistant .image-provider-tag {
+  display: none;
+}
+
+/* Keep genuinely useful metadata, but lower it beneath the content hierarchy. */
+.chat-messages .message.assistant :is(
+  .web-search-details-meta,
+  .generated-preview-meta,
+  .websurf-v2-featured-meta,
+  .websurf-v2-explorer-meta,
+  .websurf-v2-source-meta
+) {
+  color: rgba(145, 154, 171, 0.76);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.chat-messages .message.assistant :is(
+  .web-search-details-meta,
+  .generated-preview-meta,
+  .websurf-v2-featured-meta,
+  .websurf-v2-explorer-meta,
+  .websurf-v2-source-meta
+):empty {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .chat-messages .message.assistant[data-identity-mode="compact"] > .message-header {
+    margin-bottom: 8px;
+  }
+
+  .chat-messages .message.assistant[data-identity-mode="compact"] > .message-header .message-sender {
+    font-size: 0.61rem;
+  }
+}
+
+@media (forced-colors: active) {
+  .chat-messages .message.assistant[data-identity-mode="compact"] > .message-header .message-sender {
+    color: CanvasText;
+  }
+
+  .chat-messages .message.assistant[data-identity-mode="compact"] > .message-header .message-sender::before {
+    background: CanvasText;
+    box-shadow: none;
+  }
+}

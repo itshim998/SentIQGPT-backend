@@ -1,0 +1,168 @@
+/* SentIQ Liquid Glass V4 — Phase 7.3 image and chart results */
+
+.chat-messages .image-generation-card[data-asset-result-version="7.3"] {
+  max-width: min(620px, 100%);
+  padding: 8px;
+}
+
+.chat-messages .image-generation-card .image-generation-frame.asset-media-frame {
+  position: relative;
+  width: 100%;
+  min-height: 220px;
+  border-radius: 13px;
+  overflow: hidden;
+  background: rgba(7, 9, 16, 0.82);
+}
+
+.chat-messages .image-generation-card .message-image {
+  width: 100%;
+  max-width: none;
+  height: auto;
+  margin: 0;
+  border-radius: 13px;
+  box-shadow: none;
+  object-fit: contain;
+}
+
+.chat-messages .image-generation-card .message-image:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.chat-messages .image-generation-card .image-generation-pending-layer {
+  inset: 0;
+  border-radius: 13px;
+  background:
+    linear-gradient(115deg, transparent 16%, rgba(202, 187, 245, 0.09) 42%, transparent 68%),
+    linear-gradient(160deg, rgba(68, 63, 92, 0.28), rgba(17, 20, 32, 0.7));
+  background-size: 230% 100%, 100% 100%;
+  animation: assetResultSweep 1.7s linear infinite;
+}
+
+.chat-messages .asset-image-overlay {
+  position: absolute;
+  z-index: 4;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: rgba(11, 13, 22, 0.68);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(14px) saturate(125%);
+  -webkit-backdrop-filter: blur(14px) saturate(125%);
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.chat-messages .image-generation-frame:hover .asset-image-overlay,
+.chat-messages .image-generation-frame:focus-within .asset-image-overlay,
+.chat-messages .image-generation-card.is-failed .asset-image-overlay {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.chat-messages .asset-overlay-action,
+.chat-messages .image-frame-download-btn.asset-overlay-action {
+  position: static;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: rgba(240, 242, 248, 0.94);
+}
+
+.chat-messages .image-generation-card .image-load-error {
+  margin: 0;
+  padding: 54px 18px 14px;
+  color: rgba(244, 194, 194, 0.9);
+  font-style: normal;
+  text-align: center;
+}
+
+.chat-messages .image-generation-card .asset-result-failure-actions {
+  justify-content: center;
+}
+
+.chat-messages .message-chart-container[data-asset-result-version="7.3"] {
+  display: grid;
+  margin: 12px 0 4px;
+}
+
+.chat-messages .message-chart-container .message-chart-frame,
+.chat-messages .message-chart-container .message-chart-image {
+  width: calc(100% - 20px);
+  margin: 10px;
+  border-radius: 13px;
+  background: rgba(7, 9, 16, 0.52);
+  box-shadow: none;
+}
+
+.chat-messages .message-chart-container .message-chart-frame {
+  min-height: 300px;
+  height: clamp(280px, 44vw, 390px);
+  overflow: hidden;
+}
+
+.chat-messages .message-chart-container.is-loading .message-chart-frame::before {
+  content: "";
+  position: absolute;
+  inset: 18px;
+  border-radius: 10px;
+  background:
+    linear-gradient(90deg, rgba(255,255,255,0.045) 1px, transparent 1px) 0 0 / 48px 100%,
+    linear-gradient(rgba(255,255,255,0.045) 1px, transparent 1px) 0 0 / 100% 48px,
+    linear-gradient(160deg, rgba(90, 81, 125, 0.14), rgba(18, 20, 31, 0.08));
+}
+
+.chat-messages .asset-chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+  padding: 0 14px 13px;
+  color: rgba(184, 191, 204, 0.88);
+  font-size: 0.7rem;
+}
+
+.chat-messages .asset-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.chat-messages .asset-chart-legend-swatch {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 3px;
+  background: rgba(178, 155, 235, 0.72);
+}
+
+.chat-messages .message-chart-container .message-chart-error {
+  margin: 10px;
+  padding: 42px 16px 12px;
+  color: rgba(244, 194, 194, 0.9);
+  font-style: normal;
+  text-align: center;
+}
+
+.chat-messages .asset-chart-status {
+  padding: 8px 13px 0;
+  color: rgba(164, 205, 184, 0.9);
+  font-size: 0.7rem;
+}
+
+.chat-messages .asset-chart-status.is-error {
+  color: rgba(244, 194, 194, 0.92);
+}

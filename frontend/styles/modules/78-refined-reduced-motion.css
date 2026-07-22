@@ -1,0 +1,398 @@
+/* ============================================================
+   SentIQ Chat — Pass 11.7
+   Intentional reduced-motion alternatives
+   ============================================================ */
+
+@keyframes sentiqReducedOpacityEnter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes sentiqReducedOpacityExit {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce), (update: slow) {
+  html:root {
+    --sentiq-motion-duration-instant: 0ms;
+    --sentiq-motion-duration-fast: 80ms;
+    --sentiq-motion-duration-standard: 80ms;
+    --sentiq-motion-duration-slow: 0ms;
+    --sentiq-motion-duration-progress: 0ms;
+    --sentiq-motion-duration-progress-relaxed: 0ms;
+    --sentiq-motion-surface-enter-duration: 80ms;
+    --sentiq-motion-surface-exit-duration: 80ms;
+    --sentiq-motion-layout-duration: 0ms;
+    --sentiq-motion-focus-duration: 80ms;
+    --sentiq-motion-completion-duration: 0ms;
+    --sentiq-motion-interrupt-duration: 0ms;
+    --sentiq-motion-ease-standard: linear;
+    --sentiq-motion-ease-enter: linear;
+    --sentiq-motion-ease-exit: linear;
+    --transition: 80ms linear;
+    --transition-slow: 0ms linear;
+  }
+
+  html,
+  body,
+  .chat-messages,
+  .chat-list,
+  .live-beta-surface,
+  .live-beta-transcript,
+  .live-workspace-transcript-sheet,
+  .settings-workspace,
+  .settings-workspace-body,
+  .billing-panel,
+  .websurf-v2-source-explorer-detail,
+  .generated-file-body,
+  .message-code-scroll,
+  .message-table-scroll {
+    scroll-behavior: auto !important;
+  }
+
+  /* Ambient drift and fixed-background shimmer are removed entirely. */
+  body::before,
+  .main-content-glow,
+  .sentiq-loader::before,
+  .sentiq-loader-shimmer::before,
+  .image-generation-pending-layer,
+  [data-asset-result-version="7.3"].is-loading::after {
+    animation: none !important;
+    background-attachment: scroll !important;
+    transform: none !important;
+    will-change: auto !important;
+  }
+
+  body::before {
+    background-position: 50% 0%, 50% 50%, 50% 50% !important;
+    opacity: 0.76;
+  }
+
+  /* Ordinary surfaces appear without slide, scale, blur, or parallax. */
+  .message.user,
+  .message.assistant,
+  .adaptive-panel-surface:not(#account-panel),
+  .account-panel,
+  .sentiq-attention-status,
+  .toast,
+  .websurf-v2-featured-card,
+  .deep-research-card,
+  .image-generation-card,
+  .message-chart-container,
+  .generated-file-panel,
+  .failure-recovery-panel,
+  .streaming-new-text,
+  .streaming-rendered.streaming-render-pulse > :last-child,
+  .streaming-rendered.streaming-render-pulse:empty {
+    animation: none !important;
+    filter: none !important;
+    transform: none !important;
+    will-change: auto !important;
+  }
+
+  /* Explicit lifecycle hooks retain only a brief opacity change. */
+  [data-sentiq-motion-family="surface"][data-sentiq-motion-phase="enter"] {
+    animation: sentiqReducedOpacityEnter 80ms linear both !important;
+    transform: none !important;
+  }
+
+  [data-sentiq-motion-family="surface"][data-sentiq-motion-phase="exit"] {
+    animation: sentiqReducedOpacityExit 80ms linear both !important;
+    transform: none !important;
+  }
+
+  /* Layout changes happen immediately; stateful transforms still apply. */
+  .app-container,
+  .main-content,
+  .sidebar,
+  .chat-input-wrapper,
+  .chat-input-area,
+  .settings-workspace,
+  .billing-plan-row,
+  .live-workspace-surface,
+  .websurf-v2-source-explorer-detail,
+  .thinking-chevron,
+  [data-sentiq-motion-family="layout"] {
+    transition-duration: 0ms !important;
+    transition-delay: 0ms !important;
+    transition-timing-function: linear !important;
+  }
+
+  .sidebar.is-mobile-navigation-dragging {
+    transition: none !important;
+  }
+
+  /* Opacity remains useful for overlays and disclosure without movement. */
+  .sidebar-backdrop,
+  .composer-action-menu,
+  .execution-mode-menu,
+  .account-panel,
+  .auth-menu-panel,
+  .scroll-anchor-pill,
+  .toast,
+  .thinking-content,
+  .adaptive-panel-backdrop {
+    transition-property: opacity, visibility !important;
+    transition-duration: 80ms, 0ms !important;
+    transition-delay: 0ms !important;
+    transition-timing-function: linear !important;
+  }
+
+  /* Focus remains visible and responsive, with no scale or travel. */
+  :where(
+    button,
+    [role="button"],
+    a[href],
+    input,
+    textarea,
+    select,
+    summary,
+    [tabindex]:not([tabindex="-1"])
+  ) {
+    transition-property: color, background-color, border-color, box-shadow, opacity !important;
+    transition-duration: 80ms !important;
+    transition-delay: 0ms !important;
+    transition-timing-function: linear !important;
+  }
+
+  :where(button, [role="button"], a[href]):active,
+  .btn-new-chat:active,
+  .composer-action:active,
+  .starter-action-btn:active,
+  .message-action-btn:active,
+  .live-beta-control:active {
+    transform: none !important;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area::after {
+    transition: opacity 80ms linear !important;
+    background-position: 50% 0 !important;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] :is(
+    .input-field-wrapper,
+    .input-tools,
+    .execution-mode-control,
+    .btn-send,
+    .btn-live-voice,
+    .composer-mode-pill,
+    .composer-attachment
+  ) {
+    transition-property: opacity, border-color, background-color, box-shadow, color !important;
+    transition-duration: 80ms !important;
+    transition-timing-function: linear !important;
+  }
+
+  /* Completion and interruption use persistent semantic styling, not motion. */
+  .message-action-btn.copied,
+  .conversation-attention-marker,
+  [data-sentiq-motion-family="completion"],
+  .failure-recovery-panel,
+  .chat-load-error,
+  .composer-attachment[data-attachment-state="failed"],
+  .composer-attachment.is-failed,
+  [aria-invalid="true"],
+  [data-sentiq-motion-family="interrupt"],
+  .sentiq-attention-status[data-attention-kind="file-analysis-failed"] .sentiq-attention-status-mark {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  .message-action-btn.copied,
+  [data-sentiq-motion-family="completion"] {
+    border-color: color-mix(in srgb, var(--success, #34d399) 42%, transparent) !important;
+  }
+
+  [aria-invalid="true"],
+  .composer-attachment.is-failed,
+  .composer-attachment[data-attachment-state="failed"],
+  [data-sentiq-motion-family="interrupt"] {
+    border-color: color-mix(in srgb, var(--danger, #f87171) 48%, transparent) !important;
+  }
+
+  /* Static loader equivalents preserve hierarchy and busy-state meaning. */
+  .sentiq-loader {
+    opacity: 1;
+    filter: none !important;
+    transform: none !important;
+    transition: opacity 80ms linear !important;
+    will-change: auto !important;
+  }
+
+  .sentiq-loader.loader-exit {
+    opacity: 0;
+  }
+
+  .sentiq-loader::before,
+  .sentiq-loader-shimmer::before {
+    animation: none !important;
+    background-position: 50% 50% !important;
+    opacity: 0.32;
+  }
+
+  .sentiq-loader.loader-chart .loader-chart-bar,
+  .sentiq-dot,
+  .sentiq-dot-grid::after,
+  .asset-file-skeleton span,
+  .image-generation-pending-layer,
+  [data-sentiq-motion-family="progress"] {
+    animation: none !important;
+    transform: none !important;
+    will-change: auto !important;
+  }
+
+  .sentiq-loader.loader-chart .loader-chart-bar {
+    opacity: 0.78;
+  }
+
+  .sentiq-loader.loader-chart .loader-chart-bar:nth-child(2n) {
+    opacity: 0.58;
+  }
+
+  .sentiq-dot-grid {
+    transform: none !important;
+    transition: none !important;
+  }
+
+  .sentiq-dot-grid::after {
+    opacity: 0.24;
+  }
+
+  .sentiq-dot {
+    opacity: 0.68;
+  }
+
+  .sentiq-dot:nth-child(3n + 1) {
+    opacity: 0.94;
+  }
+
+  .asset-file-skeleton span:nth-child(2n) {
+    opacity: 0.56;
+  }
+
+  .response-inline-spinner,
+  .chat-cache-spinner,
+  .semantic-activity-mark {
+    position: relative;
+    animation: none !important;
+    transform: none !important;
+    will-change: auto !important;
+  }
+
+  .response-inline-spinner,
+  .chat-cache-spinner {
+    border-color: rgba(148, 163, 184, 0.28) !important;
+    border-right-color: rgba(196, 181, 253, 0.82) !important;
+  }
+
+  .response-inline-spinner::after,
+  .chat-cache-spinner::after,
+  .semantic-activity-mark::after,
+  .semantic-activity-progress .response-inline-spinner::after {
+    content: "";
+    position: absolute;
+    top: 50% !important;
+    left: 50% !important;
+    width: 4px !important;
+    height: 4px !important;
+    border-radius: 50% !important;
+    background: currentColor !important;
+    box-shadow: none !important;
+    opacity: 0.78;
+    animation: none !important;
+    transform: translate(-50%, -50%) !important;
+    transform-origin: center !important;
+  }
+
+  .chat-cache-spinner::after {
+    width: 6px !important;
+    height: 6px !important;
+  }
+
+  .image-generation-pending-layer,
+  [data-asset-result-version="7.3"].is-loading::after {
+    opacity: 0.72;
+  }
+
+  /* Live voice remains state-readable through static colour, rings, and bars. */
+  #live-beta-panel .live-beta-orbit,
+  #live-beta-panel .live-beta-orb,
+  #live-beta-panel .live-beta-wave i {
+    animation: none !important;
+    transform: none !important;
+    transition: none !important;
+    will-change: auto !important;
+  }
+
+  #live-beta-panel .live-beta-orbit-one {
+    opacity: 0.72;
+  }
+
+  #live-beta-panel .live-beta-orbit-two {
+    opacity: 0.38;
+  }
+
+  #live-beta-panel .live-beta-wave i {
+    height: 9px;
+    opacity: 0.72;
+  }
+
+  #live-beta-panel .live-beta-wave i:nth-child(2),
+  #live-beta-panel .live-beta-wave i:nth-child(4) {
+    height: 16px;
+  }
+
+  #live-beta-panel .live-beta-wave i:nth-child(3) {
+    height: 23px;
+  }
+
+  #live-beta-panel[data-state="listening"] .live-beta-orbit-one {
+    border-width: 2px;
+    opacity: 0.88;
+  }
+
+  #live-beta-panel[data-state="speaking"] .live-beta-wave i {
+    opacity: 1;
+  }
+
+  #live-beta-panel[data-state="thinking"] .live-beta-wave i,
+  #live-beta-panel[data-state="connecting"] .live-beta-wave i {
+    height: 8px;
+    opacity: 0.58;
+  }
+
+  #live-beta-panel[data-state="muted"] .live-beta-wave i,
+  #live-beta-panel[data-state="ended"] .live-beta-wave i {
+    height: 4px;
+    opacity: 0.42;
+  }
+
+  #live-beta-panel .live-beta-state-dot {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  /* Expensive compositing hints are unnecessary when motion is static. */
+  .sentiq-loader,
+  .message,
+  .live-beta-orbit,
+  .live-beta-orb,
+  .live-beta-wave i,
+  .streaming-new-text,
+  .response-inline-spinner,
+  .chat-cache-spinner {
+    will-change: auto !important;
+  }
+
+  @media (max-width: 768px) {
+    .sidebar,
+    .sidebar-backdrop,
+    .chat-input-wrapper,
+    .chat-input-area,
+    .composer-action-menu,
+    .execution-mode-menu {
+      transition-delay: 0ms !important;
+    }
+  }
+}

@@ -1,0 +1,153 @@
+/* ============================================================
+   SentIQ Chat — Pass 11.3
+   Hard blur and simultaneous layer budget
+   ============================================================ */
+
+:root {
+  --sentiq-blur-budget-radius: 14px;
+  --sentiq-blur-budget-saturation: 112%;
+  --sentiq-blur-effective-radius: var(--sentiq-blur-budget-radius);
+  --sentiq-blur-surface: rgba(11, 14, 21, 0.76);
+  --sentiq-blur-surface-static: rgba(10, 13, 20, 0.94);
+  --sentiq-blur-surface-nested: rgba(8, 11, 17, 0.975);
+  --sentiq-blur-border: rgba(255, 255, 255, 0.085);
+  --sentiq-blur-border-elevated: rgba(255, 255, 255, 0.105);
+}
+
+/*
+ * Known elevated surfaces start static. The runtime grants blur only to the
+ * highest-priority slots inside the hard layer limit.
+ */
+:where(
+  .sidebar,
+  .chat-input-area,
+  .composer-action-menu,
+  .execution-mode-menu,
+  .auth-menu-panel,
+  .account-panel,
+  .chat-actions-menu,
+  .deep-research-export-menu,
+  .websurf-v2-citation-menu,
+  .websurf-v2-source-explorer-detail,
+  .modal-container,
+  .auth-modal-body,
+  .settings-workspace,
+  .adaptive-panel,
+  .generated-file-panel,
+  .image-generation-card,
+  .message-chart-container,
+  .thinking-panel,
+  .toast,
+  .image-lightbox-toolbar,
+  .live-beta-surface,
+  .live-workspace-surface
+),
+[data-sentiq-blur-candidate="true"] {
+  background-color: var(--sentiq-blur-surface-static);
+  border-color: var(--sentiq-blur-border);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Only runtime-issued slots may use backdrop filtering. */
+[data-sentiq-blur-candidate="true"][data-sentiq-blur-slot] {
+  background-color: var(--sentiq-blur-surface);
+  border-color: var(--sentiq-blur-border-elevated);
+  backdrop-filter: blur(var(--sentiq-blur-effective-radius)) saturate(var(--sentiq-blur-budget-saturation)) !important;
+  -webkit-backdrop-filter: blur(var(--sentiq-blur-effective-radius)) saturate(var(--sentiq-blur-budget-saturation)) !important;
+}
+
+/* Nested and over-budget surfaces become more opaque instead of adding blur. */
+[data-sentiq-blur-candidate="true"][data-sentiq-blur-nested="true"],
+[data-sentiq-blur-candidate="true"][data-sentiq-blur-fallback] {
+  background-color: var(--sentiq-blur-surface-nested);
+  border-color: var(--sentiq-blur-border);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-sentiq-blur-slot] [data-sentiq-blur-candidate="true"],
+[data-sentiq-blur-slot] :is(
+  .composer-action-menu,
+  .execution-mode-menu,
+  .auth-menu-panel,
+  .account-panel,
+  .chat-actions-menu,
+  .deep-research-export-menu,
+  .websurf-v2-citation-menu,
+  .websurf-v2-source-explorer-detail,
+  .thinking-panel
+) {
+  background-color: var(--sentiq-blur-surface-nested);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Viewport-sized dimmers never consume a filtered layer. */
+:where(
+  .sidebar-backdrop,
+  .modal-backdrop,
+  .modal-overlay,
+  .settings-modal,
+  .auth-modal,
+  .name-modal,
+  .adaptive-panel-backdrop,
+  .conversation-continuity-dialog-backdrop,
+  .image-lightbox,
+  .live-beta-panel
+) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+:root[data-sentiq-blur-profile="static"] [data-sentiq-blur-candidate="true"],
+:root[data-sentiq-blur-max-layers="0"] [data-sentiq-blur-candidate="true"] {
+  background-color: var(--sentiq-blur-surface-static);
+  border-color: var(--sentiq-blur-border);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Mobile blur is capped even if a stale desktop variable survives rotation. */
+@media (max-width: 768px) {
+  :root {
+    --sentiq-blur-effective-radius: min(var(--sentiq-blur-budget-radius), 6px);
+    --sentiq-blur-surface: rgba(10, 13, 20, 0.88);
+    --sentiq-blur-surface-static: rgba(9, 12, 18, 0.965);
+    --sentiq-blur-surface-nested: rgba(8, 11, 17, 0.988);
+  }
+}
+
+@media (max-width: 768px) and (orientation: landscape),
+       (max-width: 768px) and (max-height: 520px) {
+  :root {
+    --sentiq-blur-effective-radius: min(var(--sentiq-blur-budget-radius), 4px);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (update: slow) {
+  [data-sentiq-blur-candidate="true"] {
+    background-color: var(--sentiq-blur-surface-static);
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  [data-sentiq-blur-candidate="true"] {
+    background-color: var(--sentiq-blur-surface-static);
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  [data-sentiq-blur-candidate="true"] {
+    background: Canvas;
+    border: 1px solid CanvasText;
+    color: CanvasText;
+    box-shadow: none;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}

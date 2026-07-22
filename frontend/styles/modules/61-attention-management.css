@@ -1,0 +1,219 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Pass 9.5
+   Calm attention management
+   ============================================================ */
+
+:root[data-attention-management-version="9.5"] {
+  --attention-surface: rgba(16, 19, 27, 0.965);
+  --attention-border: rgba(224, 221, 236, 0.13);
+  --attention-copy: rgba(244, 244, 248, 0.98);
+  --attention-muted: rgba(173, 179, 191, 0.9);
+  --attention-ready: rgba(167, 211, 194, 0.94);
+  --attention-research: rgba(188, 173, 232, 0.94);
+  --attention-image: rgba(176, 193, 229, 0.95);
+  --attention-error: rgba(230, 150, 150, 0.96);
+  --attention-connection: rgba(156, 210, 184, 0.95);
+}
+
+.conversation-attention-marker {
+  min-width: 22px;
+  max-width: 78px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  margin-left: 4px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  color: var(--attention-ready);
+  font-size: 0.61rem;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+.chat-list-item[data-attention-kind="research-complete"] .conversation-attention-marker {
+  color: var(--attention-research);
+}
+
+.chat-list-item[data-attention-kind="image-complete"] .conversation-attention-marker {
+  color: var(--attention-image);
+}
+
+.chat-list-item[data-attention-kind="file-analysis-failed"] .conversation-attention-marker {
+  color: var(--attention-error);
+}
+
+.conversation-attention-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.conversation-attention-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-list-item.active .conversation-attention-marker,
+.chat-list-item.is-renaming .conversation-attention-marker {
+  display: none;
+}
+
+.chat-list-item.has-attention-signal .conversation-activity-indicator {
+  display: none;
+}
+
+.sentiq-attention-status {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top));
+  right: 18px;
+  z-index: 1180;
+  width: min(390px, calc(100vw - 36px));
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 10px 10px 13px;
+  border: 1px solid var(--attention-border);
+  border-radius: 16px;
+  background:
+    linear-gradient(140deg, rgba(255, 255, 255, 0.035), transparent 48%),
+    var(--attention-surface);
+  color: var(--attention-copy);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.04);
+  backdrop-filter: blur(24px) saturate(1.04);
+  animation: sentiq-attention-enter 150ms ease-out both;
+}
+
+.sentiq-attention-status[hidden] {
+  display: none;
+}
+
+.sentiq-attention-status-mark {
+  width: 9px;
+  height: 9px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  color: var(--attention-ready);
+}
+
+.sentiq-attention-status[data-attention-kind="research-complete"] .sentiq-attention-status-mark {
+  color: var(--attention-research);
+}
+
+.sentiq-attention-status[data-attention-kind="image-complete"] .sentiq-attention-status-mark {
+  color: var(--attention-image);
+  border-radius: 3px;
+  transform: rotate(5deg);
+}
+
+.sentiq-attention-status[data-attention-kind="file-analysis-failed"] .sentiq-attention-status-mark {
+  color: var(--attention-error);
+  border-radius: 2px;
+}
+
+.sentiq-attention-status[data-attention-kind="connection-recovered"] .sentiq-attention-status-mark {
+  color: var(--attention-connection);
+}
+
+.sentiq-attention-status-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.sentiq-attention-status-title,
+.sentiq-attention-status-detail {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sentiq-attention-status-title {
+  color: var(--attention-copy);
+  font-size: 0.76rem;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+}
+
+.sentiq-attention-status-detail {
+  color: var(--attention-muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.sentiq-attention-status-open,
+.sentiq-attention-status-dismiss {
+  min-height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(229, 231, 238, 0.94);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sentiq-attention-status-open {
+  padding: 0 10px;
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+.sentiq-attention-status-dismiss {
+  width: 32px;
+  padding: 0;
+  color: var(--attention-muted);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.sentiq-attention-status-open:hover,
+.sentiq-attention-status-open:focus-visible,
+.sentiq-attention-status-dismiss:hover,
+.sentiq-attention-status-dismiss:focus-visible {
+  border-color: rgba(211, 204, 233, 0.22);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--attention-copy);
+  outline: none;
+}
+
+.sentiq-attention-status-open:focus-visible,
+.sentiq-attention-status-dismiss:focus-visible {
+  box-shadow: 0 0 0 3px rgba(151, 132, 211, 0.15);
+}
+
+@keyframes sentiq-attention-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sentiq-attention-status {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .conversation-attention-marker,
+  .sentiq-attention-status,
+  .sentiq-attention-status-open,
+  .sentiq-attention-status-dismiss {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: auto;
+  }
+}

@@ -1,0 +1,180 @@
+/* ============================================================
+   SentIQ Chat — Pass 10.2
+   visualViewport-aware mobile composer foundation
+   ============================================================ */
+
+:root[data-mobile-composer-version="10.2"] {
+  --mobile-composer-viewport-width: 100vw;
+  --mobile-composer-viewport-height: 100dvh;
+  --mobile-composer-viewport-top: 0px;
+  --mobile-composer-keyboard-inset: 0px;
+  --mobile-composer-textarea-max-height: 144px;
+  --mobile-composer-action-menu-max-height: 360px;
+  --mobile-composer-inline-start: max(12px, env(safe-area-inset-left, 0px));
+  --mobile-composer-inline-end: max(12px, env(safe-area-inset-right, 0px));
+  --mobile-composer-bottom-padding: max(12px, env(safe-area-inset-bottom, 0px));
+}
+
+:root[data-mobile-composer-active="true"] body {
+  overscroll-behavior: none;
+}
+
+:root[data-mobile-composer-active="true"] .app-container {
+  top: var(--mobile-composer-viewport-top);
+  height: var(--mobile-composer-viewport-height);
+  min-height: 0;
+  max-height: var(--mobile-composer-viewport-height);
+  overflow: hidden;
+}
+
+:root[data-mobile-composer-active="true"] .main-content[data-mobile-composer-version="10.2"] {
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+:root[data-mobile-composer-active="true"] .main-content[data-mobile-composer-version="10.2"] > .chat-scroll-region {
+  min-height: 0;
+  overflow: hidden;
+}
+
+:root[data-mobile-composer-active="true"] .main-content[data-mobile-composer-version="10.2"] .chat-messages {
+  min-height: 0;
+  overscroll-behavior-y: contain;
+  overflow-anchor: auto;
+  scroll-padding-bottom: 18px;
+  -webkit-overflow-scrolling: touch;
+}
+
+:root[data-mobile-composer-active="true"] .main-content[data-mobile-composer-version="10.2"] > .chat-input-wrapper[data-mobile-composer-version="10.2"] {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: min(calc(var(--sentiq-composer-max-width) + 24px), 100%);
+  margin: 0 auto;
+  padding:
+    8px
+    var(--mobile-composer-inline-end)
+    var(--mobile-composer-bottom-padding)
+    var(--mobile-composer-inline-start);
+  overflow: visible;
+  overflow-anchor: none;
+  contain: layout style;
+  transition: none;
+}
+
+:root[data-mobile-composer-active="true"] .main-content.is-empty-chat[data-mobile-composer-version="10.2"] > .chat-input-wrapper[data-mobile-composer-version="10.2"] {
+  padding-top: 6px;
+  padding-right: var(--mobile-composer-inline-end);
+  padding-bottom: var(--mobile-composer-bottom-padding);
+  padding-left: var(--mobile-composer-inline-start);
+}
+
+:root[data-mobile-composer-keyboard="open"] {
+  --mobile-composer-bottom-padding: 8px;
+}
+
+:root[data-mobile-composer-keyboard="open"] .main-content[data-mobile-composer-version="10.2"],
+:root[data-mobile-composer-keyboard="open"] .chat-input-wrapper[data-mobile-composer-version="10.2"],
+:root[data-mobile-composer-keyboard="open"] .chat-input-area[data-mobile-composer-version="10.2"] {
+  transition: none !important;
+}
+
+:root[data-mobile-composer-active="true"] .chat-input-wrapper[data-mobile-composer-version="10.2"] > .chat-input-area[data-mobile-composer-version="10.2"] {
+  max-height: min(
+    calc(var(--mobile-composer-viewport-height) - 24px),
+    calc(var(--mobile-composer-textarea-max-height) + 230px)
+  );
+  overflow: visible;
+}
+
+:root[data-mobile-composer-active="true"] .chat-input-wrapper[data-mobile-composer-version="10.2"] .input-field-wrapper {
+  min-height: var(--sentiq-composer-field-min-height, 44px);
+  max-height: var(--mobile-composer-textarea-max-height);
+  overflow: hidden;
+}
+
+:root[data-mobile-composer-active="true"] .chat-input-wrapper[data-mobile-composer-version="10.2"] .input-field-wrapper textarea {
+  field-sizing: fixed;
+  height: auto;
+  min-height: var(--sentiq-composer-field-min-height, 44px);
+  max-height: var(--mobile-composer-textarea-max-height);
+  overflow-x: hidden;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+:root[data-mobile-composer-active="true"] .chat-input-wrapper[data-mobile-composer-version="10.2"][data-mobile-composer-textarea-overflow="true"] .input-field-wrapper textarea {
+  overflow-y: auto;
+}
+
+:root[data-mobile-composer-active="true"] .chat-input-wrapper[data-mobile-composer-version="10.2"] .file-preview-area {
+  max-height: min(144px, calc(var(--mobile-composer-viewport-height) * 0.26));
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+:root[data-mobile-composer-active="true"] .chat-input-wrapper[data-mobile-composer-version="10.2"] .composer-action-menu,
+:root[data-mobile-composer-active="true"] .chat-input-wrapper[data-mobile-composer-version="10.2"] .execution-mode-menu {
+  max-height: min(
+    var(--mobile-composer-action-menu-max-height),
+    calc(var(--mobile-composer-viewport-height) - 24px)
+  );
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+:root[data-mobile-composer-active="true"] .chat-input-wrapper[data-mobile-composer-version="10.2"] .composer-action-menu {
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: auto;
+}
+
+:root[data-mobile-composer-active="true"] .chat-input-wrapper[data-mobile-composer-version="10.2"] .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-menu {
+  max-height: min(var(--mobile-composer-action-menu-max-height), 190px);
+}
+
+:root[data-mobile-composer-keyboard="open"] .main-content.is-empty-chat[data-mobile-composer-version="10.2"] {
+  --sentiq-home-top-space: minmax(0, 1fr);
+  --sentiq-home-bottom-space: 0px;
+}
+
+:root[data-mobile-composer-keyboard="open"] .main-content.is-empty-chat[data-mobile-composer-version="10.2"] > .welcome-screen {
+  min-height: 0;
+  max-height: min(32vh, 190px);
+  overflow: hidden;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+:root[data-mobile-composer-keyboard="open"] .main-content[data-mobile-composer-version="10.2"] .chat-messages {
+  scroll-behavior: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-mobile-composer-version="10.2"] .app-container,
+  :root[data-mobile-composer-version="10.2"] .main-content,
+  :root[data-mobile-composer-version="10.2"] .chat-input-wrapper,
+  :root[data-mobile-composer-version="10.2"] .chat-input-area,
+  :root[data-mobile-composer-version="10.2"] .composer-action-menu,
+  :root[data-mobile-composer-version="10.2"] .execution-mode-menu {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :root[data-mobile-composer-active="true"] .chat-input-wrapper[data-mobile-composer-version="10.2"] .composer-action-menu,
+  :root[data-mobile-composer-active="true"] .chat-input-wrapper[data-mobile-composer-version="10.2"] .execution-mode-menu {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+  }
+}

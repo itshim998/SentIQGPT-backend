@@ -1,0 +1,194 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 8.1
+   Tablet side sheets and mobile sheets
+   ============================================================ */
+
+@media (min-width: 641px) and (max-width: 1024px) {
+  .modal-overlay.adaptive-panel-root,
+  .live-beta-panel.adaptive-panel-root {
+    align-items: stretch;
+    justify-content: flex-end;
+    padding: 0;
+    background: rgba(2, 4, 9, 0.68);
+  }
+
+  .modal-overlay.adaptive-panel-root .adaptive-panel-surface,
+  .live-beta-panel.adaptive-panel-root .adaptive-panel-surface,
+  #account-panel.adaptive-panel-root[data-adaptive-panel-mode="side-sheet"] {
+    width: min(520px, 88%);
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    border-width: 0 0 0 1px;
+    border-radius: 24px 0 0 24px;
+  }
+
+  .modal-overlay.adaptive-panel-root .adaptive-panel-surface,
+  .live-beta-panel.adaptive-panel-root .adaptive-panel-surface {
+    animation: adaptivePanelSideEnter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  #account-panel.adaptive-panel-root[data-adaptive-panel-mode="side-sheet"] {
+    position: fixed;
+    z-index: calc(1700 + var(--adaptive-panel-stack, 0));
+    inset: 0 0 0 auto;
+    left: auto;
+    right: 0;
+    bottom: 0;
+    padding:
+      max(14px, env(safe-area-inset-top))
+      max(14px, env(safe-area-inset-right))
+      max(14px, env(safe-area-inset-bottom))
+      14px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.045), transparent 42%),
+      rgba(9, 12, 19, 0.98);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(100%);
+    transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1), opacity 160ms ease;
+  }
+
+  #account-panel.adaptive-panel-root[data-adaptive-panel-mode="side-sheet"].visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
+  }
+
+  @keyframes adaptivePanelSideEnter {
+    from { opacity: 0; transform: translateX(24px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+}
+
+@media (max-width: 640px) {
+  .modal-overlay.adaptive-panel-root,
+  .live-beta-panel.adaptive-panel-root {
+    padding: 0;
+    align-items: flex-end;
+    justify-content: stretch;
+    background: rgba(2, 4, 9, 0.66);
+  }
+
+  .adaptive-panel-root[data-adaptive-panel-mode="bottom-sheet"] .adaptive-panel-surface {
+    width: 100%;
+    max-width: none;
+    max-height: min(88dvh, 760px);
+    margin: 0;
+    border-width: 1px 0 0;
+    border-radius: 26px 26px 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    animation: adaptivePanelBottomEnter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .adaptive-panel-root[data-adaptive-panel-mode="full-height-sheet"] .adaptive-panel-surface {
+    width: 100%;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    animation: adaptivePanelBottomEnter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .adaptive-panel-root[data-adaptive-panel-mode="bottom-sheet"] .adaptive-panel-header,
+  .adaptive-panel-root[data-adaptive-panel-mode="full-height-sheet"] .adaptive-panel-header {
+    min-height: calc(62px + env(safe-area-inset-top));
+    padding-top: max(15px, env(safe-area-inset-top));
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-left: max(16px, env(safe-area-inset-left));
+  }
+
+  .adaptive-panel-root[data-adaptive-panel-mode="bottom-sheet"] .adaptive-panel-header::before {
+    content: "";
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    width: 38px;
+    height: 3px;
+    border-radius: 999px;
+    background: rgba(194, 199, 212, 0.24);
+    transform: translateX(-50%);
+  }
+
+  #account-panel.adaptive-panel-root[data-adaptive-panel-mode="bottom-sheet"] {
+    position: fixed;
+    z-index: calc(1700 + var(--adaptive-panel-stack, 0));
+    inset: auto 0 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: min(78dvh, 680px);
+    margin: 0;
+    padding:
+      10px
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-width: 1px 0 0;
+    border-radius: 26px 26px 0 0;
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.045), transparent 42%),
+      rgba(9, 12, 19, 0.985);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(100%);
+  }
+
+  #account-panel.adaptive-panel-root[data-adaptive-panel-mode="bottom-sheet"].visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+
+  #settings-modal .settings-tabs,
+  #trust-modal .settings-tabs {
+    flex: 0 0 auto;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+
+  #settings-modal .settings-tab,
+  #trust-modal .settings-tab {
+    flex: 0 0 auto;
+    min-height: 44px;
+    white-space: nowrap;
+  }
+
+  @keyframes adaptivePanelBottomEnter {
+    from { opacity: 0; transform: translateY(28px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+
+@media (max-width: 390px) {
+  .adaptive-panel-header {
+    gap: 10px;
+  }
+
+  .adaptive-panel-title {
+    font-size: 0.96rem;
+  }
+
+  .adaptive-panel-close {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #account-panel.adaptive-panel-root,
+  .adaptive-panel-root .adaptive-panel-surface {
+    animation: none !important;
+    transition: none !important;
+  }
+}

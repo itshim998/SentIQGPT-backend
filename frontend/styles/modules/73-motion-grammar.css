@@ -1,0 +1,287 @@
+/* ============================================================
+   SentIQ Chat — Pass 11.1
+   Deliberate six-family motion grammar
+   ============================================================ */
+
+html:root[data-sentiq-motion-version="11.1"] {
+  /* Shared duration vocabulary */
+  --sentiq-motion-duration-instant: 80ms;
+  --sentiq-motion-duration-fast: 150ms;
+  --sentiq-motion-duration-standard: 220ms;
+  --sentiq-motion-duration-slow: 320ms;
+  --sentiq-motion-duration-progress: 1600ms;
+  --sentiq-motion-duration-progress-relaxed: 3200ms;
+
+  /* Shared easing vocabulary */
+  --sentiq-motion-ease-standard: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --sentiq-motion-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --sentiq-motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --sentiq-motion-ease-linear: linear;
+
+  /* Family 1: surface enter and exit */
+  --sentiq-motion-surface-enter-duration: var(--sentiq-motion-duration-standard);
+  --sentiq-motion-surface-enter-ease: var(--sentiq-motion-ease-enter);
+  --sentiq-motion-surface-exit-duration: var(--sentiq-motion-duration-fast);
+  --sentiq-motion-surface-exit-ease: var(--sentiq-motion-ease-exit);
+
+  /* Family 2: layout reposition */
+  --sentiq-motion-layout-duration: var(--sentiq-motion-duration-standard);
+  --sentiq-motion-layout-ease: var(--sentiq-motion-ease-standard);
+
+  /* Family 3: focus activation */
+  --sentiq-motion-focus-duration: var(--sentiq-motion-duration-fast);
+  --sentiq-motion-focus-ease: var(--sentiq-motion-ease-standard);
+
+  /* Family 4: progress */
+  --sentiq-motion-progress-duration: var(--sentiq-motion-duration-progress);
+  --sentiq-motion-progress-relaxed-duration: var(--sentiq-motion-duration-progress-relaxed);
+  --sentiq-motion-progress-ease: var(--sentiq-motion-ease-linear);
+  --sentiq-motion-progress-pulse-ease: var(--sentiq-motion-ease-standard);
+
+  /* Family 5: success or completion */
+  --sentiq-motion-completion-duration: var(--sentiq-motion-duration-standard);
+  --sentiq-motion-completion-ease: var(--sentiq-motion-ease-enter);
+
+  /* Family 6: interrupt or error */
+  --sentiq-motion-interrupt-duration: var(--sentiq-motion-duration-fast);
+  --sentiq-motion-interrupt-ease: var(--sentiq-motion-ease-standard);
+
+  /* Backward-compatible aliases now resolve through the grammar. */
+  --transition: var(--sentiq-motion-focus-duration) var(--sentiq-motion-focus-ease);
+  --transition-slow: var(--sentiq-motion-layout-duration) var(--sentiq-motion-layout-ease);
+}
+
+@keyframes sentiqMotionSurfaceEnter {
+  from { opacity: 0; transform: translate3d(0, 8px, 0) scale(0.992); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes sentiqMotionSurfaceExit {
+  from { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  to { opacity: 0; transform: translate3d(0, -4px, 0) scale(0.992); }
+}
+
+@keyframes sentiqMotionCompletion {
+  0% { transform: scale(0.97); }
+  58% { transform: scale(1.018); }
+  100% { transform: scale(1); }
+}
+
+@keyframes sentiqMotionInterrupt {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  38% { transform: translate3d(-2px, 0, 0); }
+  72% { transform: translate3d(2px, 0, 0); }
+}
+
+@keyframes sentiqMotionProgressSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* Family 1 — Surface enter and exit */
+:root[data-sentiq-motion-version="11.1"] :is(
+  .message.user,
+  .message.assistant,
+  .adaptive-panel-surface:not(#account-panel),
+  .account-panel,
+  .sentiq-attention-status,
+  .toast,
+  .websurf-v2-featured-card,
+  .deep-research-card,
+  .image-generation-card,
+  .message-chart-container,
+  .generated-file-panel,
+  .failure-recovery-panel
+) {
+  animation-duration: var(--sentiq-motion-surface-enter-duration);
+  animation-timing-function: var(--sentiq-motion-surface-enter-ease);
+  animation-iteration-count: 1;
+}
+
+:root[data-sentiq-motion-version="11.1"] [data-sentiq-motion-family="surface"][data-sentiq-motion-phase="enter"] {
+  animation: sentiqMotionSurfaceEnter var(--sentiq-motion-surface-enter-duration) var(--sentiq-motion-surface-enter-ease) both;
+}
+
+:root[data-sentiq-motion-version="11.1"] [data-sentiq-motion-family="surface"][data-sentiq-motion-phase="exit"] {
+  animation: sentiqMotionSurfaceExit var(--sentiq-motion-surface-exit-duration) var(--sentiq-motion-surface-exit-ease) both;
+}
+
+:root[data-sentiq-motion-version="11.1"] .sentiq-loader {
+  transition:
+    opacity var(--sentiq-motion-surface-enter-duration) var(--sentiq-motion-surface-enter-ease),
+    transform var(--sentiq-motion-surface-enter-duration) var(--sentiq-motion-surface-enter-ease),
+    filter var(--sentiq-motion-surface-enter-duration) var(--sentiq-motion-surface-enter-ease);
+}
+
+:root[data-sentiq-motion-version="11.1"] .sentiq-loader.loader-exit {
+  transition-duration: var(--sentiq-motion-surface-exit-duration);
+  transition-timing-function: var(--sentiq-motion-surface-exit-ease);
+}
+
+/* Family 2 — Layout reposition */
+:root[data-sentiq-motion-version="11.1"] :is(
+  .app-container,
+  .main-content,
+  .sidebar:not([data-mobile-navigation-version="10.1"]),
+  .chat-input-wrapper,
+  .chat-input-area,
+  .composer-action-menu,
+  .execution-mode-menu,
+  .composer-attachment,
+  .scroll-anchor-pill,
+  .settings-workspace,
+  .billing-plan-row,
+  .live-workspace-surface,
+  .websurf-v2-source-explorer-detail
+) {
+  transition-duration: var(--sentiq-motion-layout-duration);
+  transition-timing-function: var(--sentiq-motion-layout-ease);
+}
+
+:root[data-sentiq-motion-version="11.1"] .thinking-chevron {
+  transition: transform var(--sentiq-motion-layout-duration) var(--sentiq-motion-layout-ease);
+}
+
+:root[data-sentiq-motion-version="11.1"] .thinking-content {
+  transition:
+    max-height var(--sentiq-motion-layout-duration) var(--sentiq-motion-layout-ease),
+    padding var(--sentiq-motion-layout-duration) var(--sentiq-motion-layout-ease),
+    opacity var(--sentiq-motion-focus-duration) var(--sentiq-motion-focus-ease);
+}
+
+@media (max-width: 768px) {
+  :root[data-sentiq-motion-version="11.1"] .sidebar[data-mobile-navigation-version="10.1"] {
+    transition:
+      transform var(--sentiq-motion-layout-duration) var(--sentiq-motion-layout-ease),
+      visibility 0s linear var(--sentiq-motion-layout-duration);
+  }
+
+  :root[data-sentiq-motion-version="11.1"] .sidebar[data-mobile-navigation-version="10.1"].open {
+    transition:
+      transform var(--sentiq-motion-layout-duration) var(--sentiq-motion-layout-ease),
+      visibility 0s linear 0s;
+  }
+
+  :root[data-sentiq-motion-version="11.1"] .sidebar[data-mobile-navigation-version="10.1"].is-mobile-navigation-dragging {
+    transition: none;
+  }
+
+  :root[data-sentiq-motion-version="11.1"] .sidebar-backdrop {
+    transition: opacity var(--sentiq-motion-surface-exit-duration) var(--sentiq-motion-surface-exit-ease);
+  }
+
+  :root[data-sentiq-motion-version="11.1"] body.mobile-navigation-open .sidebar-backdrop {
+    transition-duration: var(--sentiq-motion-surface-enter-duration);
+    transition-timing-function: var(--sentiq-motion-surface-enter-ease);
+  }
+}
+
+:root[data-sentiq-motion-version="11.1"] [data-sentiq-motion-family="layout"] {
+  transition-property: transform, opacity, inline-size, block-size, margin, padding;
+  transition-duration: var(--sentiq-motion-layout-duration);
+  transition-timing-function: var(--sentiq-motion-layout-ease);
+}
+
+/* Family 3 — Focus activation */
+:root[data-sentiq-motion-version="11.1"] :where(
+  button,
+  [role="button"],
+  a[href],
+  input,
+  textarea,
+  select,
+  summary,
+  [tabindex]:not([tabindex="-1"])
+),
+:root[data-sentiq-motion-version="11.1"] :is(
+  .message-action-btn,
+  .adaptive-panel-close,
+  .mobile-navigation-close,
+  .settings-workspace-nav-item,
+  .chat-list-item,
+  .composer-action,
+  .execution-mode-toggle,
+  .sentiq-attention-status-open,
+  .sentiq-attention-status-dismiss,
+  .failure-recovery-restore,
+  [data-failure-recovery-action="true"],
+  .billing-plan-action,
+  [data-sentiq-motion-family="focus"]
+) {
+  transition-duration: var(--sentiq-motion-focus-duration);
+  transition-timing-function: var(--sentiq-motion-focus-ease);
+}
+
+/* Family 4 — Progress */
+:root[data-sentiq-motion-version="11.1"] :is(
+  .response-inline-spinner,
+  .chat-cache-spinner,
+  .image-generation-pending-layer,
+  .asset-file-skeleton span
+),
+:root[data-sentiq-motion-version="11.1"] .semantic-activity-mark::after,
+:root[data-sentiq-motion-version="11.1"] .semantic-activity-progress .response-inline-spinner::after,
+:root[data-sentiq-motion-version="11.1"] .sentiq-loader::before,
+:root[data-sentiq-motion-version="11.1"] .sentiq-loader-shimmer::before,
+:root[data-sentiq-motion-version="11.1"] [data-asset-result-version="7.3"].is-loading::after {
+  animation-duration: var(--sentiq-motion-progress-duration);
+  animation-timing-function: var(--sentiq-motion-progress-ease);
+}
+
+:root[data-sentiq-motion-version="11.1"] :is(
+  .sentiq-loader.loader-chart .loader-chart-bar,
+  .sentiq-dot,
+  #live-beta-panel .live-beta-orbit,
+  #live-beta-panel .live-beta-orb,
+  #live-beta-panel .live-beta-wave i
+),
+:root[data-sentiq-motion-version="11.1"] .sentiq-dot-grid::after {
+  animation-duration: var(--sentiq-motion-progress-relaxed-duration);
+  animation-timing-function: var(--sentiq-motion-progress-pulse-ease);
+}
+
+:root[data-sentiq-motion-version="11.1"] [data-sentiq-motion-family="progress"] {
+  animation: sentiqMotionProgressSpin var(--sentiq-motion-progress-duration) var(--sentiq-motion-progress-ease) infinite;
+}
+
+/* Family 5 — Success or completion */
+:root[data-sentiq-motion-version="11.1"] :is(
+  .message-action-btn.copied,
+  .conversation-attention-marker,
+  [data-sentiq-motion-family="completion"]
+) {
+  animation: sentiqMotionCompletion var(--sentiq-motion-completion-duration) var(--sentiq-motion-completion-ease) both;
+}
+
+/* Family 6 — Interrupt or error */
+:root[data-sentiq-motion-version="11.1"] :is(
+  .failure-recovery-panel,
+  .chat-load-error,
+  .composer-attachment[data-attachment-state="failed"],
+  .composer-attachment.is-failed,
+  [aria-invalid="true"],
+  [data-sentiq-motion-family="interrupt"]
+) {
+  animation: sentiqMotionInterrupt var(--sentiq-motion-interrupt-duration) var(--sentiq-motion-interrupt-ease) both;
+}
+
+:root[data-sentiq-motion-version="11.1"] .sentiq-attention-status[data-attention-kind="file-analysis-failed"] .sentiq-attention-status-mark {
+  animation: sentiqMotionInterrupt var(--sentiq-motion-interrupt-duration) var(--sentiq-motion-interrupt-ease) both;
+}
+
+/* Pass 11.7 owns reduced and slow-update alternatives without universal overrides. */
+:root[data-sentiq-motion-version="11.1"][data-sentiq-motion-policy="reduced"] {
+  --sentiq-motion-duration-instant: 0ms;
+  --sentiq-motion-duration-fast: 80ms;
+  --sentiq-motion-duration-standard: 80ms;
+  --sentiq-motion-duration-slow: 0ms;
+  --sentiq-motion-duration-progress: 0ms;
+  --sentiq-motion-duration-progress-relaxed: 0ms;
+  --sentiq-motion-layout-duration: 0ms;
+  --sentiq-motion-focus-duration: 80ms;
+  --transition: 80ms linear;
+  --transition-slow: 0ms linear;
+}
+
+:root[data-sentiq-motion-version="11.1"][data-sentiq-motion-policy="reduced"] .chat-messages {
+  scroll-behavior: auto;
+}

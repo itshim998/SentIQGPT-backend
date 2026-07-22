@@ -1,0 +1,118 @@
+/* SentIQ Chat — Pass 11.6 asset and font loading */
+
+@font-face {
+  font-family: "Inter Fallback";
+  src: local("Arial");
+  size-adjust: 107.06%;
+  ascent-override: 90.44%;
+  descent-override: 22.52%;
+  line-gap-override: 0%;
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+html:root {
+  --font-sans: "Inter", "Inter Fallback", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: "Inter", "Inter Fallback", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  font-synthesis-weight: none;
+}
+
+#sentiq-ui-icon-sprite {
+  position: absolute !important;
+  width: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+
+:is(.asset-result-action, .asset-overlay-action) > svg[aria-hidden="true"] {
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+img[data-asset-loading-version="11.6"] {
+  max-width: 100%;
+  height: auto;
+  object-fit: var(--sentiq-asset-object-fit, contain);
+  image-rendering: auto;
+}
+
+img[data-asset-loading-version="11.6"][data-asset-reserve="square"] {
+  aspect-ratio: auto var(--sentiq-asset-aspect-ratio, 1 / 1);
+}
+
+img[data-asset-loading-version="11.6"][data-asset-reserve="thumbnail"] {
+  aspect-ratio: auto var(--sentiq-asset-aspect-ratio, 39 / 29);
+}
+
+img[data-asset-loading-version="11.6"][data-asset-reserve="featured"] {
+  aspect-ratio: auto var(--sentiq-asset-aspect-ratio, 16 / 7);
+}
+
+img[data-asset-loading-version="11.6"][data-asset-reserve="wide"],
+img[data-asset-loading-version="11.6"][data-asset-reserve="chart"] {
+  aspect-ratio: auto var(--sentiq-asset-aspect-ratio, 16 / 9);
+}
+
+img[data-asset-loading-version="11.6"][data-asset-reserve="generated"] {
+  aspect-ratio: auto var(--sentiq-asset-aspect-ratio, 1 / 1);
+}
+
+[data-asset-frame-version="11.6"] {
+  overflow: hidden;
+  contain: layout paint;
+  contain-intrinsic-size: auto 320px;
+}
+
+[data-asset-frame-version="11.6"][data-asset-reserve="square"],
+[data-asset-frame-version="11.6"][data-asset-reserve="generated"] {
+  contain-intrinsic-size: auto min(512px, 80vw);
+}
+
+[data-asset-frame-version="11.6"][data-asset-reserve="thumbnail"] {
+  contain-intrinsic-size: auto 58px;
+}
+
+[data-asset-frame-version="11.6"][data-asset-reserve="featured"] {
+  contain-intrinsic-size: auto 180px;
+}
+
+[data-asset-frame-version="11.6"][data-asset-reserve="wide"],
+[data-asset-frame-version="11.6"][data-asset-reserve="chart"] {
+  contain-intrinsic-size: auto 320px;
+}
+
+img[data-asset-loading-state="lazy"] {
+  background: color-mix(in srgb, var(--sentiq-surface-floating, #111722) 88%, transparent);
+}
+
+img[data-asset-loading-state="loaded"],
+img[data-asset-decode-state="decoded"] {
+  background: transparent;
+}
+
+@media (max-width: 768px) {
+  [data-asset-frame-version="11.6"] {
+    contain-intrinsic-size: auto 240px;
+  }
+
+  [data-asset-frame-version="11.6"][data-asset-reserve="square"],
+  [data-asset-frame-version="11.6"][data-asset-reserve="generated"] {
+    contain-intrinsic-size: auto min(420px, 86vw);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  img[data-asset-loading-version="11.6"] {
+    transition: none !important;
+  }
+}

@@ -1,0 +1,258 @@
+/* ============================================================
+   SentIQ Chat — Pass 11.2
+   Compositor-safe transitions and bounded progress variables
+   ============================================================ */
+
+@property --deep-research-progress-scale {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --sentiq-progress-scale {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+:root {
+  --sentiq-compositor-safe-properties: transform, opacity;
+  --sentiq-compositor-enter-distance: 6px;
+  --sentiq-compositor-scale-min: 0.985;
+}
+
+@keyframes sentiqCompositorSweep {
+  from { transform: translate3d(-34%, 0, 0); }
+  to { transform: translate3d(34%, 0, 0); }
+}
+
+@keyframes sentiqCompositorTextEnter {
+  from { opacity: 0.58; transform: translate3d(0, 2px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes sentiqCompositorOpacityPulse {
+  0%, 100% { opacity: 0.44; }
+  50% { opacity: 0.72; }
+}
+
+@keyframes sentiqCompositorLiveWave {
+  0%, 100% { opacity: 0.7; transform: scaleY(0.32); }
+  50% { opacity: 1; transform: scaleY(1); }
+}
+
+/* Layout changes may still occur once, but they are never tweened. */
+:root[data-sentiq-motion-version="11.1"] :is(
+  [data-sentiq-motion-family="layout"],
+  .app-container,
+  .main-content,
+  .chat-input-wrapper,
+  .composer-action-menu,
+  .execution-mode-menu,
+  .composer-attachment,
+  .scroll-anchor-pill,
+  .settings-workspace,
+  .billing-plan-row,
+  .live-workspace-surface,
+  .websurf-v2-source-explorer-detail
+) {
+  transition-property: transform, opacity;
+}
+
+@media (min-width: 769px) {
+  :root .sidebar {
+    transition-property: transform, opacity;
+  }
+}
+
+/* Collapsible content snaps its dimensions, then uses a small visual settle. */
+:root[data-sentiq-motion-version="11.1"] .thinking-content {
+  transform: translate3d(0, -4px, 0);
+  transition-property: transform, opacity;
+  transition-duration: var(--sentiq-motion-layout-duration, 220ms);
+  transition-timing-function: var(--sentiq-motion-layout-ease, cubic-bezier(0.2, 0.7, 0.2, 1));
+}
+
+:root[data-sentiq-motion-version="11.1"] .thinking-panel[data-expanded="true"] .thinking-content {
+  transform: translate3d(0, 0, 0);
+}
+
+:root .deep-research-report-preview-container {
+  transform: translate3d(0, -2px, 0);
+  transition-property: transform, opacity;
+}
+
+:root .deep-research-report-preview-container.expanded {
+  transform: translate3d(0, 0, 0);
+}
+
+/* Interactive controls never tween shadow, filter, size, margin, or padding. */
+:root :where(
+  button,
+  [role="button"],
+  a[href],
+  input,
+  textarea,
+  select,
+  summary,
+  [tabindex]:not([tabindex="-1"])
+) {
+  transition-property: transform, opacity, color, background-color, border-color;
+}
+
+:root :is(
+  .btn-new-chat,
+  .chat-list-item,
+  .message-image,
+  .image-download-btn,
+  .chat-input-area,
+  .sentiq-attention-status,
+  .failure-recovery-panel
+) {
+  transition-property: transform, opacity, color, background-color, border-color;
+}
+
+/* Full-screen surfaces may fade, but never animate filters or large paint effects. */
+:root :is(
+  .modal-overlay,
+  .live-beta-panel,
+  .image-lightbox,
+  .sidebar-backdrop
+) {
+  transition-property: opacity;
+}
+
+:root body::before {
+  animation: none;
+  will-change: auto;
+}
+
+/* Loader and streaming reveals use transform + opacity instead of blur. */
+:root[data-sentiq-motion-version="11.1"] .sentiq-loader,
+:root[data-sentiq-motion-version="11.1"] .sentiq-loader.loader-exit,
+:root .sentiq-reveal-target,
+:root .sentiq-reveal-target.is-visible {
+  filter: none;
+  transition-property: transform, opacity;
+}
+
+:root :is(
+  .streaming-new-text,
+  .streaming-rendered.streaming-render-pulse > :last-child,
+  .streaming-rendered.streaming-render-pulse:empty
+) {
+  animation-name: sentiqCompositorTextEnter;
+  will-change: auto;
+}
+
+/* Paint-heavy background-position sweeps become translated bounded layers. */
+:root .sentiq-loader::before,
+:root .sentiq-loader-shimmer::before {
+  inset: -12% -70%;
+  background-size: 100% 100%;
+  background-attachment: scroll;
+  transform: translate3d(-34%, 0, 0);
+  animation-name: sentiqCompositorSweep;
+  will-change: transform;
+}
+
+:root .chat-input-area.is-response-locked::before {
+  background-size: 100% 100%;
+  animation-name: sentiqCompositorOpacityPulse;
+  will-change: opacity;
+}
+
+/* Large image skeletons move one narrow overlay instead of repainting a gradient. */
+:root .image-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgba(139, 92, 246, 0.065);
+  background-size: auto;
+  animation: none;
+  contain: paint;
+}
+
+:root .image-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0 -62%;
+  background: linear-gradient(110deg, transparent 34%, rgba(196, 181, 253, 0.16) 50%, transparent 66%);
+  transform: translate3d(-34%, 0, 0);
+  animation: sentiqCompositorSweep var(--sentiq-motion-progress-duration, 1600ms) linear infinite;
+  will-change: transform;
+  pointer-events: none;
+}
+
+/* Progress is a clamped 0..1 scale set by the progress workspace runtime. */
+:root .deep-research-progress-bar {
+  contain: paint;
+}
+
+:root .deep-research-card[data-deep-research-workspace-version="7.2"] .deep-research-progress-fill {
+  width: 100%;
+  transform: scaleX(var(--deep-research-progress-scale, 0));
+  transform-origin: left center;
+  transition-property: transform;
+  transition-duration: var(--sentiq-motion-layout-duration, 220ms);
+  transition-timing-function: var(--sentiq-motion-layout-ease, cubic-bezier(0.2, 0.7, 0.2, 1));
+  will-change: auto;
+}
+
+:root .deep-research-card[data-deep-research-workspace-version="7.2"][aria-busy="true"] .deep-research-progress-fill {
+  will-change: transform;
+}
+
+/* Voice bars retain a stable box and animate only their local transform. */
+:root .live-beta-wave i {
+  height: 31px;
+  transform: scaleY(0.32);
+  transform-origin: center;
+  animation-name: sentiqCompositorLiveWave;
+  will-change: transform, opacity;
+}
+
+:root .live-beta-orb {
+  transition-property: transform, opacity;
+}
+
+/* Reduced, slow-update, and data-saving policies resolve to static final states. */
+:root[data-sentiq-compositor-policy="reduced"] .sentiq-loader::before,
+:root[data-sentiq-compositor-policy="reduced"] .sentiq-loader-shimmer::before,
+:root[data-sentiq-compositor-policy="reduced"] .image-skeleton::after,
+:root[data-sentiq-compositor-policy="reduced"] .chat-input-area.is-response-locked::before,
+:root[data-sentiq-compositor-policy="reduced"] .streaming-new-text,
+:root[data-sentiq-compositor-policy="reduced"] .streaming-rendered.streaming-render-pulse > :last-child,
+:root[data-sentiq-compositor-policy="reduced"] .streaming-rendered.streaming-render-pulse:empty,
+:root[data-sentiq-compositor-policy="reduced"] .live-beta-wave i {
+  animation: none !important;
+  will-change: auto;
+}
+
+:root[data-sentiq-compositor-policy="reduced"] .live-beta-wave i {
+  opacity: 0.78;
+  transform: scaleY(0.52);
+}
+
+:root[data-sentiq-compositor-policy="reduced"] .deep-research-progress-fill {
+  transition: none;
+  will-change: auto;
+}
+
+@media (prefers-reduced-motion: reduce), (update: slow) {
+  .sentiq-loader::before,
+  .sentiq-loader-shimmer::before,
+  .image-skeleton::after,
+  .chat-input-area.is-response-locked::before,
+  .streaming-new-text,
+  .streaming-rendered.streaming-render-pulse > :last-child,
+  .streaming-rendered.streaming-render-pulse:empty,
+  .live-beta-wave i {
+    animation: none !important;
+    will-change: auto;
+  }
+
+  .deep-research-progress-fill {
+    transition: none;
+    will-change: auto;
+  }
+}

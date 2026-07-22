@@ -1,0 +1,60 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Pass 8.4
+   Live voice composer entry control
+   ============================================================ */
+
+.btn-live-voice {
+  overflow: visible;
+  border: 1px solid rgba(186, 173, 236, 0.18);
+  background: rgba(149, 123, 232, 0.12);
+  color: rgba(224, 218, 244, 0.96);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+
+.btn-live-voice::after {
+  display: none;
+}
+
+.btn-live-voice:hover:not(.is-disabled),
+.btn-live-voice:focus-visible {
+  border-color: rgba(196, 184, 238, 0.28);
+  background: rgba(149, 123, 232, 0.17);
+  color: rgba(244, 241, 251, 0.99);
+  box-shadow: 0 0 0 3px rgba(149, 123, 232, 0.075);
+  transform: none;
+}
+
+.btn-live-voice.is-disabled {
+  border-color: rgba(170, 175, 190, 0.1);
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(133, 142, 159, 0.82);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.btn-live-voice.is-disabled:hover {
+  border-color: rgba(170, 175, 190, 0.15);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(164, 172, 187, 0.92);
+}
+
+.btn-live-voice svg {
+  filter: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-live-voice {
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .btn-live-voice,
+  .btn-live-voice.is-disabled {
+    border-color: ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+    box-shadow: none;
+    forced-color-adjust: auto;
+  }
+}

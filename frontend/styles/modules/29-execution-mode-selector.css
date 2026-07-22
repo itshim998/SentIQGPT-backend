@@ -1,0 +1,311 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 5.6
+   Compact execution mode selector
+   ============================================================ */
+
+.execution-mode-control[data-execution-mode-version="5.6"] {
+  --execution-mode-width: 98px;
+  --execution-menu-width: 292px;
+  grid-area: execution;
+  position: relative !important;
+  inset: auto !important;
+  z-index: 8 !important;
+  width: var(--execution-mode-width);
+  height: var(--sentiq-composer-control-size, 42px);
+  display: flex !important;
+  align-items: center;
+  align-self: end;
+  flex: 0 0 var(--execution-mode-width);
+  padding: 0 !important;
+  visibility: visible;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle {
+  width: var(--execution-mode-width);
+  min-width: var(--execution-mode-width);
+  height: var(--sentiq-composer-control-size, 42px);
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) 13px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid rgba(218, 211, 244, 0.085);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.028);
+  color: rgba(180, 187, 201, 0.92);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  transform: none;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(141, 184, 211, 0.9);
+  box-shadow: 0 0 0 3px rgba(141, 184, 211, 0.075);
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"][data-execution-mode="intuitive"] .execution-mode-toggle-indicator {
+  background: rgba(190, 171, 239, 0.94);
+  box-shadow: 0 0 0 3px rgba(165, 139, 230, 0.09);
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] #execution-mode-label {
+  min-width: 0;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle svg {
+  width: 13px;
+  height: 13px;
+  transition: transform 150ms ease;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"].open .execution-mode-toggle svg {
+  transform: rotate(180deg);
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle:hover,
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle:focus-visible,
+.execution-mode-control[data-execution-mode-version="5.6"].open .execution-mode-toggle {
+  border-color: rgba(203, 190, 247, 0.18);
+  background: rgba(149, 123, 232, 0.07);
+  color: rgba(244, 242, 250, 0.98);
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle:focus-visible {
+  outline: 2px solid rgba(196, 181, 253, 0.46);
+  outline-offset: 2px;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"].is-response-locked {
+  opacity: 0.48;
+  filter: grayscale(0.24);
+  pointer-events: none;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-menu {
+  position: absolute;
+  top: auto;
+  right: calc((var(--sentiq-composer-control-size, 42px) + var(--sentiq-composer-grid-gap, 9px)) * -1);
+  bottom: calc(100% + 10px);
+  width: min(var(--execution-menu-width), calc(100vw - 24px));
+  max-height: min(188px, calc(100vh - 32px));
+  max-height: min(188px, calc(100dvh - 32px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  padding: 7px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid rgba(218, 211, 244, 0.11);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.036), transparent 42%),
+    rgba(11, 14, 22, 0.96);
+  -webkit-backdrop-filter: blur(24px) saturate(120%);
+  backdrop-filter: blur(24px) saturate(120%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 22px 54px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transform: translateY(6px) scale(0.98);
+  transform-origin: bottom right;
+  pointer-events: none;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(196, 181, 253, 0.2) transparent;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"].open .execution-mode-menu {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option {
+  width: 100%;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 9px 9px 11px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: rgba(175, 182, 196, 0.94);
+  text-align: left;
+  transform: none;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option:hover,
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option:focus-visible {
+  border-color: rgba(218, 211, 244, 0.085);
+  background: rgba(255, 255, 255, 0.042);
+  color: rgba(242, 240, 248, 0.98);
+  outline: none;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option:focus-visible {
+  box-shadow: 0 0 0 2px rgba(196, 181, 253, 0.18) inset;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option.is-selected,
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option[aria-selected="true"] {
+  border-color: rgba(199, 185, 244, 0.15);
+  background:
+    linear-gradient(110deg, rgba(149, 123, 232, 0.11), rgba(255, 255, 255, 0.025));
+  color: rgba(247, 244, 253, 0.99);
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option-title {
+  color: inherit;
+  font-size: 0.78rem;
+  font-weight: 690;
+  line-height: 1.2;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: rgba(145, 153, 170, 0.9);
+  font-size: 0.67rem;
+  font-weight: 480;
+  line-height: 1.36;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option.is-selected .execution-mode-option-description,
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option[aria-selected="true"] .execution-mode-option-description {
+  color: rgba(181, 174, 207, 0.94);
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option-check {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(218, 211, 244, 0.08);
+  border-radius: 999px;
+  color: transparent;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option-check svg {
+  width: 13px;
+  height: 13px;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option.is-selected .execution-mode-option-check,
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option[aria-selected="true"] .execution-mode-option-check {
+  border-color: rgba(199, 185, 244, 0.2);
+  background: rgba(149, 123, 232, 0.14);
+  color: rgba(225, 216, 250, 0.98);
+}
+
+@media (max-width: 768px) {
+  #execution-mode-control[data-execution-mode-version="5.6"] {
+    --execution-mode-width: 94px;
+    position: relative !important;
+    top: auto !important;
+    right: auto !important;
+    bottom: auto !important;
+    left: auto !important;
+    z-index: 8 !important;
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  #execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-menu {
+    top: auto;
+    right: calc((var(--sentiq-composer-control-size, 40px) + var(--sentiq-composer-grid-gap, 7px)) * -1);
+    bottom: calc(100% + 9px);
+    width: min(var(--execution-menu-width), calc(100vw - 24px));
+    max-height: min(190px, calc(100dvh - max(32px, env(safe-area-inset-top)) - max(24px, env(safe-area-inset-bottom))));
+    transform-origin: bottom right;
+  }
+}
+
+@media (max-width: 390px) {
+  #execution-mode-control[data-execution-mode-version="5.6"] {
+    --execution-mode-width: 90px;
+  }
+
+  #execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle {
+    gap: 4px;
+    padding-inline: 8px;
+    font-size: 0.7rem;
+  }
+
+  #execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-menu {
+    right: calc((var(--sentiq-composer-control-size, 38px) + 5px) * -1);
+    width: min(var(--execution-menu-width), calc(100vw - 24px));
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .execution-mode-control[data-execution-mode-version="5.6"] {
+    height: max(44px, var(--sentiq-composer-control-size, 40px));
+  }
+
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle {
+    min-height: 44px;
+  }
+
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option {
+    min-height: 68px;
+    padding-block: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle,
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle svg,
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-menu,
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle,
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-menu,
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option,
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option-check {
+    border: 1px solid ButtonText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+  }
+
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option[aria-selected="true"] {
+    border-color: Highlight;
+    color: HighlightText;
+    background: Highlight;
+  }
+
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option[aria-selected="true"] .execution-mode-option-description,
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option[aria-selected="true"] .execution-mode-option-check {
+    color: HighlightText;
+  }
+}

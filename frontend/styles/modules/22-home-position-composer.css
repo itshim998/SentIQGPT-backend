@@ -1,0 +1,169 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 4.3
+   Home-position composer
+
+   The existing .is-empty-chat state changes the layout of one composer.
+   The persistent conversation layout remains the established flex column.
+   ============================================================ */
+
+.main-content.is-empty-chat {
+  --sentiq-home-top-space: minmax(84px, 1fr);
+  --sentiq-home-bottom-space: minmax(42px, 0.72fr);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows:
+    var(--sentiq-home-top-space)
+    auto
+    auto
+    var(--sentiq-home-bottom-space);
+  align-content: stretch;
+}
+
+.main-content.is-empty-chat > .welcome-screen {
+  grid-column: 1;
+  grid-row: 2;
+  width: min(100%, var(--content-max-width));
+  min-height: 0;
+  flex: none;
+  align-self: end;
+  justify-content: flex-end;
+  margin: 0 auto;
+  padding: clamp(18px, 3.2vh, 36px) 24px 12px;
+}
+
+.main-content.is-empty-chat > .chat-scroll-region {
+  display: none !important;
+}
+
+.main-content.is-empty-chat > .chat-input-wrapper {
+  grid-column: 1;
+  grid-row: 3;
+  align-self: start;
+  width: 100%;
+  margin: 0 auto;
+  padding-top: 8px;
+  padding-bottom: clamp(18px, 3vh, 30px);
+}
+
+.main-content.is-empty-chat > .chat-input-wrapper::after {
+  top: -18px;
+  right: -48px;
+  left: -48px;
+  border-top-color: transparent;
+  background:
+    radial-gradient(ellipse at 50% 32%, rgba(149, 123, 232, 0.055), transparent 66%),
+    linear-gradient(180deg, transparent, rgba(5, 7, 12, 0.34) 72%, rgba(5, 7, 12, 0.56));
+  opacity: 0.5;
+}
+
+.main-content.composer-layout-transitioning > .chat-input-wrapper {
+  z-index: 8;
+  will-change: transform, opacity;
+}
+
+.main-content.composer-layout-transitioning > .welcome-screen {
+  transition: opacity 220ms ease, transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.main-content:not(.is-empty-chat) > .welcome-screen {
+  pointer-events: none;
+}
+
+@media (min-width: 1440px) and (min-height: 820px) {
+  .main-content.is-empty-chat {
+    --sentiq-home-top-space: minmax(100px, 1.08fr);
+    --sentiq-home-bottom-space: minmax(58px, 0.82fr);
+  }
+
+  .main-content.is-empty-chat > .welcome-screen {
+    padding-bottom: 14px;
+  }
+}
+
+@media (max-width: 768px) {
+  .main-content.is-empty-chat {
+    --sentiq-home-top-space: minmax(calc(72px + env(safe-area-inset-top)), 0.76fr);
+    --sentiq-home-bottom-space: minmax(calc(18px + env(safe-area-inset-bottom)), 0.42fr);
+  }
+
+  .main-content.is-empty-chat > .welcome-screen {
+    width: min(100%, calc(100vw - 24px));
+    padding: clamp(12px, 2.6vh, 24px) 12px 8px;
+  }
+
+  .main-content.is-empty-chat > .chat-input-wrapper {
+    max-width: 100%;
+    padding-top: 6px;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+
+  .main-content.is-empty-chat > .chat-input-wrapper::after {
+    top: -12px;
+    right: -16px;
+    left: -16px;
+    opacity: 0.38;
+  }
+}
+
+@media (max-width: 480px) {
+  .main-content.is-empty-chat {
+    --sentiq-home-top-space: minmax(calc(66px + env(safe-area-inset-top)), 0.64fr);
+    --sentiq-home-bottom-space: minmax(calc(10px + env(safe-area-inset-bottom)), 0.28fr);
+  }
+
+  .main-content.is-empty-chat > .welcome-screen {
+    width: min(100%, calc(100vw - 18px));
+    padding-right: 9px;
+    padding-left: 9px;
+  }
+}
+
+@media (max-height: 700px) {
+  .main-content.is-empty-chat {
+    --sentiq-home-top-space: minmax(64px, 0.62fr);
+    --sentiq-home-bottom-space: minmax(12px, 0.26fr);
+  }
+
+  .main-content.is-empty-chat > .welcome-screen {
+    padding-top: 10px;
+    padding-bottom: 6px;
+    gap: 6px;
+  }
+
+  .main-content.is-empty-chat > .chat-input-wrapper {
+    padding-top: 4px;
+    padding-bottom: 12px;
+  }
+}
+
+@media (max-height: 580px) and (orientation: landscape) {
+  .main-content.is-empty-chat {
+    --sentiq-home-top-space: minmax(44px, 0.34fr);
+    --sentiq-home-bottom-space: minmax(6px, 0.12fr);
+  }
+
+  .main-content.is-empty-chat > .welcome-screen {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .main-content.is-empty-chat .welcome-subtitle,
+  .main-content.is-empty-chat .auth-welcome-note {
+    max-width: 720px;
+    line-height: 1.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-content.composer-layout-transitioning > .chat-input-wrapper,
+  .main-content.composer-layout-transitioning > .welcome-screen {
+    transition: none;
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .main-content.is-empty-chat > .chat-input-wrapper::after {
+    display: none !important;
+  }
+}
