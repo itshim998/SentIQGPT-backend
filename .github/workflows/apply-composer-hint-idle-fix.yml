@@ -40,3 +40,5 @@ jobs:
           git diff --cached --quiet && { echo "No controller change produced"; exit 1; }
           git commit -m "fix(ui): replace perpetual composer hint animation"
           git push origin HEAD:ui/sentiq-liquid-glass-v4
+
+# Temporary one-shot remediation workflow. Remove after the controller commit lands.
