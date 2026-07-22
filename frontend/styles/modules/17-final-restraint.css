@@ -1,0 +1,600 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Pass 12.4
+   Final restraint
+
+   Keeps depth where it communicates hierarchy, while removing duplicate
+   atmosphere, ornamental motion, nested card treatment, redundant controls,
+   and glass effects that do not earn their cost.
+   ============================================================ */
+
+:root {
+  --radius-sm: 8px;
+  --radius: 9px;
+  --radius-lg: 14px;
+  --radius-xl: 14px;
+  --sentiq-composer-radius: 22px;
+  --glass-blur: blur(8px);
+  --shadow-sm: 0 10px 28px rgba(0, 0, 0, 0.18);
+  --shadow-md: 0 18px 44px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 26px 72px rgba(0, 0, 0, 0.34);
+}
+
+/* One atmospheric layer is enough. */
+html,
+body {
+  background: #07090e;
+}
+
+body {
+  background:
+    radial-gradient(ellipse 72% 46% at 50% -18%, rgba(149, 123, 232, 0.09), transparent 68%),
+    #07090e;
+}
+
+body::before,
+.app-container::before,
+.app-container::after,
+.main-content::after,
+.main-content-glow {
+  display: none !important;
+  animation: none !important;
+}
+
+body::after {
+  background: radial-gradient(ellipse at center, transparent 58%, rgba(0, 0, 0, 0.34) 100%);
+  opacity: 0.7;
+}
+
+.main-content {
+  background: rgba(5, 7, 11, 0.2);
+  box-shadow: none;
+}
+
+.main-content::before {
+  background: radial-gradient(ellipse 88% 56% at 50% -16%, rgba(149, 123, 232, 0.075), transparent 72%);
+  opacity: 0.62;
+  animation: none !important;
+  transform: none !important;
+}
+
+/* Remove controls and copy that duplicate a clearer path elsewhere. */
+.welcome-eyebrow,
+.starter-actions,
+#auth-user-chip,
+#auth-logout-btn,
+#auth-menu-toggle,
+#auth-menu-panel,
+.composer-action-subtitle,
+.live-beta-eyebrow,
+.image-provider-tag,
+.image-gen-label,
+.billing-eyebrow {
+  display: none !important;
+}
+
+/* Sidebar: navigation, not another glass card. */
+.sidebar {
+  background: rgba(8, 10, 15, 0.97);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-right: 1px solid rgba(255, 255, 255, 0.045);
+  box-shadow: none;
+}
+
+.sidebar-header {
+  border-bottom: 0;
+}
+
+.sidebar-footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+.sidebar-label {
+  display: none;
+}
+
+.sidebar-conversations {
+  padding-top: 8px;
+}
+
+.sidebar-collapse-btn,
+.btn-new-chat,
+.btn-settings,
+.account-btn {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.sidebar-collapse-btn,
+.btn-new-chat,
+.btn-settings,
+.account-btn,
+.chat-list-item,
+.btn-chat-list-more {
+  border-radius: 8px;
+}
+
+.btn-new-chat:hover,
+.btn-new-chat:focus-visible,
+.btn-settings:hover,
+.btn-settings:focus-visible,
+.account-btn:hover,
+.account-btn:focus-visible,
+.sidebar-collapse-btn:hover,
+.sidebar-collapse-btn:focus-visible {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.chat-search-input {
+  min-height: 40px;
+  margin-bottom: 9px;
+  padding-inline: 10px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-search-input:focus {
+  border-color: rgba(210, 197, 255, 0.24);
+  box-shadow: none;
+}
+
+.chat-list-item,
+.btn-chat-list-more {
+  border: 0;
+  background: transparent;
+}
+
+.chat-list-item.active {
+  border: 0;
+  background: rgba(149, 123, 232, 0.085);
+}
+
+.chat-list-item.active::before {
+  background: rgba(210, 197, 255, 0.74);
+}
+
+.chat-actions-menu {
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 10px;
+  background: #0d1119;
+  box-shadow: var(--shadow-sm);
+}
+
+.account-panel {
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 12px;
+  background: #0d1119;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.3);
+}
+
+.account-panel-header {
+  border-bottom: 0;
+}
+
+.account-panel-item {
+  border-radius: 8px;
+}
+
+/* Messages: preserve reading flow; reserve surfaces for actual assets. */
+.message.assistant,
+.message.user {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.message-action-btn {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.message-action-btn:hover,
+.message-action-btn:focus-visible {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.thinking-panel,
+.web-search-panel,
+.message-chart-container,
+.generated-file-panel {
+  border: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+.response-trust-pill {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent !important;
+  font-weight: 560;
+}
+
+.websurf-v2-answer {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.websurf-v2-sources {
+  gap: 0;
+}
+
+.websurf-v2-source,
+.websurf-v2-explorer-source {
+  padding: 11px 0;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.websurf-v2-featured-card {
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: none;
+}
+
+.websurf-v2-featured-card:hover {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.045);
+  transform: none;
+}
+
+.websurf-v2-featured-media {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.message-image,
+.message-chart-image {
+  border-radius: 10px;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.24);
+}
+
+.message-image.loaded {
+  animation: none;
+  opacity: 1;
+}
+
+.message-image:hover {
+  transform: none;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.24);
+}
+
+.image-download-btn {
+  padding: 3px 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--sentiq-text-link, var(--purple-400));
+  box-shadow: none;
+}
+
+.image-download-btn:hover {
+  background: transparent;
+  box-shadow: none;
+  text-decoration: underline;
+}
+
+/* Composer: the single deliberate glass surface. */
+.chat-input-wrapper::before {
+  display: none;
+}
+
+.chat-input-area {
+  background: rgba(12, 15, 22, 0.96);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--sentiq-composer-radius);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.25);
+}
+
+.chat-input-area:focus-within {
+  border-color: rgba(210, 197, 255, 0.18);
+  box-shadow:
+    0 0 0 1px rgba(149, 123, 232, 0.08),
+    0 16px 42px rgba(0, 0, 0, 0.28);
+}
+
+.tool-btn,
+.composer-plus-btn,
+.execution-mode-toggle {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.tool-btn:hover,
+.tool-btn:focus-visible,
+.composer-plus-btn:hover,
+.composer-plus-btn:focus-visible,
+.execution-mode-toggle:hover,
+.execution-mode-toggle:focus-visible,
+.execution-mode-control.open .execution-mode-toggle {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.btn-send,
+.auth-btn.auth-btn-primary,
+.btn-primary {
+  border: 0;
+  background: #8f78dc;
+  box-shadow: none;
+}
+
+.btn-send:hover,
+.btn-send:focus-visible,
+.auth-btn.auth-btn-primary:hover,
+.auth-btn.auth-btn-primary:focus-visible,
+.btn-primary:hover,
+.btn-primary:focus-visible {
+  background: #9c88e3;
+  box-shadow: none;
+  transform: none;
+}
+
+.composer-action-menu,
+.execution-mode-menu {
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 12px;
+  background: #0d1119;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
+}
+
+.composer-action-option,
+.execution-mode-option {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.composer-action-option:hover,
+.composer-action-option:focus-visible,
+.execution-mode-option:hover,
+.execution-mode-option:focus-visible {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.composer-action-option.active,
+.execution-mode-option.active {
+  border-color: transparent;
+  background: rgba(149, 123, 232, 0.09);
+}
+
+.composer-mode-pill,
+.file-chip,
+.auth-gate-message {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: none;
+}
+
+/* Panels and settings: hierarchy through spacing and separators, not boxes. */
+.modal-overlay {
+  background: rgba(3, 5, 9, 0.76);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  animation: none;
+}
+
+.modal-container,
+.live-beta-surface {
+  border: 0;
+  border-radius: 14px;
+  background: #0d1119;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--shadow-lg);
+  animation: none;
+}
+
+.modal-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.settings-tabs {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.settings-tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+}
+
+.settings-tab.active {
+  border-bottom-color: rgba(210, 197, 255, 0.72);
+  color: var(--sentiq-text-primary, var(--text-primary));
+}
+
+.memory-item {
+  margin: 0;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.memory-item:hover {
+  border-color: rgba(255, 255, 255, 0.07);
+  background: transparent;
+}
+
+.memory-scope-badge,
+.badge {
+  border: 0;
+  background: transparent;
+}
+
+.btn,
+.auth-btn,
+.auth-google-btn,
+.auth-field input,
+.memory-delete-btn,
+.account-panel-item {
+  border-radius: 8px;
+}
+
+.btn-secondary {
+  border: 0;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.btn-secondary:hover {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.billing-current {
+  border-bottom-color: rgba(255, 255, 255, 0.055);
+}
+
+.billing-usage-grid {
+  gap: 0 20px;
+}
+
+.billing-meter {
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 0;
+  background: transparent;
+}
+
+.billing-meter-track span {
+  background: #8f78dc;
+}
+
+.billing-plan-grid {
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+.billing-plan-card {
+  min-height: 0;
+  padding: 15px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 0;
+  background: transparent;
+}
+
+.billing-plan-card.active {
+  padding-left: 12px;
+  border-color: rgba(255, 255, 255, 0.055);
+  background: transparent;
+  box-shadow: inset 2px 0 0 rgba(210, 197, 255, 0.65);
+}
+
+.toast,
+.scroll-anchor-pill {
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  background: #0d1119;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Voice motion should communicate state, not decorate the panel. */
+.live-beta-orbit,
+.composer-drop-orb {
+  display: none !important;
+}
+
+.live-beta-visual {
+  background: transparent;
+}
+
+/* Keep state and focus animation; remove ornamental transforms. */
+.modal-container,
+.message-image,
+.websurf-v2-featured-card,
+.btn-primary,
+.btn-send,
+.auth-btn-primary {
+  transition-property: background-color, border-color, color, opacity, box-shadow;
+}
+
+@media (max-width: 768px) {
+  body {
+    background:
+      radial-gradient(ellipse 100% 42% at 50% -12%, rgba(149, 123, 232, 0.08), transparent 70%),
+      #07090e;
+  }
+
+  .sidebar {
+    background: #090c12;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .sidebar-backdrop.visible {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .chat-input-area {
+    border-radius: 20px;
+  }
+
+  .modal-container,
+  .live-beta-surface {
+    border-radius: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::after,
+  .main-content::before,
+  .modal-overlay,
+  .modal-container,
+  .message-image,
+  .websurf-v2-featured-card {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .starter-actions,
+  #auth-user-chip,
+  #auth-logout-btn,
+  #auth-menu-toggle,
+  #auth-menu-panel {
+    display: none !important;
+  }
+
+  .sidebar,
+  .main-content,
+  .chat-input-area,
+  .modal-container,
+  .live-beta-surface,
+  .account-panel,
+  .composer-action-menu,
+  .execution-mode-menu {
+    background: Canvas;
+    border: 1px solid CanvasText;
+    box-shadow: none;
+  }
+}
