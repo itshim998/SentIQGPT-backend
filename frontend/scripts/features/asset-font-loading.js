@@ -81,6 +81,19 @@ function initializeAssetFontLoading() {
     return image.matches(".message-image, .message-chart-image");
   }
 
+  function isInVisualViewport(image) {
+    if (image.closest("[hidden], details:not([open])")) return false;
+    const rect = image.getBoundingClientRect();
+    const viewportWidth = window.visualViewport?.width || window.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight = window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight;
+    return rect.width > 0
+      && rect.height > 0
+      && rect.bottom > 0
+      && rect.right > 0
+      && rect.top < viewportHeight
+      && rect.left < viewportWidth;
+  }
+
   function resolveProfile(image) {
     return findImageProfile((selector) => {
       try { return image.matches(selector); } catch { return false; }
@@ -149,11 +162,11 @@ function initializeAssetFontLoading() {
     );
     const critical = image.dataset.assetPriority === "high" || image.hasAttribute("data-eager-asset");
     const latest = isLatestPrimaryAsset(image);
-    const visible = image.getClientRects().length > 0 && image.closest("[hidden]") === null;
+    const visible = isInVisualViewport(image);
     const policy = deriveImageLoadingPolicy({
       critical,
       latest,
-      visible: visible && !image.closest("details:not([open])"),
+      visible,
       longConversationManaged,
     });
 
