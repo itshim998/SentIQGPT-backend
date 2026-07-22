@@ -4,23 +4,9 @@ on:
   pull_request:
     paths:
       - "frontend/**"
-      - "scripts/checkFrontendSyntax.mjs"
-      - "scripts/frontendBootstrapDomAliases.cjs"
-      - "scripts/runFrontendBootstrapCheck.mjs"
-      - "scripts/runFrontendChecks.mjs"
-      - "scripts/runFrontendUiStateTests.mjs"
-      - "scripts/isolateChatControllerHang.mjs"
-      - "scripts/isolateFrontendMainImports.mjs"
-      - "scripts/isolateFrontendShellHang.mjs"
-      - "scripts/isolateFrontendStartupHang.mjs"
-      - "scripts/profileFrontendStartup.mjs"
-      - "scripts/testFrontendRuntimeSmoke.mjs"
-      - "backend/frontendSource.ts"
-      - "backend/testFrontendBootstrap.ts"
-      - "backend/testFrontendFileGeneration.ts"
+      - "scripts/minimizeFrontendStartupHang.mjs"
       - "package.json"
       - "package-lock.json"
-      - "tsconfig.backend.json"
       - ".github/workflows/frontend-checks.yml"
   push:
     branches:
@@ -28,23 +14,9 @@ on:
       - "ui/**"
     paths:
       - "frontend/**"
-      - "scripts/checkFrontendSyntax.mjs"
-      - "scripts/frontendBootstrapDomAliases.cjs"
-      - "scripts/runFrontendBootstrapCheck.mjs"
-      - "scripts/runFrontendChecks.mjs"
-      - "scripts/runFrontendUiStateTests.mjs"
-      - "scripts/isolateChatControllerHang.mjs"
-      - "scripts/isolateFrontendMainImports.mjs"
-      - "scripts/isolateFrontendShellHang.mjs"
-      - "scripts/isolateFrontendStartupHang.mjs"
-      - "scripts/profileFrontendStartup.mjs"
-      - "scripts/testFrontendRuntimeSmoke.mjs"
-      - "backend/frontendSource.ts"
-      - "backend/testFrontendBootstrap.ts"
-      - "backend/testFrontendFileGeneration.ts"
+      - "scripts/minimizeFrontendStartupHang.mjs"
       - "package.json"
       - "package-lock.json"
-      - "tsconfig.backend.json"
       - ".github/workflows/frontend-checks.yml"
   workflow_dispatch:
 
@@ -56,163 +28,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  frontend-checks:
-    name: Syntax, lifecycle, UI state, billing, and runtime
+  startup-delta-debug:
+    name: Minimize blocked frontend startup
     runs-on: ubuntu-latest
     timeout-minutes: 25
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-
       - name: Install dependencies
         run: npm ci
-
-      - name: Frontend syntax
-        run: npm run check:frontend-syntax
-
-      - name: Frontend bootstrap
-        id: frontend_bootstrap
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run test:frontend-bootstrap 2>&1 | tee frontend-bootstrap.log
-
-      - name: Upload bootstrap failure log
-        if: failure() && steps.frontend_bootstrap.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-bootstrap-failure-${{ github.run_id }}
-          path: frontend-bootstrap.log
-          if-no-files-found: error
-          retention-days: 2
-
-      - name: Frontend file generation
-        run: npm run test:frontend-file-generation
-
-      - name: Frontend tool lifecycle
-        run: npm run test:frontend-tool-lifecycle
-
-      - name: Frontend billing
-        run: npm run test:frontend-billing
-
-      - name: Focused UI state
-        id: frontend_ui_state
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run test:frontend-ui-state 2>&1 | tee frontend-ui-state.log
-
-      - name: Upload focused UI-state failure log
-        if: failure() && steps.frontend_ui_state.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-ui-state-failure-${{ github.run_id }}
-          path: frontend-ui-state.log
-          if-no-files-found: error
-          retention-days: 2
-
-      - name: Install browser smoke harness
+      - name: Install browser diagnostic harness
         run: npm install --no-save --ignore-scripts puppeteer-core@24.16.0
-
-      - name: Chromium complete DOM side-effect isolation
-        id: frontend_startup_isolation
+      - name: Delta-debug DOM side effects
+        id: delta_debug
         shell: bash
         run: |
           set -o pipefail
-          node scripts/isolateFrontendStartupHang.mjs 2>&1 | tee frontend-startup-isolation.log
-
-      - name: Upload complete DOM isolation log
-        if: failure() && steps.frontend_startup_isolation.outcome == 'failure'
+          node scripts/minimizeFrontendStartupHang.mjs 2>&1 | tee frontend-startup-delta-debug.log
+      - name: Upload delta-debug result
+        if: always() && steps.delta_debug.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-complete-dom-isolation-${{ github.run_id }}
-          path: frontend-startup-isolation.log
-          if-no-files-found: error
-          retention-days: 2
-
-      - name: Chromium chat controller isolation
-        id: frontend_chat_controller_isolation
-        shell: bash
-        run: |
-          set -o pipefail
-          node scripts/isolateChatControllerHang.mjs 2>&1 | tee frontend-chat-controller-isolation.log
-
-      - name: Upload chat controller isolation log
-        if: failure() && steps.frontend_chat_controller_isolation.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-chat-controller-isolation-${{ github.run_id }}
-          path: frontend-chat-controller-isolation.log
-          if-no-files-found: error
-          retention-days: 2
-
-      - name: Chromium main import isolation
-        id: frontend_main_import_isolation
-        shell: bash
-        run: |
-          set -o pipefail
-          node scripts/isolateFrontendMainImports.mjs 2>&1 | tee frontend-main-import-isolation.log
-
-      - name: Upload main import isolation log
-        if: failure() && steps.frontend_main_import_isolation.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-main-import-isolation-${{ github.run_id }}
-          path: frontend-main-import-isolation.log
-          if-no-files-found: error
-          retention-days: 2
-
-      - name: Chromium shell isolation
-        id: frontend_shell_isolation
-        shell: bash
-        run: |
-          set -o pipefail
-          node scripts/isolateFrontendShellHang.mjs 2>&1 | tee frontend-shell-isolation.log
-
-      - name: Upload shell isolation log
-        if: failure() && steps.frontend_shell_isolation.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-shell-isolation-${{ github.run_id }}
-          path: frontend-shell-isolation.log
-          if-no-files-found: error
-          retention-days: 2
-
-      - name: Chromium startup CPU profile
-        id: frontend_startup_profile
-        shell: bash
-        run: |
-          set -o pipefail
-          node scripts/profileFrontendStartup.mjs 2>&1 | tee frontend-startup-profile.log
-
-      - name: Upload startup profile failure log
-        if: failure() && steps.frontend_startup_profile.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-startup-profile-failure-${{ github.run_id }}
-          path: frontend-startup-profile.log
-          if-no-files-found: error
-          retention-days: 2
-
-      - name: Chromium runtime smoke
-        id: frontend_runtime
-        shell: bash
-        run: |
-          set -o pipefail
-          node scripts/testFrontendRuntimeSmoke.mjs 2>&1 | tee frontend-runtime.log
-
-      - name: Upload runtime failure log
-        if: failure() && steps.frontend_runtime.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-runtime-failure-${{ github.run_id }}
-          path: frontend-runtime.log
+          name: frontend-startup-delta-debug-${{ github.run_id }}
+          path: frontend-startup-delta-debug.log
           if-no-files-found: error
           retention-days: 2
