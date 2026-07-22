@@ -1,17 +1,19 @@
-import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const require = createRequire(import.meta.url);
-const tsNodeCli = require.resolve("ts-node/dist/bin.js");
+const tsNodeExecutable = resolve(
+  repositoryRoot,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "ts-node.cmd" : "ts-node",
+);
 const preloadUrl = pathToFileURL(resolve(repositoryRoot, "scripts/frontendBootstrapDomAliases.mjs")).href;
 const existingNodeOptions = String(process.env.NODE_OPTIONS || "").trim();
 const nodeOptions = [existingNodeOptions, `--import=${preloadUrl}`].filter(Boolean).join(" ");
 
-const result = spawnSync(process.execPath, [
-  tsNodeCli,
+const result = spawnSync(tsNodeExecutable, [
   "--project",
   resolve(repositoryRoot, "tsconfig.backend.json"),
   resolve(repositoryRoot, "backend/testFrontendBootstrap.ts"),
