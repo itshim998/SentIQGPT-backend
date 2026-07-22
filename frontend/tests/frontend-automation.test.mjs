@@ -69,9 +69,11 @@ for (const token of [
   "node-version: 20",
   "cache: npm",
   "run: npm ci",
-  "run: npm run test:frontend",
 ]) assert.ok(workflowSource.includes(token), `Frontend workflow missing ${token}`);
+for (const script of FRONTEND_CHECK_SEQUENCE) {
+  assert.ok(workflowSource.includes(`run: npm run ${script}`), `Frontend workflow must expose ${script} as its own diagnostic step`);
+}
 assert.equal(workflowSource.includes("secrets."), false, "Frontend checks must remain secret-free");
 assert.equal(workflowSource.includes("pull_request_target"), false, "Untrusted pull requests must not run with elevated target-branch context");
 
-console.log("Pass 12.2 frontend automation contracts passed: the aggregate gate and CI workflow are deterministic, cross-platform, non-duplicating, least-privilege, and fail-closed.");
+console.log("Pass 12.2 frontend automation contracts passed: local aggregation and CI diagnostics are deterministic, cross-platform, non-duplicating, least-privilege, and fail-closed.");
