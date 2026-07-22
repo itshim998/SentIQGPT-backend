@@ -23,6 +23,26 @@ const MIME = Object.freeze({
 });
 
 const SUSPECT_IMPORTS = Object.freeze([
+  "../ui-state-runtime.js",
+  "../authentication-surface.js",
+  "../settings-workspace.js",
+  "../live-surface.js",
+  "../adaptive-panel-framework.js",
+  "../panel-focus-recovery.js",
+  "../compact-user-messages.js",
+  "../identity-metadata.js",
+  "../message-action-behaviour.js",
+  "../long-answer-reading.js",
+  "../websurf-presentation-refinement.js",
+  "../deep-research-workspace.js",
+  "../asset-result-presentation.js",
+  "../semantic-activity-progress.js",
+  "../failure-recovery.js",
+  "../ui-state-bridge.js",
+  "../progressive-disclosure.js",
+  "../capability-awareness.js",
+  "../conversation-continuity.js",
+  "../conversation-continuity-event-bridge.js",
   "../attention-management.js",
   "../frame-discipline.js",
   "../long-conversation-optimizer.js",
@@ -81,14 +101,6 @@ function variantSource(disabledImports = []) {
   return source;
 }
 
-function withTimeout(promise, milliseconds, label) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} exceeded ${milliseconds}ms`)), milliseconds);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
 const server = createServer((request, response) => {
   const resolved = fileFor(request.url);
   if (!resolved || !existsSync(resolved.candidate) || !statSync(resolved.candidate).isFile()) {
@@ -117,7 +129,6 @@ async function runVariant(name, disabledImports) {
   let browser;
   const startedAt = Date.now();
   const errors = [];
-  const blockedExternal = [];
   try {
     browser = await puppeteer.launch({
       executablePath,
@@ -130,27 +141,23 @@ async function runVariant(name, disabledImports) {
     await page.setRequestInterception(true);
     page.on("request", (request) => {
       if (request.url().startsWith(localOrigin)) request.continue();
-      else {
-        blockedExternal.push(request.url());
-        request.abort("blockedbyclient");
-      }
+      else request.abort("blockedbyclient");
     });
     await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
     const url = `${localOrigin}/index.html?isolation=${encodeURIComponent(name)}&nonce=${Date.now()}`;
-    await withTimeout(page.goto(url, { waitUntil: "domcontentloaded", timeout: 5_500 }), 6_500, name);
-    const state = await withTimeout(page.evaluate(() => ({
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 5_500 });
+    const state = await page.evaluate(() => ({
       readyState: document.readyState,
       title: document.title,
       bodyChildren: document.body?.children?.length || 0,
-    })), 2_000, `${name}:evaluate`);
+    }));
     return {
       name,
       disabledImports,
-      completed: state.readyState === "interactive" || state.readyState === "complete",
+      completed: ["interactive", "complete"].includes(state.readyState),
       durationMs: Date.now() - startedAt,
       state,
       errors,
-      blockedExternal: [...new Set(blockedExternal)],
     };
   } catch (error) {
     browser?.process()?.kill?.("SIGKILL");
@@ -161,32 +168,18 @@ async function runVariant(name, disabledImports) {
       durationMs: Date.now() - startedAt,
       error: error?.message || String(error),
       errors,
-      blockedExternal: [...new Set(blockedExternal)],
     };
   } finally {
     await browser?.close().catch(() => {});
   }
 }
 
-const results = [];
-results.push(await runVariant("baseline", []));
-for (const importPath of SUSPECT_IMPORTS) {
-  results.push(await runVariant(`without:${importPath}`, [importPath]));
-}
-
+const results = [await runVariant("baseline", [])];
+for (const importPath of SUSPECT_IMPORTS) results.push(await runVariant(`without:${importPath}`, [importPath]));
 const recovered = results.filter((result) => result.name !== "baseline" && result.completed);
-console.log(JSON.stringify({
-  baseline: results[0],
-  recovered,
-  results,
-}, null, 2));
-
+console.log(JSON.stringify({ baseline: results[0], recovered, results }, null, 2));
 await new Promise((resolvePromise) => server.close(resolvePromise));
 
-if (results[0].completed) {
-  throw new Error("Startup isolation baseline completed after external requests were blocked; the prior CI timeout was externally induced.");
-}
-if (recovered.length !== 1) {
-  throw new Error(`Startup isolation expected one recovering import, found ${recovered.length}.`);
-}
+if (results[0].completed) throw new Error("Startup isolation baseline unexpectedly completed.");
+if (recovered.length !== 1) throw new Error(`Startup isolation expected one recovering import, found ${recovered.length}.`);
 throw new Error(`Startup hang isolated to ${recovered[0].disabledImports[0]}.`);
