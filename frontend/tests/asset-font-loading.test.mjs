@@ -107,7 +107,7 @@ for (const token of [
   'image.decoding = policy.decoding',
   'image.loading = policy.loading',
   'setAttribute(image, "fetchpriority", policy.fetchPriority)',
-  "normalizeIntrinsicDimensions",
+  "deriveImageReservation",
   "scheduleScrollAnchor",
   "window.SentIQAssetFontLoading = Object.freeze",
 ]) assert.ok(runtimeSource.includes(token), `Runtime missing ${token}`);
@@ -130,7 +130,7 @@ assert.equal(bootstrapSource.includes("i.ibb.co"), false);
 
 for (const token of [
   "sentiq-ui-icon-sprite",
-  "<symbol",
+  'createElementNS(SVG_NS, "symbol")',
   "createElementNS",
   'createUiIcon("zoom-in"',
   'createUiIcon("download"',
@@ -144,7 +144,7 @@ assert.ok(chartPresentationSource.includes('image.loading = "lazy"'));
 assert.ok(chartPresentationSource.includes('image.decoding = "async"'));
 
 for (const token of [
-  '@font-face',
+  "@font-face",
   'font-family: "Inter Fallback"',
   "size-adjust: 107.06%",
   "ascent-override: 90.44%",
