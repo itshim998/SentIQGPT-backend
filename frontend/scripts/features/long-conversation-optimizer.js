@@ -403,6 +403,9 @@ function initializeLongConversationOptimizer() {
       frameApi?.scheduleScrollAnchor?.("long-conversation:citation-expand");
     }
     notify("citations", reason, { expanded, near });
+    if (reason === "toggle" || reason === "toggle-capture" || reason === "interaction") {
+      scheduleSnapshot("citation-expansion");
+    }
   }
 
   function registerCitationPanel(panel) {
@@ -439,6 +442,7 @@ function initializeLongConversationOptimizer() {
   function restoreConversationSnapshot(key, reason = "rehydrate") {
     const snapshot = snapshots.get(key);
     const messages = getMessages();
+    if (!snapshot) currentCitationExpansion.clear();
     processMedia(chatMessages, reason);
     processCitations(chatMessages);
     scheduleMessageWindow(reason);
@@ -462,7 +466,7 @@ function initializeLongConversationOptimizer() {
     });
     chatMessages.scrollTop = target;
     setData(chatMessages, "conversationRehydration", "restored");
-    frameApi?.scheduleScrollAnchor?.("long-conversation:rehydrate");
+    frameApi?.scheduleScrollAnchor?.("long-conversation:rehydrate", { userInitiated: true });
     notify("rehydration", reason, { key, restored: true, target, messageCount: messages.length });
   }
 
