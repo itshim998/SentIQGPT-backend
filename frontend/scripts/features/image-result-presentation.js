@@ -1,8 +1,7 @@
 /* SentIQ Liquid Glass V4 — Phase 7.3 image results */
 
 import { ASSET_RESULT_VERSION, findMessageRetryControl } from "./asset-result-state.js";
-
-const ZOOM_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path><path d="M11 8v6M8 11h6"></path></svg>';
+import { createUiIcon } from "./ui-icon-sprite.js";
 
 function ensureOverlay(card, frame, image) {
   let overlay = frame.querySelector(":scope > .asset-image-overlay");
@@ -21,7 +20,8 @@ function ensureOverlay(card, frame, image) {
     zoom.className = "asset-overlay-action asset-image-zoom";
     zoom.title = "Open image viewer";
     zoom.setAttribute("aria-label", "Open image viewer");
-    zoom.innerHTML = ZOOM_ICON;
+    const icon = createUiIcon("zoom-in", { width: 18, height: 18 });
+    if (icon) zoom.appendChild(icon);
     zoom.addEventListener("click", () => image?.click());
     overlay.appendChild(zoom);
   }
