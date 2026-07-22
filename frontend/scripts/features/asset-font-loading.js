@@ -102,7 +102,7 @@ function initializeAssetFontLoading() {
 
   function resolveFrame(image) {
     const frame = image.closest(FRAME_SELECTOR);
-    return frame instanceof HTMLElement ? frame : image.parentElement;
+    return frame instanceof HTMLElement ? frame : null;
   }
 
   function setReservedGeometry(image, profile, reason) {
