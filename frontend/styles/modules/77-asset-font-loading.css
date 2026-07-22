@@ -100,10 +100,6 @@ img[data-asset-decode-state="decoded"] {
   background: transparent;
 }
 
-html[data-font-load-state="loading"] :is(.logo, .welcome-screen h2, .message-content, .chat-list) {
-  text-wrap: pretty;
-}
-
 @media (max-width: 768px) {
   [data-asset-frame-version="11.6"] {
     contain-intrinsic-size: auto 240px;
@@ -116,7 +112,6 @@ html[data-font-load-state="loading"] :is(.logo, .welcome-screen h2, .message-con
 }
 
 @media (prefers-reduced-motion: reduce) {
-  html[data-font-load-state="loading"] *,
   img[data-asset-loading-version="11.6"] {
     transition: none !important;
   }
