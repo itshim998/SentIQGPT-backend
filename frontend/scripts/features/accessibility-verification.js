@@ -18,13 +18,7 @@ const FOCUSABLE_SELECTOR = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
-const MENU_ITEM_SELECTOR = [
-  "[role='menuitem']",
-  "[role='option']",
-  "button:not([disabled])",
-  "a[href]",
-].join(",");
-
+const MENU_ITEM_SELECTOR = "[role='menuitem'], [role='option'], button:not([disabled]), a[href]";
 const KNOWN_LABELS = Object.freeze({
   "chat-search-input": "Search conversations",
   "composer-plus-btn": "More message actions",
@@ -34,6 +28,14 @@ const KNOWN_LABELS = Object.freeze({
   "sidebar-collapse-btn": "Collapse chat history",
   "scroll-anchor-pill": "Jump to latest message",
 });
+
+let generatedDialogTitle = 0;
+
+function setAttributeIfChanged(element, name, value) {
+  if (!(element instanceof Element)) return;
+  const next = String(value);
+  if (element.getAttribute(name) !== next) element.setAttribute(name, next);
+}
 
 function isElementVisible(element) {
   if (!(element instanceof HTMLElement) || !element.isConnected || element.hidden) return false;
@@ -81,26 +83,23 @@ function textAlternative(element) {
 function ensureKnownLabels(scope = document) {
   Object.entries(KNOWN_LABELS).forEach(([id, label]) => {
     const element = document.getElementById(id);
-    if (!(element instanceof HTMLElement)) return;
-    if (!textAlternative(element)) element.setAttribute("aria-label", label);
+    if (element instanceof HTMLElement && !textAlternative(element)) setAttributeIfChanged(element, "aria-label", label);
   });
 
   scope.querySelectorAll?.("button[title], a[title], [role='button'][title]").forEach((element) => {
-    if (!textAlternative(element)) element.setAttribute("aria-label", element.getAttribute("title"));
+    if (!textAlternative(element)) setAttributeIfChanged(element, "aria-label", element.getAttribute("title"));
   });
 
   scope.querySelectorAll?.("button svg, a svg, [role='button'] svg").forEach((icon) => {
     if (icon.hasAttribute("role") || icon.querySelector("title")) return;
-    icon.setAttribute("aria-hidden", "true");
-    icon.setAttribute("focusable", "false");
+    setAttributeIfChanged(icon, "aria-hidden", "true");
+    setAttributeIfChanged(icon, "focusable", "false");
   });
 }
 
 function ensureDocumentLandmarks() {
-  const body = document.body;
   const main = document.querySelector("main.main-content, main");
-  if (!(body instanceof HTMLElement) || !(main instanceof HTMLElement)) return;
-
+  if (!(main instanceof HTMLElement)) return;
   if (!main.id) main.id = "main-content";
   if (!main.hasAttribute("tabindex")) main.tabIndex = -1;
 
@@ -111,48 +110,45 @@ function ensureDocumentLandmarks() {
     skipLink.className = "sentiq-skip-link";
     skipLink.href = `#${main.id}`;
     skipLink.textContent = "Skip to main content";
-    body.prepend(skipLink);
+    document.body.prepend(skipLink);
+    skipLink.addEventListener("click", () => {
+      window.requestAnimationFrame(() => main.focus({ preventScroll: true }));
+    });
   }
-
-  skipLink.addEventListener("click", () => {
-    window.requestAnimationFrame(() => main.focus({ preventScroll: true }));
-  });
 }
 
 function ensureStaticSemantics(scope = document) {
   const chatMessages = document.getElementById("chat-messages");
   if (chatMessages instanceof HTMLElement) {
-    chatMessages.setAttribute("role", "log");
-    chatMessages.setAttribute("aria-label", "Conversation messages");
-    chatMessages.setAttribute("aria-live", "polite");
-    chatMessages.setAttribute("aria-relevant", "additions text");
-    chatMessages.setAttribute("aria-atomic", "false");
+    setAttributeIfChanged(chatMessages, "role", "log");
+    setAttributeIfChanged(chatMessages, "aria-label", "Conversation messages");
+    setAttributeIfChanged(chatMessages, "aria-live", "polite");
+    setAttributeIfChanged(chatMessages, "aria-relevant", "additions text");
+    setAttributeIfChanged(chatMessages, "aria-atomic", "false");
     if (!chatMessages.hasAttribute("tabindex")) chatMessages.tabIndex = 0;
   }
 
   const starterActions = document.getElementById("starter-actions");
-  if (starterActions instanceof HTMLElement && !starterActions.hasAttribute("role")) {
-    starterActions.setAttribute("role", "group");
-  }
+  if (starterActions instanceof HTMLElement && !starterActions.hasAttribute("role")) starterActions.setAttribute("role", "group");
 
   const composerMenu = document.getElementById("composer-action-menu");
   if (composerMenu instanceof HTMLElement) {
-    composerMenu.setAttribute("role", "menu");
-    composerMenu.setAttribute("aria-label", "Message actions");
-    composerMenu.querySelectorAll(".composer-action-option").forEach((item) => item.setAttribute("role", "menuitem"));
+    setAttributeIfChanged(composerMenu, "role", "menu");
+    setAttributeIfChanged(composerMenu, "aria-label", "Message actions");
+    composerMenu.querySelectorAll(".composer-action-option").forEach((item) => setAttributeIfChanged(item, "role", "menuitem"));
   }
 
   const composerTrigger = document.getElementById("composer-plus-btn");
   if (composerTrigger instanceof HTMLElement) {
-    composerTrigger.setAttribute("aria-haspopup", "menu");
-    composerTrigger.setAttribute("aria-controls", "composer-action-menu");
+    setAttributeIfChanged(composerTrigger, "aria-haspopup", "menu");
+    setAttributeIfChanged(composerTrigger, "aria-controls", "composer-action-menu");
   }
 
   const executionToggle = document.getElementById("execution-mode-toggle");
   if (executionToggle instanceof HTMLElement) {
-    executionToggle.setAttribute("aria-haspopup", "listbox");
+    setAttributeIfChanged(executionToggle, "aria-haspopup", "listbox");
     const current = document.getElementById("execution-mode-label")?.textContent?.trim();
-    executionToggle.setAttribute("aria-label", current ? `Choose execution mode. Current mode: ${current}` : "Choose execution mode");
+    setAttributeIfChanged(executionToggle, "aria-label", current ? `Choose execution mode. Current mode: ${current}` : "Choose execution mode");
   }
 
   scope.querySelectorAll?.("[role='dialog'][aria-modal='true']").forEach((dialog) => {
@@ -162,15 +158,14 @@ function ensureStaticSemantics(scope = document) {
     if (labelledBy && document.getElementById(labelledBy)) return;
     const heading = dialog.querySelector("h1, h2, h3, [data-adaptive-panel-title]");
     if (!(heading instanceof HTMLElement)) return;
-    if (!heading.id) heading.id = `sentiq-dialog-title-${Math.random().toString(36).slice(2, 9)}`;
-    dialog.setAttribute("aria-labelledby", heading.id);
+    if (!heading.id) heading.id = `sentiq-dialog-title-${++generatedDialogTitle}`;
+    setAttributeIfChanged(dialog, "aria-labelledby", heading.id);
   });
 
   scope.querySelectorAll?.("[role='tablist']").forEach((tabList) => {
-    if (!(tabList instanceof HTMLElement)) return;
     tabList.querySelectorAll("[role='tab']").forEach((tab, index) => {
-      if (!(tab instanceof HTMLElement)) return;
-      if (!tab.hasAttribute("tabindex")) tab.tabIndex = tab.getAttribute("aria-selected") === "true" || index === 0 ? 0 : -1;
+      if (!(tab instanceof HTMLElement) || tab.hasAttribute("tabindex")) return;
+      tab.tabIndex = tab.getAttribute("aria-selected") === "true" || index === 0 ? 0 : -1;
     });
   });
 
@@ -181,32 +176,31 @@ function ensureStaticSemantics(scope = document) {
 
 function ensureLiveSemantics(scope = document) {
   scope.querySelectorAll?.(".response-inline-loader, .semantic-surface-progress, .semantic-legacy-progress").forEach((status) => {
-    status.setAttribute("role", "status");
-    status.setAttribute("aria-live", "polite");
-    status.setAttribute("aria-atomic", "true");
+    setAttributeIfChanged(status, "role", "status");
+    setAttributeIfChanged(status, "aria-live", "polite");
+    setAttributeIfChanged(status, "aria-atomic", "true");
   });
 
   scope.querySelectorAll?.(".sentiq-loader-host").forEach((host) => {
-    host.setAttribute("role", "status");
-    host.setAttribute("aria-live", "polite");
-    host.setAttribute("aria-busy", "true");
-    if (!textAlternative(host)) host.setAttribute("aria-label", "Working");
+    setAttributeIfChanged(host, "role", "status");
+    setAttributeIfChanged(host, "aria-live", "polite");
+    setAttributeIfChanged(host, "aria-busy", "true");
+    if (!textAlternative(host)) setAttributeIfChanged(host, "aria-label", "Working");
   });
 
   scope.querySelectorAll?.(".failure-recovery-panel, .chat-load-error").forEach((alert) => {
-    alert.setAttribute("role", "alert");
-    alert.setAttribute("aria-live", "assertive");
-    alert.setAttribute("aria-atomic", "true");
+    setAttributeIfChanged(alert, "role", "alert");
+    setAttributeIfChanged(alert, "aria-live", "assertive");
+    setAttributeIfChanged(alert, "aria-atomic", "true");
   });
 
   scope.querySelectorAll?.("[data-asset-result-version].is-loading, .image-generation-card.is-loading, .deep-research-card[aria-busy='true']")
-    .forEach((busy) => busy.setAttribute("aria-busy", "true"));
+    .forEach((busy) => setAttributeIfChanged(busy, "aria-busy", "true"));
 }
 
 function ensureTouchMetadata(scope = document) {
   scope.querySelectorAll?.("button, [role='button'], [role='menuitem'], [role='option'], summary").forEach((control) => {
-    if (!(control instanceof HTMLElement)) return;
-    control.style.setProperty("--sentiq-a11y-touch-target", `${ACCESSIBILITY_MIN_TOUCH_TARGET}px`);
+    if (control instanceof HTMLElement) control.style.setProperty("--sentiq-a11y-touch-target", `${ACCESSIBILITY_MIN_TOUCH_TARGET}px`);
   });
 }
 
@@ -239,7 +233,9 @@ function controlledContainer(trigger) {
 
 function triggerFor(container) {
   if (!(container instanceof HTMLElement) || !container.id) return null;
-  return document.querySelector(`[aria-controls~="${CSS.escape(container.id)}"]`);
+  return Array.from(document.querySelectorAll("[aria-controls]")).find((candidate) => (
+    String(candidate.getAttribute("aria-controls") || "").split(/\s+/).includes(container.id)
+  )) || null;
 }
 
 function focusMenuEdge(trigger, edge = "first") {
@@ -294,14 +290,12 @@ function handleTabListKey(event, tabList) {
 function activeModalDialog() {
   const dialogs = Array.from(document.querySelectorAll("[role='dialog'][aria-modal='true']")).filter(isElementVisible);
   if (!dialogs.length) return null;
-  return dialogs
-    .map((dialog, index) => ({
-      dialog,
-      index,
-      zIndex: Number.parseInt(window.getComputedStyle(dialog.closest(".adaptive-panel-root, .modal-overlay, .live-beta-panel") || dialog).zIndex, 10) || 0,
-    }))
-    .sort((first, second) => first.zIndex - second.zIndex || first.index - second.index)
-    .at(-1)?.dialog || null;
+  const ranked = dialogs.map((dialog, index) => {
+    const layer = dialog.closest(".adaptive-panel-root, .modal-overlay, .live-beta-panel") || dialog;
+    const zIndex = Number.parseInt(window.getComputedStyle(layer).zIndex, 10) || 0;
+    return { dialog, index, zIndex };
+  }).sort((first, second) => first.zIndex - second.zIndex || first.index - second.index);
+  return ranked[ranked.length - 1].dialog;
 }
 
 function focusDialog(dialog) {
@@ -341,7 +335,7 @@ function initializeAccessibilityVerification() {
     const text = String(message || "").replace(/\s+/g, " ").trim();
     if (!text) return;
     window.clearTimeout(announcementTimer);
-    announcer.setAttribute("aria-live", priority === "assertive" ? "assertive" : "polite");
+    setAttributeIfChanged(announcer, "aria-live", priority === "assertive" ? "assertive" : "polite");
     announcer.textContent = "";
     announcementTimer = window.setTimeout(() => { announcer.textContent = text; }, 20);
   }
@@ -395,22 +389,15 @@ function initializeAccessibilityVerification() {
     if (event?.detail?.reason === "mutation") return;
     announce(event?.detail?.open ? "Navigation opened" : "Navigation closed");
   });
-
   document.addEventListener("sentiq-panel-stack-restored", () => announce("Returned to the conversation"));
 
   new MutationObserver((records) => {
     records.forEach((record) => {
-      if (record.type === "attributes" && record.target instanceof Element) scheduleEnhance(record.target);
       record.addedNodes.forEach((node) => {
         if (node instanceof Element) scheduleEnhance(node);
       });
     });
-  }).observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ["hidden", "aria-hidden", "aria-expanded", "aria-selected", "aria-busy", "role", "title"],
-  });
+  }).observe(document.body, { childList: true, subtree: true });
 
   window.SentIQAccessibility = Object.freeze({
     version: ACCESSIBILITY_VERIFICATION_VERSION,
