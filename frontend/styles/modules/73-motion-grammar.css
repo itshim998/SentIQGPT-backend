@@ -268,31 +268,20 @@ html:root[data-sentiq-motion-version="11.1"] {
   animation: sentiqMotionInterrupt var(--sentiq-motion-interrupt-duration) var(--sentiq-motion-interrupt-ease) both;
 }
 
-/* Slow-update devices use the same static policy as reduced motion. */
-:root[data-sentiq-motion-version="11.1"][data-sentiq-motion-policy="reduced"] *,
-:root[data-sentiq-motion-version="11.1"][data-sentiq-motion-policy="reduced"] *::before,
-:root[data-sentiq-motion-version="11.1"][data-sentiq-motion-policy="reduced"] *::after {
-  animation-duration: 1ms !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 1ms !important;
-  transition-delay: 0ms !important;
+/* Pass 11.7 owns reduced and slow-update alternatives without universal overrides. */
+:root[data-sentiq-motion-version="11.1"][data-sentiq-motion-policy="reduced"] {
+  --sentiq-motion-duration-instant: 0ms;
+  --sentiq-motion-duration-fast: 80ms;
+  --sentiq-motion-duration-standard: 80ms;
+  --sentiq-motion-duration-slow: 0ms;
+  --sentiq-motion-duration-progress: 0ms;
+  --sentiq-motion-duration-progress-relaxed: 0ms;
+  --sentiq-motion-layout-duration: 0ms;
+  --sentiq-motion-focus-duration: 80ms;
+  --transition: 80ms linear;
+  --transition-slow: 0ms linear;
 }
 
 :root[data-sentiq-motion-version="11.1"][data-sentiq-motion-policy="reduced"] .chat-messages {
   scroll-behavior: auto;
-}
-
-@media (prefers-reduced-motion: reduce), (update: slow) {
-  :root[data-sentiq-motion-version="11.1"] *,
-  :root[data-sentiq-motion-version="11.1"] *::before,
-  :root[data-sentiq-motion-version="11.1"] *::after {
-    animation-duration: 1ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 1ms !important;
-    transition-delay: 0ms !important;
-  }
-
-  :root[data-sentiq-motion-version="11.1"] .chat-messages {
-    scroll-behavior: auto;
-  }
 }
