@@ -159,12 +159,16 @@ assert.ok(legacyWidthRead >= 0 && transformedPercentRead > legacyWidthRead, "A f
 
 const motionRuntimeImport = domRefsSource.indexOf('import "../motion-grammar.js";');
 const compositorRuntimeImport = domRefsSource.indexOf('import "../compositor-safety.js";');
+const blurRuntimeImport = domRefsSource.indexOf('import "../blur-layer-budget.js";');
 assert.ok(motionRuntimeImport >= 0 && compositorRuntimeImport > motionRuntimeImport, "Compositor policy must load after the motion grammar");
+assert.ok(blurRuntimeImport > compositorRuntimeImport, "Blur budgeting must consume compositor policy before later accessibility auditing");
 
 const motionCssImport = importSource.indexOf('@import url("./73-motion-grammar.css");');
 const compositorCssImport = importSource.indexOf('@import url("./74-compositor-safety.css");');
-const reducedMotionRule = importSource.indexOf("@media (prefers-reduced-motion: reduce)");
-assert.ok(motionCssImport >= 0 && compositorCssImport > motionCssImport, "Compositor safety must be the final component layer");
-assert.ok(reducedMotionRule > compositorCssImport, "The global reduced-motion guard must remain last");
+const refinedReducedMotionImport = importSource.indexOf('@import url("./78-refined-reduced-motion.css");');
+const accessibilityCssImport = importSource.indexOf('@import url("./79-accessibility-verification.css");');
+assert.ok(motionCssImport >= 0 && compositorCssImport > motionCssImport, "Compositor safety must load after the motion grammar");
+assert.ok(refinedReducedMotionImport > compositorCssImport, "Refined reduced-motion policy must remain later in the cascade");
+assert.ok(accessibilityCssImport > refinedReducedMotionImport, "Accessibility verification must remain the final policy layer");
 
-console.log("Pass 11.2 compositor safety gate passed: transform/opacity motion, bounded progress, paint-heavy overrides, cascade precedence, inline migration, and reduced policies.");
+console.log("Pass 11.2 compositor safety gate passed: transform/opacity motion, bounded progress, paint-heavy overrides, cascade precedence, inline migration, and later policy ordering are covered.");
