@@ -22,6 +22,7 @@ import "../attention-management.js";
 import "../frame-discipline.js";
 import "../long-conversation-optimizer.js";
 import "../citation-expansion-rehydration.js";
+import "../asset-font-loading.js";
 import "../mobile-navigation.js";
 import "../mobile-composer.js";
 import "../touch-interaction-language.js";
