@@ -85,9 +85,9 @@ for (const token of [
   'requestClose({ restoreFocus: true, source: "close-button" })',
   'requestClose({ restoreFocus: true, source: "swipe-down" })',
   'requestClose({ restoreFocus: true, source: "escape" })',
-  'sidebar.setAttribute("role", "dialog")',
-  'sidebar.setAttribute("aria-modal", state.ariaModal)',
-  'sidebar.setAttribute("aria-hidden", state.sidebarHidden ? "true" : "false")',
+  'setAttr(sidebar, "role", "dialog")',
+  'setAttr(sidebar, "aria-modal", state.ariaModal)',
+  'setAttr(sidebar, "aria-hidden", state.sidebarHidden ? "true" : "false")',
   'element.setAttribute("inert", "")',
   'element.setAttribute("aria-hidden", "true")',
   'lockUnderlyingScroll()',
@@ -98,7 +98,8 @@ for (const token of [
   'document.addEventListener("keydown", handleKeydown, { capture: true })',
   'window.addEventListener("resize", handleViewportChange, { passive: true })',
   'window.visualViewport?.addEventListener?.("resize", updateViewportHeight',
-  'new MutationObserver((records) =>',
+  'let observedOpen = sidebar.classList.contains("open")',
+  'if (nextOpen === observedOpen) return',
   'window.SentIQMobileNavigation = Object.freeze',
 ]) assert.ok(runtimeSource.includes(token), `Mobile navigation runtime missing ${token}`);
 
