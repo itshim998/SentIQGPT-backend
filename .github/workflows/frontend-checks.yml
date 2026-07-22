@@ -9,6 +9,7 @@ on:
       - "scripts/runFrontendBootstrapCheck.mjs"
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
+      - "scripts/isolateFrontendShellHang.mjs"
       - "scripts/isolateFrontendStartupHang.mjs"
       - "scripts/profileFrontendStartup.mjs"
       - "scripts/testFrontendRuntimeSmoke.mjs"
@@ -30,6 +31,7 @@ on:
       - "scripts/runFrontendBootstrapCheck.mjs"
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
+      - "scripts/isolateFrontendShellHang.mjs"
       - "scripts/isolateFrontendStartupHang.mjs"
       - "scripts/profileFrontendStartup.mjs"
       - "scripts/testFrontendRuntimeSmoke.mjs"
@@ -114,6 +116,22 @@ jobs:
 
       - name: Install browser smoke harness
         run: npm install --no-save --ignore-scripts puppeteer-core@24.16.0
+
+      - name: Chromium shell isolation
+        id: frontend_shell_isolation
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/isolateFrontendShellHang.mjs 2>&1 | tee frontend-shell-isolation.log
+
+      - name: Upload shell isolation log
+        if: failure() && steps.frontend_shell_isolation.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-shell-isolation-${{ github.run_id }}
+          path: frontend-shell-isolation.log
+          if-no-files-found: error
+          retention-days: 2
 
       - name: Chromium startup import isolation
         id: frontend_startup_isolation
