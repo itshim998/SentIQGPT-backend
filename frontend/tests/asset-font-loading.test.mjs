@@ -110,6 +110,7 @@ for (const token of [
   "deriveImageReservation",
   "scheduleScrollAnchor",
   "window.SentIQAssetFontLoading = Object.freeze",
+  "return frame instanceof HTMLElement ? frame : null",
 ]) assert.ok(runtimeSource.includes(token), `Runtime missing ${token}`);
 
 for (const forbidden of ["localStorage", "sessionStorage", "fetch(", "setInterval(", "innerHTML = image"]) {
@@ -154,6 +155,8 @@ for (const token of [
   "contain-intrinsic-size",
   "aspect-ratio: auto",
 ]) assert.ok(cssSource.includes(token), `Asset CSS missing ${token}`);
+assert.equal(cssSource.includes('html[data-font-load-state="loading"]'), false,
+  "Font loading must not temporarily change line wrapping");
 
 assert.ok(cssImportsSource.includes('@import url("./77-asset-font-loading.css");'));
 const longConversationImport = domRefsSource.indexOf('import "../long-conversation-optimizer.js";');
@@ -163,6 +166,7 @@ assert.ok(longConversationImport >= 0 && assetLoadingImport > longConversationIm
   "Asset loading must initialize after long-conversation policy and before mobile navigation");
 
 assert.ok(htaccessSource.includes('AddType image/svg+xml .svg'));
+assert.ok(htaccessSource.includes('\\.(html|css|m?js)$'));
 assert.ok(htaccessSource.includes('max-age=604800'));
 assert.ok(htaccessSource.includes('max-age=2592000'));
 assert.ok(markSource.includes('<svg xmlns="http://www.w3.org/2000/svg"'));
