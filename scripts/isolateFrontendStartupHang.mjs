@@ -109,6 +109,7 @@ await new Promise((resolvePromise, reject) => {
 });
 const address = server.address();
 const port = typeof address === "object" && address ? address.port : 0;
+const localOrigin = `http://${HOST}:${port}`;
 const executablePath = findChrome();
 
 async function runVariant(name, disabledImports) {
@@ -116,6 +117,7 @@ async function runVariant(name, disabledImports) {
   let browser;
   const startedAt = Date.now();
   const errors = [];
+  const blockedExternal = [];
   try {
     browser = await puppeteer.launch({
       executablePath,
@@ -125,8 +127,16 @@ async function runVariant(name, disabledImports) {
     });
     const page = await browser.newPage();
     page.on("pageerror", (error) => errors.push(error?.message || String(error)));
+    await page.setRequestInterception(true);
+    page.on("request", (request) => {
+      if (request.url().startsWith(localOrigin)) request.continue();
+      else {
+        blockedExternal.push(request.url());
+        request.abort("blockedbyclient");
+      }
+    });
     await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
-    const url = `http://${HOST}:${port}/index.html?isolation=${encodeURIComponent(name)}&nonce=${Date.now()}`;
+    const url = `${localOrigin}/index.html?isolation=${encodeURIComponent(name)}&nonce=${Date.now()}`;
     await withTimeout(page.goto(url, { waitUntil: "domcontentloaded", timeout: 5_500 }), 6_500, name);
     const state = await withTimeout(page.evaluate(() => ({
       readyState: document.readyState,
@@ -140,6 +150,7 @@ async function runVariant(name, disabledImports) {
       durationMs: Date.now() - startedAt,
       state,
       errors,
+      blockedExternal: [...new Set(blockedExternal)],
     };
   } catch (error) {
     browser?.process()?.kill?.("SIGKILL");
@@ -150,6 +161,7 @@ async function runVariant(name, disabledImports) {
       durationMs: Date.now() - startedAt,
       error: error?.message || String(error),
       errors,
+      blockedExternal: [...new Set(blockedExternal)],
     };
   } finally {
     await browser?.close().catch(() => {});
@@ -172,7 +184,7 @@ console.log(JSON.stringify({
 await new Promise((resolvePromise) => server.close(resolvePromise));
 
 if (results[0].completed) {
-  throw new Error("Startup isolation baseline unexpectedly completed; the hang was not reproduced.");
+  throw new Error("Startup isolation baseline completed after external requests were blocked; the prior CI timeout was externally induced.");
 }
 if (recovered.length !== 1) {
   throw new Error(`Startup isolation expected one recovering import, found ${recovered.length}.`);
