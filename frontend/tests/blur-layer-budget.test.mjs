@@ -137,19 +137,23 @@ for (const token of [
   "@media (forced-colors: active)",
 ]) assert.ok(cssSource.includes(token), `Blur budget CSS missing ${token}`);
 
-assert.ok(cssSource.indexOf("background-color: var(--sentiq-blur-surface-static)") < cssSource.indexOf("[data-sentiq-blur-candidate=\"true\"][data-sentiq-blur-slot]"));
+assert.ok(cssSource.indexOf("background-color: var(--sentiq-blur-surface-static)") < cssSource.indexOf('[data-sentiq-blur-candidate="true"][data-sentiq-blur-slot]'));
 assert.equal(/(^|[;{]\s*)filter\s*:\s*blur\(/m.test(cssSource), false, "Foreground filters must not replace backdrop budgeting");
 assert.equal(/animation\s*:/.test(cssSource), false, "Blur budget must not introduce animation");
 assert.equal(/transition\s*:/.test(cssSource), false, "Blur budget must not animate blur changes");
 
 const compositorImport = domRefsSource.indexOf('import "../compositor-safety.js";');
 const blurRuntimeImport = domRefsSource.indexOf('import "../blur-layer-budget.js";');
+const accessibilityRuntimeImport = domRefsSource.indexOf('import "../accessibility-verification.js";');
 assert.ok(compositorImport >= 0 && blurRuntimeImport > compositorImport, "Blur budgeting must initialize after compositor safety");
+assert.ok(accessibilityRuntimeImport > blurRuntimeImport, "Accessibility verification must audit the final blur-managed surfaces");
 
 const compositorCssImport = importSource.indexOf('@import url("./74-compositor-safety.css");');
 const blurCssImport = importSource.indexOf('@import url("./75-blur-layer-budget.css");');
-const reducedMotionRule = importSource.indexOf("@media (prefers-reduced-motion: reduce)");
-assert.ok(compositorCssImport >= 0 && blurCssImport > compositorCssImport, "Blur budget must be the final component override");
-assert.ok(reducedMotionRule > blurCssImport, "The global reduced-motion guard must remain last");
+const refinedReducedMotionImport = importSource.indexOf('@import url("./78-refined-reduced-motion.css");');
+const accessibilityCssImport = importSource.indexOf('@import url("./79-accessibility-verification.css");');
+assert.ok(compositorCssImport >= 0 && blurCssImport > compositorCssImport, "Blur budget must load after compositor safety");
+assert.ok(refinedReducedMotionImport > blurCssImport, "Reduced-motion policy must remain able to constrain blur-adjacent motion");
+assert.ok(accessibilityCssImport > refinedReducedMotionImport, "Accessibility verification must remain the final policy layer");
 
-console.log("Pass 11.3 blur and layer budget gate passed: two desktop layers, one mobile layer, no nested blur, and static capability fallbacks.");
+console.log("Pass 11.3 blur and layer budget gate passed: two desktop layers, one mobile layer, no nested blur, static capability fallbacks, and later accessibility policies remain ordered.");
