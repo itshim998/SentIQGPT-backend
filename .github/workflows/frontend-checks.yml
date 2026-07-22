@@ -10,6 +10,7 @@ on:
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
       - "scripts/testFrontendRuntimeSmoke.mjs"
+      - "scripts/applyComposerHintIdleFix.mjs"
       - "backend/frontendSource.ts"
       - "backend/testFrontendBootstrap.ts"
       - "backend/testFrontendFileGeneration.ts"
@@ -29,6 +30,7 @@ on:
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
       - "scripts/testFrontendRuntimeSmoke.mjs"
+      - "scripts/applyComposerHintIdleFix.mjs"
       - "backend/frontendSource.ts"
       - "backend/testFrontendBootstrap.ts"
       - "backend/testFrontendFileGeneration.ts"
@@ -39,7 +41,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: frontend-checks-${{ github.workflow }}-${{ github.ref }}
@@ -54,6 +56,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -63,6 +67,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Apply stable composer hint policy
+        run: node scripts/applyComposerHintIdleFix.mjs
 
       - name: Frontend syntax
         run: npm run check:frontend-syntax
@@ -126,3 +133,18 @@ jobs:
           path: frontend-runtime.log
           if-no-files-found: error
           retention-days: 2
+
+      - name: Commit verified composer hint remediation
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/ui/sentiq-liquid-glass-v4'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- frontend/scripts/features/chat-controller.js; then
+            echo "Controller already contains the stable hint policy."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/scripts/features/chat-controller.js
+          git commit -m "fix(ui): replace perpetual composer hint animation"
+          git push origin HEAD:ui/sentiq-liquid-glass-v4
