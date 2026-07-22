@@ -9,6 +9,7 @@ on:
       - "scripts/runFrontendBootstrapCheck.mjs"
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
+      - "scripts/isolateChatControllerHang.mjs"
       - "scripts/isolateFrontendMainImports.mjs"
       - "scripts/isolateFrontendShellHang.mjs"
       - "scripts/isolateFrontendStartupHang.mjs"
@@ -32,6 +33,7 @@ on:
       - "scripts/runFrontendBootstrapCheck.mjs"
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
+      - "scripts/isolateChatControllerHang.mjs"
       - "scripts/isolateFrontendMainImports.mjs"
       - "scripts/isolateFrontendShellHang.mjs"
       - "scripts/isolateFrontendStartupHang.mjs"
@@ -118,6 +120,22 @@ jobs:
 
       - name: Install browser smoke harness
         run: npm install --no-save --ignore-scripts puppeteer-core@24.16.0
+
+      - name: Chromium chat controller isolation
+        id: frontend_chat_controller_isolation
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/isolateChatControllerHang.mjs 2>&1 | tee frontend-chat-controller-isolation.log
+
+      - name: Upload chat controller isolation log
+        if: failure() && steps.frontend_chat_controller_isolation.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-chat-controller-isolation-${{ github.run_id }}
+          path: frontend-chat-controller-isolation.log
+          if-no-files-found: error
+          retention-days: 2
 
       - name: Chromium main import isolation
         id: frontend_main_import_isolation
