@@ -56,7 +56,10 @@ for (const forbidden of ["fetch(", "SentIQAPI", "localStorage", "sessionStorage"
   assert.equal(framework.includes(forbidden), false, `framework must not contain ${forbidden}`);
 }
 
-assert.ok(domRefs.startsWith('import "../adaptive-panel-framework.js";'));
+const adaptiveImport = domRefs.indexOf('import "../adaptive-panel-framework.js";');
+const focusRecoveryImport = domRefs.indexOf('import "../panel-focus-recovery.js";');
+assert.ok(adaptiveImport >= 0, "Adaptive panel framework must be part of frontend startup");
+assert.ok(focusRecoveryImport > adaptiveImport, "Panel focus recovery must initialize after the adaptive panel framework");
 assert.ok(imports.includes('@import url("./45-adaptive-panel-foundation.css");'));
 assert.ok(imports.includes('@import url("./46-adaptive-panel-responsive.css");'));
 
