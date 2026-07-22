@@ -1,0 +1,42 @@
+name: Apply composer hint idle fix
+
+on:
+  push:
+    branches:
+      - ui/sentiq-liquid-glass-v4
+    paths:
+      - "scripts/applyComposerHintIdleFix.mjs"
+      - ".github/workflows/apply-composer-hint-idle-fix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-composer-hint-idle-fix
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui/sentiq-liquid-glass-v4
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply exact source transform
+        run: node scripts/applyComposerHintIdleFix.mjs
+      - name: Commit transformed controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/scripts/features/chat-controller.js
+          git diff --cached --quiet && { echo "No controller change produced"; exit 1; }
+          git commit -m "fix(ui): replace perpetual composer hint animation"
+          git push origin HEAD:ui/sentiq-liquid-glass-v4
