@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - "scripts/traceFrontendIdleChurn.mjs"
+      - "scripts/inspectComposerHintSource.mjs"
       - ".github/workflows/frontend-idle-trace.yml"
   push:
     branches:
       - "ui/**"
     paths:
       - "scripts/traceFrontendIdleChurn.mjs"
+      - "scripts/inspectComposerHintSource.mjs"
       - ".github/workflows/frontend-idle-trace.yml"
   workflow_dispatch:
 
@@ -34,10 +36,14 @@ jobs:
       - run: npm install --no-save --package-lock=false --ignore-scripts puppeteer-core@24.16.0
       - name: Trace idle frames and mutations
         run: node scripts/traceFrontendIdleChurn.mjs > frontend-idle-trace.log
+      - name: Inspect composer hint source
+        run: node scripts/inspectComposerHintSource.mjs > composer-hint-source.log
       - name: Upload idle trace
         uses: actions/upload-artifact@v4
         with:
           name: frontend-idle-trace-${{ github.run_id }}
-          path: frontend-idle-trace.log
+          path: |
+            frontend-idle-trace.log
+            composer-hint-source.log
           if-no-files-found: error
           retention-days: 2
