@@ -14,6 +14,7 @@ const aggregateSource = await readFile(new URL("../../scripts/runFrontendChecks.
 const stateRunnerSource = await readFile(new URL("../../scripts/runFrontendUiStateTests.mjs", import.meta.url), "utf8");
 const bootstrapRunnerSource = await readFile(new URL("../../scripts/runFrontendBootstrapCheck.mjs", import.meta.url), "utf8");
 const bootstrapPreloadSource = await readFile(new URL("../../scripts/frontendBootstrapDomAliases.cjs", import.meta.url), "utf8");
+const runtimeSmokeSource = await readFile(new URL("../../scripts/testFrontendRuntimeSmoke.mjs", import.meta.url), "utf8");
 const workflowSource = await readFile(new URL("../../.github/workflows/frontend-checks.yml", import.meta.url), "utf8");
 
 assert.deepEqual(FRONTEND_CHECK_SEQUENCE, [
@@ -42,6 +43,7 @@ const discovered = discoverFrontendUiStateTests().map((path) => basename(path));
 assert.ok(discovered.length >= 3, "Focused UI-state discovery should find the established pass gates");
 assert.ok(discovered.includes("accessibility-verification.test.mjs"));
 assert.ok(discovered.includes("blur-layer-budget.test.mjs"));
+assert.ok(discovered.includes("startup-observer-safety.test.mjs"));
 assert.ok(discovered.includes("ui-state-invariants.test.mjs"));
 assert.ok(discovered.includes("ui-state-runtime-contract.test.mjs"));
 assert.equal(discovered.includes("billing-token-usage.test.mjs"), false);
@@ -63,7 +65,7 @@ assert.ok(stateRunnerSource.includes("No focused frontend UI-state tests were di
 
 for (const token of [
   'process.platform === "win32" ? "ts-node.cmd" : "ts-node"',
-  'scripts/frontendBootstrapDomAliases.cjs',
+  "scripts/frontendBootstrapDomAliases.cjs",
   "--require=",
   "domReadyListeners[0]();",
   "for (const listener of domReadyListeners) listener();",
@@ -85,6 +87,19 @@ for (const token of [
 ]) assert.ok(bootstrapPreloadSource.includes(token), `Bootstrap preload missing ${token}`);
 
 for (const token of [
+  "puppeteer-core",
+  "setRequestInterception(true)",
+  'request.abort("blockedbyclient")',
+  "window.MutationObserver = class InstrumentedMutationObserver",
+  'cdp.send("Performance.getMetrics")',
+  'page.click("#composer-plus-btn")',
+  'page.click("#execution-mode-toggle")',
+  "domContentLoadedMs > 8_000",
+  "mutationRecords > 500",
+  "rafExecuted > 180",
+]) assert.ok(runtimeSmokeSource.includes(token), `Runtime smoke missing ${token}`);
+
+for (const token of [
   "name: Frontend checks",
   "pull_request:",
   '      - "ui/**"',
@@ -99,8 +114,12 @@ for (const token of [
   "run: npm ci",
   '      - "scripts/frontendBootstrapDomAliases.cjs"',
   '      - "scripts/runFrontendBootstrapCheck.mjs"',
+  '      - "scripts/testFrontendRuntimeSmoke.mjs"',
+  "puppeteer-core@24.16.0",
+  "node scripts/testFrontendRuntimeSmoke.mjs",
   "frontend-bootstrap-failure-${{ github.run_id }}",
   "frontend-ui-state-failure-${{ github.run_id }}",
+  "frontend-runtime-failure-${{ github.run_id }}",
   "retention-days: 2",
 ]) assert.ok(workflowSource.includes(token), `Frontend workflow missing ${token}`);
 for (const script of FRONTEND_CHECK_SEQUENCE) {
@@ -109,4 +128,4 @@ for (const script of FRONTEND_CHECK_SEQUENCE) {
 assert.equal(workflowSource.includes("secrets."), false, "Frontend checks must remain secret-free");
 assert.equal(workflowSource.includes("pull_request_target"), false, "Untrusted pull requests must not run with elevated target-branch context");
 
-console.log("Pass 12.2 frontend automation contracts passed: local aggregation, bootstrap adaptation, focused discovery, and CI diagnostics are deterministic, cross-platform, non-duplicating, least-privilege, and fail-closed.");
+console.log("Pass 12.2 frontend automation contracts passed: local aggregation, bootstrap adaptation, focused discovery, bounded observer contracts, and real Chromium startup diagnostics are deterministic, cross-platform, least-privilege, and fail-closed.");
