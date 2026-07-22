@@ -121,6 +121,22 @@ jobs:
       - name: Install browser smoke harness
         run: npm install --no-save --ignore-scripts puppeteer-core@24.16.0
 
+      - name: Chromium complete DOM side-effect isolation
+        id: frontend_startup_isolation
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/isolateFrontendStartupHang.mjs 2>&1 | tee frontend-startup-isolation.log
+
+      - name: Upload complete DOM isolation log
+        if: failure() && steps.frontend_startup_isolation.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-complete-dom-isolation-${{ github.run_id }}
+          path: frontend-startup-isolation.log
+          if-no-files-found: error
+          retention-days: 2
+
       - name: Chromium chat controller isolation
         id: frontend_chat_controller_isolation
         shell: bash
@@ -166,22 +182,6 @@ jobs:
         with:
           name: frontend-shell-isolation-${{ github.run_id }}
           path: frontend-shell-isolation.log
-          if-no-files-found: error
-          retention-days: 2
-
-      - name: Chromium startup import isolation
-        id: frontend_startup_isolation
-        shell: bash
-        run: |
-          set -o pipefail
-          node scripts/isolateFrontendStartupHang.mjs 2>&1 | tee frontend-startup-isolation.log
-
-      - name: Upload startup isolation log
-        if: failure() && steps.frontend_startup_isolation.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-startup-isolation-${{ github.run_id }}
-          path: frontend-startup-isolation.log
           if-no-files-found: error
           retention-days: 2
 
