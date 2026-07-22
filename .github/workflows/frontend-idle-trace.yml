@@ -1,6 +1,10 @@
 name: Frontend idle trace
 
 on:
+  pull_request:
+    paths:
+      - "scripts/traceFrontendIdleChurn.mjs"
+      - ".github/workflows/frontend-idle-trace.yml"
   push:
     branches:
       - "ui/**"
