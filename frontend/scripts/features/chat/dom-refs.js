@@ -32,6 +32,7 @@ import "../motion-grammar.js";
 import "../compositor-safety.js";
 import "../blur-layer-budget.js";
 import "../accessibility-verification.js";
+import "../accessibility-verification-dynamic.js";
 
 export function getChatDomRefs(doc = document) {
   return {
