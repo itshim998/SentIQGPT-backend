@@ -12,6 +12,7 @@ const CONTROLS = Object.freeze([
   { capability: "live", selector: "#live-beta-btn" },
 ]);
 const CONTROL_SELECTOR = CONTROLS.map(({ selector }) => selector).join(",");
+const OBSERVED_CAPABILITY_SELECTOR = `${CONTROL_SELECTOR}, #file-input`;
 
 function initializeCapabilityAwareness() {
   if (typeof window === "undefined" || typeof document === "undefined") return;
@@ -47,6 +48,11 @@ function initializeCapabilityAwareness() {
   function setAttributeIfChanged(element, name, value) {
     const next = String(value);
     if (element.getAttribute(name) !== next) element.setAttribute(name, next);
+  }
+
+  function setTextIfChanged(element, value) {
+    const next = String(value ?? "");
+    if (element.textContent !== next) element.textContent = next;
   }
 
   function helpNode(key) {
@@ -91,10 +97,10 @@ function initializeCapabilityAwareness() {
     if (!(subtitle instanceof HTMLElement)) return;
     if (!originalSubtitles.has(subtitle)) originalSubtitles.set(subtitle, subtitle.textContent || "");
     if (capability.available) {
-      subtitle.textContent = originalSubtitles.get(subtitle);
+      setTextIfChanged(subtitle, originalSubtitles.get(subtitle));
       subtitle.removeAttribute("data-capability-copy");
     } else {
-      subtitle.textContent = compactReason(capability);
+      setTextIfChanged(subtitle, compactReason(capability));
       subtitle.dataset.capabilityCopy = "reason";
     }
   }
@@ -110,7 +116,7 @@ function initializeCapabilityAwareness() {
     control.classList.toggle("is-capability-checking", capability.state === "checking");
     setAttributeIfChanged(control, "aria-disabled", capability.available ? "false" : "true");
     const help = helpNode(capability.key);
-    help.textContent = capability.reason;
+    setTextIfChanged(help, capability.reason);
     appendDescription(control, help.id);
     const originalTitle = originalTitles.get(control);
     if (capability.available && originalTitle === null) control.removeAttribute("title");
@@ -249,6 +255,16 @@ function initializeCapabilityAwareness() {
     return control instanceof HTMLElement && capability && !capability.available ? control : null;
   }
 
+  function containsAddedCapabilityControl(records) {
+    return records.some((record) => Array.from(record.addedNodes).some((node) => (
+      node instanceof Element
+      && (
+        node.matches(OBSERVED_CAPABILITY_SELECTOR)
+        || Boolean(node.querySelector?.(OBSERVED_CAPABILITY_SELECTOR))
+      )
+    )));
+  }
+
   document.addEventListener("click", (event) => {
     const control = blockedControl(event);
     if (!control) return;
@@ -287,7 +303,7 @@ function initializeCapabilityAwareness() {
   });
 
   new MutationObserver((records) => {
-    if (records.some((record) => record.addedNodes.length > 0)) applySnapshot();
+    if (containsAddedCapabilityControl(records)) applySnapshot();
   }).observe(document.body, { childList: true, subtree: true });
 
   window.SentIQCapabilities = Object.freeze({
