@@ -1,4 +1,4 @@
-/* Test-only DOM constructor aliases for the frontend bootstrap harness. */
+/* Test-only DOM constructor and primitive aliases for the frontend bootstrap harness. */
 
 const HTMLElementAliases = Object.freeze([
   "HTMLAnchorElement",
@@ -41,3 +41,37 @@ if (!("SVGElement" in globalThis)) {
     },
   });
 }
+
+function defineHarnessPrimitive(name, value) {
+  if (name in Object.prototype) return;
+  Object.defineProperty(Object.prototype, name, {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value,
+  });
+}
+
+// The legacy bootstrap harness uses lightweight object literals for document,
+// elements, and CSSStyleDeclaration. These non-enumerable shims model only the
+// standard primitives used by current frontend modules and never ship to users.
+defineHarnessPrimitive("dispatchEvent", function dispatchEvent() {
+  return true;
+});
+defineHarnessPrimitive("getPropertyValue", function getPropertyValue(name) {
+  const value = this?.[name];
+  return value === undefined || value === null ? "" : String(value);
+});
+defineHarnessPrimitive("hasAttribute", function hasAttribute(name) {
+  return typeof this?.getAttribute === "function" && this.getAttribute(name) !== null;
+});
+defineHarnessPrimitive("toggleAttribute", function toggleAttribute(name, force) {
+  const shouldHave = force === undefined ? !this.hasAttribute(name) : Boolean(force);
+  if (shouldHave && typeof this?.setAttribute === "function") this.setAttribute(name, "");
+  else if (!shouldHave && typeof this?.removeAttribute === "function") this.removeAttribute(name);
+  return shouldHave;
+});
+defineHarnessPrimitive("getClientRects", function getClientRects() {
+  if (typeof this?.getBoundingClientRect !== "function") return [];
+  return [this.getBoundingClientRect()];
+});
