@@ -6,6 +6,11 @@ const source = readFileSync(controllerPath, "utf8");
 
 const oldDeclarations = `  let composerHintTimer = 0;\n  let composerHintIndex = 0;\n  let composerHintCycleId = 0;\n  let composerHintIntroConsumed = false;`;
 const nextDeclarations = `  let composerHintIndex = 0;\n  let composerHintIntroConsumed = false;`;
+
+if (source.includes("function setComposerHintText(value)") && !source.includes(oldDeclarations)) {
+  console.log("Stable composer hint policy is already present.");
+  process.exit(0);
+}
 if ((source.split(oldDeclarations).length - 1) !== 1) {
   throw new Error("Expected exactly one legacy composer hint declaration block.");
 }
