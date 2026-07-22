@@ -12,6 +12,7 @@ import {
 const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
 const aggregateSource = await readFile(new URL("../../scripts/runFrontendChecks.mjs", import.meta.url), "utf8");
 const stateRunnerSource = await readFile(new URL("../../scripts/runFrontendUiStateTests.mjs", import.meta.url), "utf8");
+const workflowSource = await readFile(new URL("../../.github/workflows/frontend-checks.yml", import.meta.url), "utf8");
 
 assert.deepEqual(FRONTEND_CHECK_SEQUENCE, [
   "check:frontend-syntax",
@@ -46,7 +47,7 @@ assert.equal(new Set(discovered).size, discovered.length);
 
 for (const source of [aggregateSource, stateRunnerSource]) {
   assert.ok(source.includes("spawnSync"));
-  assert.ok(source.includes('shell: false'));
+  assert.ok(source.includes("shell: false"));
   assert.ok(source.includes('stdio: "inherit"'));
   assert.equal(source.includes("shell: true"), false);
   assert.equal(source.includes("execSync"), false);
@@ -56,4 +57,21 @@ assert.ok(stateRunnerSource.includes('name.endsWith(".test.mjs")'));
 assert.ok(stateRunnerSource.includes("failures.push"));
 assert.ok(stateRunnerSource.includes("No focused frontend UI-state tests were discovered"));
 
-console.log("Pass 12.2 frontend automation contracts passed: the aggregate gate is deterministic, cross-platform, non-duplicating, and fail-closed.");
+for (const token of [
+  "name: Frontend checks",
+  "pull_request:",
+  '      - "ui/**"',
+  "workflow_dispatch:",
+  "permissions:\n  contents: read",
+  "cancel-in-progress: true",
+  "uses: actions/checkout@v4",
+  "uses: actions/setup-node@v4",
+  "node-version: 20",
+  "cache: npm",
+  "run: npm ci",
+  "run: npm run test:frontend",
+]) assert.ok(workflowSource.includes(token), `Frontend workflow missing ${token}`);
+assert.equal(workflowSource.includes("secrets."), false, "Frontend checks must remain secret-free");
+assert.equal(workflowSource.includes("pull_request_target"), false, "Untrusted pull requests must not run with elevated target-branch context");
+
+console.log("Pass 12.2 frontend automation contracts passed: the aggregate gate and CI workflow are deterministic, cross-platform, non-duplicating, least-privilege, and fail-closed.");
