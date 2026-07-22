@@ -15,6 +15,8 @@ const stateRunnerSource = await readFile(new URL("../../scripts/runFrontendUiSta
 const bootstrapRunnerSource = await readFile(new URL("../../scripts/runFrontendBootstrapCheck.mjs", import.meta.url), "utf8");
 const bootstrapPreloadSource = await readFile(new URL("../../scripts/frontendBootstrapDomAliases.cjs", import.meta.url), "utf8");
 const runtimeSmokeSource = await readFile(new URL("../../scripts/testFrontendRuntimeSmoke.mjs", import.meta.url), "utf8");
+const deploymentVerifySource = await readFile(new URL("../../scripts/verifyFrontendDeployment.mjs", import.meta.url), "utf8");
+const deployedRuntimeSource = await readFile(new URL("../../scripts/testDeployedFrontendRuntime.mjs", import.meta.url), "utf8");
 const workflowSource = await readFile(new URL("../../.github/workflows/frontend-checks.yml", import.meta.url), "utf8");
 
 assert.deepEqual(FRONTEND_CHECK_SEQUENCE, [
@@ -100,6 +102,35 @@ for (const token of [
 ]) assert.ok(runtimeSmokeSource.includes(token), `Runtime smoke missing ${token}`);
 
 for (const token of [
+  "https://ui-sentiq-liquid-glass-v4.sentiqgpt-frontend.pages.dev/",
+  "frontend/deployment-revision.json",
+  "deployment-revision.json?token=",
+  'cache: "no-store"',
+  "AbortSignal.timeout(10_000)",
+  "actual.token === expected.token",
+  "actual.contentRevision === expected.contentRevision",
+  "actual.pass === expected.pass",
+  "Verified deployed frontend revision",
+]) assert.ok(deploymentVerifySource.includes(token), `Deployment verifier missing ${token}`);
+assert.equal(deploymentVerifySource.includes("secrets."), false);
+
+for (const token of [
+  "https://ui-sentiq-liquid-glass-v4.sentiqgpt-frontend.pages.dev/",
+  "puppeteer-core",
+  'waitUntil: "domcontentloaded"',
+  'page.waitForSelector("#composer-plus-btn"',
+  'page.waitForSelector("#execution-mode-toggle"',
+  'page.click("#composer-plus-btn")',
+  'page.click("#execution-mode-toggle")',
+  'cdp.send("Performance.getMetrics")',
+  "domContentLoadedMs > 10_000",
+  "taskDuration > 1.2",
+  "scriptDuration > 1.0",
+  'page.screenshot({ path: "frontend-live-runtime-failure.png"',
+  "Deployed frontend runtime smoke passed",
+]) assert.ok(deployedRuntimeSource.includes(token), `Deployed runtime smoke missing ${token}`);
+
+for (const token of [
   "name: Frontend checks",
   "pull_request:",
   '      - "ui/**"',
@@ -115,11 +146,19 @@ for (const token of [
   '      - "scripts/frontendBootstrapDomAliases.cjs"',
   '      - "scripts/runFrontendBootstrapCheck.mjs"',
   '      - "scripts/testFrontendRuntimeSmoke.mjs"',
+  '      - "scripts/verifyFrontendDeployment.mjs"',
+  '      - "scripts/testDeployedFrontendRuntime.mjs"',
   "puppeteer-core@24.16.0",
   "node scripts/testFrontendRuntimeSmoke.mjs",
+  "node scripts/verifyFrontendDeployment.mjs",
+  "node scripts/testDeployedFrontendRuntime.mjs",
+  "github.event_name == 'push' && github.ref == 'refs/heads/ui/sentiq-liquid-glass-v4'",
   "frontend-bootstrap-failure-${{ github.run_id }}",
   "frontend-ui-state-failure-${{ github.run_id }}",
   "frontend-runtime-failure-${{ github.run_id }}",
+  "frontend-deployment-verification-failure-${{ github.run_id }}",
+  "frontend-deployed-runtime-failure-${{ github.run_id }}",
+  "frontend-live-runtime-failure.png",
   "retention-days: 2",
 ]) assert.ok(workflowSource.includes(token), `Frontend workflow missing ${token}`);
 for (const script of FRONTEND_CHECK_SEQUENCE) {
@@ -127,5 +166,6 @@ for (const script of FRONTEND_CHECK_SEQUENCE) {
 }
 assert.equal(workflowSource.includes("secrets."), false, "Frontend checks must remain secret-free");
 assert.equal(workflowSource.includes("pull_request_target"), false, "Untrusted pull requests must not run with elevated target-branch context");
+assert.equal(workflowSource.includes("contents: write"), false, "Frontend checks must remain read-only");
 
-console.log("Pass 12.2 frontend automation contracts passed: local aggregation, bootstrap adaptation, focused discovery, bounded observer contracts, and real Chromium startup diagnostics are deterministic, cross-platform, least-privilege, and fail-closed.");
+console.log("Pass 12.2 frontend automation contracts passed: local aggregation, bootstrap adaptation, bounded observer contracts, real Chromium startup diagnostics, exact Pages revision verification, and deployed interactivity checks are deterministic, least-privilege, and fail-closed.");
