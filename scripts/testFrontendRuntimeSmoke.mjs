@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { extname, join, normalize, resolve } from "node:path";
+import { extname, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
 
@@ -102,7 +102,8 @@ await new Promise((resolvePromise, reject) => {
 });
 const address = server.address();
 const port = typeof address === "object" && address ? address.port : 0;
-const url = `http://${HOST}:${port}/index.html?runtime-smoke=1`;
+const localOrigin = `http://${HOST}:${port}`;
+const url = `${localOrigin}/index.html?runtime-smoke=1`;
 
 let browser;
 try {
@@ -134,10 +135,19 @@ try {
 
   const consoleErrors = [];
   const pageErrors = [];
+  const blockedExternal = new Set();
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
   page.on("pageerror", (error) => pageErrors.push(error?.stack || error?.message || String(error)));
+  await page.setRequestInterception(true);
+  page.on("request", (request) => {
+    if (request.url().startsWith(localOrigin)) request.continue();
+    else {
+      blockedExternal.add(request.url());
+      request.abort("blockedbyclient");
+    }
+  });
 
   await page.evaluateOnNewDocument(() => {
     const diagnostics = {
@@ -216,7 +226,9 @@ try {
   const cdp = await page.createCDPSession();
   await cdp.send("Performance.enable");
 
+  const navigationStartedAt = Date.now();
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
+  const domContentLoadedMs = Date.now() - navigationStartedAt;
   await page.waitForFunction(() => document.readyState === "complete", { timeout: 10_000 });
   await sleep(2_000);
 
@@ -237,26 +249,35 @@ try {
     - Object.values(beforeDiagnostics.observers || {}).reduce((sum, observer) => sum + Number(observer.records || 0), 0);
   const observerActivity = summarizeObservers(afterDiagnostics.observers, beforeDiagnostics.observers);
 
-  const interaction = await page.evaluate(() => {
-    const plus = document.getElementById("composer-plus-btn");
-    const mode = document.getElementById("execution-mode-toggle");
-    plus?.click?.();
-    const plusExpanded = plus?.getAttribute("aria-expanded") || "";
-    mode?.click?.();
-    const modeExpanded = mode?.getAttribute("aria-expanded") || "";
-    return {
-      plusPresent: Boolean(plus),
-      modePresent: Boolean(mode),
-      plusExpanded,
-      modeExpanded,
-      title: document.title,
-      readyState: document.readyState,
-      bodyTextLength: document.body?.innerText?.length || 0,
-    };
-  });
+  const interactionBefore = await page.evaluate(() => ({
+    plusExpanded: document.getElementById("composer-plus-btn")?.getAttribute("aria-expanded") || "",
+    modeExpanded: document.getElementById("execution-mode-toggle")?.getAttribute("aria-expanded") || "",
+  }));
+  await page.click("#composer-plus-btn");
+  await sleep(80);
+  const plusExpanded = await page.$eval("#composer-plus-btn", (element) => element.getAttribute("aria-expanded") || "");
+  await page.click("#composer-plus-btn");
+  await sleep(40);
+  await page.click("#execution-mode-toggle");
+  await sleep(80);
+  const modeExpanded = await page.$eval("#execution-mode-toggle", (element) => element.getAttribute("aria-expanded") || "");
+
+  const interaction = await page.evaluate(() => ({
+    plusPresent: Boolean(document.getElementById("composer-plus-btn")),
+    modePresent: Boolean(document.getElementById("execution-mode-toggle")),
+    title: document.title,
+    readyState: document.readyState,
+    bodyTextLength: document.body?.innerText?.length || 0,
+    mobileNavigationState: document.getElementById("sidebar")?.dataset.mobileNavigationState || "",
+  }));
+  interaction.plusBefore = interactionBefore.plusExpanded;
+  interaction.plusExpanded = plusExpanded;
+  interaction.modeBefore = interactionBefore.modeExpanded;
+  interaction.modeExpanded = modeExpanded;
 
   const report = {
     url,
+    domContentLoadedMs,
     interaction,
     idleWindowSeconds: 2,
     taskDurationSeconds: Number(taskDuration.toFixed(4)),
@@ -269,6 +290,7 @@ try {
     frameFlushDelta: Number(afterFrameState?.flushCount || 0) - Number(beforeFrameState?.flushCount || 0),
     frameState: afterFrameState,
     observerActivity,
+    blockedExternal: [...blockedExternal],
     consoleErrors,
     pageErrors,
   };
@@ -277,7 +299,11 @@ try {
   const failures = [];
   if (interaction.readyState !== "complete") failures.push(`document.readyState=${interaction.readyState}`);
   if (!interaction.plusPresent || !interaction.modePresent) failures.push("core composer controls are missing");
+  if (interaction.plusExpanded === interaction.plusBefore) failures.push("composer action control did not change state when clicked");
+  if (interaction.modeExpanded === interaction.modeBefore) failures.push("execution-mode control did not change state when clicked");
+  if (interaction.mobileNavigationState !== "desktop") failures.push(`desktop mobile-navigation state was ${interaction.mobileNavigationState || "missing"}`);
   if (pageErrors.length) failures.push(`${pageErrors.length} uncaught page error(s)`);
+  if (domContentLoadedMs > 8_000) failures.push(`DOMContentLoaded took ${domContentLoadedMs}ms`);
   if (taskDuration > 0.8) failures.push(`idle TaskDuration was ${taskDuration.toFixed(3)}s over a 2s window`);
   if (scriptDuration > 0.65) failures.push(`idle ScriptDuration was ${scriptDuration.toFixed(3)}s over a 2s window`);
   if (rafExecuted > 180) failures.push(`${rafExecuted} requestAnimationFrame callbacks executed while idle`);
