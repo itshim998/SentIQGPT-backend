@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const tsNodeExecutable = resolve(
@@ -9,9 +9,9 @@ const tsNodeExecutable = resolve(
   ".bin",
   process.platform === "win32" ? "ts-node.cmd" : "ts-node",
 );
-const preloadUrl = pathToFileURL(resolve(repositoryRoot, "scripts/frontendBootstrapDomAliases.mjs")).href;
+const preloadPath = resolve(repositoryRoot, "scripts/frontendBootstrapDomAliases.cjs");
 const existingNodeOptions = String(process.env.NODE_OPTIONS || "").trim();
-const nodeOptions = [existingNodeOptions, `--import=${preloadUrl}`].filter(Boolean).join(" ");
+const nodeOptions = [existingNodeOptions, `--require=${JSON.stringify(preloadPath)}`].filter(Boolean).join(" ");
 
 const result = spawnSync(tsNodeExecutable, [
   "--project",
