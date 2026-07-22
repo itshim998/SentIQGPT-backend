@@ -1,0 +1,62 @@
+name: Frontend checks
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "scripts/checkFrontendSyntax.mjs"
+      - "scripts/runFrontendChecks.mjs"
+      - "scripts/runFrontendUiStateTests.mjs"
+      - "backend/frontendSource.ts"
+      - "backend/testFrontendBootstrap.ts"
+      - "backend/testFrontendFileGeneration.ts"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.backend.json"
+      - ".github/workflows/frontend-checks.yml"
+  push:
+    branches:
+      - master
+      - "ui/**"
+    paths:
+      - "frontend/**"
+      - "scripts/checkFrontendSyntax.mjs"
+      - "scripts/runFrontendChecks.mjs"
+      - "scripts/runFrontendUiStateTests.mjs"
+      - "backend/frontendSource.ts"
+      - "backend/testFrontendBootstrap.ts"
+      - "backend/testFrontendFileGeneration.ts"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.backend.json"
+      - ".github/workflows/frontend-checks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-checks:
+    name: Syntax, lifecycle, UI state, and billing
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run frontend gate
+        run: npm run test:frontend
