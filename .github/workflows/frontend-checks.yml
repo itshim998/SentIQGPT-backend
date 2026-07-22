@@ -62,7 +62,20 @@ jobs:
         run: npm run check:frontend-syntax
 
       - name: Frontend bootstrap
-        run: npm run test:frontend-bootstrap
+        id: frontend_bootstrap
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:frontend-bootstrap 2>&1 | tee frontend-bootstrap.log
+
+      - name: Upload bootstrap failure log
+        if: failure() && steps.frontend_bootstrap.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-bootstrap-failure-${{ github.run_id }}
+          path: frontend-bootstrap.log
+          if-no-files-found: error
+          retention-days: 2
 
       - name: Frontend file generation
         run: npm run test:frontend-file-generation
