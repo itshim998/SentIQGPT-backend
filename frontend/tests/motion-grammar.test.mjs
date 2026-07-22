@@ -102,10 +102,14 @@ for (const token of [
   ".semantic-activity-progress .response-inline-spinner::after",
   ".conversation-attention-marker",
   ".failure-recovery-panel",
-  'data-sentiq-motion-policy="reduced"] *::before',
-  '@media (prefers-reduced-motion: reduce), (update: slow)',
+  "Pass 11.7 owns reduced and slow-update alternatives",
+  'data-sentiq-motion-policy="reduced"]',
+  '--sentiq-motion-layout-duration: 0ms',
+  '--sentiq-motion-focus-duration: 80ms',
 ]) assert.ok(cssSource.includes(token), `Motion family coverage missing ${token}`);
 
+assert.equal(cssSource.includes('data-sentiq-motion-policy="reduced"] *'), false,
+  "The grammar must not restore a universal reduced-motion override");
 assert.equal(cssSource.includes(":is(\n  .response-inline-spinner,\n  .chat-cache-spinner,\n  .semantic-activity-mark::after"), false, "Pseudo-elements must not be nested inside :is()");
 assert.equal((cssSource.match(/\binfinite\b/g) || []).length, 1, "Only the explicit progress family may repeat indefinitely");
 assert.ok(cssSource.includes('data-sentiq-motion-family="progress"] {\n  animation: sentiqMotionProgressSpin'));
@@ -116,8 +120,8 @@ assert.ok(richRuntimeImport >= 0 && motionRuntimeImport > richRuntimeImport, "Mo
 
 const richCssImport = importSource.indexOf('@import url("./72-mobile-rich-content-responsive.css");');
 const motionCssImport = importSource.indexOf('@import url("./73-motion-grammar.css");');
-const reducedMotionRule = importSource.indexOf("@media (prefers-reduced-motion: reduce)");
-assert.ok(richCssImport >= 0 && motionCssImport > richCssImport, "Motion grammar CSS must be the final component layer");
-assert.ok(reducedMotionRule > motionCssImport, "The global reduced-motion guard must remain after the grammar");
+const refinedReducedImport = importSource.indexOf('@import url("./78-refined-reduced-motion.css");');
+assert.ok(richCssImport >= 0 && motionCssImport > richCssImport, "Motion grammar CSS must follow the completed mobile foundation");
+assert.ok(refinedReducedImport > motionCssImport, "Intentional reduced-motion alternatives must load after the grammar and decorative layers");
 
-console.log("Pass 11.1 motion grammar gate passed: six families, one vocabulary, reduced-motion and slow-update safeguards.");
+console.log("Pass 11.1 motion grammar gate passed: six families, one vocabulary, and Pass 11.7 reduced-motion delegation.");
