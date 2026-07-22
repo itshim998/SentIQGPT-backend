@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 
 const capabilitySource = await readFile(new URL("../scripts/features/capability-awareness.js", import.meta.url), "utf8");
 const mobileNavigationSource = await readFile(new URL("../scripts/features/mobile-navigation.js", import.meta.url), "utf8");
+const attachmentContextSource = await readFile(new URL("../scripts/features/attachment-context-surface.js", import.meta.url), "utf8");
+const chatControllerSource = await readFile(new URL("../scripts/features/chat-controller.js", import.meta.url), "utf8");
 
 for (const token of [
   "function setTextIfChanged",
@@ -36,4 +38,42 @@ assert.equal(mobileNavigationSource.includes('sidebar.classList.remove("is-mobil
 assert.equal(mobileNavigationSource.includes("const classChanged = records.some"), false,
   "Mobile navigation observer must react to open-state transitions, not every class mutation");
 
-console.log("Startup observer safety gate passed: capability text synchronization and mobile navigation class observation are idempotent and bounded.");
+for (const token of [
+  "function setHidden(element, hidden)",
+  "function setAttribute(element, name, value)",
+  "function scheduleMeasureSelectedOverflow()",
+  'setClass(selectedBar, "has-preview-overflow", false)',
+  'setClass(selectedBar, "is-preview-expanded", false)',
+  "setHidden(expandButton, true)",
+  "setHidden(expandButton, !overflows)",
+  "if (measureFrame) return",
+]) {
+  assert.ok(attachmentContextSource.includes(token), `Attachment context idle safety missing ${token}`);
+}
+assert.equal(attachmentContextSource.includes('selectedBar.classList.remove("has-preview-overflow", "is-preview-expanded")'), false,
+  "Selected-context measurement must not rewrite classes unconditionally");
+assert.equal(attachmentContextSource.includes("expandButton.hidden = !overflows"), false,
+  "Selected-context measurement must not rewrite hidden state unconditionally");
+assert.equal(attachmentContextSource.includes("window.requestAnimationFrame(measureSelectedOverflow)"), false,
+  "Selected-context measurement must be keyed and coalesced");
+
+for (const token of [
+  "function setComposerHintText(value)",
+  "function setComposerHintVisible(visible)",
+  "composerHintText.textContent !== next",
+  'composerHintOverlay.classList.contains("visible") !== next',
+  "chatInput.placeholder !== placeholder",
+]) {
+  assert.ok(chatControllerSource.includes(token), `Composer hint idle safety missing ${token}`);
+}
+for (const forbidden of [
+  "composerHintTimer = window.setTimeout(step, 52)",
+  "composerHintTimer = window.setTimeout(step, 28)",
+  "composerHintTimer = window.setTimeout(step, 220)",
+  "function cancelComposerHintAnimation()",
+  "clearTimeout(compo  function",
+]) {
+  assert.equal(chatControllerSource.includes(forbidden), false, `Composer hint idle loop survived: ${forbidden}`);
+}
+
+console.log("Startup observer safety gate passed: capability, mobile navigation, attachment context, and composer hint updates are idempotent, coalesced, and bounded.");
