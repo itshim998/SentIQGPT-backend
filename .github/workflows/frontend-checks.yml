@@ -9,6 +9,7 @@ on:
       - "scripts/runFrontendBootstrapCheck.mjs"
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
+      - "scripts/profileFrontendStartup.mjs"
       - "scripts/testFrontendRuntimeSmoke.mjs"
       - "backend/frontendSource.ts"
       - "backend/testFrontendBootstrap.ts"
@@ -28,6 +29,7 @@ on:
       - "scripts/runFrontendBootstrapCheck.mjs"
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
+      - "scripts/profileFrontendStartup.mjs"
       - "scripts/testFrontendRuntimeSmoke.mjs"
       - "backend/frontendSource.ts"
       - "backend/testFrontendBootstrap.ts"
@@ -110,6 +112,22 @@ jobs:
 
       - name: Install browser smoke harness
         run: npm install --no-save --ignore-scripts puppeteer-core@24.16.0
+
+      - name: Chromium startup CPU profile
+        id: frontend_startup_profile
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/profileFrontendStartup.mjs 2>&1 | tee frontend-startup-profile.log
+
+      - name: Upload startup profile failure log
+        if: failure() && steps.frontend_startup_profile.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-startup-profile-failure-${{ github.run_id }}
+          path: frontend-startup-profile.log
+          if-no-files-found: error
+          retention-days: 2
 
       - name: Chromium runtime smoke
         id: frontend_runtime
