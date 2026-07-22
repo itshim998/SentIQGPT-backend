@@ -67,11 +67,17 @@ function initializeMobileNavigation() {
   function setAttr(element, name, value) {
     if (!(element instanceof Element)) return;
     if (value === null || value === undefined || value === "") {
-      element.removeAttribute(name);
+      if (element.hasAttribute(name)) element.removeAttribute(name);
       return;
     }
     const next = String(value);
     if (element.getAttribute(name) !== next) element.setAttribute(name, next);
+  }
+
+  function setClassIfChanged(element, className, enabled) {
+    if (!(element instanceof Element)) return;
+    const next = Boolean(enabled);
+    if (element.classList.contains(className) !== next) element.classList.toggle(className, next);
   }
 
   function ensureSheetChrome() {
@@ -193,19 +199,19 @@ function initializeMobileNavigation() {
     root.style.overscrollBehavior = "none";
     body.style.overflow = "hidden";
     body.style.overscrollBehavior = "none";
-    body.classList.add("mobile-navigation-open");
+    setClassIfChanged(body, "mobile-navigation-open", true);
   }
 
   function unlockUnderlyingScroll() {
     if (!scrollSnapshot) {
-      document.body.classList.remove("mobile-navigation-open");
+      setClassIfChanged(document.body, "mobile-navigation-open", false);
       return;
     }
     const snapshot = scrollSnapshot;
     scrollSnapshot = null;
     restoreInlineStyle(document.documentElement, snapshot.rootStyle);
     restoreInlineStyle(document.body, snapshot.bodyStyle);
-    document.body.classList.remove("mobile-navigation-open");
+    setClassIfChanged(document.body, "mobile-navigation-open", false);
     window.requestAnimationFrame(() => {
       window.scrollTo(snapshot.x, snapshot.y);
       if (chatMessages) chatMessages.scrollTop = snapshot.chatScrollTop;
@@ -213,8 +219,7 @@ function initializeMobileNavigation() {
   }
 
   function restoreSidebarAttribute(name, value) {
-    if (value === null) sidebar.removeAttribute(name);
-    else sidebar.setAttribute(name, value);
+    setAttr(sidebar, name, value);
   }
 
   function setSheetAccessibility(state) {
@@ -226,17 +231,18 @@ function initializeMobileNavigation() {
       restoreSidebarAttribute("aria-hidden", originalSidebarAttributes.ariaHidden);
       restoreSidebarAttribute("tabindex", originalSidebarAttributes.tabIndex);
       if (originalSidebarAttributes.inert) sidebar.setAttribute("inert", "");
-      else sidebar.removeAttribute("inert");
+      else if (sidebar.hasAttribute("inert")) sidebar.removeAttribute("inert");
       return;
     }
 
-    sidebar.setAttribute("role", "dialog");
-    sidebar.setAttribute("aria-modal", state.ariaModal);
-    sidebar.setAttribute("aria-labelledby", "mobile-navigation-sheet-title");
-    sidebar.setAttribute("aria-hidden", state.sidebarHidden ? "true" : "false");
-    sidebar.setAttribute("tabindex", "-1");
-    if (state.sidebarHidden) sidebar.setAttribute("inert", "");
-    else sidebar.removeAttribute("inert");
+    setAttr(sidebar, "role", "dialog");
+    setAttr(sidebar, "aria-modal", state.ariaModal);
+    setAttr(sidebar, "aria-labelledby", "mobile-navigation-sheet-title");
+    setAttr(sidebar, "aria-hidden", state.sidebarHidden ? "true" : "false");
+    setAttr(sidebar, "tabindex", "-1");
+    if (state.sidebarHidden) {
+      if (!sidebar.hasAttribute("inert")) sidebar.setAttribute("inert", "");
+    } else if (sidebar.hasAttribute("inert")) sidebar.removeAttribute("inert");
   }
 
   function notify(reason, state) {
@@ -274,7 +280,7 @@ function initializeMobileNavigation() {
       setUnderlyingPageInert(false);
       unlockUnderlyingScroll();
       sidebar.style.removeProperty("--mobile-navigation-drag-y");
-      sidebar.classList.remove("is-mobile-navigation-dragging");
+      setClassIfChanged(sidebar, "is-mobile-navigation-dragging", false);
       if (lastOpen && restoreFocusOnClose && mobile) {
         restoreFocusOnClose = false;
         window.requestAnimationFrame(() => sidebarToggle.focus({ preventScroll: true }));
@@ -284,10 +290,10 @@ function initializeMobileNavigation() {
     }
 
     if (!mobile && sidebar.classList.contains("open")) {
-      sidebar.classList.remove("open");
-      document.body.classList.remove("body-sidebar-open");
+      setClassIfChanged(sidebar, "open", false);
+      setClassIfChanged(document.body, "body-sidebar-open", false);
       const currentBackdrop = ensureBackdropBinding();
-      currentBackdrop?.classList.remove("visible");
+      if (currentBackdrop) setClassIfChanged(currentBackdrop, "visible", false);
     }
 
     const changed = open !== lastOpen || mobile !== lastMobile;
@@ -305,10 +311,10 @@ function initializeMobileNavigation() {
 
     defer(() => {
       if (!sidebar.classList.contains("open")) return;
-      sidebar.classList.remove("open");
-      sidebarToggle.setAttribute("aria-expanded", "false");
-      document.body.classList.remove("body-sidebar-open");
-      currentBackdrop?.classList.remove("visible");
+      setClassIfChanged(sidebar, "open", false);
+      setAttr(sidebarToggle, "aria-expanded", "false");
+      setClassIfChanged(document.body, "body-sidebar-open", false);
+      if (currentBackdrop) setClassIfChanged(currentBackdrop, "visible", false);
       sync(options.source || "fallback-close");
     });
     return true;
@@ -379,7 +385,7 @@ function initializeMobileNavigation() {
     if (deltaY <= 0 || Math.abs(deltaY) <= Math.abs(deltaX) * 1.05) return;
     gesture.dragging = true;
     event.preventDefault();
-    sidebar.classList.add("is-mobile-navigation-dragging");
+    setClassIfChanged(sidebar, "is-mobile-navigation-dragging", true);
     sidebar.style.setProperty("--mobile-navigation-drag-y", `${clampMobileNavigationDrag(deltaY)}px`);
   }
 
@@ -390,7 +396,7 @@ function initializeMobileNavigation() {
     const deltaY = completed.currentY - completed.startY;
     const deltaX = completed.currentX - completed.startX;
     const durationMs = performance.now() - completed.startedAt;
-    sidebar.classList.remove("is-mobile-navigation-dragging");
+    setClassIfChanged(sidebar, "is-mobile-navigation-dragging", false);
     sidebar.style.removeProperty("--mobile-navigation-drag-y");
     if (completed.dragging && shouldCloseMobileNavigationGesture({ deltaY, deltaX, durationMs })) {
       requestClose({ restoreFocus: true, source: "swipe-down" });
@@ -399,7 +405,7 @@ function initializeMobileNavigation() {
 
   function cancelGesture() {
     gesture = null;
-    sidebar.classList.remove("is-mobile-navigation-dragging");
+    setClassIfChanged(sidebar, "is-mobile-navigation-dragging", false);
     sidebar.style.removeProperty("--mobile-navigation-drag-y");
   }
 
@@ -407,7 +413,12 @@ function initializeMobileNavigation() {
     window.cancelAnimationFrame(viewportFrame);
     viewportFrame = window.requestAnimationFrame(() => {
       const height = window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight;
-      if (height > 0) document.documentElement.style.setProperty("--mobile-navigation-viewport-height", `${Math.round(height)}px`);
+      if (height > 0) {
+        const next = `${Math.round(height)}px`;
+        if (document.documentElement.style.getPropertyValue("--mobile-navigation-viewport-height") !== next) {
+          document.documentElement.style.setProperty("--mobile-navigation-viewport-height", next);
+        }
+      }
     });
   }
 
@@ -432,9 +443,13 @@ function initializeMobileNavigation() {
   window.visualViewport?.addEventListener?.("resize", updateViewportHeight, { passive: true });
   window.addEventListener("orientationchange", handleViewportChange, { passive: true });
 
-  new MutationObserver((records) => {
-    const classChanged = records.some((record) => record.type === "attributes" && record.attributeName === "class");
-    if (classChanged) sync("mutation");
+  let observedOpen = sidebar.classList.contains("open");
+  new MutationObserver(() => {
+    const nextOpen = sidebar.classList.contains("open");
+    if (nextOpen === observedOpen) return;
+    observedOpen = nextOpen;
+    sync("mutation");
+    observedOpen = sidebar.classList.contains("open");
   }).observe(sidebar, { attributes: true, attributeFilter: ["class"] });
 
   new MutationObserver(() => ensureBackdropBinding()).observe(appContainer, { childList: true });
