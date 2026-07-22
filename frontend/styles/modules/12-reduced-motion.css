@@ -59,12 +59,4 @@
 @import url("./75-blur-layer-budget.css");
 @import url("./76-long-conversation-optimisation.css");
 @import url("./77-asset-font-loading.css");
-
-/* Reduced-motion: kill all animations */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-}
+@import url("./78-refined-reduced-motion.css");
