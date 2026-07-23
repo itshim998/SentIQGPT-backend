@@ -181,6 +181,16 @@ try {
     await sleep(70);
   }
   const immediate = await page.$eval("#chat-messages", (scroller) => scroller.scrollTop);
+
+  await page.evaluate((restoreTarget) => {
+    window.setTimeout(() => {
+      const scroller = document.getElementById("chat-messages");
+      if (!(scroller instanceof HTMLElement)) return;
+      document.documentElement.dataset.scrollRuntimeDelayedWrite = "attempted";
+      scroller.scrollTop = restoreTarget;
+    }, 620);
+  }, before);
+
   await sleep(1400);
   const settled = await page.$eval("#chat-messages", (scroller) => scroller.scrollTop);
 
@@ -191,6 +201,7 @@ try {
     conversationId: window.SentIQConversationContinuity?.getConversationId?.() || "",
     manualDataset: document.documentElement.dataset.sentiqManualScroll || "",
     correctionDataset: document.documentElement.dataset.sentiqScrollCorrection || "",
+    delayedWrite: document.documentElement.dataset.scrollRuntimeDelayedWrite || "",
     windowed: document.getElementById("chat-messages")?.dataset.longConversationWindowed || "",
   }));
 
@@ -215,11 +226,11 @@ try {
   if (pageErrors.length) failures.push(`${pageErrors.length} uncaught page error(s)`);
   if (geometry.maximum < 3000) failures.push(`long-thread fixture was not scrollable enough: maximum=${geometry.maximum}`);
   if (immediateDelta < 180) failures.push(`wheel input moved only ${immediateDelta}px immediately`);
-  if (settledDelta < 180) failures.push(`wheel position retained only ${settledDelta}px after delayed observers settled`);
+  if (settledDelta < 180) failures.push(`wheel position retained only ${settledDelta}px after a delayed direct scroll write`);
   if (rebound > 120) failures.push(`scroll position rebounded ${rebound}px after wheel input`);
   if (failures.length) throw new Error(`Long-thread scroll runtime failed:\n- ${failures.join("\n- ")}`);
 
-  console.log("Long-thread scroll runtime passed: wheel input moved the real message scroller and the new reading position remained stable after delayed observers settled.");
+  console.log("Long-thread scroll runtime passed: wheel input remained authoritative even when a delayed runtime attempted to restore the old scrollTop.");
 } finally {
   await browser?.close().catch(() => {});
   await new Promise((resolvePromise) => server.close(resolvePromise));
