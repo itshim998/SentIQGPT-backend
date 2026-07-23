@@ -9,7 +9,10 @@ const guardSource = readFileSync(guardPath, "utf8");
 const domRefs = readFileSync(resolve(root, "frontend/scripts/features/chat/dom-refs.js"), "utf8");
 const imports = readFileSync(resolve(root, "frontend/styles/modules/12-reduced-motion.css"), "utf8");
 const css = readFileSync(resolve(root, "frontend/styles/modules/80-scroll-interaction-hotfix.css"), "utf8");
-const { shouldAllowProgrammaticScroll } = await import(pathToFileURL(guardPath));
+const {
+  MANUAL_SCROLL_HOLD_MS,
+  shouldAllowProgrammaticScroll,
+} = await import(pathToFileURL(guardPath));
 
 assert.equal(
   shouldAllowProgrammaticScroll({ now: 100, manualUntil: 200, explicitUntil: 0 }),
@@ -26,12 +29,16 @@ assert.equal(
   true,
   "programmatic anchoring resumes after manual scrolling settles",
 );
+assert.ok(
+  MANUAL_SCROLL_HOLD_MS >= 2400,
+  "manual scroll protection must outlast the conversation continuity restore window",
+);
 
 const guardImport = domRefs.indexOf('import "../scroll-interaction-guard.js";');
 const readingImport = domRefs.indexOf('import "../long-answer-reading.js";');
 assert.ok(guardImport >= 0, "scroll interaction guard must be loaded");
 assert.ok(readingImport >= 0, "long-answer reading runtime must remain loaded");
-assert.ok(guardImport < readingImport, "scroll guard must wrap the native method before long-answer reading captures it");
+assert.ok(guardImport < readingImport, "scroll guard must wrap native APIs before long-answer reading captures them");
 assert.match(imports, /@import url\("\.\/80-scroll-interaction-hotfix\.css"\);/);
 
 for (const policy of [
@@ -44,6 +51,7 @@ for (const policy of [
 ]) {
   assert.ok(css.includes(policy), `scroll hotfix is missing ${policy}`);
 }
+assert.match(css, /> \.message\[data-long-conversation-window\]/);
 
 for (const forbidden of [
   "MutationObserver",
@@ -54,8 +62,12 @@ for (const forbidden of [
   assert.equal(guardSource.includes(forbidden), false, `scroll guard must not introduce ${forbidden}`);
 }
 
+assert.match(guardSource, /Object\.defineProperty\(chatMessages, "scrollTo"/);
+assert.match(guardSource, /Object\.defineProperty\(chatMessages, "scrollTop"/);
 assert.match(guardSource, /addEventListener\("wheel"[\s\S]*capture: true, passive: true/);
 assert.match(guardSource, /addEventListener\("touchmove"[\s\S]*capture: true, passive: true/);
-assert.match(guardSource, /blocked-during-manual-scroll/);
+assert.match(guardSource, /addEventListener\("pointerdown"[\s\S]*capture: true, passive: true/);
+assert.match(guardSource, /blocked-\$\{kind\}-during-manual-scroll/);
+assert.match(guardSource, /sentiqScrollTopProtected/);
 
-console.log("Production scroll hotfix gate passed: manual navigation wins, deliberate jumps remain available, native anchoring is disabled, and user capsules stay fully painted.");
+console.log("Production scroll hotfix gate passed: wheel navigation owns both scroll APIs, delayed restores are bounded, deliberate jumps remain available, and all conversation messages stay fully laid out.");
