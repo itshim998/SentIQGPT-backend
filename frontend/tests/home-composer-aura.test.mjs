@@ -69,17 +69,24 @@ assert.ok(
 
 for (const token of [
   ".main-content > .chat-input-wrapper::after",
-  "width: calc(100% + 196px)",
-  "height: calc(100% + 150px)",
+  "top: calc(50% + 4px)",
+  "width: calc(100% + 168px)",
+  "height: calc(100% + 72px)",
+  "border-radius: 999px",
   "z-index: -1",
-  "opacity: 0.78",
+  "opacity: 0.74",
   'data-home-composer-aura="entering"',
   'data-home-composer-aura="settled"',
   ".chat-input-area:not(.is-response-locked)::before",
 ]) {
-  assert.ok(visibilitySource.includes(token), `Visible home composer aura missing ${token}`);
+  assert.ok(visibilitySource.includes(token), `Composer-contained home aura missing ${token}`);
 }
 
+assert.equal(
+  visibilitySource.includes("height: calc(100% + 150px)"),
+  false,
+  "The oversized vertical aura that overlapped the welcome heading must not return",
+);
 assert.equal(
   visibilitySource.includes("filter: blur("),
   false,
@@ -96,4 +103,4 @@ assert.equal(
   "The retired full-width under-composer wash must not return",
 );
 
-console.log("Home composer aura gate passed: the wrapper-level purple field is loaded late, visibly settled, bounded, cancellable, and motion-safe.");
+console.log("Home composer aura gate passed: the purple field stays centred on the composer, avoids the welcome heading, remains cancellable, and is motion-safe.");
