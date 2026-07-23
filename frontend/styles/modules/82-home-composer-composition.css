@@ -1,0 +1,142 @@
+/* ============================================================
+   SentIQ Chat — Pass 12.6.4
+   Centred home composition and composer-wrapped aura
+
+   Keeps the welcome copy optically centred above the composer while the
+   decorative colour peeks from the composer's sides and lower edge instead
+   of occupying the gap between the subtitle and input.
+   ============================================================ */
+
+@media (min-width: 769px) {
+  .main-content.is-empty-chat {
+    --sentiq-home-top-space: minmax(72px, 0.82fr);
+    --sentiq-home-bottom-space: minmax(64px, 1fr);
+  }
+
+  .main-content.is-empty-chat > .welcome-screen {
+    width: min(var(--sentiq-home-composer-shell-width), calc(100% - 48px));
+    max-width: min(var(--sentiq-home-composer-shell-width), calc(100% - 48px));
+    justify-self: center;
+    align-items: center;
+    margin-inline: auto;
+    padding: clamp(16px, 2.8vh, 30px) 0 16px;
+    text-align: center;
+  }
+
+  .main-content.is-empty-chat > .welcome-screen h2,
+  .main-content.is-empty-chat > .welcome-screen .welcome-subtitle {
+    width: 100%;
+    margin-inline: auto;
+    text-align: center;
+  }
+
+  .main-content.is-empty-chat > .chat-input-wrapper {
+    justify-self: center;
+    margin-inline: auto;
+    padding-top: 18px;
+  }
+}
+
+.main-content.is-empty-chat > .chat-input-wrapper {
+  isolation: isolate;
+  overflow: visible;
+}
+
+.main-content.is-empty-chat > .chat-input-wrapper > .chat-input-area {
+  position: relative;
+  z-index: 1;
+}
+
+.main-content.is-empty-chat > .chat-input-wrapper::after {
+  top: calc(50% + 16px);
+  width: calc(100% + 164px);
+  height: calc(100% + 96px);
+  z-index: 0;
+  border-radius: 999px;
+  background:
+    radial-gradient(
+      ellipse at -2% 56%,
+      rgba(160, 126, 246, 0.25) 0%,
+      rgba(139, 101, 226, 0.105) 42%,
+      transparent 72%
+    ),
+    radial-gradient(
+      ellipse at 102% 56%,
+      rgba(160, 126, 246, 0.25) 0%,
+      rgba(139, 101, 226, 0.105) 42%,
+      transparent 72%
+    ),
+    radial-gradient(
+      ellipse at 50% 106%,
+      rgba(155, 116, 242, 0.34) 0%,
+      rgba(134, 94, 220, 0.17) 34%,
+      rgba(101, 67, 181, 0.06) 56%,
+      transparent 76%
+    );
+}
+
+.main-content.is-empty-chat[data-home-composer-aura="settled"]
+  > .chat-input-wrapper::after {
+  opacity: 0.82;
+}
+
+@media (min-width: 769px) and (max-width: 1180px) {
+  .main-content.is-empty-chat > .chat-input-wrapper::after {
+    top: calc(50% + 14px);
+    width: calc(100% + 128px);
+    height: calc(100% + 82px);
+  }
+}
+
+@media (max-width: 768px) {
+  .main-content.is-empty-chat > .welcome-screen {
+    justify-self: center;
+    align-items: center;
+    margin-inline: auto;
+    text-align: center;
+  }
+
+  .main-content.is-empty-chat > .welcome-screen h2,
+  .main-content.is-empty-chat > .welcome-screen .welcome-subtitle {
+    width: 100%;
+    margin-inline: auto;
+    text-align: center;
+  }
+
+  .main-content.is-empty-chat > .chat-input-wrapper::after {
+    top: calc(50% + 8px);
+    width: calc(100% + 56px);
+    height: calc(100% + 54px);
+  }
+
+  .main-content.is-empty-chat[data-home-composer-aura="settled"]
+    > .chat-input-wrapper::after {
+    opacity: 0.52;
+  }
+}
+
+@media (max-width: 480px) {
+  .main-content.is-empty-chat > .chat-input-wrapper::after {
+    top: calc(50% + 7px);
+    width: calc(100% + 34px);
+    height: calc(100% + 46px);
+  }
+
+  .main-content.is-empty-chat[data-home-composer-aura="settled"]
+    > .chat-input-wrapper::after {
+    opacity: 0.44;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-content.is-empty-chat[data-home-composer-aura="settled"]
+    > .chat-input-wrapper::after {
+    opacity: 0.72;
+  }
+}
+
+@media (forced-colors: active) {
+  .main-content.is-empty-chat > .chat-input-wrapper::after {
+    display: none !important;
+  }
+}
