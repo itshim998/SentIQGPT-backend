@@ -1,5 +1,5 @@
 /* ============================================================
-   SentIQ Liquid Glass V4 — Phase 4.3
+   SentIQ Liquid Glass V4 — Phase 4.3 / Pass 12.6
    Home-position composer
 
    The existing .is-empty-chat state changes the layout of one composer.
@@ -9,6 +9,7 @@
 .main-content.is-empty-chat {
   --sentiq-home-top-space: minmax(84px, 1fr);
   --sentiq-home-bottom-space: minmax(42px, 0.72fr);
+  --sentiq-home-composer-shell-width: 780px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows:
@@ -39,21 +40,63 @@
   grid-column: 1;
   grid-row: 3;
   align-self: start;
-  width: 100%;
+  width: min(var(--sentiq-home-composer-shell-width), calc(100% - 48px));
+  max-width: min(var(--sentiq-home-composer-shell-width), calc(100% - 48px));
   margin: 0 auto;
   padding-top: 8px;
   padding-bottom: clamp(18px, 3vh, 30px);
 }
 
-.main-content.is-empty-chat > .chat-input-wrapper::after {
-  top: -18px;
-  right: -48px;
-  left: -48px;
-  border-top-color: transparent;
+/*
+ * The empty-state atmosphere belongs to the composer itself rather than the
+ * whole workspace. The pseudo-element is always present so leaving the empty
+ * state can fade it out while the same composer moves into the conversation.
+ */
+.main-content > .chat-input-wrapper > .chat-input-area::before {
+  content: "";
+  position: absolute;
+  inset: -72px -86px -78px;
+  z-index: -2;
+  border-radius: 999px;
   background:
-    radial-gradient(ellipse at 50% 32%, rgba(149, 123, 232, 0.055), transparent 66%),
-    linear-gradient(180deg, transparent, rgba(5, 7, 12, 0.34) 72%, rgba(5, 7, 12, 0.56));
-  opacity: 0.5;
+    radial-gradient(
+      ellipse at 50% 50%,
+      rgba(149, 123, 232, 0.2) 0%,
+      rgba(149, 123, 232, 0.1) 30%,
+      rgba(111, 82, 194, 0.04) 52%,
+      transparent 72%
+    );
+  filter: blur(28px);
+  opacity: 0;
+  transform: scale(0.86);
+  transform-origin: center;
+  pointer-events: none;
+  transition:
+    opacity 240ms var(--sentiq-motion-ease-standard, ease),
+    transform 360ms var(--sentiq-motion-ease-emphasized, ease);
+}
+
+.main-content.is-empty-chat[data-home-composer-aura="entering"]
+  > .chat-input-wrapper
+  > .chat-input-area::before {
+  opacity: 0;
+  transform: scale(0.46);
+}
+
+.main-content.is-empty-chat[data-home-composer-aura="settled"]
+  > .chat-input-wrapper
+  > .chat-input-area::before {
+  opacity: 0.46;
+  transform: scale(1);
+  transition-duration: 980ms, 1080ms;
+  transition-timing-function:
+    var(--sentiq-motion-ease-emphasized, cubic-bezier(0.16, 1, 0.3, 1)),
+    var(--sentiq-motion-ease-emphasized, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+/* Retire the former broad under-composer wash; the local aura is quieter. */
+.main-content.is-empty-chat > .chat-input-wrapper::after {
+  display: none;
 }
 
 .main-content.composer-layout-transitioning > .chat-input-wrapper {
@@ -80,6 +123,17 @@
   }
 }
 
+@media (min-width: 769px) and (max-width: 1180px) {
+  .main-content.is-empty-chat {
+    --sentiq-home-composer-shell-width: 720px;
+  }
+
+  .main-content > .chat-input-wrapper > .chat-input-area::before {
+    inset: -64px -70px -70px;
+    filter: blur(26px);
+  }
+}
+
 @media (max-width: 768px) {
   .main-content.is-empty-chat {
     --sentiq-home-top-space: minmax(calc(72px + env(safe-area-inset-top)), 0.76fr);
@@ -92,16 +146,21 @@
   }
 
   .main-content.is-empty-chat > .chat-input-wrapper {
+    width: 100%;
     max-width: 100%;
     padding-top: 6px;
     padding-bottom: max(14px, env(safe-area-inset-bottom));
   }
 
-  .main-content.is-empty-chat > .chat-input-wrapper::after {
-    top: -12px;
-    right: -16px;
-    left: -16px;
-    opacity: 0.38;
+  .main-content > .chat-input-wrapper > .chat-input-area::before {
+    inset: -46px -30px -54px;
+    filter: blur(22px);
+  }
+
+  .main-content.is-empty-chat[data-home-composer-aura="settled"]
+    > .chat-input-wrapper
+    > .chat-input-area::before {
+    opacity: 0.32;
   }
 }
 
@@ -115,6 +174,11 @@
     width: min(100%, calc(100vw - 18px));
     padding-right: 9px;
     padding-left: 9px;
+  }
+
+  .main-content > .chat-input-wrapper > .chat-input-area::before {
+    inset: -40px -18px -48px;
+    filter: blur(18px);
   }
 }
 
@@ -160,10 +224,22 @@
     transition: none;
     animation: none;
   }
+
+  .main-content > .chat-input-wrapper > .chat-input-area::before {
+    transition: none;
+    transform: scale(1);
+  }
+
+  .main-content.is-empty-chat[data-home-composer-aura="settled"]
+    > .chat-input-wrapper
+    > .chat-input-area::before {
+    opacity: 0.38;
+    transform: scale(1);
+  }
 }
 
 @media (forced-colors: active) {
-  .main-content.is-empty-chat > .chat-input-wrapper::after {
+  .main-content > .chat-input-wrapper > .chat-input-area::before {
     display: none !important;
   }
 }
