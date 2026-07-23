@@ -7,6 +7,7 @@ import "../panel-focus-recovery.js";
 import "../compact-user-messages.js";
 import "../identity-metadata.js";
 import "../message-action-behaviour.js";
+import "../scroll-interaction-guard.js";
 import "../long-answer-reading.js";
 import "../websurf-presentation-refinement.js";
 import "../deep-research-workspace.js";

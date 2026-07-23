@@ -1,0 +1,38 @@
+/* ============================================================
+   SentIQ Chat — production long-thread scroll hotfix
+
+   The message stream already owns explicit JavaScript anchoring. Native CSS
+   anchoring and smooth programmatic corrections must not compete with manual
+   wheel, touch, or keyboard navigation.
+   ============================================================ */
+
+#chat-messages {
+  scroll-behavior: auto;
+  overscroll-behavior-y: contain;
+  overflow-anchor: none;
+  scroll-padding-block: 28px 64px;
+}
+
+#chat-messages > .message {
+  overflow-anchor: none;
+}
+
+/* User prompts are inexpensive and must remain fully painted at viewport edges. */
+@supports (content-visibility: auto) {
+  #chat-messages[data-long-conversation-windowed="true"]
+    > .message.user[data-long-conversation-window] {
+    content-visibility: visible;
+    contain: none;
+    contain-intrinsic-size: none;
+  }
+}
+
+.chat-messages .message.user {
+  overflow: visible;
+}
+
+@media (max-width: 768px) {
+  #chat-messages {
+    scroll-padding-block: 20px 84px;
+  }
+}
