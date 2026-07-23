@@ -9,6 +9,14 @@ const styleSource = await readFile(
   new URL("../styles/modules/22-home-position-composer.css", import.meta.url),
   "utf8",
 );
+const visibilitySource = await readFile(
+  new URL("../styles/modules/81-home-composer-aura-visibility.css", import.meta.url),
+  "utf8",
+);
+const importSource = await readFile(
+  new URL("../styles/modules/12-reduced-motion.css", import.meta.url),
+  "utf8",
+);
 
 for (const token of [
   'const AURA_ATTRIBUTE = "data-home-composer-aura"',
@@ -46,18 +54,39 @@ for (const token of [
   "--sentiq-home-composer-shell-width: 780px",
   "width: min(var(--sentiq-home-composer-shell-width), calc(100% - 48px))",
   "max-width: min(var(--sentiq-home-composer-shell-width), calc(100% - 48px))",
-  ".main-content > .chat-input-wrapper > .chat-input-area::before",
   '[data-home-composer-aura="entering"]',
   '[data-home-composer-aura="settled"]',
-  "opacity: 0.46",
   "@media (prefers-reduced-motion: reduce)",
   "@media (forced-colors: active)",
 ]) {
   assert.ok(styleSource.includes(token), `Focused home composer styling missing ${token}`);
 }
 
+assert.ok(
+  importSource.includes('@import url("./81-home-composer-aura-visibility.css")'),
+  "The visibility correction must load after the established compositor and accessibility layers",
+);
+
+for (const token of [
+  ".main-content > .chat-input-wrapper::after",
+  "width: calc(100% + 196px)",
+  "height: calc(100% + 150px)",
+  "z-index: -1",
+  "opacity: 0.78",
+  'data-home-composer-aura="entering"',
+  'data-home-composer-aura="settled"',
+  ".chat-input-area:not(.is-response-locked)::before",
+]) {
+  assert.ok(visibilitySource.includes(token), `Visible home composer aura missing ${token}`);
+}
+
 assert.equal(
-  styleSource.includes("animation-iteration-count: infinite"),
+  visibilitySource.includes("filter: blur("),
+  false,
+  "The visibility fix must use a bounded radial field rather than adding another blur layer",
+);
+assert.equal(
+  `${styleSource}\n${visibilitySource}`.includes("animation-iteration-count: infinite"),
   false,
   "Home composer aura must settle rather than pulse indefinitely",
 );
@@ -67,4 +96,4 @@ assert.equal(
   "The retired full-width under-composer wash must not return",
 );
 
-console.log("Home composer aura gate passed: the empty composer is bounded, the purple atmosphere reveals once, and first-message exit remains cancellable and motion-safe.");
+console.log("Home composer aura gate passed: the wrapper-level purple field is loaded late, visibly settled, bounded, cancellable, and motion-safe.");
