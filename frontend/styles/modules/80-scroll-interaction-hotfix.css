@@ -2,8 +2,8 @@
    SentIQ Chat — production long-thread scroll hotfix
 
    The message stream already owns explicit JavaScript anchoring. Native CSS
-   anchoring and smooth programmatic corrections must not compete with manual
-   wheel, touch, or keyboard navigation.
+   anchoring, smooth corrections, and variable-height message virtualisation
+   must not compete with manual wheel, touch, pointer, or keyboard navigation.
    ============================================================ */
 
 #chat-messages {
@@ -17,10 +17,16 @@
   overflow-anchor: none;
 }
 
-/* User prompts are inexpensive and must remain fully painted at viewport edges. */
+/*
+   Message heights vary heavily across Markdown, code, citations, images, and
+   generated assets. Resolving content-visibility estimates while scrolling can
+   replace a 180px intrinsic placeholder with the real height and visually pull
+   the reader back. Keep conversation messages fully laid out; sidebar history
+   windowing remains available for large account histories.
+*/
 @supports (content-visibility: auto) {
   #chat-messages[data-long-conversation-windowed="true"]
-    > .message.user[data-long-conversation-window] {
+    > .message[data-long-conversation-window] {
     content-visibility: visible;
     contain: none;
     contain-intrinsic-size: none;
