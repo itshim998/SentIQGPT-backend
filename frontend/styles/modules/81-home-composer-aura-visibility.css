@@ -1,31 +1,30 @@
 /* ============================================================
-   SentIQ Chat — Pass 12.6.1
-   Visible new-chat composer aura
+   SentIQ Chat — Pass 12.6.3
+   Composer-contained new-chat aura
 
-   The first implementation placed the aura inside the isolated composer
-   surface at a negative stack level. Its lifecycle ran correctly, but the
-   opaque capsule absorbed almost all of the visible colour. This late layer
-   moves only the decorative field to the transparent wrapper.
+   The colour field lives on the transparent composer wrapper so it remains
+   visible, but its vertical envelope is deliberately shallow. This keeps the
+   diffusion around the composer rather than behind the welcome heading.
    ============================================================ */
 
 .main-content > .chat-input-wrapper::after {
   content: "";
   display: block;
   position: absolute;
-  top: 50%;
+  top: calc(50% + 4px);
   left: 50%;
-  width: calc(100% + 196px);
-  height: calc(100% + 150px);
+  width: calc(100% + 168px);
+  height: calc(100% + 72px);
   z-index: -1;
-  border-radius: 50%;
+  border-radius: 999px;
   background:
     radial-gradient(
       ellipse at 50% 50%,
-      rgba(161, 132, 246, 0.34) 0%,
-      rgba(142, 108, 232, 0.22) 30%,
-      rgba(112, 78, 204, 0.11) 52%,
-      rgba(83, 55, 158, 0.045) 66%,
-      transparent 78%
+      rgba(161, 132, 246, 0.32) 0%,
+      rgba(142, 108, 232, 0.21) 31%,
+      rgba(112, 78, 204, 0.105) 53%,
+      rgba(83, 55, 158, 0.04) 67%,
+      transparent 79%
     );
   opacity: 0;
   transform: translate3d(-50%, -50%, 0) scale(0.66);
@@ -56,7 +55,7 @@
 
 .main-content.is-empty-chat[data-home-composer-aura="settled"]
   > .chat-input-wrapper::after {
-  opacity: 0.78;
+  opacity: 0.74;
   transform: translate3d(-50%, -50%, 0) scale(1);
   transition-duration: 920ms, 1080ms;
   transition-timing-function:
@@ -66,32 +65,34 @@
 
 @media (min-width: 769px) and (max-width: 1180px) {
   .main-content > .chat-input-wrapper::after {
-    width: calc(100% + 164px);
-    height: calc(100% + 132px);
+    width: calc(100% + 132px);
+    height: calc(100% + 64px);
   }
 }
 
 @media (max-width: 768px) {
   .main-content > .chat-input-wrapper::after {
-    width: calc(100% + 72px);
-    height: calc(100% + 96px);
+    top: calc(50% + 3px);
+    width: calc(100% + 64px);
+    height: calc(100% + 56px);
   }
 
   .main-content.is-empty-chat[data-home-composer-aura="settled"]
     > .chat-input-wrapper::after {
-    opacity: 0.52;
+    opacity: 0.5;
   }
 }
 
 @media (max-width: 480px) {
   .main-content > .chat-input-wrapper::after {
-    width: calc(100% + 40px);
-    height: calc(100% + 76px);
+    top: calc(50% + 2px);
+    width: calc(100% + 36px);
+    height: calc(100% + 48px);
   }
 
   .main-content.is-empty-chat[data-home-composer-aura="settled"]
     > .chat-input-wrapper::after {
-    opacity: 0.44;
+    opacity: 0.42;
   }
 }
 
@@ -103,7 +104,7 @@
 
   .main-content.is-empty-chat[data-home-composer-aura="settled"]
     > .chat-input-wrapper::after {
-    opacity: 0.68;
+    opacity: 0.66;
   }
 }
 
