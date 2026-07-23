@@ -1,5 +1,5 @@
 /* ============================================================
-   SentIQ Liquid Glass V4 — Phase 4.3
+   SentIQ Liquid Glass V4 — Phase 4.3 / Pass 12.6
    Home-position composer transition
 
    The existing main-content empty state remains the single source of truth.
@@ -9,6 +9,12 @@
 
 const EMPTY_CHAT_CLASS = "is-empty-chat";
 const TRANSITIONING_CLASS = "composer-layout-transitioning";
+const AURA_ATTRIBUTE = "data-home-composer-aura";
+const AURA_STATE = Object.freeze({
+  hidden: "hidden",
+  entering: "entering",
+  settled: "settled",
+});
 
 function prefersReducedMotion() {
   return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
@@ -30,6 +36,41 @@ function initializeHomePositionComposer() {
   let transitionPending = false;
   let activeAnimation = null;
   let resizeFrame = 0;
+  let auraFrame = 0;
+
+  function setHomeComposerAuraState(state) {
+    if (mainContent.getAttribute(AURA_ATTRIBUTE) === state) return;
+    mainContent.setAttribute(AURA_ATTRIBUTE, state);
+  }
+
+  function cancelAuraReveal() {
+    if (!auraFrame) return;
+    window.cancelAnimationFrame(auraFrame);
+    auraFrame = 0;
+  }
+
+  function scheduleAuraReveal() {
+    cancelAuraReveal();
+
+    if (!mainContent.classList.contains(EMPTY_CHAT_CLASS)) {
+      setHomeComposerAuraState(AURA_STATE.hidden);
+      return;
+    }
+
+    if (prefersReducedMotion()) {
+      setHomeComposerAuraState(AURA_STATE.settled);
+      return;
+    }
+
+    setHomeComposerAuraState(AURA_STATE.entering);
+    auraFrame = window.requestAnimationFrame(() => {
+      auraFrame = window.requestAnimationFrame(() => {
+        auraFrame = 0;
+        const stillEmpty = mainContent.classList.contains(EMPTY_CHAT_CLASS);
+        setHomeComposerAuraState(stillEmpty ? AURA_STATE.settled : AURA_STATE.hidden);
+      });
+    });
+  }
 
   function captureStableRect() {
     if (!isRenderable(composer)) return;
@@ -111,6 +152,13 @@ function initializeHomePositionComposer() {
     emptyState = nextEmptyState;
     transitionPending = true;
 
+    if (nextEmptyState) {
+      scheduleAuraReveal();
+    } else {
+      cancelAuraReveal();
+      setHomeComposerAuraState(AURA_STATE.hidden);
+    }
+
     window.requestAnimationFrame(() => {
       animateToCurrentPosition(previousRect, nextEmptyState);
     });
@@ -144,6 +192,7 @@ function initializeHomePositionComposer() {
     });
   }, { passive: true });
 
+  scheduleAuraReveal();
   window.requestAnimationFrame(captureStableRect);
 }
 
