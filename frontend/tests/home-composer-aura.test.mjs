@@ -13,6 +13,10 @@ const visibilitySource = await readFile(
   new URL("../styles/modules/81-home-composer-aura-visibility.css", import.meta.url),
   "utf8",
 );
+const compositionSource = await readFile(
+  new URL("../styles/modules/82-home-composer-composition.css", import.meta.url),
+  "utf8",
+);
 const importSource = await readFile(
   new URL("../styles/modules/12-reduced-motion.css", import.meta.url),
   "utf8",
@@ -62,38 +66,54 @@ for (const token of [
   assert.ok(styleSource.includes(token), `Focused home composer styling missing ${token}`);
 }
 
+const visibilityImport = '@import url("./81-home-composer-aura-visibility.css")';
+const compositionImport = '@import url("./82-home-composer-composition.css")';
+assert.ok(importSource.includes(visibilityImport), "The visible wrapper-level aura must remain loaded");
+assert.ok(importSource.includes(compositionImport), "The final home composition polish must be loaded");
 assert.ok(
-  importSource.includes('@import url("./81-home-composer-aura-visibility.css")'),
-  "The visibility correction must load after the established compositor and accessibility layers",
+  importSource.indexOf(compositionImport) > importSource.indexOf(visibilityImport),
+  "The centred composition must load after the earlier aura visibility correction",
 );
 
 for (const token of [
   ".main-content > .chat-input-wrapper::after",
-  "top: calc(50% + 4px)",
-  "width: calc(100% + 168px)",
-  "height: calc(100% + 72px)",
-  "border-radius: 999px",
-  "z-index: -1",
-  "opacity: 0.74",
   'data-home-composer-aura="entering"',
   'data-home-composer-aura="settled"',
   ".chat-input-area:not(.is-response-locked)::before",
 ]) {
-  assert.ok(visibilitySource.includes(token), `Composer-contained home aura missing ${token}`);
+  assert.ok(visibilitySource.includes(token), `Visible home composer aura missing ${token}`);
+}
+
+for (const token of [
+  "--sentiq-home-top-space: minmax(72px, 0.82fr)",
+  "--sentiq-home-bottom-space: minmax(64px, 1fr)",
+  "width: min(var(--sentiq-home-composer-shell-width), calc(100% - 48px))",
+  "padding-top: 18px",
+  "isolation: isolate",
+  "top: calc(50% + 16px)",
+  "width: calc(100% + 164px)",
+  "height: calc(100% + 96px)",
+  "z-index: 0",
+  "ellipse at -2% 56%",
+  "ellipse at 102% 56%",
+  "ellipse at 50% 106%",
+  "opacity: 0.82",
+]) {
+  assert.ok(compositionSource.includes(token), `Centred composer-wrapped aura missing ${token}`);
 }
 
 assert.equal(
-  visibilitySource.includes("height: calc(100% + 150px)"),
+  compositionSource.includes("ellipse at 50% 50%"),
   false,
-  "The oversized vertical aura that overlapped the welcome heading must not return",
+  "The final aura must not return to a filled field between the heading and composer",
 );
 assert.equal(
-  visibilitySource.includes("filter: blur("),
+  compositionSource.includes("filter: blur("),
   false,
-  "The visibility fix must use a bounded radial field rather than adding another blur layer",
+  "The final aura must use bounded gradients rather than another blur layer",
 );
 assert.equal(
-  `${styleSource}\n${visibilitySource}`.includes("animation-iteration-count: infinite"),
+  `${styleSource}\n${visibilitySource}\n${compositionSource}`.includes("animation-iteration-count: infinite"),
   false,
   "Home composer aura must settle rather than pulse indefinitely",
 );
@@ -103,4 +123,4 @@ assert.equal(
   "The retired full-width under-composer wash must not return",
 );
 
-console.log("Home composer aura gate passed: the purple field stays centred on the composer, avoids the welcome heading, remains cancellable, and is motion-safe.");
+console.log("Home composer aura gate passed: the welcome stack is centred and the bounded purple field peeks from the composer's sides and lower edge.");
