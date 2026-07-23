@@ -67,12 +67,6 @@ function initializeWelcomeComposition() {
 
   if (!welcomeScreen || !welcomeHeading || !welcomeSubtitle) return;
 
-  // Remove a stale continuation surface if an older cached bundle created one
-  // before this module version loaded. Chat history remains the only route back
-  // into an existing conversation.
-  document.getElementById("sentiq-welcome-continuation")?.remove();
-  welcomeScreen.classList.remove("has-recent-work");
-
   let renderQueued = false;
 
   function render() {
