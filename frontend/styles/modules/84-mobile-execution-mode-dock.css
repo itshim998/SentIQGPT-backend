@@ -1,11 +1,10 @@
 /* ============================================================
-   SentIQ Chat — Pass 12.7.2
-   Mobile execution-mode dock
+   SentIQ Chat — Pass 12.7.3
+   Mobile execution-mode page control
 
-   Removes the execution selector from the crowded mobile composer row and
-   places it just above the capsule, aligned with the composer's left edge.
-   The underlying DOM, menu behaviour, execution state, and desktop layout
-   remain unchanged.
+   Keeps the compact mobile composer free of the execution selector and places
+   that selector in the page's top-right content corner. The underlying DOM,
+   menu behaviour, execution state, and desktop layout remain unchanged.
    ============================================================ */
 
 @media (max-width: 768px) {
@@ -25,12 +24,12 @@
   :root[data-mobile-composer-active="true"]
     #execution-mode-control[data-execution-mode-version="5.6"] {
     grid-area: auto;
-    position: absolute !important;
-    top: auto !important;
-    right: auto !important;
-    bottom: calc(100% + 12px) !important;
-    left: 10px !important;
-    z-index: 20 !important;
+    position: fixed !important;
+    top: max(18px, env(safe-area-inset-top, 0px)) !important;
+    right: max(16px, env(safe-area-inset-right, 0px)) !important;
+    bottom: auto !important;
+    left: auto !important;
+    z-index: 80 !important;
     width: max-content;
     height: 44px;
     align-self: auto;
@@ -58,12 +57,12 @@
   :root[data-mobile-composer-active="true"]
     #execution-mode-control[data-execution-mode-version="5.6"]
     .execution-mode-menu {
-    top: auto;
-    right: auto;
-    bottom: calc(100% + 9px);
-    left: 0;
+    top: calc(100% + 9px);
+    right: 0;
+    bottom: auto;
+    left: auto;
     width: min(var(--execution-menu-width), calc(100vw - 24px));
-    transform-origin: bottom left;
+    transform-origin: top right;
   }
 
   :root[data-mobile-composer-active="true"]
@@ -77,8 +76,8 @@
 @media (max-width: 768px) and (orientation: landscape) {
   :root[data-mobile-composer-active="true"]
     #execution-mode-control[data-execution-mode-version="5.6"] {
-    bottom: calc(100% + 8px) !important;
-    left: 8px !important;
+    top: max(10px, env(safe-area-inset-top, 0px)) !important;
+    right: max(12px, env(safe-area-inset-right, 0px)) !important;
     height: 40px;
   }
 
