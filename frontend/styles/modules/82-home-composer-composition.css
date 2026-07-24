@@ -1,10 +1,10 @@
 /* ============================================================
-   SentIQ Chat — Pass 12.6.4
-   Centred home composition and composer-wrapped aura
+   SentIQ Chat — Pass 12.6.5
+   Centred home composition and lowered composer-wrapped aura
 
-   Keeps the welcome copy optically centred above the composer while the
-   decorative colour peeks from the composer's sides and lower edge instead
-   of occupying the gap between the subtitle and input.
+   Keeps the established welcome and composer geometry untouched while moving
+   only the decorative colour field downward so it surrounds the composer and
+   remains visible at its sides and lower edge.
    ============================================================ */
 
 @media (min-width: 769px) {
@@ -48,7 +48,7 @@
 }
 
 .main-content.is-empty-chat > .chat-input-wrapper::after {
-  top: calc(50% + 16px);
+  top: calc(50% + 92px);
   width: calc(100% + 164px);
   height: calc(100% + 96px);
   z-index: 0;
@@ -82,7 +82,7 @@
 
 @media (min-width: 769px) and (max-width: 1180px) {
   .main-content.is-empty-chat > .chat-input-wrapper::after {
-    top: calc(50% + 14px);
+    top: calc(50% + 72px);
     width: calc(100% + 128px);
     height: calc(100% + 82px);
   }
@@ -104,7 +104,7 @@
   }
 
   .main-content.is-empty-chat > .chat-input-wrapper::after {
-    top: calc(50% + 8px);
+    top: calc(50% + 34px);
     width: calc(100% + 56px);
     height: calc(100% + 54px);
   }
@@ -117,7 +117,7 @@
 
 @media (max-width: 480px) {
   .main-content.is-empty-chat > .chat-input-wrapper::after {
-    top: calc(50% + 7px);
+    top: calc(50% + 28px);
     width: calc(100% + 34px);
     height: calc(100% + 46px);
   }
