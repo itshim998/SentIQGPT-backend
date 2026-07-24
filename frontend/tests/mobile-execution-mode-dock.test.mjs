@@ -17,16 +17,19 @@ const composerMarkup = await readFile(
 for (const token of [
   '@media (max-width: 768px)',
   '#execution-mode-control[data-execution-mode-version="5.6"]',
-  'position: absolute !important',
-  'bottom: calc(100% + 12px) !important',
-  'left: 10px !important',
+  'position: fixed !important',
+  'top: max(18px, env(safe-area-inset-top, 0px)) !important',
+  'right: max(16px, env(safe-area-inset-right, 0px)) !important',
+  'bottom: auto !important',
+  'left: auto !important',
   'grid-template-columns:',
   '"plus field action"',
-  'transform-origin: bottom left',
+  'top: calc(100% + 9px)',
+  'transform-origin: top right',
   '@media (prefers-reduced-motion: reduce) and (max-width: 768px)',
   '@media (forced-colors: active) and (max-width: 768px)',
 ]) {
-  assert.ok(styleSource.includes(token), `Mobile execution dock missing ${token}`);
+  assert.ok(styleSource.includes(token), `Mobile execution control missing ${token}`);
 }
 
 assert.equal(
@@ -40,17 +43,22 @@ assert.equal(
   "The mobile execution selector must remain available rather than being hidden",
 );
 assert.equal(
-  styleSource.includes("position: fixed"),
+  styleSource.includes("bottom: calc(100% + 12px)"),
   false,
-  "The execution selector must remain anchored to the composer rather than the viewport",
+  "The execution selector must not return to the space above the composer",
+);
+assert.equal(
+  styleSource.includes("left: 10px !important"),
+  false,
+  "The execution selector must remain in the page's top-right corner",
 );
 
 const previousImport = '@import url("./83-composer-sidebar-polish.css")';
 const dockImport = '@import url("./84-mobile-execution-mode-dock.css")';
-assert.ok(styleImportSource.includes(dockImport), "Mobile execution dock stylesheet must be loaded");
+assert.ok(styleImportSource.includes(dockImport), "Mobile execution control stylesheet must be loaded");
 assert.ok(
   styleImportSource.indexOf(dockImport) > styleImportSource.indexOf(previousImport),
-  "Mobile execution dock must load after the final composer geometry layer",
+  "Mobile execution control must load after the final composer geometry layer",
 );
 
 assert.ok(
@@ -63,5 +71,5 @@ assert.ok(
 );
 
 console.log(
-  "Mobile execution-mode dock gate passed: the mode selector sits above the composer, the compact row contains only attachment, field, and action controls, and existing semantics remain intact.",
+  "Mobile execution-mode position gate passed: the selector occupies the page's top-right corner, its menu opens downward, the composer row contains only attachment, field, and action controls, and existing semantics remain intact.",
 );
