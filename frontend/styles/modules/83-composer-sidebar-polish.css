@@ -1,0 +1,70 @@
+/* ============================================================
+   SentIQ Chat — Pass 12.7.1
+   Capsule composer and smooth desktop sidebar transition
+
+   Removes the nested rectangular field treatment while retaining the outer
+   composer focus response, rounds the default composer into an elongated
+   capsule, and gives the desktop sidebar shell an explicit layout transition.
+   ============================================================ */
+
+/* The whole composer owns focus; the textarea region must not draw a box. */
+.chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper,
+.chat-input-wrapper[data-composer-version="5.1"]
+  > .chat-input-area:has(#chat-input:focus-visible)
+  .input-field-wrapper {
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] #chat-input:focus,
+.chat-input-wrapper[data-composer-version="5.1"] #chat-input:focus-visible {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+
+/* A single-line composer reads as a capsule rather than a rounded card. */
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
+  --sentiq-composer-capsule-radius: 999px;
+  border-radius: 999px;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area::before,
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area::after {
+  border-radius: inherit;
+}
+
+/* Rich attachment layouts remain a compact panel instead of an oversized pill. */
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area.has-attachments,
+.chat-input-wrapper[data-composer-version="5.1"]
+  > .chat-input-area:has(.file-preview-area:not([hidden])) {
+  border-radius: 30px;
+}
+
+@media (min-width: 769px) {
+  .sidebar[data-sidebar-transition-version="12.7.1"] {
+    transition-property: width, background-color, border-color, box-shadow;
+    transition-duration: 360ms, 220ms, 220ms, 280ms;
+    transition-timing-function:
+      cubic-bezier(0.16, 1, 0.3, 1),
+      cubic-bezier(0.2, 0.7, 0.2, 1),
+      cubic-bezier(0.2, 0.7, 0.2, 1),
+      cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+
+  .sidebar[data-sidebar-transition-version="12.7.1"] .sidebar-collapse-icon {
+    transition: transform 360ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .app-container[data-sidebar-transitioning="true"] .sidebar {
+    overflow: clip;
+    will-change: width;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar[data-sidebar-transition-version="12.7.1"],
+  .sidebar[data-sidebar-transition-version="12.7.1"] .sidebar-collapse-icon {
+    transition-duration: 0ms;
+  }
+}
