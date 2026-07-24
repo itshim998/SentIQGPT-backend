@@ -34,6 +34,7 @@ import "../compositor-safety.js";
 import "../blur-layer-budget.js";
 import "../accessibility-verification.js";
 import "../accessibility-verification-dynamic.js";
+import "../sidebar-transition-polish.js";
 
 export function getChatDomRefs(doc = document) {
   return {
