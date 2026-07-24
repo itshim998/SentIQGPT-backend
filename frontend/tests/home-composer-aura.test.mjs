@@ -90,7 +90,10 @@ for (const token of [
   "width: min(var(--sentiq-home-composer-shell-width), calc(100% - 48px))",
   "padding-top: 18px",
   "isolation: isolate",
-  "top: calc(50% + 16px)",
+  "top: calc(50% + 92px)",
+  "top: calc(50% + 72px)",
+  "top: calc(50% + 34px)",
+  "top: calc(50% + 28px)",
   "width: calc(100% + 164px)",
   "height: calc(100% + 96px)",
   "z-index: 0",
@@ -99,9 +102,14 @@ for (const token of [
   "ellipse at 50% 106%",
   "opacity: 0.82",
 ]) {
-  assert.ok(compositionSource.includes(token), `Centred composer-wrapped aura missing ${token}`);
+  assert.ok(compositionSource.includes(token), `Lowered composer-wrapped aura missing ${token}`);
 }
 
+assert.equal(
+  compositionSource.includes("top: calc(50% + 16px)"),
+  false,
+  "The former high desktop aura position must not return",
+);
 assert.equal(
   compositionSource.includes("ellipse at 50% 50%"),
   false,
@@ -123,4 +131,4 @@ assert.equal(
   "The retired full-width under-composer wash must not return",
 );
 
-console.log("Home composer aura gate passed: the welcome stack is centred and the bounded purple field peeks from the composer's sides and lower edge.");
+console.log("Home composer aura gate passed: the welcome and composer geometry stay fixed while the purple field is lowered around the composer's sides and lower edge.");
