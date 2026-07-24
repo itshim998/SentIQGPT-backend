@@ -21,12 +21,18 @@ const domRefsSource = await readFile(
 for (const token of [
   '.input-field-wrapper',
   '> .chat-input-area:has(#chat-input:focus-visible)',
-  '#chat-input:focus-visible',
-  'box-shadow: none',
+  'data-accessibility-verification-version="12.1"',
+  '#chat-input:is(:focus, :focus-visible)',
+  'outline: none !important',
+  'outline-offset: 0 !important',
+  'box-shadow: none !important',
   '--sentiq-composer-capsule-radius: 999px',
   'border-radius: 999px',
   '> .chat-input-area.has-attachments',
   'border-radius: 30px',
+  '.main-content:not(.is-empty-chat)',
+  'width: min(780px, calc(100% - 48px))',
+  'max-width: min(780px, calc(100% - 48px))',
 ]) {
   assert.ok(styleSource.includes(token), `Composer polish missing ${token}`);
 }
@@ -83,4 +89,4 @@ assert.ok(
   'Sidebar transition runtime must initialize before chat event binding',
 );
 
-console.log('Composer/sidebar polish gate passed: the textarea has no nested focus rectangle, the composer is capsule-shaped, and desktop sidebar state changes animate without replacing existing behavior.');
+console.log('Composer/sidebar polish gate passed: the textarea has no nested focus rectangle, the conversation composer is compact and capsule-shaped, and desktop sidebar state changes animate without replacing existing behavior.');
