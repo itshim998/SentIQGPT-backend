@@ -1,10 +1,11 @@
 /* ============================================================
-   SentIQ Chat — Pass 12.7.1
-   Capsule composer and smooth desktop sidebar transition
+   SentIQ Chat — Pass 12.7.2
+   Capsule composer, compact conversation shell, and smooth sidebar transition
 
    Removes the nested rectangular field treatment while retaining the outer
-   composer focus response, rounds the default composer into an elongated
-   capsule, and gives the desktop sidebar shell an explicit layout transition.
+   composer focus response, keeps the default composer capsule-shaped, narrows
+   the persistent conversation composer, and preserves smooth desktop sidebar
+   resizing.
    ============================================================ */
 
 /* The whole composer owns focus; the textarea region must not draw a box. */
@@ -16,11 +17,16 @@
   box-shadow: none;
 }
 
-.chat-input-wrapper[data-composer-version="5.1"] #chat-input:focus,
-.chat-input-wrapper[data-composer-version="5.1"] #chat-input:focus-visible {
-  border: 0;
-  outline: none;
-  box-shadow: none;
+/* Phase 12.1 intentionally gives every form control an important focus ring.
+   The composer is a compound control, so its outer capsule communicates focus
+   while the internal textarea must remain visually seamless. */
+:root[data-accessibility-verification-version="12.1"]
+  .chat-input-wrapper[data-composer-version="5.1"]
+  #chat-input:is(:focus, :focus-visible) {
+  border: 0 !important;
+  outline: none !important;
+  outline-offset: 0 !important;
+  box-shadow: none !important;
 }
 
 /* A single-line composer reads as a capsule rather than a rounded card. */
@@ -42,6 +48,16 @@
 }
 
 @media (min-width: 769px) {
+  /* Keep the persistent composer aligned with the reading column instead of
+     stretching across the whole workspace. Home keeps its established width. */
+  .main-content:not(.is-empty-chat)
+    > .chat-input-wrapper[data-composer-version="5.1"] {
+    width: min(780px, calc(100% - 48px));
+    max-width: min(780px, calc(100% - 48px));
+    margin-inline: auto;
+    padding-inline: 24px;
+  }
+
   .sidebar[data-sidebar-transition-version="12.7.1"] {
     transition-property: width, background-color, border-color, box-shadow;
     transition-duration: 360ms, 220ms, 220ms, 280ms;
