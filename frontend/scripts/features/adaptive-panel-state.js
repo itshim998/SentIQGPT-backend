@@ -35,7 +35,7 @@ export const ADAPTIVE_PANEL_CONFIGS = Object.freeze([
     titleSelector: ".modal-header h2",
     existingCloseSelector: "#close-settings-btn",
     closeActionSelector: "#close-settings-btn",
-    desktopPlacement: "contextual",
+    desktopPlacement: "center",
     mobileMode: "full",
     dismissible: true,
   }),
