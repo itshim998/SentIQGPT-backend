@@ -20,7 +20,8 @@ const live = getAdaptivePanelConfig("live-beta-panel");
 const account = getAdaptivePanelConfig("account-panel");
 
 assert.equal(resolveAdaptivePanelMode(auth, 1440), "floating-dialog");
-assert.equal(resolveAdaptivePanelMode(settings, 1440), "contextual-floating");
+assert.equal(settings.desktopPlacement, "center");
+assert.equal(resolveAdaptivePanelMode(settings, 1440), "floating-dialog");
 assert.equal(resolveAdaptivePanelMode(live, 900), "side-sheet");
 assert.equal(resolveAdaptivePanelMode(settings, 390), "full-height-sheet");
 assert.equal(resolveAdaptivePanelMode(auth, 390), "bottom-sheet");
