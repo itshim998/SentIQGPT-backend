@@ -1,0 +1,112 @@
+/* ============================================================
+   SentIQ Chat — Pass 12.7.5
+   Unboxed composer controls and semantic activity
+
+   Keeps hit areas, labels, chevrons, spinner motion, and accessibility while
+   removing decorative containers that duplicate the composer and message flow.
+   ============================================================ */
+
+/* The composer already supplies the enclosing capsule. Plus and execution mode
+   therefore read as controls within one surface rather than nested pills. */
+.chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn,
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn:hover,
+.chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn:active,
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle:hover,
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle:active,
+.execution-mode-control[data-execution-mode-version="5.6"].open .execution-mode-toggle {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: rgba(244, 242, 250, 0.98);
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle {
+  grid-template-columns: minmax(0, 1fr) 13px;
+  gap: 6px;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle-indicator {
+  display: none !important;
+}
+
+.execution-mode-control[data-execution-mode-version="5.6"] #execution-mode-label {
+  text-align: right;
+}
+
+/* A focused button may still use the application-wide keyboard focus ring.
+   Pointer interaction never adds a second pill or circular surface. */
+.chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn:focus:not(:focus-visible),
+.execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Semantic progress belongs in the reading flow, not inside another capsule. */
+.chat-messages .response-inline-loader.semantic-activity-progress,
+.chat-messages .semantic-legacy-progress,
+.chat-messages .semantic-surface-progress {
+  min-height: 24px;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.chat-messages .response-inline-loader.semantic-activity-progress {
+  margin: 2px 0 8px;
+}
+
+.chat-messages .semantic-surface-progress {
+  margin: 8px 10px 10px;
+}
+
+.chat-messages .image-generation-frame > .semantic-surface-progress {
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* The inline row is the single source of truth for active progress. Hide any
+   duplicated compact identity line and its decorative dot while activity runs. */
+.chat-messages .message.assistant:has(.response-inline-loader.semantic-activity-progress)
+  > .message-header,
+.chat-messages .message.assistant:has(.sentiq-loader.semantic-legacy-loader)
+  > .message-header {
+  display: none !important;
+}
+
+@media (max-width: 480px) {
+  .chat-messages .response-inline-loader.semantic-activity-progress,
+  .chat-messages .semantic-legacy-progress,
+  .chat-messages .semantic-surface-progress {
+    max-width: 100%;
+  }
+}
+
+@media (forced-colors: active) {
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn,
+  .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle {
+    border: 1px solid ButtonText !important;
+    color: ButtonText;
+    forced-color-adjust: auto;
+  }
+
+  .chat-messages .response-inline-loader.semantic-activity-progress,
+  .chat-messages .semantic-legacy-progress,
+  .chat-messages .semantic-surface-progress {
+    border: 0;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: auto;
+  }
+}
