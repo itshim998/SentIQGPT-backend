@@ -29,11 +29,15 @@ if (chatMessages) {
   function resolveToolActivity(message) {
     const loader = message.querySelector(".response-inline-loader");
     const label = normalizeLabel(loader?.textContent);
-    if (!loader || !label || /^thinking$/i.test(label)) return null;
+    if (!loader || !label) return null;
+
+    // The inline semantic progress row already communicates both the activity
+    // label and its spinner. Keeping a second uppercase identity row above it
+    // duplicated the same state and added an unnecessary dot marker.
     return {
-      mode: "compact",
-      kind: "tool-active",
-      label,
+      mode: "implicit",
+      kind: "assistant",
+      label: "SentIQ response",
     };
   }
 
