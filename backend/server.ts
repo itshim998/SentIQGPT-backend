@@ -125,7 +125,10 @@ import {
 
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
-import { executeAutomaticModelToolCalls } from "./orchestrator/toolExecutor";
+import {
+  executeAutomaticModelToolCalls,
+  synthesizeIntuitiveToolResult,
+} from "./orchestrator/toolExecutor";
 import { consumeModelTurnStream, ModelTurnProgressTracker } from "./ai/modelToolExecution";
 import { assertNoUnbackedToolCompletionClaim } from "./ai/modelToolCompletionClaims";
 import {
@@ -145,6 +148,10 @@ import { isWebSurfV2Enabled, prepareWebSurfV2, type WebSurfV2Payload } from "./t
 import { WebSurfCitationStream } from "./tools/webSearch/webSurfCitationStream";
 import { WebSurfOutputGuardStream } from "./tools/webSearch/webSurfOutputGuard";
 import { normalizeExecutionMode, resolveExecutionProfile } from "./orchestrator/executionProfile";
+import {
+  buildIntuitiveToolSelectionPrompt,
+  isNemotronIntuitiveLaneEnabled,
+} from "./orchestrator/intuitiveTextLane";
 
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
@@ -3986,18 +3993,32 @@ app.post(
           automaticToolsRequested: automaticTools.length > 0,
           toolTransportMode: toolTransport?.mode === "streaming" ? "streaming" : "buffered",
         });
-        const adapterStream = await callLLMAdapterTurnStream({
+        const intuitiveLaneActive = isNemotronIntuitiveLaneEnabled(executionProfile.mode)
+          && guestCtx.imageAttachments.length === 0;
+        const intuitiveToolSelectionActive = intuitiveLaneActive && automaticTools.length > 0;
+        const initialTurnCall: LLMAdapterCall = {
           ...call,
           signal: requestAbortController.signal,
-          execution_mode: executionProfile.mode,
+          ...(intuitiveToolSelectionActive
+            ? {
+                prompt: buildIntuitiveToolSelectionPrompt(effectiveUserMessage, automaticTools),
+                max_output_tokens: 200,
+                execution_mode: "fast" as const,
+                budget_class: "auxiliary" as const,
+                auxiliary_budget: "routing" as const,
+                skip_wrappers: true,
+              }
+            : { execution_mode: executionProfile.mode }),
           sentiq_tool_context: automaticTools.length > 0 ? { authenticated: false, executionMode: executionProfile.mode } : undefined,
           sentiq_allowed_tool_names: automaticTools,
           required_capabilities: requiredCapabilities,
           tool_transport_mode: toolTransport?.mode ?? "none",
-        });
+        };
+        const adapterStream = await callLLMAdapterTurnStream(initialTurnCall);
         let fullReply = "";
 
-        const turn = await consumeModelTurnStream(adapterStream, async (value) => {
+        let turn = await consumeModelTurnStream(adapterStream, async (value) => {
+            if (intuitiveToolSelectionActive) return;
             if (clientDisconnected) return;
             const safeValue = guestOutputGuard ? guestOutputGuard.push(value) : value;
             fullReply += safeValue;
@@ -4006,9 +4027,34 @@ app.post(
               recordStreamChunk(streamMetrics, visible);
               await writeSseJson({ type: "token", text: visible });
             }
-        }, (progress) => guestTurnProgress.advance(progress), {
+        }, (progress) => {
+          if (!intuitiveToolSelectionActive) guestTurnProgress.advance(progress);
+        }, {
           validateAssistantText: assertNoUnbackedToolCompletionClaim,
         });
+        if (intuitiveToolSelectionActive && turn.kind === "assistant_text") {
+          const finalStream = await callLLMAdapterTurnStream({
+            ...call,
+            signal: requestAbortController.signal,
+            execution_mode: "intuitive",
+            sentiq_tool_context: undefined,
+            sentiq_allowed_tool_names: [],
+            required_capabilities: [],
+            tool_transport_mode: "none",
+          });
+          turn = await consumeModelTurnStream(finalStream, async (value) => {
+            if (clientDisconnected) return;
+            const safeValue = guestOutputGuard ? guestOutputGuard.push(value) : value;
+            fullReply += safeValue;
+            const visible = guestCitationStream ? guestCitationStream.push(safeValue) : safeValue;
+            if (visible) {
+              recordStreamChunk(streamMetrics, visible);
+              await writeSseJson({ type: "token", text: visible });
+            }
+          }, (progress) => guestTurnProgress.advance(progress), {
+            validateAssistantText: assertNoUnbackedToolCompletionClaim,
+          });
+        }
         if (turn.kind === "tool_calls") {
           guestAutomaticToolAccepted = true;
           guestTurnProgress.advance("execution_started");
@@ -4032,7 +4078,7 @@ app.post(
               },
             );
           }
-          const toolResult = await executeAutomaticModelToolCalls(
+          let toolResult = await executeAutomaticModelToolCalls(
             turn.calls,
             effectiveUserMessage,
             guestCtx,
@@ -4040,6 +4086,16 @@ app.post(
             requestAbortController.signal,
             async (event) => writeSseJson(event),
           );
+          if (intuitiveLaneActive) {
+            toolResult = await synthesizeIntuitiveToolResult(
+              toolResult,
+              effectiveUserMessage,
+              guestCtx,
+              executionProfile,
+              guestGeneralModelOverride,
+              requestAbortController.signal,
+            );
+          }
           const deliveredUsableResult = toolResult.file?.success === true
             || toolResult.image?.success === true
             || toolResult.chart?.success === true
@@ -5344,6 +5400,7 @@ app.post(
 
     let stopHeartbeat = () => {};
     let automaticToolAccepted = false;
+    let automaticToolReservationCompleted = false;
     const modelTurnProgress = new ModelTurnProgressTracker();
     const call = buildChatPrompt({
       userMessage: effectiveUserMessage,
@@ -5381,6 +5438,7 @@ app.post(
       const automaticTools = requestedAutomaticTools.length > 0
         ? getAutomaticSentIQToolsForRoute(directReservation, true)
         : [];
+      const intuitiveLaneActive = isNemotronIntuitiveLaneEnabled(executionProfile.mode) && !hasImage;
       if (requestedAutomaticTools.length > 0 && automaticTools.length === 0) {
         throw new ModelCapabilityUnavailableError(billingRequiredCapabilities);
       }
@@ -5392,20 +5450,32 @@ app.post(
         automaticToolsRequested: automaticTools.length > 0,
         toolTransportMode: toolTransport?.mode === "streaming" ? "streaming" : "buffered",
       });
-      const adapterStream = await callLLMAdapterTurnStream({
+      const intuitiveToolSelectionActive = intuitiveLaneActive && automaticTools.length > 0;
+      const initialTurnCall: LLMAdapterCall = {
         ...streamCall,
-        execution_mode: executionProfile.mode,
+        ...(intuitiveToolSelectionActive
+          ? {
+              prompt: buildIntuitiveToolSelectionPrompt(effectiveUserMessage, automaticTools),
+              max_output_tokens: 200,
+              execution_mode: "fast" as const,
+              budget_class: "auxiliary" as const,
+              auxiliary_budget: "routing" as const,
+              skip_wrappers: true,
+            }
+          : { execution_mode: executionProfile.mode }),
         sentiq_tool_context: automaticTools.length > 0 ? {
           authenticated: !isGuest,
           executionMode: executionProfile.mode,
         } : undefined,
-          sentiq_allowed_tool_names: automaticTools,
-          required_capabilities: invocationRequiredCapabilities,
-          tool_transport_mode: toolTransport?.mode ?? "none",
-      });
+        sentiq_allowed_tool_names: automaticTools,
+        required_capabilities: invocationRequiredCapabilities,
+        tool_transport_mode: toolTransport?.mode ?? "none",
+      };
+      const adapterStream = await callLLMAdapterTurnStream(initialTurnCall);
       let fullReply = "";
 
-      const turn = await consumeModelTurnStream(adapterStream, async (value) => {
+      let turn = await consumeModelTurnStream(adapterStream, async (value) => {
+          if (intuitiveToolSelectionActive) return;
           const safeValue = webSurfOutputGuard ? webSurfOutputGuard.push(value) : value;
           fullReply += safeValue;
           const visible = webSurfCitationStream ? webSurfCitationStream.push(safeValue) : safeValue;
@@ -5413,14 +5483,45 @@ app.post(
             recordStreamChunk(streamMetrics, visible);
             await writeSseJson({ type: "token", text: visible });
           }
-      }, (progress) => modelTurnProgress.advance(progress), {
+      }, (progress) => {
+        if (!intuitiveToolSelectionActive) modelTurnProgress.advance(progress);
+      }, {
         validateAssistantText: assertNoUnbackedToolCompletionClaim,
       });
+      if (intuitiveToolSelectionActive && turn.kind === "assistant_text") {
+        const finalRequiredCapabilities = deriveRequiredModelCapabilities({
+          hasImageInput: false,
+          automaticToolsRequested: false,
+          streaming: true,
+        });
+        const finalStream = await callLLMAdapterTurnStream({
+          ...streamCall,
+          execution_mode: "intuitive",
+          sentiq_tool_context: undefined,
+          sentiq_allowed_tool_names: [],
+          required_capabilities: finalRequiredCapabilities,
+          tool_transport_mode: "none",
+        });
+        turn = await consumeModelTurnStream(finalStream, async (value) => {
+          const safeValue = webSurfOutputGuard ? webSurfOutputGuard.push(value) : value;
+          fullReply += safeValue;
+          const visible = webSurfCitationStream ? webSurfCitationStream.push(safeValue) : safeValue;
+          if (visible) {
+            recordStreamChunk(streamMetrics, visible);
+            await writeSseJson({ type: "token", text: visible });
+          }
+        }, (progress) => modelTurnProgress.advance(progress), {
+          validateAssistantText: assertNoUnbackedToolCompletionClaim,
+        });
+      }
       if (turn.kind === "tool_calls") {
         automaticToolAccepted = true;
         modelTurnProgress.advance("execution_started");
-        await commitTextBilling(directReservation, "stream.tool-selected");
-        const toolResult = await executeAutomaticModelToolCalls(
+        if (!intuitiveLaneActive) {
+          await commitTextBilling(directReservation, "stream.tool-selected");
+          automaticToolReservationCompleted = true;
+        }
+        let toolResult = await executeAutomaticModelToolCalls(
           turn.calls,
           effectiveUserMessage,
           ctx,
@@ -5429,6 +5530,18 @@ app.post(
           async (event) => writeSseJson(event),
           async (token) => writeSseJson({ type: "file_token", format: "html", text: token }),
         );
+        if (intuitiveLaneActive) {
+          toolResult = await synthesizeIntuitiveToolResult(
+            toolResult,
+            effectiveUserMessage,
+            ctx,
+            executionProfile,
+            modelOverride,
+            requestAbortController.signal,
+          );
+          await commitTextBilling(directReservation, "stream.tool-final-synthesis");
+          automaticToolReservationCompleted = true;
+        }
         if (toolResult.reply && toolResult.web_search?.v2) {
           await streamBufferedAnswer(toolResult.reply, undefined, false, streamMetrics);
           await persistAssistantMessage(toolResult.reply, toolResult.web_search.v2);
@@ -5454,9 +5567,11 @@ app.post(
           });
         } else if (toolResult.memory) {
           await persistStoredMemory(toolResult.memory);
-          const memoryReply = toolResult.memory.stored && toolResult.memory.persisted
-            ? getMemoryConfirmationText(toolResult.memory.scope === "chat" ? "chat" : "global")
-            : (toolResult.reply || MEMORY_PERSISTENCE_FAILURE_TEXT);
+          const memoryReply = toolResult.final_synthesis_completed && toolResult.reply
+            ? toolResult.reply
+            : toolResult.memory.stored && toolResult.memory.persisted
+              ? getMemoryConfirmationText(toolResult.memory.scope === "chat" ? "chat" : "global")
+              : (toolResult.reply || MEMORY_PERSISTENCE_FAILURE_TEXT);
           await persistAssistantMessage(memoryReply);
           await writeSseJson({
             type: "structured_response",
@@ -5539,6 +5654,9 @@ app.post(
       console.log(`[Stream] live stream completed in ${Date.now() - streamStart}ms`);
     } catch (err) {
       if (automaticToolAccepted) {
+        if (!automaticToolReservationCompleted) {
+          await releaseBillingReservation(directReservation);
+        }
         await sendStreamError(err, streamMetrics);
         return;
       }

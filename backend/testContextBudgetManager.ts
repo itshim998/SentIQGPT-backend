@@ -1,9 +1,17 @@
 import assert from "assert";
-import { getRequestBudgetContext, runWithRequestBudgetContext } from "./context/requestBudgetContext";
+import {
+  attachTokenAllowanceAccounting,
+  getRequestBudgetContext,
+  getTokenAllowanceAccounting,
+  recordSuccessfulModelUsage,
+  runWithRequestBudgetContext,
+} from "./context/requestBudgetContext";
 import {
   AUXILIARY_OUTPUT_CAPS,
   ARTIFACT_OUTPUT_POLICY,
   EXECUTION_MODE_OUTPUT_POLICIES,
+  GenerationBudgetError,
+  INTUITIVE_GENERATION_POLICIES,
   TIER_TOKEN_POLICIES,
   estimateInputTokens,
   resolveOutputBudget,
@@ -31,6 +39,20 @@ async function main(): Promise<void> {
     memory: 400,
   });
   assert.strictEqual(ARTIFACT_OUTPUT_POLICY.hardOutputTokens, 6_500);
+  assert.deepStrictEqual(INTUITIVE_GENERATION_POLICIES, {
+    normal: {
+      totalGenerationTokens: 6_000,
+      maximumReasoningTokens: 2_000,
+      protectedVisibleAnswerTokens: 1_500,
+      timeoutMs: 120_000,
+    },
+    heavy: {
+      totalGenerationTokens: 8_000,
+      maximumReasoningTokens: 3_500,
+      protectedVisibleAnswerTokens: 2_000,
+      timeoutMs: 120_000,
+    },
+  });
 
   const ascii = estimateInputTokens("one two three", 2);
   const unicode = estimateInputTokens("你好世界你好世界", 2);
@@ -122,6 +144,102 @@ async function main(): Promise<void> {
   assert.strictEqual(artifact.selectedOutputTokens, ARTIFACT_OUTPUT_POLICY.hardOutputTokens);
   assert.strictEqual(artifact.forceFallback, false);
 
+  const intuitiveOrdinary = resolveOutputBudget({
+    planCode: "free",
+    executionMode: "intuitive",
+    budgetClass: "interactive",
+    estimatedInputTokens: 500,
+    complexity: "normal",
+    providerCapability: "nemotron_reasoning",
+  });
+  assert.strictEqual(intuitiveOrdinary.selectedOutputTokens, 6_000);
+  assert.strictEqual(intuitiveOrdinary.reasoningBudgetTokens, 2_000);
+  assert.strictEqual(intuitiveOrdinary.protectedVisibleAnswerTokens, 1_500);
+  assert.strictEqual(intuitiveOrdinary.timeoutMs, 120_000);
+  assert(
+    intuitiveOrdinary.reasoningBudgetTokens + intuitiveOrdinary.protectedVisibleAnswerTokens
+      <= intuitiveOrdinary.selectedOutputTokens,
+    "ordinary Intuitive reasoning and protected answer must fit its total ceiling",
+  );
+
+  const intuitiveComplex = resolveOutputBudget({
+    planCode: "free",
+    executionMode: "intuitive",
+    budgetClass: "interactive",
+    estimatedInputTokens: 500,
+    complexity: "heavy",
+    providerCapability: "nemotron_reasoning",
+  });
+  assert.strictEqual(intuitiveComplex.selectedOutputTokens, 8_000);
+  assert.strictEqual(intuitiveComplex.reasoningBudgetTokens, 3_500);
+  assert.strictEqual(intuitiveComplex.protectedVisibleAnswerTokens, 2_000);
+
+  const providerLimitedIntuitive = resolveOutputBudget({
+    planCode: "free",
+    executionMode: "intuitive",
+    budgetClass: "interactive",
+    estimatedInputTokens: 500,
+    complexity: "normal",
+    providerCapability: "nemotron_reasoning",
+    providerMaximumGeneratedTokens: 5_000,
+  });
+  assert.strictEqual(providerLimitedIntuitive.selectedOutputTokens, 5_000);
+  assert.strictEqual(providerLimitedIntuitive.reasoningBudgetTokens, 2_000);
+
+  const affordableIntuitive = resolveOutputBudget({
+    planCode: "free",
+    executionMode: "intuitive",
+    budgetClass: "interactive",
+    estimatedInputTokens: 1_000,
+    complexity: "normal",
+    providerCapability: "nemotron_reasoning",
+    remainingReservationTokens: 5_000,
+  });
+  assert.strictEqual(affordableIntuitive.selectedOutputTokens, 4_000);
+  assert.strictEqual(affordableIntuitive.reasoningBudgetTokens, 2_000);
+  assert.strictEqual(affordableIntuitive.protectedVisibleAnswerTokens, 1_500);
+
+  const nearLimitIntuitive = resolveOutputBudget({
+    planCode: "free",
+    executionMode: "intuitive",
+    budgetClass: "interactive",
+    estimatedInputTokens: 1_000,
+    complexity: "normal",
+    providerCapability: "nemotron_reasoning",
+    remainingReservationTokens: 3_000,
+  });
+  assert.strictEqual(nearLimitIntuitive.selectedOutputTokens, 2_000);
+  assert.strictEqual(nearLimitIntuitive.reasoningBudgetTokens, 500);
+  assert.strictEqual(nearLimitIntuitive.protectedVisibleAnswerTokens, 1_500);
+
+  assert.throws(
+    () => resolveOutputBudget({
+      planCode: "free",
+      executionMode: "intuitive",
+      budgetClass: "interactive",
+      estimatedInputTokens: 700,
+      complexity: "normal",
+      providerCapability: "nemotron_reasoning",
+      remainingReservationTokens: 2_000,
+    }),
+    GenerationBudgetError,
+  );
+  assert.throws(
+    () => resolveOutputBudget({
+      planCode: "free",
+      executionMode: "fast",
+      budgetClass: "interactive",
+      estimatedInputTokens: 40,
+      remainingReservationTokens: 60,
+      reservationFeature: "lite_text",
+    }),
+    (error: unknown) => (
+      error instanceof GenerationBudgetError
+      && error.code === "token_reservation_exhausted"
+      && error.message.includes("Lite")
+    ),
+  );
+
   const contexts = await Promise.all([
     runWithRequestBudgetContext({ planCode: "premium", executionMode: "intuitive", resolution: "billing" }, async () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -135,6 +253,37 @@ async function main(): Promise<void> {
   ]);
   assert.strictEqual(getRequestBudgetContext().planCode, "free");
   assert.strictEqual(getRequestBudgetContext().executionMode, "fast");
+
+  await runWithRequestBudgetContext(
+    { planCode: "free", executionMode: "intuitive", resolution: "billing" },
+    async () => {
+      attachTokenAllowanceAccounting({
+        feature: "premium_text",
+        requestId: "nemotron-usage-test",
+        planCode: "free",
+        reservedTokens: 10_000,
+      });
+      recordSuccessfulModelUsage({
+        prompt: "reported input",
+        output: "visible answer",
+        reportedInputTokens: 25,
+        // Provider output usage includes hidden reasoning plus visible output.
+        reportedOutputTokens: 125,
+      });
+      recordSuccessfulModelUsage({
+        prompt: "estimated input",
+        output: "estimated visible output",
+      });
+      // A failed provider call deliberately has no recordSuccessfulModelUsage call.
+      const accounting = getTokenAllowanceAccounting("nemotron-usage-test");
+      assert(accounting);
+      assert.strictEqual(accounting.successfulCalls, 2);
+      assert.strictEqual(accounting.reportedCalls, 1);
+      assert.strictEqual(accounting.estimatedCalls, 1);
+      assert(accounting.inputTokens > 25);
+      assert(accounting.outputTokens > 125);
+    },
+  );
 
   const originalWarn = console.warn;
   console.warn = () => undefined;

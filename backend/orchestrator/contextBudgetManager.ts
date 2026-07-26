@@ -12,6 +12,12 @@ export type OutputBudgetClass = "interactive" | "artifact" | "auxiliary";
 export type AuxiliaryOutputKind = "title" | "routing" | "memory";
 export type RequestComplexity = "normal" | "heavy";
 export type GroqCapacityBand = "unknown" | "healthy" | "guarded" | "constrained" | "critical";
+export type GenerationProviderCapability = "legacy_text" | "nemotron_reasoning";
+
+function positiveEnv(name: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 export interface TierTokenPolicy {
   readonly normalMinTotalTokens: number;
@@ -36,6 +42,28 @@ export interface ExecutionModeOutputPolicy {
 export const EXECUTION_MODE_OUTPUT_POLICIES: Readonly<Record<ExecutionMode, ExecutionModeOutputPolicy>> = {
   fast: { defaultOutputTokens: 2_500, hardOutputTokens: 2_500, reasoningEffort: "low" },
   intuitive: { defaultOutputTokens: 3_500, hardOutputTokens: 3_500, reasoningEffort: "medium" },
+};
+
+export interface IntuitiveGenerationPolicy {
+  readonly totalGenerationTokens: number;
+  readonly maximumReasoningTokens: number;
+  readonly protectedVisibleAnswerTokens: number;
+  readonly timeoutMs: number;
+}
+
+export const INTUITIVE_GENERATION_POLICIES: Readonly<Record<RequestComplexity, IntuitiveGenerationPolicy>> = {
+  normal: {
+    totalGenerationTokens: positiveEnv("SENTIQ_INTUITIVE_ORDINARY_MAX_GENERATED_TOKENS", 6_000),
+    maximumReasoningTokens: positiveEnv("SENTIQ_INTUITIVE_ORDINARY_REASONING_BUDGET", 2_000),
+    protectedVisibleAnswerTokens: positiveEnv("SENTIQ_INTUITIVE_ORDINARY_MIN_FINAL_ANSWER_TOKENS", 1_500),
+    timeoutMs: positiveEnv("SENTIQ_INTUITIVE_TOTAL_TIMEOUT_MS", 120_000),
+  },
+  heavy: {
+    totalGenerationTokens: positiveEnv("SENTIQ_INTUITIVE_COMPLEX_MAX_GENERATED_TOKENS", 8_000),
+    maximumReasoningTokens: positiveEnv("SENTIQ_INTUITIVE_COMPLEX_REASONING_BUDGET", 3_500),
+    protectedVisibleAnswerTokens: positiveEnv("SENTIQ_INTUITIVE_COMPLEX_MIN_FINAL_ANSWER_TOKENS", 2_000),
+    timeoutMs: positiveEnv("SENTIQ_INTUITIVE_TOTAL_TIMEOUT_MS", 120_000),
+  },
 };
 
 export const AUXILIARY_OUTPUT_CAPS: Readonly<Record<AuxiliaryOutputKind, number>> = {
@@ -83,6 +111,24 @@ export interface OutputBudgetDecision {
   readonly remainingRatio?: number;
   readonly allowHeavyExpansion: boolean;
   readonly forceFallback: boolean;
+  readonly providerCapability: GenerationProviderCapability;
+  readonly totalGenerationCeiling: number;
+  readonly reasoningBudgetTokens: number;
+  readonly protectedVisibleAnswerTokens: number;
+  readonly timeoutMs?: number;
+}
+
+export class GenerationBudgetError extends Error {
+  readonly code: string;
+
+  constructor(
+    message = "The current request reservation cannot support a meaningful answer.",
+    code = "generation_budget_insufficient",
+  ) {
+    super(message);
+    this.name = "GenerationBudgetError";
+    this.code = code;
+  }
 }
 
 let latestGroqCapacitySnapshot: GroqCapacitySnapshot | undefined;
@@ -194,15 +240,27 @@ export function resolveOutputBudget(args: {
   readonly estimatedInputTokens: number;
   readonly complexity?: RequestComplexity;
   readonly capacity?: GroqCapacitySnapshot;
+  readonly remainingReservationTokens?: number;
+  readonly providerCapability?: GenerationProviderCapability;
+  readonly providerMaximumGeneratedTokens?: number;
+  readonly reservationFeature?: "premium_text" | "lite_text";
 }): OutputBudgetDecision {
   const planCode = normalizeContextPlanCode(args.planCode);
   const tier = TIER_TOKEN_POLICIES[planCode];
   const executionMode = normalizeExecutionMode(args.executionMode);
   const interactivePolicy = EXECUTION_MODE_OUTPUT_POLICIES[executionMode];
   const complexity = args.complexity ?? "normal";
+  const providerCapability = args.providerCapability ?? "legacy_text";
+  const intuitiveGenerationPolicy = INTUITIVE_GENERATION_POLICIES[complexity];
+  const usesReasoningGenerationBudget = args.budgetClass === "interactive"
+    && executionMode === "intuitive"
+    && providerCapability === "nemotron_reasoning";
   let defaultOutputTokens = interactivePolicy.defaultOutputTokens;
   let hardOutputTokens = interactivePolicy.hardOutputTokens;
-  if (args.budgetClass === "artifact") {
+  if (usesReasoningGenerationBudget) {
+    defaultOutputTokens = intuitiveGenerationPolicy.totalGenerationTokens;
+    hardOutputTokens = intuitiveGenerationPolicy.totalGenerationTokens;
+  } else if (args.budgetClass === "artifact") {
     defaultOutputTokens = ARTIFACT_OUTPUT_POLICY.defaultOutputTokens;
     hardOutputTokens = ARTIFACT_OUTPUT_POLICY.hardOutputTokens;
   } else if (args.budgetClass === "auxiliary") {
@@ -246,6 +304,48 @@ export function resolveOutputBudget(args: {
     }
   }
 
+  if (Number.isFinite(args.providerMaximumGeneratedTokens)) {
+    selectedOutputTokens = Math.min(
+      selectedOutputTokens,
+      Math.max(1, Math.floor(args.providerMaximumGeneratedTokens as number)),
+    );
+  }
+
+  if (Number.isFinite(args.remainingReservationTokens)) {
+    const affordableGeneratedTokens = Math.floor(Number(args.remainingReservationTokens))
+      - Math.max(0, Math.ceil(args.estimatedInputTokens));
+    const minimumAnswerTokens = usesReasoningGenerationBudget
+      ? intuitiveGenerationPolicy.protectedVisibleAnswerTokens
+      : 32;
+    if (affordableGeneratedTokens < minimumAnswerTokens) {
+      if (!usesReasoningGenerationBudget) {
+        const allowanceLabel = args.reservationFeature === "lite_text" ? "Lite" : "Standard";
+        throw new GenerationBudgetError(
+          `The ${allowanceLabel} token reservation cannot support another model call.`,
+          "token_reservation_exhausted",
+        );
+      }
+      throw new GenerationBudgetError();
+    }
+    selectedOutputTokens = Math.min(selectedOutputTokens, affordableGeneratedTokens);
+  }
+
+  const protectedVisibleAnswerTokens = usesReasoningGenerationBudget
+    ? intuitiveGenerationPolicy.protectedVisibleAnswerTokens
+    : 0;
+  if (usesReasoningGenerationBudget && selectedOutputTokens < protectedVisibleAnswerTokens) {
+    throw new GenerationBudgetError();
+  }
+  const reasoningBudgetTokens = usesReasoningGenerationBudget
+    ? Math.max(
+        0,
+        Math.min(
+          intuitiveGenerationPolicy.maximumReasoningTokens,
+          selectedOutputTokens - protectedVisibleAnswerTokens,
+        ),
+      )
+    : 0;
+
   return {
     budgetClass: args.budgetClass,
     auxiliaryKind: args.auxiliaryKind,
@@ -265,5 +365,10 @@ export function resolveOutputBudget(args: {
     remainingRatio,
     allowHeavyExpansion,
     forceFallback,
+    providerCapability,
+    totalGenerationCeiling: Math.max(1, selectedOutputTokens),
+    reasoningBudgetTokens,
+    protectedVisibleAnswerTokens,
+    timeoutMs: usesReasoningGenerationBudget ? intuitiveGenerationPolicy.timeoutMs : undefined,
   };
 }

@@ -10,7 +10,6 @@ import {
   waitForInternalGatewayReady,
 } from "../internalGateway";
 import {
-  applyAffordableTokenCeiling,
   getRequestBudgetContext,
   recordSuccessfulModelUsage,
 } from "../context/requestBudgetContext";
@@ -24,6 +23,7 @@ import {
   type RequestComplexity,
 } from "../orchestrator/contextBudgetManager";
 import type { ExecutionMode } from "../orchestrator/executionProfile";
+import { getNemotronRolloutSnapshot } from "../nemotronRolloutFlags";
 import {
   SENTIQ_TOOL_CHOICE_POLICY,
   SENTIQ_TOOL_REGISTRY_VERSION,
@@ -151,6 +151,10 @@ interface InternalBudgetPolicy {
   readonly normal_min_total_tokens: number;
   readonly capacity_band: string;
   readonly force_fallback: boolean;
+  readonly provider_capability: string;
+  readonly reasoning_budget_tokens: number;
+  readonly protected_output_tokens: number;
+  readonly timeout_ms?: number;
 }
 
 interface PreparedAdapterCall {
@@ -363,12 +367,39 @@ function isGroqPrimaryCall(call: LLMAdapterCall): boolean {
   return call.model_override === "gpt-oss-120b" || call.model_override?.startsWith("groq:") === true;
 }
 
+function isNemotronGenerationCall(
+  call: LLMAdapterCall,
+  executionMode: ExecutionMode,
+  budgetClass: OutputBudgetClass,
+): boolean {
+  const flags = getNemotronRolloutSnapshot();
+  if (!flags.nvidiaProvider || !flags.nemotronIntuitive) return false;
+  if (executionMode !== "intuitive" || budgetClass !== "interactive") return false;
+  if (call.task !== "chat" && call.task !== "general") return false;
+  if ((call.sentiq_allowed_tool_names?.length ?? 0) > 0) return false;
+  const required = new Set(call.required_capabilities ?? []);
+  return !required.has("image_input")
+    && !required.has("sentiq_tools_buffered")
+    && !required.has("sentiq_tools_streaming");
+}
+
 function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
   const context = getRequestBudgetContext();
   const classification = inferBudgetClass(call);
   const estimate = estimateInputTokens(call.prompt, call.message_count ?? 1);
   const complexity = call.request_complexity ?? "normal";
   const executionMode = call.execution_mode ?? context.executionMode;
+  const providerCapability = isNemotronGenerationCall(call, executionMode, classification.budgetClass)
+    ? "nemotron_reasoning" as const
+    : "legacy_text" as const;
+  const remainingReservationTokens = context.tokenAllowance
+    ? Math.max(
+        0,
+        context.tokenAllowance.reservedTokens
+          - context.tokenAllowance.inputTokens
+          - context.tokenAllowance.outputTokens,
+      )
+    : undefined;
   const decision = resolveOutputBudget({
     planCode: context.planCode,
     executionMode,
@@ -377,9 +408,13 @@ function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
     requestedOutputTokens: call.max_output_tokens,
     estimatedInputTokens: estimate.tokens,
     complexity,
-    capacity: isGroqPrimaryCall(call) ? getGroqCapacitySnapshot() : undefined,
+    capacity: providerCapability === "legacy_text" && isGroqPrimaryCall(call)
+      ? getGroqCapacitySnapshot()
+      : undefined,
+    remainingReservationTokens,
+    providerCapability,
+    reservationFeature: context.tokenAllowance?.feature,
   });
-  const affordableOutputTokens = applyAffordableTokenCeiling(call.prompt, decision.selectedOutputTokens);
   const budgetPolicy: InternalBudgetPolicy = {
     plan_code: decision.planCode,
     execution_mode: decision.executionMode,
@@ -389,11 +424,15 @@ function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
     estimated_input_tokens: estimate.tokens,
     default_output_tokens: decision.defaultOutputTokens,
     hard_output_tokens: decision.hardOutputTokens,
-    selected_output_tokens: affordableOutputTokens,
-    total_token_budget: estimate.tokens + affordableOutputTokens,
+    selected_output_tokens: decision.selectedOutputTokens,
+    total_token_budget: estimate.tokens + decision.selectedOutputTokens,
     normal_min_total_tokens: decision.normalMinTotalTokens,
     capacity_band: decision.capacityBand,
     force_fallback: decision.forceFallback,
+    provider_capability: decision.providerCapability,
+    reasoning_budget_tokens: decision.reasoningBudgetTokens,
+    protected_output_tokens: decision.protectedVisibleAnswerTokens,
+    timeout_ms: decision.timeoutMs,
   };
   console.info(JSON.stringify({
     scope: "context_budget",
@@ -403,8 +442,10 @@ function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
     budget_class: decision.budgetClass,
     auxiliary_kind: decision.auxiliaryKind ?? null,
     estimated_input_tokens: estimate.tokens,
-    selected_output_tokens: affordableOutputTokens,
+    selected_output_tokens: decision.selectedOutputTokens,
     hard_output_tokens: decision.hardOutputTokens,
+    reasoning_budget_tokens: decision.reasoningBudgetTokens,
+    protected_output_tokens: decision.protectedVisibleAnswerTokens,
     capacity_band: decision.capacityBand,
     force_fallback: decision.forceFallback,
   }));
@@ -412,7 +453,8 @@ function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
     call: {
       ...call,
       execution_mode: decision.executionMode,
-      max_output_tokens: affordableOutputTokens,
+      max_output_tokens: decision.selectedOutputTokens,
+      timeout_ms: call.timeout_ms ?? decision.timeoutMs,
       reasoning_effort: decision.budgetClass === "interactive" && isGroqPrimaryCall(call)
         ? decision.reasoningEffort
         : call.reasoning_effort,
@@ -517,6 +559,22 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
   }
   if (sentiqToolRequest && data.result.error) {
     throw new ModelToolTransportError();
+  }
+  if (data.result.error === "provider_failed") {
+    // An exhausted Intuitive provider chain is a failed call, not successful
+    // token usage. Preserve the generic adapter error for the existing public
+    // response path without charging the current request reservation.
+    return {
+      text: "",
+      assistant_turn: { kind: "assistant_text", text: "" },
+      model_used: undefined,
+      fallback: data.result.fallback,
+      fallback_reason: data.result.fallback_reason,
+      finish_reason: data.result.finish_reason,
+      truncated: data.result.truncated,
+      error: data.result.error,
+      error_detail: data.result.error_detail,
+    };
   }
   recordGroqCapacitySnapshot(data.result.telemetry?.capacity);
   const assistantTurn = data.result.assistant_turn
@@ -651,6 +709,11 @@ async function callLLMAdapterTextStreamLegacy(
   let sseBuffer = "";
   let chargeableOutput = "";
   let usageRecorded = false;
+  let reportedUsage: {
+    readonly input_tokens?: number;
+    readonly output_tokens?: number;
+    readonly total_tokens?: number;
+  } | undefined;
   const eventQueue: Array<
     | { type: "text"; text: string }
     | { type: "error"; error: string }
@@ -679,10 +742,24 @@ async function callLLMAdapterTextStreamLegacy(
     }
 
     try {
-      const parsed = JSON.parse(payload) as { text?: string; error?: string; message?: string; capacity?: unknown };
+      const parsed = JSON.parse(payload) as {
+        text?: string;
+        error?: string;
+        message?: string;
+        capacity?: unknown;
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          total_tokens?: number;
+        };
+      };
 
       if (eventType === "capacity") {
         recordGroqCapacitySnapshot(parsed.capacity ?? parsed);
+        return;
+      }
+      if (eventType === "usage") {
+        reportedUsage = parsed.usage;
         return;
       }
       
@@ -742,7 +819,12 @@ async function callLLMAdapterTextStreamLegacy(
 
       if (eventQueue.length === 0) {
         if (!usageRecorded && chargeableOutput) {
-          recordSuccessfulModelUsage({ prompt: call.prompt, output: chargeableOutput });
+          recordSuccessfulModelUsage({
+            prompt: call.prompt,
+            output: chargeableOutput,
+            reportedInputTokens: reportedUsage?.input_tokens,
+            reportedOutputTokens: reportedUsage?.output_tokens,
+          });
           usageRecorded = true;
         }
         abort.cleanup();
@@ -759,7 +841,12 @@ async function callLLMAdapterTextStreamLegacy(
 
       if (nextEvent.type === "done") {
         if (!usageRecorded) {
-          recordSuccessfulModelUsage({ prompt: call.prompt, output: chargeableOutput });
+          recordSuccessfulModelUsage({
+            prompt: call.prompt,
+            output: chargeableOutput,
+            reportedInputTokens: reportedUsage?.input_tokens,
+            reportedOutputTokens: reportedUsage?.output_tokens,
+          });
           usageRecorded = true;
         }
         abort.cleanup();
@@ -918,6 +1005,11 @@ export async function callLLMAdapterTurnStream(
   let recoveryAttempted = false;
   let chargeableOutput = "";
   let usageRecorded = false;
+  let reportedUsage: {
+    readonly input_tokens?: number;
+    readonly output_tokens?: number;
+    readonly total_tokens?: number;
+  } | undefined;
 
   const queueRaw = (delta: RawProviderDelta) => {
     if (delta.kind === "text_delta" || delta.kind === "tool_call_start") providerOutcomeStarted = true;
@@ -942,10 +1034,19 @@ export async function callLLMAdapterTurnStream(
       error?: string;
       message?: string;
       capacity?: unknown;
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        total_tokens?: number;
+      };
       delta?: RawProviderDelta;
     };
     if (eventType === "capacity") {
       recordGroqCapacitySnapshot(parsed.capacity ?? parsed);
+      return;
+    }
+    if (eventType === "usage") {
+      reportedUsage = parsed.usage;
       return;
     }
     if (eventType === "error" || parsed.error) throw new Error(parsed.message || parsed.error || "LLM stream failed");
@@ -989,7 +1090,12 @@ export async function callLLMAdapterTurnStream(
         controller.enqueue(event);
         if (event.kind === "done") {
           if (!usageRecorded) {
-            recordSuccessfulModelUsage({ prompt: call.prompt, output: chargeableOutput });
+            recordSuccessfulModelUsage({
+              prompt: call.prompt,
+              output: chargeableOutput,
+              reportedInputTokens: reportedUsage?.input_tokens,
+              reportedOutputTokens: reportedUsage?.output_tokens,
+            });
             usageRecorded = true;
           }
           abort.cleanup();

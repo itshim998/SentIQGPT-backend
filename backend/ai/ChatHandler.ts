@@ -12,6 +12,7 @@ import type { WebSurfAnswerPlan, WebSurfAnswerSourceContext } from "../tools/web
 import { normalizeWebSurfAnswerOutput } from "../tools/webSearch/webSurfOutputGuard";
 import type { SentIQToolName, ToolAvailabilityContext, ValidatedToolCall } from "../orchestrator/toolContract";
 import { deriveRequiredModelCapabilities, type RequiredModelCapability } from "./modelToolCapability";
+import { buildIntuitiveToolSelectionPrompt } from "../orchestrator/intuitiveTextLane";
 
 const REASONING_MAX_OUTPUT_TOKENS = 2600;
 const CONTINUATION_MAX_OUTPUT_TOKENS = 1800;
@@ -75,6 +76,38 @@ export interface ChatResponse {
   readonly fallback?: boolean;
   readonly sanitize_bypass?: boolean;
   readonly tool_calls?: readonly ValidatedToolCall[];
+}
+
+export async function selectChatToolCalls(args: {
+  readonly userMessage: string;
+  readonly modelOverride: string;
+  readonly userId?: string;
+  readonly modelToolContext: ToolAvailabilityContext;
+  readonly allowedModelTools: readonly SentIQToolName[];
+  readonly signal?: AbortSignal;
+}): Promise<readonly ValidatedToolCall[]> {
+  if (args.allowedModelTools.length === 0) return [];
+  const result = await callLLMAdapterDetailed({
+    task: "chat",
+    prompt: buildIntuitiveToolSelectionPrompt(args.userMessage, args.allowedModelTools),
+    model_override: args.modelOverride,
+    user_id: args.userId,
+    max_output_tokens: 200,
+    execution_mode: "fast",
+    skip_wrappers: true,
+    signal: args.signal,
+    budget_class: "auxiliary",
+    auxiliary_budget: "routing",
+    sentiq_tool_context: args.modelToolContext,
+    sentiq_allowed_tool_names: args.allowedModelTools,
+    required_capabilities: deriveRequiredModelCapabilities({
+      automaticToolsRequested: true,
+      streaming: false,
+    }),
+  });
+  return result.assistant_turn?.kind === "tool_calls"
+    ? result.assistant_turn.calls
+    : [];
 }
 
 export async function handleChat(args: {

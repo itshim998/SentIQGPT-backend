@@ -2,7 +2,7 @@
 // Validated provider-neutral model tool calls enter terminal tool executors
 // directly and cannot be produced by this local plan boundary.
 
-import { handleChat } from "../ai/ChatHandler";
+import { handleChat, selectChatToolCalls } from "../ai/ChatHandler";
 import { createHash, randomUUID } from "crypto";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
 import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
@@ -31,12 +31,17 @@ import {
   getEnabledAutomaticSentIQTools,
   routeSupportsCapabilities,
 } from "../ai/modelToolCapability";
-import type { ToolLifecycleEvent, ValidatedToolCall } from "./toolContract";
+import type { ToolAvailabilityContext, ToolLifecycleEvent, ValidatedToolCall } from "./toolContract";
 import { AutomaticToolDispatchError, dispatchAutomaticModelToolCall } from "../ai/modelToolExecution";
 import { getTokenAllowanceAccounting } from "../context/requestBudgetContext";
 import type { GeneratedFileFormat } from "../tools/fileGeneration/types";
 import { getConversationMessageByClientRequestId } from "../services/conversationService";
 import { resolveAutomaticMemoryUpdate } from "../ai/modelToolMemorySafety";
+import {
+  buildIntuitiveToolSynthesisEvidence,
+  isNemotronIntuitiveLaneEnabled,
+  shouldRunIntuitiveFinalSynthesis,
+} from "./intuitiveTextLane";
 
 // ==============================
 // Types
@@ -135,6 +140,8 @@ export interface StepResult {
   };
   readonly error?: string;
   readonly tool_events?: readonly ToolLifecycleEvent[];
+  /** Internal marker preventing a trusted tool result from being synthesized twice. */
+  readonly final_synthesis_completed?: boolean;
 }
 
 export interface ExecutionResult {
@@ -275,8 +282,83 @@ async function execConversation(
   const automaticTools = requestedAutomaticTools.length > 0
     ? getAutomaticSentIQToolsForRoute(finalRoute, false)
     : [];
+  const intuitiveLaneActive = isNemotronIntuitiveLaneEnabled(profile.mode) && !hasImages;
+  const modelToolContext: ToolAvailabilityContext = {
+    authenticated: Boolean(ctx.userId && ctx.userId !== "guest"),
+    executionMode: profile.mode,
+  };
+  const executeSelectedToolCalls = async (
+    calls: readonly ValidatedToolCall[],
+  ): Promise<StepResult> => {
+    const requestsFileGeneration = calls.some((call) => call.name === "file_gen");
+    const tokenAccounting = reservation ? getTokenAllowanceAccounting(reservation.requestId) : null;
+    const affordableArtifactTokens = tokenAccounting
+      ? tokenAccounting.reservedTokens - tokenAccounting.inputTokens - tokenAccounting.outputTokens
+      : 0;
+    if (requestsFileGeneration && (reservation?.feature !== "premium_text" || affordableArtifactTokens < 2_048)) {
+      await releaseBillingReservation(reservation);
+      throw new BillingQuotaError(
+        "You do not have enough Standard tokens remaining for this request. Your allowance will refresh automatically.",
+        {
+          code: "quota_exceeded",
+          feature: "premium_text",
+          planCode: reservation?.planCode,
+          resetAt: reservation?.resetAt,
+          limit: reservation?.limit,
+          remaining: reservation?.remaining,
+        },
+      );
+    }
+    let toolResult = await executeAutomaticModelToolCalls(calls, input, ctx, profile, signal);
+    if (intuitiveLaneActive) {
+      toolResult = await synthesizeIntuitiveToolResult(
+        toolResult,
+        input,
+        ctx,
+        profile,
+        modelOverride,
+        signal,
+      );
+    }
+    const deliveredUsableResult = toolResult.file?.success === true
+      || toolResult.image?.success === true
+      || toolResult.chart?.success === true
+      || (toolResult.tool === "web_search" && Boolean(toolResult.reply?.trim()))
+      || (toolResult.tool === "memory_update" && toolResult.memory?.stored === true);
+    if (reservation && deliveredUsableResult) {
+      await billingQuotaService.commit(reservation, {
+        endpoint: "orchestrator",
+        tool: toolResult.tool,
+        outcome: "tool_completed",
+      });
+    } else if (reservation) {
+      await releaseBillingReservation(reservation);
+    }
+    return toolResult;
+  };
   let result: Awaited<ReturnType<typeof handleChat>>;
   try {
+    if (intuitiveLaneActive && automaticTools.length > 0) {
+      const selectedToolCalls = await selectChatToolCalls({
+        userMessage: input,
+        modelOverride,
+        userId: ctx.userId,
+        modelToolContext,
+        allowedModelTools: automaticTools,
+        signal,
+      });
+      if (selectedToolCalls.length > 0) {
+        return await executeSelectedToolCalls(selectedToolCalls);
+      }
+    }
+
+    const finalRequiredCapabilities = intuitiveLaneActive
+      ? deriveRequiredModelCapabilities({
+          hasImageInput: false,
+          automaticToolsRequested: false,
+          streaming: false,
+        })
+      : requiredCapabilities;
     result = await handleChat({
       userMessage: input,
       recentMessages: ctx.recentMessages,
@@ -300,49 +382,14 @@ async function execConversation(
       webSurfAnswerPlan: webSurfEvidence?.answerIntelligence?.plan,
       webSurfAnswerSources: webSurfEvidence?.answerIntelligence?.sources,
       executionMode: profile.mode,
-      modelToolContext: automaticTools.length > 0 ? {
-        authenticated: Boolean(ctx.userId && ctx.userId !== "guest"),
-        executionMode: profile.mode,
-      } : undefined,
-      allowedModelTools: automaticTools,
-      requiredCapabilities,
+      modelToolContext: !intuitiveLaneActive && automaticTools.length > 0
+        ? modelToolContext
+        : undefined,
+      allowedModelTools: intuitiveLaneActive ? [] : automaticTools,
+      requiredCapabilities: finalRequiredCapabilities,
     });
     if (result.tool_calls) {
-      const requestsFileGeneration = result.tool_calls.some((call) => call.name === "file_gen");
-      const tokenAccounting = reservation ? getTokenAllowanceAccounting(reservation.requestId) : null;
-      const affordableArtifactTokens = tokenAccounting
-        ? tokenAccounting.reservedTokens - tokenAccounting.inputTokens - tokenAccounting.outputTokens
-        : 0;
-      if (requestsFileGeneration && (reservation?.feature !== "premium_text" || affordableArtifactTokens < 2_048)) {
-        await releaseBillingReservation(reservation);
-        throw new BillingQuotaError(
-          "You do not have enough Standard tokens remaining for this request. Your allowance will refresh automatically.",
-          {
-            code: "quota_exceeded",
-            feature: "premium_text",
-            planCode: reservation?.planCode,
-            resetAt: reservation?.resetAt,
-            limit: reservation?.limit,
-            remaining: reservation?.remaining,
-          },
-        );
-      }
-      const toolResult = await executeAutomaticModelToolCalls(result.tool_calls, input, ctx, profile, signal);
-      const deliveredUsableResult = toolResult.file?.success === true
-        || toolResult.image?.success === true
-        || toolResult.chart?.success === true
-        || (toolResult.tool === "web_search" && Boolean(toolResult.reply?.trim()))
-        || (toolResult.tool === "memory_update" && toolResult.memory?.stored === true);
-      if (reservation && deliveredUsableResult) {
-        await billingQuotaService.commit(reservation, {
-          endpoint: "orchestrator",
-          tool: toolResult.tool,
-          outcome: "tool_completed",
-        });
-      } else if (reservation) {
-        await releaseBillingReservation(reservation);
-      }
-      return toolResult;
+      return await executeSelectedToolCalls(result.tool_calls);
     }
     if (reservation) {
       await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "conversation" });
@@ -360,6 +407,54 @@ async function execConversation(
     model_used: result.model_used,
     fallback: result.fallback,
     sanitize_bypass: result.sanitize_bypass,
+    final_synthesis_completed: intuitiveLaneActive,
+  };
+}
+
+export async function synthesizeIntuitiveToolResult(
+  step: StepResult,
+  originalUserRequest: string,
+  ctx: BuiltContext,
+  profile: ExecutionProfile,
+  modelOverride: string,
+  signal?: AbortSignal,
+): Promise<StepResult> {
+  if (
+    !isNemotronIntuitiveLaneEnabled(profile.mode)
+    || step.final_synthesis_completed
+    || !shouldRunIntuitiveFinalSynthesis(step)
+  ) {
+    return step;
+  }
+
+  const synthesis = await handleChat({
+    userMessage: originalUserRequest,
+    recentMessages: ctx.recentMessages,
+    memories: ctx.memories,
+    conversationSummary: ctx.conversationSummary,
+    conversationCapsule: ctx.conversationCapsule,
+    workspaceCapsule: ctx.workspaceCapsule,
+    priorConversationEvidence: ctx.priorConversationEvidence,
+    routeEvidence: buildIntuitiveToolSynthesisEvidence(step),
+    isExplicitRecallQuery: ctx.isExplicitRecallQuery,
+    trustedProfile: ctx.trustedProfile,
+    modelOverride,
+    userId: ctx.userId,
+    reasoningEffort: profile.model.reasoningEffort,
+    signal,
+    executionMode: "intuitive",
+    allowedModelTools: [],
+    requiredCapabilities: [],
+  });
+
+  return {
+    ...step,
+    reply: synthesis.reply,
+    thinking: undefined,
+    model_used: synthesis.model_used,
+    fallback: synthesis.fallback,
+    sanitize_bypass: synthesis.sanitize_bypass,
+    final_synthesis_completed: true,
   };
 }
 
