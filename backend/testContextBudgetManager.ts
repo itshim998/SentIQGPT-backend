@@ -8,13 +8,13 @@ import {
 } from "./context/requestBudgetContext";
 import {
   AUXILIARY_OUTPUT_CAPS,
-  ARTIFACT_OUTPUT_POLICY,
-  EXECUTION_MODE_OUTPUT_POLICIES,
+  ARTIFACT_GENERATION_POLICY,
+  EXECUTION_MODE_GENERATION_POLICIES,
   GenerationBudgetError,
   INTUITIVE_GENERATION_POLICIES,
-  TIER_TOKEN_POLICIES,
+  PLAN_MODE_INPUT_CONTEXT_POLICIES,
   estimateInputTokens,
-  resolveOutputBudget,
+  resolveGenerationBudget,
   type GroqCapacitySnapshot,
 } from "./orchestrator/contextBudgetManager";
 
@@ -23,31 +23,29 @@ function capacity(remainingTokens: number, limitTokens = 10_000): GroqCapacitySn
 }
 
 async function main(): Promise<void> {
-  assert.deepStrictEqual(TIER_TOKEN_POLICIES, {
-    free: { normalMinTotalTokens: 2_500, normalMaxTotalTokens: 3_200, heavyMaxTotalTokens: 4_000 },
-    student_core: { normalMinTotalTokens: 4_500, normalMaxTotalTokens: 6_000, heavyMaxTotalTokens: 7_500 },
-    premium: { normalMinTotalTokens: 7_000, normalMaxTotalTokens: 9_500, heavyMaxTotalTokens: 12_000 },
-    pro: { normalMinTotalTokens: 10_000, normalMaxTotalTokens: 16_000, heavyMaxTotalTokens: 22_000 },
+  assert.deepStrictEqual(PLAN_MODE_INPUT_CONTEXT_POLICIES.free, {
+    fast: { constrainedCeilingTokens: 2_500, ordinaryCeilingTokens: 3_200, complexCeilingTokens: 4_000 },
+    intuitive: { constrainedCeilingTokens: 2_500, ordinaryCeilingTokens: 6_000, complexCeilingTokens: 8_000 },
   });
-  assert.deepStrictEqual(EXECUTION_MODE_OUTPUT_POLICIES, {
-    fast: { defaultOutputTokens: 2_500, hardOutputTokens: 2_500, reasoningEffort: "low" },
-    intuitive: { defaultOutputTokens: 3_500, hardOutputTokens: 3_500, reasoningEffort: "medium" },
+  assert.deepStrictEqual(EXECUTION_MODE_GENERATION_POLICIES, {
+    fast: { defaultGenerationTokens: 2_500, generationCeilingTokens: 2_500, reasoningEffort: "low" },
+    intuitive: { defaultGenerationTokens: 3_500, generationCeilingTokens: 3_500, reasoningEffort: "medium" },
   });
   assert.deepStrictEqual(AUXILIARY_OUTPUT_CAPS, {
     title: 80,
     routing: 200,
     memory: 400,
   });
-  assert.strictEqual(ARTIFACT_OUTPUT_POLICY.hardOutputTokens, 6_500);
+  assert.strictEqual(ARTIFACT_GENERATION_POLICY.generationCeilingTokens, 6_500);
   assert.deepStrictEqual(INTUITIVE_GENERATION_POLICIES, {
     normal: {
-      totalGenerationTokens: 6_000,
+      generationCeilingTokens: 6_000,
       maximumReasoningTokens: 2_000,
       protectedVisibleAnswerTokens: 1_500,
       timeoutMs: 120_000,
     },
     heavy: {
-      totalGenerationTokens: 8_000,
+      generationCeilingTokens: 8_000,
       maximumReasoningTokens: 3_500,
       protectedVisibleAnswerTokens: 2_000,
       timeoutMs: 120_000,
@@ -60,42 +58,42 @@ async function main(): Promise<void> {
   assert(unicode.utf8Bytes > "你好世界你好世界".length, "UTF-8 byte size is measured");
   assert(unicode.tokens > 1, "non-ASCII input receives a conservative estimate");
 
-  for (const planCode of Object.keys(TIER_TOKEN_POLICIES)) {
-    const fast = resolveOutputBudget({
+  for (const planCode of Object.keys(PLAN_MODE_INPUT_CONTEXT_POLICIES)) {
+    const fast = resolveGenerationBudget({
       planCode,
       executionMode: "fast",
       budgetClass: "interactive",
       requestedOutputTokens: 6_000,
       estimatedInputTokens: 500,
     });
-    const intuitive = resolveOutputBudget({
+    const intuitive = resolveGenerationBudget({
       planCode,
       executionMode: "intuitive",
       budgetClass: "interactive",
       requestedOutputTokens: 6_000,
       estimatedInputTokens: 500,
     });
-    assert.strictEqual(fast.selectedOutputTokens, 2_500);
+    assert.strictEqual(fast.selectedGenerationTokens, 2_500);
     assert.strictEqual(fast.reasoningEffort, "low");
-    assert.strictEqual(intuitive.selectedOutputTokens, 3_500);
+    assert.strictEqual(intuitive.selectedGenerationTokens, 3_500);
     assert.strictEqual(intuitive.reasoningEffort, "medium");
   }
 
-  const proDefault = resolveOutputBudget({ planCode: "pro", executionMode: "fast", budgetClass: "interactive", estimatedInputTokens: 500 });
-  assert.strictEqual(proDefault.selectedOutputTokens, 2_500);
-  assert.strictEqual(proDefault.totalTokenBudget, 16_000);
+  const proDefault = resolveGenerationBudget({ planCode: "pro", executionMode: "fast", budgetClass: "interactive", estimatedInputTokens: 500 });
+  assert.strictEqual(proDefault.selectedGenerationTokens, 2_500);
+  assert.strictEqual(proDefault.inputContextCeilingTokens, 16_000);
 
-  const guarded = resolveOutputBudget({
+  const guarded = resolveGenerationBudget({
     planCode: "free",
     budgetClass: "interactive",
     estimatedInputTokens: 500,
     capacity: capacity(3_000),
   });
   assert.strictEqual(guarded.capacityBand, "guarded");
-  assert.strictEqual(guarded.selectedOutputTokens, 2_125);
+  assert.strictEqual(guarded.selectedGenerationTokens, 2_125);
   assert.strictEqual(guarded.allowHeavyExpansion, false);
 
-  const constrained = resolveOutputBudget({
+  const constrained = resolveGenerationBudget({
     planCode: "premium",
     executionMode: "intuitive",
     budgetClass: "interactive",
@@ -103,19 +101,19 @@ async function main(): Promise<void> {
     capacity: capacity(2_000),
   });
   assert.strictEqual(constrained.capacityBand, "constrained");
-  assert.strictEqual(constrained.selectedOutputTokens, 2_100);
-  assert.strictEqual(constrained.totalTokenBudget, TIER_TOKEN_POLICIES.premium.normalMinTotalTokens);
+  assert.strictEqual(constrained.selectedGenerationTokens, 2_100);
+  assert.strictEqual(constrained.inputContextCeilingTokens, 7_000);
 
-  const critical = resolveOutputBudget({
+  const critical = resolveGenerationBudget({
     planCode: "pro",
     budgetClass: "interactive",
     estimatedInputTokens: 500,
     capacity: capacity(900),
   });
-  assert.strictEqual(critical.selectedOutputTokens, 256);
+  assert.strictEqual(critical.selectedGenerationTokens, 256);
   assert.strictEqual(critical.forceFallback, true);
 
-  const insufficient = resolveOutputBudget({
+  const insufficient = resolveGenerationBudget({
     planCode: "premium",
     budgetClass: "interactive",
     estimatedInputTokens: 1_900,
@@ -124,27 +122,27 @@ async function main(): Promise<void> {
   assert.strictEqual(insufficient.forceFallback, true);
 
   for (const [kind, expected] of Object.entries(AUXILIARY_OUTPUT_CAPS)) {
-    const decision = resolveOutputBudget({
+    const decision = resolveGenerationBudget({
       planCode: "pro",
       budgetClass: "auxiliary",
       auxiliaryKind: kind as keyof typeof AUXILIARY_OUTPUT_CAPS,
       requestedOutputTokens: 9_000,
       estimatedInputTokens: 100,
     });
-    assert.strictEqual(decision.selectedOutputTokens, expected);
+    assert.strictEqual(decision.selectedGenerationTokens, expected);
   }
 
-  const artifact = resolveOutputBudget({
+  const artifact = resolveGenerationBudget({
     planCode: "free",
     budgetClass: "artifact",
     requestedOutputTokens: 9_000,
     estimatedInputTokens: 20_000,
     capacity: capacity(100),
   });
-  assert.strictEqual(artifact.selectedOutputTokens, ARTIFACT_OUTPUT_POLICY.hardOutputTokens);
+  assert.strictEqual(artifact.selectedGenerationTokens, ARTIFACT_GENERATION_POLICY.generationCeilingTokens);
   assert.strictEqual(artifact.forceFallback, false);
 
-  const intuitiveOrdinary = resolveOutputBudget({
+  const intuitiveOrdinary = resolveGenerationBudget({
     planCode: "free",
     executionMode: "intuitive",
     budgetClass: "interactive",
@@ -152,17 +150,18 @@ async function main(): Promise<void> {
     complexity: "normal",
     providerCapability: "nemotron_reasoning",
   });
-  assert.strictEqual(intuitiveOrdinary.selectedOutputTokens, 6_000);
+  assert.strictEqual(intuitiveOrdinary.selectedGenerationTokens, 6_000);
   assert.strictEqual(intuitiveOrdinary.reasoningBudgetTokens, 2_000);
   assert.strictEqual(intuitiveOrdinary.protectedVisibleAnswerTokens, 1_500);
+  assert.strictEqual(intuitiveOrdinary.providerMaximumGeneratedTokens, 8_000);
   assert.strictEqual(intuitiveOrdinary.timeoutMs, 120_000);
   assert(
     intuitiveOrdinary.reasoningBudgetTokens + intuitiveOrdinary.protectedVisibleAnswerTokens
-      <= intuitiveOrdinary.selectedOutputTokens,
+      <= intuitiveOrdinary.selectedGenerationTokens,
     "ordinary Intuitive reasoning and protected answer must fit its total ceiling",
   );
 
-  const intuitiveComplex = resolveOutputBudget({
+  const intuitiveComplex = resolveGenerationBudget({
     planCode: "free",
     executionMode: "intuitive",
     budgetClass: "interactive",
@@ -170,11 +169,11 @@ async function main(): Promise<void> {
     complexity: "heavy",
     providerCapability: "nemotron_reasoning",
   });
-  assert.strictEqual(intuitiveComplex.selectedOutputTokens, 8_000);
+  assert.strictEqual(intuitiveComplex.selectedGenerationTokens, 8_000);
   assert.strictEqual(intuitiveComplex.reasoningBudgetTokens, 3_500);
   assert.strictEqual(intuitiveComplex.protectedVisibleAnswerTokens, 2_000);
 
-  const providerLimitedIntuitive = resolveOutputBudget({
+  const providerLimitedIntuitive = resolveGenerationBudget({
     planCode: "free",
     executionMode: "intuitive",
     budgetClass: "interactive",
@@ -183,10 +182,10 @@ async function main(): Promise<void> {
     providerCapability: "nemotron_reasoning",
     providerMaximumGeneratedTokens: 5_000,
   });
-  assert.strictEqual(providerLimitedIntuitive.selectedOutputTokens, 5_000);
+  assert.strictEqual(providerLimitedIntuitive.selectedGenerationTokens, 5_000);
   assert.strictEqual(providerLimitedIntuitive.reasoningBudgetTokens, 2_000);
 
-  const affordableIntuitive = resolveOutputBudget({
+  const affordableIntuitive = resolveGenerationBudget({
     planCode: "free",
     executionMode: "intuitive",
     budgetClass: "interactive",
@@ -195,11 +194,72 @@ async function main(): Promise<void> {
     providerCapability: "nemotron_reasoning",
     remainingReservationTokens: 5_000,
   });
-  assert.strictEqual(affordableIntuitive.selectedOutputTokens, 4_000);
+  assert.strictEqual(affordableIntuitive.selectedGenerationTokens, 4_000);
   assert.strictEqual(affordableIntuitive.reasoningBudgetTokens, 2_000);
   assert.strictEqual(affordableIntuitive.protectedVisibleAnswerTokens, 1_500);
 
-  const nearLimitIntuitive = resolveOutputBudget({
+  const exactWorkedExample = resolveGenerationBudget({
+    planCode: "free",
+    executionMode: "intuitive",
+    budgetClass: "interactive",
+    estimatedInputTokens: 2_200,
+    complexity: "normal",
+    providerCapability: "nemotron_reasoning",
+    remainingReservationTokens: 7_000,
+  });
+  assert.strictEqual(exactWorkedExample.selectedGenerationTokens, 4_800);
+  assert.strictEqual(exactWorkedExample.reasoningBudgetTokens, 2_000);
+  assert.strictEqual(exactWorkedExample.protectedVisibleAnswerTokens, 1_500);
+  assert.strictEqual(2_200 + exactWorkedExample.selectedGenerationTokens, 7_000);
+
+  const exactReserveFloor = resolveGenerationBudget({
+    planCode: "free",
+    executionMode: "intuitive",
+    budgetClass: "interactive",
+    estimatedInputTokens: 2_200,
+    complexity: "normal",
+    providerCapability: "nemotron_reasoning",
+    remainingReservationTokens: 3_700,
+  });
+  assert.strictEqual(exactReserveFloor.selectedGenerationTokens, 1_500);
+  assert.strictEqual(exactReserveFloor.reasoningBudgetTokens, 0);
+  assert.throws(
+    () => resolveGenerationBudget({
+      planCode: "free",
+      executionMode: "intuitive",
+      budgetClass: "interactive",
+      estimatedInputTokens: 2_200,
+      complexity: "normal",
+      providerCapability: "nemotron_reasoning",
+      remainingReservationTokens: 3_699,
+    }),
+    GenerationBudgetError,
+  );
+  assert.throws(
+    () => resolveGenerationBudget({
+      planCode: "free",
+      executionMode: "intuitive",
+      budgetClass: "interactive",
+      estimatedInputTokens: 100,
+      complexity: "normal",
+      providerCapability: "nemotron_reasoning",
+      providerMaximumGeneratedTokens: 1_499,
+    }),
+    GenerationBudgetError,
+  );
+  const providerAtFloor = resolveGenerationBudget({
+    planCode: "free",
+    executionMode: "intuitive",
+    budgetClass: "interactive",
+    estimatedInputTokens: 100,
+    complexity: "normal",
+    providerCapability: "nemotron_reasoning",
+    providerMaximumGeneratedTokens: 1_500,
+  });
+  assert.strictEqual(providerAtFloor.selectedGenerationTokens, 1_500);
+  assert.strictEqual(providerAtFloor.reasoningBudgetTokens, 0);
+
+  const nearLimitIntuitive = resolveGenerationBudget({
     planCode: "free",
     executionMode: "intuitive",
     budgetClass: "interactive",
@@ -208,12 +268,12 @@ async function main(): Promise<void> {
     providerCapability: "nemotron_reasoning",
     remainingReservationTokens: 3_000,
   });
-  assert.strictEqual(nearLimitIntuitive.selectedOutputTokens, 2_000);
+  assert.strictEqual(nearLimitIntuitive.selectedGenerationTokens, 2_000);
   assert.strictEqual(nearLimitIntuitive.reasoningBudgetTokens, 500);
   assert.strictEqual(nearLimitIntuitive.protectedVisibleAnswerTokens, 1_500);
 
   assert.throws(
-    () => resolveOutputBudget({
+    () => resolveGenerationBudget({
       planCode: "free",
       executionMode: "intuitive",
       budgetClass: "interactive",
@@ -225,7 +285,7 @@ async function main(): Promise<void> {
     GenerationBudgetError,
   );
   assert.throws(
-    () => resolveOutputBudget({
+    () => resolveGenerationBudget({
       planCode: "free",
       executionMode: "fast",
       budgetClass: "interactive",

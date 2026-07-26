@@ -166,6 +166,12 @@ function main(): void {
     );
     assert(executorSource.includes("allowedModelTools: intuitiveLaneActive ? [] : automaticTools"));
     assert(executorSource.includes("synthesizeIntuitiveToolResult"));
+    assert(executorSource.includes("protectIntuitiveFinalSynthesis"));
+    assert(executorSource.includes("consumeFutureObligationId: INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID"));
+    assert(
+      executorSource.includes("const reusesActiveRequestBudget = Boolean(webSurfEvidence && getTokenAllowanceAccounting())"),
+      "nested WebSurf synthesis must reuse the outer request-local ledger",
+    );
 
     const serverSource = readFileSync(join(__dirname, "server.ts"), "utf8");
     assert(serverSource.includes("const intuitiveToolSelectionActive = intuitiveLaneActive && automaticTools.length > 0"));
@@ -174,6 +180,8 @@ function main(): void {
       "selection text must never be forwarded as a client-visible answer",
     );
     assert(serverSource.includes("toolResult = await synthesizeIntuitiveToolResult"));
+    assert(serverSource.includes("protectIntuitiveFinalSynthesis"));
+    assert(serverSource.includes("consume_future_obligation_id: INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID"));
 
     console.log("Nemotron Intuitive lane validation passed.");
   } finally {

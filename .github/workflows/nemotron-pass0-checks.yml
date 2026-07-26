@@ -71,3 +71,6 @@ jobs:
 
       - name: Context budgets
         run: npm run test:context-budget
+
+      - name: Request budget lifecycle
+        run: npm run test:request-budget-lifecycle

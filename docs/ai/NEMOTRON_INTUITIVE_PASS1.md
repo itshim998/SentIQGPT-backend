@@ -91,8 +91,8 @@ request allowance accounting.
 Reported provider usage is preferred. A conservative visible-plus-hidden
 floor is applied if an OpenAI-compatible endpoint reports less completion
 usage than the locally observed stream requires. When reported usage is
-absent, the existing conservative estimators are used. Failed calls are not
-recorded as successful usage.
+absent, the existing conservative estimators are used. Failed calls without
+reliable usage are not recorded as successful usage.
 
 A failed slot may be replaced only before meaningful visible content starts.
 Reasoning-only chunks do not start visible output. After visible output
@@ -123,6 +123,7 @@ These non-secret settings are documented in `.env.example` and
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 NVIDIA_NEMOTRON_MODEL=nvidia/nemotron-3-ultra-550b-a55b
 POLLINATIONS_INTUITIVE_MODEL=vendouple/nemotron-3-ultra:free
+SENTIQ_NVIDIA_MAX_GENERATED_TOKENS=8000
 SENTIQ_INTUITIVE_ORDINARY_MAX_GENERATED_TOKENS=6000
 SENTIQ_INTUITIVE_ORDINARY_REASONING_BUDGET=2000
 SENTIQ_INTUITIVE_ORDINARY_MIN_FINAL_ANSWER_TOKENS=1500
@@ -188,16 +189,18 @@ key material:
 
 | Slot | Independent minimal request |
 | --- | --- |
-| `nvidia-slot-1` | Failed with HTTP 403 in the original Pass 1 run; correctly disabled as an authentication failure |
+| `nvidia-slot-1` | Passed a repaired-key redacted rerun with HTTP 200 |
 | `nvidia-slot-2` | Passed |
 | `nvidia-slot-3` | Passed |
 | `nvidia-slot-4` | Initial transient failure; recovered and passed in the pooled run |
 | `nvidia-slot-5` | Passed |
 | `nvidia-slot-6` | Passed |
 
-The `NVIDIA_API_KEY_1` credential was replaced after the original run. Its
-current status must be established by a new redacted `nvidia-slot-1` live
-request; the historical 403 result above is retained until that rerun passes.
+The original Pass 1 request for `NVIDIA_API_KEY_1` failed with HTTP 403. The
+credential was repaired, but a stale process-level `NVIDIA_API_KEY_1` continued
+to override the `.env` value until that process environment entry was removed.
+The Pass 3 redacted rerun then passed with HTTP 200, reported no visible
+reasoning marker, and did not print response text or credential material.
 
 The pooled run covered every enabled working slot. One intermittent empty
 stream was skipped safely before visible output and the pool continued on a
