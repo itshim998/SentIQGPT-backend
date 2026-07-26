@@ -172,6 +172,15 @@ visible invariant. Live smoke outcomes are reported separately in the draft
 pull request and final implementation handoff; secrets and raw provider
 responses must not be recorded.
 
+For a low-cost, redacted recheck of the repaired first key only, run:
+
+```bash
+python backend/verifyNvidiaSlot1Live.py
+```
+
+The verifier sends one minimal request through `nvidia-slot-1` and reports only
+safe status and aggregate usage metadata.
+
 ## Redacted live smoke result
 
 The low-cost live verifier discovered six safe local slots without printing
