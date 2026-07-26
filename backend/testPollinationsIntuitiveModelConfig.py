@@ -16,11 +16,7 @@ def main() -> int:
     require_contains(ROOT / ".env.example", EXPECTED_LINE)
     require_contains(ROOT / ".env.template", EXPECTED_LINE)
     require_contains(ROOT / "docs" / "ai" / "NEMOTRON_INTUITIVE_PASS1.md", MODEL_ID)
-
-    adapter_source = (ROOT / "llm_adapter.py").read_text(encoding="utf-8")
     require_contains(ROOT / "llm_adapter.py", 'os.getenv("POLLINATIONS_INTUITIVE_MODEL", "").strip()')
-    if "POLLINATIONS_INTUITIVE_MODEL" not in adapter_source:
-        raise AssertionError("llm_adapter.py is not wired to the Intuitive Pollinations model setting")
 
     print(f"Pollinations Intuitive model configuration validated: {MODEL_ID}")
     return 0
