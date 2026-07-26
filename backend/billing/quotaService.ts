@@ -15,6 +15,7 @@ import {
 } from "../ai/modelToolCapability";
 import {
   attachTokenAllowanceAccounting,
+  closeTokenAllowanceAccounting,
   getTokenAllowanceAccounting,
 } from "../context/requestBudgetContext";
 import { TEXT_TOKEN_POLICY_VERSION } from "./planCatalog";
@@ -303,6 +304,9 @@ export class BillingQuotaService {
     const actualTokens = accounting
       ? Math.max(1, accounting.inputTokens + accounting.outputTokens)
       : undefined;
+    if (accounting) {
+      closeTokenAllowanceAccounting({ requestId: reservation.requestId });
+    }
     const result = await this.repository.commitReservation({
       requestId: reservation.requestId,
       provider: reservation.provider,
@@ -312,9 +316,12 @@ export class BillingQuotaService {
         safe_model_label: reservation.safeModelLabel,
         ...(actualTokens !== undefined ? {
           actual_token_units: actualTokens,
-          input_tokens: accounting?.inputTokens ?? 0,
-          output_tokens: accounting?.outputTokens ?? 0,
-          successful_model_calls: accounting?.successfulCalls ?? 0,
+           input_tokens: accounting?.inputTokens ?? 0,
+           output_tokens: accounting?.outputTokens ?? 0,
+           observed_input_tokens: accounting?.observedInputTokens ?? 0,
+           observed_output_tokens: accounting?.observedOutputTokens ?? 0,
+           usage_overrun_tokens: accounting?.usageOverrunTokens ?? 0,
+           successful_model_calls: accounting?.successfulCalls ?? 0,
           usage_reported_calls: accounting?.reportedCalls ?? 0,
           usage_estimated_calls: accounting?.estimatedCalls ?? 0,
           quota_policy_version: TEXT_TOKEN_POLICY_VERSION,
@@ -343,6 +350,12 @@ export class BillingQuotaService {
 
   async release(reservation: UsageReservation | null | undefined, reason = "unchargeable_failure"): Promise<void> {
     if (!reservation) return;
+    if (isTextTokenFeature(reservation.feature)) {
+      closeTokenAllowanceAccounting({
+        requestId: reservation.requestId,
+        releasePending: true,
+      });
+    }
     const result = await this.repository.releaseReservation(reservation.requestId);
     if (isTextTokenFeature(reservation.feature)) {
       const accounting = getTokenAllowanceAccounting(reservation.requestId);

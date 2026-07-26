@@ -1334,7 +1334,9 @@ def _apply_execution_mode_output_cap(
     if task not in CHATLIKE_TASKS:
         return max_output_tokens
     if execution_mode == "intuitive" and nemotron_generation:
-        mode_cap = _parse_int_env("SENTIQ_INTUITIVE_COMPLEX_MAX_GENERATED_TOKENS", 8_000)
+        # Defensive provider ceiling only. Node owns ordinary/complex product
+        # policy and always sends the selected generation allocation.
+        mode_cap = _parse_int_env("SENTIQ_NVIDIA_MAX_GENERATED_TOKENS", 8_000)
     else:
         mode_cap = EXECUTION_MODE_OUTPUT_CAPS[execution_mode]
     if isinstance(max_output_tokens, int) and max_output_tokens > 0:
@@ -1951,8 +1953,19 @@ def _select_groq_capacity_allocation(
         return max_output_tokens, False, 0, "unknown"
     if budget_policy.get("budget_class") == "artifact":
         return max_output_tokens, False, 0, "not_applicable"
-    selected = max(1, int(max_output_tokens or budget_policy.get("selected_output_tokens") or 256))
-    default_output = max(1, int(budget_policy.get("default_output_tokens") or selected))
+    # Pass 3 names are explicit about generated completion tokens. The legacy
+    # keys remain read-only fallbacks for compatibility with older Node callers.
+    selected = max(1, int(
+        max_output_tokens
+        or budget_policy.get("selected_generation_tokens")
+        or budget_policy.get("selected_output_tokens")
+        or 256
+    ))
+    default_output = max(1, int(
+        budget_policy.get("default_generation_tokens")
+        or budget_policy.get("default_output_tokens")
+        or selected
+    ))
     estimated_input = max(0, int(budget_policy.get("estimated_input_tokens") or 0))
     force_fallback = bool(budget_policy.get("force_fallback"))
     capacity_band = "unknown"
@@ -1996,7 +2009,7 @@ def _select_groq_capacity_allocation(
         "capacity_group": "default_org",
         "capacity_band": capacity_band,
         "estimated_input_tokens": estimated_input,
-        "selected_output_tokens": selected,
+        "selected_generation_tokens": selected,
         "force_fallback": force_fallback,
     }, separators=(",", ":")))
     return selected, force_fallback, reservation, capacity_band

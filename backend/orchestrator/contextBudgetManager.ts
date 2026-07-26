@@ -19,33 +19,59 @@ function positiveEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-export interface TierTokenPolicy {
-  readonly normalMinTotalTokens: number;
-  readonly normalMaxTotalTokens: number;
-  readonly heavyMaxTotalTokens: number;
+export interface InputContextPolicy {
+  readonly constrainedCeilingTokens: number;
+  readonly ordinaryCeilingTokens: number;
+  readonly complexCeilingTokens: number;
 }
 
-export const TIER_TOKEN_POLICIES: Readonly<Record<ContextPlanCode, TierTokenPolicy>> = {
-  free: { normalMinTotalTokens: 2_500, normalMaxTotalTokens: 3_200, heavyMaxTotalTokens: 4_000 },
-  student_core: { normalMinTotalTokens: 4_500, normalMaxTotalTokens: 6_000, heavyMaxTotalTokens: 7_500 },
-  premium: { normalMinTotalTokens: 7_000, normalMaxTotalTokens: 9_500, heavyMaxTotalTokens: 12_000 },
-  pro: { normalMinTotalTokens: 10_000, normalMaxTotalTokens: 16_000, heavyMaxTotalTokens: 22_000 },
+/**
+ * Canonical composed-input policy. Paid-plan differentiation is intentionally
+ * unchanged in Pass 3; only Free Fast and Free Intuitive are mode-distinct.
+ */
+export const PLAN_MODE_INPUT_CONTEXT_POLICIES: Readonly<
+  Record<ContextPlanCode, Readonly<Record<ExecutionMode, InputContextPolicy>>>
+> = {
+  free: {
+    fast: {
+      constrainedCeilingTokens: 2_500,
+      ordinaryCeilingTokens: positiveEnv("SENTIQ_FREE_FAST_ORDINARY_CONTEXT_TOKENS", 3_200),
+      complexCeilingTokens: positiveEnv("SENTIQ_FREE_FAST_COMPLEX_CONTEXT_TOKENS", 4_000),
+    },
+    intuitive: {
+      constrainedCeilingTokens: 2_500,
+      ordinaryCeilingTokens: positiveEnv("SENTIQ_FREE_INTUITIVE_ORDINARY_CONTEXT_TOKENS", 6_000),
+      complexCeilingTokens: positiveEnv("SENTIQ_FREE_INTUITIVE_COMPLEX_CONTEXT_TOKENS", 8_000),
+    },
+  },
+  student_core: {
+    fast: { constrainedCeilingTokens: 4_500, ordinaryCeilingTokens: 6_000, complexCeilingTokens: 7_500 },
+    intuitive: { constrainedCeilingTokens: 4_500, ordinaryCeilingTokens: 6_000, complexCeilingTokens: 7_500 },
+  },
+  premium: {
+    fast: { constrainedCeilingTokens: 7_000, ordinaryCeilingTokens: 9_500, complexCeilingTokens: 12_000 },
+    intuitive: { constrainedCeilingTokens: 7_000, ordinaryCeilingTokens: 9_500, complexCeilingTokens: 12_000 },
+  },
+  pro: {
+    fast: { constrainedCeilingTokens: 10_000, ordinaryCeilingTokens: 16_000, complexCeilingTokens: 22_000 },
+    intuitive: { constrainedCeilingTokens: 10_000, ordinaryCeilingTokens: 16_000, complexCeilingTokens: 22_000 },
+  },
 };
 
-export interface ExecutionModeOutputPolicy {
-  readonly defaultOutputTokens: number;
-  readonly hardOutputTokens: number;
+export interface ExecutionModeGenerationPolicy {
+  readonly defaultGenerationTokens: number;
+  readonly generationCeilingTokens: number;
   readonly reasoningEffort: ModelReasoningEffort;
 }
 
-/** Canonical interactive completion policy. Plans only affect total request budgets. */
-export const EXECUTION_MODE_OUTPUT_POLICIES: Readonly<Record<ExecutionMode, ExecutionModeOutputPolicy>> = {
-  fast: { defaultOutputTokens: 2_500, hardOutputTokens: 2_500, reasoningEffort: "low" },
-  intuitive: { defaultOutputTokens: 3_500, hardOutputTokens: 3_500, reasoningEffort: "medium" },
+/** Canonical legacy interactive completion policy for non-Nemotron calls. */
+export const EXECUTION_MODE_GENERATION_POLICIES: Readonly<Record<ExecutionMode, ExecutionModeGenerationPolicy>> = {
+  fast: { defaultGenerationTokens: 2_500, generationCeilingTokens: 2_500, reasoningEffort: "low" },
+  intuitive: { defaultGenerationTokens: 3_500, generationCeilingTokens: 3_500, reasoningEffort: "medium" },
 };
 
 export interface IntuitiveGenerationPolicy {
-  readonly totalGenerationTokens: number;
+  readonly generationCeilingTokens: number;
   readonly maximumReasoningTokens: number;
   readonly protectedVisibleAnswerTokens: number;
   readonly timeoutMs: number;
@@ -53,18 +79,24 @@ export interface IntuitiveGenerationPolicy {
 
 export const INTUITIVE_GENERATION_POLICIES: Readonly<Record<RequestComplexity, IntuitiveGenerationPolicy>> = {
   normal: {
-    totalGenerationTokens: positiveEnv("SENTIQ_INTUITIVE_ORDINARY_MAX_GENERATED_TOKENS", 6_000),
+    generationCeilingTokens: positiveEnv("SENTIQ_INTUITIVE_ORDINARY_MAX_GENERATED_TOKENS", 6_000),
     maximumReasoningTokens: positiveEnv("SENTIQ_INTUITIVE_ORDINARY_REASONING_BUDGET", 2_000),
     protectedVisibleAnswerTokens: positiveEnv("SENTIQ_INTUITIVE_ORDINARY_MIN_FINAL_ANSWER_TOKENS", 1_500),
     timeoutMs: positiveEnv("SENTIQ_INTUITIVE_TOTAL_TIMEOUT_MS", 120_000),
   },
   heavy: {
-    totalGenerationTokens: positiveEnv("SENTIQ_INTUITIVE_COMPLEX_MAX_GENERATED_TOKENS", 8_000),
+    generationCeilingTokens: positiveEnv("SENTIQ_INTUITIVE_COMPLEX_MAX_GENERATED_TOKENS", 8_000),
     maximumReasoningTokens: positiveEnv("SENTIQ_INTUITIVE_COMPLEX_REASONING_BUDGET", 3_500),
     protectedVisibleAnswerTokens: positiveEnv("SENTIQ_INTUITIVE_COMPLEX_MIN_FINAL_ANSWER_TOKENS", 2_000),
     timeoutMs: positiveEnv("SENTIQ_INTUITIVE_TOTAL_TIMEOUT_MS", 120_000),
   },
 };
+
+/** Provider hard safety ceiling, not a plan or mode product policy. */
+export const NEMOTRON_PROVIDER_GENERATION_SAFETY_CEILING_TOKENS = positiveEnv(
+  "SENTIQ_NVIDIA_MAX_GENERATED_TOKENS",
+  8_000,
+);
 
 export const AUXILIARY_OUTPUT_CAPS: Readonly<Record<AuxiliaryOutputKind, number>> = {
   title: 80,
@@ -72,9 +104,9 @@ export const AUXILIARY_OUTPUT_CAPS: Readonly<Record<AuxiliaryOutputKind, number>
   memory: 400,
 };
 
-export const ARTIFACT_OUTPUT_POLICY = {
-  defaultOutputTokens: 6_500,
-  hardOutputTokens: 6_500,
+export const ARTIFACT_GENERATION_POLICY = {
+  defaultGenerationTokens: 6_500,
+  generationCeilingTokens: 6_500,
 } as const;
 
 export interface GroqCapacitySnapshot {
@@ -96,23 +128,23 @@ export type TokenTrimMode = "head" | "head_tail";
 
 const TOKEN_TRIM_MARKER = "\n[... context trimmed to fit request budget ...]\n";
 
-export interface OutputBudgetDecision {
+export interface GenerationBudgetDecision {
   readonly budgetClass: OutputBudgetClass;
   readonly auxiliaryKind?: AuxiliaryOutputKind;
   readonly planCode: ContextPlanCode;
   readonly executionMode: ExecutionMode;
   readonly reasoningEffort?: ModelReasoningEffort;
-  readonly selectedOutputTokens: number;
-  readonly defaultOutputTokens: number;
-  readonly hardOutputTokens: number;
-  readonly totalTokenBudget: number;
-  readonly normalMinTotalTokens: number;
+  readonly selectedGenerationTokens: number;
+  readonly defaultGenerationTokens: number;
+  readonly generationCeilingTokens: number;
+  readonly inputContextCeilingTokens: number;
+  readonly constrainedInputContextCeilingTokens: number;
   readonly capacityBand: GroqCapacityBand;
   readonly remainingRatio?: number;
   readonly allowHeavyExpansion: boolean;
   readonly forceFallback: boolean;
   readonly providerCapability: GenerationProviderCapability;
-  readonly totalGenerationCeiling: number;
+  readonly providerMaximumGeneratedTokens?: number;
   readonly reasoningBudgetTokens: number;
   readonly protectedVisibleAnswerTokens: number;
   readonly timeoutMs?: number;
@@ -231,7 +263,24 @@ export function getGroqCapacitySnapshot(maxAgeMs = 15 * 60_000): GroqCapacitySna
   return latestGroqCapacitySnapshot;
 }
 
-export function resolveOutputBudget(args: {
+export function resolveInputContextCeiling(args: {
+  readonly planCode: unknown;
+  readonly executionMode?: unknown;
+  readonly complexity?: RequestComplexity;
+  readonly capacityBand?: GroqCapacityBand;
+}): number {
+  const planCode = normalizeContextPlanCode(args.planCode);
+  const executionMode = normalizeExecutionMode(args.executionMode);
+  const policy = PLAN_MODE_INPUT_CONTEXT_POLICIES[planCode][executionMode];
+  if (args.capacityBand === "constrained" || args.capacityBand === "critical") {
+    return policy.constrainedCeilingTokens;
+  }
+  return args.complexity === "heavy"
+    ? policy.complexCeilingTokens
+    : policy.ordinaryCeilingTokens;
+}
+
+export function resolveGenerationBudget(args: {
   readonly planCode: unknown;
   readonly executionMode?: unknown;
   readonly budgetClass: OutputBudgetClass;
@@ -244,35 +293,35 @@ export function resolveOutputBudget(args: {
   readonly providerCapability?: GenerationProviderCapability;
   readonly providerMaximumGeneratedTokens?: number;
   readonly reservationFeature?: "premium_text" | "lite_text";
-}): OutputBudgetDecision {
+}): GenerationBudgetDecision {
   const planCode = normalizeContextPlanCode(args.planCode);
-  const tier = TIER_TOKEN_POLICIES[planCode];
   const executionMode = normalizeExecutionMode(args.executionMode);
-  const interactivePolicy = EXECUTION_MODE_OUTPUT_POLICIES[executionMode];
+  const inputContextPolicy = PLAN_MODE_INPUT_CONTEXT_POLICIES[planCode][executionMode];
+  const interactivePolicy = EXECUTION_MODE_GENERATION_POLICIES[executionMode];
   const complexity = args.complexity ?? "normal";
   const providerCapability = args.providerCapability ?? "legacy_text";
   const intuitiveGenerationPolicy = INTUITIVE_GENERATION_POLICIES[complexity];
   const usesReasoningGenerationBudget = args.budgetClass === "interactive"
     && executionMode === "intuitive"
     && providerCapability === "nemotron_reasoning";
-  let defaultOutputTokens = interactivePolicy.defaultOutputTokens;
-  let hardOutputTokens = interactivePolicy.hardOutputTokens;
+  let defaultGenerationTokens = interactivePolicy.defaultGenerationTokens;
+  let generationCeilingTokens = interactivePolicy.generationCeilingTokens;
   if (usesReasoningGenerationBudget) {
-    defaultOutputTokens = intuitiveGenerationPolicy.totalGenerationTokens;
-    hardOutputTokens = intuitiveGenerationPolicy.totalGenerationTokens;
+    defaultGenerationTokens = intuitiveGenerationPolicy.generationCeilingTokens;
+    generationCeilingTokens = intuitiveGenerationPolicy.generationCeilingTokens;
   } else if (args.budgetClass === "artifact") {
-    defaultOutputTokens = ARTIFACT_OUTPUT_POLICY.defaultOutputTokens;
-    hardOutputTokens = ARTIFACT_OUTPUT_POLICY.hardOutputTokens;
+    defaultGenerationTokens = ARTIFACT_GENERATION_POLICY.defaultGenerationTokens;
+    generationCeilingTokens = ARTIFACT_GENERATION_POLICY.generationCeilingTokens;
   } else if (args.budgetClass === "auxiliary") {
     const cap = AUXILIARY_OUTPUT_CAPS[args.auxiliaryKind ?? "routing"];
-    defaultOutputTokens = cap;
-    hardOutputTokens = cap;
+    defaultGenerationTokens = cap;
+    generationCeilingTokens = cap;
   }
 
   const requested = Number.isFinite(args.requestedOutputTokens)
     ? Math.max(1, Math.floor(args.requestedOutputTokens as number))
-    : defaultOutputTokens;
-  let selectedOutputTokens = Math.min(requested, hardOutputTokens);
+    : defaultGenerationTokens;
+  let selectedGenerationTokens = Math.min(requested, generationCeilingTokens);
   let capacityBand: GroqCapacityBand = "unknown";
   let remainingRatio: number | undefined;
   let allowHeavyExpansion = true;
@@ -285,29 +334,34 @@ export function resolveOutputBudget(args: {
     } else if (remainingRatio >= 0.25) {
       capacityBand = "guarded";
       allowHeavyExpansion = false;
-      selectedOutputTokens = Math.min(selectedOutputTokens, Math.floor(defaultOutputTokens * 0.85));
+      selectedGenerationTokens = Math.min(selectedGenerationTokens, Math.floor(defaultGenerationTokens * 0.85));
     } else if (remainingRatio >= 0.1) {
       capacityBand = "constrained";
       allowHeavyExpansion = false;
-      selectedOutputTokens = Math.min(selectedOutputTokens, Math.max(256, Math.floor(defaultOutputTokens * 0.6)));
+      selectedGenerationTokens = Math.min(selectedGenerationTokens, Math.max(256, Math.floor(defaultGenerationTokens * 0.6)));
     } else {
       capacityBand = "critical";
       allowHeavyExpansion = false;
-      selectedOutputTokens = Math.min(selectedOutputTokens, 256);
+      selectedGenerationTokens = Math.min(selectedGenerationTokens, 256);
       forceFallback = true;
     }
     if (args.capacity.remainingTokens < Math.max(0, Math.ceil(args.estimatedInputTokens)) + 256) {
       forceFallback = true;
       capacityBand = "critical";
       allowHeavyExpansion = false;
-      selectedOutputTokens = Math.min(selectedOutputTokens, 256);
+      selectedGenerationTokens = Math.min(selectedGenerationTokens, 256);
     }
   }
 
-  if (Number.isFinite(args.providerMaximumGeneratedTokens)) {
-    selectedOutputTokens = Math.min(
-      selectedOutputTokens,
-      Math.max(1, Math.floor(args.providerMaximumGeneratedTokens as number)),
+  const providerMaximumGeneratedTokens = Number.isFinite(args.providerMaximumGeneratedTokens)
+    ? Math.max(1, Math.floor(args.providerMaximumGeneratedTokens as number))
+    : providerCapability === "nemotron_reasoning"
+      ? NEMOTRON_PROVIDER_GENERATION_SAFETY_CEILING_TOKENS
+      : undefined;
+  if (providerMaximumGeneratedTokens !== undefined) {
+    selectedGenerationTokens = Math.min(
+      selectedGenerationTokens,
+      providerMaximumGeneratedTokens,
     );
   }
 
@@ -327,13 +381,13 @@ export function resolveOutputBudget(args: {
       }
       throw new GenerationBudgetError();
     }
-    selectedOutputTokens = Math.min(selectedOutputTokens, affordableGeneratedTokens);
+    selectedGenerationTokens = Math.min(selectedGenerationTokens, affordableGeneratedTokens);
   }
 
   const protectedVisibleAnswerTokens = usesReasoningGenerationBudget
     ? intuitiveGenerationPolicy.protectedVisibleAnswerTokens
     : 0;
-  if (usesReasoningGenerationBudget && selectedOutputTokens < protectedVisibleAnswerTokens) {
+  if (usesReasoningGenerationBudget && selectedGenerationTokens < protectedVisibleAnswerTokens) {
     throw new GenerationBudgetError();
   }
   const reasoningBudgetTokens = usesReasoningGenerationBudget
@@ -341,7 +395,7 @@ export function resolveOutputBudget(args: {
         0,
         Math.min(
           intuitiveGenerationPolicy.maximumReasoningTokens,
-          selectedOutputTokens - protectedVisibleAnswerTokens,
+          selectedGenerationTokens - protectedVisibleAnswerTokens,
         ),
       )
     : 0;
@@ -352,21 +406,22 @@ export function resolveOutputBudget(args: {
     planCode,
     executionMode,
     reasoningEffort: args.budgetClass === "interactive" ? interactivePolicy.reasoningEffort : undefined,
-    selectedOutputTokens: Math.max(1, selectedOutputTokens),
-    defaultOutputTokens,
-    hardOutputTokens,
-    totalTokenBudget: capacityBand === "constrained" || capacityBand === "critical"
-      ? tier.normalMinTotalTokens
-      : complexity === "heavy" && allowHeavyExpansion
-        ? tier.heavyMaxTotalTokens
-        : tier.normalMaxTotalTokens,
-    normalMinTotalTokens: tier.normalMinTotalTokens,
+    selectedGenerationTokens: Math.max(1, selectedGenerationTokens),
+    defaultGenerationTokens,
+    generationCeilingTokens,
+    inputContextCeilingTokens: resolveInputContextCeiling({
+      planCode,
+      executionMode,
+      complexity: complexity === "heavy" && allowHeavyExpansion ? "heavy" : "normal",
+      capacityBand,
+    }),
+    constrainedInputContextCeilingTokens: inputContextPolicy.constrainedCeilingTokens,
     capacityBand,
     remainingRatio,
     allowHeavyExpansion,
     forceFallback,
     providerCapability,
-    totalGenerationCeiling: Math.max(1, selectedOutputTokens),
+    providerMaximumGeneratedTokens,
     reasoningBudgetTokens,
     protectedVisibleAnswerTokens,
     timeoutMs: usesReasoningGenerationBudget ? intuitiveGenerationPolicy.timeoutMs : undefined,

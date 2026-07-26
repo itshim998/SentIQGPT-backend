@@ -39,7 +39,10 @@ import { getConversationMessageByClientRequestId } from "../services/conversatio
 import { resolveAutomaticMemoryUpdate } from "../ai/modelToolMemorySafety";
 import {
   buildIntuitiveToolSynthesisEvidence,
+  INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID,
   isNemotronIntuitiveLaneEnabled,
+  protectIntuitiveFinalSynthesis,
+  releaseIntuitiveFinalSynthesisProtection,
   shouldRunIntuitiveFinalSynthesis,
 } from "./intuitiveTextLane";
 
@@ -256,7 +259,11 @@ async function execConversation(
     automaticToolsRequested: requestedAutomaticTools.length > 0,
     streaming: false,
   });
-  const reservation = ctx.billingIdentity
+  // Automatic WebSurf V2 re-enters the conversation executor for its bounded
+  // synthesis. Reuse the outer turn ledger and database reservation instead of
+  // replacing it with a second reservation inside the same user turn.
+  const reusesActiveRequestBudget = Boolean(webSurfEvidence && getTokenAllowanceAccounting());
+  const reservation = ctx.billingIdentity && !reusesActiveRequestBudget
     ? await billingQuotaService.reserveTextRoute({
         identity: ctx.billingIdentity,
         requestId: createBillingStepRequestId(ctx, "conversation", augmentedInput),
@@ -337,8 +344,23 @@ async function execConversation(
     return toolResult;
   };
   let result: Awaited<ReturnType<typeof handleChat>>;
+  let intuitiveFutureProtected = intuitiveLaneActive && reusesActiveRequestBudget;
   try {
     if (intuitiveLaneActive && automaticTools.length > 0) {
+      protectIntuitiveFinalSynthesis({
+        userMessage: input,
+        complexity: hasFiles ? "heavy" : "normal",
+        knownContext: [
+          ctx.conversationSummary,
+          ctx.conversationCapsule,
+          ctx.workspaceCapsule,
+          ...(ctx.recentMessages ?? []).map((message) => message.content),
+          ...(ctx.memories ?? []).map((memory) => memory.summary),
+          ...(ctx.fileReferences ?? []).map((file) => file.extractedText.slice(0, 200_000)),
+        ].filter((value): value is string => Boolean(value)),
+        messageCount: (ctx.recentMessages?.length ?? 0) + 1,
+      });
+      intuitiveFutureProtected = true;
       const selectedToolCalls = await selectChatToolCalls({
         userMessage: input,
         modelOverride,
@@ -387,7 +409,11 @@ async function execConversation(
         : undefined,
       allowedModelTools: intuitiveLaneActive ? [] : automaticTools,
       requiredCapabilities: finalRequiredCapabilities,
+      consumeFutureObligationId: intuitiveFutureProtected
+        ? INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID
+        : undefined,
     });
+    intuitiveFutureProtected = false;
     if (result.tool_calls) {
       return await executeSelectedToolCalls(result.tool_calls);
     }
@@ -395,6 +421,7 @@ async function execConversation(
       await billingQuotaService.commit(reservation, { endpoint: "orchestrator", tool: "conversation" });
     }
   } catch (error) {
+    if (intuitiveFutureProtected) releaseIntuitiveFinalSynthesisProtection();
     await releaseBillingReservation(reservation);
     throw error;
   }
@@ -422,8 +449,11 @@ export async function synthesizeIntuitiveToolResult(
   if (
     !isNemotronIntuitiveLaneEnabled(profile.mode)
     || step.final_synthesis_completed
-    || !shouldRunIntuitiveFinalSynthesis(step)
   ) {
+    return step;
+  }
+  if (!shouldRunIntuitiveFinalSynthesis(step)) {
+    releaseIntuitiveFinalSynthesisProtection();
     return step;
   }
 
@@ -445,6 +475,7 @@ export async function synthesizeIntuitiveToolResult(
     executionMode: "intuitive",
     allowedModelTools: [],
     requiredCapabilities: [],
+    consumeFutureObligationId: INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID,
   });
 
   return {

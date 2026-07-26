@@ -13,9 +13,11 @@ import { normalizeWebSurfAnswerOutput } from "../tools/webSearch/webSurfOutputGu
 import type { SentIQToolName, ToolAvailabilityContext, ValidatedToolCall } from "../orchestrator/toolContract";
 import { deriveRequiredModelCapabilities, type RequiredModelCapability } from "./modelToolCapability";
 import { buildIntuitiveToolSelectionPrompt } from "../orchestrator/intuitiveTextLane";
+import { GenerationBudgetError } from "../orchestrator/contextBudgetManager";
 
 const REASONING_MAX_OUTPUT_TOKENS = 2600;
 const CONTINUATION_MAX_OUTPUT_TOKENS = 1800;
+const CONTINUATION_MIN_OUTPUT_TOKENS = 128;
 const RAW_REASONING_FALLBACK =
   "I couldn't complete that response. Please retry in a moment.";
 const GENERIC_CHAT_FALLBACK_PATTERN =
@@ -135,6 +137,7 @@ export async function handleChat(args: {
   readonly modelToolContext?: ToolAvailabilityContext;
   readonly allowedModelTools?: readonly SentIQToolName[];
   readonly requiredCapabilities?: readonly RequiredModelCapability[];
+  readonly consumeFutureObligationId?: string;
 }): Promise<ChatResponse> {
   if (!args.userMessage.trim()) {
     throw new Error("userMessage must be a non-empty string.");
@@ -191,6 +194,7 @@ export async function handleChat(args: {
         automaticToolsRequested: (args.allowedModelTools?.length ?? 0) > 0,
         streaming: false,
       }),
+      consume_future_obligation_id: args.consumeFutureObligationId,
     });
     if (result.assistant_turn?.kind === "tool_calls") {
       return {
@@ -209,7 +213,7 @@ export async function handleChat(args: {
     adapterError = result.error;
     finishReason = result.finish_reason;
   } catch (error) {
-    if (error instanceof ModelToolTransportError) throw error;
+    if (error instanceof ModelToolTransportError || error instanceof GenerationBudgetError) throw error;
     raw = args.reasoningMode ? RAW_REASONING_FALLBACK : getDemoFallbackResponse("chat");
   }
 
@@ -271,10 +275,17 @@ export async function handleChat(args: {
         userId: args.userId,
         reasoningMode: args.reasoningMode,
       });
-      const continuationCall = args.reasoningMode
-        ? { ...continuationBaseCall, max_output_tokens: CONTINUATION_MAX_OUTPUT_TOKENS, skip_wrappers: true }
-        : continuationBaseCall;
-      const continuationResult = await callLLMAdapterDetailed({ ...continuationCall, signal: args.signal });
+      const continuationCall = {
+        ...continuationBaseCall,
+        max_output_tokens: CONTINUATION_MAX_OUTPUT_TOKENS,
+        minimum_output_tokens: CONTINUATION_MIN_OUTPUT_TOKENS,
+        skip_wrappers: args.reasoningMode ? true : continuationBaseCall.skip_wrappers,
+      };
+      const continuationResult = await callLLMAdapterDetailed({
+        ...continuationCall,
+        signal: args.signal,
+        execution_mode: args.executionMode,
+      });
       if (continuationResult.finish_reason || continuationResult.truncated) {
         console.log(
           `[ChatHandler] continuation finish_reason=${continuationResult.finish_reason ?? "none"} truncated=${continuationResult.truncated ? "true" : "false"}`,

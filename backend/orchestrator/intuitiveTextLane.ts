@@ -1,11 +1,58 @@
 import { getNemotronRolloutSnapshot } from "../nemotronRolloutFlags";
+import {
+  getRequestBudgetContext,
+  releaseFutureTokenObligation,
+  reserveFutureTokenObligation,
+  type FutureTokenObligation,
+} from "../context/requestBudgetContext";
+import {
+  INTUITIVE_GENERATION_POLICIES,
+  estimateInputTokens,
+  resolveInputContextCeiling,
+  type RequestComplexity,
+} from "./contextBudgetManager";
 import type { ExecutionMode } from "./executionProfile";
 import type { RouteEvidenceItem } from "./contextComposer";
 import type { SentIQToolName } from "./toolContract";
 
+export const INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID = "intuitive-final-synthesis";
+
 export function isNemotronIntuitiveLaneEnabled(mode: ExecutionMode | undefined): boolean {
   const flags = getNemotronRolloutSnapshot();
   return mode === "intuitive" && flags.nvidiaProvider && flags.nemotronIntuitive;
+}
+
+export function protectIntuitiveFinalSynthesis(args: {
+  readonly userMessage: string;
+  readonly complexity?: RequestComplexity;
+  readonly knownContext?: readonly string[];
+  readonly messageCount?: number;
+}): FutureTokenObligation | null {
+  const complexity = args.complexity ?? "normal";
+  const requestContext = getRequestBudgetContext();
+  const knownInput = [
+    args.userMessage,
+    ...(args.knownContext ?? []),
+  ].filter(Boolean).join("\n\n");
+  // Covers final prompt framing and a compact bounded tool-evidence block while
+  // never reserving beyond the canonical composed-input ceiling.
+  const conservativeInputEstimate = Math.min(
+    resolveInputContextCeiling({
+      planCode: requestContext.planCode,
+      executionMode: "intuitive",
+      complexity,
+    }),
+    estimateInputTokens(knownInput, args.messageCount ?? 1).tokens + 256,
+  );
+  return reserveFutureTokenObligation({
+    id: INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID,
+    protectedInputTokens: conservativeInputEstimate,
+    protectedOutputTokens: INTUITIVE_GENERATION_POLICIES[complexity].protectedVisibleAnswerTokens,
+  });
+}
+
+export function releaseIntuitiveFinalSynthesisProtection(): boolean {
+  return releaseFutureTokenObligation(INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID);
 }
 
 export function buildIntuitiveToolSelectionPrompt(

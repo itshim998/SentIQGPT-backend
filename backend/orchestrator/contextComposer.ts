@@ -11,7 +11,7 @@ import {
   estimateInputTokens,
   estimateTextTokens,
   getGroqCapacitySnapshot,
-  resolveOutputBudget,
+  resolveInputContextCeiling,
   trimTextToTokenBudget,
   type ContextBudgetProfile,
   type RequestComplexity,
@@ -67,11 +67,13 @@ export interface ComposerInput {
   budgetProfile?: ContextBudgetProfile;
   complexity?: RequestComplexity;
   capacityAware?: boolean;
+  inputContextCeilingTokens?: number;
+  /** @deprecated Compatibility override. Means composed input only. */
   tokenBudget?: number;
 }
 
 export interface ContextCompositionTelemetry {
-  readonly tokenBudget: number;
+  readonly inputContextCeilingTokens: number;
   readonly rawEstimatedInputTokens: number;
   readonly finalEstimatedInputTokens: number;
   readonly selectedSections: readonly string[];
@@ -266,7 +268,7 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
   const requestContext = getRequestBudgetContext();
   const profile = input.budgetProfile ?? "standard";
   const complexity = input.complexity ?? (input.fileReferences?.length || input.routeEvidence?.length ? "heavy" : "normal");
-  const system = characterGuard(input.systemPrompt, MAX_SYSTEM_CHARS).trim();
+  let system = characterGuard(input.systemPrompt, MAX_SYSTEM_CHARS).trim();
   let stableContext = input.stableContext
     ? trimTextToTokenBudget(characterGuard(input.stableContext, MAX_DYNAMIC_ITEM_CHARS), MAX_SUMMARY_TOKENS)
     : "";
@@ -282,23 +284,33 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
   let userMessage = characterGuard(input.userMessage, MAX_DYNAMIC_ITEM_CHARS);
   let currentMessageTrimmed = userMessage !== input.userMessage;
 
-  const provisionalBudget = input.tokenBudget ?? resolveOutputBudget({
-    planCode: requestContext.planCode,
-    executionMode: requestContext.executionMode,
-    budgetClass: "interactive",
-    estimatedInputTokens: estimateInputTokens(
-      [system, stableContext, workspaceCapsule, conversationCapsule, rollingSummary, userMessage].filter(Boolean).join("\n\n"),
-      (input.conversation?.length ?? 0) + 1,
-    ).tokens,
-    complexity,
-    capacity: input.capacityAware ? getGroqCapacitySnapshot() : undefined,
-  }).totalTokenBudget;
-  const tokenBudget = Math.max(256, Math.floor(provisionalBudget));
+  const capacity = input.capacityAware ? getGroqCapacitySnapshot() : undefined;
+  const remainingRatio = capacity && capacity.limitTokens > 0
+    ? Math.max(0, Math.min(1, capacity.remainingTokens / capacity.limitTokens))
+    : undefined;
+  const capacityBand = remainingRatio === undefined
+    ? "unknown" as const
+    : remainingRatio < 0.1
+      ? "critical" as const
+      : remainingRatio < 0.25
+        ? "constrained" as const
+        : remainingRatio < 0.5
+          ? "guarded" as const
+          : "healthy" as const;
+  const provisionalInputContextCeiling = input.inputContextCeilingTokens
+    ?? input.tokenBudget
+    ?? resolveInputContextCeiling({
+      planCode: requestContext.planCode,
+      executionMode: requestContext.executionMode,
+      complexity,
+      capacityBand,
+    });
+  const inputContextCeilingTokens = Math.max(256, Math.floor(provisionalInputContextCeiling));
 
   const memories = buildMemoryBlocks(input.memories);
   const recallEvidence = buildRecallBlocks(input);
   const routeEvidence = buildRouteEvidenceBlocks(input);
-  const fileSelection = selectFileChunks(input.fileReferences, input.userMessage, tokenBudget);
+  const fileSelection = selectFileChunks(input.fileReferences, input.userMessage, inputContextCeilingTokens);
   const fileChunks = fileSelection.blocks;
   const recentTurns = (input.conversation ?? []).map((message, index) => ({
     id: index,
@@ -312,6 +324,7 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
 
   const droppedCounts: Record<string, number> = {
     optional_evidence: 0,
+    required_evidence: 0,
     file_chunks: Math.max(0, fileSelection.rawChunkCount - fileChunks.length),
     memories: 0,
     summaries: 0,
@@ -346,7 +359,7 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
   let estimatedTokens = rawEstimatedInputTokens;
 
   // 1. Remove low-ranked optional route/recall evidence.
-  while (estimatedTokens > tokenBudget) {
+  while (estimatedTokens > inputContextCeilingTokens) {
     const optionalRoute = routeEvidence.filter((item) => !item.required);
     const optionalRecall = recallEvidence.filter((item) => !item.required);
     const candidates = [
@@ -361,13 +374,13 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
   }
 
   // 2. Reduce low-relevance file chunks, retaining one useful chunk when possible.
-  while (estimatedTokens > tokenBudget && fileChunks.length > 1) {
+  while (estimatedTokens > inputContextCeilingTokens && fileChunks.length > 1) {
     removeLowestRanked(fileChunks);
     droppedCounts.file_chunks += 1;
     estimatedTokens = estimateCurrent();
   }
-  if (estimatedTokens > tokenBudget && fileChunks.length === 1) {
-    const overflow = estimatedTokens - tokenBudget;
+  if (estimatedTokens > inputContextCeilingTokens && fileChunks.length === 1) {
+    const overflow = estimatedTokens - inputContextCeilingTokens;
     const currentTokens = estimateTextTokens(fileChunks[0].block);
     const targetTokens = Math.max(64, currentTokens - overflow - 8);
     const trimmed = trimTextToTokenBudget(fileChunks[0].block, targetTokens, "head_tail");
@@ -379,7 +392,7 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
   }
 
   // 3. Remove low-relevance memories.
-  while (estimatedTokens > tokenBudget && removeLowestRanked(memories)) {
+  while (estimatedTokens > inputContextCeilingTokens && removeLowestRanked(memories)) {
     droppedCounts.memories += 1;
     estimatedTokens = estimateCurrent();
   }
@@ -391,7 +404,7 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
     if (tokens <= 64) return "";
     return trimTextToTokenBudget(value, Math.max(64, Math.floor(tokens / 2)), "head_tail");
   };
-  while (estimatedTokens > tokenBudget && (rollingSummary || workspaceCapsule || stableContext || conversationCapsule)) {
+  while (estimatedTokens > inputContextCeilingTokens && (rollingSummary || workspaceCapsule || stableContext || conversationCapsule)) {
     if (rollingSummary) rollingSummary = shrinkSummary(rollingSummary);
     else if (workspaceCapsule) {
       const previous = workspaceCapsule;
@@ -408,15 +421,15 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
   }
 
   // 5. Drop the oldest recent turns.
-  while (estimatedTokens > tokenBudget && recentTurns.length > 0) {
+  while (estimatedTokens > inputContextCeilingTokens && recentTurns.length > 0) {
     recentTurns.shift();
     droppedCounts.recent_turns += 1;
     estimatedTokens = estimateCurrent();
   }
 
   // 6. Head/tail trim the current message only as the final normal safeguard.
-  if (estimatedTokens > tokenBudget) {
-    const overflow = estimatedTokens - tokenBudget;
+  if (estimatedTokens > inputContextCeilingTokens) {
+    const overflow = estimatedTokens - inputContextCeilingTokens;
     const currentTokens = estimateTextTokens(userMessage);
     const targetTokens = Math.max(MIN_RETAINED_USER_TOKENS, currentTokens - overflow - 8);
     const trimmed = trimTextToTokenBudget(userMessage, targetTokens, "head_tail");
@@ -425,6 +438,46 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
       currentMessageTrimmed = true;
       estimatedTokens = estimateCurrent();
     }
+  }
+
+  // 7. Emergency hard-ceiling enforcement. Required evidence is reduced only
+  // after every optional context class and the current message's normal trim.
+  const requiredEvidence = () => [
+    ...routeEvidence.filter((item) => item.required).map((item) => ({ source: routeEvidence, item })),
+    ...recallEvidence.filter((item) => item.required).map((item) => ({ source: recallEvidence, item })),
+  ];
+  while (estimatedTokens > inputContextCeilingTokens) {
+    const candidates = requiredEvidence()
+      .sort((left, right) => estimateTextTokens(right.item.block) - estimateTextTokens(left.item.block));
+    const candidate = candidates[0];
+    if (!candidate) break;
+    const currentTokens = estimateTextTokens(candidate.item.block);
+    if (currentTokens <= 64) {
+      if (candidates.length <= 1) break;
+      candidate.source.splice(candidate.source.indexOf(candidate.item), 1);
+    } else {
+      candidate.item.block = trimTextToTokenBudget(
+        candidate.item.block,
+        Math.max(64, currentTokens - (estimatedTokens - inputContextCeilingTokens) - 8),
+        "head_tail",
+      );
+    }
+    droppedCounts.required_evidence += 1;
+    estimatedTokens = estimateCurrent();
+  }
+  if (estimatedTokens > inputContextCeilingTokens && system) {
+    const systemTokens = estimateTextTokens(system);
+    system = trimTextToTokenBudget(
+      system,
+      Math.max(32, systemTokens - (estimatedTokens - inputContextCeilingTokens) - 8),
+      "head_tail",
+    );
+    estimatedTokens = estimateCurrent();
+  }
+  if (estimatedTokens > inputContextCeilingTokens) {
+    const error = new Error("The composed model input cannot fit its context ceiling.");
+    (error as Error & { code?: string }).code = "context_budget_insufficient";
+    throw error;
   }
 
   let prompt = assemble();
@@ -458,9 +511,9 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
     recentTurns.length > 0 && "recent_chat",
     "current_user_message",
   ].filter((section): section is string => Boolean(section));
-  const protectedOverflowTokens = Math.max(0, estimatedTokens - tokenBudget);
+  const protectedOverflowTokens = Math.max(0, estimatedTokens - inputContextCeilingTokens);
   const telemetry: ContextCompositionTelemetry = {
-    tokenBudget,
+    inputContextCeilingTokens,
     rawEstimatedInputTokens,
     finalEstimatedInputTokens: estimatedTokens,
     selectedSections,
@@ -477,7 +530,7 @@ export function composeContextDetailed(input: ComposerInput): ContextComposition
     execution_mode: requestContext.executionMode,
     profile,
     complexity,
-    budget_tokens: tokenBudget,
+    input_context_ceiling_tokens: inputContextCeilingTokens,
     estimated_input_tokens: rawEstimatedInputTokens,
     final_estimated_tokens: estimatedTokens,
     selected_sections: selectedSections,
