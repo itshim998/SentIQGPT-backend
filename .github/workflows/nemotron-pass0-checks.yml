@@ -1,0 +1,63 @@
+name: Nemotron Pass 0 checks
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/tests/billing-token-usage.test.mjs"
+      - "supabase/migrations/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.backend.json"
+      - ".env.example"
+      - ".env.template"
+      - ".gitignore"
+      - ".github/workflows/nemotron-pass0-checks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nemotron-pass0-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-baseline:
+    name: Build, rollout flags, billing, routing, and context
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript build
+        run: npm run build
+
+      - name: Independent rollout flags
+        run: npm run test:nemotron-rollout-flags
+
+      - name: Existing token allowances
+        run: npm run billing:test-token-allowances
+
+      - name: Execution profiles
+        run: npm run test:execution-profiles
+
+      - name: Model capability routing
+        run: npm run test:model-capability-routing
+
+      - name: Model tool contract
+        run: npm run test:model-tool-contract
+
+      - name: Context budgets
+        run: npm run test:context-budget
