@@ -71,6 +71,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 from dotenv import load_dotenv
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
+from backend.nvidia_nemotron import NvidiaNemotronProvider
+
 
 def _parse_bool_env(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
@@ -214,6 +216,11 @@ GPT_OSS_DEFAULT_MAX_COMPLETION_TOKENS = 2000
 GPT_OSS_REASONING_EFFORTS = {"low", "medium"}
 EXECUTION_MODES = {"fast", "intuitive"}
 EXECUTION_MODE_OUTPUT_CAPS = {"fast": 2500, "intuitive": 3500}
+
+# --- NVIDIA NIM Nemotron (dormant unless the provider flag is enabled) ---
+NVIDIA_NEMOTRON_PROVIDER = NvidiaNemotronProvider.from_env()
+NVIDIA_NEMOTRON_MODEL = NVIDIA_NEMOTRON_PROVIDER.settings.model
+POLLINATIONS_INTUITIVE_MODEL = os.getenv("POLLINATIONS_INTUITIVE_MODEL", "").strip()
 
 # --- Pollinations provider ---
 POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY", "")
@@ -767,7 +774,29 @@ def _default_model_for_provider(provider: str) -> str:
         return GROQ_MODEL
     if provider == "pollinations":
         return GENERAL_CHAT_MODEL
+    if provider == "nvidia":
+        return NVIDIA_NEMOTRON_MODEL
     return GEMINI_STANDARD_MODEL
+
+
+def _nemotron_intuitive_lane_enabled(
+    execution_mode: Optional[str],
+    task: str,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
+    required_capabilities: Optional[list[str]] = None,
+) -> bool:
+    """Keep the lane fail-closed unless both independent flags are enabled."""
+
+    if not (
+        _parse_bool_env("SENTIQ_NVIDIA_PROVIDER_ENABLED", False)
+        and _parse_bool_env("SENTIQ_NEMOTRON_INTUITIVE_ENABLED", False)
+    ):
+        return False
+    if _normalize_execution_mode(execution_mode) != "intuitive" or task not in CHATLIKE_TASKS:
+        return False
+    if sentiq_tool_request:
+        return False
+    return "image_input" not in set(required_capabilities or [])
 
 
 def resolve_model_override(model_override: Optional[str], default_provider: str) -> tuple[str, Optional[str]]:
@@ -802,6 +831,8 @@ def resolve_model_override(model_override: Optional[str], default_provider: str)
             return "groq", concrete_model
         if provider == "pollinations":
             return "pollinations", concrete_model
+        if provider == "nvidia":
+            return "nvidia", concrete_model or NVIDIA_NEMOTRON_MODEL
         if provider == "gemini":
             if concrete_logical == GEMINI_LITE_ALIAS:
                 return "gemini", GEMINI_LITE_MODEL
@@ -1297,10 +1328,15 @@ def _apply_execution_mode_output_cap(
     task: str,
     max_output_tokens: Optional[int],
     execution_mode: str,
+    *,
+    nemotron_generation: bool = False,
 ) -> Optional[int]:
     if task not in CHATLIKE_TASKS:
         return max_output_tokens
-    mode_cap = EXECUTION_MODE_OUTPUT_CAPS[execution_mode]
+    if execution_mode == "intuitive" and nemotron_generation:
+        mode_cap = _parse_int_env("SENTIQ_INTUITIVE_COMPLEX_MAX_GENERATED_TOKENS", 8_000)
+    else:
+        mode_cap = EXECUTION_MODE_OUTPUT_CAPS[execution_mode]
     if isinstance(max_output_tokens, int) and max_output_tokens > 0:
         return min(max_output_tokens, mode_cap)
     return mode_cap
@@ -1786,6 +1822,7 @@ _groq_capacity_lock = threading.Lock()
 _groq_capacity_snapshot: Optional[dict[str, Any]] = None
 _groq_inflight_tokens = 0
 _groq_call_state = threading.local()
+_nvidia_call_state = threading.local()
 
 
 class GroqCapacityDeferredError(RuntimeError):
@@ -1893,6 +1930,13 @@ def get_groq_capacity_snapshot() -> Optional[dict[str, Any]]:
 
 def get_current_groq_call_telemetry() -> Optional[dict[str, Any]]:
     telemetry = getattr(_groq_call_state, "telemetry", None)
+    if not isinstance(telemetry, dict):
+        return None
+    return telemetry
+
+
+def get_current_nvidia_call_telemetry() -> Optional[dict[str, Any]]:
+    telemetry = getattr(_nvidia_call_state, "telemetry", None)
     if not isinstance(telemetry, dict):
         return None
     return telemetry
@@ -2763,15 +2807,30 @@ def call_llm_router(
         LLM response text.
     """
     _groq_call_state.telemetry = None
+    _nvidia_call_state.telemetry = None
     policy_execution_mode = budget_policy.get("execution_mode") if isinstance(budget_policy, dict) else None
     execution_mode = _normalize_execution_mode(execution_mode or policy_execution_mode)
-    max_output_tokens = _apply_execution_mode_output_cap(task, max_output_tokens, execution_mode)
     effective_reasoning_effort = (
         "medium" if execution_mode == "intuitive" else "low"
     ) if task in CHATLIKE_TASKS else reasoning_effort
     # Determine provider
     default_provider = prefer or get_provider_for_task(task)
     provider, resolved_override = resolve_model_override(model_override, default_provider)
+    intuitive_lane_active = _nemotron_intuitive_lane_enabled(
+        execution_mode,
+        task,
+        sentiq_tool_request,
+        required_capabilities,
+    )
+    if intuitive_lane_active:
+        provider = "nvidia"
+        resolved_override = NVIDIA_NEMOTRON_MODEL
+    max_output_tokens = _apply_execution_mode_output_cap(
+        task,
+        max_output_tokens,
+        execution_mode,
+        nemotron_generation=intuitive_lane_active,
+    )
     model = resolved_override or _default_model_for_provider(provider)
     resolved_tool_transport_mode = _validate_tool_transport_contract(
         sentiq_tool_request,
@@ -2807,7 +2866,7 @@ def call_llm_router(
             print(f"[FALLBACK] triggered: reason={fallback_reason} -> model={actual_model_used}")
         else:
             print(f"[MODEL_USED] {actual_model_used}")
-        telemetry = get_current_groq_call_telemetry()
+        telemetry = get_current_nvidia_call_telemetry() or get_current_groq_call_telemetry()
         capacity = get_groq_capacity_snapshot()
         if telemetry is None and capacity is not None:
             telemetry = {"capacity": capacity, "usage": None}
@@ -2815,7 +2874,7 @@ def call_llm_router(
         text = assistant_turn.get("text", "") if assistant_turn.get("kind") == "assistant_text" else ""
         payload = {
             "text": text,
-            "model_used": actual_model_used,
+            "model_used": None if intuitive_lane_active or provider == "nvidia" else actual_model_used,
             "fallback": fallback_triggered,
             "fallback_reason": fallback_reason,
             "finish_reason": finish_reason,
@@ -2952,7 +3011,24 @@ def call_llm_router(
 
     # Invoke the correct provider
     try:
-        if provider == "pollinations":
+        if provider == "nvidia":
+            reasoning_budget = 0
+            if isinstance(budget_policy, dict):
+                reasoning_budget = max(0, int(budget_policy.get("reasoning_budget_tokens") or 0))
+            result, nvidia_usage, _slot_id = NVIDIA_NEMOTRON_PROVIDER.complete(
+                effective_prompt,
+                max_tokens=max_output_tokens or 6_000,
+                reasoning_budget=reasoning_budget,
+            )
+            _nvidia_call_state.telemetry = {
+                "capacity": None,
+                "usage": {
+                    "input_tokens": nvidia_usage.input_tokens,
+                    "output_tokens": nvidia_usage.output_tokens,
+                    "total_tokens": nvidia_usage.total_tokens,
+                },
+            }
+        elif provider == "pollinations":
             result, finish_reason, truncated = _call_pollinations(
                 effective_prompt,
                 resolved_override or model,
@@ -3003,6 +3079,24 @@ def call_llm_router(
 
     except Exception as e:
         logger.error("Provider=%s failed for task=%s: %s", provider, task, e)
+
+        if provider == "nvidia":
+            if POLLINATIONS_INTUITIVE_MODEL:
+                try:
+                    return _fallback_to_pollinations(
+                        POLLINATIONS_INTUITIVE_MODEL,
+                        "intuitive_primary_unavailable",
+                    )
+                except Exception as pollinations_error:
+                    logger.error(
+                        "Intuitive last-resort provider failed: %s",
+                        _redact_secrets(pollinations_error),
+                    )
+            return _build_response_payload(
+                "",
+                error="provider_failed",
+                error_detail="The Intuitive response provider is temporarily unavailable.",
+            )
 
         # File generation has a strict provider policy:
         # minimax primary, openai-large fallback, and no qwen/Gemini/Groq escape hatch.
@@ -3216,13 +3310,28 @@ def stream_llm_router(
     Prefers Pollinations; falls back to alternate Pollinations model, then Gemini.
     """
     _groq_call_state.telemetry = None
+    _nvidia_call_state.telemetry = None
     policy_execution_mode = budget_policy.get("execution_mode") if isinstance(budget_policy, dict) else None
     execution_mode = _normalize_execution_mode(execution_mode or policy_execution_mode)
-    max_output_tokens = _apply_execution_mode_output_cap(task, max_output_tokens, execution_mode)
     effective_reasoning_effort = (
         "medium" if execution_mode == "intuitive" else "low"
     ) if task in CHATLIKE_TASKS else reasoning_effort
     provider, resolved_override = resolve_model_override(model_override, "pollinations")
+    intuitive_lane_active = _nemotron_intuitive_lane_enabled(
+        execution_mode,
+        task,
+        sentiq_tool_request,
+        required_capabilities,
+    )
+    if intuitive_lane_active:
+        provider = "nvidia"
+        resolved_override = NVIDIA_NEMOTRON_MODEL
+    max_output_tokens = _apply_execution_mode_output_cap(
+        task,
+        max_output_tokens,
+        execution_mode,
+        nemotron_generation=intuitive_lane_active,
+    )
     model = resolved_override or _default_model_for_provider(provider)
     resolved_tool_transport_mode = _validate_tool_transport_contract(
         sentiq_tool_request,
@@ -3260,6 +3369,54 @@ def stream_llm_router(
     )
     logger.info("[Provider] %s", provider)
     logger.info("[LLM Request] stream  model=%s  provider=%s  override=%s", model, provider, model_override)
+
+    # --- Intuitive NVIDIA Nemotron streaming path ---
+    if provider == "nvidia":
+        emitted_visible_text = False
+        reasoning_budget = 0
+        if isinstance(budget_policy, dict):
+            reasoning_budget = max(0, int(budget_policy.get("reasoning_budget_tokens") or 0))
+        try:
+            for event in NVIDIA_NEMOTRON_PROVIDER.stream(
+                prompt,
+                max_tokens=max_output_tokens or 6_000,
+                reasoning_budget=reasoning_budget,
+            ):
+                if isinstance(event, str):
+                    if event.strip():
+                        emitted_visible_text = True
+                    yield event
+                    continue
+                if isinstance(event, dict) and event.get("kind") == "provider_usage":
+                    usage = event.get("usage") if isinstance(event.get("usage"), dict) else {}
+                    _nvidia_call_state.telemetry = {
+                        "capacity": None,
+                        "usage": {
+                            "input_tokens": usage.get("input_tokens"),
+                            "output_tokens": usage.get("output_tokens"),
+                            "total_tokens": usage.get("total_tokens"),
+                        },
+                    }
+                    yield event
+            return
+        except GeneratorExit:
+            raise
+        except Exception as nvidia_stream_error:
+            if emitted_visible_text:
+                raise
+            logger.warning(
+                "Intuitive primary stream failed before visible output: %s",
+                _redact_secrets(nvidia_stream_error),
+            )
+            if not POLLINATIONS_INTUITIVE_MODEL:
+                raise RuntimeError("The Intuitive response provider is temporarily unavailable.") from nvidia_stream_error
+            yield from _call_pollinations_stream(
+                prompt,
+                POLLINATIONS_INTUITIVE_MODEL,
+                image_attachments=None,
+                max_output_tokens=max_output_tokens,
+            )
+            return
 
     # --- Groq GPT-OSS streaming path ---
     if provider == "groq" and _is_gpt_oss_model(model):
