@@ -42,6 +42,7 @@
     "test:image-routing-safety": "ts-node --project tsconfig.backend.json backend/testImageRoutingSafety.ts",
     "test:context-budget": "ts-node --project tsconfig.backend.json backend/testContextBudgetManager.ts && ts-node --project tsconfig.backend.json backend/testContextComposition.ts",
     "test:request-budget-lifecycle": "ts-node --project tsconfig.backend.json backend/testRequestBudgetLifecycle.ts",
+    "test:protected-context-safety": "ts-node --project tsconfig.backend.json backend/testProtectedContextSafety.ts",
     "test:context-capsules": "ts-node --project tsconfig.backend.json backend/testContextCapsules.ts",
     "test:source-retrieval": "ts-node --project tsconfig.backend.json backend/testSourceRetrieval.ts",
     "test:groq-capacity": "python backend/testGroqCapacity.py",

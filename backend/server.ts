@@ -5390,6 +5390,34 @@ app.post(
       { model: modelOverride, fastPath: fastPathEligible },
     );
 
+    let call: LLMAdapterCall;
+    try {
+      call = buildChatPrompt({
+        userMessage: effectiveUserMessage,
+        recentMessages: ctx.recentMessages,
+        memories: ctx.memories,
+        fileReferences: ctx.fileReferences,
+        imageAttachments: ctx.imageAttachments,
+        conversationSummary: ctx.conversationSummary,
+        conversationCapsule: ctx.conversationCapsule,
+        workspaceCapsule: ctx.workspaceCapsule,
+        priorConversationEvidence: ctx.priorConversationEvidence,
+        routeEvidence: webSurfV2?.routeEvidence,
+        isExplicitRecallQuery: ctx.isExplicitRecallQuery,
+        trustedProfile: ctx.trustedProfile,
+        modelOverride,
+        userId,
+        streaming: true,
+        reasoningEffort: executionProfile.model.reasoningEffort,
+        webSurfSourceIds: webSurfV2?.synthesisSourceIds,
+        webSurfAnswerPlan: webSurfV2?.answerIntelligence?.plan,
+        webSurfAnswerSources: webSurfV2?.answerIntelligence?.sources,
+      });
+    } catch (error) {
+      await releaseBillingReservation(directReservation);
+      throw error;
+    }
+
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
@@ -5405,27 +5433,6 @@ app.post(
     let automaticToolAccepted = false;
     let automaticToolReservationCompleted = false;
     const modelTurnProgress = new ModelTurnProgressTracker();
-    const call = buildChatPrompt({
-      userMessage: effectiveUserMessage,
-      recentMessages: ctx.recentMessages,
-      memories: ctx.memories,
-      fileReferences: ctx.fileReferences,
-      imageAttachments: ctx.imageAttachments,
-      conversationSummary: ctx.conversationSummary,
-      conversationCapsule: ctx.conversationCapsule,
-      workspaceCapsule: ctx.workspaceCapsule,
-      priorConversationEvidence: ctx.priorConversationEvidence,
-      routeEvidence: webSurfV2?.routeEvidence,
-      isExplicitRecallQuery: ctx.isExplicitRecallQuery,
-      trustedProfile: ctx.trustedProfile,
-      modelOverride,
-      userId,
-      streaming: true,
-      reasoningEffort: executionProfile.model.reasoningEffort,
-      webSurfSourceIds: webSurfV2?.synthesisSourceIds,
-      webSurfAnswerPlan: webSurfV2?.answerIntelligence?.plan,
-      webSurfAnswerSources: webSurfV2?.answerIntelligence?.sources,
-    });
 
     let intuitiveFutureProtected = false;
     try {

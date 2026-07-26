@@ -14,6 +14,7 @@ import type { SentIQToolName, ToolAvailabilityContext, ValidatedToolCall } from 
 import { deriveRequiredModelCapabilities, type RequiredModelCapability } from "./modelToolCapability";
 import { buildIntuitiveToolSelectionPrompt } from "../orchestrator/intuitiveTextLane";
 import { GenerationBudgetError } from "../orchestrator/contextBudgetManager";
+import { releaseFutureTokenObligation } from "../context/requestBudgetContext";
 
 const REASONING_MAX_OUTPUT_TOKENS = 2600;
 const CONTINUATION_MAX_OUTPUT_TOKENS = 1800;
@@ -165,7 +166,17 @@ export async function handleChat(args: {
     webSurfAnswerSources: args.webSurfAnswerSources,
   };
 
-  const baseCall = buildChatPrompt(ctx);
+  let baseCall: ReturnType<typeof buildChatPrompt>;
+  try {
+    // Context composition must finish before the final model-call reservation
+    // consumes a protected future obligation.
+    baseCall = buildChatPrompt(ctx);
+  } catch (error) {
+    if (args.consumeFutureObligationId) {
+      releaseFutureTokenObligation(args.consumeFutureObligationId);
+    }
+    throw error;
+  }
   const call = args.reasoningMode
     ? { ...baseCall, max_output_tokens: REASONING_MAX_OUTPUT_TOKENS, skip_wrappers: true }
     : baseCall;

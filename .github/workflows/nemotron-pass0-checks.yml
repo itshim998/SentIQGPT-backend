@@ -1,4 +1,4 @@
-name: Nemotron Pass 0 checks
+name: Nemotron Intuitive rollout checks
 
 on:
   pull_request:
@@ -23,8 +23,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  backend-baseline:
-    name: Build, rollout flags, billing, routing, and context
+  rollout-safety:
+    name: Build, rollout flags, provider routing, budget safety, and request lifecycle
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -74,3 +74,6 @@ jobs:
 
       - name: Request budget lifecycle
         run: npm run test:request-budget-lifecycle
+
+      - name: Protected context safety
+        run: npm run test:protected-context-safety

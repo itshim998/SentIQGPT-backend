@@ -512,6 +512,17 @@ function recordPreparedUsage(
   });
 }
 
+async function waitForGatewayBeforeReservation(call: LLMAdapterCall): Promise<void> {
+  try {
+    await waitForInternalGatewayReady();
+  } catch (error) {
+    if (call.consume_future_obligation_id) {
+      releaseFutureTokenObligation(call.consume_future_obligation_id);
+    }
+    throw error;
+  }
+}
+
 function hasReliableUsage(
   inputTokens: number | null | undefined,
   outputTokens: number | null | undefined,
@@ -523,7 +534,7 @@ function hasReliableUsage(
 }
 
 export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMAdapterResult> {
-  await waitForInternalGatewayReady();
+  await waitForGatewayBeforeReservation(call);
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
   const sentiqToolRequest = buildSentIQToolTransportRequest(call);
@@ -736,7 +747,7 @@ export async function callLLMAdapter(call: LLMAdapterCall): Promise<string> {
 async function callLLMAdapterTextStreamLegacy(
   call: LLMAdapterCall,
 ): Promise<ReadableStream<string>> {
-  await waitForInternalGatewayReady();
+  await waitForGatewayBeforeReservation(call);
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
   const url = getInternalGatewayUrl("/llm/stream");
@@ -1059,7 +1070,7 @@ export async function callLLMAdapterTurnStream(
     );
   }
 
-  await waitForInternalGatewayReady();
+  await waitForGatewayBeforeReservation(call);
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
   call = { ...call, tool_transport_mode: "streaming" };

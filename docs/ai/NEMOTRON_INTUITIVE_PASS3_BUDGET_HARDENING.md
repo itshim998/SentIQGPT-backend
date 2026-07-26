@@ -28,6 +28,14 @@ After Pass 3:
   selection, repair, continuation, routing, memory, title, and other
   model-backed calls in the same request context.
 
+> **Pass 3.1 correction:** The original Pass 3 emergency fit path could trim
+> the system prompt, and its final whole-prompt character guard was not
+> section-aware. Pass 3.1 removes both behaviors. The complete system prompt
+> and stable context-handling rules are now immutable. If those blocks, the
+> minimum current message, and minimum required evidence cannot fit, composition
+> fails with `context_budget_insufficient` before provider invocation. See
+> `NEMOTRON_INTUITIVE_PASS3_1_PROTECTED_CONTEXT_SAFETY.md`.
+
 ## Canonical policy owner
 
 `backend/orchestrator/contextBudgetManager.ts` owns product policy and
@@ -55,9 +63,12 @@ substituted for the generation ceiling.
 | premium | Fast or Intuitive | 9,500 | 12,000 |
 | pro | Fast or Intuitive | 16,000 | 22,000 |
 
-Paid-plan differentiation is unchanged. The composer retains system/policy and
-the current message, then required tool/source evidence ahead of files,
-memories, summaries/capsules, and older optional history. The legacy
+Paid-plan differentiation is unchanged. The composer retains immutable
+system/policy and stable handling rules, then the current-message minimum and
+required tool/source evidence ahead of files, optional evidence, memories,
+summaries/capsules, and older optional history. Impossible protected floors
+fail before provider invocation; system and stable rules are never trimmed.
+The legacy
 `tokenBudget` composer override remains compatibility-safe but is explicitly
 documented as composed input only; new code uses
 `inputContextCeilingTokens`.
