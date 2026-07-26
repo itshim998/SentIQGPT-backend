@@ -47,6 +47,9 @@ jobs:
       - name: Independent rollout flags
         run: npm run test:nemotron-rollout-flags
 
+      - name: NVIDIA and Pollinations Intuitive provider tests
+        run: npm run test:nemotron-provider
+
       - name: Existing token allowances
         run: npm run billing:test-token-allowances
 
