@@ -122,7 +122,7 @@ These non-secret settings are documented in `.env.example` and
 ```env
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 NVIDIA_NEMOTRON_MODEL=nvidia/nemotron-3-ultra-550b-a55b
-POLLINATIONS_INTUITIVE_MODEL=
+POLLINATIONS_INTUITIVE_MODEL=vendouple/nemotron-3-ultra:free
 SENTIQ_INTUITIVE_ORDINARY_MAX_GENERATED_TOKENS=6000
 SENTIQ_INTUITIVE_ORDINARY_REASONING_BUDGET=2000
 SENTIQ_INTUITIVE_ORDINARY_MIN_FINAL_ANSWER_TOKENS=1500
@@ -139,15 +139,21 @@ SENTIQ_NVIDIA_AUTH_FAILURE_COOLDOWN_MS=3600000
 
 ## Pollinations last resort
 
-On 2026-07-26, the current public Pollinations text-model listing was checked
-and did not expose a verified Nemotron 3 Ultra model identifier. No display
-label was converted into a guessed slug. `POLLINATIONS_INTUITIVE_MODEL`
-therefore remains blank and the last-resort route is explicitly
-unconfigured. If a verified model identifier becomes available, it can be
-set without changing provider code.
+The configured Pollinations community-model identifier for the Intuitive
+last-resort route is:
 
-The lane does not fall back to Fast when the Intuitive providers are
-unavailable.
+```text
+vendouple/nemotron-3-ultra:free
+```
+
+It is present in `.env.example` and `.env.template`, and the existing adapter
+reads it through `POLLINATIONS_INTUITIVE_MODEL`. Local and deployed runtime
+environments must also set that non-secret variable; tracked templates do not
+modify an existing untracked `.env` or cloud environment automatically.
+
+The lane uses Pollinations only after the NVIDIA pool fails before visible
+answer output begins. It does not fall back to Fast when the Intuitive
+providers are unavailable.
 
 ## Verification
 
@@ -173,12 +179,16 @@ key material:
 
 | Slot | Independent minimal request |
 | --- | --- |
-| `nvidia-slot-1` | Failed with HTTP 403; correctly disabled as an authentication failure |
+| `nvidia-slot-1` | Failed with HTTP 403 in the original Pass 1 run; correctly disabled as an authentication failure |
 | `nvidia-slot-2` | Passed |
 | `nvidia-slot-3` | Passed |
 | `nvidia-slot-4` | Initial transient failure; recovered and passed in the pooled run |
 | `nvidia-slot-5` | Passed |
 | `nvidia-slot-6` | Passed |
+
+The `NVIDIA_API_KEY_1` credential was replaced after the original run. Its
+current status must be established by a new redacted `nvidia-slot-1` live
+request; the historical 403 result above is retained until that rerun passes.
 
 The pooled run covered every enabled working slot. One intermittent empty
 stream was skipped safely before visible output and the pool continued on a
@@ -202,5 +212,6 @@ the final reserved amount returned to 0 after cancellation cleanup, and Lite
 usage remained 0. Billing mode was disabled, and no authenticated JWT was
 available, so this is not an authenticated persistence or allowance test.
 
-Pollinations fallback was not exercised live because its exact Nemotron model
-identifier remains unverified and deliberately unconfigured.
+The Pollinations fallback was not exercised during the original Pass 1 live
+run because the model identifier had not yet been supplied. It is now
+configured for a later low-cost fallback smoke test.
