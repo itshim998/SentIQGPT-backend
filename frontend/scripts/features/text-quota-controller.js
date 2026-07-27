@@ -56,7 +56,7 @@ const NOTICE_DURATION_MS = 7_000;
     statusDetail = document.createElement("span");
     statusDetail.className = "text-quota-status-detail";
     statusNode.append(statusTitle, statusDetail);
-    composer.insertAdjacentElement("afterend", statusNode);
+    wrapper.appendChild(statusNode);
     return statusNode;
   }
 
