@@ -21,14 +21,21 @@ class SummaryRepositoryFixture {
       quota_policy_version: "standard-lite-tokens-v1",
       quotas: {
         premium_text: {
-          used: 1_000,
+          used: 25_000,
           reserved: 0,
           limit: 25_000,
-          remaining: 24_000,
-          tokens_consumed: 1_000,
-          tokens_remaining: 24_000,
+          remaining: 0,
+          tokens_consumed: 25_000,
+          tokens_remaining: 0,
         },
-        lite_text: { remaining: 50_000 },
+        lite_text: {
+          used: 12_000,
+          reserved: 0,
+          limit: 50_000,
+          remaining: 38_000,
+          tokens_consumed: 12_000,
+          tokens_remaining: 38_000,
+        },
       },
     };
   }
@@ -54,7 +61,8 @@ class SummaryRepositoryFixture {
       next_recovery_at: "2026-07-27T12:10:00.000Z",
       full_reset_at: "2026-07-27T16:00:00.000Z",
       stale_reclaimed_tokens: 0,
-      rollback_shadow_v1_standard_tokens: 1_000,
+      rollback_shadow_v1_standard_tokens: 25_000,
+      rollback_shadow_v1_lite_tokens: 12_000,
     };
   }
 }
@@ -78,7 +86,14 @@ async function main(): Promise<void> {
       tokens_consumed: 0,
       tokens_remaining: 25_000,
     },
-    lite_text: { remaining: 50_000 },
+    lite_text: {
+      used: 0,
+      reserved: 0,
+      limit: 50_000,
+      remaining: 50_000,
+      tokens_consumed: 0,
+      tokens_remaining: 50_000,
+    },
   });
   assert.deepEqual(freeSummary.text_allowance, {
     policy_version: "unified-text-tokens-v2",
