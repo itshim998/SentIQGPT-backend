@@ -166,24 +166,35 @@ function readTimestamp(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-function hideRollbackShadowFromV1Summary(summary: any, shadowTokens: number): any {
-  if (shadowTokens <= 0 || !summary?.quotas?.premium_text) return summary;
-  const premiumText = summary.quotas.premium_text;
-  const used = Math.max(0, normalizeNumber(premiumText.used) - shadowTokens);
-  const reserved = Math.max(0, normalizeNumber(premiumText.reserved));
-  const limit = Math.max(0, normalizeNumber(premiumText.limit));
+function hideRollbackShadowFromQuota(quota: any, shadowTokens: number): any {
+  if (shadowTokens <= 0 || !quota) return quota;
+  const used = Math.max(0, normalizeNumber(quota.used) - shadowTokens);
+  const reserved = Math.max(0, normalizeNumber(quota.reserved));
+  const limit = Math.max(0, normalizeNumber(quota.limit));
   const remaining = Math.max(0, limit - used - reserved);
+  return {
+    ...quota,
+    used,
+    remaining,
+    tokens_consumed: used,
+    tokens_remaining: remaining,
+  };
+}
+
+function hideRollbackShadowsFromV1Summary(
+  summary: any,
+  shadows: { readonly standardTokens: number; readonly liteTokens: number },
+): any {
+  if (!summary?.quotas) return summary;
+  const premiumText = hideRollbackShadowFromQuota(summary.quotas.premium_text, shadows.standardTokens);
+  const liteText = hideRollbackShadowFromQuota(summary.quotas.lite_text, shadows.liteTokens);
+  if (premiumText === summary.quotas.premium_text && liteText === summary.quotas.lite_text) return summary;
   return {
     ...summary,
     quotas: {
       ...summary.quotas,
-      premium_text: {
-        ...premiumText,
-        used,
-        remaining,
-        tokens_consumed: used,
-        tokens_remaining: remaining,
-      },
+      premium_text: premiumText,
+      lite_text: liteText,
     },
   };
 }
@@ -306,10 +317,10 @@ export class BillingQuotaService {
           reclaimed_tokens: normalizeNumber(textAllowance.stale_reclaimed_tokens),
         });
       }
-      const shadowSafeSummary = hideRollbackShadowFromV1Summary(
-        summary,
-        normalizeNumber(textAllowance?.rollback_shadow_v1_standard_tokens),
-      );
+      const shadowSafeSummary = hideRollbackShadowsFromV1Summary(summary, {
+        standardTokens: normalizeNumber(textAllowance?.rollback_shadow_v1_standard_tokens),
+        liteTokens: normalizeNumber(textAllowance?.rollback_shadow_v1_lite_tokens),
+      });
       return {
         ...shadowSafeSummary,
         text_allowance: publicTextAllowance,
@@ -748,6 +759,8 @@ export class BillingQuotaService {
       closeTokenAllowanceAccounting({ requestId: reservation.requestId });
       const overrunTokens = normalizeNumber(result?.usage_overrun_tokens);
       const reserveBreachTokens = normalizeNumber(result?.fast_reserve_breach_tokens);
+      const lateSettlement = normalizeBoolean(result?.late_settlement);
+      const lateCapacityOverrunTokens = normalizeNumber(result?.late_capacity_overrun_tokens);
       logQuotaLifecycle("unified_text_reservation_committed", {
         plan_policy: UNIFIED_TEXT_POLICY_VERSION,
         plan_code: "free",
@@ -760,10 +773,22 @@ export class BillingQuotaService {
         ),
         usage_overrun_tokens: overrunTokens,
         fast_reserve_breach_tokens: reserveBreachTokens,
+        late_settlement: lateSettlement,
+        late_capacity_overrun_tokens: lateCapacityOverrunTokens,
         reported_calls: accounting.reportedCalls,
         estimated_calls: accounting.estimatedCalls,
         idempotent: normalizeBoolean(result?.idempotent),
       });
+      if (lateSettlement) {
+        logQuotaLifecycle("late_settlement_committed", {
+          plan_policy: UNIFIED_TEXT_POLICY_VERSION,
+          plan_code: "free",
+          execution_mode: reservation.executionMode,
+          actual_settled_tokens: normalizeNumber(result?.actual_tokens, actualTokens),
+          late_capacity_overrun_tokens: lateCapacityOverrunTokens,
+          fast_reserve_breach_tokens: reserveBreachTokens,
+        });
+      }
       if (overrunTokens > 0) {
         logQuotaLifecycle("usage_overrun", {
           plan_policy: UNIFIED_TEXT_POLICY_VERSION,
@@ -797,12 +822,12 @@ export class BillingQuotaService {
         safe_model_label: reservation.safeModelLabel,
         ...(actualTokens !== undefined ? {
           actual_token_units: actualTokens,
-           input_tokens: accounting?.inputTokens ?? 0,
-           output_tokens: accounting?.outputTokens ?? 0,
-           observed_input_tokens: accounting?.observedInputTokens ?? 0,
-           observed_output_tokens: accounting?.observedOutputTokens ?? 0,
-           usage_overrun_tokens: accounting?.usageOverrunTokens ?? 0,
-           successful_model_calls: accounting?.successfulCalls ?? 0,
+          input_tokens: accounting?.inputTokens ?? 0,
+          output_tokens: accounting?.outputTokens ?? 0,
+          observed_input_tokens: accounting?.observedInputTokens ?? 0,
+          observed_output_tokens: accounting?.observedOutputTokens ?? 0,
+          usage_overrun_tokens: accounting?.usageOverrunTokens ?? 0,
+          successful_model_calls: accounting?.successfulCalls ?? 0,
           usage_reported_calls: accounting?.reportedCalls ?? 0,
           usage_estimated_calls: accounting?.estimatedCalls ?? 0,
           quota_policy_version: TEXT_TOKEN_POLICY_VERSION,
