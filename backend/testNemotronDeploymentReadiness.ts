@@ -37,6 +37,7 @@ assert.equal(dormant.activeFlagCount, 0);
 
 const validCanary = evaluateNemotronDeploymentReadiness(enabledEnvironment(), {
   requireEnabled: true,
+  requireCompleteBundle: true,
   expectedStage: "canary",
 });
 assert.equal(validCanary.ready, true);
@@ -48,13 +49,40 @@ assert.equal(serializedCanary.includes("secret-provider-key"), false);
 assert.equal(serializedCanary.includes("secret-service-role"), false);
 assert.equal(serializedCanary.includes("secret-anonymous-hash-salt"), false);
 
-const partial = evaluateNemotronDeploymentReadiness({
-  SENTIQ_NEMOTRON_ROLLOUT_STAGE: "canary",
-  SENTIQ_NEMOTRON_CANARY_DEPLOYMENT_ID: "canary-revision-002",
-  [NEMOTRON_ROLLOUT_ENV.nvidiaProvider]: "true",
-});
-assert.equal(partial.ready, false);
-assert.ok(partial.issues.some((issue) => issue.code === "partial_flag_bundle"));
+// Provider-only canarying is a safe dependency-first stage and must remain
+// restartable. The warning prevents mistaking it for the complete rollout.
+const providerOnly = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  [NEMOTRON_ROLLOUT_ENV.nemotronIntuitive]: "false",
+  [NEMOTRON_ROLLOUT_ENV.unifiedTextTokensV2]: "false",
+  [NEMOTRON_ROLLOUT_ENV.intuitiveQuotaUi]: "false",
+  SENTIQ_ANON_USAGE_HASH_SECRET: undefined,
+  SUPABASE_URL_1: undefined,
+  SUPABASE_SERVICE_ROLE_KEY_1: undefined,
+}));
+assert.equal(providerOnly.ready, true);
+assert.ok(providerOnly.warnings.some((warning) => warning.code === "partial_flag_bundle"));
+assert.equal(providerOnly.issues.length, 0);
+
+const completeRequired = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  [NEMOTRON_ROLLOUT_ENV.nemotronIntuitive]: "false",
+  [NEMOTRON_ROLLOUT_ENV.unifiedTextTokensV2]: "false",
+  [NEMOTRON_ROLLOUT_ENV.intuitiveQuotaUi]: "false",
+}), { requireCompleteBundle: true });
+assert.equal(completeRequired.ready, false);
+assert.ok(completeRequired.issues.some((issue) => issue.code === "complete_flag_bundle_required"));
+
+const intuitiveWithoutProvider = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  [NEMOTRON_ROLLOUT_ENV.nvidiaProvider]: "false",
+}));
+assert.equal(intuitiveWithoutProvider.ready, false);
+assert.ok(intuitiveWithoutProvider.issues.some((issue) => issue.code === "intuitive_requires_provider"));
+
+const uiWithoutUnified = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  [NEMOTRON_ROLLOUT_ENV.unifiedTextTokensV2]: "false",
+  [NEMOTRON_ROLLOUT_ENV.nemotronIntuitive]: "false",
+}));
+assert.equal(uiWithoutUnified.ready, false);
+assert.ok(uiWithoutUnified.issues.some((issue) => issue.code === "quota_ui_requires_unified_tokens"));
 
 const stageOff = evaluateNemotronDeploymentReadiness(enabledEnvironment({
   SENTIQ_NEMOTRON_ROLLOUT_STAGE: "off",
@@ -105,8 +133,20 @@ const validFull = evaluateNemotronDeploymentReadiness(enabledEnvironment({
   SENTIQ_NEMOTRON_FULL_ROLLOUT_ACK: NEMOTRON_FULL_ROLLOUT_ACK,
 }), {
   requireEnabled: true,
+  requireCompleteBundle: true,
   expectedStage: "full",
 });
 assert.equal(validFull.ready, true);
+
+// An emergency kill switch may reduce a full rollout to a safe partial subset.
+// Startup remains available, while the report makes the degraded bundle visible.
+const fullKillSwitch = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  SENTIQ_NEMOTRON_ROLLOUT_STAGE: "full",
+  SENTIQ_NEMOTRON_CANARY_DEPLOYMENT_ID: undefined,
+  SENTIQ_NEMOTRON_FULL_ROLLOUT_ACK: NEMOTRON_FULL_ROLLOUT_ACK,
+  [NEMOTRON_ROLLOUT_ENV.nemotronIntuitive]: "false",
+}));
+assert.equal(fullKillSwitch.ready, true);
+assert.ok(fullKillSwitch.warnings.some((warning) => warning.code === "partial_flag_bundle"));
 
 console.log("Nemotron deployment readiness checks passed.");
