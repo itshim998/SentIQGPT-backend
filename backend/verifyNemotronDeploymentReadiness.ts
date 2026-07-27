@@ -15,6 +15,7 @@ function main(): void {
   const argv = process.argv.slice(2);
   const report = evaluateNemotronDeploymentReadiness(process.env, {
     requireEnabled: argv.includes("--require-enabled"),
+    requireCompleteBundle: argv.includes("--require-complete-bundle"),
     expectedStage: readExpectedStage(argv),
   });
 
