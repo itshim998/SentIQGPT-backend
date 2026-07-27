@@ -79,11 +79,11 @@ function reserve(args: {
   minimum: number;
   ttlSeconds?: number;
 }): any {
+  const metadata = JSON.stringify({ ttl_seconds: args.ttlSeconds ?? 600 }).replace(/'/g, "''");
   return parseJson(runSql(
     `select public.reserve_unified_text_tokens_v2(` +
     `${sqlText(args.userId)}::uuid,null,${sqlText(args.requestId)},${sqlText(args.mode)},` +
-    `${args.requested},${args.minimum},` +
-    `${JSON.stringify({ ttl_seconds: args.ttlSeconds ?? 600 })}::jsonb)::text`,
+    `${args.requested},${args.minimum},'${metadata}'::jsonb)::text`,
   ));
 }
 
@@ -154,7 +154,6 @@ function main(): void {
   applyMigration(migrations.at(-1)!);
   assert.equal(runSql("select public.get_unified_text_tokens_v2_schema_version()"), "20260727180000");
 
-  // Full V2 consumption must not reopen Lite after a V1 rollback.
   const fullUser = "00000000-0000-0000-0000-000000005101";
   const fullReservation = reserve({
     userId: fullUser,
@@ -199,7 +198,6 @@ function main(): void {
     50_000,
   );
 
-  // Partial usage leaves only the correct conservative Lite capacity.
   const partialUser = "00000000-0000-0000-0000-000000005102";
   const partialReservation = reserve({
     userId: partialUser,
@@ -227,8 +225,6 @@ function main(): void {
   assert.equal(summary(partialUser).used_tokens, 10_000);
   assert.equal(summary(partialUser).remaining_tokens, 40_000);
 
-  // Repeated settlement and multiple commits keep one Standard gate and one
-  // Lite shadow per canonical V2 event.
   const repeated = commit(partialReservation, 10_000);
   assert.equal(repeated.idempotent, true);
   const secondPartial = reserve({
@@ -256,8 +252,6 @@ function main(): void {
   assert.equal(summary(partialUser).used_tokens, 15_000);
   assert.equal(summary(partialUser).legacy_v1_used_tokens, 0);
 
-  // Reliable usage may settle after TTL reclamation. Reclaimed capacity is
-  // charged as a late settlement, with reserve breach/debt made explicit.
   const lateUser = "00000000-0000-0000-0000-000000005103";
   const initialUsage = reserve({
     userId: lateUser,
@@ -295,8 +289,6 @@ function main(): void {
   assert.equal(summary(lateUser).remaining_tokens, 0);
   assert.equal(commit(lateIntuitive, 10_000).idempotent, true);
 
-  // If reclaimed capacity has already been consumed, late settlement records
-  // the exact allowance overrun instead of dropping provider usage.
   const debtUser = "00000000-0000-0000-0000-000000005104";
   const debtLate = reserve({
     userId: debtUser,
@@ -326,7 +318,6 @@ function main(): void {
   assert.equal(summary(debtUser).used_tokens, 55_000);
   assert.equal(summary(debtUser).remaining_tokens, 0);
 
-  // Explicit release remains terminal and non-committable.
   const releasedUser = "00000000-0000-0000-0000-000000005105";
   const releasedReservation = reserve({
     userId: releasedUser,
