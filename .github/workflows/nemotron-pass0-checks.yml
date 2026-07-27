@@ -10,14 +10,21 @@ on:
       - "frontend/styles/modules/14-billing.css"
       - "frontend/tests/billing-token-usage.test.mjs"
       - "frontend/tests/text-quota-*.test.mjs"
+      - "scripts/nemotronCanaryContract.mjs"
+      - "scripts/testNemotronCanaryContract.mjs"
+      - "scripts/verifyNemotronCanaryLive.mjs"
+      - "scripts/start-container-validated.sh"
       - "supabase/migrations/**"
+      - "Dockerfile"
       - "package.json"
       - "package-lock.json"
       - "tsconfig.backend.json"
       - ".env.example"
       - ".env.template"
+      - ".env.nemotron-canary.example"
       - ".gitignore"
       - ".github/workflows/nemotron-pass0-checks.yml"
+      - ".github/workflows/nemotron-canary-live.yml"
   workflow_dispatch:
 
 permissions:
@@ -75,6 +82,9 @@ jobs:
 
       - name: Independent rollout flags
         run: npm run test:nemotron-rollout-flags
+
+      - name: Deployment readiness and canary safety
+        run: npm run test:nemotron-deployment-readiness
 
       - name: NVIDIA and Pollinations Intuitive provider tests
         run: npm run test:nemotron-provider
