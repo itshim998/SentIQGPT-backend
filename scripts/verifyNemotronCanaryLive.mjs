@@ -7,6 +7,7 @@ import {
 } from "./nemotronCanaryContract.mjs";
 
 const confirmation = String(process.env.SENTIQ_LIVE_VERIFY_CONFIRM_CANARY || "").trim().toLowerCase();
+const canaryLabelRaw = String(process.env.SENTIQ_LIVE_VERIFY_CANARY_LABEL || "").trim();
 const baseUrlRaw = String(process.env.SENTIQ_LIVE_VERIFY_BASE_URL || "").trim();
 const accessToken = String(process.env.SENTIQ_LIVE_VERIFY_ACCESS_TOKEN || "").trim();
 const anonymousId = String(process.env.SENTIQ_LIVE_VERIFY_ANONYMOUS_ID || "").trim()
@@ -16,6 +17,14 @@ const requestTimeoutMs = Math.max(
   30_000,
   Math.min(150_000, Number.parseInt(process.env.SENTIQ_LIVE_VERIFY_REQUEST_TIMEOUT_MS || "135000", 10) || 135_000),
 );
+const MAX_CANCELLATION_OBSERVED_BYTES = 512 * 1024;
+
+function resolveCanaryLabel() {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/.test(canaryLabelRaw)) {
+    throw new Error("SENTIQ_LIVE_VERIFY_CANARY_LABEL must be a non-secret 3–80 character canary label.");
+  }
+  return canaryLabelRaw;
+}
 
 function resolveBaseUrl() {
   if (confirmation !== "true") {
@@ -27,12 +36,16 @@ function resolveBaseUrl() {
   if (parsed.protocol !== "https:" && !local) {
     throw new Error("Remote canary verification requires an HTTPS base URL.");
   }
+  if (parsed.username || parsed.password) {
+    throw new Error("The canary base URL must not contain credentials.");
+  }
   parsed.pathname = parsed.pathname.replace(/\/+$/, "");
   parsed.search = "";
   parsed.hash = "";
   return parsed.toString().replace(/\/$/, "");
 }
 
+const canaryLabel = resolveCanaryLabel();
 const baseUrl = resolveBaseUrl();
 const headers = {
   "Content-Type": "application/json",
@@ -87,79 +100,94 @@ async function readUsage() {
 }
 
 async function runChatScenario(name, body, options = {}) {
-  const response = await fetchWithTimeout(`${baseUrl}/api/chat/stream`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      ...body,
-      client_request_id: `${name}-${Date.now().toString(36)}`,
-    }),
-  });
-  const raw = await response.text();
-  const summary = summarizeCanarySse(raw, response.status);
-  const validation = validateCanarySse(summary, options);
-  const result = {
-    scenario: name,
-    status: validation.valid ? "pass" : "fail",
-    ...summary,
-    issues: validation.issues,
-  };
-  safeLog(result);
-  return result;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("canary stream timeout")), requestTimeoutMs);
+  try {
+    const response = await fetch(`${baseUrl}/api/chat/stream`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        ...body,
+        client_request_id: `${name}-${Date.now().toString(36)}`,
+      }),
+      signal: controller.signal,
+    });
+    const raw = await response.text();
+    const summary = summarizeCanarySse(raw, response.status);
+    const validation = validateCanarySse(summary, options);
+    const result = {
+      scenario: name,
+      status: validation.valid ? "pass" : "fail",
+      ...summary,
+      issues: validation.issues,
+    };
+    safeLog(result);
+    return result;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function verifyCancellation() {
   const controller = new AbortController();
-  const response = await fetch(`${baseUrl}/api/chat/stream`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      message: "Give a concise three-item checklist for reviewing a small code change.",
-      execution_mode: "intuitive",
-      client_request_id: `cancel-${Date.now().toString(36)}`,
-      context: { recent_messages: [], memories: [], file_references: [], image_attachments: [] },
-    }),
-    signal: controller.signal,
-  });
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Cancellation scenario did not receive a readable stream.");
-  const decoder = new TextDecoder();
-  let observed = "";
-  let visibleStarted = false;
-  let aborted = false;
+  const timer = setTimeout(() => controller.abort(new Error("canary cancellation timeout")), requestTimeoutMs);
+  let reader = null;
   try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      observed += decoder.decode(value, { stream: true });
-      if (/"type"\s*:\s*"token"/.test(observed)) {
-        visibleStarted = true;
-        controller.abort();
-        aborted = true;
-        break;
+    const response = await fetch(`${baseUrl}/api/chat/stream`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        message: "Give a concise three-item checklist for reviewing a small code change.",
+        execution_mode: "intuitive",
+        client_request_id: `cancel-${Date.now().toString(36)}`,
+        context: { recent_messages: [], memories: [], file_references: [], image_attachments: [] },
+      }),
+      signal: controller.signal,
+    });
+    reader = response.body?.getReader();
+    if (!reader) throw new Error("Cancellation scenario did not receive a readable stream.");
+    const decoder = new TextDecoder();
+    let observed = "";
+    let visibleStarted = false;
+    let aborted = false;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        observed += decoder.decode(value, { stream: true });
+        if (observed.length > MAX_CANCELLATION_OBSERVED_BYTES) {
+          throw new Error("Cancellation scenario exceeded the safe observation limit before visible output.");
+        }
+        if (/"type"\s*:\s*"token"/.test(observed)) {
+          visibleStarted = true;
+          controller.abort();
+          aborted = true;
+          break;
+        }
       }
+    } catch (error) {
+      if (error?.name !== "AbortError") throw error;
+      aborted = true;
     }
-  } catch (error) {
-    if (error?.name !== "AbortError") throw error;
-    aborted = true;
+    const summary = summarizeCanarySse(observed, response.status);
+    const valid = response.status === 200
+      && visibleStarted
+      && aborted
+      && !summary.forbiddenPublicMarker;
+    const result = {
+      scenario: "intuitive_cancellation",
+      status: valid ? "pass" : "fail",
+      httpStatus: response.status,
+      visibleStarted,
+      aborted,
+      forbiddenPublicMarker: summary.forbiddenPublicMarker,
+    };
+    safeLog(result);
+    return result;
   } finally {
-    try { await reader.cancel(); } catch { /* abort may already close the stream */ }
+    clearTimeout(timer);
+    try { await reader?.cancel(); } catch { /* abort may already close the stream */ }
   }
-  const summary = summarizeCanarySse(observed, response.status);
-  const valid = response.status === 200
-    && visibleStarted
-    && aborted
-    && !summary.forbiddenPublicMarker;
-  const result = {
-    scenario: "intuitive_cancellation",
-    status: valid ? "pass" : "fail",
-    httpStatus: response.status,
-    visibleStarted,
-    aborted,
-    forbiddenPublicMarker: summary.forbiddenPublicMarker,
-  };
-  safeLog(result);
-  return result;
 }
 
 async function waitForSettlement(maxAttempts = 15) {
@@ -174,6 +202,7 @@ async function waitForSettlement(maxAttempts = 15) {
 }
 
 async function main() {
+  safeLog({ scenario: "canary_metadata", label: canaryLabel });
   await waitForReady();
 
   const beforePayload = await readUsage();
