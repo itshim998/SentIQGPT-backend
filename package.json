@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.backend.json",
     "start": "node dist/backend/verifyNemotronDeploymentReadiness.js && node dist/backend/server.js",
-    "dev": "ts-node --project tsconfig.backend.json backend/server.ts",
+    "dev": "ts-node --project tsconfig.backend.json backend/verifyNemotronDeploymentReadiness.ts && ts-node --project tsconfig.backend.json backend/server.ts",
     "check:migrations": "ts-node --project tsconfig.backend.json backend/checkShardMigrations.ts",
     "llm-service": "python backend/llm_service.py",
     "dev:all": "concurrently \"npm run dev\" \"npm run llm-service\"",
