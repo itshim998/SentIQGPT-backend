@@ -125,7 +125,7 @@ The focused tests cover:
 
 ## Validation result
 
-The final Pass 6 implementation passed:
+The Pass 6 code head `4f12943619f8f5e5855023929ad7013691ef80ef` passed:
 
 - TypeScript build;
 - rollout-flag and provider suites;
@@ -136,6 +136,8 @@ The final Pass 6 implementation passed:
 - frontend syntax and bootstrap;
 - frontend file generation, tool lifecycle, billing, and focused UI-state tests;
 - Chromium runtime smoke.
+
+The subsequent documentation-only commit does not change runtime behaviour.
 
 ## Deferred work
 
