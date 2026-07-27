@@ -23,6 +23,11 @@ function asyncRoute(handler: AsyncRoute) {
   };
 }
 
+export function isIntuitiveQuotaUiPubliclyEnabled(): boolean {
+  const rollout = getNemotronRolloutSnapshot();
+  return rollout.unifiedTextTokensV2 && rollout.intuitiveQuotaUi;
+}
+
 function toFallbackUsageSummary(identity: BillingIdentity) {
   const plan = getPlanByCode(identity.userId ? "free" : "free");
   return {
@@ -122,20 +127,35 @@ export function registerBillingRoutes(app: Express): void {
       return;
     }
 
+    const quotaUiEnabled = isIntuitiveQuotaUiPubliclyEnabled();
     try {
       const summary = await quotaService.getUsageSummary(identity);
-      res.json({ mode: getBillingMode(), identity: { is_guest: identity.isGuest }, summary });
+      res.json({
+        mode: getBillingMode(),
+        quota_ui_enabled: quotaUiEnabled,
+        identity: { is_guest: identity.isGuest },
+        summary,
+      });
       return;
     } catch (error) {
       if (getBillingMode() !== "disabled") throw error;
     }
-    res.json({ mode: getBillingMode(), identity: { is_guest: identity.isGuest }, summary: toFallbackUsageSummary(identity) });
+    res.json({
+      mode: getBillingMode(),
+      quota_ui_enabled: quotaUiEnabled,
+      identity: { is_guest: identity.isGuest },
+      summary: toFallbackUsageSummary(identity),
+    });
   }));
 
   app.get("/api/billing/usage", verifyJWT({ allowGuest: true }), asyncRoute(async (req, res) => {
     const identity = buildBillingIdentity(req, getRequestUser(req));
     const summary = await quotaService.getUsageSummary(identity);
-    res.json({ mode: getBillingMode(), summary });
+    res.json({
+      mode: getBillingMode(),
+      quota_ui_enabled: isIntuitiveQuotaUiPubliclyEnabled(),
+      summary,
+    });
   }));
 
   app.post("/api/billing/checkout", verifyJWT({ allowGuest: false }), asyncRoute(async (req, res) => {
