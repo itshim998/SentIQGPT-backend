@@ -10,7 +10,9 @@ export const NEMOTRON_DEPLOYMENT_ENV = Object.freeze({
 } as const);
 
 export const NEMOTRON_FULL_ROLLOUT_ACK = "ENABLE_FULL_NEMOTRON_ROLLOUT";
+export const EXPECTED_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 export const EXPECTED_NVIDIA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
+export const EXPECTED_POLLINATIONS_ENDPOINT = "https://gen.pollinations.ai/v1/chat/completions";
 export const EXPECTED_POLLINATIONS_MODEL = "vendouple/nemotron-3-ultra:free";
 
 export type NemotronRolloutStage = "off" | "canary" | "full";
@@ -34,7 +36,9 @@ export interface NemotronDeploymentReadinessReport {
   readonly checks: Readonly<{
     flagBundleComplete: boolean;
     providerKeySlots: number;
+    nvidiaBaseUrlPinned: boolean;
     primaryModelPinned: boolean;
+    pollinationsEndpointPinned: boolean;
     freeFallbackPinned: boolean;
     anonymousIdentitySecretConfigured: boolean;
     controlDatabaseConfigured: boolean;
@@ -87,14 +91,20 @@ function countNvidiaKeySlots(environment: NemotronRolloutEnvironment): number {
   return slots.size;
 }
 
-function isSecureNvidiaBaseUrl(environment: NemotronRolloutEnvironment): boolean {
-  const raw = readString(environment, "NVIDIA_BASE_URL") || "https://integrate.api.nvidia.com/v1";
+function normalizeCredentialFreeHttpsEndpoint(value: string): string | null {
   try {
-    const parsed = new URL(raw);
-    return parsed.protocol === "https:" && !parsed.username && !parsed.password;
+    const parsed = new URL(value);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash) {
+      return null;
+    }
+    return parsed.toString().replace(/\/$/, "");
   } catch {
-    return false;
+    return null;
   }
+}
+
+function endpointMatches(value: string, expected: string): boolean {
+  return normalizeCredentialFreeHttpsEndpoint(value) === normalizeCredentialFreeHttpsEndpoint(expected);
 }
 
 function hasControlDatabase(environment: NemotronRolloutEnvironment): boolean {
@@ -125,9 +135,17 @@ export function evaluateNemotronDeploymentReadiness(
   const providerKeySlots = countNvidiaKeySlots(environment);
   const timeoutMs = readInteger(environment, "SENTIQ_INTUITIVE_TOTAL_TIMEOUT_MS", 120_000);
   const maximumGeneratedTokens = readInteger(environment, "SENTIQ_NVIDIA_MAX_GENERATED_TOKENS", 8_000);
+  const nvidiaBaseUrlPinned = endpointMatches(
+    readString(environment, "NVIDIA_BASE_URL") || EXPECTED_NVIDIA_BASE_URL,
+    EXPECTED_NVIDIA_BASE_URL,
+  );
   const primaryModelPinned = (
     readString(environment, "NVIDIA_NEMOTRON_MODEL") || EXPECTED_NVIDIA_MODEL
   ) === EXPECTED_NVIDIA_MODEL;
+  const pollinationsEndpointPinned = endpointMatches(
+    readString(environment, "POLLINATIONS_OPENAI_ENDPOINT") || EXPECTED_POLLINATIONS_ENDPOINT,
+    EXPECTED_POLLINATIONS_ENDPOINT,
+  );
   const freeFallbackPinned = (
     readString(environment, "POLLINATIONS_INTUITIVE_MODEL") || EXPECTED_POLLINATIONS_MODEL
   ) === EXPECTED_POLLINATIONS_MODEL;
@@ -250,11 +268,11 @@ export function evaluateNemotronDeploymentReadiness(
         "At least one server-side NVIDIA key slot is required while the provider is enabled.",
       );
     }
-    if (!isSecureNvidiaBaseUrl(environment)) {
+    if (!nvidiaBaseUrlPinned) {
       addIssue(
         issues,
-        "insecure_provider_base_url",
-        "The NVIDIA provider base URL must be a credential-free HTTPS URL.",
+        "provider_base_url_not_pinned",
+        "The NVIDIA provider must use the approved credential-free HTTPS endpoint.",
       );
     }
     if (!primaryModelPinned) {
@@ -262,6 +280,13 @@ export function evaluateNemotronDeploymentReadiness(
         issues,
         "primary_model_not_pinned",
         "The primary Intuitive model must match the approved free rollout model.",
+      );
+    }
+    if (!pollinationsEndpointPinned) {
+      addIssue(
+        issues,
+        "fallback_endpoint_not_pinned",
+        "The last-resort fallback must use the approved Pollinations HTTPS endpoint.",
       );
     }
     if (!freeFallbackPinned) {
@@ -318,7 +343,9 @@ export function evaluateNemotronDeploymentReadiness(
   const checks = Object.freeze({
     flagBundleComplete,
     providerKeySlots,
+    nvidiaBaseUrlPinned,
     primaryModelPinned,
+    pollinationsEndpointPinned,
     freeFallbackPinned,
     anonymousIdentitySecretConfigured,
     controlDatabaseConfigured,
