@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getControlDatabase } from "../dbRouter";
 import { getPlanCatalog, TEXT_TOKEN_POLICY_VERSION } from "./planCatalog";
 import type { BillingIdentity, BillingPlanCode, BillableFeature } from "./entitlementTypes";
+import type { ExecutionMode } from "../orchestrator/executionProfile";
 
 type SupabaseError = {
   readonly code?: string;
@@ -102,6 +103,20 @@ export class BillingRepository {
     return data;
   }
 
+  async getUnifiedTextUsageSummaryV2(identity: BillingIdentity): Promise<any> {
+    const { data, error } = await this.db.rpc("get_unified_text_usage_summary_v2", {
+      p_user_id: identity.userId,
+      p_anonymous_key_hash: identity.userId ? null : identity.anonymousKeyHash,
+    });
+    if (error) {
+      throw new BillingRepositoryError(
+        `Unified text-token V2 summary is unavailable: ${formatSupabaseError(error)}`,
+        "unified_text_v2_unavailable",
+      );
+    }
+    return data;
+  }
+
   async reserveUsage(args: {
     readonly identity: BillingIdentity;
     readonly feature: BillableFeature;
@@ -119,6 +134,32 @@ export class BillingRepository {
     });
     if (error) {
       throw new BillingRepositoryError(`Failed to reserve usage: ${formatSupabaseError(error)}`);
+    }
+    return data;
+  }
+
+  async reserveUnifiedTextTokensV2(args: {
+    readonly identity: BillingIdentity;
+    readonly requestId: string;
+    readonly executionMode: ExecutionMode;
+    readonly requestedTokens: number;
+    readonly minimumTokens: number;
+    readonly metadata?: Record<string, unknown>;
+  }): Promise<any> {
+    const { data, error } = await this.db.rpc("reserve_unified_text_tokens_v2", {
+      p_user_id: args.identity.userId,
+      p_anonymous_key_hash: args.identity.userId ? null : args.identity.anonymousKeyHash,
+      p_request_id: args.requestId,
+      p_execution_mode: args.executionMode,
+      p_requested_tokens: args.requestedTokens,
+      p_minimum_tokens: args.minimumTokens,
+      p_metadata: args.metadata ?? {},
+    });
+    if (error) {
+      throw new BillingRepositoryError(
+        `Unified text-token V2 reservation is unavailable: ${formatSupabaseError(error)}`,
+        "unified_text_v2_unavailable",
+      );
     }
     return data;
   }
@@ -143,12 +184,50 @@ export class BillingRepository {
     return data;
   }
 
+  async commitUnifiedTextTokensV2(args: {
+    readonly reservationId: string;
+    readonly requestId: string;
+    readonly actualTokens: number;
+    readonly metadata?: Record<string, unknown>;
+  }): Promise<any> {
+    const { data, error } = await this.db.rpc("commit_unified_text_tokens_v2", {
+      p_reservation_id: args.reservationId,
+      p_request_id: args.requestId,
+      p_actual_tokens: args.actualTokens,
+      p_metadata: args.metadata ?? {},
+    });
+    if (error) {
+      throw new BillingRepositoryError(
+        `Unified text-token V2 settlement is unavailable: ${formatSupabaseError(error)}`,
+        "unified_text_v2_unavailable",
+      );
+    }
+    return data;
+  }
+
   async releaseReservation(requestId: string): Promise<any> {
     const { data, error } = await this.db.rpc("release_usage_reservation", {
       p_request_id: requestId,
     });
     if (error) {
       throw new BillingRepositoryError(`Failed to release usage reservation: ${formatSupabaseError(error)}`);
+    }
+    return data;
+  }
+
+  async releaseUnifiedTextTokensV2(args: {
+    readonly reservationId: string;
+    readonly requestId: string;
+  }): Promise<any> {
+    const { data, error } = await this.db.rpc("release_unified_text_tokens_v2", {
+      p_reservation_id: args.reservationId,
+      p_request_id: args.requestId,
+    });
+    if (error) {
+      throw new BillingRepositoryError(
+        `Unified text-token V2 release is unavailable: ${formatSupabaseError(error)}`,
+        "unified_text_v2_unavailable",
+      );
     }
     return data;
   }

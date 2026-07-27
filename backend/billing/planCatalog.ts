@@ -3,6 +3,23 @@ import type { BillingMode, BillingPlan, BillingPlanCode, BillableFeature, Featur
 const INR = "INR";
 
 export const TEXT_TOKEN_POLICY_VERSION = "standard-lite-tokens-v1";
+export const UNIFIED_TEXT_POLICY_VERSION = "unified-text-tokens-v2";
+
+export const FREE_UNIFIED_TEXT_LIMIT_TOKENS = 50_000;
+export const FREE_UNIFIED_TEXT_WINDOW_SECONDS = 18_000;
+export const FREE_UNIFIED_TEXT_FAST_RESERVE_TOKENS = 10_000;
+
+export const FREE_UNIFIED_TEXT_POLICY = Object.freeze({
+  policyVersion: UNIFIED_TEXT_POLICY_VERSION,
+  limitTokens: FREE_UNIFIED_TEXT_LIMIT_TOKENS,
+  windowSeconds: FREE_UNIFIED_TEXT_WINDOW_SECONDS,
+  fastReserveTokens: FREE_UNIFIED_TEXT_FAST_RESERVE_TOKENS,
+  fastDesiredReservationTokens: 12_000,
+  intuitiveDesiredReservationTokens: 16_000,
+  fastMinimumReservationTokens: 256,
+  intuitiveOrdinaryMinimumReservationTokens: 1_500,
+  intuitiveComplexMinimumReservationTokens: 2_000,
+} as const);
 
 export const TEXT_TOKEN_PLAN_POLICY: Readonly<Record<BillingPlanCode, {
   readonly standardTokens: number;
