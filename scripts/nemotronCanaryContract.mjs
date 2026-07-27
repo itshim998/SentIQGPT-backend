@@ -3,10 +3,16 @@ export const UNIFIED_TEXT_LIMIT_TOKENS = 50_000;
 export const FAST_RESERVE_TOKENS = 10_000;
 
 const FORBIDDEN_PUBLIC_PATTERN = /\bnvidia\b|\bnemotron\b|integrate\.api\.nvidia\.com|reasoning_content|<think>|<\/think>/i;
+const CANARY_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/;
 
 function finiteOrNull(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function normalizeCanaryLabel(value) {
+  const label = String(value ?? "").trim();
+  return CANARY_LABEL_PATTERN.test(label) ? label : null;
 }
 
 export function projectCanaryUsage(payload) {
