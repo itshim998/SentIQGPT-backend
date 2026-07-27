@@ -94,6 +94,7 @@ The account Billing panel remains signed-in-only, while the composer quota state
 - Unavailable Intuitive mode receives `aria-disabled=true`.
 - Exhausted composer state receives `aria-disabled=true` and `inert`.
 - Draft text is retained rather than cleared.
+- Independent composer locks are preserved when quota capacity returns.
 - Forced-colour and reduced-motion fallbacks are included.
 - The status is text-based and does not rely on coloured dots.
 
@@ -108,16 +109,33 @@ Pass 6 adds:
 - `backend/billing/testQuotaUiExposure.ts`
 - `frontend/tests/text-quota-state.test.mjs`
 - `frontend/tests/text-quota-controller-contract.test.mjs`
+- `frontend/tests/text-quota-controller-runtime.test.mjs`
 - `npm run test:quota-ui-contract`
 
 The focused tests cover:
 
 - independent rollout-flag combinations;
 - fresh, reserve-boundary, one-token-headroom, heavy-context, low-Fast, and exhausted states;
-- visible Fast switching and one-time retry constraints;
-- composer preservation/blocking contracts;
+- an executable Intuitive rejection followed by exactly one successful Fast retry;
+- suppression of the first quota error from the conversation surface;
+- no Fast retry on complete exhaustion;
+- composer draft preservation and blocking;
 - unified billing presentation;
 - absence of provider/model branding.
+
+## Validation result
+
+The final Pass 6 implementation passed:
+
+- TypeScript build;
+- rollout-flag and provider suites;
+- Standard/Lite V1 regressions;
+- unified V2 concurrency, rollback, and late-settlement suites;
+- quota UI contract tests;
+- execution profile, capability, tool, context, and request-budget suites;
+- frontend syntax and bootstrap;
+- frontend file generation, tool lifecycle, billing, and focused UI-state tests;
+- Chromium runtime smoke.
 
 ## Deferred work
 
