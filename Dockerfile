@@ -54,9 +54,9 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY --from=node-build /app/dist ./dist
 COPY backend/llm_service.py ./backend/llm_service.py
 COPY llm_adapter.py task_registry.json ./
-COPY scripts/start-container.sh ./scripts/start-container.sh
+COPY scripts/start-container.sh scripts/start-container-validated.sh ./scripts/
 
-RUN chmod +x ./scripts/start-container.sh \
+RUN chmod +x ./scripts/start-container.sh ./scripts/start-container-validated.sh \
     && mkdir -p /tmp/matplotlib /tmp/.cache \
     && chown -R node:node /tmp/matplotlib /tmp/.cache
 
@@ -68,4 +68,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3001') + '/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["./scripts/start-container.sh"]
+CMD ["./scripts/start-container-validated.sh"]
