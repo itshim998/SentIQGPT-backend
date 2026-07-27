@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  normalizeCanaryLabel,
   summarizeCanarySse,
   validateCanarySse,
   validateCanaryUsage,
@@ -28,6 +29,12 @@ function usagePayload(overrides = {}) {
     },
   };
 }
+
+assert.equal(normalizeCanaryLabel("canary-revision_001"), "canary-revision_001");
+assert.equal(normalizeCanaryLabel("  canary.001  "), "canary.001");
+assert.equal(normalizeCanaryLabel("ab"), null);
+assert.equal(normalizeCanaryLabel('canary"; echo injected'), null);
+assert.equal(normalizeCanaryLabel("canary\nsecond-line"), null);
 
 const validUsage = validateCanaryUsage(usagePayload());
 assert.equal(validUsage.valid, true);
