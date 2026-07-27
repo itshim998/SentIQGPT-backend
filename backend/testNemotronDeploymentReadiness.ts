@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import {
+  EXPECTED_NVIDIA_BASE_URL,
   EXPECTED_NVIDIA_MODEL,
+  EXPECTED_POLLINATIONS_ENDPOINT,
   EXPECTED_POLLINATIONS_MODEL,
   NEMOTRON_FULL_ROLLOUT_ACK,
   evaluateNemotronDeploymentReadiness,
@@ -17,8 +19,9 @@ function enabledEnvironment(overrides: Record<string, string | undefined> = {}) 
     [NEMOTRON_ROLLOUT_ENV.unifiedTextTokensV2]: "true",
     [NEMOTRON_ROLLOUT_ENV.intuitiveQuotaUi]: "true",
     NVIDIA_API_KEY_1: "secret-provider-key",
-    NVIDIA_BASE_URL: "https://integrate.api.nvidia.com/v1",
+    NVIDIA_BASE_URL: EXPECTED_NVIDIA_BASE_URL,
     NVIDIA_NEMOTRON_MODEL: EXPECTED_NVIDIA_MODEL,
+    POLLINATIONS_OPENAI_ENDPOINT: EXPECTED_POLLINATIONS_ENDPOINT,
     POLLINATIONS_INTUITIVE_MODEL: EXPECTED_POLLINATIONS_MODEL,
     SENTIQ_INTUITIVE_TOTAL_TIMEOUT_MS: "120000",
     SENTIQ_NVIDIA_MAX_GENERATED_TOKENS: "8000",
@@ -43,6 +46,8 @@ const validCanary = evaluateNemotronDeploymentReadiness(enabledEnvironment(), {
 assert.equal(validCanary.ready, true);
 assert.equal(validCanary.checks.providerKeySlots, 1);
 assert.equal(validCanary.checks.flagBundleComplete, true);
+assert.equal(validCanary.checks.nvidiaBaseUrlPinned, true);
+assert.equal(validCanary.checks.pollinationsEndpointPinned, true);
 
 const serializedCanary = JSON.stringify(validCanary);
 assert.equal(serializedCanary.includes("secret-provider-key"), false);
@@ -95,6 +100,24 @@ const missingProviderKey = evaluateNemotronDeploymentReadiness(enabledEnvironmen
 }));
 assert.equal(missingProviderKey.ready, false);
 assert.ok(missingProviderKey.issues.some((issue) => issue.code === "provider_key_pool_empty"));
+
+const wrongProviderEndpoint = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  NVIDIA_BASE_URL: "https://example.invalid/v1",
+}));
+assert.equal(wrongProviderEndpoint.ready, false);
+assert.ok(wrongProviderEndpoint.issues.some((issue) => issue.code === "provider_base_url_not_pinned"));
+
+const credentialedProviderEndpoint = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  NVIDIA_BASE_URL: "https://user:password@integrate.api.nvidia.com/v1",
+}));
+assert.equal(credentialedProviderEndpoint.ready, false);
+assert.ok(credentialedProviderEndpoint.issues.some((issue) => issue.code === "provider_base_url_not_pinned"));
+
+const wrongFallbackEndpoint = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  POLLINATIONS_OPENAI_ENDPOINT: "https://example.invalid/v1/chat/completions",
+}));
+assert.equal(wrongFallbackEndpoint.ready, false);
+assert.ok(wrongFallbackEndpoint.issues.some((issue) => issue.code === "fallback_endpoint_not_pinned"));
 
 const missingGuestSecret = evaluateNemotronDeploymentReadiness(enabledEnvironment({
   SENTIQ_ANON_USAGE_HASH_SECRET: undefined,
