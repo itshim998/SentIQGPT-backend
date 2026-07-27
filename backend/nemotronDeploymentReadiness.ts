@@ -43,10 +43,12 @@ export interface NemotronDeploymentReadinessReport {
     pythonQuotaEnforcementDisabled: boolean;
   }>;
   readonly issues: readonly NemotronReadinessIssue[];
+  readonly warnings: readonly NemotronReadinessIssue[];
 }
 
 interface ReadinessOptions {
   readonly requireEnabled?: boolean;
+  readonly requireCompleteBundle?: boolean;
   readonly expectedStage?: NemotronRolloutStage;
 }
 
@@ -103,12 +105,12 @@ function hasControlDatabase(environment: NemotronRolloutEnvironment): boolean {
 }
 
 function addIssue(
-  issues: NemotronReadinessIssue[],
+  target: NemotronReadinessIssue[],
   code: string,
   message: string,
 ): void {
-  if (issues.some((issue) => issue.code === code)) return;
-  issues.push(Object.freeze({ code, message }));
+  if (target.some((issue) => issue.code === code)) return;
+  target.push(Object.freeze({ code, message }));
 }
 
 export function evaluateNemotronDeploymentReadiness(
@@ -137,6 +139,7 @@ export function evaluateNemotronDeploymentReadiness(
     readString(environment, "SENTIQ_PYTHON_LLM_QUOTA_ENFORCEMENT").toLowerCase(),
   );
   const issues: NemotronReadinessIssue[] = [];
+  const warnings: NemotronReadinessIssue[] = [];
 
   if (!stageResult.valid) {
     addIssue(
@@ -146,6 +149,9 @@ export function evaluateNemotronDeploymentReadiness(
     );
   }
 
+  // Enabling a dependent without its prerequisite is unsafe. Disabling any
+  // capability, however, must remain restart-safe so each kill switch can be
+  // used independently during a canary or emergency rollback.
   if (flags.nemotronIntuitive && !flags.nvidiaProvider) {
     addIssue(
       issues,
@@ -171,33 +177,39 @@ export function evaluateNemotronDeploymentReadiness(
   if (activeFlagCount === 0) {
     if (stage !== "off") {
       addIssue(
-        issues,
-        "stage_enabled_without_flags",
-        "Canary or full stage cannot be selected while every rollout flag is disabled.",
+        warnings,
+        "stage_selected_with_flags_dormant",
+        "The deployment stage is selected, but every rollout capability remains dormant.",
       );
     }
     if (options.requireEnabled) {
       addIssue(
         issues,
         "rollout_not_enabled",
-        "This verification requires the complete rollout flag bundle to be enabled.",
+        "This verification requires at least one rollout capability to be enabled.",
       );
     }
-  } else {
-    if (stage === "off") {
-      addIssue(
-        issues,
-        "flags_enabled_while_stage_off",
-        "Rollout flags cannot be enabled while the deployment stage is off.",
-      );
-    }
-    if (!flagBundleComplete) {
-      addIssue(
-        issues,
-        "partial_flag_bundle",
-        "Canary and full deployments require all four rollout flags together.",
-      );
-    }
+  } else if (stage === "off") {
+    addIssue(
+      issues,
+      "flags_enabled_while_stage_off",
+      "Rollout flags cannot be enabled while the deployment stage is off.",
+    );
+  }
+
+  if (activeFlagCount > 0 && !flagBundleComplete) {
+    addIssue(
+      warnings,
+      "partial_flag_bundle",
+      "A dependency-safe partial bundle is active; this is valid for staged canarying or a kill-switch rollback, but not a complete end-to-end rollout.",
+    );
+  }
+  if (options.requireCompleteBundle && !flagBundleComplete) {
+    addIssue(
+      issues,
+      "complete_flag_bundle_required",
+      "This verification requires all four rollout capabilities to be enabled.",
+    );
   }
 
   if (options.expectedStage && stage !== options.expectedStage) {
@@ -230,12 +242,12 @@ export function evaluateNemotronDeploymentReadiness(
     }
   }
 
-  if (flagBundleComplete) {
+  if (flags.nvidiaProvider) {
     if (providerKeySlots < 1) {
       addIssue(
         issues,
         "provider_key_pool_empty",
-        "At least one server-side NVIDIA key slot is required for an enabled rollout.",
+        "At least one server-side NVIDIA key slot is required while the provider is enabled.",
       );
     }
     if (!isSecureNvidiaBaseUrl(environment)) {
@@ -259,20 +271,6 @@ export function evaluateNemotronDeploymentReadiness(
         "The last-resort Intuitive fallback must match the approved free model route.",
       );
     }
-    if (!anonymousIdentitySecretConfigured) {
-      addIssue(
-        issues,
-        "anonymous_identity_secret_missing",
-        "Unified guest quotas require a stable anonymous-identity hash secret.",
-      );
-    }
-    if (!controlDatabaseConfigured) {
-      addIssue(
-        issues,
-        "control_database_missing",
-        "Unified text-token V2 requires the control database URL and service-role key.",
-      );
-    }
     if (!Number.isFinite(timeoutMs) || timeoutMs < 30_000 || timeoutMs > 120_000) {
       addIssue(
         issues,
@@ -289,6 +287,23 @@ export function evaluateNemotronDeploymentReadiness(
         issues,
         "invalid_generated_token_ceiling",
         "The NVIDIA generated-token ceiling must remain between 1,500 and 8,000 tokens.",
+      );
+    }
+  }
+
+  if (flags.unifiedTextTokensV2) {
+    if (!anonymousIdentitySecretConfigured) {
+      addIssue(
+        issues,
+        "anonymous_identity_secret_missing",
+        "Unified guest quotas require a stable anonymous-identity hash secret.",
+      );
+    }
+    if (!controlDatabaseConfigured) {
+      addIssue(
+        issues,
+        "control_database_missing",
+        "Unified text-token V2 requires the control database URL and service-role key.",
       );
     }
     if (!pythonQuotaEnforcementDisabled) {
@@ -320,5 +335,6 @@ export function evaluateNemotronDeploymentReadiness(
     flags,
     checks,
     issues: Object.freeze(issues),
+    warnings: Object.freeze(warnings),
   });
 }
