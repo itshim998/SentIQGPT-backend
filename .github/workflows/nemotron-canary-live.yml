@@ -27,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nemotron-live-canary-${{ inputs.canary_label }}
+  group: nemotron-live-canary
   cancel-in-progress: false
 
 jobs:
@@ -51,21 +51,21 @@ jobs:
 
       - name: Run guarded live canary suite
         env:
-          SENTIQ_LIVE_VERIFY_CONFIRM_CANARY: "true"
+          SENTIQ_LIVE_VERIFY_CONFIRM_CANARY: ${{ inputs.confirmation == 'CANARY_ONLY' }}
+          SENTIQ_LIVE_VERIFY_CANARY_LABEL: ${{ inputs.canary_label }}
           SENTIQ_LIVE_VERIFY_BASE_URL: ${{ inputs.base_url }}
           SENTIQ_LIVE_VERIFY_ACCESS_TOKEN: ${{ secrets.SENTIQ_NEMOTRON_CANARY_ACCESS_TOKEN }}
           SENTIQ_LIVE_VERIFY_ANONYMOUS_ID: ${{ secrets.SENTIQ_NEMOTRON_CANARY_ANONYMOUS_ID }}
           SENTIQ_LIVE_VERIFY_REQUIRE_WEBSURF: ${{ inputs.require_websurf }}
         run: |
           set -o pipefail
-          echo '{"scenario":"canary_metadata","label":"${{ inputs.canary_label }}"}' | tee nemotron-canary-report.jsonl
-          node scripts/verifyNemotronCanaryLive.mjs | tee -a nemotron-canary-report.jsonl
+          node scripts/verifyNemotronCanaryLive.mjs | tee nemotron-canary-report.jsonl
 
       - name: Upload redacted canary report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: nemotron-canary-report-${{ inputs.canary_label }}-${{ github.run_id }}
+          name: nemotron-canary-report-${{ github.run_id }}
           path: nemotron-canary-report.jsonl
           if-no-files-found: warn
           retention-days: 7
