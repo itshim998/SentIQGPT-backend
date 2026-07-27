@@ -1,0 +1,71 @@
+name: Nemotron Intuitive canary live verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "HTTPS base URL of the isolated canary backend"
+        required: true
+        type: string
+      canary_label:
+        description: "Non-secret canary revision label for the report"
+        required: true
+        type: string
+      require_websurf:
+        description: "Require the Intuitive WebSurf scenario"
+        required: true
+        default: true
+        type: boolean
+      confirmation:
+        description: "Confirm this URL is an isolated canary, not the production traffic endpoint"
+        required: true
+        type: choice
+        options:
+          - CANARY_ONLY
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nemotron-live-canary-${{ inputs.canary_label }}
+  cancel-in-progress: false
+
+jobs:
+  verify-canary:
+    name: Flagged end-to-end canary verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: nemotron-canary
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Verify local canary contract
+        run: node scripts/testNemotronCanaryContract.mjs
+
+      - name: Run guarded live canary suite
+        env:
+          SENTIQ_LIVE_VERIFY_CONFIRM_CANARY: "true"
+          SENTIQ_LIVE_VERIFY_BASE_URL: ${{ inputs.base_url }}
+          SENTIQ_LIVE_VERIFY_ACCESS_TOKEN: ${{ secrets.SENTIQ_NEMOTRON_CANARY_ACCESS_TOKEN }}
+          SENTIQ_LIVE_VERIFY_ANONYMOUS_ID: ${{ secrets.SENTIQ_NEMOTRON_CANARY_ANONYMOUS_ID }}
+          SENTIQ_LIVE_VERIFY_REQUIRE_WEBSURF: ${{ inputs.require_websurf }}
+        run: |
+          set -o pipefail
+          echo '{"scenario":"canary_metadata","label":"${{ inputs.canary_label }}"}' | tee nemotron-canary-report.jsonl
+          node scripts/verifyNemotronCanaryLive.mjs | tee -a nemotron-canary-report.jsonl
+
+      - name: Upload redacted canary report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nemotron-canary-report-${{ inputs.canary_label }}-${{ github.run_id }}
+          path: nemotron-canary-report.jsonl
+          if-no-files-found: warn
+          retention-days: 7
