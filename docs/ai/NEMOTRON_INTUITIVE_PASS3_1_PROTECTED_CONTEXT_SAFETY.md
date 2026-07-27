@@ -185,11 +185,17 @@ textual context, not a substitute for durable source storage. The hard system
 character maximum is an application safety boundary, and an oversized
 application prompt now fails rather than attempting recovery by mutation.
 
-## 12. Deferred billing work
+## 12. Passes 4-5 integration
 
-Pass 3.1 does not implement unified token billing V2, the rolling five-hour
-50,000-token window, the protected final 10,000-token Fast reserve,
-database-level concurrency, quota-driven Fast switching, quota UI, settings
-redesign, plan/pricing changes, or database migrations. Those Passes 4–5 items
-remain deferred. All four rollout flags remain false by default, and
-Standard/Lite V1 settlement behavior is unchanged.
+Pass 3.1 itself did not implement billing policy. The later Passes 4-5 work on
+this branch now attaches a Free-only unified V2 reservation as the hard ceiling
+of the same request-local ledger. Protected-context failure still occurs
+before provider invocation and releases that reservation; completed,
+reliably-reported supporting usage is committed rather than discarded.
+
+The rolling five-hour 50,000-token allowance, protected final 10,000-token Fast
+reserve, database concurrency, transition/rollback accounting, and public
+summary/error contracts are documented in
+`docs/ai/UNIFIED_TEXT_TOKENS_V2_PASSES4_5.md`. Standard/Lite V1 remains
+available for flag-off operation and paid plans. All four tracked rollout flags
+remain false, and quota UI/settings work remains deferred to Pass 6.

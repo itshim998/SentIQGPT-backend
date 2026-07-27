@@ -27,6 +27,23 @@ jobs:
     name: Build, rollout flags, provider routing, budget safety, and request lifecycle
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sentiq_billing_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sentiq_billing_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SENTIQ_BILLING_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sentiq_billing_test
+      SENTIQ_BILLING_TEST_DATABASE_ALLOW_DESTRUCTIVE: "true"
 
     steps:
       - name: Checkout
@@ -59,6 +76,15 @@ jobs:
 
       - name: Existing token allowances
         run: npm run billing:test-token-allowances
+
+      - name: Unified Free text-token policy and usage summary
+        run: npm run billing:test-unified-text-v2
+
+      - name: Unified text routing
+        run: npm run test:unified-text-routing
+
+      - name: Unified text PostgreSQL migration and concurrency
+        run: npm run billing:test-unified-text-v2-sql
 
       - name: Execution profiles
         run: npm run test:execution-profiles
