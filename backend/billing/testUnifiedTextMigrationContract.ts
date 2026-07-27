@@ -8,6 +8,14 @@ const migrationPath = resolve(
   "supabase/migrations/20260727120000_unified_text_tokens_v2.sql",
 );
 const migration = readFileSync(migrationPath, "utf8");
+const integrityMigration = readFileSync(
+  resolve(repoRoot, "supabase/migrations/20260727180000_unified_text_tokens_v2_integrity.sql"),
+  "utf8",
+);
+const schemaCompatMigration = readFileSync(
+  resolve(repoRoot, "supabase/migrations/20260727183000_unified_text_tokens_v2_schema_compat.sql"),
+  "utf8",
+);
 const v1Migration = readFileSync(
   resolve(repoRoot, "supabase/migrations/20260718120000_standard_lite_token_allowances.sql"),
   "utf8",
@@ -36,7 +44,6 @@ assert.match(migration, /feature in \('premium_text', 'lite_text'\)/i);
 assert.match(migration, /metadata ->> 'quota_policy_version' = 'standard-lite-tokens-v1'/i);
 assert.match(migration, /unified_text_v2_rollback_shadow/i);
 assert.match(migration, /rollback_shadow_v1_standard_tokens/i);
-assert.match(migration, /on conflict \(request_id\) where request_id is not null do nothing/i);
 assert.match(migration, /usage_overrun_tokens/i);
 assert.match(migration, /fast_reserve_breach_tokens/i);
 assert.match(migration, /for update/i);
@@ -47,6 +54,24 @@ assert.match(migration, /enable row level security/i);
 assert.match(migration, /revoke all .* from public, anon, authenticated/i);
 assert.match(migration, /grant execute .* to service_role/i);
 assert.doesNotMatch(migration, /drop table|truncate table|delete from public\.usage_events/i);
+
+assert.match(integrityMigration, /sync_unified_text_v2_rollback_shadows/i);
+assert.match(integrityMigration, /unified_text_v2_rollback_shadow_class', 'standard_gate'/i);
+assert.match(integrityMigration, /unified_text_v2_rollback_shadow_class', 'lite_usage'/i);
+assert.match(integrityMigration, /feature,\s*units[\s\S]*?'premium_text'/i);
+assert.match(integrityMigration, /feature,\s*units[\s\S]*?'lite_text'/i);
+assert.match(integrityMigration, /v_late_settlement :=/i);
+assert.match(integrityMigration, /v_late_capacity_overrun_tokens/i);
+assert.match(integrityMigration, /v_reservation\.status = 'expired'/i);
+assert.match(integrityMigration, /late_settlement/i);
+assert.match(integrityMigration, /rollback_shadow_v1_lite_tokens/i);
+assert.match(integrityMigration, /on conflict \(request_id\) where request_id is not null do update/i);
+assert.match(integrityMigration, /security definer/i);
+assert.match(integrityMigration, /set search_path = public, pg_temp/i);
+assert.doesNotMatch(integrityMigration, /drop table|truncate table/i);
+
+assert.match(schemaCompatMigration, /select '20260727120000'::text/i);
+assert.match(schemaCompatMigration, /get_unified_text_tokens_v2_schema_version/i);
 assert.match(v1Migration, /standard-lite-tokens-v1/);
 assert.doesNotMatch(v1Migration, /unified-text-tokens-v2/);
 assert.match(dbRouter, /get_unified_text_tokens_v2_schema_version/);
