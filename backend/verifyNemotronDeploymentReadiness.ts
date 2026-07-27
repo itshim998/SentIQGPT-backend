@@ -1,7 +1,21 @@
+import dotenv from "dotenv";
+import { existsSync } from "node:fs";
+import { resolve as pathResolve } from "node:path";
 import {
   evaluateNemotronDeploymentReadiness,
   type NemotronRolloutStage,
 } from "./nemotronDeploymentReadiness";
+
+function loadEnvironment(): void {
+  const candidates = [
+    pathResolve(__dirname, "..", ".env"),
+    pathResolve(__dirname, "..", "..", ".env"),
+    pathResolve(process.cwd(), ".env"),
+  ];
+  const path = candidates.find((candidate) => existsSync(candidate));
+  if (path) dotenv.config({ path });
+  else dotenv.config();
+}
 
 function readExpectedStage(argv: readonly string[]): NemotronRolloutStage | undefined {
   const argument = argv.find((value) => value.startsWith("--expect-stage="));
@@ -12,6 +26,7 @@ function readExpectedStage(argv: readonly string[]): NemotronRolloutStage | unde
 }
 
 function main(): void {
+  loadEnvironment();
   const argv = process.argv.slice(2);
   const report = evaluateNemotronDeploymentReadiness(process.env, {
     requireEnabled: argv.includes("--require-enabled"),
