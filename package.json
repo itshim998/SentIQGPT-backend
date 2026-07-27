@@ -51,6 +51,7 @@
     "test:frontend-tool-lifecycle": "node frontend/tests/tool-lifecycle-reducer.test.mjs",
     "test:frontend-billing": "node --no-warnings frontend/tests/billing-token-usage.test.mjs",
     "test:frontend-ui-state": "node scripts/runFrontendUiStateTests.mjs",
+    "test:quota-ui-contract": "ts-node --project tsconfig.backend.json backend/billing/testQuotaUiExposure.ts && node --no-warnings frontend/tests/text-quota-state.test.mjs && node --no-warnings frontend/tests/text-quota-controller-contract.test.mjs",
     "test:frontend": "node scripts/runFrontendChecks.mjs",
     "check:frontend-syntax": "node scripts/checkFrontendSyntax.mjs",
     "test:azure-container-renderer": "node scripts/testAzureContainerAppScaling.mjs",
@@ -94,8 +95,6 @@
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
-    "@types/helmet": "^0.0.48",
     "@types/multer": "^1.4.12",
     "@types/node": "^20.11.0",
     "concurrently": "^9.0.0",
