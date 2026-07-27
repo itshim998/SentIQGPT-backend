@@ -1,11 +1,19 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import { BillingRepository } from "./billingRepository";
 import { RazorpayProvider } from "./paymentProviders/razorpayProvider";
-import { getBillingMode, getPlanCatalog, getPlanByCode, isBillingPlanCode, toPublicPlan } from "./planCatalog";
+import {
+  getBillingMode,
+  getPlanCatalog,
+  getPlanByCode,
+  isBillingPlanCode,
+  TEXT_TOKEN_POLICY_VERSION,
+  toPublicPlan,
+} from "./planCatalog";
 import { buildBillingIdentity } from "./anonymousIdentity";
-import { BillingQuotaService } from "./quotaService";
+import { BillingQuotaError, BillingQuotaService } from "./quotaService";
 import type { BillingIdentity, BillingPlanCode } from "./entitlementTypes";
 import { getRequestUser, verifyJWT } from "../middleware/auth";
+import { getNemotronRolloutSnapshot } from "../nemotronRolloutFlags";
 
 type AsyncRoute = (req: Request, res: Response, next: NextFunction) => Promise<void>;
 
@@ -39,7 +47,7 @@ function toFallbackUsageSummary(identity: BillingIdentity) {
             token_limit: quota.limit,
             tokens_consumed: 0,
             tokens_remaining: quota.limit,
-            policy_version: "standard-lite-tokens-v1",
+            policy_version: TEXT_TOKEN_POLICY_VERSION,
           } : {}),
         },
       ])),
@@ -99,6 +107,8 @@ export function registerBillingRoutes(app: Express): void {
         return;
       }
     } catch (error) {
+      if (error instanceof BillingQuotaError) throw error;
+      if (getNemotronRolloutSnapshot().unifiedTextTokensV2) throw error;
       if (getBillingMode() !== "disabled") throw error;
     }
     res.json({ mode: getBillingMode(), plans: getPlanCatalog().map(toPublicPlan) });

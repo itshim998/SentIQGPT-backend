@@ -424,7 +424,7 @@ function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
       remainingReservationTokens,
       providerCapability,
       providerMaximumGeneratedTokens: call.provider_maximum_generated_tokens,
-      reservationFeature: context.tokenAllowance?.feature,
+      reservationAllowanceClass: context.tokenAllowance?.allowanceClass,
     });
   } catch (error) {
     if (call.consume_future_obligation_id) {

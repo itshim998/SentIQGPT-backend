@@ -536,7 +536,7 @@ function quotaErrorToPublicResponse(error: BillingQuotaError) {
 async function releaseBillingReservation(reservation: UsageReservation | null | undefined): Promise<void> {
   if (!reservation) return;
   await billingQuotaService.release(reservation).catch((releaseError) => {
-    console.warn(`[Billing] failed to release reservation ${reservation.requestId}: ${releaseError instanceof Error ? releaseError.message : releaseError}`);
+    console.warn(`[Billing] failed to release reservation: ${releaseError instanceof Error ? releaseError.name : "unknown_error"}`);
   });
 }
 
@@ -547,6 +547,8 @@ async function reserveTextBilling(args: {
   readonly clientRequestId?: string | null;
   readonly route: string;
   readonly requiredCapabilities?: readonly RequiredModelCapability[];
+  readonly executionMode: "fast" | "intuitive";
+  readonly complexity?: "normal" | "heavy";
 }): Promise<UsageReservation> {
   return billingQuotaService.reserveTextRoute({
     identity: args.identity,
@@ -554,6 +556,8 @@ async function reserveTextBilling(args: {
     conversationId: args.conversationId,
     clientRequestId: args.clientRequestId,
     requiredCapabilities: args.requiredCapabilities,
+    executionMode: args.executionMode,
+    complexity: args.complexity,
     metadata: {
       endpoint: "chat",
       route: args.route,
@@ -2930,6 +2934,8 @@ app.post(
         conversationId: requestedConversationId,
         clientRequestId: parsed.data.clientRequestId,
         route: "guest.chat",
+        executionMode: executionProfile.mode,
+        complexity: guestContext.fileReferences.length > 0 ? "heavy" : "normal",
         requiredCapabilities: deriveRequiredModelCapabilities({
           hasImageInput: guestContext.imageAttachments.length > 0,
           automaticToolsRequested: false,
@@ -3508,6 +3514,7 @@ app.post(
             const quotaPayload = quotaErrorToPublicResponse(err);
             await writeSseJson({
               ...quotaPayload,
+              quota_type: quotaPayload.type,
               type: "error",
               partial,
               streamed_chunks: metrics?.chunkCount ?? 0,
@@ -3891,6 +3898,8 @@ app.post(
         conversationId: requestedConversationId,
         clientRequestId: parsed.data.clientRequestId,
         route: "guest.general.stream",
+        executionMode: executionProfile.mode,
+        complexity: guestCtx.hasFileContext ? "heavy" : "normal",
         requiredCapabilities: deriveRequiredModelCapabilities({
           hasImageInput: guestCtx.imageAttachments.length > 0,
           automaticToolsRequested: !hasEffectiveWebSearchMode && getEnabledAutomaticSentIQTools().length > 0,
@@ -4067,8 +4076,28 @@ app.post(
             ? tokenAccounting.reservedTokens - tokenAccounting.inputTokens - tokenAccounting.outputTokens
             : 0;
           if (requestsFileGeneration
-              && (guestGeneralReservation.feature !== "premium_text" || affordableArtifactTokens < 2_048)) {
+              && (
+                !["premium_text", "unified_text"].includes(guestGeneralReservation.feature)
+                || affordableArtifactTokens < 2_048
+              )) {
             await releaseBillingReservation(guestGeneralReservation);
+            if (guestGeneralReservation.feature === "unified_text") {
+              throw new BillingQuotaError(
+                "Your remaining text-token allowance cannot support this request yet. Try a smaller request or wait for tokens to refresh.",
+                {
+                  code: "unified_text_insufficient_for_request",
+                  type: "insufficient_allowance",
+                  planCode: guestGeneralReservation.planCode,
+                  policyVersion: guestGeneralReservation.policyVersion,
+                  requiredMode: null,
+                  limitTokens: guestGeneralReservation.limit,
+                  remainingTokens: guestGeneralReservation.remaining,
+                  fastAvailableTokens: guestGeneralReservation.remaining,
+                  nextRecoveryAt: guestGeneralReservation.resetAt,
+                  resetAt: guestGeneralReservation.resetAt,
+                },
+              );
+            }
             throw new BillingQuotaError(
               "You do not have enough Standard tokens remaining for this request. Your allowance will refresh automatically.",
               {
@@ -4486,6 +4515,8 @@ app.post(
           conversationId: requestedConversationId,
           clientRequestId: parsed.data.clientRequestId,
           route: "stream.fast",
+          executionMode: executionProfile.mode,
+          complexity: "normal",
         });
         const [fastCtx, routedModel] = await Promise.all([
           buildContextFast(fastRawContext, undefined, userId, { profile: executionProfile }),
@@ -5341,6 +5372,8 @@ app.post(
       conversationId: activeConversationId,
       clientRequestId: parsed.data.clientRequestId,
       route: "stream",
+      executionMode: executionProfile.mode,
+      complexity: hasFile ? "heavy" : "normal",
       requiredCapabilities: billingRequiredCapabilities,
     });
     const modelOverride = directReservation.adapterModelOverride;
@@ -7916,7 +7949,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   }
 
   if (err instanceof BillingQuotaError) {
-    console.warn(`${LOG_PREFIX} Billing quota error: ${err.code} feature=${err.feature}`);
+    console.warn(`${LOG_PREFIX} Billing quota error: ${err.code} policy=${err.policyVersion ?? "v1"} plan=${err.planCode ?? "unknown"}`);
     if (!res.headersSent && !res.writableEnded) {
       res.status(err.statusCode).json(quotaErrorToPublicResponse(err));
     }

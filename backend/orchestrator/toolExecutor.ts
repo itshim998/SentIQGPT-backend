@@ -19,6 +19,7 @@ import { INTUITIVE_PROFILE, type ExecutionProfile } from "./executionProfile";
 import { BillingQuotaError, BillingQuotaService } from "../billing/quotaService";
 import { getGeminiStandardCapabilityRoute, getImageModelForPlan } from "../billing/modelEntitlementRouter";
 import type { UsageReservation } from "../billing/entitlementTypes";
+import { UNIFIED_TEXT_POLICY_VERSION } from "../billing/planCatalog";
 import {
   findExistingAssistantImageMessage,
   persistGeneratedImageResult,
@@ -173,7 +174,7 @@ function createBillingStepRequestId(ctx: BuiltContext, tool: PlanTool, input: st
 async function releaseBillingReservation(reservation: UsageReservation | null | undefined): Promise<void> {
   if (!reservation) return;
   await billingQuotaService.release(reservation).catch((error) => {
-    console.warn(`[Billing] failed to release reservation ${reservation.requestId}: ${error instanceof Error ? error.message : error}`);
+    console.warn(`[Billing] failed to release reservation: ${error instanceof Error ? error.name : "unknown_error"}`);
   });
 }
 
@@ -271,6 +272,8 @@ async function execConversation(
         clientRequestId: ctx.billingRequestId,
         metadata: { endpoint: "orchestrator", tool: "conversation", routed_model: routedModel.model },
         requiredCapabilities,
+        executionMode: profile.mode,
+        complexity: hasFiles ? "heavy" : "normal",
       })
     : null;
   const unreservedRoute = routeSupportsCapabilities(
@@ -302,8 +305,32 @@ async function execConversation(
     const affordableArtifactTokens = tokenAccounting
       ? tokenAccounting.reservedTokens - tokenAccounting.inputTokens - tokenAccounting.outputTokens
       : 0;
-    if (requestsFileGeneration && (reservation?.feature !== "premium_text" || affordableArtifactTokens < 2_048)) {
+    if (
+      requestsFileGeneration
+      && (
+        !reservation
+        || !["premium_text", "unified_text"].includes(reservation.feature)
+        || affordableArtifactTokens < 2_048
+      )
+    ) {
       await releaseBillingReservation(reservation);
+      if (reservation?.feature === "unified_text") {
+        throw new BillingQuotaError(
+          "Your remaining text-token allowance cannot support this request yet. Try a smaller request or wait for tokens to refresh.",
+          {
+            code: "unified_text_insufficient_for_request",
+            type: "insufficient_allowance",
+            planCode: reservation.planCode,
+            policyVersion: UNIFIED_TEXT_POLICY_VERSION,
+            requiredMode: null,
+            limitTokens: reservation.limit,
+            remainingTokens: reservation.remaining,
+            fastAvailableTokens: reservation.remaining,
+            nextRecoveryAt: reservation.resetAt,
+            resetAt: reservation.resetAt,
+          },
+        );
+      }
       throw new BillingQuotaError(
         "You do not have enough Standard tokens remaining for this request. Your allowance will refresh automatically.",
         {

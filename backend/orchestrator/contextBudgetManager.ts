@@ -4,6 +4,7 @@
 // policies, and character-only emergency guards used by the composer.
 
 import { normalizeExecutionMode, type ExecutionMode, type ModelReasoningEffort } from "./executionProfile";
+import type { TextAllowanceClass } from "../billing/entitlementTypes";
 
 export type ContextBudgetProfile = "standard" | "streaming";
 // Canonical request, input-context, and completion policy registry.
@@ -292,7 +293,7 @@ export function resolveGenerationBudget(args: {
   readonly remainingReservationTokens?: number;
   readonly providerCapability?: GenerationProviderCapability;
   readonly providerMaximumGeneratedTokens?: number;
-  readonly reservationFeature?: "premium_text" | "lite_text";
+  readonly reservationAllowanceClass?: TextAllowanceClass;
 }): GenerationBudgetDecision {
   const planCode = normalizeContextPlanCode(args.planCode);
   const executionMode = normalizeExecutionMode(args.executionMode);
@@ -373,7 +374,11 @@ export function resolveGenerationBudget(args: {
       : 32;
     if (affordableGeneratedTokens < minimumAnswerTokens) {
       if (!usesReasoningGenerationBudget) {
-        const allowanceLabel = args.reservationFeature === "lite_text" ? "Lite" : "Standard";
+        const allowanceLabel = args.reservationAllowanceClass === "unified_text"
+          ? "Text"
+          : args.reservationAllowanceClass === "lite"
+            ? "Lite"
+            : "Standard";
         throw new GenerationBudgetError(
           `The ${allowanceLabel} token reservation cannot support another model call.`,
           "token_reservation_exhausted",

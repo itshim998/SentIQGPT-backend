@@ -291,7 +291,7 @@ async function main(): Promise<void> {
       budgetClass: "interactive",
       estimatedInputTokens: 40,
       remainingReservationTokens: 60,
-      reservationFeature: "lite_text",
+      reservationAllowanceClass: "lite",
     }),
     (error: unknown) => (
       error instanceof GenerationBudgetError

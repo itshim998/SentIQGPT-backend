@@ -7,9 +7,12 @@ import {
   type ContextPlanCode,
 } from "../orchestrator/contextBudgetManager";
 import { normalizeExecutionMode, type ExecutionMode } from "../orchestrator/executionProfile";
+import type { TextAllowanceClass } from "../billing/entitlementTypes";
 
 export interface TokenAllowanceAccounting {
-  feature: "premium_text" | "lite_text";
+  feature?: "premium_text" | "lite_text";
+  allowanceClass: TextAllowanceClass;
+  policyVersion: string;
   requestId: string;
   planCode: string;
   windowIdentity: string | null;
@@ -61,7 +64,11 @@ const FREE_CONTEXT: RequestBudgetContext = { planCode: "free", executionMode: "f
 const requestBudgetStorage = new AsyncLocalStorage<RequestBudgetContext>();
 
 function allowanceError(accounting: TokenAllowanceAccounting): GenerationBudgetError {
-  const allowanceLabel = accounting.feature === "lite_text" ? "Lite" : "Standard";
+  const allowanceLabel = accounting.allowanceClass === "unified_text"
+    ? "Text"
+    : accounting.allowanceClass === "lite"
+      ? "Lite"
+      : "Standard";
   return new GenerationBudgetError(
     `The ${allowanceLabel} token reservation cannot support another model call.`,
     "token_reservation_exhausted",
@@ -106,7 +113,9 @@ export function getRequestBudgetContext(): RequestBudgetContext {
 }
 
 export function attachTokenAllowanceAccounting(args: {
-  readonly feature: "premium_text" | "lite_text";
+  readonly feature?: "premium_text" | "lite_text";
+  readonly allowanceClass?: TextAllowanceClass;
+  readonly policyVersion?: string;
   readonly requestId: string;
   readonly planCode: string;
   readonly windowIdentity?: string | null;
@@ -114,8 +123,12 @@ export function attachTokenAllowanceAccounting(args: {
 }): void {
   const context = requestBudgetStorage.getStore();
   if (!context) return;
+  const allowanceClass = args.allowanceClass
+    ?? (args.feature === "lite_text" ? "lite" : "standard");
   context.tokenAllowance = {
     feature: args.feature,
+    allowanceClass,
+    policyVersion: args.policyVersion ?? "standard-lite-tokens-v1",
     requestId: args.requestId,
     planCode: args.planCode,
     windowIdentity: args.windowIdentity ?? null,
@@ -381,6 +394,8 @@ export function getTokenAllowanceAccounting(requestId?: string): TokenAllowanceA
   if (!accounting || (requestId && accounting.requestId !== requestId)) return null;
   return {
     feature: accounting.feature,
+    allowanceClass: accounting.allowanceClass,
+    policyVersion: accounting.policyVersion,
     requestId: accounting.requestId,
     planCode: accounting.planCode,
     windowIdentity: accounting.windowIdentity,
