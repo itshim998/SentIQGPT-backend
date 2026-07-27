@@ -1,4 +1,5 @@
 import {
+  normalizeCanaryLabel,
   projectCanaryUsage,
   summarizeCanarySse,
   validateCanarySse,
@@ -20,10 +21,11 @@ const requestTimeoutMs = Math.max(
 const MAX_CANCELLATION_OBSERVED_BYTES = 512 * 1024;
 
 function resolveCanaryLabel() {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/.test(canaryLabelRaw)) {
+  const label = normalizeCanaryLabel(canaryLabelRaw);
+  if (!label) {
     throw new Error("SENTIQ_LIVE_VERIFY_CANARY_LABEL must be a non-secret 3–80 character canary label.");
   }
-  return canaryLabelRaw;
+  return label;
 }
 
 function resolveBaseUrl() {
