@@ -86,6 +86,9 @@ jobs:
       - name: Unified text PostgreSQL migration and concurrency
         run: npm run billing:test-unified-text-v2-sql
 
+      - name: Unified text Pass 5.1 rollback and late settlement
+        run: npm run billing:test-unified-text-pass51-sql
+
       - name: Execution profiles
         run: npm run test:execution-profiles
 
