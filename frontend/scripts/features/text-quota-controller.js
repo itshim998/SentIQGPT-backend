@@ -66,9 +66,27 @@ const NOTICE_DURATION_MS = 7_000;
     const input = document.getElementById("chat-input");
     wrapper?.classList.toggle("is-text-quota-exhausted", blocked);
     if (composer) {
-      if (blocked) composer.setAttribute("inert", "");
-      else composer.removeAttribute("inert");
-      composer.setAttribute("aria-disabled", blocked ? "true" : "false");
+      if (blocked) {
+        if (!composer.hasAttribute("inert")) {
+          composer.dataset.textQuotaInert = "true";
+          composer.setAttribute("inert", "");
+        }
+        if (!composer.dataset.textQuotaAriaDisabled) {
+          composer.dataset.textQuotaAriaDisabled = composer.getAttribute("aria-disabled") ?? "__absent__";
+        }
+        composer.setAttribute("aria-disabled", "true");
+      } else {
+        if (composer.dataset.textQuotaInert === "true") {
+          composer.removeAttribute("inert");
+          delete composer.dataset.textQuotaInert;
+        }
+        if (composer.dataset.textQuotaAriaDisabled) {
+          const previous = composer.dataset.textQuotaAriaDisabled;
+          if (previous === "__absent__") composer.removeAttribute("aria-disabled");
+          else composer.setAttribute("aria-disabled", previous);
+          delete composer.dataset.textQuotaAriaDisabled;
+        }
+      }
     }
     if (input) {
       if (blocked && !input.readOnly) {
@@ -216,7 +234,7 @@ const NOTICE_DURATION_MS = 7_000;
       return await originalSendMessageStream(message, context, guardedCallbacks, signal);
     } catch (error) {
       if (await prepareFastRetry(error, originalMode, alreadyRetried)) {
-        return originalSendMessageStream(message, {
+        return await originalSendMessageStream(message, {
           ...context,
           executionMode: "fast",
           execution_mode: "fast",
@@ -239,7 +257,7 @@ const NOTICE_DURATION_MS = 7_000;
       return await originalSendMessage(message, context);
     } catch (error) {
       if (await prepareFastRetry(error, originalMode, alreadyRetried)) {
-        return originalSendMessage(message, {
+        return await originalSendMessage(message, {
           ...context,
           executionMode: "fast",
           execution_mode: "fast",
