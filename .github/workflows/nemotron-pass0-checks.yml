@@ -4,7 +4,12 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "frontend/scripts/features/text-quota-*.js"
+      - "frontend/scripts/features/text-quota-*.mjs"
+      - "frontend/scripts/panels/billing-panel.js"
+      - "frontend/styles/modules/14-billing.css"
       - "frontend/tests/billing-token-usage.test.mjs"
+      - "frontend/tests/text-quota-*.test.mjs"
       - "supabase/migrations/**"
       - "package.json"
       - "package-lock.json"
@@ -88,6 +93,9 @@ jobs:
 
       - name: Unified text Pass 5.1 rollback and late settlement
         run: npm run billing:test-unified-text-pass51-sql
+
+      - name: Frontend quota UX and mode-switch contract
+        run: npm run test:quota-ui-contract
 
       - name: Execution profiles
         run: npm run test:execution-profiles
