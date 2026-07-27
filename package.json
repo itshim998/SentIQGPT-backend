@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.backend.json",
-    "start": "node dist/backend/server.js",
+    "start": "node dist/backend/verifyNemotronDeploymentReadiness.js && node dist/backend/server.js",
     "dev": "ts-node --project tsconfig.backend.json backend/server.ts",
     "check:migrations": "ts-node --project tsconfig.backend.json backend/checkShardMigrations.ts",
     "llm-service": "python backend/llm_service.py",
@@ -32,6 +32,9 @@
     "test:execution-profiles": "ts-node --project tsconfig.backend.json backend/testExecutionProfiles.ts",
     "test:nemotron-rollout-flags": "ts-node --project tsconfig.backend.json backend/testNemotronRolloutFlags.ts",
     "test:nemotron-provider": "python backend/testPollinationsIntuitiveModelConfig.py && python backend/testNvidiaNemotronProvider.py && python backend/testNemotronRouting.py && ts-node --project tsconfig.backend.json backend/testNemotronIntuitiveLane.ts",
+    "test:nemotron-deployment-readiness": "ts-node --project tsconfig.backend.json backend/testNemotronDeploymentReadiness.ts && node scripts/testNemotronCanaryContract.mjs",
+    "verify:nemotron-deployment-readiness": "ts-node --project tsconfig.backend.json backend/verifyNemotronDeploymentReadiness.ts",
+    "verify:nemotron-canary-live": "node scripts/verifyNemotronCanaryLive.mjs",
     "test:model-tool-contract": "ts-node --project tsconfig.backend.json backend/testToolContract.ts",
     "test:model-tool-transport": "ts-node --project tsconfig.backend.json backend/testModelToolTransport.ts && python backend/testModelToolProviderTransport.py",
     "test:model-tool-execution": "ts-node --project tsconfig.backend.json backend/testModelToolExecution.ts",
