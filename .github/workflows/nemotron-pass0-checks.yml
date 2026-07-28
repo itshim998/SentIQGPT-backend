@@ -119,6 +119,9 @@ jobs:
       - name: Unified text Pass 5.1 rollback and late settlement
         run: npm run billing:test-unified-text-pass51-sql
 
+      - name: Unified text full rollout migration gate
+        run: npm run billing:test-unified-text-full-rollout-sql
+
       - name: Frontend quota UX and mode-switch contract
         run: npm run test:quota-ui-contract
 
