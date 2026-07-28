@@ -59,6 +59,7 @@
     "test:frontend": "node scripts/runFrontendChecks.mjs",
     "check:frontend-syntax": "node scripts/checkFrontendSyntax.mjs",
     "test:azure-container-renderer": "node scripts/testAzureContainerAppScaling.mjs",
+    "test:nemotron-azure-rollout": "node scripts/testNemotronFullRolloutUpdate.mjs && node scripts/testNemotronAzureRolloutIntegrity.mjs",
     "verify:model-native-executors-live": "ts-node --project tsconfig.backend.json backend/verifyModelNativeExecutors.ts",
     "verify:model-native-memory-migration-live": "ts-node --project tsconfig.backend.json backend/verifyAutomaticMemoryMigrationLive.ts",
     "verify:model-native-stack-startup-live": "node scripts/verifyModelNativeStackStartupLive.mjs",

@@ -47,7 +47,7 @@ function upsertPlain(environment, name, value) {
 }
 
 function upsertSecretReference(environment, name, secretRef) {
-  if (!/^[a-z0-9][a-z0-9-]{0,19}$/.test(secretRef)) {
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,251}[a-z0-9])?$/.test(secretRef)) {
     throw new Error(`Invalid Azure secret reference for ${name}.`);
   }
   const existing = environment.find((entry) => entry?.name === name);

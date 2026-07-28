@@ -93,6 +93,23 @@ function upsertPlainEnvironmentVariable(environment, name, value) {
   for (const duplicate of duplicates.reverse()) environment.splice(duplicate.index, 1);
 }
 
+export function assertNoManagementPlaneRedactedEnvironmentEntries(document) {
+  const containers = document?.properties?.template?.containers;
+  if (!Array.isArray(containers)) return;
+  for (const container of containers) {
+    for (const entry of Array.isArray(container?.env) ? container.env : []) {
+      if (!entry || typeof entry !== "object" || !entry.name) continue;
+      const hasValueField = Object.prototype.hasOwnProperty.call(entry, "value");
+      const hasSecretReference = typeof entry.secretRef === "string" && entry.secretRef.trim().length > 0;
+      if (!hasValueField && !hasSecretReference) {
+        throw new Error(
+          `Refusing to render management-plane-redacted environment entry ${entry.name}.`,
+        );
+      }
+    }
+  }
+}
+
 export function renderAzureContainerAppUpdate(args) {
   if (!args.document || typeof args.document !== "object" || Array.isArray(args.document)) {
     throw new Error("Azure Container App input must be a JSON object.");
@@ -100,6 +117,7 @@ export function renderAzureContainerAppUpdate(args) {
   if (!args.containerName || !args.image || !args.revisionSuffix || !args.readinessPath) {
     throw new Error("Container name, image, revision suffix, and readiness path are required.");
   }
+  assertNoManagementPlaneRedactedEnvironmentEntries(args.document);
 
   const scale = parseScaleSettings(args);
   const template = args.document.properties?.template;
