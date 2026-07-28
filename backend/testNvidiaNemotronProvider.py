@@ -2,6 +2,7 @@ import io
 import json
 import logging
 import unittest
+from types import SimpleNamespace
 
 from nvidia_nemotron import (
     NvidiaAllKeysUnavailableError,
@@ -13,6 +14,10 @@ from nvidia_nemotron import (
     NvidiaProviderError,
     NvidiaProviderSettings,
     discover_nvidia_key_records,
+)
+from verifyNvidiaNemotronLive import (
+    safe_result,
+    verify_independent_slot,
 )
 
 
@@ -113,6 +118,70 @@ def visible_response(text="Visible answer.", *, reasoning=None, usage=True):
 
 
 class NvidiaNemotronProviderTests(unittest.TestCase):
+    def test_live_verifier_retries_retryable_empty_stream_on_fresh_provider(self):
+        usage = SimpleNamespace(
+            input_tokens=1,
+            output_tokens=1,
+            total_tokens=2,
+            hidden_reasoning_tokens=0,
+            source="reported",
+        )
+        outcomes = [
+            NvidiaProviderError("empty", category="empty_stream"),
+            ("OK", usage),
+        ]
+        factory_calls = []
+        sleeps = []
+
+        class VerificationProvider:
+            def __init__(self, outcome):
+                self.outcome = outcome
+
+            def complete_on_slot(self, *_args, **_kwargs):
+                if isinstance(self.outcome, BaseException):
+                    raise self.outcome
+                return self.outcome
+
+        def factory():
+            factory_calls.append(True)
+            return VerificationProvider(outcomes.pop(0))
+
+        result = verify_independent_slot(factory, "nvidia-slot-4", sleep=sleeps.append)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["attempts"], 2)
+        self.assertEqual(result["retry_categories"], ["empty_stream"])
+        self.assertEqual(len(factory_calls), 2)
+        self.assertEqual(sleeps, [1.0])
+
+    def test_live_verifier_does_not_retry_authentication_failure(self):
+        sleeps = []
+
+        class AuthenticationFailureProvider:
+            def complete_on_slot(self, *_args, **_kwargs):
+                raise NvidiaProviderError("rejected", category="auth", status_code=401)
+
+        result = verify_independent_slot(
+            AuthenticationFailureProvider,
+            "nvidia-slot-1",
+            sleep=sleeps.append,
+        )
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["category"], "auth")
+        self.assertEqual(result["attempts"], 1)
+        self.assertEqual(sleeps, [])
+
+    def test_live_verifier_rejects_public_reasoning_markers(self):
+        usage = SimpleNamespace(
+            input_tokens=1,
+            output_tokens=1,
+            total_tokens=2,
+            hidden_reasoning_tokens=0,
+            source="reported",
+        )
+        result = safe_result("nvidia-slot-1", "<think>hidden</think> OK", usage)
+        self.assertEqual(result["status"], "fail")
+        self.assertTrue(result["reasoning_marker_visible"])
+
     def test_arbitrary_indexed_key_discovery(self):
         environment = {
             **{f"NVIDIA_API_KEY_{index}": f"key-{index}" for index in range(1, 7)},

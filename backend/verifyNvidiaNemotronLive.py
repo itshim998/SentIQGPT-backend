@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -21,19 +22,26 @@ from nvidia_nemotron import (
 
 ROOT = Path(__file__).resolve().parents[1]
 MINIMAL_PROMPT = "Reply with the single word OK."
+MAX_INDEPENDENT_ATTEMPTS = 3
+RETRYABLE_INDEPENDENT_CATEGORIES = frozenset({
+    "empty_stream",
+    "rate_limit",
+    "transient",
+})
 
 
 def safe_result(slot_id: str, text: str, usage) -> dict[str, object]:
     normalized = text.lower()
+    reasoning_marker_visible = (
+        "reasoning_content" in normalized
+        or "<think>" in normalized
+        or "</think>" in normalized
+    )
     return {
         "slot_id": slot_id,
-        "status": "pass" if text.strip() else "fail",
+        "status": "pass" if text.strip() and not reasoning_marker_visible else "fail",
         "visible_chars": len(text),
-        "reasoning_marker_visible": (
-            "reasoning_content" in normalized
-            or "<think>" in normalized
-            or "</think>" in normalized
-        ),
+        "reasoning_marker_visible": reasoning_marker_visible,
         "usage": {
             "input_tokens": usage.input_tokens,
             "output_tokens": usage.output_tokens,
@@ -42,6 +50,67 @@ def safe_result(slot_id: str, text: str, usage) -> dict[str, object]:
             "source": usage.source,
         },
     }
+
+
+def is_retryable_independent_error(error: BaseException) -> bool:
+    return getattr(error, "category", "") in RETRYABLE_INDEPENDENT_CATEGORIES
+
+
+def verify_independent_slot(
+    provider_factory,
+    slot_id: str,
+    *,
+    max_attempts: int = MAX_INDEPENDENT_ATTEMPTS,
+    sleep=time.sleep,
+) -> dict[str, object]:
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least one.")
+
+    retry_categories: list[str] = []
+    for attempt in range(1, max_attempts + 1):
+        try:
+            provider = provider_factory()
+            text, usage = provider.complete_on_slot(
+                slot_id,
+                MINIMAL_PROMPT,
+                max_tokens=64,
+                reasoning_budget=16,
+            )
+            result = safe_result(slot_id, text, usage)
+            if result["status"] == "pass":
+                return {
+                    **result,
+                    "attempts": attempt,
+                    "retry_categories": retry_categories,
+                }
+            category = (
+                "public_reasoning_marker"
+                if result["reasoning_marker_visible"]
+                else "empty_stream"
+            )
+            error = NvidiaProviderError(
+                "Independent slot verification returned unsafe public output.",
+                category=category,
+            )
+        except Exception as caught:
+            error = caught
+
+        category = str(getattr(error, "category", "internal"))
+        status_code = getattr(error, "status_code", None)
+        if attempt < max_attempts and is_retryable_independent_error(error):
+            retry_categories.append(category)
+            sleep(float(attempt))
+            continue
+        return {
+            "slot_id": slot_id,
+            "status": "fail",
+            "category": category,
+            "status_code": status_code,
+            "attempts": attempt,
+            "retry_categories": retry_categories,
+        }
+
+    raise AssertionError("Independent slot verification exhausted without a result.")
 
 
 def main() -> int:
@@ -57,25 +126,12 @@ def main() -> int:
 
     failures = 0
     for slot_id in slot_ids:
-        try:
-            text, usage = provider.complete_on_slot(
-                slot_id,
-                MINIMAL_PROMPT,
-                max_tokens=64,
-                reasoning_budget=16,
-            )
-            result = safe_result(slot_id, text, usage)
-            failures += int(result["status"] != "pass")
-            print(json.dumps({"event": "independent_slot", **result}))
-        except Exception as error:
-            failures += 1
-            print(json.dumps({
-                "event": "independent_slot",
-                "slot_id": slot_id,
-                "status": "fail",
-                "category": getattr(error, "category", "internal"),
-                "status_code": getattr(error, "status_code", None),
-            }))
+        result = verify_independent_slot(
+            lambda: NvidiaNemotronProvider.from_env(environ=source),
+            slot_id,
+        )
+        failures += int(result["status"] != "pass")
+        print(json.dumps({"event": "independent_slot", **result}))
 
     pooled_provider = NvidiaNemotronProvider.from_env(environ=source)
     selected_slots: list[str] = []
