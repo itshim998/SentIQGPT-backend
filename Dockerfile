@@ -52,7 +52,11 @@ RUN python3 -m venv /opt/venv \
 ENV PATH="/opt/venv/bin:${PATH}"
 
 COPY --from=node-build /app/dist ./dist
-COPY backend/llm_service.py ./backend/llm_service.py
+COPY backend/llm_service.py \
+     backend/nvidia_nemotron.py \
+     backend/verifyNvidiaNemotronLive.py \
+     backend/verifyPollinationsIntuitiveLive.py \
+     ./backend/
 COPY llm_adapter.py task_registry.json ./
 COPY scripts/start-container.sh scripts/start-container-validated.sh ./scripts/
 
