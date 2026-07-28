@@ -250,7 +250,7 @@ answer after meaningful output.
   replaces it; hidden reasoning is not added twice.
 - **Pollinations:** valid reported usage is used. Missing or malformed usage is
   conservatively estimated. Its configured Intuitive model remains
-  `vendouple/nemotron-3-ultra:free`.
+  `deepseek`.
 - **Groq and Gemini:** existing valid reported usage is preserved; otherwise
   the shared conservative estimator is used.
 - **All providers:** selection, synthesis, continuation, repair, title,
@@ -307,7 +307,7 @@ credential material, prompt, or raw header was persisted.
 Both environment templates contain:
 
 ```env
-POLLINATIONS_INTUITIVE_MODEL=vendouple/nemotron-3-ultra:free
+POLLINATIONS_INTUITIVE_MODEL=deepseek
 ```
 
 The adapter reads that variable, deterministic configuration tests validate

@@ -13,7 +13,7 @@ export const NEMOTRON_FULL_ROLLOUT_ACK = "ENABLE_FULL_NEMOTRON_ROLLOUT";
 export const EXPECTED_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 export const EXPECTED_NVIDIA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 export const EXPECTED_POLLINATIONS_ENDPOINT = "https://gen.pollinations.ai/v1/chat/completions";
-export const EXPECTED_POLLINATIONS_MODEL = "vendouple/nemotron-3-ultra:free";
+export const EXPECTED_POLLINATIONS_MODEL = "deepseek";
 export const REQUIRED_FULL_ROLLOUT_NVIDIA_SLOTS = 6;
 
 export type NemotronRolloutStage = "off" | "canary" | "full";
