@@ -89,22 +89,28 @@ export function simulateRevisionCopyEnvironment(sourceEnvironment, plan) {
 }
 
 export function buildExactRollbackPlan({
+  rollbackSourceRevision,
   rollbackRevision,
   failedRevision,
-  previousRevisionMode,
 }) {
+  const source = required(rollbackSourceRevision, "rollbackSourceRevision");
   const rollback = required(rollbackRevision, "rollbackRevision");
   const failed = required(failedRevision, "failedRevision");
+  if (source === rollback) throw new Error("Rollback source and copy revisions must differ.");
+  if (source === failed) throw new Error("Rollback source and failed revisions must differ.");
   if (rollback === failed) throw new Error("Rollback and failed revisions must differ.");
   return Object.freeze({
+    copyFromRevision: source,
     rollbackRevision: rollback,
     failedRevision: failed,
+    createExactRevisionCopy: true,
+    revisionMode: "multiple",
     revisionWeights: Object.freeze({
+      [source]: 0,
       [rollback]: 100,
       [failed]: 0,
     }),
     deactivateFailedRevision: true,
-    restoreRevisionMode: required(previousRevisionMode, "previousRevisionMode").toLowerCase(),
     reconstructEnvironment: false,
   });
 }

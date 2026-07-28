@@ -358,7 +358,6 @@ jobs:
           FQDN: ${{ steps.production.outputs.fqdn }}
           PREVIOUS_REVISION: ${{ steps.production.outputs.previous_revision }}
           PREVIOUS_IMAGE: ${{ steps.production.outputs.previous_image }}
-          PREVIOUS_MODE: ${{ steps.production.outputs.previous_mode }}
           SECRET_RESOLUTION: ${{ steps.production.outputs.secret_resolution }}
           DEPLOY_IMAGE: ${{ vars.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_REPOSITORY }}:${{ github.sha }}
         run: |
@@ -369,6 +368,8 @@ jobs:
           traffic_shifted=0
           revision_suffix="full-${GITHUB_SHA::10}-${GITHUB_RUN_ID}"
           new_revision="${APP_NAME}--${revision_suffix}"
+          rollback_suffix="rollback-${GITHUB_SHA::10}-${GITHUB_RUN_ID}"
+          rollback_revision="${APP_NAME}--${rollback_suffix}"
           azure_report="azure-full-rollout-report.jsonl"
 
           write_summary() {
@@ -380,6 +381,7 @@ jobs:
               --arg commit "${GITHUB_SHA}" \
               --arg previous_revision "${PREVIOUS_REVISION}" \
               --arg new_revision "${new_revision}" \
+              --arg rollback_revision "${rollback_revision}" \
               --arg image "${DEPLOY_IMAGE}" \
               '{
                 event: "nemotron_full_rollout",
@@ -388,6 +390,7 @@ jobs:
                 commit: $commit,
                 previous_revision: $previous_revision,
                 new_revision: $new_revision,
+                rollback_revision: $rollback_revision,
                 image: $image
               }' > nemotron-rollout-summary.json
           }
@@ -397,27 +400,121 @@ jobs:
             trap - EXIT
             if [[ "${status}" != "0" && "${verified}" != "1" ]]; then
               set +e
+              if [[ "${mode_changed}" != "1" ]]; then
+                write_summary failure no_revision_mutation
+                echo 'No Azure revision mutation occurred; rollback was not required.'
+                exit "${status}"
+              fi
+
               write_summary failure automatic_rollback
               echo 'Full rollout verification failed; restoring exact last-known-good traffic and revision.'
               rollback_ok=1
 
               if [[ "${mode_changed}" == "1" ]]; then
-                new_exists="$(az containerapp revision list \
+                az containerapp revision set-mode \
                   --name "${APP_NAME}" \
                   --resource-group "${RESOURCE_GROUP}" \
-                  --query "[?name=='${new_revision}'] | length(@)" \
+                  --mode multiple \
+                  --only-show-errors \
+                  --output none || rollback_ok=0
+
+                new_exists="$(az containerapp revision show \
+                  --name "${APP_NAME}" \
+                  --resource-group "${RESOURCE_GROUP}" \
+                  --revision "${new_revision}" \
+                  --query 'name' \
                   -o tsv 2>/dev/null || true)"
-                if [[ "${new_exists}" == "1" ]]; then
+
+                rollback_exists="$(az containerapp revision show \
+                  --name "${APP_NAME}" \
+                  --resource-group "${RESOURCE_GROUP}" \
+                  --revision "${rollback_revision}" \
+                  --query 'name' \
+                  -o tsv 2>/dev/null || true)"
+                if [[ "${rollback_exists}" != "${rollback_revision}" ]]; then
+                  az containerapp revision copy \
+                    --name "${APP_NAME}" \
+                    --resource-group "${RESOURCE_GROUP}" \
+                    --from-revision "${PREVIOUS_REVISION}" \
+                    --revision-suffix "${rollback_suffix}" \
+                    --only-show-errors \
+                    --output none || rollback_ok=0
+                fi
+
+                rollback_copy_ready=0
+                if [[ "${rollback_ok}" == "1" ]]; then
+                  for attempt in $(seq 1 90); do
+                    rollback_state="$(az containerapp revision show \
+                      --name "${APP_NAME}" \
+                      --resource-group "${RESOURCE_GROUP}" \
+                      --revision "${rollback_revision}" \
+                      -o json 2>/dev/null || printf '{}')"
+                    rollback_health="$(jq -r '.properties.healthState // empty' <<< "${rollback_state}")"
+                    rollback_provisioning="$(jq -r '.properties.provisioningState // empty' <<< "${rollback_state}")"
+                    rollback_running="$(jq -r '.properties.runningState // empty' <<< "${rollback_state}")"
+                    rollback_image="$(jq -r --arg container "${IMAGE_REPOSITORY}" \
+                      '.properties.template.containers[]?
+                        | select(.name == $container)
+                        | .image // empty' <<< "${rollback_state}")"
+                    rollback_fqdn="$(jq -r '.properties.fqdn // empty' <<< "${rollback_state}")"
+                    rollback_ready_status="$(curl \
+                      --silent \
+                      --output /dev/null \
+                      --write-out '%{http_code}' \
+                      --max-time 15 \
+                      "https://${rollback_fqdn}/ready" || true)"
+                    if [[ "${rollback_health}" == "Healthy" \
+                      && "${rollback_provisioning}" == "Provisioned" \
+                      && "${rollback_running}" == Running* \
+                      && "${rollback_image}" == "${PREVIOUS_IMAGE}" \
+                      && "${rollback_ready_status}" == "200" ]]; then
+                      rollback_copy_ready=1
+                      break
+                    fi
+                    sleep 2
+                  done
+                fi
+                [[ "${rollback_copy_ready}" == "1" ]] || rollback_ok=0
+
+                previous_active="$(az containerapp revision show \
+                  --name "${APP_NAME}" \
+                  --resource-group "${RESOURCE_GROUP}" \
+                  --revision "${PREVIOUS_REVISION}" \
+                  --query 'properties.active' \
+                  -o tsv 2>/dev/null || true)"
+                if [[ "${previous_active,,}" != "true" ]]; then
+                  az containerapp revision activate \
+                    --name "${APP_NAME}" \
+                    --resource-group "${RESOURCE_GROUP}" \
+                    --revision "${PREVIOUS_REVISION}" \
+                    --only-show-errors \
+                    --output none || rollback_ok=0
+                fi
+
+                if [[ "${rollback_copy_ready}" == "1" && "${new_exists}" == "${new_revision}" ]]; then
+                  az containerapp ingress traffic set \
+                    --name "${APP_NAME}" \
+                    --resource-group "${RESOURCE_GROUP}" \
+                    --revision-weight \
+                      "${PREVIOUS_REVISION}=0" \
+                      "${rollback_revision}=100" \
+                      "${new_revision}=0" \
+                    --only-show-errors \
+                    --output none || rollback_ok=0
+                elif [[ "${rollback_copy_ready}" == "1" ]]; then
+                  az containerapp ingress traffic set \
+                    --name "${APP_NAME}" \
+                    --resource-group "${RESOURCE_GROUP}" \
+                    --revision-weight \
+                      "${PREVIOUS_REVISION}=0" \
+                      "${rollback_revision}=100" \
+                    --only-show-errors \
+                    --output none || rollback_ok=0
+                elif [[ "${new_exists}" == "${new_revision}" ]]; then
                   az containerapp ingress traffic set \
                     --name "${APP_NAME}" \
                     --resource-group "${RESOURCE_GROUP}" \
                     --revision-weight "${PREVIOUS_REVISION}=100" "${new_revision}=0" \
-                    --only-show-errors \
-                    --output none || rollback_ok=0
-                  az containerapp revision deactivate \
-                    --name "${APP_NAME}" \
-                    --resource-group "${RESOURCE_GROUP}" \
-                    --revision "${new_revision}" \
                     --only-show-errors \
                     --output none || rollback_ok=0
                 else
@@ -428,38 +525,67 @@ jobs:
                     --only-show-errors \
                     --output none || rollback_ok=0
                 fi
-                if [[ "${PREVIOUS_MODE,,}" == "single" ]]; then
-                  az containerapp revision set-mode \
+
+                if [[ "${new_exists}" == "${new_revision}" ]]; then
+                  new_active="$(az containerapp revision show \
                     --name "${APP_NAME}" \
                     --resource-group "${RESOURCE_GROUP}" \
-                    --mode single \
-                    --only-show-errors \
-                    --output none || rollback_ok=0
+                    --revision "${new_revision}" \
+                    --query 'properties.active' \
+                    -o tsv 2>/dev/null || true)"
+                  if [[ "${new_active,,}" == "true" ]]; then
+                    az containerapp revision deactivate \
+                      --name "${APP_NAME}" \
+                      --resource-group "${RESOURCE_GROUP}" \
+                      --revision "${new_revision}" \
+                      --only-show-errors \
+                      --output none || rollback_ok=0
+                  fi
                 fi
               fi
 
               restored=0
               for attempt in $(seq 1 90); do
-                ready_revision="$(az containerapp show \
+                app_state="$(az containerapp show \
                   --name "${APP_NAME}" \
                   --resource-group "${RESOURCE_GROUP}" \
-                  --query 'properties.latestReadyRevisionName' \
-                  -o tsv 2>/dev/null || true)"
+                  -o json 2>/dev/null || printf '{}')"
+                ready_revision="$(jq -r '.properties.latestReadyRevisionName // empty' <<< "${app_state}")"
+                current_mode="$(jq -r '.properties.configuration.activeRevisionsMode // empty' <<< "${app_state}")"
                 ready_status="$(curl \
                   --silent \
                   --output /dev/null \
                   --write-out '%{http_code}' \
                   --max-time 15 \
                   "https://${FQDN}/ready" || true)"
-                previous_health="$(az containerapp revision show \
+                rollback_state="$(az containerapp revision show \
+                  --name "${APP_NAME}" \
+                  --resource-group "${RESOURCE_GROUP}" \
+                  --revision "${rollback_revision}" \
+                  -o json 2>/dev/null || printf '{}')"
+                rollback_health="$(jq -r '.properties.healthState // empty' <<< "${rollback_state}")"
+                rollback_active="$(jq -r '.properties.active // false' <<< "${rollback_state}")"
+                rollback_weight="$(jq -r '.properties.trafficWeight // empty' <<< "${rollback_state}")"
+                source_state="$(az containerapp revision show \
                   --name "${APP_NAME}" \
                   --resource-group "${RESOURCE_GROUP}" \
                   --revision "${PREVIOUS_REVISION}" \
-                  --query 'properties.healthState' \
-                  -o tsv 2>/dev/null || true)"
-                if [[ "${ready_revision}" == "${PREVIOUS_REVISION}" \
+                  -o json 2>/dev/null || printf '{}')"
+                source_health="$(jq -r '.properties.healthState // empty' <<< "${source_state}")"
+                source_active="$(jq -r '.properties.active // false' <<< "${source_state}")"
+                source_image="$(jq -r --arg container "${IMAGE_REPOSITORY}" \
+                  '.properties.template.containers[]?
+                    | select(.name == $container)
+                    | .image // empty' <<< "${source_state}")"
+                if [[ "${ready_revision}" == "${rollback_revision}" \
                   && "${ready_status}" == "200" \
-                  && "${previous_health}" == "Healthy" ]]; then
+                  && "${rollback_health}" == "Healthy" \
+                  && "${rollback_active,,}" == "true" \
+                  && "${rollback_weight}" == "100" \
+                  && "${current_mode,,}" == "multiple" \
+                  && "${source_health}" == "Healthy" \
+                  && "${source_active,,}" == "true" \
+                  && "${source_image}" == "${PREVIOUS_IMAGE}" ]]; then
                   restored=1
                   break
                 fi
@@ -467,19 +593,28 @@ jobs:
               done
               [[ "${restored}" == "1" ]] || rollback_ok=0
 
-              failed_weight="$(az containerapp revision list \
+              failed_weight="$(az containerapp revision show \
                 --name "${APP_NAME}" \
                 --resource-group "${RESOURCE_GROUP}" \
-                --query "[?name=='${new_revision}'].properties.trafficWeight | [0]" \
+                --revision "${new_revision}" \
+                --query 'properties.trafficWeight' \
+                -o tsv 2>/dev/null || true)"
+              failed_active="$(az containerapp revision show \
+                --name "${APP_NAME}" \
+                --resource-group "${RESOURCE_GROUP}" \
+                --revision "${new_revision}" \
+                --query 'properties.active' \
                 -o tsv 2>/dev/null || true)"
               [[ -z "${failed_weight}" || "${failed_weight}" == "0" || "${failed_weight}" == "None" ]] \
+                || rollback_ok=0
+              [[ -z "${failed_active}" || "${failed_active}" == "false" || "${failed_active}" == "None" ]] \
                 || rollback_ok=0
 
               if [[ "${rollback_ok}" != "1" ]]; then
                 echo 'CRITICAL: exact production rollback verification failed.'
                 exit 86
               fi
-              echo "Exact production rollback verified on ${PREVIOUS_REVISION}; failed revision has no traffic."
+              echo "Exact production rollback copy ${rollback_revision} verified from ${PREVIOUS_REVISION}; failed revision has no traffic."
             fi
             exit "${status}"
           }

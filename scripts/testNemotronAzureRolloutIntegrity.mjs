@@ -288,12 +288,16 @@ for (const name of [
 // P: rollback restores the exact prior revision; it never reconstructs flags
 // from redacted metadata.
 const rollbackPlan = buildExactRollbackPlan({
-  rollbackRevision: rollbackRevisionName,
+  rollbackSourceRevision: rollbackRevisionName,
+  rollbackRevision: "sentiqgpt-backend--rollback-copy",
   failedRevision: "sentiqgpt-backend--failed",
-  previousRevisionMode: "Single",
 });
 assert.equal(rollbackPlan.reconstructEnvironment, false);
-assert.equal(rollbackPlan.revisionWeights[rollbackRevisionName], 100);
+assert.equal(rollbackPlan.copyFromRevision, rollbackRevisionName);
+assert.equal(rollbackPlan.createExactRevisionCopy, true);
+assert.equal(rollbackPlan.revisionMode, "multiple");
+assert.equal(rollbackPlan.revisionWeights[rollbackRevisionName], 0);
+assert.equal(rollbackPlan.revisionWeights["sentiqgpt-backend--rollback-copy"], 100);
 assert.equal(
   existingEnvironment.find((entry) => entry.name === "SENTIQ_NVIDIA_PROVIDER_ENABLED").value,
   "false",
@@ -313,6 +317,13 @@ assert.match(ordinaryWorkflow, /multiple[\s\S]*skip/i);
 assert.doesNotMatch(fullWorkflow, /renderNemotronFullRolloutUpdate\.mjs/);
 assert.doesNotMatch(fullWorkflow, /az containerapp update[\s\S]*--yaml/);
 assert.doesNotMatch(fullWorkflow, /^\s*(?:timeout \d+s )?az containerapp exec/m);
+assert.match(fullWorkflow, /rollback_suffix="rollback-\$\{GITHUB_SHA::10\}-\$\{GITHUB_RUN_ID\}"/);
+assert.match(
+  fullWorkflow,
+  /--from-revision "\$\{PREVIOUS_REVISION\}"[\s\S]*--revision-suffix "\$\{rollback_suffix\}"/,
+);
+assert.match(fullWorkflow, /ready_revision}" == "\$\{rollback_revision\}"/);
+assert.doesNotMatch(fullWorkflow, /--mode single/);
 assert.equal(
   fullWorkflow.match(/(?:timeout \d+s )?bash scripts\/execAzureContainerAppCommand\.sh/g)?.length,
   5,

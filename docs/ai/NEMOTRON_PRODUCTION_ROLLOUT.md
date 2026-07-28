@@ -29,9 +29,17 @@ empty `value`.
   WebSurf, cancellation, and leakage checks all pass.
 - Activation is an explicit traffic change. The previous healthy revision
   remains active at zero traffic for emergency rollback.
-- Any post-copy failure restores 100% traffic to the exact source revision,
-  deactivates the failed revision, restores the previous revision mode when
-  applicable, verifies `/ready`, and then returns workflow failure.
+- Any post-copy failure creates a new revision copied exactly from the proven
+  source, without image or environment overrides. This is necessary because
+  Azure's `latestReadyRevisionName` is monotonic and cannot be moved backward
+  merely by changing traffic. The workflow verifies the rollback copy at zero
+  traffic, activates it at 100%, deactivates the failed revision, retains
+  multiple-revision mode and the original source, verifies `/ready`, and only
+  then returns workflow failure.
+- Independent NVIDIA slot verification retries only bounded, explicitly
+  retryable upstream conditions (`empty_stream`, rate limiting, and transient
+  transport errors). Authentication, malformed output, and public reasoning
+  markers fail immediately.
 
 Both Azure deployment workflows use the
 `azure-container-apps-production` concurrency group. While blue/green mode is
