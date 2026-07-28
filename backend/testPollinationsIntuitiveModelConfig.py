@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL_ID = "vendouple/nemotron-3-ultra:free"
+MODEL_ID = "deepseek"
 EXPECTED_LINE = f"POLLINATIONS_INTUITIVE_MODEL={MODEL_ID}"
 
 
@@ -17,6 +17,18 @@ def main() -> int:
     require_contains(ROOT / ".env.template", EXPECTED_LINE)
     require_contains(ROOT / "docs" / "ai" / "NEMOTRON_INTUITIVE_PASS1.md", MODEL_ID)
     require_contains(ROOT / "llm_adapter.py", 'os.getenv("POLLINATIONS_INTUITIVE_MODEL", "").strip()')
+    require_contains(
+        ROOT / "backend" / "nemotronDeploymentReadiness.ts",
+        f'EXPECTED_POLLINATIONS_MODEL = "{MODEL_ID}"',
+    )
+    require_contains(
+        ROOT / "scripts" / "renderNemotronFullRolloutUpdate.mjs",
+        f'POLLINATIONS_INTUITIVE_MODEL: "{MODEL_ID}"',
+    )
+    require_contains(
+        ROOT / ".github" / "workflows" / "nemotron-full-rollout.yml",
+        EXPECTED_LINE,
+    )
 
     print(f"Pollinations Intuitive model configuration validated: {MODEL_ID}")
     return 0

@@ -18,6 +18,20 @@ PROMPT = "Reply with the single word OK."
 FORBIDDEN_MARKERS = ("reasoning_content", "<think>", "</think>")
 
 
+def _safe_error_code(response: requests.Response) -> str | None:
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    return str(code)[:80] if isinstance(code, (str, int)) else None
+
+
 def _safe_usage(payload: dict[str, Any]) -> dict[str, int | None]:
     usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
     return {
@@ -74,6 +88,7 @@ def main() -> int:
             "status": "fail",
             "category": "http",
             "status_code": response.status_code,
+            "error_code": _safe_error_code(response),
         }))
         return 1
 

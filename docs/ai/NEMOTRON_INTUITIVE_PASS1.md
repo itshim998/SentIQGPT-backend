@@ -122,7 +122,7 @@ These non-secret settings are documented in `.env.example` and
 ```env
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 NVIDIA_NEMOTRON_MODEL=nvidia/nemotron-3-ultra-550b-a55b
-POLLINATIONS_INTUITIVE_MODEL=vendouple/nemotron-3-ultra:free
+POLLINATIONS_INTUITIVE_MODEL=deepseek
 SENTIQ_NVIDIA_MAX_GENERATED_TOKENS=8000
 SENTIQ_INTUITIVE_ORDINARY_MAX_GENERATED_TOKENS=6000
 SENTIQ_INTUITIVE_ORDINARY_REASONING_BUDGET=2000
@@ -140,17 +140,22 @@ SENTIQ_NVIDIA_AUTH_FAILURE_COOLDOWN_MS=3600000
 
 ## Pollinations last resort
 
-The configured Pollinations community-model identifier for the Intuitive
+The configured Pollinations reasoning-model identifier for the Intuitive
 last-resort route is:
 
 ```text
-vendouple/nemotron-3-ultra:free
+deepseek
 ```
 
 It is present in `.env.example` and `.env.template`, and the existing adapter
-reads it through `POLLINATIONS_INTUITIVE_MODEL`. Local and deployed runtime
-environments must also set that non-secret variable; tracked templates do not
-modify an existing untracked `.env` or cloud environment automatically.
+reads it through `POLLINATIONS_INTUITIVE_MODEL`. The first-party `deepseek`
+reasoning alias replaced the retired
+`vendouple/nemotron-3-ultra:free` community-model identifier during the
+production recovery on 2026-07-28. The replacement was confirmed in the live
+Pollinations model catalog, allowed by the production key scope, and verified
+through a redacted live inference. Local and deployed runtime environments must
+also set that non-secret variable; tracked templates do not modify an existing
+untracked `.env` or cloud environment automatically.
 
 The lane uses Pollinations only after the NVIDIA pool fails before visible
 answer output begins. It does not fall back to Fast when the Intuitive

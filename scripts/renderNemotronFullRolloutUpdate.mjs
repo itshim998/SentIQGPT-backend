@@ -13,7 +13,7 @@ export const FULL_ROLLOUT_PLAIN_ENV = Object.freeze({
   NVIDIA_BASE_URL: "https://integrate.api.nvidia.com/v1",
   NVIDIA_NEMOTRON_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
   POLLINATIONS_OPENAI_ENDPOINT: "https://gen.pollinations.ai/v1/chat/completions",
-  POLLINATIONS_INTUITIVE_MODEL: "vendouple/nemotron-3-ultra:free",
+  POLLINATIONS_INTUITIVE_MODEL: "deepseek",
   SENTIQ_NVIDIA_MAX_GENERATED_TOKENS: "8000",
   SENTIQ_INTUITIVE_TOTAL_TIMEOUT_MS: "120000",
   SENTIQ_NVIDIA_FIRST_CHUNK_TIMEOUT_MS: "30000",
