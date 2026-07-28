@@ -21,7 +21,7 @@ async function main(): Promise<void> {
   const passingFetch: typeof fetch = async (input) => {
     const url = String(input);
     calls.push(url);
-    if (url.endsWith("/get_unified_text_tokens_v2_schema_version")) {
+    if (url.endsWith("/get_unified_text_tokens_v2_full_rollout_schema_version")) {
       return response(UNIFIED_TEXT_FULL_ROLLOUT_SCHEMA_VERSION);
     }
     if (url.endsWith("/verify_unified_text_tokens_v2_rollout")) {
@@ -42,7 +42,7 @@ async function main(): Promise<void> {
 
   const staleFetch: typeof fetch = async (input) => {
     const url = String(input);
-    if (url.endsWith("/get_unified_text_tokens_v2_schema_version")) {
+    if (url.endsWith("/get_unified_text_tokens_v2_full_rollout_schema_version")) {
       return response("20260727120000");
     }
     return response({
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
 
   const missingObjectsFetch: typeof fetch = async (input) => {
     const url = String(input);
-    if (url.endsWith("/get_unified_text_tokens_v2_schema_version")) {
+    if (url.endsWith("/get_unified_text_tokens_v2_full_rollout_schema_version")) {
       return response(UNIFIED_TEXT_FULL_ROLLOUT_SCHEMA_VERSION);
     }
     return response({
