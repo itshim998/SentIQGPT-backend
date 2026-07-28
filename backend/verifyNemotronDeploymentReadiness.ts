@@ -5,6 +5,7 @@ import {
   evaluateNemotronDeploymentReadiness,
   type NemotronRolloutStage,
 } from "./nemotronDeploymentReadiness";
+import { verifyUnifiedTextProductionReadiness } from "./unifiedTextProductionReadiness";
 
 function loadEnvironment(): void {
   const candidates = [
@@ -25,7 +26,7 @@ function readExpectedStage(argv: readonly string[]): NemotronRolloutStage | unde
   throw new Error("--expect-stage must be off, canary, or full.");
 }
 
-function main(): void {
+async function main(): Promise<void> {
   loadEnvironment();
   const argv = process.argv.slice(2);
   const report = evaluateNemotronDeploymentReadiness(process.env, {
@@ -39,19 +40,29 @@ function main(): void {
     ...report,
   }));
 
-  if (!report.ready) process.exitCode = 1;
+  if (!report.ready) {
+    process.exitCode = 1;
+    return;
+  }
+
+  if (report.flags.unifiedTextTokensV2) {
+    const databaseReport = await verifyUnifiedTextProductionReadiness();
+    console.log(JSON.stringify({
+      event: "unified_text_production_readiness",
+      ...databaseReport,
+    }));
+    if (!databaseReport.ready) process.exitCode = 1;
+  }
 }
 
-try {
-  main();
-} catch (error) {
+void main().catch((error) => {
   console.error(JSON.stringify({
     event: "nemotron_deployment_readiness",
     status: "blocked",
     issues: [{
-      code: "preflight_argument_error",
-      message: error instanceof Error ? error.message : "Deployment preflight could not run.",
+      code: "preflight_execution_error",
+      message: error instanceof Error ? error.name : "Deployment preflight could not run.",
     }],
   }));
   process.exitCode = 1;
-}
+});
