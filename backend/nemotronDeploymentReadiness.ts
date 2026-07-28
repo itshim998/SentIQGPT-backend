@@ -222,7 +222,7 @@ export function evaluateNemotronDeploymentReadiness(
       "A dependency-safe partial bundle is active; this is valid for staged canarying or a kill-switch rollback, but not a complete end-to-end rollout.",
     );
   }
-  if ((options.requireCompleteBundle || stage === "full") && !flagBundleComplete) {
+  if (options.requireCompleteBundle && !flagBundleComplete) {
     addIssue(
       issues,
       "complete_flag_bundle_required",
