@@ -14,6 +14,7 @@ export const EXPECTED_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 export const EXPECTED_NVIDIA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 export const EXPECTED_POLLINATIONS_ENDPOINT = "https://gen.pollinations.ai/v1/chat/completions";
 export const EXPECTED_POLLINATIONS_MODEL = "vendouple/nemotron-3-ultra:free";
+export const REQUIRED_FULL_ROLLOUT_NVIDIA_SLOTS = 6;
 
 export type NemotronRolloutStage = "off" | "canary" | "full";
 
@@ -36,6 +37,7 @@ export interface NemotronDeploymentReadinessReport {
   readonly checks: Readonly<{
     flagBundleComplete: boolean;
     providerKeySlots: number;
+    pollinationsCredentialConfigured: boolean;
     nvidiaBaseUrlPinned: boolean;
     primaryModelPinned: boolean;
     pollinationsEndpointPinned: boolean;
@@ -133,6 +135,7 @@ export function evaluateNemotronDeploymentReadiness(
   const activeFlagCount = Object.values(flags).filter(Boolean).length;
   const flagBundleComplete = activeFlagCount === 4;
   const providerKeySlots = countNvidiaKeySlots(environment);
+  const pollinationsCredentialConfigured = Boolean(readString(environment, "POLLINATIONS_API_KEY"));
   const timeoutMs = readInteger(environment, "SENTIQ_INTUITIVE_TOTAL_TIMEOUT_MS", 120_000);
   const maximumGeneratedTokens = readInteger(environment, "SENTIQ_NVIDIA_MAX_GENERATED_TOKENS", 8_000);
   const nvidiaBaseUrlPinned = endpointMatches(
@@ -167,9 +170,6 @@ export function evaluateNemotronDeploymentReadiness(
     );
   }
 
-  // Enabling a dependent without its prerequisite is unsafe. Disabling any
-  // capability, however, must remain restart-safe so each kill switch can be
-  // used independently during a canary or emergency rollback.
   if (flags.nemotronIntuitive && !flags.nvidiaProvider) {
     addIssue(
       issues,
@@ -222,11 +222,11 @@ export function evaluateNemotronDeploymentReadiness(
       "A dependency-safe partial bundle is active; this is valid for staged canarying or a kill-switch rollback, but not a complete end-to-end rollout.",
     );
   }
-  if (options.requireCompleteBundle && !flagBundleComplete) {
+  if ((options.requireCompleteBundle || stage === "full") && !flagBundleComplete) {
     addIssue(
       issues,
       "complete_flag_bundle_required",
-      "This verification requires all four rollout capabilities to be enabled.",
+      "The complete full rollout requires all four rollout capabilities to be enabled.",
     );
   }
 
@@ -256,6 +256,20 @@ export function evaluateNemotronDeploymentReadiness(
         issues,
         "full_rollout_not_acknowledged",
         "Full rollout requires the explicit full-rollout acknowledgement value.",
+      );
+    }
+    if (providerKeySlots < REQUIRED_FULL_ROLLOUT_NVIDIA_SLOTS) {
+      addIssue(
+        issues,
+        "full_rollout_provider_pool_incomplete",
+        `Full rollout requires all ${REQUIRED_FULL_ROLLOUT_NVIDIA_SLOTS} NVIDIA key slots.`,
+      );
+    }
+    if (!pollinationsCredentialConfigured) {
+      addIssue(
+        issues,
+        "full_rollout_fallback_credential_missing",
+        "Full rollout requires the server-side Pollinations fallback credential.",
       );
     }
   }
@@ -343,6 +357,7 @@ export function evaluateNemotronDeploymentReadiness(
   const checks = Object.freeze({
     flagBundleComplete,
     providerKeySlots,
+    pollinationsCredentialConfigured,
     nvidiaBaseUrlPinned,
     primaryModelPinned,
     pollinationsEndpointPinned,
