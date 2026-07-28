@@ -5,6 +5,7 @@ import {
   EXPECTED_POLLINATIONS_ENDPOINT,
   EXPECTED_POLLINATIONS_MODEL,
   NEMOTRON_FULL_ROLLOUT_ACK,
+  REQUIRED_FULL_ROLLOUT_NVIDIA_SLOTS,
   evaluateNemotronDeploymentReadiness,
 } from "./nemotronDeploymentReadiness";
 import { NEMOTRON_ROLLOUT_ENV } from "./nemotronRolloutFlags";
@@ -18,9 +19,10 @@ function enabledEnvironment(overrides: Record<string, string | undefined> = {}) 
     [NEMOTRON_ROLLOUT_ENV.nemotronIntuitive]: "true",
     [NEMOTRON_ROLLOUT_ENV.unifiedTextTokensV2]: "true",
     [NEMOTRON_ROLLOUT_ENV.intuitiveQuotaUi]: "true",
-    NVIDIA_API_KEY_1: "secret-provider-key",
+    NVIDIA_API_KEY_1: "secret-provider-key-1",
     NVIDIA_BASE_URL: EXPECTED_NVIDIA_BASE_URL,
     NVIDIA_NEMOTRON_MODEL: EXPECTED_NVIDIA_MODEL,
+    POLLINATIONS_API_KEY: "secret-pollinations-key",
     POLLINATIONS_OPENAI_ENDPOINT: EXPECTED_POLLINATIONS_ENDPOINT,
     POLLINATIONS_INTUITIVE_MODEL: EXPECTED_POLLINATIONS_MODEL,
     SENTIQ_INTUITIVE_TOTAL_TIMEOUT_MS: "120000",
@@ -31,6 +33,20 @@ function enabledEnvironment(overrides: Record<string, string | undefined> = {}) 
     SENTIQ_PYTHON_LLM_QUOTA_ENFORCEMENT: "false",
     ...overrides,
   };
+}
+
+function fullEnvironment(overrides: Record<string, string | undefined> = {}) {
+  return enabledEnvironment({
+    SENTIQ_NEMOTRON_ROLLOUT_STAGE: "full",
+    SENTIQ_NEMOTRON_CANARY_DEPLOYMENT_ID: undefined,
+    SENTIQ_NEMOTRON_FULL_ROLLOUT_ACK: NEMOTRON_FULL_ROLLOUT_ACK,
+    NVIDIA_API_KEY_2: "secret-provider-key-2",
+    NVIDIA_API_KEY_3: "secret-provider-key-3",
+    NVIDIA_API_KEY_4: "secret-provider-key-4",
+    NVIDIA_API_KEY_5: "secret-provider-key-5",
+    NVIDIA_API_KEY_6: "secret-provider-key-6",
+    ...overrides,
+  });
 }
 
 const dormant = evaluateNemotronDeploymentReadiness({});
@@ -48,14 +64,14 @@ assert.equal(validCanary.checks.providerKeySlots, 1);
 assert.equal(validCanary.checks.flagBundleComplete, true);
 assert.equal(validCanary.checks.nvidiaBaseUrlPinned, true);
 assert.equal(validCanary.checks.pollinationsEndpointPinned, true);
+assert.equal(validCanary.checks.pollinationsCredentialConfigured, true);
 
 const serializedCanary = JSON.stringify(validCanary);
 assert.equal(serializedCanary.includes("secret-provider-key"), false);
+assert.equal(serializedCanary.includes("secret-pollinations-key"), false);
 assert.equal(serializedCanary.includes("secret-service-role"), false);
 assert.equal(serializedCanary.includes("secret-anonymous-hash-salt"), false);
 
-// Provider-only canarying is a safe dependency-first stage and must remain
-// restartable. The warning prevents mistaking it for the complete rollout.
 const providerOnly = evaluateNemotronDeploymentReadiness(enabledEnvironment({
   [NEMOTRON_ROLLOUT_ENV.nemotronIntuitive]: "false",
   [NEMOTRON_ROLLOUT_ENV.unifiedTextTokensV2]: "false",
@@ -143,30 +159,33 @@ const legacyQuotaEnabled = evaluateNemotronDeploymentReadiness(enabledEnvironmen
 assert.equal(legacyQuotaEnabled.ready, false);
 assert.ok(legacyQuotaEnabled.issues.some((issue) => issue.code === "legacy_python_quota_enabled"));
 
-const fullWithoutAck = evaluateNemotronDeploymentReadiness(enabledEnvironment({
-  SENTIQ_NEMOTRON_ROLLOUT_STAGE: "full",
-  SENTIQ_NEMOTRON_CANARY_DEPLOYMENT_ID: undefined,
+const fullWithoutAck = evaluateNemotronDeploymentReadiness(fullEnvironment({
+  SENTIQ_NEMOTRON_FULL_ROLLOUT_ACK: undefined,
 }));
 assert.equal(fullWithoutAck.ready, false);
 assert.ok(fullWithoutAck.issues.some((issue) => issue.code === "full_rollout_not_acknowledged"));
 
-const validFull = evaluateNemotronDeploymentReadiness(enabledEnvironment({
-  SENTIQ_NEMOTRON_ROLLOUT_STAGE: "full",
-  SENTIQ_NEMOTRON_CANARY_DEPLOYMENT_ID: undefined,
-  SENTIQ_NEMOTRON_FULL_ROLLOUT_ACK: NEMOTRON_FULL_ROLLOUT_ACK,
-}), {
+const incompleteFullPool = evaluateNemotronDeploymentReadiness(fullEnvironment({
+  NVIDIA_API_KEY_6: undefined,
+}));
+assert.equal(incompleteFullPool.ready, false);
+assert.ok(incompleteFullPool.issues.some((issue) => issue.code === "full_rollout_provider_pool_incomplete"));
+
+const fullWithoutFallbackCredential = evaluateNemotronDeploymentReadiness(fullEnvironment({
+  POLLINATIONS_API_KEY: undefined,
+}));
+assert.equal(fullWithoutFallbackCredential.ready, false);
+assert.ok(fullWithoutFallbackCredential.issues.some((issue) => issue.code === "full_rollout_fallback_credential_missing"));
+
+const validFull = evaluateNemotronDeploymentReadiness(fullEnvironment(), {
   requireEnabled: true,
   requireCompleteBundle: true,
   expectedStage: "full",
 });
 assert.equal(validFull.ready, true);
+assert.equal(validFull.checks.providerKeySlots, REQUIRED_FULL_ROLLOUT_NVIDIA_SLOTS);
 
-// An emergency kill switch may reduce a full rollout to a safe partial subset.
-// Startup remains available, while the report makes the degraded bundle visible.
-const fullKillSwitch = evaluateNemotronDeploymentReadiness(enabledEnvironment({
-  SENTIQ_NEMOTRON_ROLLOUT_STAGE: "full",
-  SENTIQ_NEMOTRON_CANARY_DEPLOYMENT_ID: undefined,
-  SENTIQ_NEMOTRON_FULL_ROLLOUT_ACK: NEMOTRON_FULL_ROLLOUT_ACK,
+const fullKillSwitch = evaluateNemotronDeploymentReadiness(fullEnvironment({
   [NEMOTRON_ROLLOUT_ENV.nemotronIntuitive]: "false",
 }));
 assert.equal(fullKillSwitch.ready, true);
