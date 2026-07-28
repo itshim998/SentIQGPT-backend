@@ -27,12 +27,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AZURE_CORE_OUTPUT: none
-  # Azure backend image/resource identifier remains unchanged until a verified replacement exists.
   IMAGE_REPOSITORY: sentiqgpt-backend
-  SENTIQ_CONTAINER_MIN_REPLICAS: ${{ vars.SENTIQ_CONTAINER_MIN_REPLICAS || '0' }}
-  SENTIQ_CONTAINER_MAX_REPLICAS: ${{ vars.SENTIQ_CONTAINER_MAX_REPLICAS || '1' }}
-  SENTIQ_CONTAINER_COOLDOWN_SECONDS: ${{ vars.SENTIQ_CONTAINER_COOLDOWN_SECONDS || '900' }}
 
 jobs:
   build-and-deploy:
@@ -42,7 +37,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Azure login
         uses: azure/login@v3
@@ -51,68 +46,142 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Validate Container App runtime gates
+      - name: Install verified Container Apps CLI extension
+        run: >-
+          az extension add
+          --name containerapp
+          --version 1.3.0b4
+          --upgrade
+          --only-show-errors
+          --output none
+
+      - name: Prove last-ready runtime and prevent full-rollout overwrite
+        id: preflight
         shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          mode="$(az containerapp show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query 'properties.configuration.activeRevisionsMode' \
+            -o tsv)"
+          if [[ "${mode,,}" == "multiple" ]]; then
+            echo 'Verified full-rollout blue/green mode is active; ordinary deployment will skip to prevent an overwrite.'
+            echo "deploy=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          [[ "${mode,,}" == "single" ]] || {
+            echo 'Unsupported Azure revision mode.'
+            exit 1
+          }
+
           target_port="$(az containerapp show \
-            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
             --query 'properties.configuration.ingress.targetPort' \
             -o tsv)"
-          if [[ "${target_port}" != "3001" ]]; then
-            echo "Azure Container App ingress targetPort must remain 3001."
+          latest_ready="$(az containerapp show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query 'properties.latestReadyRevisionName' \
+            -o tsv)"
+          fqdn="$(az containerapp show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query 'properties.configuration.ingress.fqdn' \
+            -o tsv)"
+          [[ "${target_port}" == "3001" && -n "${latest_ready}" && -n "${fqdn}" ]] || {
+            echo 'Last-ready Azure production metadata is incomplete.'
             exit 1
-          fi
+          }
 
-          internal_token_secret_ref="$(az containerapp show \
-            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+          internal_ref="$(az containerapp revision show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${latest_ready}" \
             --query "properties.template.containers[0].env[?name=='SENTIQ_INTERNAL_SERVICE_TOKEN'].secretRef | [0]" \
             -o tsv)"
-          if [[ -z "${internal_token_secret_ref}" || "${internal_token_secret_ref}" == "None" ]]; then
-            echo "SENTIQ_INTERNAL_SERVICE_TOKEN must be mapped from an Azure Container Apps secret before deployment."
+          [[ -n "${internal_ref}" && "${internal_ref}" != "None" ]] || {
+            echo 'SENTIQ_INTERNAL_SERVICE_TOKEN is not a secret reference on the last-ready revision.'
             exit 1
-          fi
-
-          unsafe_internal_endpoints="$(az containerapp show \
-            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --query "properties.template.containers[0].env[?name=='SENTIQ_ENABLE_UNSAFE_INTERNAL_ENDPOINTS'].value | [0]" \
+          }
+          resolved_ref_count="$(az containerapp secret list \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query "[?name=='${internal_ref}'] | length(@)" \
             -o tsv)"
-          if [[ "${unsafe_internal_endpoints}" == "true" ]]; then
-            echo "Unsafe internal endpoints cannot be enabled in production."
+          [[ "${resolved_ref_count}" == "1" ]] || {
+            echo 'SENTIQ_INTERNAL_SERVICE_TOKEN secret reference is unresolved.'
             exit 1
-          fi
+          }
 
-          for env_name in \
-            SENTIQ_MODEL_TOOL_REGISTRY_ENABLED \
-            SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED \
-            SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED \
-            SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED \
-            SENTIQ_MODEL_IMAGE_SELECTION_ENABLED \
-            SENTIQ_MODEL_CHART_SELECTION_ENABLED \
-            SENTIQ_MODEL_FILE_SELECTION_ENABLED \
-            SENTIQ_MODEL_MEMORY_SELECTION_ENABLED \
-            SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED; do
-            configured_value="$(az containerapp show \
-              --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-              --query "properties.template.containers[0].env[?name=='${env_name}'].value | [0]" \
-              -o tsv)"
-            if [[ -z "${configured_value}" || "${configured_value}" == "None" ]]; then
-              echo "Canonical model-tool variable ${env_name} must be explicitly configured before deployment."
-              exit 1
-            fi
+          ready_status=0
+          for attempt in $(seq 1 90); do
+            ready_status="$(curl \
+              --silent \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              --max-time 15 \
+              "https://${fqdn}/ready" || true)"
+            [[ "${ready_status}" == "200" ]] && break
+            sleep 2
           done
+          [[ "${ready_status}" == "200" ]] || {
+            echo 'Last-ready production failed /ready.'
+            exit 1
+          }
+          replica="$(az containerapp replica list \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${latest_ready}" \
+            --query '[0].name' \
+            -o tsv)"
+          [[ -n "${replica}" ]] || {
+            echo 'Last-ready production has no running replica.'
+            exit 1
+          }
+
+          runtime_command="$(node scripts/verifyAzureRuntimeEnvironment.mjs --emit-command)"
+          runtime_log="${RUNNER_TEMP}/ordinary-deploy-runtime-${GITHUB_RUN_ID}.log"
+          trap 'rm -f "${runtime_log}"' EXIT
+          az containerapp exec \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${latest_ready}" \
+            --replica "${replica}" \
+            --container "${IMAGE_REPOSITORY}" \
+            --command "${runtime_command}" | tee "${runtime_log}"
+          grep -a '"event": "azure_runtime_environment"' "${runtime_log}" \
+            | tail -1 \
+            | jq -e '.ok == true' >/dev/null
+
+          readiness_path="$(az containerapp revision show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${latest_ready}" \
+            --query "properties.template.containers[0].probes[?type=='Readiness'].httpGet.path | [0]" \
+            -o tsv)"
+          [[ "${readiness_path}" == "/ready" ]] || {
+            echo 'Last-ready revision does not use the production /ready gate.'
+            exit 1
+          }
+          echo "deploy=true" >> "${GITHUB_OUTPUT}"
+          echo "previous_revision=${latest_ready}" >> "${GITHUB_OUTPUT}"
+          echo "fqdn=${fqdn}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
+        if: steps.preflight.outputs.deploy == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Azure Container Registry
+        if: steps.preflight.outputs.deploy == 'true'
         run: az acr login --name "${{ vars.AZURE_ACR_NAME }}"
 
-      - name: Build and push image
+      - name: Build and push immutable image
+        if: steps.preflight.outputs.deploy == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -122,51 +191,71 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Deploy immutable image to Azure Container Apps
+      - name: Copy last-ready revision with the immutable image
+        if: steps.preflight.outputs.deploy == 'true'
         shell: bash
         env:
+          APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          PREVIOUS_REVISION: ${{ steps.preflight.outputs.previous_revision }}
+          FQDN: ${{ steps.preflight.outputs.fqdn }}
           DEPLOY_IMAGE: ${{ vars.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_REPOSITORY }}:${{ github.sha }}
         run: |
-          set -euo pipefail
-          current_config="${RUNNER_TEMP}/sentiq-container-app-current.json"
-          update_config="${RUNNER_TEMP}/sentiq-container-app-update.yaml"
-          trap 'rm -f "${current_config}" "${update_config}"' EXIT
-
-          az containerapp show \
-            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            -o json > "${current_config}"
-
-          node scripts/renderAzureContainerAppUpdate.mjs \
-            --input "${current_config}" \
-            --output "${update_config}" \
+          set -Eeuo pipefail
+          suffix="${GITHUB_SHA::12}"
+          new_revision="${APP_NAME}--${suffix}"
+          az containerapp revision copy \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --from-revision "${PREVIOUS_REVISION}" \
             --container-name "${IMAGE_REPOSITORY}" \
             --image "${DEPLOY_IMAGE}" \
-            --revision-suffix "${GITHUB_SHA::12}" \
-            --min-replicas "${SENTIQ_CONTAINER_MIN_REPLICAS}" \
-            --max-replicas "${SENTIQ_CONTAINER_MAX_REPLICAS}" \
-            --cooldown-seconds "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}" \
-            --readiness-path "/ready"
+            --revision-suffix "${suffix}" \
+            --only-show-errors \
+            --output none
 
-          az containerapp update \
-            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --yaml "${update_config}"
-
-          actual_min="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.minReplicas' -o tsv)"
-          actual_max="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.maxReplicas' -o tsv)"
-          actual_cooldown="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.cooldownPeriod' -o tsv)"
-          readiness_path="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].probes[?type=='Readiness'].httpGet.path | [0]" -o tsv)"
-          readiness_failures="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].probes[?type=='Readiness'].failureThreshold | [0]" -o tsv)"
-          if [[ "${actual_min}" != "${SENTIQ_CONTAINER_MIN_REPLICAS}" || "${actual_max}" != "${SENTIQ_CONTAINER_MAX_REPLICAS}" || "${actual_cooldown}" != "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}" ]]; then
-            echo "Azure Container App scale verification failed."
+          verified=0
+          for attempt in $(seq 1 120); do
+            latest_ready="$(az containerapp show \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --query 'properties.latestReadyRevisionName' \
+              -o tsv 2>/dev/null || true)"
+            health="$(az containerapp revision show \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --revision "${new_revision}" \
+              --query 'properties.healthState' \
+              -o tsv 2>/dev/null || true)"
+            ready_status="$(curl \
+              --silent \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              --max-time 15 \
+              "https://${FQDN}/ready" || true)"
+            if [[ "${latest_ready}" == "${new_revision}" \
+              && "${health}" == "Healthy" \
+              && "${ready_status}" == "200" ]]; then
+              verified=1
+              break
+            fi
+            sleep 3
+          done
+          [[ "${verified}" == "1" ]] || {
+            echo 'The immutable ordinary deployment did not become healthy.'
             exit 1
-          fi
-          if [[ "${readiness_path}" != "/ready" || "${readiness_failures}" != "2" ]]; then
-            echo "Azure Container App readiness probe verification failed."
+          }
+          deployed_image="$(az containerapp revision show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${new_revision}" \
+            --query "properties.template.containers[?name=='${IMAGE_REPOSITORY}'].image | [0]" \
+            -o tsv)"
+          [[ "${deployed_image}" == "${DEPLOY_IMAGE}" ]] || {
+            echo 'Deployed image does not match the immutable commit tag.'
             exit 1
-          fi
-          echo "Azure Container App scale active: min=${actual_min}, max=${actual_max}, cooldown=${actual_cooldown}."
+          }
+          echo "Azure Container App deployed safely on ${new_revision}."
 
   rollback:
     name: Deploy existing image tag
@@ -175,7 +264,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Azure login
         uses: azure/login@v3
@@ -184,105 +273,108 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Validate Container App runtime gates
-        shell: bash
-        run: |
-          set -euo pipefail
-          target_port="$(az containerapp show \
-            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --query 'properties.configuration.ingress.targetPort' \
-            -o tsv)"
-          if [[ "${target_port}" != "3001" ]]; then
-            echo "Azure Container App ingress targetPort must remain 3001."
-            exit 1
-          fi
+      - name: Install verified Container Apps CLI extension
+        run: >-
+          az extension add
+          --name containerapp
+          --version 1.3.0b4
+          --upgrade
+          --only-show-errors
+          --output none
 
-          internal_token_secret_ref="$(az containerapp show \
-            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --query "properties.template.containers[0].env[?name=='SENTIQ_INTERNAL_SERVICE_TOKEN'].secretRef | [0]" \
-            -o tsv)"
-          if [[ -z "${internal_token_secret_ref}" || "${internal_token_secret_ref}" == "None" ]]; then
-            echo "SENTIQ_INTERNAL_SERVICE_TOKEN must be mapped from an Azure Container Apps secret before deployment."
-            exit 1
-          fi
-
-          unsafe_internal_endpoints="$(az containerapp show \
-            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --query "properties.template.containers[0].env[?name=='SENTIQ_ENABLE_UNSAFE_INTERNAL_ENDPOINTS'].value | [0]" \
-            -o tsv)"
-          if [[ "${unsafe_internal_endpoints}" == "true" ]]; then
-            echo "Unsafe internal endpoints cannot be enabled in production."
-            exit 1
-          fi
-
-          for env_name in \
-            SENTIQ_MODEL_TOOL_REGISTRY_ENABLED \
-            SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED \
-            SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED \
-            SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED \
-            SENTIQ_MODEL_IMAGE_SELECTION_ENABLED \
-            SENTIQ_MODEL_CHART_SELECTION_ENABLED \
-            SENTIQ_MODEL_FILE_SELECTION_ENABLED \
-            SENTIQ_MODEL_MEMORY_SELECTION_ENABLED \
-            SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED; do
-            configured_value="$(az containerapp show \
-              --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-              --query "properties.template.containers[0].env[?name=='${env_name}'].value | [0]" \
-              -o tsv)"
-            if [[ -z "${configured_value}" || "${configured_value}" == "None" ]]; then
-              echo "Canonical model-tool variable ${env_name} must be explicitly configured before rollback."
-              exit 1
-            fi
-          done
-
-      - name: Deploy selected immutable image to Azure Container Apps
+      - name: Copy exact last-ready configuration with selected image
         shell: bash
         env:
+          APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           IMAGE_TAG: ${{ inputs.image_tag }}
+          FQDN: ${{ vars.AZURE_CONTAINER_APP_FQDN }}
         run: |
-          set -euo pipefail
-          suffix="$(printf '%s' "${IMAGE_TAG}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | cut -c1-20)"
-          suffix="${suffix:-manual}"
-          current_config="${RUNNER_TEMP}/sentiq-container-app-current.json"
-          update_config="${RUNNER_TEMP}/sentiq-container-app-update.yaml"
-          trap 'rm -f "${current_config}" "${update_config}"' EXIT
+          set -Eeuo pipefail
+          previous_revision="$(az containerapp show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query 'properties.latestReadyRevisionName' \
+            -o tsv)"
+          mode="$(az containerapp show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query 'properties.configuration.activeRevisionsMode' \
+            -o tsv)"
+          fqdn="$(az containerapp show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query 'properties.configuration.ingress.fqdn' \
+            -o tsv)"
+          [[ -n "${previous_revision}" && -n "${fqdn}" ]] || {
+            echo 'No last-ready revision is available for the selected image deployment.'
+            exit 1
+          }
+          suffix="$(printf '%s' "${IMAGE_TAG}" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed 's/[^a-z0-9-]/-/g' \
+            | cut -c1-20)"
+          suffix="rollback-${suffix:-manual}-${GITHUB_RUN_ID}"
+          new_revision="${APP_NAME}--${suffix}"
+          deploy_image="${{ vars.AZURE_ACR_LOGIN_SERVER }}/${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
-          az containerapp show \
-            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            -o json > "${current_config}"
-
-          node scripts/renderAzureContainerAppUpdate.mjs \
-            --input "${current_config}" \
-            --output "${update_config}" \
+          az containerapp revision copy \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --from-revision "${previous_revision}" \
             --container-name "${IMAGE_REPOSITORY}" \
-            --image "${{ vars.AZURE_ACR_LOGIN_SERVER }}/${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
-            --revision-suffix "rollback-${suffix}" \
-            --min-replicas "${SENTIQ_CONTAINER_MIN_REPLICAS}" \
-            --max-replicas "${SENTIQ_CONTAINER_MAX_REPLICAS}" \
-            --cooldown-seconds "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}" \
-            --readiness-path "/health"
+            --image "${deploy_image}" \
+            --revision-suffix "${suffix}" \
+            --only-show-errors \
+            --output none
 
-          az containerapp update \
-            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --yaml "${update_config}"
+          revision_ready=0
+          for attempt in $(seq 1 120); do
+            health="$(az containerapp revision show \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --revision "${new_revision}" \
+              --query 'properties.healthState' \
+              -o tsv 2>/dev/null || true)"
+            revision_fqdn="$(az containerapp revision show \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --revision "${new_revision}" \
+              --query 'properties.fqdn' \
+              -o tsv 2>/dev/null || true)"
+            revision_status="$(curl \
+              --silent \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              --max-time 15 \
+              "https://${revision_fqdn}/ready" || true)"
+            if [[ "${health}" == "Healthy" && "${revision_status}" == "200" ]]; then
+              revision_ready=1
+              break
+            fi
+            sleep 3
+          done
+          [[ "${revision_ready}" == "1" ]] || {
+            echo 'Selected image revision failed verification and received no intentional traffic.'
+            exit 1
+          }
 
-          actual_min="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.minReplicas' -o tsv)"
-          actual_max="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.maxReplicas' -o tsv)"
-          actual_cooldown="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query 'properties.template.scale.cooldownPeriod' -o tsv)"
-          readiness_path="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].probes[?type=='Readiness'].httpGet.path | [0]" -o tsv)"
-          readiness_failures="$(az containerapp show --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].probes[?type=='Readiness'].failureThreshold | [0]" -o tsv)"
-          if [[ "${actual_min}" != "${SENTIQ_CONTAINER_MIN_REPLICAS}" || "${actual_max}" != "${SENTIQ_CONTAINER_MAX_REPLICAS}" || "${actual_cooldown}" != "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}" ]]; then
-            echo "Azure Container App scale verification failed."
-            exit 1
+          if [[ "${mode,,}" == "multiple" ]]; then
+            az containerapp ingress traffic set \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --revision-weight "${previous_revision}=0" "${new_revision}=100" \
+              --only-show-errors \
+              --output none
           fi
-          if [[ "${readiness_path}" != "/health" || "${readiness_failures}" != "2" ]]; then
-            echo "Azure Container App rollback readiness probe verification failed."
+          public_status="$(curl \
+            --silent \
+            --output /dev/null \
+            --write-out '%{http_code}' \
+            --max-time 30 \
+            "https://${fqdn}/ready")"
+          [[ "${public_status}" == "200" ]] || {
+            echo 'Selected image did not pass public /ready after activation.'
             exit 1
-          fi
-          echo "Azure Container App scale active: min=${actual_min}, max=${actual_max}, cooldown=${actual_cooldown}."
+          }
+          echo "Selected immutable image deployed on ${new_revision}; previous revision remains available."

@@ -59,10 +59,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -82,7 +82,7 @@ jobs:
 
       - name: Upload bootstrap failure log
         if: failure() && steps.frontend_bootstrap.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-bootstrap-failure-${{ github.run_id }}
           path: frontend-bootstrap.log
@@ -107,7 +107,7 @@ jobs:
 
       - name: Upload focused UI-state failure log
         if: failure() && steps.frontend_ui_state.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-ui-state-failure-${{ github.run_id }}
           path: frontend-ui-state.log
@@ -127,7 +127,7 @@ jobs:
 
       - name: Upload runtime failure log
         if: failure() && steps.frontend_runtime.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-runtime-failure-${{ github.run_id }}
           path: frontend-runtime.log
@@ -144,7 +144,7 @@ jobs:
 
       - name: Upload deployment verification failure log
         if: failure() && steps.frontend_deployment_verify.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-deployment-verification-failure-${{ github.run_id }}
           path: frontend-deployment-verify.log
@@ -161,7 +161,7 @@ jobs:
 
       - name: Upload deployed runtime failure evidence
         if: failure() && steps.frontend_deployed_runtime.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-deployed-runtime-failure-${{ github.run_id }}
           path: |

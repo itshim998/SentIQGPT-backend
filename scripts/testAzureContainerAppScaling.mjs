@@ -117,43 +117,19 @@ assert.throws(
 );
 
 const workflow = fs.readFileSync(".github/workflows/azure-container-apps.yml", "utf8");
-const canonicalModelToolVariables = [
-  "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED",
-  "SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED",
-  "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED",
-  "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED",
-  "SENTIQ_MODEL_IMAGE_SELECTION_ENABLED",
-  "SENTIQ_MODEL_CHART_SELECTION_ENABLED",
-  "SENTIQ_MODEL_FILE_SELECTION_ENABLED",
-  "SENTIQ_MODEL_MEMORY_SELECTION_ENABLED",
-  "SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED",
-];
-for (const name of canonicalModelToolVariables) {
-  assert.equal(
-    workflow.match(new RegExp(`\\b${name}\\b`, "g"))?.length,
-    2,
-    `${name} must be validated by both normal and rollback deployments`,
-  );
-}
-assert.match(workflow, /SENTIQ_CONTAINER_MIN_REPLICAS: \$\{\{ vars\.SENTIQ_CONTAINER_MIN_REPLICAS \|\| '0' \}\}/);
-assert.match(workflow, /SENTIQ_CONTAINER_MAX_REPLICAS: \$\{\{ vars\.SENTIQ_CONTAINER_MAX_REPLICAS \|\| '1' \}\}/);
-assert.match(workflow, /SENTIQ_CONTAINER_COOLDOWN_SECONDS: \$\{\{ vars\.SENTIQ_CONTAINER_COOLDOWN_SECONDS \|\| '900' \}\}/);
 assert.equal(
-  workflow.match(/node scripts\/renderAzureContainerAppUpdate\.mjs/g)?.length,
+  workflow.match(/az containerapp revision copy/g)?.length,
   2,
-  "normal and rollback deployments must use the protected renderer",
+  "normal and selected-image deployments must copy an exact last-ready revision",
 );
 assert.equal(
-  workflow.match(/--yaml "\$\{update_config\}"/g)?.length,
+  workflow.match(/--from-revision "\$\{(?:PREVIOUS_REVISION|previous_revision)\}"/g)?.length,
   2,
-  "normal and rollback deployments must apply the rendered Container App configuration",
+  "both deployments must anchor to an explicitly captured last-ready revision",
 );
-assert.equal(workflow.match(/--readiness-path "\/ready"/g)?.length, 1);
-assert.equal(workflow.match(/--readiness-path "\/health"/g)?.length, 1);
-assert.equal(
-  workflow.match(/Azure Container App scale active:/g)?.length,
-  2,
-  "normal and rollback deployments must verify active scale values",
-);
+assert.doesNotMatch(workflow, /renderAzureContainerAppUpdate\.mjs/);
+assert.doesNotMatch(workflow, /az containerapp update[\s\S]*--yaml/);
+assert.match(workflow, /verifyAzureRuntimeEnvironment\.mjs --emit-command/);
+assert.match(workflow, /multiple[\s\S]*ordinary deployment will skip/i);
 
-console.log("PASS | Azure Container App scaling renderer preserved protected configuration.");
+console.log("PASS | Azure Container App renderer and revision-copy deployment contracts are safe.");
