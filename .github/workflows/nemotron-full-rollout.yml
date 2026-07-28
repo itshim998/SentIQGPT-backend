@@ -77,6 +77,7 @@ jobs:
           npm run test:quota-ui-contract
           npm run test:protected-context-safety
           npm run test:request-budget-lifecycle
+          npm run test:stream-lifecycle
           npm run test:nemotron-azure-rollout
           python -m py_compile backend/verifyNvidiaNemotronLive.py
           python -m py_compile backend/verifyPollinationsIntuitiveLive.py

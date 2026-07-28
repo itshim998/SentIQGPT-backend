@@ -164,6 +164,9 @@ jobs:
       - name: Request budget lifecycle
         run: npm run test:request-budget-lifecycle
 
+      - name: Streaming disconnect lifecycle
+        run: npm run test:stream-lifecycle
+
       - name: Protected context safety
         run: npm run test:protected-context-safety
 

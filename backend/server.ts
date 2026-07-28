@@ -7,6 +7,7 @@ import multer from "multer";
 import { existsSync } from "fs";
 import { resolve as pathResolve } from "path";
 import { createHash, randomUUID } from "crypto";
+import { attachStreamDisconnectLifecycle } from "./streamDisconnectLifecycle";
 
 bootProfiler.mark("process.start");
 
@@ -3402,10 +3403,14 @@ app.post(
     let clientDisconnected = false;
     let responseCompleted = false;
     const requestAbortController = new AbortController();
-    req.on("close", () => {
-      if (responseCompleted) return;
-      clientDisconnected = true;
-      requestAbortController.abort(new Error("Client disconnected"));
+    attachStreamDisconnectLifecycle({
+      request: req,
+      response: res,
+      isResponseCompleted: () => responseCompleted,
+      onDisconnect: () => {
+        clientDisconnected = true;
+        requestAbortController.abort(new Error("Client disconnected"));
+      },
     });
 
     const sseWriter = createSseWriter(res, { maxBufferedBytes: 512 * 1024 });
@@ -3930,6 +3935,7 @@ app.post(
       const guestTurnProgress = new ModelTurnProgressTracker();
       try {
         const streamStart = Date.now();
+        await writeSseJson({ type: "route", route: "chat" });
         if (webSurfV2Enabled && hasEffectiveWebSearchMode) {
           await writeSseJson({ type: "route", route: "web_search", v2: true });
           guestWebSurfV2 = await prepareWebSurfV2(
