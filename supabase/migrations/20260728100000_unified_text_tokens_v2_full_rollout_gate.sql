@@ -6,11 +6,20 @@
 --   20260727180000_unified_text_tokens_v2_integrity.sql
 --   20260727183000_unified_text_tokens_v2_schema_compat.sql
 --
--- This migration is additive. It gives production startup a latest-version
--- marker plus a service-role-only structural verification RPC. No V1 object is
--- removed and disabling the rollout flags remains a valid rollback path.
+-- This migration is additive. The original base-version RPC remains unchanged
+-- for the existing server startup compatibility check. A separate latest
+-- full-rollout marker and structural verification RPC gate production rollout.
 
 create or replace function public.get_unified_text_tokens_v2_schema_version()
+returns text
+language sql
+security definer
+set search_path = public, pg_temp
+as $$
+  select '20260727120000'::text;
+$$;
+
+create or replace function public.get_unified_text_tokens_v2_full_rollout_schema_version()
 returns text
 language sql
 security definer
@@ -69,6 +78,7 @@ begin
   return jsonb_build_object(
     'ready', cardinality(v_missing) = 0,
     'schema_version', '20260728100000',
+    'base_schema_version', '20260727120000',
     'missing_count', cardinality(v_missing),
     'missing', to_jsonb(v_missing)
   );
@@ -76,9 +86,13 @@ end;
 $$;
 
 revoke all on function public.get_unified_text_tokens_v2_schema_version() from public, anon, authenticated;
+revoke all on function public.get_unified_text_tokens_v2_full_rollout_schema_version() from public, anon, authenticated;
 revoke all on function public.verify_unified_text_tokens_v2_rollout() from public, anon, authenticated;
 grant execute on function public.get_unified_text_tokens_v2_schema_version() to service_role;
+grant execute on function public.get_unified_text_tokens_v2_full_rollout_schema_version() to service_role;
 grant execute on function public.verify_unified_text_tokens_v2_rollout() to service_role;
 
+comment on function public.get_unified_text_tokens_v2_full_rollout_schema_version() is
+  'Latest migration marker for the SentIQ unified text-token V2 full rollout.';
 comment on function public.verify_unified_text_tokens_v2_rollout() is
   'Service-role-only structural gate for the SentIQ unified text-token V2 full rollout.';
