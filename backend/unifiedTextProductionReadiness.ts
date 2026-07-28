@@ -83,7 +83,7 @@ export async function verifyUnifiedTextProductionReadiness(
         fetchImpl,
         baseUrl,
         serviceRoleKey,
-        functionName: "get_unified_text_tokens_v2_schema_version",
+        functionName: "get_unified_text_tokens_v2_full_rollout_schema_version",
       }),
       callRpc({
         fetchImpl,
