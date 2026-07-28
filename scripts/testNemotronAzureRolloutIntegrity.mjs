@@ -317,6 +317,11 @@ assert.match(ordinaryWorkflow, /multiple[\s\S]*skip/i);
 assert.doesNotMatch(fullWorkflow, /renderNemotronFullRolloutUpdate\.mjs/);
 assert.doesNotMatch(fullWorkflow, /az containerapp update[\s\S]*--yaml/);
 assert.doesNotMatch(fullWorkflow, /^\s*(?:timeout \d+s )?az containerapp exec/m);
+assert.match(
+  fullWorkflow,
+  /SENTIQ_LIVE_VERIFY_CANARY_LABEL="full-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}"[\s\S]{0,300}node scripts\/verifyNemotronFullRolloutLive\.mjs/,
+  "full-rollout live verification must provide a valid non-secret canary label",
+);
 assert.match(fullWorkflow, /rollback_suffix="rollback-\$\{GITHUB_SHA::10\}-\$\{GITHUB_RUN_ID\}"/);
 assert.match(
   fullWorkflow,

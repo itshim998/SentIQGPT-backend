@@ -872,6 +872,7 @@ jobs:
           SENTIQ_LIVE_VERIFY_BASE_URL="https://${new_fqdn}" \
           SENTIQ_LIVE_VERIFY_EXPECTED_HOST="${new_fqdn}" \
           SENTIQ_LIVE_VERIFY_REQUIRE_WEBSURF=true \
+          SENTIQ_LIVE_VERIFY_CANARY_LABEL="full-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
           SENTIQ_LIVE_VERIFY_ANONYMOUS_ID="full-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             node scripts/verifyNemotronFullRolloutLive.mjs \
               | tee nemotron-full-rollout-report.jsonl
