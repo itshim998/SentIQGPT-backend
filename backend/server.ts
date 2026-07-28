@@ -4270,12 +4270,19 @@ app.post(
             return;
           }
         }
-        if (streamMetrics.chunkCount > 0) {
-          await commitTextBilling(guestGeneralReservation, "guest.general.stream.partial");
-        } else {
+        let streamError = err;
+        const settlementAlreadyUnavailable = err instanceof BillingQuotaError
+          && err.code === "unified_text_quota_unavailable";
+        if (streamMetrics.chunkCount > 0 && !settlementAlreadyUnavailable) {
+          try {
+            await commitTextBilling(guestGeneralReservation, "guest.general.stream.partial");
+          } catch (settlementErr) {
+            streamError = settlementErr;
+          }
+        } else if (streamMetrics.chunkCount === 0) {
           await releaseBillingReservation(guestGeneralReservation);
         }
-        await sendStreamError(err, streamMetrics);
+        await sendStreamError(streamError, streamMetrics);
       } finally {
         finishSse();
       }
@@ -5793,12 +5800,19 @@ app.post(
           return;
         }
       }
-      if (streamMetrics.chunkCount > 0) {
-        await commitTextBilling(directReservation, "stream.partial");
-      } else {
+      let streamError = err;
+      const settlementAlreadyUnavailable = err instanceof BillingQuotaError
+        && err.code === "unified_text_quota_unavailable";
+      if (streamMetrics.chunkCount > 0 && !settlementAlreadyUnavailable) {
+        try {
+          await commitTextBilling(directReservation, "stream.partial");
+        } catch (settlementErr) {
+          streamError = settlementErr;
+        }
+      } else if (streamMetrics.chunkCount === 0) {
         await releaseBillingReservation(directReservation);
       }
-      await sendStreamError(err, streamMetrics);
+      await sendStreamError(streamError, streamMetrics);
     } finally {
       if (intuitiveFutureProtected) releaseIntuitiveFinalSynthesisProtection();
       stopHeartbeat();
