@@ -58,12 +58,15 @@ function main(): void {
   runSql("drop schema if exists public cascade; create schema public; grant all on schema public to postgres, public;");
   for (const migration of migrations) applyMigration(migration);
 
-  const version = runSql("select public.get_unified_text_tokens_v2_schema_version()");
-  assert.equal(version, "20260728100000");
+  const baseVersion = runSql("select public.get_unified_text_tokens_v2_schema_version()");
+  assert.equal(baseVersion, "20260727120000");
+  const fullVersion = runSql("select public.get_unified_text_tokens_v2_full_rollout_schema_version()");
+  assert.equal(fullVersion, "20260728100000");
 
   const gate = JSON.parse(runSql("select public.verify_unified_text_tokens_v2_rollout()::text"));
   assert.equal(gate.ready, true);
   assert.equal(gate.schema_version, "20260728100000");
+  assert.equal(gate.base_schema_version, "20260727120000");
   assert.equal(gate.missing_count, 0);
   assert.deepEqual(gate.missing, []);
 
