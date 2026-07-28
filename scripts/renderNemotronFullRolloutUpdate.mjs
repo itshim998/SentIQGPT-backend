@@ -61,10 +61,11 @@ function upsertSecretReference(environment, name, secretRef) {
 
 function removeDuplicateEnvironmentEntries(environment) {
   const seen = new Set();
-  for (let index = environment.length - 1; index >= 0; index -= 1) {
+  for (let index = 0; index < environment.length;) {
     const name = environment[index]?.name;
     if (!name || !seen.has(name)) {
       if (name) seen.add(name);
+      index += 1;
       continue;
     }
     environment.splice(index, 1);
