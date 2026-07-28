@@ -1,4 +1,5 @@
 export const UNIFIED_TEXT_FULL_ROLLOUT_SCHEMA_VERSION = "20260728100000";
+const UNIFIED_TEXT_READINESS_TIMEOUT_MS = 15_000;
 
 export interface UnifiedTextProductionReadinessReport {
   readonly ready: boolean;
@@ -34,17 +35,24 @@ async function callRpc(args: {
   readonly serviceRoleKey: string;
   readonly functionName: string;
 }): Promise<unknown> {
-  const response = await args.fetchImpl(`${args.baseUrl}/rest/v1/rpc/${args.functionName}`, {
-    method: "POST",
-    headers: {
-      apikey: args.serviceRoleKey,
-      Authorization: `Bearer ${args.serviceRoleKey}`,
-      "Content-Type": "application/json",
-    },
-    body: "{}",
-  });
-  if (!response.ok) throw new Error(`rpc_unavailable:${args.functionName}:${response.status}`);
-  return response.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error("unified_text_readiness_timeout")), UNIFIED_TEXT_READINESS_TIMEOUT_MS);
+  try {
+    const response = await args.fetchImpl(`${args.baseUrl}/rest/v1/rpc/${args.functionName}`, {
+      method: "POST",
+      headers: {
+        apikey: args.serviceRoleKey,
+        Authorization: `Bearer ${args.serviceRoleKey}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`rpc_unavailable:${args.functionName}:${response.status}`);
+    return response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function readScalarString(value: unknown): string | null {
@@ -112,7 +120,9 @@ export async function verifyUnifiedTextProductionReadiness(
       ? "unified_text_database_environment_missing"
       : raw === "invalid_control_database_url"
         ? "unified_text_database_url_invalid"
-        : "unified_text_full_rollout_migration_unavailable";
+        : raw === "unified_text_readiness_timeout"
+          ? "unified_text_full_rollout_migration_timeout"
+          : "unified_text_full_rollout_migration_unavailable";
     return {
       ready: false,
       status: "blocked",
