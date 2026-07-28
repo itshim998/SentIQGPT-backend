@@ -312,5 +312,11 @@ assert.match(ordinaryWorkflow, /activeRevisionsMode/);
 assert.match(ordinaryWorkflow, /multiple[\s\S]*skip/i);
 assert.doesNotMatch(fullWorkflow, /renderNemotronFullRolloutUpdate\.mjs/);
 assert.doesNotMatch(fullWorkflow, /az containerapp update[\s\S]*--yaml/);
+assert.doesNotMatch(fullWorkflow, /^\s*(?:timeout \d+s )?az containerapp exec/m);
+assert.equal(
+  fullWorkflow.match(/(?:timeout \d+s )?bash scripts\/execAzureContainerAppCommand\.sh/g)?.length,
+  5,
+  "all five full-rollout exec calls must use a CI-safe pseudo-terminal",
+);
 
 console.log("PASS | Nemotron Azure rollout integrity fixtures A-T.");

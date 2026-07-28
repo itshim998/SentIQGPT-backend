@@ -131,5 +131,13 @@ assert.doesNotMatch(workflow, /renderAzureContainerAppUpdate\.mjs/);
 assert.doesNotMatch(workflow, /az containerapp update[\s\S]*--yaml/);
 assert.match(workflow, /verifyAzureRuntimeEnvironment\.mjs --emit-command/);
 assert.match(workflow, /multiple[\s\S]*ordinary deployment will skip/i);
+assert.doesNotMatch(workflow, /^\s*az containerapp exec/m);
+assert.match(workflow, /bash scripts\/execAzureContainerAppCommand\.sh/);
+
+const execWrapper = fs.readFileSync("scripts/execAzureContainerAppCommand.sh", "utf8");
+assert.match(execWrapper, /printf -v azure_exec_command '%q '/);
+assert.match(execWrapper, /script --quiet --return --command/);
+assert.match(execWrapper, /\/dev\/null/);
+assert.doesNotMatch(execWrapper, /\beval\b/);
 
 console.log("PASS | Azure Container App renderer and revision-copy deployment contracts are safe.");

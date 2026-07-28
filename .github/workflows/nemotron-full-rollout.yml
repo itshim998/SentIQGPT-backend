@@ -23,7 +23,6 @@ concurrency:
 
 env:
   IMAGE_REPOSITORY: sentiqgpt-backend
-  ROLLOUT_TEMP_ROOT: ${{ runner.temp }}/sentiq-nemotron-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   full-rollout:
@@ -53,6 +52,8 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          export ROLLOUT_TEMP_ROOT="${RUNNER_TEMP}/sentiq-nemotron-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf 'ROLLOUT_TEMP_ROOT=%s\n' "${ROLLOUT_TEMP_ROOT}" >> "${GITHUB_ENV}"
           install -d -m 700 "${ROLLOUT_TEMP_ROOT}"
           printf '%s\n' \
             '{"event":"nemotron_full_rollout","status":"started","phase":"initialization"}' \
@@ -211,7 +212,7 @@ jobs:
             exit 1
           }
           runtime_command="$(node scripts/verifyAzureRuntimeEnvironment.mjs --emit-command)"
-          az containerapp exec \
+          bash scripts/execAzureContainerAppCommand.sh \
             --name "${APP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
             --revision "${latest_ready_revision}" \
@@ -682,7 +683,7 @@ jobs:
           }
 
           runtime_command="$(node scripts/verifyAzureRuntimeEnvironment.mjs --emit-command)"
-          az containerapp exec \
+          bash scripts/execAzureContainerAppCommand.sh \
             --name "${APP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
             --revision "${new_revision}" \
@@ -693,7 +694,7 @@ jobs:
             | tail -1 \
             | jq -e '.ok == true' >/dev/null
 
-          az containerapp exec \
+          bash scripts/execAzureContainerAppCommand.sh \
             --name "${APP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
             --revision "${new_revision}" \
@@ -706,7 +707,7 @@ jobs:
           grep -a -Eq '"event":"unified_text_production_readiness".*"ready":true.*"schemaVersion":"20260728100000".*"structuralReady":true.*"missingCount":0' \
             deployment-readiness-full-rollout-report.jsonl
 
-          timeout 900s az containerapp exec \
+          timeout 900s bash scripts/execAzureContainerAppCommand.sh \
             --name "${APP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
             --revision "${new_revision}" \
@@ -721,7 +722,7 @@ jobs:
             exit 1
           }
 
-          timeout 180s az containerapp exec \
+          timeout 180s bash scripts/execAzureContainerAppCommand.sh \
             --name "${APP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
             --revision "${new_revision}" \
