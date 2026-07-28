@@ -1,0 +1,154 @@
+name: Nemotron Intuitive rollout checks
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/scripts/features/text-quota-*.js"
+      - "frontend/scripts/features/text-quota-*.mjs"
+      - "frontend/scripts/panels/billing-panel.js"
+      - "frontend/styles/modules/14-billing.css"
+      - "frontend/tests/billing-token-usage.test.mjs"
+      - "frontend/tests/text-quota-*.test.mjs"
+      - "scripts/nemotronCanaryContract.mjs"
+      - "scripts/renderNemotronFullRolloutUpdate.mjs"
+      - "scripts/testNemotronCanaryContract.mjs"
+      - "scripts/testNemotronFullRolloutUpdate.mjs"
+      - "scripts/verifyNemotronCanaryLive.mjs"
+      - "scripts/verifyNemotronFullRolloutLive.mjs"
+      - "scripts/start-container-validated.sh"
+      - "supabase/migrations/**"
+      - "Dockerfile"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.backend.json"
+      - ".env.example"
+      - ".env.template"
+      - ".env.nemotron-canary.example"
+      - ".gitignore"
+      - ".github/workflows/nemotron-pass0-checks.yml"
+      - ".github/workflows/nemotron-canary-live.yml"
+      - ".github/workflows/nemotron-full-rollout.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nemotron-pass0-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rollout-safety:
+    name: Build, rollout flags, provider routing, budget safety, and request lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sentiq_billing_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sentiq_billing_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SENTIQ_BILLING_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sentiq_billing_test
+      SENTIQ_BILLING_TEST_DATABASE_ALLOW_DESTRUCTIVE: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          python -m pip install --disable-pip-version-check requests python-dotenv
+
+      - name: TypeScript build
+        run: npm run build
+
+      - name: Independent rollout flags
+        run: npm run test:nemotron-rollout-flags
+
+      - name: Deployment readiness and canary safety
+        run: npm run test:nemotron-deployment-readiness
+
+      - name: Production database readiness contract
+        run: npm run test:nemotron-production-readiness
+
+      - name: Full rollout Azure rendering contract
+        run: node scripts/testNemotronFullRolloutUpdate.mjs
+
+      - name: Provider verifier syntax
+        run: |
+          python -m py_compile backend/verifyNvidiaNemotronLive.py
+          python -m py_compile backend/verifyPollinationsIntuitiveLive.py
+
+      - name: NVIDIA and Pollinations Intuitive provider tests
+        run: npm run test:nemotron-provider
+
+      - name: Existing token allowances
+        run: npm run billing:test-token-allowances
+
+      - name: Unified Free text-token policy and usage summary
+        run: npm run billing:test-unified-text-v2
+
+      - name: Unified text routing
+        run: npm run test:unified-text-routing
+
+      - name: Unified text PostgreSQL migration and concurrency
+        run: npm run billing:test-unified-text-v2-sql
+
+      - name: Unified text Pass 5.1 rollback and late settlement
+        run: npm run billing:test-unified-text-pass51-sql
+
+      - name: Unified text full rollout migration gate
+        run: npm run billing:test-unified-text-full-rollout-sql
+
+      - name: Frontend quota UX and mode-switch contract
+        run: npm run test:quota-ui-contract
+
+      - name: Execution profiles
+        run: npm run test:execution-profiles
+
+      - name: Model capability routing
+        run: npm run test:model-capability-routing
+
+      - name: Model tool contract
+        run: npm run test:model-tool-contract
+
+      - name: Context budgets
+        run: npm run test:context-budget
+
+      - name: Request budget lifecycle
+        run: npm run test:request-budget-lifecycle
+
+      - name: Protected context safety
+        run: npm run test:protected-context-safety
+
+      - name: Build production image
+        run: docker build --tag sentiq-nemotron-rollout:${{ github.sha }} .
+
+      - name: Production image runtime import smoke
+        run: |
+          docker run --rm --entrypoint python sentiq-nemotron-rollout:${{ github.sha }} \
+            -c "import llm_adapter; from backend.nvidia_nemotron import NvidiaNemotronProvider; print('nemotron-runtime-import-ok')"
+          docker run --rm --entrypoint node sentiq-nemotron-rollout:${{ github.sha }} \
+            dist/backend/verifyNemotronDeploymentReadiness.js

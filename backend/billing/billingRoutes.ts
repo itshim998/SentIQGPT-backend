@@ -1,11 +1,19 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import { BillingRepository } from "./billingRepository";
 import { RazorpayProvider } from "./paymentProviders/razorpayProvider";
-import { getBillingMode, getPlanCatalog, getPlanByCode, isBillingPlanCode, toPublicPlan } from "./planCatalog";
+import {
+  getBillingMode,
+  getPlanCatalog,
+  getPlanByCode,
+  isBillingPlanCode,
+  TEXT_TOKEN_POLICY_VERSION,
+  toPublicPlan,
+} from "./planCatalog";
 import { buildBillingIdentity } from "./anonymousIdentity";
-import { BillingQuotaService } from "./quotaService";
+import { BillingQuotaError, BillingQuotaService } from "./quotaService";
 import type { BillingIdentity, BillingPlanCode } from "./entitlementTypes";
 import { getRequestUser, verifyJWT } from "../middleware/auth";
+import { getNemotronRolloutSnapshot } from "../nemotronRolloutFlags";
 
 type AsyncRoute = (req: Request, res: Response, next: NextFunction) => Promise<void>;
 
@@ -13,6 +21,11 @@ function asyncRoute(handler: AsyncRoute) {
   return (req: Request, res: Response, next: NextFunction) => {
     void handler(req, res, next).catch(next);
   };
+}
+
+export function isIntuitiveQuotaUiPubliclyEnabled(): boolean {
+  const rollout = getNemotronRolloutSnapshot();
+  return rollout.unifiedTextTokensV2 && rollout.intuitiveQuotaUi;
 }
 
 function toFallbackUsageSummary(identity: BillingIdentity) {
@@ -39,7 +52,7 @@ function toFallbackUsageSummary(identity: BillingIdentity) {
             token_limit: quota.limit,
             tokens_consumed: 0,
             tokens_remaining: quota.limit,
-            policy_version: "standard-lite-tokens-v1",
+            policy_version: TEXT_TOKEN_POLICY_VERSION,
           } : {}),
         },
       ])),
@@ -99,6 +112,8 @@ export function registerBillingRoutes(app: Express): void {
         return;
       }
     } catch (error) {
+      if (error instanceof BillingQuotaError) throw error;
+      if (getNemotronRolloutSnapshot().unifiedTextTokensV2) throw error;
       if (getBillingMode() !== "disabled") throw error;
     }
     res.json({ mode: getBillingMode(), plans: getPlanCatalog().map(toPublicPlan) });
@@ -112,20 +127,35 @@ export function registerBillingRoutes(app: Express): void {
       return;
     }
 
+    const quotaUiEnabled = isIntuitiveQuotaUiPubliclyEnabled();
     try {
       const summary = await quotaService.getUsageSummary(identity);
-      res.json({ mode: getBillingMode(), identity: { is_guest: identity.isGuest }, summary });
+      res.json({
+        mode: getBillingMode(),
+        quota_ui_enabled: quotaUiEnabled,
+        identity: { is_guest: identity.isGuest },
+        summary,
+      });
       return;
     } catch (error) {
       if (getBillingMode() !== "disabled") throw error;
     }
-    res.json({ mode: getBillingMode(), identity: { is_guest: identity.isGuest }, summary: toFallbackUsageSummary(identity) });
+    res.json({
+      mode: getBillingMode(),
+      quota_ui_enabled: quotaUiEnabled,
+      identity: { is_guest: identity.isGuest },
+      summary: toFallbackUsageSummary(identity),
+    });
   }));
 
   app.get("/api/billing/usage", verifyJWT({ allowGuest: true }), asyncRoute(async (req, res) => {
     const identity = buildBillingIdentity(req, getRequestUser(req));
     const summary = await quotaService.getUsageSummary(identity);
-    res.json({ mode: getBillingMode(), summary });
+    res.json({
+      mode: getBillingMode(),
+      quota_ui_enabled: isIntuitiveQuotaUiPubliclyEnabled(),
+      summary,
+    });
   }));
 
   app.post("/api/billing/checkout", verifyJWT({ allowGuest: false }), asyncRoute(async (req, res) => {

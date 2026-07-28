@@ -125,7 +125,10 @@ import {
 
 // v2 Orchestrator
 import { orchestrate } from "./orchestrator/aiOrchestrator";
-import { executeAutomaticModelToolCalls } from "./orchestrator/toolExecutor";
+import {
+  executeAutomaticModelToolCalls,
+  synthesizeIntuitiveToolResult,
+} from "./orchestrator/toolExecutor";
 import { consumeModelTurnStream, ModelTurnProgressTracker } from "./ai/modelToolExecution";
 import { assertNoUnbackedToolCompletionClaim } from "./ai/modelToolCompletionClaims";
 import {
@@ -145,6 +148,13 @@ import { isWebSurfV2Enabled, prepareWebSurfV2, type WebSurfV2Payload } from "./t
 import { WebSurfCitationStream } from "./tools/webSearch/webSurfCitationStream";
 import { WebSurfOutputGuardStream } from "./tools/webSearch/webSurfOutputGuard";
 import { normalizeExecutionMode, resolveExecutionProfile } from "./orchestrator/executionProfile";
+import {
+  buildIntuitiveToolSelectionPrompt,
+  INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID,
+  isNemotronIntuitiveLaneEnabled,
+  protectIntuitiveFinalSynthesis,
+  releaseIntuitiveFinalSynthesisProtection,
+} from "./orchestrator/intuitiveTextLane";
 
 // Middleware
 import { generalRateLimiter, aiRateLimiter, uploadRateLimiter } from "./middleware/rateLimiter";
@@ -526,7 +536,7 @@ function quotaErrorToPublicResponse(error: BillingQuotaError) {
 async function releaseBillingReservation(reservation: UsageReservation | null | undefined): Promise<void> {
   if (!reservation) return;
   await billingQuotaService.release(reservation).catch((releaseError) => {
-    console.warn(`[Billing] failed to release reservation ${reservation.requestId}: ${releaseError instanceof Error ? releaseError.message : releaseError}`);
+    console.warn(`[Billing] failed to release reservation: ${releaseError instanceof Error ? releaseError.name : "unknown_error"}`);
   });
 }
 
@@ -537,6 +547,8 @@ async function reserveTextBilling(args: {
   readonly clientRequestId?: string | null;
   readonly route: string;
   readonly requiredCapabilities?: readonly RequiredModelCapability[];
+  readonly executionMode: "fast" | "intuitive";
+  readonly complexity?: "normal" | "heavy";
 }): Promise<UsageReservation> {
   return billingQuotaService.reserveTextRoute({
     identity: args.identity,
@@ -544,6 +556,8 @@ async function reserveTextBilling(args: {
     conversationId: args.conversationId,
     clientRequestId: args.clientRequestId,
     requiredCapabilities: args.requiredCapabilities,
+    executionMode: args.executionMode,
+    complexity: args.complexity,
     metadata: {
       endpoint: "chat",
       route: args.route,
@@ -2920,6 +2934,8 @@ app.post(
         conversationId: requestedConversationId,
         clientRequestId: parsed.data.clientRequestId,
         route: "guest.chat",
+        executionMode: executionProfile.mode,
+        complexity: guestContext.fileReferences.length > 0 ? "heavy" : "normal",
         requiredCapabilities: deriveRequiredModelCapabilities({
           hasImageInput: guestContext.imageAttachments.length > 0,
           automaticToolsRequested: false,
@@ -3498,6 +3514,7 @@ app.post(
             const quotaPayload = quotaErrorToPublicResponse(err);
             await writeSseJson({
               ...quotaPayload,
+              quota_type: quotaPayload.type,
               type: "error",
               partial,
               streamed_chunks: metrics?.chunkCount ?? 0,
@@ -3881,6 +3898,8 @@ app.post(
         conversationId: requestedConversationId,
         clientRequestId: parsed.data.clientRequestId,
         route: "guest.general.stream",
+        executionMode: executionProfile.mode,
+        complexity: guestCtx.hasFileContext ? "heavy" : "normal",
         requiredCapabilities: deriveRequiredModelCapabilities({
           hasImageInput: guestCtx.imageAttachments.length > 0,
           automaticToolsRequested: !hasEffectiveWebSearchMode && getEnabledAutomaticSentIQTools().length > 0,
@@ -3986,18 +4005,32 @@ app.post(
           automaticToolsRequested: automaticTools.length > 0,
           toolTransportMode: toolTransport?.mode === "streaming" ? "streaming" : "buffered",
         });
-        const adapterStream = await callLLMAdapterTurnStream({
+        const intuitiveLaneActive = isNemotronIntuitiveLaneEnabled(executionProfile.mode)
+          && guestCtx.imageAttachments.length === 0;
+        const intuitiveToolSelectionActive = intuitiveLaneActive && automaticTools.length > 0;
+        const initialTurnCall: LLMAdapterCall = {
           ...call,
           signal: requestAbortController.signal,
-          execution_mode: executionProfile.mode,
+          ...(intuitiveToolSelectionActive
+            ? {
+                prompt: buildIntuitiveToolSelectionPrompt(effectiveUserMessage, automaticTools),
+                max_output_tokens: 200,
+                execution_mode: "fast" as const,
+                budget_class: "auxiliary" as const,
+                auxiliary_budget: "routing" as const,
+                skip_wrappers: true,
+              }
+            : { execution_mode: executionProfile.mode }),
           sentiq_tool_context: automaticTools.length > 0 ? { authenticated: false, executionMode: executionProfile.mode } : undefined,
           sentiq_allowed_tool_names: automaticTools,
           required_capabilities: requiredCapabilities,
           tool_transport_mode: toolTransport?.mode ?? "none",
-        });
+        };
+        const adapterStream = await callLLMAdapterTurnStream(initialTurnCall);
         let fullReply = "";
 
-        const turn = await consumeModelTurnStream(adapterStream, async (value) => {
+        let turn = await consumeModelTurnStream(adapterStream, async (value) => {
+            if (intuitiveToolSelectionActive) return;
             if (clientDisconnected) return;
             const safeValue = guestOutputGuard ? guestOutputGuard.push(value) : value;
             fullReply += safeValue;
@@ -4006,9 +4039,34 @@ app.post(
               recordStreamChunk(streamMetrics, visible);
               await writeSseJson({ type: "token", text: visible });
             }
-        }, (progress) => guestTurnProgress.advance(progress), {
+        }, (progress) => {
+          if (!intuitiveToolSelectionActive) guestTurnProgress.advance(progress);
+        }, {
           validateAssistantText: assertNoUnbackedToolCompletionClaim,
         });
+        if (intuitiveToolSelectionActive && turn.kind === "assistant_text") {
+          const finalStream = await callLLMAdapterTurnStream({
+            ...call,
+            signal: requestAbortController.signal,
+            execution_mode: "intuitive",
+            sentiq_tool_context: undefined,
+            sentiq_allowed_tool_names: [],
+            required_capabilities: [],
+            tool_transport_mode: "none",
+          });
+          turn = await consumeModelTurnStream(finalStream, async (value) => {
+            if (clientDisconnected) return;
+            const safeValue = guestOutputGuard ? guestOutputGuard.push(value) : value;
+            fullReply += safeValue;
+            const visible = guestCitationStream ? guestCitationStream.push(safeValue) : safeValue;
+            if (visible) {
+              recordStreamChunk(streamMetrics, visible);
+              await writeSseJson({ type: "token", text: visible });
+            }
+          }, (progress) => guestTurnProgress.advance(progress), {
+            validateAssistantText: assertNoUnbackedToolCompletionClaim,
+          });
+        }
         if (turn.kind === "tool_calls") {
           guestAutomaticToolAccepted = true;
           guestTurnProgress.advance("execution_started");
@@ -4018,8 +4076,28 @@ app.post(
             ? tokenAccounting.reservedTokens - tokenAccounting.inputTokens - tokenAccounting.outputTokens
             : 0;
           if (requestsFileGeneration
-              && (guestGeneralReservation.feature !== "premium_text" || affordableArtifactTokens < 2_048)) {
+              && (
+                !["premium_text", "unified_text"].includes(guestGeneralReservation.feature)
+                || affordableArtifactTokens < 2_048
+              )) {
             await releaseBillingReservation(guestGeneralReservation);
+            if (guestGeneralReservation.feature === "unified_text") {
+              throw new BillingQuotaError(
+                "Your remaining text-token allowance cannot support this request yet. Try a smaller request or wait for tokens to refresh.",
+                {
+                  code: "unified_text_insufficient_for_request",
+                  type: "insufficient_allowance",
+                  planCode: guestGeneralReservation.planCode,
+                  policyVersion: guestGeneralReservation.policyVersion,
+                  requiredMode: null,
+                  limitTokens: guestGeneralReservation.limit,
+                  remainingTokens: guestGeneralReservation.remaining,
+                  fastAvailableTokens: guestGeneralReservation.remaining,
+                  nextRecoveryAt: guestGeneralReservation.resetAt,
+                  resetAt: guestGeneralReservation.resetAt,
+                },
+              );
+            }
             throw new BillingQuotaError(
               "You do not have enough Standard tokens remaining for this request. Your allowance will refresh automatically.",
               {
@@ -4032,7 +4110,7 @@ app.post(
               },
             );
           }
-          const toolResult = await executeAutomaticModelToolCalls(
+          let toolResult = await executeAutomaticModelToolCalls(
             turn.calls,
             effectiveUserMessage,
             guestCtx,
@@ -4040,6 +4118,16 @@ app.post(
             requestAbortController.signal,
             async (event) => writeSseJson(event),
           );
+          if (intuitiveLaneActive) {
+            toolResult = await synthesizeIntuitiveToolResult(
+              toolResult,
+              effectiveUserMessage,
+              guestCtx,
+              executionProfile,
+              guestGeneralModelOverride,
+              requestAbortController.signal,
+            );
+          }
           const deliveredUsableResult = toolResult.file?.success === true
             || toolResult.image?.success === true
             || toolResult.chart?.success === true
@@ -4427,6 +4515,8 @@ app.post(
           conversationId: requestedConversationId,
           clientRequestId: parsed.data.clientRequestId,
           route: "stream.fast",
+          executionMode: executionProfile.mode,
+          complexity: "normal",
         });
         const [fastCtx, routedModel] = await Promise.all([
           buildContextFast(fastRawContext, undefined, userId, { profile: executionProfile }),
@@ -5282,6 +5372,8 @@ app.post(
       conversationId: activeConversationId,
       clientRequestId: parsed.data.clientRequestId,
       route: "stream",
+      executionMode: executionProfile.mode,
+      complexity: hasFile ? "heavy" : "normal",
       requiredCapabilities: billingRequiredCapabilities,
     });
     const modelOverride = directReservation.adapterModelOverride;
@@ -5331,6 +5423,34 @@ app.post(
       { model: modelOverride, fastPath: fastPathEligible },
     );
 
+    let call: LLMAdapterCall;
+    try {
+      call = buildChatPrompt({
+        userMessage: effectiveUserMessage,
+        recentMessages: ctx.recentMessages,
+        memories: ctx.memories,
+        fileReferences: ctx.fileReferences,
+        imageAttachments: ctx.imageAttachments,
+        conversationSummary: ctx.conversationSummary,
+        conversationCapsule: ctx.conversationCapsule,
+        workspaceCapsule: ctx.workspaceCapsule,
+        priorConversationEvidence: ctx.priorConversationEvidence,
+        routeEvidence: webSurfV2?.routeEvidence,
+        isExplicitRecallQuery: ctx.isExplicitRecallQuery,
+        trustedProfile: ctx.trustedProfile,
+        modelOverride,
+        userId,
+        streaming: true,
+        reasoningEffort: executionProfile.model.reasoningEffort,
+        webSurfSourceIds: webSurfV2?.synthesisSourceIds,
+        webSurfAnswerPlan: webSurfV2?.answerIntelligence?.plan,
+        webSurfAnswerSources: webSurfV2?.answerIntelligence?.sources,
+      });
+    } catch (error) {
+      await releaseBillingReservation(directReservation);
+      throw error;
+    }
+
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
@@ -5344,29 +5464,10 @@ app.post(
 
     let stopHeartbeat = () => {};
     let automaticToolAccepted = false;
+    let automaticToolReservationCompleted = false;
     const modelTurnProgress = new ModelTurnProgressTracker();
-    const call = buildChatPrompt({
-      userMessage: effectiveUserMessage,
-      recentMessages: ctx.recentMessages,
-      memories: ctx.memories,
-      fileReferences: ctx.fileReferences,
-      imageAttachments: ctx.imageAttachments,
-      conversationSummary: ctx.conversationSummary,
-      conversationCapsule: ctx.conversationCapsule,
-      workspaceCapsule: ctx.workspaceCapsule,
-      priorConversationEvidence: ctx.priorConversationEvidence,
-      routeEvidence: webSurfV2?.routeEvidence,
-      isExplicitRecallQuery: ctx.isExplicitRecallQuery,
-      trustedProfile: ctx.trustedProfile,
-      modelOverride,
-      userId,
-      streaming: true,
-      reasoningEffort: executionProfile.model.reasoningEffort,
-      webSurfSourceIds: webSurfV2?.synthesisSourceIds,
-      webSurfAnswerPlan: webSurfV2?.answerIntelligence?.plan,
-      webSurfAnswerSources: webSurfV2?.answerIntelligence?.sources,
-    });
 
+    let intuitiveFutureProtected = false;
     try {
       const streamStart = Date.now();
       const streamTimeoutMs = modelOverride === "openai-large" ? 240_000 : undefined;
@@ -5381,6 +5482,7 @@ app.post(
       const automaticTools = requestedAutomaticTools.length > 0
         ? getAutomaticSentIQToolsForRoute(directReservation, true)
         : [];
+      const intuitiveLaneActive = isNemotronIntuitiveLaneEnabled(executionProfile.mode) && !hasImage;
       if (requestedAutomaticTools.length > 0 && automaticTools.length === 0) {
         throw new ModelCapabilityUnavailableError(billingRequiredCapabilities);
       }
@@ -5392,20 +5494,48 @@ app.post(
         automaticToolsRequested: automaticTools.length > 0,
         toolTransportMode: toolTransport?.mode === "streaming" ? "streaming" : "buffered",
       });
-      const adapterStream = await callLLMAdapterTurnStream({
+      const intuitiveToolSelectionActive = intuitiveLaneActive && automaticTools.length > 0;
+      if (intuitiveToolSelectionActive) {
+        protectIntuitiveFinalSynthesis({
+          userMessage: effectiveUserMessage,
+          complexity: hasFile ? "heavy" : "normal",
+          knownContext: [
+            ctx.conversationSummary,
+            ctx.conversationCapsule,
+            ctx.workspaceCapsule,
+            ...(ctx.recentMessages ?? []).map((message) => message.content),
+            ...(ctx.memories ?? []).map((memory) => memory.summary),
+            ...(ctx.fileReferences ?? []).map((file) => file.extractedText.slice(0, 200_000)),
+          ].filter((value): value is string => Boolean(value)),
+          messageCount: (ctx.recentMessages?.length ?? 0) + 1,
+        });
+        intuitiveFutureProtected = true;
+      }
+      const initialTurnCall: LLMAdapterCall = {
         ...streamCall,
-        execution_mode: executionProfile.mode,
+        ...(intuitiveToolSelectionActive
+          ? {
+              prompt: buildIntuitiveToolSelectionPrompt(effectiveUserMessage, automaticTools),
+              max_output_tokens: 200,
+              execution_mode: "fast" as const,
+              budget_class: "auxiliary" as const,
+              auxiliary_budget: "routing" as const,
+              skip_wrappers: true,
+            }
+          : { execution_mode: executionProfile.mode }),
         sentiq_tool_context: automaticTools.length > 0 ? {
           authenticated: !isGuest,
           executionMode: executionProfile.mode,
         } : undefined,
-          sentiq_allowed_tool_names: automaticTools,
-          required_capabilities: invocationRequiredCapabilities,
-          tool_transport_mode: toolTransport?.mode ?? "none",
-      });
+        sentiq_allowed_tool_names: automaticTools,
+        required_capabilities: invocationRequiredCapabilities,
+        tool_transport_mode: toolTransport?.mode ?? "none",
+      };
+      const adapterStream = await callLLMAdapterTurnStream(initialTurnCall);
       let fullReply = "";
 
-      const turn = await consumeModelTurnStream(adapterStream, async (value) => {
+      let turn = await consumeModelTurnStream(adapterStream, async (value) => {
+          if (intuitiveToolSelectionActive) return;
           const safeValue = webSurfOutputGuard ? webSurfOutputGuard.push(value) : value;
           fullReply += safeValue;
           const visible = webSurfCitationStream ? webSurfCitationStream.push(safeValue) : safeValue;
@@ -5413,14 +5543,47 @@ app.post(
             recordStreamChunk(streamMetrics, visible);
             await writeSseJson({ type: "token", text: visible });
           }
-      }, (progress) => modelTurnProgress.advance(progress), {
+      }, (progress) => {
+        if (!intuitiveToolSelectionActive) modelTurnProgress.advance(progress);
+      }, {
         validateAssistantText: assertNoUnbackedToolCompletionClaim,
       });
+      if (intuitiveToolSelectionActive && turn.kind === "assistant_text") {
+        const finalRequiredCapabilities = deriveRequiredModelCapabilities({
+          hasImageInput: false,
+          automaticToolsRequested: false,
+          streaming: true,
+        });
+        const finalStream = await callLLMAdapterTurnStream({
+          ...streamCall,
+          execution_mode: "intuitive",
+          sentiq_tool_context: undefined,
+          sentiq_allowed_tool_names: [],
+          required_capabilities: finalRequiredCapabilities,
+          tool_transport_mode: "none",
+          consume_future_obligation_id: INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID,
+        });
+        intuitiveFutureProtected = false;
+        turn = await consumeModelTurnStream(finalStream, async (value) => {
+          const safeValue = webSurfOutputGuard ? webSurfOutputGuard.push(value) : value;
+          fullReply += safeValue;
+          const visible = webSurfCitationStream ? webSurfCitationStream.push(safeValue) : safeValue;
+          if (visible) {
+            recordStreamChunk(streamMetrics, visible);
+            await writeSseJson({ type: "token", text: visible });
+          }
+        }, (progress) => modelTurnProgress.advance(progress), {
+          validateAssistantText: assertNoUnbackedToolCompletionClaim,
+        });
+      }
       if (turn.kind === "tool_calls") {
         automaticToolAccepted = true;
         modelTurnProgress.advance("execution_started");
-        await commitTextBilling(directReservation, "stream.tool-selected");
-        const toolResult = await executeAutomaticModelToolCalls(
+        if (!intuitiveLaneActive) {
+          await commitTextBilling(directReservation, "stream.tool-selected");
+          automaticToolReservationCompleted = true;
+        }
+        let toolResult = await executeAutomaticModelToolCalls(
           turn.calls,
           effectiveUserMessage,
           ctx,
@@ -5429,6 +5592,19 @@ app.post(
           async (event) => writeSseJson(event),
           async (token) => writeSseJson({ type: "file_token", format: "html", text: token }),
         );
+        if (intuitiveLaneActive) {
+          toolResult = await synthesizeIntuitiveToolResult(
+            toolResult,
+            effectiveUserMessage,
+            ctx,
+            executionProfile,
+            modelOverride,
+            requestAbortController.signal,
+          );
+          intuitiveFutureProtected = false;
+          await commitTextBilling(directReservation, "stream.tool-final-synthesis");
+          automaticToolReservationCompleted = true;
+        }
         if (toolResult.reply && toolResult.web_search?.v2) {
           await streamBufferedAnswer(toolResult.reply, undefined, false, streamMetrics);
           await persistAssistantMessage(toolResult.reply, toolResult.web_search.v2);
@@ -5454,9 +5630,11 @@ app.post(
           });
         } else if (toolResult.memory) {
           await persistStoredMemory(toolResult.memory);
-          const memoryReply = toolResult.memory.stored && toolResult.memory.persisted
-            ? getMemoryConfirmationText(toolResult.memory.scope === "chat" ? "chat" : "global")
-            : (toolResult.reply || MEMORY_PERSISTENCE_FAILURE_TEXT);
+          const memoryReply = toolResult.final_synthesis_completed && toolResult.reply
+            ? toolResult.reply
+            : toolResult.memory.stored && toolResult.memory.persisted
+              ? getMemoryConfirmationText(toolResult.memory.scope === "chat" ? "chat" : "global")
+              : (toolResult.reply || MEMORY_PERSISTENCE_FAILURE_TEXT);
           await persistAssistantMessage(memoryReply);
           await writeSseJson({
             type: "structured_response",
@@ -5538,7 +5716,14 @@ app.post(
       }
       console.log(`[Stream] live stream completed in ${Date.now() - streamStart}ms`);
     } catch (err) {
+      if (intuitiveFutureProtected) {
+        releaseIntuitiveFinalSynthesisProtection();
+        intuitiveFutureProtected = false;
+      }
       if (automaticToolAccepted) {
+        if (!automaticToolReservationCompleted) {
+          await releaseBillingReservation(directReservation);
+        }
         await sendStreamError(err, streamMetrics);
         return;
       }
@@ -5546,7 +5731,15 @@ app.post(
         modelTurnProgress.canRecover()
         && streamMetrics.chunkCount === 0
         && !clientDisconnected
-        && (!err || typeof err !== "object" || (err as { code?: string }).code !== "model_tool_capability_unavailable")
+        && (
+          !err
+          || typeof err !== "object"
+          || ![
+            "model_tool_capability_unavailable",
+            "generation_budget_insufficient",
+            "token_reservation_exhausted",
+          ].includes((err as { code?: string }).code ?? "")
+        )
       ) {
         try {
           const fallbackText = await recoverBufferedStreamText({
@@ -5601,6 +5794,7 @@ app.post(
       }
       await sendStreamError(err, streamMetrics);
     } finally {
+      if (intuitiveFutureProtected) releaseIntuitiveFinalSynthesisProtection();
       stopHeartbeat();
       finishSse();
     }
@@ -7755,7 +7949,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   }
 
   if (err instanceof BillingQuotaError) {
-    console.warn(`${LOG_PREFIX} Billing quota error: ${err.code} feature=${err.feature}`);
+    console.warn(`${LOG_PREFIX} Billing quota error: ${err.code} policy=${err.policyVersion ?? "v1"} plan=${err.planCode ?? "unknown"}`);
     if (!res.headersSent && !res.writableEnded) {
       res.status(err.statusCode).json(quotaErrorToPublicResponse(err));
     }

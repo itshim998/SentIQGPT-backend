@@ -1,0 +1,412 @@
+name: Nemotron Intuitive full production rollout
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Confirm the complete production rollout and automatic rollback policy
+        required: true
+        type: choice
+        options:
+          - FULL_ROLLOUT
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: azure-container-apps-production
+  cancel-in-progress: false
+
+env:
+  AZURE_CORE_OUTPUT: none
+  IMAGE_REPOSITORY: sentiqgpt-backend
+  SENTIQ_CONTAINER_MIN_REPLICAS: ${{ vars.SENTIQ_CONTAINER_MIN_REPLICAS || '0' }}
+  SENTIQ_CONTAINER_MAX_REPLICAS: ${{ vars.SENTIQ_CONTAINER_MAX_REPLICAS || '1' }}
+  SENTIQ_CONTAINER_COOLDOWN_SECONDS: ${{ vars.SENTIQ_CONTAINER_COOLDOWN_SECONDS || '900' }}
+
+jobs:
+  full-rollout:
+    name: Verify, deploy, exercise, and automatically roll back on failure
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: >-
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[nemotron-full-rollout]')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.confirmation == 'FULL_ROLLOUT')
+    env:
+      GH_NVIDIA_API_KEY_1: ${{ secrets.NVIDIA_API_KEY_1 }}
+      GH_NVIDIA_API_KEY_2: ${{ secrets.NVIDIA_API_KEY_2 }}
+      GH_NVIDIA_API_KEY_3: ${{ secrets.NVIDIA_API_KEY_3 }}
+      GH_NVIDIA_API_KEY_4: ${{ secrets.NVIDIA_API_KEY_4 }}
+      GH_NVIDIA_API_KEY_5: ${{ secrets.NVIDIA_API_KEY_5 }}
+      GH_NVIDIA_API_KEY_6: ${{ secrets.NVIDIA_API_KEY_6 }}
+      GH_POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
+      GH_SENTIQ_ANON_USAGE_HASH_SECRET: ${{ secrets.SENTIQ_ANON_USAGE_HASH_SECRET }}
+      GH_SUPABASE_SERVICE_ROLE_KEY_1: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_1 }}
+
+    steps:
+      - name: Checkout rollout commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install verification dependencies
+        run: |
+          npm ci
+          python -m pip install --disable-pip-version-check requests python-dotenv
+
+      - name: Run release-gate contracts
+        run: |
+          npm run build
+          npm run test:nemotron-rollout-flags
+          npm run test:nemotron-deployment-readiness
+          npm run test:nemotron-production-readiness
+          npm run test:nemotron-provider
+          npm run billing:test-unified-text-v2
+          npm run test:unified-text-routing
+          npm run test:quota-ui-contract
+          node scripts/testNemotronFullRolloutUpdate.mjs
+          python -m py_compile backend/verifyNvidiaNemotronLive.py
+          python -m py_compile backend/verifyPollinationsIntuitiveLive.py
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Upgrade Container Apps CLI extension
+        run: az extension add --name containerapp --upgrade --only-show-errors
+
+      - name: Capture production state and resolve secret references
+        id: production
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          app_json="${RUNNER_TEMP}/sentiq-before-full-rollout.json"
+          azure_secrets_json="${RUNNER_TEMP}/sentiq-azure-secret-names.json"
+          secret_refs_json="${RUNNER_TEMP}/sentiq-full-rollout-secret-refs.json"
+          app_name='${{ vars.AZURE_CONTAINER_APP_NAME }}'
+          resource_group='${{ vars.AZURE_RESOURCE_GROUP }}'
+
+          [[ -n "${app_name}" && -n "${resource_group}" ]] || { echo 'Azure production app variables are required.'; exit 1; }
+          az containerapp show --name "${app_name}" --resource-group "${resource_group}" -o json > "${app_json}"
+          az containerapp secret list --name "${app_name}" --resource-group "${resource_group}" -o json > "${azure_secrets_json}"
+
+          target_port="$(jq -r '.properties.configuration.ingress.targetPort // empty' "${app_json}")"
+          revision_mode="$(jq -r '.properties.configuration.activeRevisionsMode // empty' "${app_json}")"
+          previous_revision="$(jq -r '.properties.latestRevisionName // empty' "${app_json}")"
+          fqdn="$(jq -r '.properties.configuration.ingress.fqdn // empty' "${app_json}")"
+          previous_image="$(jq -r --arg container "${IMAGE_REPOSITORY}" '.properties.template.containers[] | select(.name == $container) | .image // empty' "${app_json}")"
+
+          [[ "${target_port}" == '3001' ]] || { echo 'Production target port must remain 3001.'; exit 1; }
+          [[ "${revision_mode,,}" == 'single' ]] || { echo 'Automatic rollback requires Azure Container Apps single revision mode.'; exit 1; }
+          [[ -n "${previous_revision}" && -n "${previous_image}" && -n "${fqdn}" ]] || { echo 'Unable to capture the current production revision.'; exit 1; }
+
+          supabase_url_present="$(jq -r --arg container "${IMAGE_REPOSITORY}" '.properties.template.containers[] | select(.name == $container) | [.env[]? | select(.name == "SUPABASE_URL_1") | (.value // .secretRef // empty)] | first // empty' "${app_json}")"
+          [[ -n "${supabase_url_present}" ]] || { echo 'SUPABASE_URL_1 must already be configured in Azure.'; exit 1; }
+
+          internal_token_ref="$(jq -r --arg container "${IMAGE_REPOSITORY}" '.properties.template.containers[] | select(.name == $container) | [.env[]? | select(.name == "SENTIQ_INTERNAL_SERVICE_TOKEN") | .secretRef] | first // empty' "${app_json}")"
+          [[ -n "${internal_token_ref}" ]] || { echo 'SENTIQ_INTERNAL_SERVICE_TOKEN must remain an Azure secret reference.'; exit 1; }
+          jq -e --arg name "${internal_token_ref}" '.[] | select(.name == $name)' "${azure_secrets_json}" >/dev/null || { echo 'The internal service token secret reference is unresolved.'; exit 1; }
+
+          unsafe_internal="$(jq -r --arg container "${IMAGE_REPOSITORY}" '.properties.template.containers[] | select(.name == $container) | [.env[]? | select(.name == "SENTIQ_ENABLE_UNSAFE_INTERNAL_ENDPOINTS") | (.value // empty)] | first // "false"' "${app_json}")"
+          [[ "${unsafe_internal,,}" != 'true' ]] || { echo 'Unsafe internal endpoints must remain disabled.'; exit 1; }
+
+          for env_name in \
+            SENTIQ_MODEL_TOOL_REGISTRY_ENABLED \
+            SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED \
+            SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED \
+            SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED \
+            SENTIQ_MODEL_IMAGE_SELECTION_ENABLED \
+            SENTIQ_MODEL_CHART_SELECTION_ENABLED \
+            SENTIQ_MODEL_FILE_SELECTION_ENABLED \
+            SENTIQ_MODEL_MEMORY_SELECTION_ENABLED \
+            SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED; do
+            configured="$(jq -r --arg container "${IMAGE_REPOSITORY}" --arg name "${env_name}" '.properties.template.containers[] | select(.name == $container) | [.env[]? | select(.name == $name) | (.value // empty)] | first // empty' "${app_json}")"
+            [[ -n "${configured}" ]] || { echo "${env_name} must already be explicitly configured in Azure."; exit 1; }
+          done
+
+          printf '{}\n' > "${secret_refs_json}"
+          resolve_secret_ref() {
+            local env_name="$1"
+            local fallback_secret_name="$2"
+            local github_variable="GH_${env_name}"
+            local github_value="${!github_variable:-}"
+            local existing_ref
+            existing_ref="$(jq -r --arg container "${IMAGE_REPOSITORY}" --arg name "${env_name}" '.properties.template.containers[] | select(.name == $container) | [.env[]? | select(.name == $name) | .secretRef] | first // empty' "${app_json}")"
+            if [[ -n "${existing_ref}" ]]; then
+              jq -e --arg name "${existing_ref}" '.[] | select(.name == $name)' "${azure_secrets_json}" >/dev/null || {
+                echo "Azure secret reference ${env_name} is unresolved."
+                exit 1
+              }
+            else
+              [[ -n "${github_value}" ]] || { echo "Missing Azure secret mapping and GitHub secret for ${env_name}."; exit 1; }
+              az containerapp secret set \
+                --name "${app_name}" \
+                --resource-group "${resource_group}" \
+                --secrets "${fallback_secret_name}=${github_value}" \
+                --only-show-errors >/dev/null
+              existing_ref="${fallback_secret_name}"
+            fi
+            jq --arg name "${env_name}" --arg ref "${existing_ref}" '. + {($name): $ref}' \
+              "${secret_refs_json}" > "${secret_refs_json}.next"
+            mv "${secret_refs_json}.next" "${secret_refs_json}"
+          }
+
+          resolve_secret_ref NVIDIA_API_KEY_1 nvidia-key-1
+          resolve_secret_ref NVIDIA_API_KEY_2 nvidia-key-2
+          resolve_secret_ref NVIDIA_API_KEY_3 nvidia-key-3
+          resolve_secret_ref NVIDIA_API_KEY_4 nvidia-key-4
+          resolve_secret_ref NVIDIA_API_KEY_5 nvidia-key-5
+          resolve_secret_ref NVIDIA_API_KEY_6 nvidia-key-6
+          resolve_secret_ref POLLINATIONS_API_KEY pollinations-key
+          resolve_secret_ref SENTIQ_ANON_USAGE_HASH_SECRET anon-usage-secret
+          resolve_secret_ref SUPABASE_SERVICE_ROLE_KEY_1 supabase-sr-key-1
+
+          echo "app_json=${app_json}" >> "${GITHUB_OUTPUT}"
+          echo "secret_refs_json=${secret_refs_json}" >> "${GITHUB_OUTPUT}"
+          echo "previous_revision=${previous_revision}" >> "${GITHUB_OUTPUT}"
+          echo "previous_image=${previous_image}" >> "${GITHUB_OUTPUT}"
+          echo "fqdn=${fqdn}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name '${{ vars.AZURE_ACR_NAME }}'
+
+      - name: Build and push immutable rollout image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ vars.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_REPOSITORY }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify production image packaging
+        shell: bash
+        env:
+          DEPLOY_IMAGE: ${{ vars.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_REPOSITORY }}:${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          docker pull "${DEPLOY_IMAGE}"
+          docker run --rm --entrypoint python "${DEPLOY_IMAGE}" \
+            -c "import llm_adapter; from backend.nvidia_nemotron import NvidiaNemotronProvider; print('nemotron-runtime-import-ok')"
+          docker run --rm --entrypoint node "${DEPLOY_IMAGE}" \
+            dist/backend/verifyNemotronDeploymentReadiness.js
+
+      - name: Render full rollout and rollback configurations
+        id: configs
+        shell: bash
+        env:
+          DEPLOY_IMAGE: ${{ vars.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_REPOSITORY }}:${{ github.sha }}
+          APP_JSON: ${{ steps.production.outputs.app_json }}
+          SECRET_REFS_JSON: ${{ steps.production.outputs.secret_refs_json }}
+          PREVIOUS_IMAGE: ${{ steps.production.outputs.previous_image }}
+        run: |
+          set -Eeuo pipefail
+          full_config="${RUNNER_TEMP}/sentiq-full-rollout.json"
+          rollback_config="${RUNNER_TEMP}/sentiq-full-rollout-rollback.json"
+          node scripts/renderNemotronFullRolloutUpdate.mjs \
+            --input "${APP_JSON}" \
+            --output "${full_config}" \
+            --secret-refs "${SECRET_REFS_JSON}" \
+            --container-name "${IMAGE_REPOSITORY}" \
+            --image "${DEPLOY_IMAGE}" \
+            --revision-suffix "full-${GITHUB_SHA::10}" \
+            --min-replicas "${SENTIQ_CONTAINER_MIN_REPLICAS}" \
+            --max-replicas "${SENTIQ_CONTAINER_MAX_REPLICAS}" \
+            --cooldown-seconds "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}" \
+            --deployment-revision "${GITHUB_SHA}"
+          node scripts/renderAzureContainerAppUpdate.mjs \
+            --input "${APP_JSON}" \
+            --output "${rollback_config}" \
+            --container-name "${IMAGE_REPOSITORY}" \
+            --image "${PREVIOUS_IMAGE}" \
+            --revision-suffix "rollback-${GITHUB_SHA::10}" \
+            --min-replicas "${SENTIQ_CONTAINER_MIN_REPLICAS}" \
+            --max-replicas "${SENTIQ_CONTAINER_MAX_REPLICAS}" \
+            --cooldown-seconds "${SENTIQ_CONTAINER_COOLDOWN_SECONDS}" \
+            --readiness-path '/ready'
+          echo "full_config=${full_config}" >> "${GITHUB_OUTPUT}"
+          echo "rollback_config=${rollback_config}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy, live-verify, and automatically restore on failure
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          FULL_CONFIG: ${{ steps.configs.outputs.full_config }}
+          ROLLBACK_CONFIG: ${{ steps.configs.outputs.rollback_config }}
+          PREVIOUS_REVISION: ${{ steps.production.outputs.previous_revision }}
+          FQDN: ${{ steps.production.outputs.fqdn }}
+        run: |
+          set -Eeuo pipefail
+          deployed=0
+          verified=0
+          new_revision=''
+
+          restore_previous_release() {
+            local status="$?"
+            if [[ "${deployed}" == '1' && "${verified}" != '1' ]]; then
+              echo 'Full rollout verification failed. Restoring the previous image and environment.'
+              if az containerapp update \
+                --name "${APP_NAME}" \
+                --resource-group "${RESOURCE_GROUP}" \
+                --yaml "${ROLLBACK_CONFIG}" \
+                --only-show-errors >/dev/null; then
+                for attempt in $(seq 1 90); do
+                  ready_revision="$(az containerapp show \
+                    --name "${APP_NAME}" \
+                    --resource-group "${RESOURCE_GROUP}" \
+                    --query 'properties.latestReadyRevisionName' -o tsv 2>/dev/null || true)"
+                  if [[ -n "${ready_revision}" && "${ready_revision}" != "${new_revision}" ]] \
+                    && curl --fail --silent --show-error --max-time 10 "https://${FQDN}/ready" >/dev/null; then
+                    echo "Previous production configuration restored on ${ready_revision}."
+                    break
+                  fi
+                  sleep 5
+                done
+              else
+                echo 'Automatic rollback command failed; the pre-existing revision should remain active in single revision mode.'
+              fi
+            fi
+            exit "${status}"
+          }
+          trap restore_previous_release EXIT
+
+          deployed=1
+          az containerapp update \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --yaml "${FULL_CONFIG}" \
+            --only-show-errors >/dev/null
+
+          new_revision="$(az containerapp show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query 'properties.latestRevisionName' -o tsv)"
+          [[ -n "${new_revision}" && "${new_revision}" != "${PREVIOUS_REVISION}" ]] || {
+            echo 'Azure did not create a distinct full-rollout revision.'
+            exit 1
+          }
+
+          revision_ready=0
+          revision_json=''
+          for attempt in $(seq 1 90); do
+            curl --silent --max-time 10 "https://${FQDN}/ready" >/dev/null || true
+            revision_json="$(az containerapp revision show \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --revision "${new_revision}" -o json)"
+            provisioning="$(jq -r '.properties.provisioningState // empty' <<<"${revision_json}")"
+            health="$(jq -r '.properties.healthState // empty' <<<"${revision_json}")"
+            running="$(jq -r '.properties.runningState // empty' <<<"${revision_json}")"
+            if [[ "${provisioning}" == 'Failed' || "${running}" == 'Failed' || "${running}" == 'Degraded' || "${health}" == 'Unhealthy' ]]; then
+              echo "Full-rollout revision entered a failed state: provisioning=${provisioning} health=${health} running=${running}."
+              exit 1
+            fi
+            if [[ "${provisioning}" == 'Provisioned' && "${health}" == 'Healthy' && ( "${running}" == 'Running' || "${running}" == 'Processing' ) ]]; then
+              revision_ready=1
+              break
+            fi
+            sleep 5
+          done
+          [[ "${revision_ready}" == '1' ]] || { echo 'Full-rollout revision did not become healthy in time.'; exit 1; }
+
+          deployed_sha="$(jq -r --arg container "${IMAGE_REPOSITORY}" '.properties.template.containers[] | select(.name == $container) | [.env[]? | select(.name == "SENTIQ_DEPLOYMENT_REVISION") | .value] | first // empty' <<<"${revision_json}")"
+          [[ "${deployed_sha}" == "${GITHUB_SHA}" ]] || { echo 'Azure revision identity does not match the rollout commit.'; exit 1; }
+          for flag_name in \
+            SENTIQ_NVIDIA_PROVIDER_ENABLED \
+            SENTIQ_NEMOTRON_INTUITIVE_ENABLED \
+            SENTIQ_UNIFIED_TEXT_TOKENS_V2_ENABLED \
+            SENTIQ_INTUITIVE_QUOTA_UI_ENABLED; do
+            flag_value="$(jq -r --arg container "${IMAGE_REPOSITORY}" --arg name "${flag_name}" '.properties.template.containers[] | select(.name == $container) | [.env[]? | select(.name == $name) | .value] | first // empty' <<<"${revision_json}")"
+            [[ "${flag_value}" == 'true' ]] || { echo "${flag_name} is not active on the new revision."; exit 1; }
+          done
+
+          curl --fail --silent --show-error --max-time 15 "https://${FQDN}/ready" >/dev/null
+
+          replica=''
+          for attempt in $(seq 1 30); do
+            replica="$(az containerapp replica list \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --revision "${new_revision}" \
+              --query '[0].name' -o tsv 2>/dev/null || true)"
+            [[ -n "${replica}" ]] && break
+            curl --silent --max-time 10 "https://${FQDN}/ready" >/dev/null || true
+            sleep 2
+          done
+          [[ -n "${replica}" ]] || { echo 'No running replica was available for provider verification.'; exit 1; }
+
+          timeout 900s az containerapp exec \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${new_revision}" \
+            --replica "${replica}" \
+            --container "${IMAGE_REPOSITORY}" \
+            --command 'python backend/verifyNvidiaNemotronLive.py' | tee nvidia-full-rollout-report.jsonl
+          grep -Eq '"event"[[:space:]]*:[[:space:]]*"summary".*"failures"[[:space:]]*:[[:space:]]*0' nvidia-full-rollout-report.jsonl || {
+            echo 'NVIDIA production pool verification did not report zero failures.'
+            exit 1
+          }
+
+          timeout 180s az containerapp exec \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${new_revision}" \
+            --replica "${replica}" \
+            --container "${IMAGE_REPOSITORY}" \
+            --command 'python backend/verifyPollinationsIntuitiveLive.py' | tee pollinations-full-rollout-report.jsonl
+          grep -Eq '"event"[[:space:]]*:[[:space:]]*"pollinations_intuitive_verification".*"status"[[:space:]]*:[[:space:]]*"pass"' pollinations-full-rollout-report.jsonl || {
+            echo 'Pollinations production fallback verification did not pass.'
+            exit 1
+          }
+
+          SENTIQ_LIVE_VERIFY_CONFIRM_FULL_ROLLOUT=FULL_ROLLOUT \
+          SENTIQ_LIVE_VERIFY_BASE_URL="https://${FQDN}" \
+          SENTIQ_LIVE_VERIFY_EXPECTED_HOST="${FQDN}" \
+          SENTIQ_LIVE_VERIFY_REQUIRE_WEBSURF=true \
+          SENTIQ_LIVE_VERIFY_ANONYMOUS_ID="full-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            node scripts/verifyNemotronFullRolloutLive.mjs | tee nemotron-full-rollout-report.jsonl
+
+          active_revision="$(az containerapp show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query 'properties.latestReadyRevisionName' -o tsv)"
+          [[ "${active_revision}" == "${new_revision}" ]] || {
+            echo 'The verified revision is not Azure latestReadyRevisionName.'
+            exit 1
+          }
+
+          verified=1
+          echo "Full production rollout verified on revision ${new_revision}."
+
+      - name: Upload redacted rollout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nemotron-full-rollout-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            nvidia-full-rollout-report.jsonl
+            pollinations-full-rollout-report.jsonl
+            nemotron-full-rollout-report.jsonl
+          if-no-files-found: warn
+          retention-days: 14

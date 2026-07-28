@@ -3,6 +3,8 @@
 // ================================================================
 import { PRODUCT_NAME } from "../shared/brand.js";
 import { calculateUsagePercent, formatCompactTokenNumber } from "./billing-usage-format.js";
+import { formatRecoveryCountdown, normalizeTextAllowance } from "../features/text-quota-state.mjs";
+import "../features/text-quota-controller.js";
 
 (function () {
   const API = window.SentIQAPI;
@@ -25,11 +27,9 @@ import { calculateUsagePercent, formatCompactTokenNumber } from "./billing-usage
   function normalizeQuota(summary, feature) {
     const quota = summary?.quotas?.[feature] || {};
     let label = quota.label || feature.replace(/_/g, " ");
-    if (feature === "deep_research") {
-      label = "Deep Researches";
-    }
+    if (feature === "deep_research") label = "Deep Researches";
     return {
-      label: label,
+      label,
       used: Number(quota.used || 0),
       reserved: Number(quota.reserved || 0),
       remaining: Number(quota.remaining || 0),
@@ -72,6 +72,37 @@ import { calculateUsagePercent, formatCompactTokenNumber } from "./billing-usage
     `;
   }
 
+  function renderUnifiedTextMeter(rawAllowance) {
+    const allowance = normalizeTextAllowance(rawAllowance);
+    if (!allowance) return "";
+    const percent = calculateUsagePercent(allowance.limitTokens, allowance.remainingTokens);
+    const recoveryAt = allowance.nextRecoveryAt || allowance.fullResetAt;
+    const recovery = recoveryAt ? `More tokens in ${formatRecoveryCountdown(recoveryAt)}` : "Tokens return progressively over five hours.";
+    const modeMessage = allowance.exhausted
+      ? recovery
+      : allowance.intuitiveAvailableTokens < 1_500
+        ? `Fast remains available. ${recovery}`
+        : "Fast can use the full balance; Intuitive keeps the final 10K protected.";
+    return `
+      <div class="billing-meter billing-meter-unified" data-feature="unified_text" aria-description="One shared rolling text-token allowance with the final 10K protected for Fast.">
+        <div class="billing-meter-row">
+          <span>Text tokens</span>
+          <strong>${escapeHtml(`${formatCompactTokenNumber(allowance.remainingTokens)} / ${formatCompactTokenNumber(allowance.limitTokens)} left`)}</strong>
+        </div>
+        <div class="billing-meter-track billing-meter-track-unified" aria-hidden="true">
+          <span style="width:${percent}%"></span>
+          <i style="left:${Math.max(0, Math.min(100, ((allowance.limitTokens - allowance.fastReserveTokens) / Math.max(1, allowance.limitTokens)) * 100))}%"></i>
+        </div>
+        <div class="billing-unified-breakdown">
+          <span><strong>${escapeHtml(formatCompactTokenNumber(allowance.fastAvailableTokens))}</strong> Fast</span>
+          <span><strong>${escapeHtml(formatCompactTokenNumber(allowance.intuitiveAvailableTokens))}</strong> Intuitive</span>
+          <span><strong>${escapeHtml(formatCompactTokenNumber(allowance.fastReserveTokens))}</strong> protected</span>
+        </div>
+        <span class="billing-meter-description">${escapeHtml(modeMessage)}</span>
+      </div>
+    `;
+  }
+
   function escapeHtml(value) {
     return String(value ?? "")
       .replace(/&/g, "&amp;")
@@ -93,6 +124,8 @@ import { calculateUsagePercent, formatCompactTokenNumber } from "./billing-usage
     const image = normalizeQuota(summary, "image_generation");
     const advanced = normalizeQuota(summary, "advanced_reasoning");
     const deepResearch = normalizeQuota(summary, "deep_research");
+    const unifiedTextActive = billingState.quota_ui_enabled === true
+      && Boolean(normalizeTextAllowance(summary.text_allowance));
     const currentPlan = planName(summary.plan_code);
     const status = summary.status === "active" ? "Active" : summary.status === "canceling" ? "Cancels at renewal" : "Available";
 
@@ -106,8 +139,9 @@ import { calculateUsagePercent, formatCompactTokenNumber } from "./billing-usage
         <button id="billing-refresh-btn" class="btn btn-secondary" type="button">Refresh</button>
       </div>
       <div class="billing-usage-grid">
-        ${renderMeter("premium_text", standard)}
-        ${renderMeter("lite_text", lite)}
+        ${unifiedTextActive
+          ? renderUnifiedTextMeter(summary.text_allowance)
+          : `${renderMeter("premium_text", standard)}${renderMeter("lite_text", lite)}`}
         ${renderMeter("image_generation", image)}
         ${renderMeter("advanced_reasoning", advanced)}
         ${renderMeter("deep_research", deepResearch)}
@@ -168,9 +202,7 @@ import { calculateUsagePercent, formatCompactTokenNumber } from "./billing-usage
     if (billingTab) billingTab.style.display = billingVisible ? "" : "none";
     if (billingContent) billingContent.style.display = billingVisible ? "" : "none";
     if (accountBillingBtn) accountBillingBtn.style.display = billingVisible ? "" : "none";
-    if (!billingVisible && billingTab?.classList.contains("active")) {
-      activateSettingsTab();
-    }
+    if (!billingVisible && billingTab?.classList.contains("active")) activateSettingsTab();
   }
 
   async function hasAuthenticatedBillingSession() {
@@ -202,9 +234,12 @@ import { calculateUsagePercent, formatCompactTokenNumber } from "./billing-usage
     ]).then(([plans, me]) => {
       plansState = plans;
       billingState = me;
+      window.dispatchEvent(new CustomEvent("sentiq-billing-summary", { detail: me }));
       renderPanel();
+      return me;
     }).catch((error) => {
       if (panel) panel.innerHTML = `<div class="billing-panel-status error">${escapeHtml(error?.message || "Billing details are unavailable.")}</div>`;
+      return null;
     }).finally(() => {
       loadingPromise = null;
     });

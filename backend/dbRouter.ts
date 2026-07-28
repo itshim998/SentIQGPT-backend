@@ -1,6 +1,7 @@
 import { randomInt, randomUUID } from "crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { bootProfiler } from "./bootProfiler";
+import { getNemotronRolloutSnapshot } from "./nemotronRolloutFlags";
 
 export type DatabaseId = 1 | 2 | 3 | 4;
 export type AssignableDatabaseId = 2 | 3 | 4;
@@ -1123,6 +1124,18 @@ export async function verifyAutomaticMemoryIdempotencyMigration(): Promise<void>
   }));
 }
 
+export async function verifyUnifiedTextTokensV2Migration(): Promise<void> {
+  if (!getNemotronRolloutSnapshot().unifiedTextTokensV2) return;
+  const expectedVersion = "20260727120000";
+  const { data, error } = await controlDbClient.rpc("get_unified_text_tokens_v2_schema_version");
+  if (error || data !== expectedVersion) {
+    throw new Error(
+      `Control DB is missing unified text-token migration ${expectedVersion}. ` +
+      `code=${error?.code ?? "version_mismatch"}`,
+    );
+  }
+}
+
 export async function verifyShardMigrations(): Promise<void> {
   const mode = readStartupVerifierMode();
   bootProfiler.mark(`verifyShardMigrations.mode.${mode}`);
@@ -1130,12 +1143,14 @@ export async function verifyShardMigrations(): Promise<void> {
   if (mode === "legacy") {
     await verifyShardMigrationsLegacy();
     await verifyAutomaticMemoryIdempotencyMigration();
+    await verifyUnifiedTextTokensV2Migration();
     return;
   }
 
   if (mode === "rpc") {
     await verifyShardMigrationsRpc();
     await verifyAutomaticMemoryIdempotencyMigration();
+    await verifyUnifiedTextTokensV2Migration();
     return;
   }
 
@@ -1151,4 +1166,5 @@ export async function verifyShardMigrations(): Promise<void> {
     await verifyShardMigrationsLegacy();
   }
   await verifyAutomaticMemoryIdempotencyMigration();
+  await verifyUnifiedTextTokensV2Migration();
 }

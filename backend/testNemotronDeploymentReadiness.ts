@@ -1,0 +1,194 @@
+import assert from "node:assert/strict";
+import {
+  EXPECTED_NVIDIA_BASE_URL,
+  EXPECTED_NVIDIA_MODEL,
+  EXPECTED_POLLINATIONS_ENDPOINT,
+  EXPECTED_POLLINATIONS_MODEL,
+  NEMOTRON_FULL_ROLLOUT_ACK,
+  REQUIRED_FULL_ROLLOUT_NVIDIA_SLOTS,
+  evaluateNemotronDeploymentReadiness,
+} from "./nemotronDeploymentReadiness";
+import { NEMOTRON_ROLLOUT_ENV } from "./nemotronRolloutFlags";
+
+function enabledEnvironment(overrides: Record<string, string | undefined> = {}) {
+  return {
+    NODE_ENV: "production",
+    SENTIQ_NEMOTRON_ROLLOUT_STAGE: "canary",
+    SENTIQ_NEMOTRON_CANARY_DEPLOYMENT_ID: "canary-revision-001",
+    [NEMOTRON_ROLLOUT_ENV.nvidiaProvider]: "true",
+    [NEMOTRON_ROLLOUT_ENV.nemotronIntuitive]: "true",
+    [NEMOTRON_ROLLOUT_ENV.unifiedTextTokensV2]: "true",
+    [NEMOTRON_ROLLOUT_ENV.intuitiveQuotaUi]: "true",
+    NVIDIA_API_KEY_1: "secret-provider-key-1",
+    NVIDIA_BASE_URL: EXPECTED_NVIDIA_BASE_URL,
+    NVIDIA_NEMOTRON_MODEL: EXPECTED_NVIDIA_MODEL,
+    POLLINATIONS_API_KEY: "secret-pollinations-key",
+    POLLINATIONS_OPENAI_ENDPOINT: EXPECTED_POLLINATIONS_ENDPOINT,
+    POLLINATIONS_INTUITIVE_MODEL: EXPECTED_POLLINATIONS_MODEL,
+    SENTIQ_INTUITIVE_TOTAL_TIMEOUT_MS: "120000",
+    SENTIQ_NVIDIA_MAX_GENERATED_TOKENS: "8000",
+    SENTIQ_ANON_USAGE_HASH_SECRET: "secret-anonymous-hash-salt",
+    SUPABASE_URL_1: "https://example.supabase.co",
+    SUPABASE_SERVICE_ROLE_KEY_1: "secret-service-role",
+    SENTIQ_PYTHON_LLM_QUOTA_ENFORCEMENT: "false",
+    ...overrides,
+  };
+}
+
+function fullEnvironment(overrides: Record<string, string | undefined> = {}) {
+  return enabledEnvironment({
+    SENTIQ_NEMOTRON_ROLLOUT_STAGE: "full",
+    SENTIQ_NEMOTRON_CANARY_DEPLOYMENT_ID: undefined,
+    SENTIQ_NEMOTRON_FULL_ROLLOUT_ACK: NEMOTRON_FULL_ROLLOUT_ACK,
+    NVIDIA_API_KEY_2: "secret-provider-key-2",
+    NVIDIA_API_KEY_3: "secret-provider-key-3",
+    NVIDIA_API_KEY_4: "secret-provider-key-4",
+    NVIDIA_API_KEY_5: "secret-provider-key-5",
+    NVIDIA_API_KEY_6: "secret-provider-key-6",
+    ...overrides,
+  });
+}
+
+const dormant = evaluateNemotronDeploymentReadiness({});
+assert.equal(dormant.ready, true);
+assert.equal(dormant.stage, "off");
+assert.equal(dormant.activeFlagCount, 0);
+
+const validCanary = evaluateNemotronDeploymentReadiness(enabledEnvironment(), {
+  requireEnabled: true,
+  requireCompleteBundle: true,
+  expectedStage: "canary",
+});
+assert.equal(validCanary.ready, true);
+assert.equal(validCanary.checks.providerKeySlots, 1);
+assert.equal(validCanary.checks.flagBundleComplete, true);
+assert.equal(validCanary.checks.nvidiaBaseUrlPinned, true);
+assert.equal(validCanary.checks.pollinationsEndpointPinned, true);
+assert.equal(validCanary.checks.pollinationsCredentialConfigured, true);
+
+const serializedCanary = JSON.stringify(validCanary);
+assert.equal(serializedCanary.includes("secret-provider-key"), false);
+assert.equal(serializedCanary.includes("secret-pollinations-key"), false);
+assert.equal(serializedCanary.includes("secret-service-role"), false);
+assert.equal(serializedCanary.includes("secret-anonymous-hash-salt"), false);
+
+const providerOnly = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  [NEMOTRON_ROLLOUT_ENV.nemotronIntuitive]: "false",
+  [NEMOTRON_ROLLOUT_ENV.unifiedTextTokensV2]: "false",
+  [NEMOTRON_ROLLOUT_ENV.intuitiveQuotaUi]: "false",
+  SENTIQ_ANON_USAGE_HASH_SECRET: undefined,
+  SUPABASE_URL_1: undefined,
+  SUPABASE_SERVICE_ROLE_KEY_1: undefined,
+}));
+assert.equal(providerOnly.ready, true);
+assert.ok(providerOnly.warnings.some((warning) => warning.code === "partial_flag_bundle"));
+assert.equal(providerOnly.issues.length, 0);
+
+const completeRequired = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  [NEMOTRON_ROLLOUT_ENV.nemotronIntuitive]: "false",
+  [NEMOTRON_ROLLOUT_ENV.unifiedTextTokensV2]: "false",
+  [NEMOTRON_ROLLOUT_ENV.intuitiveQuotaUi]: "false",
+}), { requireCompleteBundle: true });
+assert.equal(completeRequired.ready, false);
+assert.ok(completeRequired.issues.some((issue) => issue.code === "complete_flag_bundle_required"));
+
+const intuitiveWithoutProvider = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  [NEMOTRON_ROLLOUT_ENV.nvidiaProvider]: "false",
+}));
+assert.equal(intuitiveWithoutProvider.ready, false);
+assert.ok(intuitiveWithoutProvider.issues.some((issue) => issue.code === "intuitive_requires_provider"));
+
+const uiWithoutUnified = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  [NEMOTRON_ROLLOUT_ENV.unifiedTextTokensV2]: "false",
+  [NEMOTRON_ROLLOUT_ENV.nemotronIntuitive]: "false",
+}));
+assert.equal(uiWithoutUnified.ready, false);
+assert.ok(uiWithoutUnified.issues.some((issue) => issue.code === "quota_ui_requires_unified_tokens"));
+
+const stageOff = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  SENTIQ_NEMOTRON_ROLLOUT_STAGE: "off",
+}));
+assert.equal(stageOff.ready, false);
+assert.ok(stageOff.issues.some((issue) => issue.code === "flags_enabled_while_stage_off"));
+
+const missingProviderKey = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  NVIDIA_API_KEY_1: undefined,
+}));
+assert.equal(missingProviderKey.ready, false);
+assert.ok(missingProviderKey.issues.some((issue) => issue.code === "provider_key_pool_empty"));
+
+const wrongProviderEndpoint = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  NVIDIA_BASE_URL: "https://example.invalid/v1",
+}));
+assert.equal(wrongProviderEndpoint.ready, false);
+assert.ok(wrongProviderEndpoint.issues.some((issue) => issue.code === "provider_base_url_not_pinned"));
+
+const credentialedProviderEndpoint = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  NVIDIA_BASE_URL: "https://user:password@integrate.api.nvidia.com/v1",
+}));
+assert.equal(credentialedProviderEndpoint.ready, false);
+assert.ok(credentialedProviderEndpoint.issues.some((issue) => issue.code === "provider_base_url_not_pinned"));
+
+const wrongFallbackEndpoint = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  POLLINATIONS_OPENAI_ENDPOINT: "https://example.invalid/v1/chat/completions",
+}));
+assert.equal(wrongFallbackEndpoint.ready, false);
+assert.ok(wrongFallbackEndpoint.issues.some((issue) => issue.code === "fallback_endpoint_not_pinned"));
+
+const missingGuestSecret = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  SENTIQ_ANON_USAGE_HASH_SECRET: undefined,
+}));
+assert.equal(missingGuestSecret.ready, false);
+assert.ok(missingGuestSecret.issues.some((issue) => issue.code === "anonymous_identity_secret_missing"));
+
+const wrongFallback = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  POLLINATIONS_INTUITIVE_MODEL: "different-model",
+}));
+assert.equal(wrongFallback.ready, false);
+assert.ok(wrongFallback.issues.some((issue) => issue.code === "fallback_model_not_pinned"));
+
+const excessiveTimeout = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  SENTIQ_INTUITIVE_TOTAL_TIMEOUT_MS: "120001",
+}));
+assert.equal(excessiveTimeout.ready, false);
+assert.ok(excessiveTimeout.issues.some((issue) => issue.code === "invalid_intuitive_timeout"));
+
+const legacyQuotaEnabled = evaluateNemotronDeploymentReadiness(enabledEnvironment({
+  SENTIQ_PYTHON_LLM_QUOTA_ENFORCEMENT: "true",
+}));
+assert.equal(legacyQuotaEnabled.ready, false);
+assert.ok(legacyQuotaEnabled.issues.some((issue) => issue.code === "legacy_python_quota_enabled"));
+
+const fullWithoutAck = evaluateNemotronDeploymentReadiness(fullEnvironment({
+  SENTIQ_NEMOTRON_FULL_ROLLOUT_ACK: undefined,
+}));
+assert.equal(fullWithoutAck.ready, false);
+assert.ok(fullWithoutAck.issues.some((issue) => issue.code === "full_rollout_not_acknowledged"));
+
+const incompleteFullPool = evaluateNemotronDeploymentReadiness(fullEnvironment({
+  NVIDIA_API_KEY_6: undefined,
+}));
+assert.equal(incompleteFullPool.ready, false);
+assert.ok(incompleteFullPool.issues.some((issue) => issue.code === "full_rollout_provider_pool_incomplete"));
+
+const fullWithoutFallbackCredential = evaluateNemotronDeploymentReadiness(fullEnvironment({
+  POLLINATIONS_API_KEY: undefined,
+}));
+assert.equal(fullWithoutFallbackCredential.ready, false);
+assert.ok(fullWithoutFallbackCredential.issues.some((issue) => issue.code === "full_rollout_fallback_credential_missing"));
+
+const validFull = evaluateNemotronDeploymentReadiness(fullEnvironment(), {
+  requireEnabled: true,
+  requireCompleteBundle: true,
+  expectedStage: "full",
+});
+assert.equal(validFull.ready, true);
+assert.equal(validFull.checks.providerKeySlots, REQUIRED_FULL_ROLLOUT_NVIDIA_SLOTS);
+
+const fullKillSwitch = evaluateNemotronDeploymentReadiness(fullEnvironment({
+  [NEMOTRON_ROLLOUT_ENV.nemotronIntuitive]: "false",
+}));
+assert.equal(fullKillSwitch.ready, true);
+assert.ok(fullKillSwitch.warnings.some((warning) => warning.code === "partial_flag_bundle"));
+
+console.log("Nemotron deployment readiness checks passed.");

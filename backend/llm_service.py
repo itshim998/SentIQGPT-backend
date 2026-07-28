@@ -60,6 +60,7 @@ from llm_adapter import (
     POLLINATIONS_TIMEOUT,
     POLLINATIONS_STREAM_FIRST_CHUNK_TIMEOUT,
     POLLINATIONS_STREAM_IDLE_TIMEOUT,
+    NVIDIA_NEMOTRON_PROVIDER,
     POLLINATIONS_API_KEY,
     STRICT_JSON_TASKS,
     SENTIQ_MODEL_TOOL_REGISTRY_ENABLED,
@@ -885,6 +886,7 @@ async def health_details():
         "embedding_model": EMBEDDING_MODEL,
         "groq_model": GROQ_MODEL,
         "groq_chat_model": GROQ_CHAT_MODEL,
+        "intuitive_text_provider": NVIDIA_NEMOTRON_PROVIDER.safe_diagnostics(),
         "coding_model": CODING_MODEL,
         "pollinations_api_key_configured": bool(POLLINATIONS_API_KEY),
         "pollinations_endpoint": POLLINATIONS_OPENAI_ENDPOINT,
@@ -1120,6 +1122,10 @@ async def stream_llm(request: LLMInvokeRequest):
                         yield f"event: capacity\ndata: {json.dumps({'capacity': telemetry['capacity']})}\n\n"
                         capacity_event_sent = True
                 if isinstance(chunk, dict):
+                    if chunk.get("kind") == "provider_usage":
+                        usage = chunk.get("usage") if isinstance(chunk.get("usage"), dict) else {}
+                        yield f"event: usage\ndata: {json.dumps({'usage': usage})}\n\n"
+                        continue
                     if chunk.get("kind") == "text_delta":
                         text_delta = str(chunk.get("text") or "")
                         if safety_monitor and text_delta:

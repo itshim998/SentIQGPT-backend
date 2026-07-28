@@ -33,11 +33,11 @@ async function main(): Promise<void> {
       const markers = [
         "SYSTEM POLICY MARKER",
         "CONTEXT HANDLING RULES",
+        "ROUTE EVIDENCE MARKER",
+        "FILE MARKER",
+        "MEMORY MARKER",
         "STABLE CONTEXT MARKER",
         "WORKSPACE CAPSULE MARKER",
-        "MEMORY MARKER",
-        "FILE MARKER",
-        "ROUTE EVIDENCE MARKER",
         "ROLLING SUMMARY MARKER",
         "CONVERSATION CAPSULE MARKER",
         "RECENT TURN MARKER",
@@ -150,6 +150,55 @@ async function main(): Promise<void> {
       assert(oversizedCurrent.prompt.includes("MESSAGE-END"), "current message tail is retained");
     },
   );
+
+  const composeFree = (executionMode: "fast" | "intuitive", complexity: "normal" | "heavy") =>
+    runWithRequestBudgetContext(
+      { planCode: "free", executionMode, resolution: "billing" },
+      () => composeContextDetailed({
+        systemPrompt: "SYSTEM POLICY",
+        userMessage: "CURRENT MESSAGE MUST REMAIN AVAILABLE",
+        complexity,
+        fileReferences: [{
+          filename: "large-context.txt",
+          extractedText: repeated("RELEVANT-CONTEXT", 12_000),
+        }],
+        conversation: Array.from({ length: 18 }, (_, index) => ({
+          role: index % 2 ? "assistant" : "user",
+          content: repeated(`HISTORY-${index}`, 180),
+        })),
+      }),
+    );
+
+  const freeFastOrdinary = composeFree("fast", "normal");
+  const freeFastComplex = composeFree("fast", "heavy");
+  const freeIntuitiveOrdinary = composeFree("intuitive", "normal");
+  const freeIntuitiveComplex = composeFree("intuitive", "heavy");
+  assert.equal(freeFastOrdinary.telemetry.inputContextCeilingTokens, 3_200);
+  assert.equal(freeFastComplex.telemetry.inputContextCeilingTokens, 4_000);
+  assert.equal(freeIntuitiveOrdinary.telemetry.inputContextCeilingTokens, 6_000);
+  assert.equal(freeIntuitiveComplex.telemetry.inputContextCeilingTokens, 8_000);
+  assert(freeFastOrdinary.telemetry.finalEstimatedInputTokens <= 3_200);
+  assert(freeFastComplex.telemetry.finalEstimatedInputTokens <= 4_000);
+  assert(freeIntuitiveOrdinary.telemetry.finalEstimatedInputTokens <= 6_000);
+  assert(freeIntuitiveComplex.telemetry.finalEstimatedInputTokens <= 8_000);
+  assert(
+    freeIntuitiveOrdinary.telemetry.finalEstimatedInputTokens
+      > freeFastOrdinary.telemetry.finalEstimatedInputTokens,
+    "Free Intuitive ordinary retains more composed input than Free Fast ordinary",
+  );
+  assert(
+    freeIntuitiveComplex.telemetry.finalEstimatedInputTokens
+      > freeIntuitiveOrdinary.telemetry.finalEstimatedInputTokens,
+    "Free Intuitive complex retains more composed input than Free Intuitive ordinary",
+  );
+  for (const composition of [
+    freeFastOrdinary,
+    freeFastComplex,
+    freeIntuitiveOrdinary,
+    freeIntuitiveComplex,
+  ]) {
+    assert(composition.prompt.includes("CURRENT MESSAGE MUST REMAIN AVAILABLE"));
+  }
 
   console.log("Context composition Phase 2 tests passed.");
 }

@@ -12,6 +12,8 @@ export type BillableFeature =
   | "generated_file"
   | "deep_research";
 
+export type TextAllowanceClass = "standard" | "lite" | "unified_text";
+
 export interface FeatureQuota {
   readonly limit: number;
   readonly windowSeconds: number;
@@ -60,7 +62,13 @@ export interface BillingIdentity {
 
 export interface UsageReservation {
   readonly requestId: string;
-  readonly feature: BillableFeature;
+  readonly reservationId?: string;
+  readonly feature: BillableFeature | "unified_text";
+  readonly allowanceClass?: TextAllowanceClass;
+  readonly policyVersion?: string;
+  readonly executionMode?: "fast" | "intuitive";
+  readonly idempotent?: boolean;
+  readonly status?: "reserved" | "committed" | "released" | "expired";
   readonly planCode: BillingPlanCode;
   readonly safeModelLabel: string;
   readonly provider: string;

@@ -10,20 +10,25 @@ import {
   waitForInternalGatewayReady,
 } from "../internalGateway";
 import {
-  applyAffordableTokenCeiling,
   getRequestBudgetContext,
+  getRemainingRequestReservationTokens,
   recordSuccessfulModelUsage,
+  releaseFutureTokenObligation,
+  releaseModelCallReservation,
+  reserveModelCall,
+  type ModelCallReservation,
 } from "../context/requestBudgetContext";
 import {
   estimateInputTokens,
   getGroqCapacitySnapshot,
   recordGroqCapacitySnapshot,
-  resolveOutputBudget,
+  resolveGenerationBudget,
   type AuxiliaryOutputKind,
   type OutputBudgetClass,
   type RequestComplexity,
 } from "../orchestrator/contextBudgetManager";
 import type { ExecutionMode } from "../orchestrator/executionProfile";
+import { getNemotronRolloutSnapshot } from "../nemotronRolloutFlags";
 import {
   SENTIQ_TOOL_CHOICE_POLICY,
   SENTIQ_TOOL_REGISTRY_VERSION,
@@ -131,6 +136,12 @@ export interface LLMAdapterCall {
   readonly auxiliary_budget?: AuxiliaryOutputKind;
   readonly request_complexity?: RequestComplexity;
   readonly message_count?: number;
+  /** Request-local final-answer obligation consumed atomically by this call. */
+  readonly consume_future_obligation_id?: string;
+  /** Provider hard cap known by Node. Python may only clamp this downward. */
+  readonly provider_maximum_generated_tokens?: number;
+  /** Minimum useful output for repair/continuation and other bounded calls. */
+  readonly minimum_output_tokens?: number;
   /** Explicit server-derived availability. Never populate this from model output. */
   readonly sentiq_tool_context?: ToolAvailabilityContext;
   /** Server-selected subset. Model output must never populate this field. */
@@ -144,18 +155,24 @@ interface InternalBudgetPolicy {
   readonly auxiliary_kind?: AuxiliaryOutputKind;
   readonly complexity: RequestComplexity;
   readonly estimated_input_tokens: number;
-  readonly default_output_tokens: number;
-  readonly hard_output_tokens: number;
-  readonly selected_output_tokens: number;
-  readonly total_token_budget: number;
-  readonly normal_min_total_tokens: number;
+  readonly default_generation_tokens: number;
+  readonly generation_ceiling_tokens: number;
+  readonly selected_generation_tokens: number;
+  readonly input_context_ceiling_tokens: number;
+  readonly constrained_input_context_ceiling_tokens: number;
   readonly capacity_band: string;
   readonly force_fallback: boolean;
+  readonly provider_capability: string;
+  readonly provider_maximum_generated_tokens?: number;
+  readonly reasoning_budget_tokens: number;
+  readonly protected_output_tokens: number;
+  readonly timeout_ms?: number;
 }
 
 interface PreparedAdapterCall {
   readonly call: LLMAdapterCall;
   readonly budgetPolicy: InternalBudgetPolicy;
+  readonly reservation: ModelCallReservation | null;
 }
 
 export interface ImageAttachment {
@@ -363,23 +380,67 @@ function isGroqPrimaryCall(call: LLMAdapterCall): boolean {
   return call.model_override === "gpt-oss-120b" || call.model_override?.startsWith("groq:") === true;
 }
 
+function isNemotronGenerationCall(
+  call: LLMAdapterCall,
+  executionMode: ExecutionMode,
+  budgetClass: OutputBudgetClass,
+): boolean {
+  const flags = getNemotronRolloutSnapshot();
+  if (!flags.nvidiaProvider || !flags.nemotronIntuitive) return false;
+  if (executionMode !== "intuitive" || budgetClass !== "interactive") return false;
+  if (call.task !== "chat" && call.task !== "general") return false;
+  if ((call.sentiq_allowed_tool_names?.length ?? 0) > 0) return false;
+  const required = new Set(call.required_capabilities ?? []);
+  return !required.has("image_input")
+    && !required.has("sentiq_tools_buffered")
+    && !required.has("sentiq_tools_streaming");
+}
+
 function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
   const context = getRequestBudgetContext();
   const classification = inferBudgetClass(call);
   const estimate = estimateInputTokens(call.prompt, call.message_count ?? 1);
   const complexity = call.request_complexity ?? "normal";
   const executionMode = call.execution_mode ?? context.executionMode;
-  const decision = resolveOutputBudget({
-    planCode: context.planCode,
-    executionMode,
-    budgetClass: classification.budgetClass,
-    auxiliaryKind: classification.auxiliaryKind,
-    requestedOutputTokens: call.max_output_tokens,
-    estimatedInputTokens: estimate.tokens,
-    complexity,
-    capacity: isGroqPrimaryCall(call) ? getGroqCapacitySnapshot() : undefined,
+  const providerCapability = isNemotronGenerationCall(call, executionMode, classification.budgetClass)
+    ? "nemotron_reasoning" as const
+    : "legacy_text" as const;
+  const remainingReservationTokens = getRemainingRequestReservationTokens({
+    consumeFutureObligationId: call.consume_future_obligation_id,
   });
-  const affordableOutputTokens = applyAffordableTokenCeiling(call.prompt, decision.selectedOutputTokens);
+  let decision: ReturnType<typeof resolveGenerationBudget>;
+  try {
+    decision = resolveGenerationBudget({
+      planCode: context.planCode,
+      executionMode,
+      budgetClass: classification.budgetClass,
+      auxiliaryKind: classification.auxiliaryKind,
+      requestedOutputTokens: call.max_output_tokens,
+      estimatedInputTokens: estimate.tokens,
+      complexity,
+      capacity: providerCapability === "legacy_text" && isGroqPrimaryCall(call)
+        ? getGroqCapacitySnapshot()
+        : undefined,
+      remainingReservationTokens,
+      providerCapability,
+      providerMaximumGeneratedTokens: call.provider_maximum_generated_tokens,
+      reservationAllowanceClass: context.tokenAllowance?.allowanceClass,
+    });
+  } catch (error) {
+    if (call.consume_future_obligation_id) {
+      releaseFutureTokenObligation(call.consume_future_obligation_id);
+    }
+    throw error;
+  }
+  const minimumOutputTokens = providerCapability === "nemotron_reasoning"
+    ? decision.protectedVisibleAnswerTokens
+    : call.minimum_output_tokens ?? 32;
+  const reservation = reserveModelCall({
+    estimatedInputTokens: estimate.tokens,
+    requestedOutputTokens: decision.selectedGenerationTokens,
+    minimumOutputTokens,
+    consumeFutureObligationId: call.consume_future_obligation_id,
+  });
   const budgetPolicy: InternalBudgetPolicy = {
     plan_code: decision.planCode,
     execution_mode: decision.executionMode,
@@ -387,13 +448,18 @@ function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
     auxiliary_kind: decision.auxiliaryKind,
     complexity,
     estimated_input_tokens: estimate.tokens,
-    default_output_tokens: decision.defaultOutputTokens,
-    hard_output_tokens: decision.hardOutputTokens,
-    selected_output_tokens: affordableOutputTokens,
-    total_token_budget: estimate.tokens + affordableOutputTokens,
-    normal_min_total_tokens: decision.normalMinTotalTokens,
+    default_generation_tokens: decision.defaultGenerationTokens,
+    generation_ceiling_tokens: decision.generationCeilingTokens,
+    selected_generation_tokens: decision.selectedGenerationTokens,
+    input_context_ceiling_tokens: decision.inputContextCeilingTokens,
+    constrained_input_context_ceiling_tokens: decision.constrainedInputContextCeilingTokens,
     capacity_band: decision.capacityBand,
     force_fallback: decision.forceFallback,
+    provider_capability: decision.providerCapability,
+    provider_maximum_generated_tokens: decision.providerMaximumGeneratedTokens,
+    reasoning_budget_tokens: decision.reasoningBudgetTokens,
+    protected_output_tokens: decision.protectedVisibleAnswerTokens,
+    timeout_ms: decision.timeoutMs,
   };
   console.info(JSON.stringify({
     scope: "context_budget",
@@ -403,8 +469,12 @@ function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
     budget_class: decision.budgetClass,
     auxiliary_kind: decision.auxiliaryKind ?? null,
     estimated_input_tokens: estimate.tokens,
-    selected_output_tokens: affordableOutputTokens,
-    hard_output_tokens: decision.hardOutputTokens,
+    selected_generation_tokens: decision.selectedGenerationTokens,
+    generation_ceiling_tokens: decision.generationCeilingTokens,
+    input_context_ceiling_tokens: decision.inputContextCeilingTokens,
+    reasoning_budget_tokens: decision.reasoningBudgetTokens,
+    protected_output_tokens: decision.protectedVisibleAnswerTokens,
+    provider_maximum_generated_tokens: decision.providerMaximumGeneratedTokens ?? null,
     capacity_band: decision.capacityBand,
     force_fallback: decision.forceFallback,
   }));
@@ -412,17 +482,59 @@ function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
     call: {
       ...call,
       execution_mode: decision.executionMode,
-      max_output_tokens: affordableOutputTokens,
+      max_output_tokens: decision.selectedGenerationTokens,
+      timeout_ms: call.timeout_ms ?? decision.timeoutMs,
       reasoning_effort: decision.budgetClass === "interactive" && isGroqPrimaryCall(call)
         ? decision.reasoningEffort
         : call.reasoning_effort,
     },
     budgetPolicy,
+    reservation,
   };
 }
 
+function releasePreparedReservation(prepared: PreparedAdapterCall): void {
+  releaseModelCallReservation(prepared.reservation?.id);
+}
+
+function recordPreparedUsage(
+  prepared: PreparedAdapterCall,
+  args: {
+    readonly prompt: string;
+    readonly output: string;
+    readonly reportedInputTokens?: number | null;
+    readonly reportedOutputTokens?: number | null;
+  },
+): boolean {
+  return recordSuccessfulModelUsage({
+    ...args,
+    reservationId: prepared.reservation?.id,
+  });
+}
+
+async function waitForGatewayBeforeReservation(call: LLMAdapterCall): Promise<void> {
+  try {
+    await waitForInternalGatewayReady();
+  } catch (error) {
+    if (call.consume_future_obligation_id) {
+      releaseFutureTokenObligation(call.consume_future_obligation_id);
+    }
+    throw error;
+  }
+}
+
+function hasReliableUsage(
+  inputTokens: number | null | undefined,
+  outputTokens: number | null | undefined,
+): boolean {
+  return Number.isFinite(inputTokens)
+    && Number.isFinite(outputTokens)
+    && Number(inputTokens) >= 0
+    && Number(outputTokens) >= 0;
+}
+
 export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMAdapterResult> {
-  await waitForInternalGatewayReady();
+  await waitForGatewayBeforeReservation(call);
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
   const sentiqToolRequest = buildSentIQToolTransportRequest(call);
@@ -450,6 +562,9 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
       })),
       signal: abort.signal,
     });
+  } catch (error) {
+    releasePreparedReservation(prepared);
+    throw error;
   } finally {
     abort.cleanup();
   }
@@ -471,13 +586,15 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
         (parseError as Error).message === "Message rejected by safety filter." ||
         (parseError as Error).message === "Safety checks are temporarily unavailable. Please try again shortly."
       ) {
+        releasePreparedReservation(prepared);
         throw parseError;
       }
     }
+    releasePreparedReservation(prepared);
     throw new Error(`LLM service error (${response.status}): ${text}`);
   }
 
-  const data = (await response.json()) as {
+  let data: {
     result:
       | string
       | {
@@ -502,8 +619,14 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
           };
         };
   };
+  try {
+    data = (await response.json()) as typeof data;
+  } catch (error) {
+    releasePreparedReservation(prepared);
+    throw error;
+  }
   if (typeof data.result === "string") {
-    recordSuccessfulModelUsage({ prompt: call.prompt, output: data.result });
+    recordPreparedUsage(prepared, { prompt: call.prompt, output: data.result });
     return {
       text: data.result,
       model_used: undefined,
@@ -516,7 +639,46 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
     };
   }
   if (sentiqToolRequest && data.result.error) {
+    const reportedUsage = data.result.telemetry?.usage;
+    const reportedInput = reportedUsage?.input_tokens ?? reportedUsage?.prompt_tokens;
+    const reportedOutput = reportedUsage?.output_tokens ?? reportedUsage?.completion_tokens;
+    if (hasReliableUsage(reportedInput, reportedOutput)) {
+      recordPreparedUsage(prepared, {
+        prompt: call.prompt,
+        output: data.result.text ?? "",
+        reportedInputTokens: reportedInput,
+        reportedOutputTokens: reportedOutput,
+      });
+    } else {
+      releasePreparedReservation(prepared);
+    }
     throw new ModelToolTransportError();
+  }
+  if (data.result.error === "provider_failed") {
+    const reportedUsage = data.result.telemetry?.usage;
+    const reportedInput = reportedUsage?.input_tokens ?? reportedUsage?.prompt_tokens;
+    const reportedOutput = reportedUsage?.output_tokens ?? reportedUsage?.completion_tokens;
+    if (hasReliableUsage(reportedInput, reportedOutput)) {
+      recordPreparedUsage(prepared, {
+        prompt: call.prompt,
+        output: data.result.text ?? "",
+        reportedInputTokens: reportedInput,
+        reportedOutputTokens: reportedOutput,
+      });
+    } else {
+      releasePreparedReservation(prepared);
+    }
+    return {
+      text: "",
+      assistant_turn: { kind: "assistant_text", text: "" },
+      model_used: undefined,
+      fallback: data.result.fallback,
+      fallback_reason: data.result.fallback_reason,
+      finish_reason: data.result.finish_reason,
+      truncated: data.result.truncated,
+      error: data.result.error,
+      error_detail: data.result.error_detail,
+    };
   }
   recordGroqCapacitySnapshot(data.result.telemetry?.capacity);
   const assistantTurn = data.result.assistant_turn
@@ -527,12 +689,14 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
     )
     : { kind: "assistant_text" as const, text: typeof data.result.text === "string" ? data.result.text : "" };
   if (sentiqToolRequest && assistantTurn.kind === "assistant_text" && !assistantTurn.text.trim()) {
+    releasePreparedReservation(prepared);
     throw new ModelToolTransportError();
   }
   if (sentiqToolRequest && assistantTurn.kind === "assistant_text") {
     try {
       assertNoUnbackedToolCompletionClaim(assistantTurn.text);
     } catch {
+      releasePreparedReservation(prepared);
       throw new ModelToolTransportError();
     }
   }
@@ -542,7 +706,7 @@ export async function callLLMAdapterDetailed(call: LLMAdapterCall): Promise<LLMA
   const chargeableOutput = assistantTurn.kind === "assistant_text"
     ? assistantTurn.text
     : JSON.stringify(assistantTurn.calls);
-  recordSuccessfulModelUsage({
+  recordPreparedUsage(prepared, {
     prompt: call.prompt,
     output: chargeableOutput,
     reportedInputTokens,
@@ -583,7 +747,7 @@ export async function callLLMAdapter(call: LLMAdapterCall): Promise<string> {
 async function callLLMAdapterTextStreamLegacy(
   call: LLMAdapterCall,
 ): Promise<ReadableStream<string>> {
-  await waitForInternalGatewayReady();
+  await waitForGatewayBeforeReservation(call);
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
   const url = getInternalGatewayUrl("/llm/stream");
@@ -614,6 +778,7 @@ async function callLLMAdapterTextStreamLegacy(
     });
   } catch (err) {
     abort.cleanup();
+    releasePreparedReservation(prepared);
     throw err;
   }
 
@@ -635,14 +800,17 @@ async function callLLMAdapterTextStreamLegacy(
         (parseError as Error).message === "Message rejected by safety filter." ||
         (parseError as Error).message === "Safety checks are temporarily unavailable. Please try again shortly."
       ) {
+        releasePreparedReservation(prepared);
         throw parseError;
       }
     }
+    releasePreparedReservation(prepared);
     throw new Error(`LLM stream error (${response.status}): ${text}`);
   }
 
   if (!response.body) {
     abort.cleanup();
+    releasePreparedReservation(prepared);
     throw new Error("No response body for streaming");
   }
 
@@ -651,11 +819,36 @@ async function callLLMAdapterTextStreamLegacy(
   let sseBuffer = "";
   let chargeableOutput = "";
   let usageRecorded = false;
+  let reportedUsage: {
+    readonly input_tokens?: number;
+    readonly output_tokens?: number;
+    readonly total_tokens?: number;
+  } | undefined;
   const eventQueue: Array<
     | { type: "text"; text: string }
     | { type: "error"; error: string }
     | { type: "done" }
   > = [];
+
+  const recordStreamUsage = (): void => {
+    if (usageRecorded) return;
+    recordPreparedUsage(prepared, {
+      prompt: call.prompt,
+      output: chargeableOutput,
+      reportedInputTokens: reportedUsage?.input_tokens,
+      reportedOutputTokens: reportedUsage?.output_tokens,
+    });
+    usageRecorded = true;
+  };
+  const releaseOrRecordAbnormalStream = (): void => {
+    if (usageRecorded) return;
+    if (hasReliableUsage(reportedUsage?.input_tokens, reportedUsage?.output_tokens)) {
+      recordStreamUsage();
+    } else {
+      releasePreparedReservation(prepared);
+      usageRecorded = true;
+    }
+  };
 
   function enqueueEventBlock(block: string): void {
     // Check for event: error format (from safety monitor)
@@ -679,10 +872,24 @@ async function callLLMAdapterTextStreamLegacy(
     }
 
     try {
-      const parsed = JSON.parse(payload) as { text?: string; error?: string; message?: string; capacity?: unknown };
+      const parsed = JSON.parse(payload) as {
+        text?: string;
+        error?: string;
+        message?: string;
+        capacity?: unknown;
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          total_tokens?: number;
+        };
+      };
 
       if (eventType === "capacity") {
         recordGroqCapacitySnapshot(parsed.capacity ?? parsed);
+        return;
+      }
+      if (eventType === "usage") {
+        reportedUsage = parsed.usage;
         return;
       }
       
@@ -723,6 +930,7 @@ async function callLLMAdapterTextStreamLegacy(
           readResult = await reader.read();
         } catch (err) {
           abort.cleanup();
+          releaseOrRecordAbnormalStream();
           throw err;
         }
         const { done, value } = readResult;
@@ -741,10 +949,7 @@ async function callLLMAdapterTextStreamLegacy(
       }
 
       if (eventQueue.length === 0) {
-        if (!usageRecorded && chargeableOutput) {
-          recordSuccessfulModelUsage({ prompt: call.prompt, output: chargeableOutput });
-          usageRecorded = true;
-        }
+        recordStreamUsage();
         abort.cleanup();
         controller.close();
         return;
@@ -758,10 +963,7 @@ async function callLLMAdapterTextStreamLegacy(
       }
 
       if (nextEvent.type === "done") {
-        if (!usageRecorded) {
-          recordSuccessfulModelUsage({ prompt: call.prompt, output: chargeableOutput });
-          usageRecorded = true;
-        }
+        recordStreamUsage();
         abort.cleanup();
         controller.close();
         return;
@@ -769,6 +971,7 @@ async function callLLMAdapterTextStreamLegacy(
 
       if (nextEvent.type === "error") {
         abort.cleanup();
+        releaseOrRecordAbnormalStream();
         controller.error(new Error(nextEvent.error));
         return;
       }
@@ -778,6 +981,7 @@ async function callLLMAdapterTextStreamLegacy(
     },
     async cancel(reason) {
       abort.cleanup();
+      releaseOrRecordAbnormalStream();
       await reader.cancel(reason).catch(() => undefined);
     },
   });
@@ -866,7 +1070,7 @@ export async function callLLMAdapterTurnStream(
     );
   }
 
-  await waitForInternalGatewayReady();
+  await waitForGatewayBeforeReservation(call);
   const prepared = prepareBudgetedCall(call);
   call = prepared.call;
   call = { ...call, tool_transport_mode: "streaming" };
@@ -893,15 +1097,18 @@ export async function callLLMAdapterTurnStream(
     });
   } catch (error) {
     abort.cleanup();
+    releasePreparedReservation(prepared);
     return bufferedTurnToProviderDeltas(await recoverBufferedToolTurn(call));
   }
   if (!response.ok) {
     abort.cleanup();
     await response.text().catch(() => "");
+    releasePreparedReservation(prepared);
     return bufferedTurnToProviderDeltas(await recoverBufferedToolTurn(call));
   }
   if (!response.body) {
     abort.cleanup();
+    releasePreparedReservation(prepared);
     return bufferedTurnToProviderDeltas(await recoverBufferedToolTurn(call));
   }
 
@@ -918,6 +1125,31 @@ export async function callLLMAdapterTurnStream(
   let recoveryAttempted = false;
   let chargeableOutput = "";
   let usageRecorded = false;
+  let reportedUsage: {
+    readonly input_tokens?: number;
+    readonly output_tokens?: number;
+    readonly total_tokens?: number;
+  } | undefined;
+
+  const recordToolStreamUsage = (): void => {
+    if (usageRecorded) return;
+    recordPreparedUsage(prepared, {
+      prompt: call.prompt,
+      output: chargeableOutput,
+      reportedInputTokens: reportedUsage?.input_tokens,
+      reportedOutputTokens: reportedUsage?.output_tokens,
+    });
+    usageRecorded = true;
+  };
+  const releaseOrRecordAbnormalToolStream = (): void => {
+    if (usageRecorded) return;
+    if (hasReliableUsage(reportedUsage?.input_tokens, reportedUsage?.output_tokens)) {
+      recordToolStreamUsage();
+    } else {
+      releasePreparedReservation(prepared);
+      usageRecorded = true;
+    }
+  };
 
   const queueRaw = (delta: RawProviderDelta) => {
     if (delta.kind === "text_delta" || delta.kind === "tool_call_start") providerOutcomeStarted = true;
@@ -942,10 +1174,19 @@ export async function callLLMAdapterTurnStream(
       error?: string;
       message?: string;
       capacity?: unknown;
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        total_tokens?: number;
+      };
       delta?: RawProviderDelta;
     };
     if (eventType === "capacity") {
       recordGroqCapacitySnapshot(parsed.capacity ?? parsed);
+      return;
+    }
+    if (eventType === "usage") {
+      reportedUsage = parsed.usage;
       return;
     }
     if (eventType === "error" || parsed.error) throw new Error(parsed.message || parsed.error || "LLM stream failed");
@@ -988,16 +1229,14 @@ export async function callLLMAdapterTurnStream(
         }
         controller.enqueue(event);
         if (event.kind === "done") {
-          if (!usageRecorded) {
-            recordSuccessfulModelUsage({ prompt: call.prompt, output: chargeableOutput });
-            usageRecorded = true;
-          }
+          recordToolStreamUsage();
           abort.cleanup();
           controller.close();
         }
       } catch (error) {
         abort.cleanup();
         await source.cancel(error).catch(() => undefined);
+        releaseOrRecordAbnormalToolStream();
         if (!providerOutcomeStarted && !recoveryAttempted) {
           recoveryAttempted = true;
           try {
@@ -1015,6 +1254,7 @@ export async function callLLMAdapterTurnStream(
     },
     async cancel(reason) {
       abort.cleanup();
+      releaseOrRecordAbnormalToolStream();
       await source.cancel(reason).catch(() => undefined);
     },
   });
@@ -1076,12 +1316,17 @@ export function callLLMAdapterSync(call: LLMAdapterCall): Promise<string> {
     });
     child.on("close", (code: number | null) => {
       if (code === 0) {
+        recordPreparedUsage(prepared, { prompt: call.prompt, output: stdout });
         resolve(stdout);
       } else {
+        releasePreparedReservation(prepared);
         reject(new Error(`llm_adapter.py exited with code ${code}: ${stderr}`));
       }
     });
-    child.on("error", reject);
+    child.on("error", (error) => {
+      releasePreparedReservation(prepared);
+      reject(error);
+    });
 
     child.stdin.write(
       JSON.stringify({

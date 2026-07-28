@@ -1,0 +1,110 @@
+"""Redacted live verification for the Pollinations Intuitive fallback.
+
+The script prints only status, response size, marker checks, and aggregate usage.
+It never prints the API key, prompt, answer text, headers, or raw response body.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from typing import Any
+
+import requests
+
+
+PROMPT = "Reply with the single word OK."
+FORBIDDEN_MARKERS = ("reasoning_content", "<think>", "</think>")
+
+
+def _safe_usage(payload: dict[str, Any]) -> dict[str, int | None]:
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    return {
+        "input_tokens": usage.get("prompt_tokens", usage.get("input_tokens")),
+        "output_tokens": usage.get("completion_tokens", usage.get("output_tokens")),
+        "total_tokens": usage.get("total_tokens"),
+    }
+
+
+def main() -> int:
+    endpoint = os.getenv(
+        "POLLINATIONS_OPENAI_ENDPOINT",
+        "https://gen.pollinations.ai/v1/chat/completions",
+    ).strip()
+    model = os.getenv("POLLINATIONS_INTUITIVE_MODEL", "").strip()
+    api_key = os.getenv("POLLINATIONS_API_KEY", "").strip()
+
+    if not endpoint.startswith("https://") or not model:
+        print(json.dumps({
+            "event": "pollinations_intuitive_verification",
+            "status": "fail",
+            "category": "configuration",
+        }))
+        return 2
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        response = requests.post(
+            endpoint,
+            headers=headers,
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": PROMPT}],
+                "max_tokens": 32,
+                "stream": False,
+            },
+            timeout=90,
+        )
+    except requests.RequestException as error:
+        print(json.dumps({
+            "event": "pollinations_intuitive_verification",
+            "status": "fail",
+            "category": "transport",
+            "error_class": type(error).__name__,
+        }))
+        return 1
+
+    if response.status_code < 200 or response.status_code >= 300:
+        print(json.dumps({
+            "event": "pollinations_intuitive_verification",
+            "status": "fail",
+            "category": "http",
+            "status_code": response.status_code,
+        }))
+        return 1
+
+    try:
+        payload = response.json()
+    except ValueError:
+        print(json.dumps({
+            "event": "pollinations_intuitive_verification",
+            "status": "fail",
+            "category": "invalid_json",
+            "status_code": response.status_code,
+        }))
+        return 1
+
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    message = choices[0].get("message") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
+    text = message.get("content", "") if isinstance(message, dict) else ""
+    normalized = str(text).lower()
+    marker_visible = any(marker in normalized for marker in FORBIDDEN_MARKERS)
+    passed = bool(str(text).strip()) and not marker_visible
+
+    print(json.dumps({
+        "event": "pollinations_intuitive_verification",
+        "status": "pass" if passed else "fail",
+        "status_code": response.status_code,
+        "visible_chars": len(str(text)),
+        "reasoning_marker_visible": marker_visible,
+        "usage": _safe_usage(payload if isinstance(payload, dict) else {}),
+    }))
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
