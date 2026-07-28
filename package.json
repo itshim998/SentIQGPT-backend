@@ -74,6 +74,7 @@
     "billing:test-unified-text-v2": "ts-node --project tsconfig.backend.json backend/billing/testUnifiedTextTokensV2.ts && ts-node --project tsconfig.backend.json backend/billing/testUnifiedTextUsageSummary.ts",
     "billing:test-unified-text-v2-sql": "ts-node --project tsconfig.backend.json backend/billing/testUnifiedTextMigrationContract.ts && ts-node --project tsconfig.backend.json backend/billing/testUnifiedTextTokensV2Sql.ts",
     "billing:test-unified-text-pass51-sql": "ts-node --project tsconfig.backend.json backend/billing/testUnifiedTextPass51Sql.ts",
+    "billing:test-unified-text-full-rollout-sql": "ts-node --project tsconfig.backend.json backend/billing/testUnifiedTextFullRolloutSql.ts",
     "test:unified-text-routing": "ts-node --project tsconfig.backend.json backend/billing/testUnifiedTextRoutePolicy.ts",
     "billing:verify-razorpay-config": "ts-node --project tsconfig.backend.json backend/billing/verifyRazorpayConfig.ts"
   },
