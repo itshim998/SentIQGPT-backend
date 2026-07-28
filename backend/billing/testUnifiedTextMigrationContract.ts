@@ -16,6 +16,10 @@ const schemaCompatMigration = readFileSync(
   resolve(repoRoot, "supabase/migrations/20260727183000_unified_text_tokens_v2_schema_compat.sql"),
   "utf8",
 );
+const pgcryptoResolutionMigration = readFileSync(
+  resolve(repoRoot, "supabase/migrations/20260728180000_unified_text_tokens_v2_pgcrypto_resolution.sql"),
+  "utf8",
+);
 const v1Migration = readFileSync(
   resolve(repoRoot, "supabase/migrations/20260718120000_standard_lite_token_allowances.sql"),
   "utf8",
@@ -72,6 +76,14 @@ assert.doesNotMatch(integrityMigration, /drop table|truncate table/i);
 
 assert.match(schemaCompatMigration, /select '20260727120000'::text/i);
 assert.match(schemaCompatMigration, /get_unified_text_tokens_v2_schema_version/i);
+assert.match(
+  pgcryptoResolutionMigration,
+  /alter function public\.sync_unified_text_v2_rollback_shadows\(uuid\)\s+set search_path = public, extensions, pg_temp/i,
+);
+assert.match(pgcryptoResolutionMigration, /digest\('sentiq-unified-text-readiness', 'sha256'\)/i);
+assert.match(pgcryptoResolutionMigration, /select '20260728180000'::text/i);
+assert.match(pgcryptoResolutionMigration, /extensions_search_path/i);
+assert.doesNotMatch(pgcryptoResolutionMigration, /drop table|truncate table|delete from/i);
 assert.match(v1Migration, /standard-lite-tokens-v1/);
 assert.doesNotMatch(v1Migration, /unified-text-tokens-v2/);
 assert.match(dbRouter, /get_unified_text_tokens_v2_schema_version/);

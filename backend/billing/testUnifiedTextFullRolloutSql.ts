@@ -27,6 +27,7 @@ const migrations = [
   "supabase/migrations/20260727180000_unified_text_tokens_v2_integrity.sql",
   "supabase/migrations/20260727183000_unified_text_tokens_v2_schema_compat.sql",
   "supabase/migrations/20260728100000_unified_text_tokens_v2_full_rollout_gate.sql",
+  "supabase/migrations/20260728180000_unified_text_tokens_v2_pgcrypto_resolution.sql",
 ].map((path) => resolve(repoRoot, path));
 
 function psqlArgs(extra: readonly string[]): string[] {
@@ -61,14 +62,37 @@ function main(): void {
   const baseVersion = runSql("select public.get_unified_text_tokens_v2_schema_version()");
   assert.equal(baseVersion, "20260727120000");
   const fullVersion = runSql("select public.get_unified_text_tokens_v2_full_rollout_schema_version()");
-  assert.equal(fullVersion, "20260728100000");
+  assert.equal(fullVersion, "20260728180000");
 
   const gate = JSON.parse(runSql("select public.verify_unified_text_tokens_v2_rollout()::text"));
   assert.equal(gate.ready, true);
-  assert.equal(gate.schema_version, "20260728100000");
+  assert.equal(gate.schema_version, "20260728180000");
   assert.equal(gate.base_schema_version, "20260727120000");
   assert.equal(gate.missing_count, 0);
   assert.deepEqual(gate.missing, []);
+
+  const commitProbe = JSON.parse(runSql(`
+    with reservation as (
+      select public.reserve_unified_text_tokens_v2(
+        '00000000-0000-0000-0000-000000001800'::uuid,
+        null,
+        'full-rollout-pgcrypto-resolution',
+        'fast',
+        256,
+        256,
+        '{"ttl_seconds":600}'::jsonb
+      ) as value
+    )
+    select public.commit_unified_text_tokens_v2(
+      (value ->> 'reservation_id')::uuid,
+      value ->> 'request_id',
+      1,
+      '{"input_tokens":1,"output_tokens":1,"successful_model_calls":1,"usage_reported_calls":1}'::jsonb
+    )::text
+    from reservation
+  `));
+  assert.equal(commitProbe.committed, true);
+  assert.equal(commitProbe.rollback_shadows_synced, true);
 
   const secondApply = migrations.slice(-1)[0];
   applyMigration(secondApply);

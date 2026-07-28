@@ -120,6 +120,31 @@ function createFixture() {
     ordinaryRouteEvent > guestGeneralStart && ordinaryRouteEvent < guestPromptStart,
     "ordinary guest streams must emit neutral route evidence before model output",
   );
+
+  const guestCatchStart = server.indexOf("let streamError = err;", guestPromptStart);
+  const signedInCatchStart = server.indexOf("let streamError = err;", guestCatchStart + 1);
+  for (const [label, catchStart] of [
+    ["guest", guestCatchStart],
+    ["signed-in", signedInCatchStart],
+  ] as const) {
+    assert(catchStart >= 0, `${label} partial-stream settlement catch must exist`);
+    const catchContract = server.slice(catchStart, catchStart + 900);
+    assert.match(
+      catchContract,
+      /err instanceof BillingQuotaError[\s\S]*?err\.code === "unified_text_quota_unavailable"/,
+      `${label} stream must not retry a known unavailable settlement`,
+    );
+    assert.match(
+      catchContract,
+      /try \{[\s\S]*?commitTextBilling[\s\S]*?catch \(settlementErr\) \{[\s\S]*?streamError = settlementErr/,
+      `${label} partial settlement failures must become public-safe stream errors`,
+    );
+    assert.match(
+      catchContract,
+      /await sendStreamError\(streamError, streamMetrics\)/,
+      `${label} stream must emit an SSE error terminator after settlement failure`,
+    );
+  }
 }
 
 console.log("Stream disconnect lifecycle tests passed.");
