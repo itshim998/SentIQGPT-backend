@@ -21,6 +21,7 @@ on:
       - "scripts/testNemotronFullRolloutUpdate.mjs"
       - "scripts/verifyNemotronCanaryLive.mjs"
       - "scripts/verifyNemotronFullRolloutLive.mjs"
+      - "scripts/execAzureContainerAppCommand.sh"
       - "scripts/start-container-validated.sh"
       - "docs/ai/NEMOTRON_PRODUCTION_ROLLOUT.md"
       - "supabase/migrations/**"
@@ -87,6 +88,22 @@ jobs:
         run: |
           npm ci
           python -m pip install --disable-pip-version-check requests python-dotenv
+
+      - name: Validate GitHub workflow schemas
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          actionlint_version="1.7.12"
+          actionlint_archive="${RUNNER_TEMP}/actionlint_${actionlint_version}_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error \
+            "https://github.com/rhysd/actionlint/releases/download/v${actionlint_version}/actionlint_${actionlint_version}_linux_amd64.tar.gz" \
+            --output "${actionlint_archive}"
+          printf '%s  %s\n' \
+            "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8" \
+            "${actionlint_archive}" \
+            | sha256sum --check --status
+          tar -xzf "${actionlint_archive}" -C "${RUNNER_TEMP}" actionlint
+          "${RUNNER_TEMP}/actionlint" -color -shellcheck= -pyflakes=
 
       - name: TypeScript build
         run: npm run build

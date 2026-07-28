@@ -147,7 +147,7 @@ jobs:
           runtime_command="$(node scripts/verifyAzureRuntimeEnvironment.mjs --emit-command)"
           runtime_log="${RUNNER_TEMP}/ordinary-deploy-runtime-${GITHUB_RUN_ID}.log"
           trap 'rm -f "${runtime_log}"' EXIT
-          az containerapp exec \
+          bash scripts/execAzureContainerAppCommand.sh \
             --name "${APP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
             --revision "${latest_ready}" \
