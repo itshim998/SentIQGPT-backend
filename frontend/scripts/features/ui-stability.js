@@ -24,7 +24,7 @@ function initializeUiStability() {
   if (!(chatInput instanceof HTMLTextAreaElement) || !(chatMessages instanceof HTMLElement)) return;
 
   let pendingSend = null;
-  let checkFrame = 0;
+  let checkTimer = 0;
   let timeoutHandle = 0;
 
   function isVisible(element) {
@@ -67,9 +67,9 @@ function initializeUiStability() {
   }
 
   function clearTimers() {
-    if (checkFrame) window.cancelAnimationFrame(checkFrame);
+    if (checkTimer) window.clearTimeout(checkTimer);
     if (timeoutHandle) window.clearTimeout(timeoutHandle);
-    checkFrame = 0;
+    checkTimer = 0;
     timeoutHandle = 0;
   }
 
@@ -85,10 +85,12 @@ function initializeUiStability() {
     chatInput.dataset.sentiqSendState = "consumed";
   }
 
-  function clearContinuityDraft() {
-    const continuity = window.SentIQConversationContinuity;
-    const conversationId = continuity?.getConversationId?.();
-    if (conversationId) continuity.discard?.(conversationId);
+  async function flushContinuityDraft() {
+    try {
+      await window.SentIQConversationContinuity?.flush?.();
+    } catch {
+      // Draft persistence remains best-effort; normal continuity retries still apply.
+    }
   }
 
   function settlePendingSend(realMessage = null) {
@@ -101,7 +103,7 @@ function initializeUiStability() {
     chatInput.removeAttribute("data-sentiq-send-state");
     root.dataset.sentiqOptimisticSend = realMessage ? "settled" : "cancelled";
     if (realMessage) {
-      window.requestAnimationFrame(() => clearContinuityDraft());
+      window.setTimeout(() => { void flushContinuityDraft(); }, 0);
       document.dispatchEvent(new CustomEvent("sentiq-composer-send-settled", {
         detail: {
           executionMode: record.executionMode,
@@ -126,8 +128,13 @@ function initializeUiStability() {
     root.dataset.sentiqOptimisticSend = "pending";
   }
 
+  function schedulePendingCheck(delay = 0) {
+    if (!pendingSend || checkTimer) return;
+    checkTimer = window.setTimeout(checkPendingSend, Math.max(0, delay));
+  }
+
   function checkPendingSend() {
-    checkFrame = 0;
+    checkTimer = 0;
     const record = pendingSend;
     if (!record) return;
 
@@ -160,12 +167,7 @@ function initializeUiStability() {
       return;
     }
 
-    checkFrame = window.requestAnimationFrame(checkPendingSend);
-  }
-
-  function schedulePendingCheck() {
-    if (!pendingSend || checkFrame) return;
-    checkFrame = window.requestAnimationFrame(checkPendingSend);
+    schedulePendingCheck(elapsedMs < 1_000 ? 32 : 150);
   }
 
   function captureSendAttempt({ composing = false } = {}) {
