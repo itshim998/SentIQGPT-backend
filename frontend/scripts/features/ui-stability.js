@@ -1,7 +1,7 @@
 import {
   OPTIMISTIC_SEND_TIMEOUT_MS,
   UI_STABILITY_VERSION,
-  isPlainTextSendCandidate,
+  isComposerSendCandidate,
   messageTextMatches,
   normalizeExecutionMode,
   shouldShowOptimisticUserMessage,
@@ -103,13 +103,17 @@ function initializeUiStability() {
     if (realMessage) {
       window.requestAnimationFrame(() => clearContinuityDraft());
       document.dispatchEvent(new CustomEvent("sentiq-composer-send-settled", {
-        detail: { executionMode: record.executionMode, textLength: record.text.length },
+        detail: {
+          executionMode: record.executionMode,
+          toolMode: record.toolMode,
+          textLength: record.text.length,
+        },
       }));
     }
   }
 
   function appendOptimisticBubble(record) {
-    if (record.optimisticBubble || !window.SentIQChat?.appendMessageBubble) return;
+    if (!record.optimisticEligible || record.optimisticBubble || !window.SentIQChat?.appendMessageBubble) return;
     const result = window.SentIQChat.appendMessageBubble("user", record.text);
     const bubble = result?.bubble;
     if (!(bubble instanceof HTMLElement)) return;
@@ -137,7 +141,7 @@ function initializeUiStability() {
     const composerCleared = chatInput.value.length === 0;
     if (composerCleared) syncProgrammaticComposerClear(record);
 
-    if (shouldShowOptimisticUserMessage({
+    if (record.optimisticEligible && shouldShowOptimisticUserMessage({
       executionMode: record.executionMode,
       composerCleared,
       matchingRealMessagePresent: false,
@@ -167,12 +171,11 @@ function initializeUiStability() {
   function captureSendAttempt({ composing = false } = {}) {
     const text = String(chatInput.value || "").trim();
     const toolMode = readToolMode();
-    if (!isPlainTextSendCandidate({
+    if (!isComposerSendCandidate({
       text,
       sendDisabled: Boolean(sendButton?.disabled || sendButton?.getAttribute("aria-disabled") === "true"),
       stopMode: Boolean(sendButton?.classList.contains("is-stop")),
       composing,
-      toolMode,
     })) return;
 
     if (pendingSend) settlePendingSend();
@@ -180,7 +183,9 @@ function initializeUiStability() {
     pendingSend = {
       id,
       text,
+      toolMode,
       executionMode: readExecutionMode(),
+      optimisticEligible: toolMode === "none",
       existingMatches: collectExistingMatches(text),
       optimisticBubble: null,
       clearEventDispatched: false,
