@@ -10,6 +10,7 @@ on:
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
       - "scripts/testFrontendRuntimeSmoke.mjs"
+      - "scripts/testFrontendUiStabilityRuntime.mjs"
       - "scripts/testLongThreadScrollRuntime.mjs"
       - "scripts/verifyFrontendDeployment.mjs"
       - "scripts/testDeployedFrontendRuntime.mjs"
@@ -32,6 +33,7 @@ on:
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
       - "scripts/testFrontendRuntimeSmoke.mjs"
+      - "scripts/testFrontendUiStabilityRuntime.mjs"
       - "scripts/testLongThreadScrollRuntime.mjs"
       - "scripts/verifyFrontendDeployment.mjs"
       - "scripts/testDeployedFrontendRuntime.mjs"
@@ -123,6 +125,7 @@ jobs:
         run: |
           set -o pipefail
           node scripts/testFrontendRuntimeSmoke.mjs 2>&1 | tee frontend-runtime.log
+          node scripts/testFrontendUiStabilityRuntime.mjs 2>&1 | tee -a frontend-runtime.log
           node scripts/testLongThreadScrollRuntime.mjs 2>&1 | tee -a frontend-runtime.log
 
       - name: Upload runtime failure log
