@@ -67,6 +67,8 @@ assert.match(extractor, /MAX_METADATA_RESPONSE_BYTES[\s\S]*readResponseTextLimit
   "metadata response bodies are byte bounded");
 assert.match(extractor, /resolvePinnedPublicAddress[\s\S]*lookup:/,
   "outbound page requests connect through a validated pinned DNS result");
+assert.match(extractor, /"all" in options[\s\S]*callback\(null, \[\{ address: pinned\.address, family: pinned\.family \}\]\)/,
+  "one-address DNS pinning honors Node's multi-address lookup callback shape");
 assert.match(extractor, /getLinkHref\(html, "icon"\)/,
   "favicon metadata uses link rel parsing");
 

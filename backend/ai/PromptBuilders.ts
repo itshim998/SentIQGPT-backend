@@ -125,6 +125,12 @@ export interface LLMAdapterCall {
   readonly timeout_ms?: number;
   readonly signal?: AbortSignal;
   readonly max_output_tokens?: number;
+  /**
+   * Visible-answer target for a bounded reasoning response. The Node budget
+   * allocator adds the hidden-reasoning allowance before setting the provider
+   * max-output limit.
+   */
+  readonly visible_answer_tokens?: number;
   readonly reasoning_effort?: "low" | "medium";
   readonly execution_mode?: ExecutionMode;
   readonly skip_wrappers?: boolean;
@@ -416,6 +422,7 @@ function prepareBudgetedCall(call: LLMAdapterCall): PreparedAdapterCall {
       budgetClass: classification.budgetClass,
       auxiliaryKind: classification.auxiliaryKind,
       requestedOutputTokens: call.max_output_tokens,
+      requestedVisibleAnswerTokens: call.visible_answer_tokens,
       estimatedInputTokens: estimate.tokens,
       complexity,
       capacity: providerCapability === "legacy_text" && isGroqPrimaryCall(call)
@@ -1631,6 +1638,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     user_id: ctx.userId,
     safety_mode: safetyMode,
     max_output_tokens: ctx.webSurfAnswerPlan?.maxOutputTokens,
+    visible_answer_tokens: ctx.webSurfAnswerPlan?.maxOutputTokens,
     reasoning_effort: groqReasoningEffort,
     skip_wrappers: ctx.reasoningMode ?? false,
     image_attachments: ctx.imageAttachments,

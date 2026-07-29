@@ -76,6 +76,11 @@ async function main(): Promise<void> {
   assert.match(call.prompt, /Resolved primary entity: 2026 FIFA World Cup/, "prompt anchors the resolved entity");
   assert.match(call.prompt, /Table policy: small_only; maximum table rows: 5/, "prompt receives explicit table controls");
   assert.equal(call.max_output_tokens, fifa.plan.maxOutputTokens, "profile uses the existing invocation token configuration");
+  assert.equal(
+    call.visible_answer_tokens,
+    fifa.plan.maxOutputTokens,
+    "profile marks its bounded output as a visible-answer target for reasoning-provider budgeting",
+  );
 
   const guard = new WebSurfOutputGuardStream(new Set(["S1"]));
   const chunks = [
