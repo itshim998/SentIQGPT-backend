@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   OPTIMISTIC_SEND_TIMEOUT_MS,
+  isComposerSendCandidate,
   isPlainTextSendCandidate,
   messageTextMatches,
   normalizeComposerText,
@@ -12,10 +13,13 @@ assert.equal(normalizeComposerText("  hello\n  world  "), "hello world");
 assert.equal(normalizeExecutionMode("intuitive"), "intuitive");
 assert.equal(normalizeExecutionMode("unknown"), "fast");
 
+assert.equal(isComposerSendCandidate({ text: "Explain this" }), true);
+assert.equal(isComposerSendCandidate({ text: "", toolMode: "none" }), false);
+assert.equal(isComposerSendCandidate({ text: "Explain this", stopMode: true }), false);
+assert.equal(isComposerSendCandidate({ text: "Explain this", composing: true }), false);
+assert.equal(isComposerSendCandidate({ text: "Explain this", toolMode: "image" }), true);
+
 assert.equal(isPlainTextSendCandidate({ text: "Explain this", toolMode: "none" }), true);
-assert.equal(isPlainTextSendCandidate({ text: "", toolMode: "none" }), false);
-assert.equal(isPlainTextSendCandidate({ text: "Explain this", stopMode: true }), false);
-assert.equal(isPlainTextSendCandidate({ text: "Explain this", composing: true }), false);
 assert.equal(isPlainTextSendCandidate({ text: "Explain this", toolMode: "image" }), false);
 
 assert.equal(shouldShowOptimisticUserMessage({
@@ -53,4 +57,4 @@ assert.equal(messageTextMatches("What is\nIntuitive mode?", " What is Intuitive 
 assert.equal(messageTextMatches("first", "second"), false);
 assert.equal(messageTextMatches("", ""), false);
 
-console.log("UI stability state gate passed: Intuitive sends are optimistic only while the real user message is pending, and invalid/tool sends are excluded.");
+console.log("UI stability state gate passed: all successful composer sends clear drafts, while only plain Intuitive sends receive an optimistic user bubble.");
