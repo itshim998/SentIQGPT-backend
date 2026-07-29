@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   FULL_ROLLOUT_PLAIN_ENV,
   FULL_ROLLOUT_SECRET_ENV_NAMES,
@@ -82,5 +84,25 @@ assert.throws(() => renderNemotronFullRolloutUpdate({
   cooldownSeconds: "900",
   deploymentRevision: "abcdef1234567890",
 }), /Invalid Azure secret reference/);
+
+const fullRolloutWorkflow = readFileSync(
+  resolve(process.cwd(), ".github/workflows/nemotron-full-rollout.yml"),
+  "utf8",
+);
+assert.match(
+  fullRolloutWorkflow,
+  /expected_schema_version="\$\([\s\S]*?UNIFIED_TEXT_FULL_ROLLOUT_SCHEMA_VERSION[\s\S]*?\)"/,
+  "full rollout must derive its expected schema version from the built readiness module",
+);
+assert.match(
+  fullRolloutWorkflow,
+  /\.schemaVersion == \$expected[\s\S]*?\.issueCode == null/,
+  "full rollout must structurally validate the exact exported schema version",
+);
+assert.doesNotMatch(
+  fullRolloutWorkflow,
+  /"schemaVersion":"20\d{12}"/,
+  "full rollout must not duplicate a dated schema-version literal",
+);
 
 console.log("Nemotron full rollout Azure renderer tests passed.");
