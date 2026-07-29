@@ -9,16 +9,18 @@ export function normalizeExecutionMode(value) {
   return String(value || "").toLowerCase() === "intuitive" ? "intuitive" : "fast";
 }
 
-export function isPlainTextSendCandidate({
+export function isComposerSendCandidate({
   text,
   sendDisabled = false,
   stopMode = false,
   composing = false,
-  toolMode = "none",
 } = {}) {
   if (sendDisabled || stopMode || composing) return false;
-  if (toolMode !== "none") return false;
   return normalizeComposerText(text).length > 0;
+}
+
+export function isPlainTextSendCandidate(options = {}) {
+  return isComposerSendCandidate(options) && (options.toolMode || "none") === "none";
 }
 
 export function shouldShowOptimisticUserMessage({
