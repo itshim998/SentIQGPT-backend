@@ -287,6 +287,12 @@ export function resolveGenerationBudget(args: {
   readonly budgetClass: OutputBudgetClass;
   readonly auxiliaryKind?: AuxiliaryOutputKind;
   readonly requestedOutputTokens?: number;
+  /**
+   * A bounded visible-answer target for reasoning providers. Their generated
+   * token allowance must also cover hidden reasoning, so this is deliberately
+   * separate from the provider's total max-output limit.
+   */
+  readonly requestedVisibleAnswerTokens?: number;
   readonly estimatedInputTokens: number;
   readonly complexity?: RequestComplexity;
   readonly capacity?: GroqCapacitySnapshot;
@@ -319,7 +325,13 @@ export function resolveGenerationBudget(args: {
     generationCeilingTokens = cap;
   }
 
-  const requested = Number.isFinite(args.requestedOutputTokens)
+  const requestedVisibleAnswerTokens = usesReasoningGenerationBudget
+    && Number.isFinite(args.requestedVisibleAnswerTokens)
+    ? Math.max(1, Math.floor(args.requestedVisibleAnswerTokens as number))
+    : undefined;
+  const requested = requestedVisibleAnswerTokens !== undefined
+    ? requestedVisibleAnswerTokens + intuitiveGenerationPolicy.maximumReasoningTokens
+    : Number.isFinite(args.requestedOutputTokens)
     ? Math.max(1, Math.floor(args.requestedOutputTokens as number))
     : defaultGenerationTokens;
   let selectedGenerationTokens = Math.min(requested, generationCeilingTokens);
@@ -366,11 +378,18 @@ export function resolveGenerationBudget(args: {
     );
   }
 
+  const protectedVisibleAnswerTokens = usesReasoningGenerationBudget
+    ? Math.min(
+        intuitiveGenerationPolicy.protectedVisibleAnswerTokens,
+        requestedVisibleAnswerTokens ?? intuitiveGenerationPolicy.protectedVisibleAnswerTokens,
+      )
+    : 0;
+
   if (Number.isFinite(args.remainingReservationTokens)) {
     const affordableGeneratedTokens = Math.floor(Number(args.remainingReservationTokens))
       - Math.max(0, Math.ceil(args.estimatedInputTokens));
     const minimumAnswerTokens = usesReasoningGenerationBudget
-      ? intuitiveGenerationPolicy.protectedVisibleAnswerTokens
+      ? protectedVisibleAnswerTokens
       : 32;
     if (affordableGeneratedTokens < minimumAnswerTokens) {
       if (!usesReasoningGenerationBudget) {
@@ -389,9 +408,6 @@ export function resolveGenerationBudget(args: {
     selectedGenerationTokens = Math.min(selectedGenerationTokens, affordableGeneratedTokens);
   }
 
-  const protectedVisibleAnswerTokens = usesReasoningGenerationBudget
-    ? intuitiveGenerationPolicy.protectedVisibleAnswerTokens
-    : 0;
   if (usesReasoningGenerationBudget && selectedGenerationTokens < protectedVisibleAnswerTokens) {
     throw new GenerationBudgetError();
   }

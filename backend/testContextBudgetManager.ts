@@ -185,6 +185,30 @@ async function main(): Promise<void> {
   assert.strictEqual(providerLimitedIntuitive.selectedGenerationTokens, 5_000);
   assert.strictEqual(providerLimitedIntuitive.reasoningBudgetTokens, 2_000);
 
+  const boundedWebSurfIntuitive = resolveGenerationBudget({
+    planCode: "free",
+    executionMode: "intuitive",
+    budgetClass: "interactive",
+    requestedOutputTokens: 500,
+    requestedVisibleAnswerTokens: 500,
+    estimatedInputTokens: 4_019,
+    complexity: "heavy",
+    providerCapability: "nemotron_reasoning",
+    providerMaximumGeneratedTokens: 8_000,
+    remainingReservationTokens: 16_000,
+  });
+  assert.strictEqual(
+    boundedWebSurfIntuitive.selectedGenerationTokens,
+    4_000,
+    "bounded WebSurf synthesis adds its hidden-reasoning allowance to the visible-answer target",
+  );
+  assert.strictEqual(boundedWebSurfIntuitive.reasoningBudgetTokens, 3_500);
+  assert.strictEqual(
+    boundedWebSurfIntuitive.protectedVisibleAnswerTokens,
+    500,
+    "a deliberate 500-token WebSurf answer is not rejected by the generic heavy-answer floor",
+  );
+
   const affordableIntuitive = resolveGenerationBudget({
     planCode: "free",
     executionMode: "intuitive",

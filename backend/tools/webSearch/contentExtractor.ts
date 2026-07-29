@@ -223,7 +223,19 @@ async function requestPinned(parsed: URL, signal?: AbortSignal, method: "GET" | 
       },
       signal: effectiveSignal,
       servername: parsed.protocol === "https:" ? parsed.hostname : undefined,
-      lookup: ((_hostname: string, _options: unknown, callback: (...args: unknown[]) => void) => {
+      lookup: ((_hostname: string, options: unknown, callback: (...args: unknown[]) => void) => {
+        // Newer Node runtimes may request dns.lookup({ all: true }) while
+        // auto-selecting an address family. Preserve the one validated pinned
+        // address while honoring that callback shape.
+        if (
+          typeof options === "object"
+          && options !== null
+          && "all" in options
+          && (options as { all?: unknown }).all === true
+        ) {
+          callback(null, [{ address: pinned.address, family: pinned.family }]);
+          return;
+        }
         callback(null, pinned.address, pinned.family);
       }) as any,
     }, (response) => {
