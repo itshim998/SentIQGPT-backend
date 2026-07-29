@@ -5,6 +5,13 @@ export function normalizeComposerText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+export function normalizeUserDisplayText(value) {
+  const source = String(value || "").trim();
+  return source.startsWith("Generate image: ")
+    ? source.slice("Generate image: ".length).trim()
+    : source;
+}
+
 export function normalizeExecutionMode(value) {
   return String(value || "").toLowerCase() === "intuitive" ? "intuitive" : "fast";
 }
