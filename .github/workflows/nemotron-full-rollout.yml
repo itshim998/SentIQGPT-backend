@@ -840,8 +840,25 @@ jobs:
             | tee deployment-readiness-full-rollout-report.jsonl
           grep -a -Eq '"event":"nemotron_deployment_readiness".*"ready":true' \
             deployment-readiness-full-rollout-report.jsonl
-          grep -a -Eq '"event":"unified_text_production_readiness".*"ready":true.*"schemaVersion":"20260728100000".*"structuralReady":true.*"missingCount":0' \
-            deployment-readiness-full-rollout-report.jsonl
+          expected_schema_version="$(
+            node -e "process.stdout.write(require('./dist/backend/unifiedTextProductionReadiness.js').UNIFIED_TEXT_FULL_ROLLOUT_SCHEMA_VERSION)"
+          )"
+          [[ "${expected_schema_version}" =~ ^[0-9]{14}$ ]] || {
+            echo 'Unified text rollout schema version export is invalid.'
+            exit 1
+          }
+          grep -a '"event":"unified_text_production_readiness"' \
+            deployment-readiness-full-rollout-report.jsonl \
+            | tail -1 \
+            | jq -e --arg expected "${expected_schema_version}" '
+                .event == "unified_text_production_readiness"
+                and .ready == true
+                and .status == "ready"
+                and .schemaVersion == $expected
+                and .structuralReady == true
+                and .missingCount == 0
+                and .issueCode == null
+              ' >/dev/null
 
           timeout 900s bash scripts/execAzureContainerAppCommand.sh \
             --name "${APP_NAME}" \
