@@ -6,10 +6,13 @@ import {
   messageTextMatches,
   normalizeComposerText,
   normalizeExecutionMode,
+  normalizeUserDisplayText,
   shouldShowOptimisticUserMessage,
 } from "../scripts/features/ui-stability-state.mjs";
 
 assert.equal(normalizeComposerText("  hello\n  world  "), "hello world");
+assert.equal(normalizeUserDisplayText("Generate image: a glass sphere"), "a glass sphere");
+assert.equal(normalizeUserDisplayText("ordinary prompt"), "ordinary prompt");
 assert.equal(normalizeExecutionMode("intuitive"), "intuitive");
 assert.equal(normalizeExecutionMode("unknown"), "fast");
 
@@ -57,4 +60,4 @@ assert.equal(messageTextMatches("What is\nIntuitive mode?", " What is Intuitive 
 assert.equal(messageTextMatches("first", "second"), false);
 assert.equal(messageTextMatches("", ""), false);
 
-console.log("UI stability state gate passed: all successful composer sends clear drafts, while only plain Intuitive sends receive an optimistic user bubble.");
+console.log("UI stability state gate passed: all successful composer sends clear drafts, only plain Intuitive sends receive an optimistic bubble, and display-normalized prompts reconcile safely.");
