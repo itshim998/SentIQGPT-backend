@@ -146,20 +146,19 @@ try {
     const inputStyle = getComputedStyle(input);
     const contentStyle = getComputedStyle(probeContent);
     const lineStyle = getComputedStyle(finalLine);
-    const startupScreenPresent = Boolean(document.getElementById("sentiq-startup-screen"));
-    probeMessage.remove();
-
-    return {
+    const visualState = {
       bootState: root.dataset.sentiqBootState || "",
-      startupScreenPresent,
+      startupScreenPresent: Boolean(document.getElementById("sentiq-startup-screen")),
       appVisibility: appStyle.visibility,
       appOpacity: Number(appStyle.opacity),
       inputMaxHeight: Number.parseFloat(inputStyle.maxHeight),
       inputFieldSizing: inputStyle.fieldSizing || "fixed",
       messageTextWrap: contentStyle.textWrap || "wrap",
-      streamAnimationName: lineStyle.animationName,
-      samples,
+      streamAnimationName: lineStyle.animationName || "none",
     };
+    probeMessage.remove();
+
+    return { ...visualState, samples };
   });
 
   const inputHeights = report.samples.map((sample) => sample.inputHeight);
