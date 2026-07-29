@@ -62,8 +62,9 @@ html[data-sentiq-boot-state="failed"] .app-container {
   to { transform: rotate(360deg); }
 }
 
-/* One stable textarea geometry. Legacy runtimes may request the same size,
-   but the browser never interpolates height or rebalances the last lines. */
+/* One stable textarea geometry. A CSS custom property is the final height
+   authority, so older desktop/mobile autosizers cannot expose their temporary
+   `height:auto` measurement state to a paint frame. */
 .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
   padding: 12px 14px;
   transition-property: border-color, background-color, box-shadow, opacity !important;
@@ -77,7 +78,8 @@ html[data-sentiq-boot-state="failed"] .app-container {
 .chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper textarea,
 #chat-input {
   field-sizing: fixed !important;
-  max-height: 150px !important;
+  height: var(--sentiq-stable-textarea-height, 44px) !important;
+  max-height: var(--sentiq-composer-field-max-height) !important;
   overflow-anchor: none;
   text-wrap: wrap;
   text-rendering: auto;
@@ -124,16 +126,11 @@ html[data-sentiq-boot-state="failed"] .app-container {
 
 @media (max-width: 640px) {
   :root {
-    --sentiq-composer-field-max-height: 144px;
+    --sentiq-composer-field-max-height: min(144px, var(--mobile-composer-textarea-max-height, 144px));
   }
 
   .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
     padding: 10px 11px;
-  }
-
-  .chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper textarea,
-  #chat-input {
-    max-height: 144px !important;
   }
 }
 
