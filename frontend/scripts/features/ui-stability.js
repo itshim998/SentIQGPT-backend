@@ -4,6 +4,7 @@ import {
   isComposerSendCandidate,
   messageTextMatches,
   normalizeExecutionMode,
+  normalizeUserDisplayText,
   shouldShowOptimisticUserMessage,
 } from "./ui-stability-state.mjs";
 
@@ -51,19 +52,16 @@ function initializeUiStability() {
     return message?.querySelector?.(".message-content")?.textContent || "";
   }
 
-  function collectExistingMatches(text) {
-    return new Set(
-      Array.from(chatMessages.querySelectorAll(".message.user:not(.sentiq-optimistic-user)"))
-        .filter((message) => messageTextMatches(getUserMessageText(message), text)),
-    );
+  function getRealUserMessages() {
+    return Array.from(chatMessages.querySelectorAll(".message.user:not(.sentiq-optimistic-user)"));
   }
 
   function findNewRealMessage(record) {
-    return Array.from(chatMessages.querySelectorAll(".message.user:not(.sentiq-optimistic-user)"))
-      .find((message) => (
-        !record.existingMatches.has(message)
-        && messageTextMatches(getUserMessageText(message), record.text)
-      )) || null;
+    const messages = getRealUserMessages();
+    if (messages.length <= record.baselineUserCount) return null;
+    return messages
+      .slice(record.baselineUserCount)
+      .find((message) => messageTextMatches(getUserMessageText(message), record.matchText)) || null;
   }
 
   function clearTimers() {
@@ -172,6 +170,7 @@ function initializeUiStability() {
 
   function captureSendAttempt({ composing = false } = {}) {
     const text = String(chatInput.value || "").trim();
+    const matchText = normalizeUserDisplayText(text);
     const toolMode = readToolMode();
     if (!isComposerSendCandidate({
       text,
@@ -185,10 +184,11 @@ function initializeUiStability() {
     pendingSend = {
       id,
       text,
+      matchText,
       toolMode,
       executionMode: readExecutionMode(),
-      optimisticEligible: toolMode === "none",
-      existingMatches: collectExistingMatches(text),
+      optimisticEligible: toolMode === "none" && Boolean(matchText),
+      baselineUserCount: getRealUserMessages().length,
       optimisticBubble: null,
       clearEventDispatched: false,
       startedAt: performance.now(),
