@@ -27,6 +27,7 @@ function initializeUiStability() {
   let pendingSend = null;
   let checkTimer = 0;
   let timeoutHandle = 0;
+  let textareaSizeFrame = 0;
 
   function isVisible(element) {
     if (!(element instanceof HTMLElement) || element.hidden) return false;
@@ -46,6 +47,33 @@ function initializeUiStability() {
       "[data-execution-mode][aria-selected='true'], [data-execution-mode].active",
     );
     return normalizeExecutionMode(selected?.getAttribute("data-execution-mode"));
+  }
+
+  function parsePixelValue(value, fallback) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  function stabilizeTextareaHeight(reason = "input") {
+    if (textareaSizeFrame) window.cancelAnimationFrame(textareaSizeFrame);
+    textareaSizeFrame = window.requestAnimationFrame(() => {
+      textareaSizeFrame = 0;
+      const computed = window.getComputedStyle(chatInput);
+      const minHeight = Math.max(40, parsePixelValue(computed.minHeight, 44));
+      const maxHeight = Math.max(minHeight, parsePixelValue(computed.maxHeight, 150));
+      const measurementHeight = `${Math.round(minHeight)}px`;
+
+      /* Temporarily constrain the authoritative CSS variable only inside this
+         animation-frame callback. The final value is restored before paint,
+         so scrollHeight can shrink as well as grow without a visible collapse. */
+      chatInput.style.setProperty("--sentiq-stable-textarea-height", measurementHeight);
+      const naturalHeight = Math.max(minHeight, chatInput.scrollHeight);
+      const nextHeight = Math.min(naturalHeight, maxHeight);
+      const nextValue = `${Math.round(nextHeight)}px`;
+      chatInput.style.setProperty("--sentiq-stable-textarea-height", nextValue);
+      chatInput.style.overflowY = naturalHeight > maxHeight + 1 ? "auto" : "hidden";
+      chatInput.dataset.sentiqStableTextarea = reason;
+    });
   }
 
   function getUserMessageText(message) {
@@ -210,8 +238,13 @@ function initializeUiStability() {
   }, true);
 
   chatInput.addEventListener("input", () => {
+    stabilizeTextareaHeight("input");
     if (pendingSend) schedulePendingCheck();
   }, { passive: true });
+  chatInput.addEventListener("change", () => stabilizeTextareaHeight("change"), { passive: true });
+  chatInput.addEventListener("compositionend", () => stabilizeTextareaHeight("compositionend"), { passive: true });
+  window.addEventListener("resize", () => stabilizeTextareaHeight("viewport"), { passive: true });
+  document.addEventListener("sentiq-mobile-composer-change", () => stabilizeTextareaHeight("mobile-composer"));
 
   const messageObserver = new MutationObserver((records) => {
     if (!pendingSend) return;
@@ -230,8 +263,10 @@ function initializeUiStability() {
     version: UI_STABILITY_VERSION,
     hasPendingSend: () => Boolean(pendingSend),
     cancelPendingSend: () => settlePendingSend(),
+    resizeTextarea: () => stabilizeTextareaHeight("manual"),
   });
   root.dataset.sentiqUiStabilityVersion = UI_STABILITY_VERSION;
+  stabilizeTextareaHeight("initial");
 }
 
 if (typeof document !== "undefined") {
