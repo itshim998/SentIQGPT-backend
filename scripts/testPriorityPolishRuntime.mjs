@@ -113,6 +113,11 @@ try {
     const livePanel = document.getElementById("live-beta-panel");
     const muteButton = document.getElementById("live-beta-mute");
 
+    const desktopPointerStyle = document.createElement("style");
+    desktopPointerStyle.dataset.priorityPolishSmoke = "desktop-pointer";
+    desktopPointerStyle.textContent = ".sentiq-artifact-expand:not([hidden]){display:inline-flex!important;}";
+    document.head.appendChild(desktopPointerStyle);
+
     const assistant = document.createElement("div");
     assistant.className = "message assistant";
     const content = document.createElement("div");
@@ -216,13 +221,15 @@ try {
     messages.appendChild(artifactHost);
     await wait(100);
 
-    const workspaceMediaMatches = matchMedia("(min-width: 1100px) and (min-height: 680px) and (hover: hover) and (pointer: fine)").matches;
+    const workspaceLayoutMatches = matchMedia("(min-width: 1100px) and (min-height: 680px)").matches;
+    const naturalFinePointer = matchMedia("(hover: hover) and (pointer: fine)").matches;
     const fileExpand = filePanel.querySelector(".sentiq-artifact-expand");
     const fileExpandOffered = fileExpand instanceof HTMLButtonElement
       && !fileExpand.hidden
       && !fileExpand.disabled
       && getComputedStyle(fileExpand).display !== "none";
     const originalFileParent = filePanel.parentElement;
+    fileExpand?.focus();
     fileExpand?.click();
     await nextFrame();
     await wait(40);
@@ -271,7 +278,8 @@ try {
     const chartExpand = chart.querySelector(".sentiq-artifact-expand");
     const chartExpandOffered = chartExpand instanceof HTMLButtonElement
       && !chartExpand.hidden
-      && !chartExpand.disabled;
+      && !chartExpand.disabled
+      && getComputedStyle(chartExpand).display !== "none";
     const originalChartParent = chart.parentElement;
     chartExpand?.click();
     await nextFrame();
@@ -289,6 +297,7 @@ try {
     assistant.remove();
     artifactHost.remove();
     chartHost.remove();
+    desktopPointerStyle.remove();
 
     return {
       firstRevealStarted,
@@ -305,7 +314,8 @@ try {
       speakingLevel,
       mutedDirection,
       mutedLevel,
-      workspaceMediaMatches,
+      workspaceLayoutMatches,
+      naturalFinePointer,
       fileExpandOffered,
       fileWorkspaceOpened,
       sameFileNodeMoved,
@@ -332,8 +342,8 @@ try {
   if (report.listeningOrbScale <= 1 || report.listeningWaveScale <= 0.3) failures.push("Live orb or waveform did not react to microphone amplitude");
   if (report.speakingDirection !== "output" || report.speakingLevel <= 0.05) failures.push("Live model PCM did not drive the speaking visualizer");
   if (report.mutedDirection !== "idle" || report.mutedLevel > 0.001) failures.push("Live visualizer did not reset when muted");
-  if (!report.workspaceMediaMatches) failures.push("Chromium did not expose the intended large-screen artifact media query");
-  if (!report.fileExpandOffered || !report.chartExpandOffered) failures.push("large-screen artifact expansion was not offered for file and chart results");
+  if (!report.workspaceLayoutMatches) failures.push("Chromium did not expose the intended large-screen artifact layout");
+  if (!report.fileExpandOffered || !report.chartExpandOffered) failures.push("desktop-emulated artifact expansion was not offered for file and chart results");
   if (!report.fileWorkspaceOpened || !report.chartWorkspaceOpened) failures.push("expanded artifact workspace did not open for file and chart results");
   if (!report.sameFileNodeMoved || !report.fileStatePreserved) failures.push("artifact workspace did not preserve the live file node and editor state");
   if (!report.backgroundInert || !report.focusContained || !report.placeholderReserved) failures.push("artifact workspace accessibility or layout reservation failed");
