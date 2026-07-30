@@ -26,6 +26,7 @@ for (const token of [
   "new MutationObserver",
   "sentiqStreamingPhase",
   "sentiq-streaming-handoff-ghost",
+  "response-inline-loader:not(.sentiq-streaming-handoff-ghost)",
   "deriveCompletedProcessSummary",
   "decorateThinkingPanel",
   "insertStandaloneProcessSummary",
@@ -33,6 +34,13 @@ for (const token of [
 ]) {
   assert.ok(runtimeSource.includes(token), `Streaming polish runtime missing ${token}`);
 }
+
+const phaseAssignment = 'content.dataset.sentiqStreamingPhase = "streaming";';
+const handoffGuard = "if (state.handoffStarted) return;";
+assert.ok(
+  runtimeSource.indexOf(phaseAssignment) < runtimeSource.indexOf(handoffGuard),
+  "The caret phase must survive observer callbacks from the fading loader clone",
+);
 
 assert.equal(runtimeSource.includes("currentExecutionMode"), false);
 assert.equal(runtimeSource.includes('=== "fast"'), false);
