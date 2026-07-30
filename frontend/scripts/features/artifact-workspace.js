@@ -199,6 +199,21 @@ function initializeArtifactWorkspace() {
     });
   }
 
+  function restoreOriginFocus(originButton) {
+    if (!(originButton instanceof HTMLElement) || !originButton.isConnected) return;
+    const focusIfUnclaimed = () => {
+      if (!originButton.isConnected || document.activeElement === originButton) return;
+      const focused = document.activeElement;
+      const focusStillOwnedByWorkspace = !focused
+        || focused === document.body
+        || focused === closeButton
+        || overlay.contains(focused);
+      if (focusStillOwnedByWorkspace) originButton.focus({ preventScroll: true });
+    };
+    focusIfUnclaimed();
+    window.requestAnimationFrame(focusIfUnclaimed);
+  }
+
   function openWorkspace(surface, originButton) {
     if (!(surface instanceof HTMLElement) || !(originButton instanceof HTMLButtonElement)) return;
     const kind = normalizeArtifactWorkspaceKind(surface.className);
@@ -262,9 +277,7 @@ function initializeArtifactWorkspace() {
     setBackgroundInert(false);
     chatMessages.scrollTop = chatScrollTop;
     if (surface.isConnected) resizeArtifact(surface);
-    if (options.restoreFocus !== false && originButton?.isConnected) {
-      window.requestAnimationFrame(() => originButton.focus({ preventScroll: true }));
-    }
+    if (options.restoreFocus !== false) restoreOriginFocus(originButton);
   }
 
   function syncAllButtons() {
