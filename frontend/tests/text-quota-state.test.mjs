@@ -38,6 +38,7 @@ assert.equal(hidden.blockComposer, false);
 
 const available = resolveTextQuotaView({ quotaUiEnabled: true, allowance: fresh, now });
 assert.equal(available.state, "available");
+assert.equal(available.visible, false);
 assert.equal(available.intuitiveSelectable, true);
 assert.equal(available.title, "50K text tokens left");
 assert.equal(available.detail, "40K available for Intuitive");
@@ -60,6 +61,7 @@ const fastOnly = resolveTextQuotaView({
   now,
 });
 assert.equal(fastOnly.state, "fast-only");
+assert.equal(fastOnly.visible, true);
 assert.equal(fastOnly.shouldSwitchToFast, true);
 assert.equal(fastOnly.intuitiveSelectable, false);
 assert.equal(fastOnly.blockComposer, false);
@@ -115,6 +117,7 @@ const exhausted = resolveTextQuotaView({
   now,
 });
 assert.equal(exhausted.state, "exhausted");
+assert.equal(exhausted.visible, true);
 assert.equal(exhausted.blockComposer, true);
 assert.equal(exhausted.title, "Text limit reached");
 
