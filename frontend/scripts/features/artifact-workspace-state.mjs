@@ -1,5 +1,5 @@
 export const ARTIFACT_WORKSPACE_VERSION = "13.2";
-export const ARTIFACT_WORKSPACE_MEDIA_QUERY = "(min-width: 1100px) and (min-height: 680px) and (hover: hover) and (pointer: fine)";
+export const ARTIFACT_WORKSPACE_MEDIA_QUERY = "(min-width: 1100px) and (min-height: 680px)";
 
 export function normalizeArtifactWorkspaceKind(value) {
   const source = String(value || "").toLowerCase();
