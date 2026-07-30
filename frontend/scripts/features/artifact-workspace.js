@@ -201,15 +201,20 @@ function initializeArtifactWorkspace() {
 
   function restoreOriginFocus(originButton) {
     if (!(originButton instanceof HTMLElement)) return;
-    const focusOrigin = () => {
+    const focusIfWorkspaceStillOwnsFocus = () => {
       if (!originButton.isConnected || originButton.hidden || originButton.matches(":disabled")) return;
-      originButton.focus({ preventScroll: true });
+      const focused = document.activeElement;
+      const workspaceStillOwnsFocus = !focused
+        || focused === document.body
+        || focused === closeButton
+        || overlay.contains(focused);
+      if (workspaceStillOwnsFocus) originButton.focus({ preventScroll: true });
     };
-    focusOrigin();
-    window.requestAnimationFrame(() => {
-      focusOrigin();
-      window.requestAnimationFrame(focusOrigin);
-    });
+    focusIfWorkspaceStillOwnsFocus();
+    window.requestAnimationFrame(focusIfWorkspaceStillOwnsFocus);
+    window.setTimeout(focusIfWorkspaceStillOwnsFocus, 0);
+    window.setTimeout(focusIfWorkspaceStillOwnsFocus, 60);
+    window.setTimeout(focusIfWorkspaceStillOwnsFocus, 140);
   }
 
   function openWorkspace(surface, originButton) {
@@ -274,6 +279,7 @@ function initializeArtifactWorkspace() {
     document.body.classList.remove("sentiq-artifact-workspace-open");
     setBackgroundInert(false);
     chatMessages.scrollTop = chatScrollTop;
+    if (originButton instanceof HTMLButtonElement) syncButtonAvailability(originButton, surface);
     if (surface.isConnected) resizeArtifact(surface);
     if (options.restoreFocus !== false) restoreOriginFocus(originButton);
   }
