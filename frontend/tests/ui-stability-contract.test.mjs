@@ -30,6 +30,14 @@ for (const token of [
   'SentIQConversationContinuity',
   'messageTextMatches',
   'OPTIMISTIC_SEND_TIMEOUT_MS',
+  'shouldClearRestoredComposer',
+  'baselineAssistantCount',
+  'hasSuccessfulAssistantResponse',
+  'userEditedAfterSend',
+  'sentiqSuccessfulSendGuard',
+  'beginChatListStabilization',
+  'sentiq-chat-list-stabilizing',
+  'new MutationObserver',
 ]) {
   assert.ok(runtimeSource.includes(token), `UI stability runtime missing ${token}`);
 }
@@ -69,6 +77,10 @@ for (const token of [
   '.streaming-new-text',
   'animation: none !important',
   'margin-block-end: 2px',
+  '#chat-list.sentiq-chat-list-stabilizing',
+  'min-block-size: var(--sentiq-chat-list-stable-height, auto)',
+  'overflow-anchor: none',
+  'contain: layout paint style',
 ]) {
   assert.ok(styleSource.includes(token), `UI stability stylesheet missing ${token}`);
 }
@@ -90,4 +102,4 @@ assert.ok(
   "UI stability runtime must initialize with the composer feature graph",
 );
 
-console.log("UI stability contract gate passed: startup is cloaked until ready, Intuitive sends render optimistically, sent drafts are cleared, and streaming/composer text stays stationary.");
+console.log("UI stability contract gate passed: startup is cloaked until ready, successful Fast and Intuitive sends clear only restored prompts, failed drafts remain recoverable, and new-chat history mutation bursts are motionless and bounded.");

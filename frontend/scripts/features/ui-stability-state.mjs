@@ -1,5 +1,8 @@
-export const UI_STABILITY_VERSION = "12.9";
+export const UI_STABILITY_VERSION = "13.0";
 export const OPTIMISTIC_SEND_TIMEOUT_MS = 15_000;
+export const SUCCESSFUL_SEND_GUARD_TIMEOUT_MS = 180_000;
+export const CHAT_LIST_STABILIZE_QUIET_MS = 180;
+export const CHAT_LIST_STABILIZE_MAX_MS = 1_200;
 
 export function normalizeComposerText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -47,4 +50,25 @@ export function messageTextMatches(left, right) {
   const a = normalizeComposerText(left);
   const b = normalizeComposerText(right);
   return Boolean(a && b && a === b);
+}
+
+export function shouldClearRestoredComposer({
+  composerText,
+  sentText,
+  requestSucceeded = false,
+  userEditedAfterSend = false,
+} = {}) {
+  return Boolean(requestSucceeded)
+    && !userEditedAfterSend
+    && messageTextMatches(composerText, sentText);
+}
+
+export function nextChatListSettleDelay({
+  elapsedMs = 0,
+  quietMs = CHAT_LIST_STABILIZE_QUIET_MS,
+  maxMs = CHAT_LIST_STABILIZE_MAX_MS,
+} = {}) {
+  const elapsed = Math.max(0, Number(elapsedMs) || 0);
+  const remaining = Math.max(0, (Number(maxMs) || CHAT_LIST_STABILIZE_MAX_MS) - elapsed);
+  return Math.min(Math.max(0, Number(quietMs) || CHAT_LIST_STABILIZE_QUIET_MS), remaining);
 }

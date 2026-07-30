@@ -109,16 +109,21 @@ try {
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 350));
 
   const report = await page.evaluate(async () => {
+    const wait = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+    const nextFrame = () => new Promise((resolveFrame) => requestAnimationFrame(resolveFrame));
     const root = document.documentElement;
     const app = document.querySelector(".app-container");
     const input = document.getElementById("chat-input");
     const composer = document.querySelector(".chat-input-area");
     const plus = document.getElementById("composer-plus-btn");
+    const send = document.getElementById("send-btn");
     const messages = document.getElementById("chat-messages");
+    const chatList = document.getElementById("chat-list");
+    const newChat = document.getElementById("new-chat-btn");
 
     const samples = [];
     for (let index = 0; index < 14; index += 1) {
-      await new Promise((resolveFrame) => requestAnimationFrame(resolveFrame));
+      await nextFrame();
       const inputRect = input.getBoundingClientRect();
       const composerRect = composer.getBoundingClientRect();
       const plusRect = plus.getBoundingClientRect();
@@ -158,7 +163,137 @@ try {
     };
     probeMessage.remove();
 
-    return { ...visualState, samples };
+    function appendUserMessage(text) {
+      const message = document.createElement("div");
+      message.className = "message user";
+      const content = document.createElement("div");
+      content.className = "message-content";
+      content.textContent = text;
+      message.appendChild(content);
+      messages.appendChild(message);
+      return message;
+    }
+
+    function appendAssistantMessage(text, failed = false) {
+      const message = document.createElement("div");
+      message.className = "message assistant";
+      const content = document.createElement("div");
+      content.className = "message-content";
+      if (failed) {
+        const errorWrap = document.createElement("div");
+        errorWrap.className = "message-error-wrap";
+        errorWrap.textContent = text;
+        content.appendChild(errorWrap);
+      } else {
+        const paragraph = document.createElement("p");
+        paragraph.textContent = text;
+        content.appendChild(paragraph);
+      }
+      message.appendChild(content);
+      messages.appendChild(message);
+      return message;
+    }
+
+    const blockControllerClick = (event) => {
+      if (event.target instanceof Element && event.target.closest("#send-btn")) event.stopImmediatePropagation();
+    };
+    document.addEventListener("click", blockControllerClick, true);
+
+    const fastPrompt = "Have you heard about Montek LC?";
+    input.value = fastPrompt;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    send.disabled = false;
+    send.setAttribute("aria-disabled", "false");
+    send.classList.remove("is-stop");
+    send.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    send.classList.add("is-stop");
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    appendUserMessage(fastPrompt);
+    await wait(60);
+    appendAssistantMessage("Yes. This is a successful Fast-mode response.");
+    input.value = fastPrompt;
+    send.classList.remove("is-stop");
+    await wait(120);
+    const fastSuccessfulDraftCleared = input.value === "";
+
+    const failedPrompt = "Preserve this retry draft";
+    input.value = failedPrompt;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    send.classList.remove("is-stop");
+    send.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    send.classList.add("is-stop");
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    appendUserMessage(failedPrompt);
+    await wait(60);
+    appendAssistantMessage("Request failed", true);
+    input.value = failedPrompt;
+    send.classList.remove("is-stop");
+    await wait(120);
+    const failedDraftPreserved = input.value === failedPrompt;
+    document.removeEventListener("click", blockControllerClick, true);
+
+    function createHistoryItem(index) {
+      const item = document.createElement("div");
+      item.className = "chat-list-item";
+      item.dataset.id = `runtime-chat-${index}`;
+      const title = document.createElement("span");
+      title.className = "chat-list-item-title";
+      title.textContent = `Runtime conversation ${index}`;
+      item.appendChild(title);
+      return item;
+    }
+
+    const originalListStyle = chatList.getAttribute("style") || "";
+    chatList.style.height = "260px";
+    chatList.style.overflowY = "auto";
+    chatList.replaceChildren(...Array.from({ length: 14 }, (_, index) => createHistoryItem(index)));
+    chatList.scrollTop = 70;
+    await nextFrame();
+    const initialHistoryHeight = chatList.getBoundingClientRect().height;
+    const initialHistoryScroll = chatList.scrollTop;
+
+    newChat.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }));
+    await nextFrame();
+    const historySamples = [];
+    for (let pass = 0; pass < 3; pass += 1) {
+      const label = document.createElement("div");
+      label.className = "chat-history-group-label";
+      label.textContent = pass === 0 ? "Today" : pass === 1 ? "Yesterday" : "Previous 7 days";
+      const items = Array.from({ length: 8 + pass }, (_, index) => createHistoryItem(pass * 20 + index));
+      chatList.replaceChildren(label, ...items);
+      chatList.scrollTop = initialHistoryScroll;
+      await wait(45);
+      const item = chatList.querySelector(".chat-list-item");
+      const renderedLabel = chatList.querySelector(".chat-history-group-label") || label;
+      const itemStyle = getComputedStyle(item);
+      const labelStyle = renderedLabel.isConnected ? getComputedStyle(renderedLabel) : null;
+      historySamples.push({
+        active: chatList.classList.contains("sentiq-chat-list-stabilizing"),
+        height: chatList.getBoundingClientRect().height,
+        itemTransitionDuration: itemStyle.transitionDuration,
+        itemAnimationName: itemStyle.animationName,
+        labelTransitionDuration: labelStyle?.transitionDuration || "0s",
+        labelAnimationName: labelStyle?.animationName || "none",
+      });
+    }
+    await wait(1_350);
+    const historySettled = !chatList.classList.contains("sentiq-chat-list-stabilizing")
+      && root.dataset.sentiqChatListStability === "settled";
+    const historyScrollRestored = Math.abs(chatList.scrollTop - initialHistoryScroll) <= 1;
+    chatList.setAttribute("style", originalListStyle);
+
+    return {
+      ...visualState,
+      samples,
+      fastSuccessfulDraftCleared,
+      failedDraftPreserved,
+      initialHistoryHeight,
+      historySamples,
+      historySettled,
+      historyScrollRestored,
+    };
   });
 
   const inputHeights = report.samples.map((sample) => sample.inputHeight);
@@ -176,11 +311,23 @@ try {
   if (Math.max(...inputHeights) > 150.5) failures.push(`textarea exceeded the 150px desktop cap (${Math.max(...inputHeights).toFixed(2)}px)`);
   if (report.messageTextWrap !== "wrap") failures.push(`message text-wrap was ${report.messageTextWrap}`);
   if (report.streamAnimationName !== "none") failures.push(`streaming final-line animation was ${report.streamAnimationName}`);
+  if (!report.fastSuccessfulDraftCleared) failures.push("successful Fast-mode prompt was restored into the composer");
+  if (!report.failedDraftPreserved) failures.push("failed-send retry draft was cleared");
+  if (report.initialHistoryHeight <= 0) failures.push("chat-list stability probe had no measurable height");
+  if (!report.historySamples.every((sample) => sample.active)) failures.push("chat-list stabilisation ended during the mutation burst");
+  if (!report.historySamples.every((sample) => sample.itemTransitionDuration === "0s" && sample.labelTransitionDuration === "0s")) {
+    failures.push("chat-list items or group labels retained transitions during new-chat refresh");
+  }
+  if (!report.historySamples.every((sample) => sample.itemAnimationName === "none" && sample.labelAnimationName === "none")) {
+    failures.push("chat-list items or group labels retained animations during new-chat refresh");
+  }
+  if (!report.historySettled) failures.push("chat-list stabilisation did not settle within its bounded window");
+  if (!report.historyScrollRestored) failures.push("chat-list scroll position was not restored after new-chat refresh");
   if (pageErrors.length) failures.push(`${pageErrors.length} uncaught page error(s)`);
 
   console.log(JSON.stringify({ ...report, pageErrors }, null, 2));
   if (failures.length) throw new Error(`Frontend UI stability smoke failed:\n- ${failures.join("\n- ")}`);
-  console.log("Frontend UI stability smoke passed: startup revealed once, multiline composer geometry stayed fixed, controls retained safe spacing, and streaming text did not reanimate.");
+  console.log("Frontend UI stability smoke passed: startup revealed once, multiline composer geometry stayed fixed, successful Fast drafts cleared while failed drafts remained recoverable, new-chat history refreshes stayed motionless, and streaming text did not reanimate.");
 } finally {
   await browser?.close().catch(() => {});
   await new Promise((resolvePromise) => server.close(resolvePromise));
