@@ -129,7 +129,7 @@ export function resolveTextQuotaView({
   }
 
   return Object.freeze({
-    visible: true,
+    visible: false,
     state: "available",
     blockComposer: false,
     shouldSwitchToFast: false,
