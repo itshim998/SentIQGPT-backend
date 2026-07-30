@@ -120,6 +120,11 @@ try {
     const app = document.querySelector(".app-container");
     const livePanel = document.getElementById("live-beta-panel");
     const muteButton = document.getElementById("live-beta-mute");
+    const welcomeScreen = document.getElementById("welcome-screen");
+
+    messages.classList.add("has-messages");
+    if (welcomeScreen instanceof HTMLElement) welcomeScreen.style.display = "none";
+    await nextFrame();
 
     const desktopPointerStyle = document.createElement("style");
     desktopPointerStyle.dataset.priorityPolishSmoke = "desktop-pointer";
@@ -250,6 +255,7 @@ try {
     fileExpand?.addEventListener("focus", () => { originFocusEvents += 1; });
     const originalFileParent = filePanel.parentElement;
     fileExpand?.focus();
+    const originFocusedBeforeOpen = document.activeElement === fileExpand;
     const focusEventsBeforeOpen = originFocusEvents;
     fileExpand?.click();
     await nextFrame();
@@ -269,7 +275,7 @@ try {
 
     overlay.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     await nextFrame();
-    await wait(70);
+    await waitUntil(() => originFocusEvents > focusEventsBeforeOpen, 500);
     const fileWorkspaceClosed = !window.SentIQArtifactWorkspace.isOpen()
       && overlay.hidden
       && filePanel.parentElement === originalFileParent
@@ -342,6 +348,7 @@ try {
       workspaceLayoutMatches,
       naturalFinePointer,
       fileExpandOffered,
+      originFocusedBeforeOpen,
       fileWorkspaceOpened,
       sameFileNodeMoved,
       backgroundInert,
@@ -371,6 +378,7 @@ try {
   if (report.mutedDirection !== "idle" || report.mutedLevel > 0.001) failures.push("Live visualizer did not reset when muted");
   if (!report.workspaceLayoutMatches) failures.push("Chromium did not expose the intended large-screen artifact layout");
   if (!report.fileExpandOffered || !report.chartExpandOffered) failures.push("desktop-emulated artifact expansion was not offered for file and chart results");
+  if (!report.originFocusedBeforeOpen) failures.push("artifact expansion trigger was not focusable in the active-conversation fixture");
   if (!report.fileWorkspaceOpened || !report.chartWorkspaceOpened) failures.push("expanded artifact workspace did not open for file and chart results");
   if (!report.sameFileNodeMoved || !report.fileStatePreserved) failures.push("artifact workspace did not preserve the live file node and editor state");
   if (!report.backgroundInert || !report.focusContained || !report.placeholderReserved) failures.push("artifact workspace accessibility or layout reservation failed");
