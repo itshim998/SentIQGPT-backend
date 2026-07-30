@@ -67,6 +67,7 @@ function initializeControlledResponsePolish() {
       });
       block.dataset.sentiqRevealBlockKey = key;
       block.dataset.sentiqControlledResponse = CONTROLLED_RESPONSE_POLISH_VERSION;
+      if (block.classList.contains("sentiq-block-reveal")) return;
       if (!streaming || state.seenBlockKeys.has(key)) {
         settleBlock(block);
         state.seenBlockKeys.add(key);
