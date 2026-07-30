@@ -8,6 +8,7 @@ import "../attachment-context-surface.js";
 import "../execution-mode-selector.js";
 import "../ui-stability.js";
 import "../streaming-polish.js";
+import "../controlled-response-polish.js";
 import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "../../shared/brand.js";
 
 export const DEFAULT_IMAGE_ANALYSIS_PROMPT = "Analyze this image. Describe what it shows, read any visible text, and explain any important details.";

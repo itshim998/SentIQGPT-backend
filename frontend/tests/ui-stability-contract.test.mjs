@@ -93,6 +93,7 @@ assert.equal(
 const stabilityImport = '@import url("./86-ui-stability.css")';
 const previousImport = '@import url("./85-unboxed-activity-controls.css")';
 const streamingPolishImport = '@import url("./87-streaming-polish.css")';
+const controlledResponseImport = '@import url("./88-controlled-response-artifacts.css")';
 assert.ok(styleImports.includes(stabilityImport), "UI stability stylesheet must be loaded");
 assert.ok(
   styleImports.indexOf(stabilityImport) > styleImports.indexOf(previousImport),
@@ -103,6 +104,10 @@ assert.ok(
   "Streaming polish must remain constrained by the final UI-stability decisions",
 );
 assert.ok(
+  styleImports.indexOf(controlledResponseImport) > styleImports.indexOf(streamingPolishImport),
+  "Controlled artifact polish must remain downstream of the anti-shake and caret layers",
+);
+assert.ok(
   constantsSource.includes('import "../ui-stability.js";'),
   "UI stability runtime must initialize with the composer feature graph",
 );
@@ -110,5 +115,9 @@ assert.ok(
   constantsSource.indexOf('import "../streaming-polish.js";') > constantsSource.indexOf('import "../ui-stability.js";'),
   "Streaming polish must initialize after UI stability on the same shared chat path",
 );
+assert.ok(
+  constantsSource.indexOf('import "../controlled-response-polish.js";') > constantsSource.indexOf('import "../streaming-polish.js";'),
+  "Controlled response polish must initialize after Priority 1 without creating a mode-specific path",
+);
 
-console.log("UI stability contract gate passed: startup is cloaked until ready, successful Fast and Intuitive sends clear only restored prompts, failed drafts remain recoverable, new-chat history mutation bursts stay bounded, and streaming polish cannot re-enable word motion.");
+console.log("UI stability contract gate passed: startup is deterministic, successful sends reconcile safely, history refresh stays bounded, streaming words remain stationary, and controlled block/artifact polish can only add paint-safe behavior.");

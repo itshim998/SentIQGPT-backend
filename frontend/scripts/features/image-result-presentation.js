@@ -2,6 +2,10 @@
 
 import { ASSET_RESULT_VERSION, findMessageRetryControl } from "./asset-result-state.js";
 import { createUiIcon } from "./ui-icon-sprite.js";
+import {
+  CONTROLLED_RESPONSE_POLISH_VERSION,
+  resolveReservedMediaAspect,
+} from "./controlled-response-polish-state.mjs";
 
 function ensureOverlay(card, frame, image) {
   let overlay = frame.querySelector(":scope > .asset-image-overlay");
@@ -76,6 +80,20 @@ function ensureFailure(card, frame, image) {
   frame.appendChild(actions);
 }
 
+function syncReservedMediaDimensions(frame, image) {
+  const width = image.naturalWidth || Number(image.getAttribute("width")) || 0;
+  const height = image.naturalHeight || Number(image.getAttribute("height")) || 0;
+  const aspect = resolveReservedMediaAspect(width, height);
+  frame.style.setProperty("--sentiq-media-aspect", aspect.cssValue);
+  frame.dataset.sentiqReservedMedia = aspect.source;
+  frame.dataset.sentiqReservedMediaVersion = CONTROLLED_RESPONSE_POLISH_VERSION;
+
+  if (aspect.source === "intrinsic") {
+    if (!image.hasAttribute("width")) image.setAttribute("width", String(aspect.width));
+    if (!image.hasAttribute("height")) image.setAttribute("height", String(aspect.height));
+  }
+}
+
 export function enhanceImageResult(card) {
   if (!(card instanceof HTMLElement)) return;
   const frame = card.querySelector(":scope > .image-generation-frame");
@@ -90,12 +108,14 @@ export function enhanceImageResult(card) {
   frame.classList.add("asset-media-frame");
   frame.setAttribute("aria-busy", frame.classList.contains("loaded") ? "false" : "true");
   frame.querySelector(".image-generation-pending-layer")?.setAttribute("aria-hidden", "true");
+  syncReservedMediaDimensions(frame, image);
 
   ensureOverlay(card, frame, image);
   ensureFailure(card, frame, image);
 
   const sync = () => {
     const ready = image.complete && image.naturalWidth > 0;
+    syncReservedMediaDimensions(frame, image);
     card.classList.toggle("is-ready", ready);
     card.classList.toggle("is-loading", !ready && !card.classList.contains("is-failed"));
     frame.setAttribute("aria-busy", ready ? "false" : "true");

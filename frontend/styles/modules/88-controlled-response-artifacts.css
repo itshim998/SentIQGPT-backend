@@ -1,0 +1,315 @@
+/* ============================================================
+   SentIQ Chat — Priority 2 controlled response and artifact polish
+   Paint-only block reveals, batched artifact mirrors, typed wireframes,
+   and explicit media reservation. Shared by Fast and Intuitive.
+   ============================================================ */
+
+/* Newly discovered semantic blocks receive one opacity-only entrance. Logical
+   block keys prevent the progressive renderer from replaying it on each update. */
+.message.assistant[data-sentiq-controlled-response="13.1"] .sentiq-block-reveal {
+  opacity: 0;
+  animation: sentiqBlockOpacityReveal 180ms ease-out forwards;
+  will-change: opacity;
+}
+
+.message.assistant[data-sentiq-controlled-response="13.1"] .sentiq-block-settled {
+  opacity: 1;
+  animation: none;
+  will-change: auto;
+}
+
+@keyframes sentiqBlockOpacityReveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* The controller writes into detached source nodes. These connected mirrors are
+   refreshed on bounded intervals, reducing layout, syntax-markup and iframe work. */
+.generated-file-panel[data-sentiq-artifact-batch="13.1"] :is(
+  .sentiq-html-code-source,
+  .sentiq-html-preview-source
+) {
+  display: none !important;
+}
+
+.generated-file-panel[data-sentiq-artifact-batch="13.1"] .sentiq-batched-html-code {
+  display: block;
+  min-block-size: 100%;
+}
+
+.generated-file-panel[data-sentiq-artifact-batch="13.1"] .sentiq-batched-html-preview {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  min-block-size: 320px;
+  border: 0;
+  background: #fff;
+}
+
+/* Explicit layout reservation for media and generated artifacts. */
+.chat-messages .image-generation-card .image-generation-frame.asset-media-frame {
+  aspect-ratio: var(--sentiq-media-aspect, 4 / 3);
+  min-block-size: clamp(220px, 42vw, 460px);
+  contain: layout paint;
+}
+
+.chat-messages .image-generation-card .image-generation-frame.asset-media-frame > .message-image {
+  inline-size: 100%;
+  block-size: 100%;
+  min-block-size: 100%;
+  object-fit: contain;
+}
+
+.chat-messages .message-chart-container .message-chart-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  block-size: auto !important;
+  min-block-size: clamp(270px, 42vw, 390px);
+  contain: layout paint;
+}
+
+.chat-messages .message-chart-container .message-chart-image {
+  aspect-ratio: 16 / 9;
+  min-block-size: clamp(250px, 40vw, 370px);
+  object-fit: contain;
+}
+
+.chat-messages .generated-file-panel .generated-file-body {
+  min-block-size: clamp(190px, 30vw, 340px);
+  contain: layout paint;
+}
+
+.chat-messages .generated-file-panel.format-html .generated-file-body {
+  min-block-size: clamp(300px, 44vw, 520px);
+}
+
+.chat-messages .generated-html-layout,
+.chat-messages .generated-html-code-pane,
+.chat-messages .generated-html-preview-pane {
+  min-block-size: clamp(300px, 44vw, 520px);
+}
+
+.chat-messages .generated-pdf-preview {
+  inline-size: 100%;
+  min-block-size: clamp(420px, 68vw, 720px);
+  aspect-ratio: 4 / 5;
+}
+
+.chat-messages :is(.generated-sheet-shell, .generated-slide-list, .generated-text-preview) {
+  min-block-size: 220px;
+}
+
+/* Chart placeholder resembles the eventual plot instead of a generic shimmer. */
+.sentiq-chart-wireframe {
+  position: absolute;
+  z-index: 2;
+  inset: 18px;
+  display: grid;
+  align-items: end;
+  padding: 20px 18px 14px 40px;
+  border-inline-start: 1px solid rgba(198, 205, 222, 0.13);
+  border-block-end: 1px solid rgba(198, 205, 222, 0.13);
+  border-radius: 8px;
+  background:
+    linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px) 0 0 / 100% 25%,
+    rgba(10, 12, 20, 0.28);
+  pointer-events: none;
+}
+
+.sentiq-chart-wireframe-plot {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(12px, 1fr));
+  align-items: end;
+  gap: clamp(8px, 2vw, 20px);
+  block-size: 100%;
+}
+
+.sentiq-chart-wireframe-plot > span {
+  block-size: var(--sentiq-wire-bar, 55%);
+  min-block-size: 24px;
+  border-radius: 7px 7px 2px 2px;
+  background: linear-gradient(180deg, rgba(183, 161, 239, 0.22), rgba(130, 113, 177, 0.07));
+  opacity: 0.78;
+  animation: sentiqWireframeBreathe 1.6s ease-in-out infinite alternate;
+}
+
+/* File placeholders retain the geometry and visual grammar of their result type. */
+.asset-file-wireframe {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  overflow: hidden;
+  padding: 18px;
+  background: rgba(8, 10, 17, 0.96);
+  pointer-events: none;
+}
+
+.asset-file-wireframe.is-document {
+  display: grid;
+  place-items: center;
+}
+
+.asset-document-wire-page {
+  inline-size: min(72%, 360px);
+  block-size: 100%;
+  min-block-size: 230px;
+  padding: 24px 22px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  background: rgba(235, 237, 244, 0.055);
+  box-shadow: 0 16px 34px rgba(0,0,0,0.16);
+}
+
+.asset-document-wire-page > span,
+.asset-code-wire-lines > span {
+  display: block;
+  block-size: 8px;
+  margin-block-end: 12px;
+  border-radius: 999px;
+  background: rgba(209, 214, 228, 0.1);
+}
+
+.asset-document-wire-page > span:first-child {
+  inline-size: 46%;
+  block-size: 12px;
+  margin-block-end: 22px;
+  background: rgba(204, 188, 243, 0.17);
+}
+
+.asset-document-wire-page > span:nth-child(3n) { inline-size: 78%; }
+.asset-document-wire-page > span:nth-child(4n) { inline-size: 91%; }
+
+.asset-file-wireframe.is-sheet {
+  display: grid;
+  grid-template-rows: 28px 1fr;
+  gap: 10px;
+}
+
+.asset-sheet-wire-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.asset-sheet-wire-tabs > span {
+  inline-size: 72px;
+  block-size: 22px;
+  border-radius: 6px;
+  background: rgba(195, 180, 234, 0.11);
+}
+
+.asset-sheet-wire-grid {
+  display: grid;
+  grid-template-columns: 34px repeat(5, minmax(48px, 1fr));
+  grid-auto-rows: minmax(24px, 1fr);
+  border: 1px solid rgba(255,255,255,0.075);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.asset-sheet-wire-grid > span {
+  border-inline-end: 1px solid rgba(255,255,255,0.055);
+  border-block-end: 1px solid rgba(255,255,255,0.055);
+  background: rgba(255,255,255,0.025);
+}
+
+.asset-sheet-wire-grid > span:nth-child(-n + 6),
+.asset-sheet-wire-grid > span:nth-child(6n + 1) {
+  background: rgba(188, 169, 235, 0.075);
+}
+
+.asset-file-wireframe.is-html {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+}
+
+.asset-code-wire-lines,
+.asset-preview-wire-pane {
+  min-block-size: 100%;
+  padding: 16px;
+  border: 1px solid rgba(255,255,255,0.065);
+  border-radius: 9px;
+  background: rgba(255,255,255,0.025);
+}
+
+.asset-code-wire-lines > span:nth-child(2n) { inline-size: 82%; }
+.asset-code-wire-lines > span:nth-child(3n) { inline-size: 64%; }
+
+.asset-preview-wire-pane {
+  display: grid;
+  grid-template-rows: 34px 1fr;
+  gap: 12px;
+}
+
+.asset-preview-wire-pane::before,
+.asset-preview-wire-pane::after {
+  content: "";
+  display: block;
+  border-radius: 7px;
+  background: rgba(209, 214, 228, 0.075);
+}
+
+.asset-preview-wire-pane::after {
+  background:
+    linear-gradient(90deg, rgba(255,255,255,0.05) 28%, transparent 28% 34%, rgba(255,255,255,0.035) 34% 100%);
+}
+
+@keyframes sentiqWireframeBreathe {
+  from { opacity: 0.48; }
+  to { opacity: 0.86; }
+}
+
+@media (max-width: 720px) {
+  .chat-messages .image-generation-card .image-generation-frame.asset-media-frame {
+    min-block-size: clamp(210px, 72vw, 380px);
+  }
+
+  .chat-messages .message-chart-container .message-chart-frame,
+  .chat-messages .message-chart-container .message-chart-image {
+    min-block-size: clamp(240px, 66vw, 340px);
+  }
+
+  .asset-file-wireframe.is-html {
+    grid-template-columns: 1fr;
+  }
+
+  .asset-preview-wire-pane {
+    display: none;
+  }
+
+  .generated-file-panel[data-sentiq-artifact-batch="13.1"] .sentiq-batched-html-preview {
+    min-block-size: 280px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (update: slow) {
+  .message.assistant[data-sentiq-controlled-response="13.1"] :is(.sentiq-block-reveal, .sentiq-block-settled) {
+    opacity: 1;
+    animation: none;
+    will-change: auto;
+  }
+
+  :is(.sentiq-chart-wireframe-plot > span, .asset-file-wireframe *) {
+    animation: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .sentiq-chart-wireframe,
+  .asset-file-wireframe,
+  .asset-document-wire-page,
+  .asset-sheet-wire-grid,
+  .asset-code-wire-lines,
+  .asset-preview-wire-pane {
+    border-color: CanvasText;
+    background: Canvas;
+  }
+
+  .sentiq-chart-wireframe-plot > span,
+  .asset-document-wire-page > span,
+  .asset-code-wire-lines > span,
+  .asset-sheet-wire-grid > span {
+    background: Highlight;
+  }
+}
