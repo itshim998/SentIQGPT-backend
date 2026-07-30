@@ -1,0 +1,331 @@
+/* ============================================================
+   SentIQ Chat — Priority 3 specialized polish
+   PCM-reactive Live voice visuals and an optional large-screen artifact
+   workspace. Shared presentation only; no execution-mode branching.
+   ============================================================ */
+
+/* Live voice: microphone and model PCM drive compositor-only orb, ring, glow,
+   and waveform transforms. Quiet, thinking, muted, and failure states retain
+   the established calm/static presentation. */
+#live-beta-panel[data-live-audio-reactive="13.2"] .live-beta-orb {
+  position: absolute;
+  overflow: visible;
+}
+
+#live-beta-panel[data-live-audio-reactive="13.2"] .live-beta-orb::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -24px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(var(--live-accent), 0.3), transparent 70%);
+  opacity: var(--live-glow-opacity, 0.1);
+  transform: scale(var(--live-glow-scale, 0.96));
+  transition: opacity 72ms linear, transform 72ms linear;
+  pointer-events: none;
+}
+
+#live-beta-panel[data-live-audio-reactive="13.2"]:is([data-state="listening"], [data-state="speaking"]) .live-beta-orb {
+  animation: none;
+  transform: scale(var(--live-orb-scale, 1));
+  transition: transform 64ms linear;
+  will-change: transform;
+}
+
+#live-beta-panel[data-live-audio-reactive="13.2"]:is([data-state="listening"], [data-state="speaking"]) .live-beta-orbit {
+  animation: none;
+  transition: transform 72ms linear, opacity 100ms linear;
+  will-change: transform, opacity;
+}
+
+#live-beta-panel[data-live-audio-reactive="13.2"]:is([data-state="listening"], [data-state="speaking"]) .live-beta-orbit-one {
+  transform: scale(var(--live-ring-one-scale, 0.992));
+  opacity: var(--live-ring-one-opacity, 0.44);
+}
+
+#live-beta-panel[data-live-audio-reactive="13.2"]:is([data-state="listening"], [data-state="speaking"]) .live-beta-orbit-two {
+  transform: scale(var(--live-ring-two-scale, 0.988));
+  opacity: var(--live-ring-two-opacity, 0.3);
+}
+
+#live-beta-panel[data-live-audio-reactive="13.2"]:is([data-state="listening"], [data-state="speaking"]) .live-beta-wave i {
+  block-size: 24px;
+  animation: none;
+  transform-origin: center;
+  transition: transform 58ms linear, opacity 80ms linear;
+  opacity: var(--live-wave-opacity, 0.58);
+  will-change: transform;
+}
+
+#live-beta-panel[data-live-audio-reactive="13.2"] .live-beta-wave i:nth-child(1) {
+  transform: scaleY(var(--live-wave-scale-1, 0.28));
+}
+
+#live-beta-panel[data-live-audio-reactive="13.2"] .live-beta-wave i:nth-child(2) {
+  transform: scaleY(var(--live-wave-scale-2, 0.28));
+}
+
+#live-beta-panel[data-live-audio-reactive="13.2"] .live-beta-wave i:nth-child(3) {
+  transform: scaleY(var(--live-wave-scale-3, 0.28));
+}
+
+#live-beta-panel[data-live-audio-reactive="13.2"] .live-beta-wave i:nth-child(4) {
+  transform: scaleY(var(--live-wave-scale-4, 0.28));
+}
+
+#live-beta-panel[data-live-audio-reactive="13.2"] .live-beta-wave i:nth-child(5) {
+  transform: scaleY(var(--live-wave-scale-5, 0.28));
+}
+
+#live-beta-panel[data-live-audio-direction="input"] .live-beta-wave {
+  opacity: 0.92;
+}
+
+#live-beta-panel[data-live-audio-direction="output"] .live-beta-wave {
+  opacity: 1;
+}
+
+/* Expanded artifact workspace. Its trigger only becomes available on a genuine
+   large pointer-based display; mobile and tablet presentation remains unchanged. */
+.sentiq-artifact-expand {
+  display: none !important;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.sentiq-artifact-expand svg,
+.sentiq-artifact-workspace-close svg {
+  inline-size: 16px;
+  block-size: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (min-width: 1100px) and (min-height: 680px) and (hover: hover) and (pointer: fine) {
+  .sentiq-artifact-expand:not([hidden]) {
+    display: inline-flex !important;
+  }
+}
+
+body.sentiq-artifact-workspace-open {
+  overflow: hidden;
+}
+
+.sentiq-artifact-workspace-overlay {
+  position: fixed;
+  z-index: 1700;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(3, 5, 10, 0.88);
+  color: var(--text-primary, #f3f4f7);
+}
+
+.sentiq-artifact-workspace-overlay[hidden] {
+  display: none !important;
+}
+
+.sentiq-artifact-workspace-shell {
+  inline-size: min(94vw, 1480px);
+  block-size: min(90dvh, 920px);
+  min-block-size: 620px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(215, 218, 229, 0.11);
+  border-radius: 22px;
+  background: rgba(8, 11, 17, 0.995);
+  box-shadow: 0 34px 100px rgba(0, 0, 0, 0.54), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+.sentiq-artifact-workspace-header {
+  min-block-size: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 14px 12px 20px;
+  border-block-end: 1px solid rgba(215, 218, 229, 0.075);
+}
+
+.sentiq-artifact-workspace-heading {
+  min-inline-size: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.sentiq-artifact-workspace-heading > span {
+  color: rgba(143, 151, 168, 0.78);
+  font-size: 0.62rem;
+  font-weight: 670;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.sentiq-artifact-workspace-heading > strong {
+  min-inline-size: 0;
+  overflow: hidden;
+  color: rgba(244, 245, 248, 0.98);
+  font-size: 0.93rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sentiq-artifact-workspace-close {
+  inline-size: 40px;
+  block-size: 40px;
+  flex: 0 0 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: rgba(157, 164, 178, 0.9);
+  cursor: pointer;
+}
+
+.sentiq-artifact-workspace-close:hover,
+.sentiq-artifact-workspace-close:focus-visible {
+  border-color: rgba(215, 218, 229, 0.1);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(245, 246, 249, 0.98);
+  outline: none;
+}
+
+.sentiq-artifact-workspace-content {
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.sentiq-artifact-workspace-placeholder {
+  inline-size: 100%;
+  min-block-size: 1px;
+  pointer-events: none;
+}
+
+.sentiq-artifact-workspace-content > :is(.generated-file-panel, .message-chart-container).sentiq-artifact-workspace-surface {
+  inline-size: 100% !important;
+  max-inline-size: none !important;
+  block-size: 100%;
+  max-block-size: none;
+  margin: 0 !important;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.sentiq-artifact-workspace-content > .generated-file-panel.sentiq-artifact-workspace-surface {
+  display: flex;
+  flex-direction: column;
+}
+
+.sentiq-artifact-workspace-content .generated-file-header {
+  flex: 0 0 auto;
+}
+
+.sentiq-artifact-workspace-content .generated-file-body {
+  min-block-size: 0 !important;
+  flex: 1 1 auto;
+  overflow: auto;
+  contain: none;
+}
+
+.sentiq-artifact-workspace-content .generated-file-panel.format-html .generated-file-body {
+  overflow: hidden;
+}
+
+.sentiq-artifact-workspace-content :is(
+  .generated-html-layout,
+  .generated-html-code-pane,
+  .generated-html-preview-pane
+) {
+  block-size: 100%;
+  min-block-size: 0 !important;
+}
+
+.sentiq-artifact-workspace-content .generated-file-panel.show-preview .generated-html-layout {
+  grid-template-columns: minmax(0, 0.92fr) minmax(420px, 1.08fr);
+}
+
+.sentiq-artifact-workspace-content .generated-html-code-pane pre,
+.sentiq-artifact-workspace-content .generated-html-editor,
+.sentiq-artifact-workspace-content :is(.generated-html-preview-frame, .sentiq-batched-html-preview) {
+  block-size: 100%;
+  min-block-size: 0 !important;
+  max-block-size: none;
+}
+
+.sentiq-artifact-workspace-content .generated-sheet-shell {
+  block-size: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.sentiq-artifact-workspace-content .generated-sheet-preview {
+  min-block-size: 0;
+  max-block-size: none;
+  flex: 1 1 auto;
+}
+
+.sentiq-artifact-workspace-content :is(.generated-pdf-preview, .generated-text-preview, .generated-slide-list) {
+  inline-size: 100%;
+  block-size: 100%;
+  min-block-size: 0;
+  max-block-size: none;
+  aspect-ratio: auto;
+}
+
+.sentiq-artifact-workspace-content > .message-chart-container.sentiq-artifact-workspace-surface {
+  display: flex;
+  flex-direction: column;
+}
+
+.sentiq-artifact-workspace-content .message-chart-frame {
+  inline-size: calc(100% - 24px);
+  block-size: auto !important;
+  min-block-size: 0 !important;
+  flex: 1 1 auto;
+  aspect-ratio: auto;
+  contain: layout paint;
+}
+
+.sentiq-artifact-workspace-content .message-chart-image {
+  max-block-size: calc(100% - 24px);
+  object-fit: contain;
+}
+
+@media (prefers-reduced-motion: reduce), (update: slow) {
+  #live-beta-panel[data-live-audio-reactive="13.2"] :is(
+    .live-beta-orb,
+    .live-beta-orb::after,
+    .live-beta-orbit,
+    .live-beta-wave i
+  ) {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+    will-change: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .sentiq-artifact-workspace-overlay,
+  .sentiq-artifact-workspace-shell,
+  .sentiq-artifact-workspace-header,
+  .sentiq-artifact-workspace-close {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+    forced-color-adjust: auto;
+  }
+}

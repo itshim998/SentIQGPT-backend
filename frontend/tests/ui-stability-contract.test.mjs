@@ -94,6 +94,7 @@ const stabilityImport = '@import url("./86-ui-stability.css")';
 const previousImport = '@import url("./85-unboxed-activity-controls.css")';
 const streamingPolishImport = '@import url("./87-streaming-polish.css")';
 const controlledResponseImport = '@import url("./88-controlled-response-artifacts.css")';
+const specializedPolishImport = '@import url("./89-specialized-polish.css")';
 assert.ok(styleImports.includes(stabilityImport), "UI stability stylesheet must be loaded");
 assert.ok(
   styleImports.indexOf(stabilityImport) > styleImports.indexOf(previousImport),
@@ -108,6 +109,10 @@ assert.ok(
   "Controlled artifact polish must remain downstream of the anti-shake and caret layers",
 );
 assert.ok(
+  styleImports.indexOf(specializedPolishImport) > styleImports.indexOf(controlledResponseImport),
+  "Specialized polish must remain downstream of all stable response layers",
+);
+assert.ok(
   constantsSource.includes('import "../ui-stability.js";'),
   "UI stability runtime must initialize with the composer feature graph",
 );
@@ -119,5 +124,13 @@ assert.ok(
   constantsSource.indexOf('import "../controlled-response-polish.js";') > constantsSource.indexOf('import "../streaming-polish.js";'),
   "Controlled response polish must initialize after Priority 1 without creating a mode-specific path",
 );
+assert.ok(
+  constantsSource.indexOf('import "../live/live-audio-visualizer.js";') > constantsSource.indexOf('import "../controlled-response-polish.js";'),
+  "Live visual polish must initialize after Priority 2",
+);
+assert.ok(
+  constantsSource.indexOf('import "../artifact-workspace.js";') > constantsSource.indexOf('import "../live/live-audio-visualizer.js";'),
+  "Artifact workspace must be the final shared response enhancement",
+);
 
-console.log("UI stability contract gate passed: startup is deterministic, successful sends reconcile safely, history refresh stays bounded, streaming words remain stationary, and controlled block/artifact polish can only add paint-safe behavior.");
+console.log("UI stability contract gate passed: startup is deterministic, sends reconcile safely, history stays bounded, streaming words remain stationary, and Priority 1–3 can only add paint-safe or isolated workspace behavior.");
