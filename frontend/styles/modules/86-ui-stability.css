@@ -1,0 +1,158 @@
+/* ============================================================
+   SentIQ Chat — UI stability and deterministic startup
+   Loaded last so it resolves legacy enhancement-layer conflicts.
+   ============================================================ */
+
+:root {
+  --sentiq-composer-field-max-height: 150px;
+}
+
+/* Do not paint the static HTML shell before auth, cache, and feature state settle. */
+html[data-sentiq-boot-state="loading"] .app-container {
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html[data-sentiq-boot-state="ready"] .app-container,
+html[data-sentiq-boot-state="failed"] .app-container {
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto;
+  transition: none !important;
+}
+
+.sentiq-startup-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(ellipse 62% 42% at 50% 28%, rgba(149, 123, 232, 0.1), transparent 72%),
+    #06070b;
+  color: var(--text-secondary, #aab1bf);
+}
+
+.sentiq-startup-screen[hidden] {
+  display: none !important;
+}
+
+.sentiq-startup-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 28px;
+  font: 600 0.84rem/1.4 var(--font-sans, Inter, sans-serif);
+  letter-spacing: 0.01em;
+}
+
+.sentiq-startup-spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 1.5px solid rgba(196, 181, 253, 0.2);
+  border-top-color: rgba(196, 181, 253, 0.82);
+  border-radius: 50%;
+  animation: sentiqStartupSpin 0.85s linear infinite;
+}
+
+@keyframes sentiqStartupSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* One stable textarea geometry. A CSS custom property is the final height
+   authority, so older desktop/mobile autosizers cannot expose their temporary
+   `height:auto` measurement state to a paint frame. */
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
+  padding: 12px 14px;
+  transition-property: border-color, background-color, box-shadow, opacity !important;
+  transition-duration: 180ms, 180ms, 220ms, 160ms !important;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area.composer-size-transitioning {
+  will-change: auto !important;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper textarea,
+#chat-input {
+  field-sizing: fixed !important;
+  height: var(--sentiq-stable-textarea-height, 44px) !important;
+  max-height: var(--sentiq-composer-field-max-height) !important;
+  overflow-anchor: none;
+  text-wrap: wrap;
+  text-rendering: auto;
+  transform: none !important;
+  will-change: auto !important;
+  transition-property: color, opacity !important;
+}
+
+.chat-input-wrapper[data-composer-version="5.1"] .input-tools,
+.chat-input-wrapper[data-composer-version="5.1"] .execution-mode-control,
+.chat-input-wrapper[data-composer-version="5.1"] .btn-send,
+.chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice {
+  align-self: end;
+  margin-block-end: 2px;
+}
+
+/* Pretty wrapping rebalances completed lines while text is arriving. Normal
+   wrapping keeps already-visible words stationary in both modes. */
+.message-content,
+.message-content :where(p, li, blockquote, td, th),
+.streaming-rendered,
+.streaming-tail {
+  text-wrap: wrap !important;
+}
+
+.streaming-new-text,
+.streaming-rendered.streaming-render-pulse > :last-child,
+.streaming-rendered.streaming-render-pulse:empty {
+  animation: none !important;
+  filter: none !important;
+  transform: none !important;
+  opacity: 1 !important;
+  will-change: auto !important;
+}
+
+.message.user.sentiq-optimistic-user {
+  animation: none !important;
+  opacity: 1;
+}
+
+.message.user.sentiq-optimistic-user .message-content {
+  opacity: 0.96;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --sentiq-composer-field-max-height: min(144px, var(--mobile-composer-textarea-max-height, 144px));
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
+    padding: 10px 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (update: slow) {
+  .sentiq-startup-spinner {
+    animation: none;
+    opacity: 0.8;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .sentiq-startup-screen {
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .sentiq-startup-spinner {
+    border-color: CanvasText;
+    border-top-color: transparent;
+  }
+}
