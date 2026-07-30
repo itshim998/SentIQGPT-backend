@@ -52,8 +52,11 @@ function initializeLiveAudioVisualizer() {
     panel.style.setProperty("--live-orb-scale", frame.orbScale.toFixed(4));
     panel.style.setProperty("--live-ring-one-scale", frame.ringOneScale.toFixed(4));
     panel.style.setProperty("--live-ring-two-scale", frame.ringTwoScale.toFixed(4));
+    panel.style.setProperty("--live-ring-one-opacity", frame.ringOneOpacity.toFixed(4));
+    panel.style.setProperty("--live-ring-two-opacity", frame.ringTwoOpacity.toFixed(4));
     panel.style.setProperty("--live-glow-opacity", frame.glowOpacity.toFixed(4));
     panel.style.setProperty("--live-glow-scale", frame.glowScale.toFixed(4));
+    panel.style.setProperty("--live-wave-opacity", frame.waveOpacity.toFixed(4));
     frame.waveScales.forEach((scale, index) => {
       panel.style.setProperty(`--live-wave-scale-${index + 1}`, scale.toFixed(4));
     });
