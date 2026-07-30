@@ -68,8 +68,11 @@ export function deriveLiveVisualFrame(level, direction = "idle") {
     orbScale: 1 + weighted * 0.075,
     ringOneScale: 0.992 + weighted * 0.052,
     ringTwoScale: 0.988 + weighted * 0.036,
+    ringOneOpacity: 0.44 + weighted * 0.42,
+    ringTwoOpacity: 0.3 + weighted * 0.32,
     glowOpacity: 0.1 + weighted * 0.42,
     glowScale: 0.96 + weighted * 0.18,
+    waveOpacity: 0.58 + weighted * 0.4,
     waveScales: waveWeights.map((weight) => clamp(0.28 + weighted * weight * 1.22, 0.24, 1.45)),
   };
 }
