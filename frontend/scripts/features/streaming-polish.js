@@ -8,7 +8,7 @@ import {
 const MESSAGE_SELECTOR = ".message.assistant";
 const CONTENT_SELECTOR = ":scope > .message-content";
 const ACTIVITY_SELECTOR = [
-  ".response-inline-loader",
+  ".response-inline-loader:not(.sentiq-streaming-handoff-ghost)",
   ".semantic-legacy-progress",
   ".semantic-surface-progress",
   "[data-semantic-activity-state]",
@@ -63,7 +63,7 @@ function initializeStreamingPolish() {
     rememberActivity(state, message.getAttribute("data-semantic-activity-state"));
     rememberActivity(state, message.dataset.loaderKind);
 
-    const loader = content.querySelector(".response-inline-loader");
+    const loader = content.querySelector(".response-inline-loader:not(.sentiq-streaming-handoff-ghost)");
     if (!(loader instanceof HTMLElement)) return null;
     state.lastLoaderText = String(loader.textContent || "").replace(/\s+/g, " ").trim();
     state.loaderSnapshot = loader.cloneNode(true);
@@ -110,9 +110,9 @@ function initializeStreamingPolish() {
   }
 
   function beginHandoff(content, state, removedLoader) {
+    content.dataset.sentiqStreamingPhase = "streaming";
     if (state.handoffStarted) return;
     state.handoffStarted = true;
-    content.dataset.sentiqStreamingPhase = "streaming";
     content.classList.add("sentiq-streaming-handoff");
     createHandoffGhost(content, state, removedLoader);
     window.setTimeout(() => content.classList.remove("sentiq-streaming-handoff"), HANDOFF_GHOST_LIFETIME_MS);
@@ -181,9 +181,10 @@ function initializeStreamingPolish() {
   }
 
   function completeMessage(content, state) {
-    if (state.completed) return;
-    state.completed = true;
-    state.completedAt = now();
+    if (!state.completed) {
+      state.completed = true;
+      state.completedAt = now();
+    }
     content.dataset.sentiqStreamingPhase = "complete";
     content.classList.remove("sentiq-streaming-handoff");
     content.querySelectorAll(":scope > .sentiq-streaming-handoff-ghost").forEach((ghost) => ghost.remove());
@@ -254,8 +255,8 @@ function initializeStreamingPolish() {
         if (removedLoader) return;
         const element = node instanceof HTMLElement ? node : null;
         if (!element) return;
-        if (element.matches(".response-inline-loader")) removedLoader = element;
-        else removedLoader = element.querySelector?.(".response-inline-loader") || null;
+        if (element.matches(".response-inline-loader:not(.sentiq-streaming-handoff-ghost)")) removedLoader = element;
+        else removedLoader = element.querySelector?.(".response-inline-loader:not(.sentiq-streaming-handoff-ghost)") || null;
       });
       if (message) scheduleMessage(message, removedLoader);
 
