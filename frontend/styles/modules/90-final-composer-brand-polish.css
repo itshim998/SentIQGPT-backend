@@ -1,0 +1,142 @@
+/* ============================================================
+   SentIQ Chat — Final composer and brand polish
+
+   Slims the desktop composer without weakening mobile touch targets, compacts
+   the tool sheet, and restores the original SentIQ mark to the collapsed
+   history control. Quota warning behavior remains owned by the quota runtime.
+   ============================================================ */
+
+.sidebar-history-logo {
+  display: none;
+  inline-size: 22px;
+  block-size: 22px;
+  object-fit: contain;
+  border-radius: 7px;
+}
+
+@media (min-width: 769px) {
+  .chat-input-wrapper[data-composer-version="5.1"] {
+    --sentiq-composer-control-size: 38px;
+    --sentiq-composer-field-min-height: 38px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
+    min-height: 56px;
+    align-items: center;
+    row-gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .input-tools,
+  .chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper,
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-control,
+  .chat-input-wrapper[data-composer-version="5.1"] .btn-send,
+  .chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice {
+    align-self: center;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper {
+    min-height: var(--sentiq-composer-field-min-height);
+    align-items: center;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper textarea {
+    min-height: var(--sentiq-composer-field-min-height);
+    padding: 7px 2px 6px;
+    line-height: 1.45;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-control,
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle {
+    height: var(--sentiq-composer-control-size);
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle {
+    min-width: 80px;
+    padding-inline: 9px;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu {
+    width: min(300px, calc(100vw - 42px));
+    max-height: min(360px, calc(100vh - 140px));
+    gap: 3px;
+    padding: 7px;
+    border-radius: 18px;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option {
+    min-height: 54px;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    column-gap: 9px;
+    padding: 7px 8px;
+    border-radius: 13px;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-icon svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-copy {
+    gap: 2px;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-title {
+    font-size: 0.8rem;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-subtitle {
+    font-size: 0.67rem;
+    line-height: 1.25;
+  }
+
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-state {
+    max-width: 90px;
+    padding: 3px 6px;
+    font-size: 0.6rem;
+  }
+
+  .app-container.sidebar-collapsed .sidebar-title-row .logo {
+    display: none;
+  }
+
+  .app-container.sidebar-collapsed .sidebar-collapse-btn {
+    order: 0;
+    border-color: rgba(210, 197, 255, 0.1);
+    background:
+      linear-gradient(145deg, rgba(210, 197, 255, 0.1), rgba(149, 123, 232, 0.035)),
+      rgba(255, 255, 255, 0.018);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.045),
+      0 8px 24px rgba(0, 0, 0, 0.1);
+  }
+
+  .app-container.sidebar-collapsed .sidebar-collapse-btn .sidebar-collapse-icon {
+    display: none;
+  }
+
+  .app-container.sidebar-collapsed .sidebar-collapse-btn .sidebar-history-logo {
+    display: block;
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (update: slow) {
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area,
+  .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu {
+    transition-duration: 0ms;
+  }
+}
+
+@media (forced-colors: active) and (min-width: 769px) {
+  .app-container.sidebar-collapsed .sidebar-collapse-btn {
+    border: 1px solid ButtonText;
+    background: Canvas;
+    box-shadow: none;
+  }
+}
