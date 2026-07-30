@@ -40,12 +40,12 @@
 
 #live-beta-panel[data-live-audio-reactive="13.2"]:is([data-state="listening"], [data-state="speaking"]) .live-beta-orbit-one {
   transform: scale(var(--live-ring-one-scale, 0.992));
-  opacity: calc(0.44 + var(--live-audio-level, 0) * 0.42);
+  opacity: var(--live-ring-one-opacity, 0.44);
 }
 
 #live-beta-panel[data-live-audio-reactive="13.2"]:is([data-state="listening"], [data-state="speaking"]) .live-beta-orbit-two {
   transform: scale(var(--live-ring-two-scale, 0.988));
-  opacity: calc(0.3 + var(--live-audio-level, 0) * 0.32);
+  opacity: var(--live-ring-two-opacity, 0.3);
 }
 
 #live-beta-panel[data-live-audio-reactive="13.2"]:is([data-state="listening"], [data-state="speaking"]) .live-beta-wave i {
@@ -53,7 +53,7 @@
   animation: none;
   transform-origin: center;
   transition: transform 58ms linear, opacity 80ms linear;
-  opacity: calc(0.58 + var(--live-audio-level, 0) * 0.4);
+  opacity: var(--live-wave-opacity, 0.58);
   will-change: transform;
 }
 
