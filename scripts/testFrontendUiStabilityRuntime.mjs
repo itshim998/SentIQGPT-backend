@@ -266,15 +266,16 @@ try {
       chatList.scrollTop = initialHistoryScroll;
       await wait(45);
       const item = chatList.querySelector(".chat-list-item");
+      const renderedLabel = chatList.querySelector(".chat-history-group-label") || label;
       const itemStyle = getComputedStyle(item);
-      const labelStyle = getComputedStyle(label);
+      const labelStyle = renderedLabel.isConnected ? getComputedStyle(renderedLabel) : null;
       historySamples.push({
         active: chatList.classList.contains("sentiq-chat-list-stabilizing"),
         height: chatList.getBoundingClientRect().height,
         itemTransitionDuration: itemStyle.transitionDuration,
         itemAnimationName: itemStyle.animationName,
-        labelTransitionDuration: labelStyle.transitionDuration,
-        labelAnimationName: labelStyle.animationName,
+        labelTransitionDuration: labelStyle?.transitionDuration || "0s",
+        labelAnimationName: labelStyle?.animationName || "none",
       });
     }
     await wait(1_350);
