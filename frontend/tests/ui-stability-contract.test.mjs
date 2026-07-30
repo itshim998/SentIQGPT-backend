@@ -92,14 +92,23 @@ assert.equal(
 
 const stabilityImport = '@import url("./86-ui-stability.css")';
 const previousImport = '@import url("./85-unboxed-activity-controls.css")';
+const streamingPolishImport = '@import url("./87-streaming-polish.css")';
 assert.ok(styleImports.includes(stabilityImport), "UI stability stylesheet must be loaded");
 assert.ok(
   styleImports.indexOf(stabilityImport) > styleImports.indexOf(previousImport),
-  "UI stability stylesheet must be the final enhancement layer",
+  "UI stability must resolve the legacy enhancement layers before streaming polish",
+);
+assert.ok(
+  styleImports.indexOf(streamingPolishImport) > styleImports.indexOf(stabilityImport),
+  "Streaming polish must remain constrained by the final UI-stability decisions",
 );
 assert.ok(
   constantsSource.includes('import "../ui-stability.js";'),
   "UI stability runtime must initialize with the composer feature graph",
 );
+assert.ok(
+  constantsSource.indexOf('import "../streaming-polish.js";') > constantsSource.indexOf('import "../ui-stability.js";'),
+  "Streaming polish must initialize after UI stability on the same shared chat path",
+);
 
-console.log("UI stability contract gate passed: startup is cloaked until ready, successful Fast and Intuitive sends clear only restored prompts, failed drafts remain recoverable, and new-chat history mutation bursts are motionless and bounded.");
+console.log("UI stability contract gate passed: startup is cloaked until ready, successful Fast and Intuitive sends clear only restored prompts, failed drafts remain recoverable, new-chat history mutation bursts stay bounded, and streaming polish cannot re-enable word motion.");
