@@ -124,6 +124,34 @@ html[data-sentiq-boot-state="failed"] .app-container {
   opacity: 0.96;
 }
 
+/* New-chat creation currently refreshes the cached conversation list more than
+   once while aliases and the pending server chat settle. Keep the existing
+   list box and scroll anchor fixed during that short mutation burst, and turn
+   off descendant motion so group-label rehydration cannot appear as shaking. */
+#chat-list.sentiq-chat-list-stabilizing {
+  min-block-size: var(--sentiq-chat-list-stable-height, auto);
+  overflow-anchor: none;
+  scroll-behavior: auto !important;
+  contain: layout paint style;
+  isolation: isolate;
+}
+
+#chat-list.sentiq-chat-list-stabilizing,
+#chat-list.sentiq-chat-list-stabilizing :where(
+  .chat-list-item,
+  .chat-list-item-title,
+  .chat-history-group-label,
+  .chat-list-collapsed-wrapper,
+  .btn-chat-list-more,
+  .chat-list-item-actions,
+  .chat-actions-menu
+) {
+  animation: none !important;
+  transition: none !important;
+  transform: none !important;
+  will-change: auto !important;
+}
+
 @media (max-width: 640px) {
   :root {
     --sentiq-composer-field-max-height: min(144px, var(--mobile-composer-textarea-max-height, 144px));
