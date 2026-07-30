@@ -10,7 +10,8 @@ import {
 
 assert.equal(ARTIFACT_WORKSPACE_VERSION, "13.2");
 assert.match(ARTIFACT_WORKSPACE_MEDIA_QUERY, /min-width: 1100px/);
-assert.match(ARTIFACT_WORKSPACE_MEDIA_QUERY, /pointer: fine/);
+assert.match(ARTIFACT_WORKSPACE_MEDIA_QUERY, /min-height: 680px/);
+assert.doesNotMatch(ARTIFACT_WORKSPACE_MEDIA_QUERY, /pointer|hover/);
 assert.equal(normalizeArtifactWorkspaceKind("generated-file-panel format-html"), "file");
 assert.equal(normalizeArtifactWorkspaceKind("message-chart-container is-ready"), "chart");
 assert.equal(normalizeArtifactWorkspaceKind("image-generation-card"), "");
@@ -23,4 +24,4 @@ assert.equal(buildArtifactWorkspaceTitle({ kind: "file", title: "  Report   Q3  
 assert.equal(getArtifactWorkspacePlaceholderHeight(412.4), "412px");
 assert.equal(getArtifactWorkspacePlaceholderHeight(0), "1px");
 
-console.log("Artifact workspace state passed: expansion is large-screen-only, typed, and layout-preserving.");
+console.log("Artifact workspace state passed: layout eligibility is testable, while CSS remains the final fine-pointer visibility gate.");
