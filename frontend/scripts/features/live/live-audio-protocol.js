@@ -1,3 +1,5 @@
+import { emitLivePcmLevel } from "./live-audio-visual-state.mjs";
+
 export const LIVE_INPUT_SAMPLE_RATE = 16_000;
 export const LIVE_OUTPUT_SAMPLE_RATE = 24_000;
 export const LIVE_INPUT_CHUNK_SAMPLES = 1_600;
@@ -12,6 +14,7 @@ export class StreamingPcm16Resampler {
 
   process(chunk) {
     if (!(chunk instanceof Float32Array) || chunk.length === 0) return new Int16Array(0);
+    emitLivePcmLevel("input", chunk);
     const combined = new Float32Array(this.remainder.length + chunk.length);
     combined.set(this.remainder, 0);
     combined.set(chunk, this.remainder.length);
@@ -82,6 +85,7 @@ export function base64Pcm16ToFloat32(base64) {
   for (let index = 0; index < samples.length; index += 1) {
     samples[index] = view.getInt16(index * 2, true) / 0x8000;
   }
+  emitLivePcmLevel("output", samples);
   return samples;
 }
 
