@@ -108,6 +108,14 @@ try {
   const report = await page.evaluate(async () => {
     const wait = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
     const nextFrame = () => new Promise((resolveFrame) => requestAnimationFrame(resolveFrame));
+    const waitUntil = async (predicate, timeoutMs = 1200) => {
+      const startedAt = performance.now();
+      while ((performance.now() - startedAt) < timeoutMs) {
+        if (predicate()) return true;
+        await wait(20);
+      }
+      return Boolean(predicate());
+    };
     const messages = document.getElementById("chat-messages");
     const app = document.querySelector(".app-container");
     const livePanel = document.getElementById("live-beta-panel");
@@ -133,22 +141,32 @@ try {
     tail.textContent = " active";
     content.append(rendered, tail);
     assistant.appendChild(content);
+
+    let revealStartedObserved = false;
+    const revealObserver = new MutationObserver((records) => {
+      if (records.some((record) => (
+        record.target === firstBlock
+        && firstBlock.classList.contains("sentiq-block-reveal")
+      ))) revealStartedObserved = true;
+    });
+    revealObserver.observe(firstBlock, { attributes: true, attributeFilter: ["class"] });
     messages.appendChild(assistant);
 
-    await wait(45);
-    const firstRevealStarted = firstBlock.classList.contains("sentiq-block-reveal");
+    await waitUntil(() => revealStartedObserved || firstBlock.classList.contains("sentiq-block-reveal"));
+    const firstRevealStarted = revealStartedObserved || firstBlock.classList.contains("sentiq-block-reveal");
     const caretStyle = getComputedStyle(tail, "::after");
     const caretActive = caretStyle.animationName.includes("sentiqStreamingCaretBreathe")
       && Number.parseFloat(caretStyle.opacity) > 0;
     const stableWrap = getComputedStyle(content).textWrap === "wrap";
 
-    await wait(260);
+    await waitUntil(() => firstBlock.classList.contains("sentiq-block-settled"));
     const firstRevealSettled = firstBlock.classList.contains("sentiq-block-settled")
       && !firstBlock.classList.contains("sentiq-block-reveal");
+    revealObserver.disconnect();
     const replacement = document.createElement("p");
     replacement.textContent = "The same logical block was replaced by the progressive renderer.";
     rendered.replaceChildren(replacement);
-    await wait(55);
+    await waitUntil(() => replacement.classList.contains("sentiq-block-settled"));
     const replacementDidNotReplay = replacement.classList.contains("sentiq-block-settled")
       && !replacement.classList.contains("sentiq-block-reveal");
     const replacementAnimation = getComputedStyle(replacement).animationName;
@@ -219,7 +237,7 @@ try {
     artifactContent.appendChild(filePanel);
     artifactHost.appendChild(artifactContent);
     messages.appendChild(artifactHost);
-    await wait(100);
+    await waitUntil(() => filePanel.querySelector(".sentiq-artifact-expand"));
 
     const workspaceLayoutMatches = matchMedia("(min-width: 1100px) and (min-height: 680px)").matches;
     const naturalFinePointer = matchMedia("(hover: hover) and (pointer: fine)").matches;
@@ -228,8 +246,11 @@ try {
       && !fileExpand.hidden
       && !fileExpand.disabled
       && getComputedStyle(fileExpand).display !== "none";
+    let originFocusEvents = 0;
+    fileExpand?.addEventListener("focus", () => { originFocusEvents += 1; });
     const originalFileParent = filePanel.parentElement;
     fileExpand?.focus();
+    const focusEventsBeforeOpen = originFocusEvents;
     fileExpand?.click();
     await nextFrame();
     await wait(40);
@@ -248,14 +269,18 @@ try {
 
     overlay.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     await nextFrame();
-    await wait(40);
+    await wait(70);
     const fileWorkspaceClosed = !window.SentIQArtifactWorkspace.isOpen()
       && overlay.hidden
       && filePanel.parentElement === originalFileParent
       && !document.querySelector(".sentiq-artifact-workspace-placeholder");
     const fileStatePreserved = editor.value === "persistent workspace state";
     const backgroundRestored = !app.inert && app.getAttribute("aria-hidden") !== "true";
-    const focusRestored = document.activeElement === fileExpand;
+    const focusRestored = originFocusEvents > focusEventsBeforeOpen;
+    const focusNotTrapped = !overlay.contains(document.activeElement);
+    const finalFocusTarget = document.activeElement instanceof HTMLElement
+      ? `${document.activeElement.tagName.toLowerCase()}#${document.activeElement.id}.${document.activeElement.className}`
+      : "unknown";
 
     const chartHost = document.createElement("div");
     chartHost.className = "message assistant";
@@ -274,7 +299,7 @@ try {
     chartContent.appendChild(chart);
     chartHost.appendChild(chartContent);
     messages.appendChild(chartHost);
-    await wait(100);
+    await waitUntil(() => chart.querySelector(".sentiq-artifact-expand"));
     const chartExpand = chart.querySelector(".sentiq-artifact-expand");
     const chartExpandOffered = chartExpand instanceof HTMLButtonElement
       && !chartExpand.hidden
@@ -326,6 +351,8 @@ try {
       fileStatePreserved,
       backgroundRestored,
       focusRestored,
+      focusNotTrapped,
+      finalFocusTarget,
       chartExpandOffered,
       chartWorkspaceOpened,
       chartWorkspaceClosed,
@@ -348,7 +375,9 @@ try {
   if (!report.sameFileNodeMoved || !report.fileStatePreserved) failures.push("artifact workspace did not preserve the live file node and editor state");
   if (!report.backgroundInert || !report.focusContained || !report.placeholderReserved) failures.push("artifact workspace accessibility or layout reservation failed");
   if (!report.fileWorkspaceClosed || !report.chartWorkspaceClosed) failures.push("artifact workspace did not restore file/chart surfaces");
-  if (!report.backgroundRestored || !report.focusRestored) failures.push("artifact workspace did not restore background and focus state");
+  if (!report.backgroundRestored || !report.focusRestored || !report.focusNotTrapped) {
+    failures.push(`artifact workspace did not safely restore background/focus (${report.finalFocusTarget})`);
+  }
   if (pageErrors.length) failures.push(`${pageErrors.length} uncaught page error(s)`);
 
   console.log(JSON.stringify({ ...report, pageErrors }, null, 2));
