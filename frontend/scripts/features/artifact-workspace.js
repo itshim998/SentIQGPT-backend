@@ -201,20 +201,22 @@ function initializeArtifactWorkspace() {
 
   function restoreOriginFocus(originButton) {
     if (!(originButton instanceof HTMLElement)) return;
-    const focusIfWorkspaceStillOwnsFocus = () => {
+    const startedAt = window.performance?.now?.() ?? Date.now();
+    const settleFocus = () => {
       if (!originButton.isConnected || originButton.hidden || originButton.matches(":disabled")) return;
       const focused = document.activeElement;
+      if (focused === originButton) return;
       const workspaceStillOwnsFocus = !focused
         || focused === document.body
         || focused === closeButton
         || overlay.contains(focused);
       if (workspaceStillOwnsFocus) originButton.focus({ preventScroll: true });
+      const elapsed = (window.performance?.now?.() ?? Date.now()) - startedAt;
+      if (document.activeElement !== originButton && elapsed < 180) {
+        window.setTimeout(settleFocus, 8);
+      }
     };
-    focusIfWorkspaceStillOwnsFocus();
-    window.requestAnimationFrame(focusIfWorkspaceStillOwnsFocus);
-    window.setTimeout(focusIfWorkspaceStillOwnsFocus, 0);
-    window.setTimeout(focusIfWorkspaceStillOwnsFocus, 60);
-    window.setTimeout(focusIfWorkspaceStillOwnsFocus, 140);
+    settleFocus();
   }
 
   function openWorkspace(surface, originButton) {
