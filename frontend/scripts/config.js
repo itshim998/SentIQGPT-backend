@@ -1,5 +1,7 @@
+import "./features/image-output-polish.js";
+
 export const SENTIQ_SUPABASE_URL = window.SENTIQ_SUPABASE_URL || "https://lzgohufdrqjdupfsvqlj.supabase.co";
-export const SENTIQ_SUPABASE_ANON_KEY = window.SENTIQ_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx6Z29odWZkcnFqZHVwZnN2cWxqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNjYwNTYsImV4cCI6MjA4OTk0MjA1Nn0.S1UYzT1yeMcCFSlcjYVfLkzzQtpwjmYWaeu74gFn-Pw";
+export const SENTIQ_SUPABASE_ANON_KEY = window.SENTIQ_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXAiLCJyZWYiOiJsemdvaHVmZHJxamR1cGZzdnFsaiIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzc0MzY2MDU2LCJleHAiOjIwODk5NDIwNTZ9.S1UYzT1yeMcCFSlcjYVfLkzzQtpwjmYWaeu74gFn-Pw";
 export const SENTIQ_SUPPORT_EMAIL = window.SENTIQ_SUPPORT_EMAIL || "support@sentiqlabs.com";
 
 const PRODUCTION_API_BASE = "https://sentiqgpt-backend.ashygrass-913d190e.centralindia.azurecontainerapps.io";
