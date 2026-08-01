@@ -9,6 +9,7 @@ const server = read("backend/server.ts");
 const toolExecutor = read("backend/orchestrator/toolExecutor.ts");
 const imageRouter = read("backend/tools/imageGeneration/imageRouter.ts");
 const imageTypes = read("backend/tools/imageGeneration/types.ts");
+const imageToolContract = read("backend/orchestrator/toolContract.ts");
 const capabilitySelector = read("backend/orchestrator/capabilityModelSelector.ts");
 const modelRouter = read("backend/billing/modelEntitlementRouter.ts");
 const pollinationsUtils = read("backend/tools/imageGeneration/pollinationsUtils.ts");
@@ -31,7 +32,12 @@ assert.match(imageTypes, /"dreamshaper"/);
 assert.match(imageTypes, /"gpt-image-2"/);
 assert.match(imageTypes, /"kontext"/);
 assert.match(capabilitySelector, /import type \{ ImageModelPreference \}/);
-assert.match(modelRouter, /Readonly<Record<BillingPlanCode, ImageModelPreference>>/);
+assert.match(imageToolContract, /requires_text_rendering: z\.boolean\(\)/);
+assert.match(imageToolContract, /\["prompt", "requires_text_rendering"\]/);
+assert.match(modelRouter, /getImageModelPreferenceForPlan\([\s\S]*requiresTextRendering: boolean/);
+assert.match(modelRouter, /if \(planCode === "free"\) return "dreamshaper"/);
+assert.match(modelRouter, /requiresTextRendering \? "gpt-image-2" : "zimage"/);
+assert(!modelRouter.includes("Readonly<Record<BillingPlanCode, ImageModelPreference>>"));
 assert.match(imageRouter, /PollinationsImageModelProvider\("klein"\)/);
 assert.match(imageRouter, /PollinationsImageModelProvider\("kontext"\)/);
 assert.match(imageRouter, /PollinationsImageModelProvider\("gpt-image-2"\)/);
@@ -47,11 +53,15 @@ for (const source of [envExample, envTemplate]) {
   assert(!source.includes("SENTIQ_IMAGE_MODEL_TEXT_CORE="));
   assert(!source.includes("SENTIQ_IMAGE_MODEL_TEXT_PREMIUM="));
   assert.match(source, /Plan-tier image routing is code-owned/);
+  assert.match(source, /SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED=true/);
 }
 assert.match(billingDocs, /Free[\s\S]*dreamshaper[\s\S]*flux/i);
-assert.match(billingDocs, /Pro[\s\S]*gpt-image-2[\s\S]*kontext/i);
+assert.match(billingDocs, /Essential[\s\S]*No[\s\S]*zimage[\s\S]*klein/i);
+assert.match(billingDocs, /Essential[\s\S]*Yes[\s\S]*gpt-image-2[\s\S]*kontext/i);
+assert.match(billingDocs, /Essential, Plus, and Pro therefore have identical model access/i);
 assert.match(rolloutDocs, /auth\/control database only/i);
 assert.match(rolloutDocs, /Data shards 2–4: no migration required/i);
+assert.match(rolloutDocs, /Essential, Plus, and Pro have identical image-model access/i);
 assert.match(migration, /RUN ON: Auth\/control database only/i);
 assert.match(migration, /DO NOT RUN ON: Data shards 2, 3, or 4/i);
 
