@@ -108,6 +108,12 @@ jobs:
       - name: TypeScript build
         run: npm run build
 
+      - name: Image routing and plan quota policy
+        run: npm run test:image-routing-safety
+
+      - name: Billing quota and payment safety
+        run: npm run billing:test-quota
+
       - name: Independent rollout flags
         run: npm run test:nemotron-rollout-flags
 
