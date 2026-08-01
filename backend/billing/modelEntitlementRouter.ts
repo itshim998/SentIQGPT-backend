@@ -115,7 +115,7 @@ export function getImageModelForPlan(planCode: BillingPlanCode, _prompt: string)
     provider: "pollinations",
     model,
     adapterModelOverride: model,
-    safeModelLabel: "Image",
+    safeModelLabel: planCode === "free" ? "Image" : "Precision Image",
     route: "image",
   };
 }
