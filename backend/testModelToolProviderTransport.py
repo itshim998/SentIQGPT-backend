@@ -68,7 +68,13 @@ def groq_chunk(*, call_id="", name="", arguments="", content=None, finish_reason
 def test_capabilities_and_cache_dimensions():
     with patch.object(adapter, "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED", True), patch.object(
         adapter, "SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED", True
-    ), patch.object(adapter, "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", True), patch.object(
+    ), patch.object(adapter, "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", True), patch.dict(
+        adapter.os.environ,
+        {
+            "SENTIQ_NVIDIA_PROVIDER_ENABLED": "true",
+            "SENTIQ_NEMOTRON_INTUITIVE_ENABLED": "true",
+        },
+    ), patch.object(
         adapter, "GOOGLE_GENAI_MODULE", object()
     ), patch.object(
         adapter, "GOOGLE_GENAI_TYPES_MODULE", object()
