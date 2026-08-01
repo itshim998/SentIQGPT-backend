@@ -1,28 +1,80 @@
-name: Apply paid image text-routing Pass 2
+name: Nemotron Intuitive rollout checks
 
 on:
   pull_request:
     paths:
-      - "scripts/fixPaidImagePatchSyntax.mjs"
-      - "scripts/fixPaidImageExecutionFixture.mjs"
-      - "scripts/runPaidImageTextRoutingPass2.mjs"
-      - "scripts/applyPaidImageTextRoutingPass2.mjs"
+      - "backend/**"
+      - "frontend/scripts/features/text-quota-*.js"
+      - "frontend/scripts/features/text-quota-*.mjs"
+      - "frontend/scripts/panels/billing-panel.js"
+      - "frontend/styles/modules/14-billing.css"
+      - "frontend/tests/billing-token-usage.test.mjs"
+      - "frontend/tests/text-quota-*.test.mjs"
+      - "scripts/nemotronCanaryContract.mjs"
+      - "scripts/renderNemotronFullRolloutUpdate.mjs"
+      - "scripts/inspectAzureContainerAppState.mjs"
+      - "scripts/prepareNemotronRollout.mjs"
+      - "scripts/resolveAzureSecretReferences.mjs"
+      - "scripts/verifyAzureRuntimeEnvironment.mjs"
+      - "scripts/testNemotronCanaryContract.mjs"
+      - "scripts/testNemotronAzureRolloutIntegrity.mjs"
+      - "scripts/testNemotronFullRolloutUpdate.mjs"
+      - "scripts/verifyNemotronCanaryLive.mjs"
+      - "scripts/verifyNemotronFullRolloutLive.mjs"
+      - "scripts/execAzureContainerAppCommand.sh"
+      - "scripts/start-container-validated.sh"
+      - "docs/BILLING_AND_PRICING.md"
+      - "docs/ai/NEMOTRON_PRODUCTION_ROLLOUT.md"
+      - "docs/PLAN_TIER_IMAGE_POLICY_ROLLOUT.md"
+      - "supabase/migrations/**"
+      - "Dockerfile"
+      - "package.json"
+      - "package-lock.json"
+      - "requirements.txt"
+      - "tsconfig.backend.json"
+      - ".env.example"
+      - ".env.template"
+      - ".env.nemotron-canary.example"
+      - ".gitignore"
       - ".github/workflows/nemotron-pass0-checks.yml"
+      - ".github/workflows/nemotron-canary-live.yml"
+      - ".github/workflows/nemotron-full-rollout.yml"
+      - ".github/workflows/azure-container-apps.yml"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: nemotron-pass0-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  apply-and-verify:
+  rollout-safety:
+    name: Build, rollout flags, provider routing, budget safety, and request lifecycle
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sentiq_billing_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sentiq_billing_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SENTIQ_BILLING_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sentiq_billing_test
+      SENTIQ_BILLING_TEST_DATABASE_ALLOW_DESTRUCTIVE: "true"
+
     steps:
-      - name: Checkout branch
+      - name: Checkout
         uses: actions/checkout@v6
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
-          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -35,44 +87,126 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Repair patch generator syntax
-        run: node scripts/fixPaidImagePatchSyntax.mjs
-
-      - name: Repair model tool execution fixture
-        run: node scripts/fixPaidImageExecutionFixture.mjs
-
-      - name: Apply implementation
-        run: node scripts/runPaidImageTextRoutingPass2.mjs
-
-      - name: Validate patch whitespace
-        run: git diff --check
-
-      - name: Commit implementation
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          if git diff --quiet; then
-            echo "Implementation already applied."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .env.example .env.template backend docs/BILLING_AND_PRICING.md llm_adapter.py scripts/applyPaidImageTextRoutingPass2.mjs
-          git commit -m "Add model-decided paid image text routing"
-          git push origin HEAD:${{ github.head_ref }}
-
       - name: Install dependencies
         run: |
           npm ci
           python -m pip install --disable-pip-version-check -r requirements.txt
 
-      - name: Run focused contracts
+      - name: Validate GitHub workflow schemas
+        shell: bash
         run: |
-          npm run build
-          npm run test:model-tool-contract
-          npm run test:model-tool-transport
-          npm run test:model-tool-execution
-          npm run test:image-routing-safety
-          npx ts-node --project tsconfig.backend.json backend/testPaidImageTextRouting.ts
-          python backend/testExpandedModelToolProviders.py
+          set -Eeuo pipefail
+          actionlint_version="1.7.12"
+          actionlint_archive="${RUNNER_TEMP}/actionlint_${actionlint_version}_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error \
+            "https://github.com/rhysd/actionlint/releases/download/v${actionlint_version}/actionlint_${actionlint_version}_linux_amd64.tar.gz" \
+            --output "${actionlint_archive}"
+          printf '%s  %s\n' \
+            "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8" \
+            "${actionlint_archive}" \
+            | sha256sum --check --status
+          tar -xzf "${actionlint_archive}" -C "${RUNNER_TEMP}" actionlint
+          "${RUNNER_TEMP}/actionlint" -color -shellcheck= -pyflakes=
+
+      - name: TypeScript build
+        run: npm run build
+
+      - name: Image routing and plan quota policy
+        run: npm run test:image-routing-safety
+
+      - name: Paid image text-rendering policy
+        run: npx ts-node --project tsconfig.backend.json backend/testPaidImageTextRouting.ts
+
+      - name: Image policy Pass 2 contract
+        run: npx ts-node --project tsconfig.backend.json backend/testImagePolicyPass2.ts
+
+      - name: Auth-only image quota migration
+        run: npx ts-node --project tsconfig.backend.json backend/billing/testImagePlanPolicyMigration.ts
+
+      - name: Priority 5 image routing stability
+        run: npx ts-node --project tsconfig.backend.json backend/testPriority5Stability.ts
+
+      - name: Billing quota and payment safety
+        run: npm run billing:test-quota
+
+      - name: Independent rollout flags
+        run: npm run test:nemotron-rollout-flags
+
+      - name: Deployment readiness and canary safety
+        run: npm run test:nemotron-deployment-readiness
+
+      - name: Production database readiness contract
+        run: npm run test:nemotron-production-readiness
+
+      - name: Full rollout Azure rendering contract
+        run: npm run test:nemotron-azure-rollout
+
+      - name: Provider verifier syntax
+        run: |
+          python -m py_compile backend/verifyNvidiaNemotronLive.py
+          python -m py_compile backend/verifyPollinationsIntuitiveLive.py
           python -m py_compile llm_adapter.py backend/nvidia_nemotron.py
+
+      - name: NVIDIA and Pollinations Intuitive provider tests
+        run: npm run test:nemotron-provider
+
+      - name: Provider-neutral model tool transports
+        run: npm run test:model-tool-transport
+
+      - name: Expanded Pollinations and NVIDIA tool transports
+        run: python backend/testExpandedModelToolProviders.py
+
+      - name: Model-native tool execution
+        run: npm run test:model-tool-execution
+
+      - name: Existing token allowances
+        run: npm run billing:test-token-allowances
+
+      - name: Unified Free text-token policy and usage summary
+        run: npm run billing:test-unified-text-v2
+
+      - name: Unified text routing
+        run: npm run test:unified-text-routing
+
+      - name: Unified text PostgreSQL migration and concurrency
+        run: npm run billing:test-unified-text-v2-sql
+
+      - name: Unified text Pass 5.1 rollback and late settlement
+        run: npm run billing:test-unified-text-pass51-sql
+
+      - name: Unified text full rollout migration gate
+        run: npm run billing:test-unified-text-full-rollout-sql
+
+      - name: Frontend quota UX and mode-switch contract
+        run: npm run test:quota-ui-contract
+
+      - name: Execution profiles
+        run: npm run test:execution-profiles
+
+      - name: Model capability routing
+        run: npm run test:model-capability-routing
+
+      - name: Model tool contract
+        run: npm run test:model-tool-contract
+
+      - name: Context budgets
+        run: npm run test:context-budget
+
+      - name: Request budget lifecycle
+        run: npm run test:request-budget-lifecycle
+
+      - name: Streaming disconnect lifecycle
+        run: npm run test:stream-lifecycle
+
+      - name: Protected context safety
+        run: npm run test:protected-context-safety
+
+      - name: Build production image
+        run: docker build --tag sentiq-nemotron-rollout:${{ github.sha }} .
+
+      - name: Production image runtime import smoke
+        run: |
+          docker run --rm --entrypoint python sentiq-nemotron-rollout:${{ github.sha }} \
+            -c "import llm_adapter; from backend.nvidia_nemotron import NvidiaNemotronProvider; print('nemotron-runtime-import-ok')"
+          docker run --rm --entrypoint node sentiq-nemotron-rollout:${{ github.sha }} \
+            dist/backend/verifyNemotronDeploymentReadiness.js
