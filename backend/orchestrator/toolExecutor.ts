@@ -6,7 +6,6 @@ import { handleChat, selectChatToolCalls } from "../ai/ChatHandler";
 import { createHash, randomUUID } from "crypto";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
 import type { ImageModelPreference } from "../tools/imageGeneration/types";
-import type { ImageModelPreference } from "../tools/imageGeneration/types";
 import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
 import { routeFileGeneration } from "../tools/fileGeneration/fileGenerator";
 import { executeTavilySearchPipeline } from "../tools/webSearch/tavilySearchPipeline";
