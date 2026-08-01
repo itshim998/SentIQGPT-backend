@@ -44,20 +44,22 @@ async function main(): Promise<void> {
   assert.deepEqual(imageQuotas.pro, { limit: 16, windowSeconds: 43_200, label: "Images" });
 
   assert.equal(getImageModelForPlan("free", false).model, "dreamshaper");
-  assert.equal(getImageModelForPlan("free", false).model, "dreamshaper");
+  assert.equal(getImageModelForPlan("free", true).model, "dreamshaper");
   assert.equal(getImageModelForPlan("student_core", false).model, "zimage");
-  assert.equal(getImageModelForPlan("student_core", true).model, "zimage");
+  assert.equal(getImageModelForPlan("student_core", true).model, "gpt-image-2");
   assert.equal(getImageModelForPlan("premium", false).model, "zimage");
-  assert.equal(getImageModelForPlan("premium", true).model, "zimage");
-  assert.equal(getImageModelForPlan("pro", false).model, "gpt-image-2");
+  assert.equal(getImageModelForPlan("premium", true).model, "gpt-image-2");
+  assert.equal(getImageModelForPlan("pro", false).model, "zimage");
   assert.equal(getImageModelForPlan("pro", true).model, "gpt-image-2");
 
   assert.deepEqual(routeOrder("free", "a puppy in snow").slice(0, 2), ["dreamshaper", "flux"]);
   assert.deepEqual(routeOrder("free", "a detailed poster with text").slice(0, 2), ["dreamshaper", "flux"]);
-  assert.deepEqual(routeOrder("student_core", "a puppy in snow").slice(0, 2), ["zimage", "klein"]);
+  assert.deepEqual(routeOrder("student_core", "a puppy in snow", false).slice(0, 2), ["zimage", "klein"]);
+  assert.deepEqual(routeOrder("student_core", "a poster reading Welcome", true).slice(0, 2), ["gpt-image-2", "kontext"]);
+  assert.deepEqual(routeOrder("premium", "a puppy in snow", false).slice(0, 2), ["zimage", "klein"]);
   assert.deepEqual(routeOrder("premium", "a detailed poster with text", true).slice(0, 2), ["gpt-image-2", "kontext"]);
-  assert.deepEqual(routeOrder("pro", "a puppy in snow").slice(0, 2), ["zimage", "klein"]);
-  assert.deepEqual(routeOrder("pro", "a detailed poster with text").slice(0, 2), ["gpt-image-2", "kontext"]);
+  assert.deepEqual(routeOrder("pro", "a puppy in snow", false).slice(0, 2), ["zimage", "klein"]);
+  assert.deepEqual(routeOrder("pro", "a detailed poster with text", true).slice(0, 2), ["gpt-image-2", "kontext"]);
   assert.equal(getImageProviderOrder("a puppy in snow", "flux")[0], "flux");
   assert.deepEqual(getImageProviderOrder("a poster", "gptimage").slice(0, 2), ["gptimage", "flux"]);
 
