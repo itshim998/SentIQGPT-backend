@@ -11,6 +11,10 @@ const replacements = [
     '  assert.equal(text.model, "gpt-image-2", `${plan} text-rendering image route`);',
     '  assert.equal(text.model, "gpt-image-2", plan + " text-rendering image route");',
   ],
+  [
+    "  '                execution_mode: \"fast\" as const,',\n  '                execution_mode: \"intuitive\" as const,',\n  2,",
+    "  '                execution_mode: \"fast\" as const,',\n  '                execution_mode: \"intuitive\" as const,',\n  1,",
+  ],
 ];
 for (const [before, after] of replacements) {
   if (source.includes(after)) continue;
@@ -18,4 +22,4 @@ for (const [before, after] of replacements) {
   source = source.replace(before, after);
 }
 fs.writeFileSync(path, source, "utf8");
-console.log("Fixed paid image routing patch syntax.");
+console.log("Fixed paid image routing patch syntax and occurrence counts.");
