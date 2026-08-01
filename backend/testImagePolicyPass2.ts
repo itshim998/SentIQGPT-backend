@@ -38,7 +38,7 @@ assert.match(modelRouter, /getImageModelPreferenceForPlan\([\s\S]*requiresTextRe
 assert.match(modelRouter, /if \(planCode === "free"\) return "dreamshaper"/);
 assert.match(modelRouter, /requiresTextRendering \? "gpt-image-2" : "zimage"/);
 assert(!modelRouter.includes("Readonly<Record<BillingPlanCode, ImageModelPreference>>"));
-assert.match(imageRouter, /PollinationsImageModelProvider\("klein"\)/);
+assert.match(imageRouter, /PollinationsImageModelProvider\("klein", \{ enhance: true \}\)/);
 assert.match(imageRouter, /PollinationsImageModelProvider\("kontext"\)/);
 assert.match(imageRouter, /PollinationsImageModelProvider\("gpt-image-2"\)/);
 assert(!imageRouter.includes("GptImageProvider"));

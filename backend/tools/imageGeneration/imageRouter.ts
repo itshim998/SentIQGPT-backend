@@ -4,10 +4,9 @@
 // Tries each provider in priority order; returns as soon as one succeeds.
 //
 // Plan-primary chains:
-//   Free:      dreamshaper -> flux -> zimage -> HuggingFace -> Z-Image Turbo
-//   Essential: zimage -> klein -> flux -> HuggingFace -> Z-Image Turbo
-//   Plus:      zimage -> klein -> flux -> HuggingFace -> Z-Image Turbo
-//   Pro:       gpt-image-2 -> kontext -> dreamshaper -> flux -> zimage -> HuggingFace -> Z-Image Turbo
+//   Free:       dreamshaper -> flux -> zimage -> HuggingFace -> Z-Image Turbo
+//   Paid visual: zimage -> klein -> flux -> HuggingFace -> Z-Image Turbo
+//   Paid text:   gpt-image-2 -> kontext -> dreamshaper -> flux -> zimage -> HuggingFace -> Z-Image Turbo
 //
 // Features:
 //   - Fair in-process queue with per-user limits and bounded concurrency
@@ -122,14 +121,14 @@ function getProvidersForMode(
     case "zimage":
       return [
         new ZimageProvider(),
-        new PollinationsImageModelProvider("klein"),
+        new PollinationsImageModelProvider("klein", { enhance: true }),
         new FluxSchnellProvider(),
         new HuggingFaceProvider(),
         new PollinationsProvider(),
       ];
     case "klein":
       return [
-        new PollinationsImageModelProvider("klein"),
+        new PollinationsImageModelProvider("klein", { enhance: true }),
         new FluxSchnellProvider(),
         new ZimageProvider(),
         new HuggingFaceProvider(),
@@ -165,6 +164,11 @@ function getProvidersForMode(
         new PollinationsProvider(),
       ];
   }
+
+  // Defensive runtime fallback for malformed or stale external preferences.
+  // Typed call sites cannot reach this branch, but request boundaries and old
+  // clients must degrade to the ordinary chain instead of crashing.
+  return mode === "complex" ? complexProviders : standardProviders;
 }
 
 export function getImageProviderOrder(

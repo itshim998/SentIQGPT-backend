@@ -14,6 +14,7 @@ import {
   ImageProviderFailure,
   failureOutcomeForHttpStatus,
   requireImageModelPreference,
+  type ImageModelPreference,
   type ImageProvider,
   type ImageProviderRequestContext,
 } from "./tools/imageGeneration/types";
@@ -61,6 +62,11 @@ async function main(): Promise<void> {
   assert.deepEqual(routeOrder("pro", "a puppy in snow", false).slice(0, 2), ["zimage", "klein"]);
   assert.deepEqual(routeOrder("pro", "a detailed poster with text", true).slice(0, 2), ["gpt-image-2", "kontext"]);
   assert.equal(getImageProviderOrder("a puppy in snow", "flux")[0], "flux");
+  assert.deepEqual(
+    getImageProviderOrder("a puppy in snow", "unexpected-model" as ImageModelPreference).slice(0, 2),
+    ["dreamshaper", "flux"],
+    "an unexpected runtime preference degrades to the safe ordinary chain",
+  );
   assert.deepEqual(getImageProviderOrder("a poster", "gptimage").slice(0, 2), ["gptimage", "flux"]);
 
   assert.equal(requireImageModelPreference("GPT-IMAGE-2"), "gpt-image-2");
