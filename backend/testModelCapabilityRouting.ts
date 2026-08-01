@@ -46,8 +46,20 @@ async function main(): Promise<void> {
   ), false);
   assert.equal(routeSupportsCapabilities(
     { provider: "pollinations", model: "mistral" },
+    ["sentiq_tools_buffered"],
+  ), true);
+  assert.equal(routeSupportsCapabilities(
+    { provider: "pollinations", model: "mistral" },
+    ["sentiq_tools_streaming"],
+  ), true);
+  assert.equal(routeSupportsCapabilities(
+    { provider: "pollinations", model: "mistral" },
     ["image_input"],
   ), false);
+  assert.equal(routeSupportsCapabilities(
+    { provider: "nvidia", model: "nvidia/nemotron-3-ultra-550b-a55b" },
+    ["sentiq_tools_buffered", "sentiq_tools_streaming"],
+  ), true);
   assert.deepEqual(deriveRequiredModelCapabilities({
     hasImageInput: true,
     automaticToolsRequested: true,
@@ -59,11 +71,13 @@ async function main(): Promise<void> {
   const previousRegistry = process.env.SENTIQ_MODEL_TOOL_REGISTRY_ENABLED;
   const previousGroqTransport = process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED;
   const previousGeminiTransport = process.env.SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED;
+  const previousPollinationsTransport = process.env.SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED;
   process.env.SENTIQ_MODEL_PREMIUM_TEXT = "groq:gpt-oss-120b";
   process.env.SENTIQ_MODEL_LITE_TEXT = "pollinations:mistral";
   process.env.SENTIQ_MODEL_TOOL_REGISTRY_ENABLED = "true";
   process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = "true";
   process.env.SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED = "true";
+  process.env.SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED = "true";
   try {
     const calls: ReservationInput[] = [];
     const capableRepository = {
@@ -94,12 +108,36 @@ async function main(): Promise<void> {
     const downgradeService = new BillingQuotaService(downgradeRepository as any);
     const toolRoute = await downgradeService.reserveTextRoute({
       identity: { userId: "22222222-2222-2222-2222-222222222222", anonymousKeyHash: null, isGuest: false },
-      requestId: "capability-tools",
+      requestId: "capability-tools-pollinations",
       requiredCapabilities: ["sentiq_tools_buffered"],
     });
     assert.equal(toolRoute.route, "lite");
-    assert.equal(toolRoute.provider, "gemini", "an incapable configured Lite route must be skipped");
+    assert.equal(toolRoute.provider, "pollinations", "a tool-capable configured Lite route must be preserved");
     assert.deepEqual(downgradeCalls.map((call) => call.feature), ["premium_text", "lite_text"]);
+
+    process.env.SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED = "false";
+    const disabledTransportCalls: ReservationInput[] = [];
+    const disabledTransportRepository = {
+      reserveUsage: async (input: ReservationInput) => {
+        disabledTransportCalls.push(input);
+        return input.feature === "premium_text"
+          ? { reserved: false, plan_code: "free", remaining: 0, limit: 0, reset_at: "later" }
+          : { reserved: true, plan_code: "free", remaining: 4, limit: 5, reservation_units: 1 };
+      },
+    };
+    const disabledTransportService = new BillingQuotaService(disabledTransportRepository as any);
+    const fallbackToolRoute = await disabledTransportService.reserveTextRoute({
+      identity: { userId: "33333333-3333-3333-3333-333333333333", anonymousKeyHash: null, isGuest: false },
+      requestId: "capability-tools-pollinations-disabled",
+      requiredCapabilities: ["sentiq_tools_buffered"],
+    });
+    assert.equal(fallbackToolRoute.route, "lite");
+    assert.equal(
+      fallbackToolRoute.provider,
+      "gemini",
+      "a configured Lite route must be skipped when its explicit transport gate is disabled",
+    );
+    assert.deepEqual(disabledTransportCalls.map((call) => call.feature), ["premium_text", "lite_text"]);
   } finally {
     if (previousPremium === undefined) delete process.env.SENTIQ_MODEL_PREMIUM_TEXT;
     else process.env.SENTIQ_MODEL_PREMIUM_TEXT = previousPremium;
@@ -111,6 +149,8 @@ async function main(): Promise<void> {
     else process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = previousGroqTransport;
     if (previousGeminiTransport === undefined) delete process.env.SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED;
     else process.env.SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED = previousGeminiTransport;
+    if (previousPollinationsTransport === undefined) delete process.env.SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED;
+    else process.env.SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED = previousPollinationsTransport;
   }
 
   console.log("Capability-aware model routing checks passed.");
