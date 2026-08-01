@@ -25,6 +25,7 @@ import { createHash } from "node:crypto";
 import {
   ImageProviderFailure,
   asImageProviderFailure,
+  type ImageModelPreference,
   type ImageProvider,
   type ImageGenerationResult,
 } from "./types";
@@ -33,7 +34,9 @@ import { ZimageProvider } from "./providers/zimageProvider";
 import { FluxSchnellProvider } from "./providers/fluxSchnellProvider";
 import { PollinationsProvider } from "./providers/pollinationsProvider";
 import { HuggingFaceProvider } from "./providers/huggingfaceProvider";
-import { GptImageProvider } from "./providers/gptImageProvider";
+import { PollinationsImageModelProvider } from "./providers/pollinationsImageModelProvider";
+
+export type { ImageModelPreference } from "./types";
 
 // ==============================
 // Provider registry (order = priority)
@@ -85,17 +88,6 @@ export function detectPromptComplexity(prompt: string): boolean {
   return matchCount >= 1;
 }
 
-export type ImageModelPreference =
-  | "dreamshaper"
-  | "flux"
-  | "zimage"
-  | "klein"
-  | "gpt-image-2"
-  | "kontext"
-  | "wan-image"
-  | "gptimage"
-  | "gptimage-large";
-
 export function selectImageProviderMode(
   prompt: string,
   preferredModel?: ImageModelPreference,
@@ -130,14 +122,14 @@ function getProvidersForMode(
     case "zimage":
       return [
         new ZimageProvider(),
-        new GptImageProvider("klein"),
+        new PollinationsImageModelProvider("klein"),
         new FluxSchnellProvider(),
         new HuggingFaceProvider(),
         new PollinationsProvider(),
       ];
     case "klein":
       return [
-        new GptImageProvider("klein"),
+        new PollinationsImageModelProvider("klein"),
         new FluxSchnellProvider(),
         new ZimageProvider(),
         new HuggingFaceProvider(),
@@ -145,8 +137,8 @@ function getProvidersForMode(
       ];
     case "gpt-image-2":
       return [
-        new GptImageProvider("gpt-image-2"),
-        new GptImageProvider("kontext"),
+        new PollinationsImageModelProvider("gpt-image-2"),
+        new PollinationsImageModelProvider("kontext"),
         new DreamshaperProvider(),
         new FluxSchnellProvider(),
         new ZimageProvider(),
@@ -155,7 +147,7 @@ function getProvidersForMode(
       ];
     case "kontext":
       return [
-        new GptImageProvider("kontext"),
+        new PollinationsImageModelProvider("kontext"),
         new DreamshaperProvider(),
         new FluxSchnellProvider(),
         new ZimageProvider(),
@@ -166,7 +158,7 @@ function getProvidersForMode(
     case "gptimage-large":
     case "wan-image":
       return [
-        new GptImageProvider(preferredModel),
+        new PollinationsImageModelProvider(preferredModel),
         new FluxSchnellProvider(),
         new ZimageProvider(),
         new HuggingFaceProvider(),
@@ -426,7 +418,7 @@ async function executeImageGeneration(args: {
     .update(args.prompt)
     .digest("hex");
   console.log(
-    `[IMAGE] routing prompt="${args.prompt.slice(0, 60)}..." mode=${providerMode} preferred=${args.preferredModel ?? "none"} primary=${selectedProviders[0]?.name ?? "none"} providers=${selectedProviders.length}`,
+    `[IMAGE] routing mode=${providerMode} preferred=${args.preferredModel ?? "none"} primary=${selectedProviders[0]?.name ?? "none"} providers=${selectedProviders.length}`,
   );
 
   for (const provider of selectedProviders) {
