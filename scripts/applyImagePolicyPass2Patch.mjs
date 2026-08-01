@@ -24,18 +24,30 @@ function replaceOnceOrVerify(path, before, after) {
   );
 }
 
+const toolExecutorPath = "backend/orchestrator/toolExecutor.ts";
+const imageTypeImport = 'import type { ImageModelPreference } from "../tools/imageGeneration/types";\n';
+const duplicateImageTypeImport = `${imageTypeImport}${imageTypeImport}`;
+let toolExecutor = read(toolExecutorPath);
+if (toolExecutor.includes(duplicateImageTypeImport)) {
+  toolExecutor = toolExecutor.replace(duplicateImageTypeImport, imageTypeImport);
+  write(toolExecutorPath, toolExecutor);
+} else if ((toolExecutor.split(imageTypeImport).length - 1) === 0) {
+  const routerImport = 'import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";\n';
+  if ((toolExecutor.split(routerImport).length - 1) !== 1) {
+    throw new Error(`${toolExecutorPath}: image router import marker is not unique`);
+  }
+  write(toolExecutorPath, toolExecutor.replace(routerImport, `${routerImport}${imageTypeImport}`));
+} else if ((toolExecutor.split(imageTypeImport).length - 1) !== 1) {
+  throw new Error(`${toolExecutorPath}: image model type import is duplicated`);
+}
+
 replaceOnceOrVerify(
-  "backend/orchestrator/toolExecutor.ts",
-  'import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";\n',
-  'import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";\nimport type { ImageModelPreference } from "../tools/imageGeneration/types";\n',
-);
-replaceOnceOrVerify(
-  "backend/orchestrator/toolExecutor.ts",
+  toolExecutorPath,
   "  let preferredModel: string | undefined;",
   "  let preferredModel: ImageModelPreference | undefined;",
 );
 replaceOnceOrVerify(
-  "backend/orchestrator/toolExecutor.ts",
+  toolExecutorPath,
   "      preferredModel: preferredModel as any,",
   "      preferredModel,",
 );
@@ -53,13 +65,18 @@ replaceOnceOrVerify(
 );
 
 for (const path of [
-  "backend/orchestrator/toolExecutor.ts",
+  toolExecutorPath,
   "backend/server.ts",
 ]) {
   const source = read(path);
   if (source.includes("preferredModel as any") || source.includes("adapterModelOverride as any")) {
     throw new Error(`${path}: image-routing any cast remains after patch`);
   }
+}
+
+const finalToolExecutor = read(toolExecutorPath);
+if ((finalToolExecutor.split(imageTypeImport).length - 1) !== 1) {
+  throw new Error(`${toolExecutorPath}: expected one image model preference import`);
 }
 
 const stabilityTest = read("backend/testPriority5Stability.ts");
