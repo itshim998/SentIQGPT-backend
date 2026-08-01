@@ -11,14 +11,32 @@ The auth/control database owns `public.billing_plans`, `public.usage_events`, `p
 
 ## Policy
 
-| Plan | Primary | Immediate fallback | Image quota |
-|---|---|---|---|
-| Free | `dreamshaper` | `flux` | 2 / 24 hours |
-| Essential | `zimage` | `klein` | 4 / 12 hours |
-| Plus | `zimage` | `klein` | 8 / 12 hours |
-| Pro | `gpt-image-2` | `kontext` | 16 / 12 hours |
+### Quotas
 
-Prompt wording does not alter the plan-entitled primary model.
+| Plan | Image quota |
+|---|---|
+| Free | 2 / 24 hours |
+| Essential | 4 / 12 hours |
+| Plus | 8 / 12 hours |
+| Pro | 16 / 12 hours |
+
+### Runtime model selection
+
+| Plan | Readable text required inside image | Primary | Immediate fallback |
+|---|---:|---|---|
+| Free | Either | `dreamshaper` | `flux` |
+| Essential | No | `zimage` | `klein` |
+| Essential | Yes | `gpt-image-2` | `kontext` |
+| Plus | No | `zimage` | `klein` |
+| Plus | Yes | `gpt-image-2` | `kontext` |
+| Pro | No | `zimage` | `klein` |
+| Pro | Yes | `gpt-image-2` | `kontext` |
+
+Essential, Plus, and Pro have identical image-model access. Their difference is quota only.
+
+The active texting model returns a schema-validated `image_gen.requires_text_rendering` Boolean. Node owns plan enforcement and converts that Boolean into the paid-plan route. Prompt wording is not reparsed inside the entitlement router. The direct image endpoint asks the active text lane for the same structured decision and uses a deterministic classifier only when that call is unavailable.
+
+Fast mode supports the tool contract through Groq, Gemini, and Pollinations. Intuitive mode supports it through Nvidia Nemotron when the Nvidia and Intuitive rollout flags are both enabled.
 
 ## Pre-apply check — auth/control database
 
@@ -45,6 +63,8 @@ supabase/migrations/20260801091500_plan_tier_image_policy.sql
 against `SUPABASE_URL_1` only.
 
 Do not run it against `SUPABASE_URL_2`, `SUPABASE_URL_3`, or `SUPABASE_URL_4`.
+
+The text-rendering routing improvement does not require another migration. It changes runtime provider selection while preserving the quota records below.
 
 ## Post-apply verification — auth/control database
 
@@ -78,10 +98,12 @@ pro          | 16 | 43200 | Images | count
 
 1. Merge the application PR after all checks pass.
 2. Apply the auth/control database migration.
-3. Deploy the backend revision containing the typed plan-tier router.
+3. Deploy the backend revision containing the typed plan-tier router and expanded tool transports.
 4. Confirm `/api/billing/plans` exposes the new Pro quota.
-5. Generate one image with a test account from each plan and confirm provider lifecycle logs show the expected primary model without prompt or credential material.
-6. Confirm failed provider attempts proceed to the requested immediate fallback.
+5. For each paid plan, generate one purely visual image and confirm `zimage` is primary with `klein` as immediate fallback.
+6. For each paid plan, generate one image requiring exact readable text and confirm `gpt-image-2` is primary with `kontext` as immediate fallback.
+7. Test one Fast request through each available text-provider route and one Intuitive request through Nvidia, confirming that structured tool arguments are validated before image execution.
+8. Confirm provider lifecycle logs contain model/outcome diagnostics without prompt text, request URLs, seeds, or credentials.
 
 ## Rollback
 
@@ -107,4 +129,4 @@ set
 where code = 'pro';
 ```
 
-Free, Essential, and Plus retain their pre-existing image quota values.
+Free, Essential, and Plus retain their pre-existing image quota values. The runtime text-rendering route rolls back with the application revision and has no database rollback step.
