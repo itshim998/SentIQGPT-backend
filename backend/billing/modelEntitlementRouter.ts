@@ -9,10 +9,12 @@ export interface ModelRoute {
   readonly route: "standard" | "lite" | "advanced_reasoning" | "image" | "deep_research";
 }
 
-const TEXT_RENDERING_PATTERNS: readonly RegExp[] = [
-  /\b(?:logo|poster|banner|title|text|typography|label|sign|quote|words|heading|ui\s*mockup|chart\s*label)\b/i,
-  /["'“”‘’][^"'“”‘’]{2,}["'“”‘’]/,
-];
+const IMAGE_MODEL_BY_PLAN: Readonly<Record<BillingPlanCode, string>> = Object.freeze({
+  free: "dreamshaper",
+  student_core: "zimage",
+  premium: "zimage",
+  pro: "gpt-image-2",
+});
 
 function stripProviderPrefix(value: string): { provider: string; model: string } {
   const normalized = value.trim();
@@ -102,35 +104,18 @@ export function getGeminiAdvancedReasoningCapabilityRoute(): ModelRoute {
   };
 }
 
-export function imagePromptNeedsTextRendering(prompt: string): boolean {
-  return TEXT_RENDERING_PATTERNS.some((pattern) => pattern.test(prompt));
-}
-
-export function getImageModelForPlan(planCode: BillingPlanCode, prompt: string): ModelRoute {
-  const needsText = imagePromptNeedsTextRendering(prompt);
-  if (!needsText) {
-    const model = readModel("SENTIQ_IMAGE_MODEL_NORMAL", "pollinations:flux");
-    return {
-      feature: "image_generation",
-      provider: model.provider || "pollinations",
-      model: model.model,
-      adapterModelOverride: model.adapterModelOverride,
-      safeModelLabel: "Image",
-      route: "image",
-    };
-  }
-
-  const premium = planCode === "premium" || planCode === "pro";
-  const model = readModel(
-    premium ? "SENTIQ_IMAGE_MODEL_TEXT_PREMIUM" : "SENTIQ_IMAGE_MODEL_TEXT_CORE",
-    "pollinations:flux",
-  );
+/**
+ * Resolve the image model strictly from the active billing plan.
+ * Prompt wording must not upgrade or downgrade the entitled image model.
+ */
+export function getImageModelForPlan(planCode: BillingPlanCode, _prompt: string): ModelRoute {
+  const model = IMAGE_MODEL_BY_PLAN[planCode];
   return {
     feature: "image_generation",
-    provider: model.provider || "pollinations",
-    model: model.model,
-    adapterModelOverride: model.adapterModelOverride,
-    safeModelLabel: "Precision Image",
+    provider: "pollinations",
+    model,
+    adapterModelOverride: model,
+    safeModelLabel: "Image",
     route: "image",
   };
 }
