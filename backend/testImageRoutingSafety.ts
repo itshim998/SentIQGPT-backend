@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   executeImageGenerationWithProviders,
   getImageProviderOrder,
+  type ImageModelPreference,
 } from "./tools/imageGeneration/imageRouter";
 import { getImageModelForPlan } from "./billing/modelEntitlementRouter";
 import { buildPollinationsUrl } from "./tools/imageGeneration/pollinationsUtils";
@@ -23,35 +24,39 @@ function provider(
   };
 }
 
+function routeOrder(planCode: "free" | "student_core" | "premium" | "pro", prompt: string): readonly string[] {
+  const route = getImageModelForPlan(planCode, prompt);
+  return getImageProviderOrder(prompt, route.adapterModelOverride as ImageModelPreference);
+}
+
 async function main(): Promise<void> {
-  const previousNormalModel = process.env.SENTIQ_IMAGE_MODEL_NORMAL;
-  const previousCoreModel = process.env.SENTIQ_IMAGE_MODEL_TEXT_CORE;
-  const previousPremiumModel = process.env.SENTIQ_IMAGE_MODEL_TEXT_PREMIUM;
-  delete process.env.SENTIQ_IMAGE_MODEL_NORMAL;
-  delete process.env.SENTIQ_IMAGE_MODEL_TEXT_CORE;
-  delete process.env.SENTIQ_IMAGE_MODEL_TEXT_PREMIUM;
-  try {
-    assert.equal(getImageModelForPlan("free", "a puppy in snow").model, "flux");
-    assert.equal(getImageModelForPlan("free", "a poster with a title").model, "flux");
-    assert.equal(getImageModelForPlan("premium", "a poster with a title").model, "flux");
-    assert.equal(getImageProviderOrder("a puppy in snow")[0], "flux");
-    assert.equal(getImageProviderOrder("a detailed poster with text")[0], "flux");
-    assert.deepEqual(getImageProviderOrder("a poster", "gptimage").slice(0, 2), ["gptimage", "flux"]);
-  } finally {
-    if (previousNormalModel === undefined) delete process.env.SENTIQ_IMAGE_MODEL_NORMAL;
-    else process.env.SENTIQ_IMAGE_MODEL_NORMAL = previousNormalModel;
-    if (previousCoreModel === undefined) delete process.env.SENTIQ_IMAGE_MODEL_TEXT_CORE;
-    else process.env.SENTIQ_IMAGE_MODEL_TEXT_CORE = previousCoreModel;
-    if (previousPremiumModel === undefined) delete process.env.SENTIQ_IMAGE_MODEL_TEXT_PREMIUM;
-    else process.env.SENTIQ_IMAGE_MODEL_TEXT_PREMIUM = previousPremiumModel;
-  }
+  assert.equal(getImageModelForPlan("free", "a puppy in snow").model, "dreamshaper");
+  assert.equal(getImageModelForPlan("free", "a poster with a title").model, "dreamshaper");
+  assert.equal(getImageModelForPlan("student_core", "a puppy in snow").model, "zimage");
+  assert.equal(getImageModelForPlan("student_core", "a poster with a title").model, "zimage");
+  assert.equal(getImageModelForPlan("premium", "a puppy in snow").model, "zimage");
+  assert.equal(getImageModelForPlan("premium", "a poster with a title").model, "zimage");
+  assert.equal(getImageModelForPlan("pro", "a puppy in snow").model, "gpt-image-2");
+  assert.equal(getImageModelForPlan("pro", "a poster with a title").model, "gpt-image-2");
+
+  assert.deepEqual(routeOrder("free", "a puppy in snow").slice(0, 2), ["dreamshaper", "flux"]);
+  assert.deepEqual(routeOrder("free", "a detailed poster with text").slice(0, 2), ["dreamshaper", "flux"]);
+  assert.deepEqual(routeOrder("student_core", "a puppy in snow").slice(0, 2), ["zimage", "klein"]);
+  assert.deepEqual(routeOrder("premium", "a detailed poster with text").slice(0, 2), ["zimage", "klein"]);
+  assert.deepEqual(routeOrder("pro", "a puppy in snow").slice(0, 2), ["gpt-image-2", "kontext"]);
+  assert.deepEqual(routeOrder("pro", "a detailed poster with text").slice(0, 2), ["gpt-image-2", "kontext"]);
+  assert.equal(getImageProviderOrder("a puppy in snow", "flux")[0], "flux");
+  assert.deepEqual(getImageProviderOrder("a poster", "gptimage").slice(0, 2), ["gptimage", "flux"]);
+
   assert.equal(failureOutcomeForHttpStatus(400), "definitive");
   assert.equal(failureOutcomeForHttpStatus(429), "definitive");
   assert.equal(failureOutcomeForHttpStatus(408), "indeterminate");
   assert.equal(failureOutcomeForHttpStatus(503), "indeterminate");
-  const urlOne = buildPollinationsUrl("a calm landscape", "zimage", "1024x1024", "request-1");
-  const urlReplay = buildPollinationsUrl("a calm landscape", "zimage", "1024x1024", "request-1");
-  const urlOther = buildPollinationsUrl("a calm landscape", "zimage", "1024x1024", "request-2");
+
+  const urlOne = buildPollinationsUrl("a calm landscape", "dreamshaper", "1024x1024", "request-1");
+  const urlReplay = buildPollinationsUrl("a calm landscape", "dreamshaper", "1024x1024", "request-1");
+  const urlOther = buildPollinationsUrl("a calm landscape", "dreamshaper", "1024x1024", "request-2");
+  assert.equal(new URL(urlOne).searchParams.get("model"), "dreamshaper");
   assert.equal(new URL(urlOne).searchParams.get("seed"), new URL(urlReplay).searchParams.get("seed"));
   assert.notEqual(new URL(urlOne).searchParams.get("seed"), new URL(urlOther).searchParams.get("seed"));
 
@@ -98,7 +103,7 @@ async function main(): Promise<void> {
     prompt: "simple icon",
     requestKey: "stable-request",
     providers: [
-      provider("gptimage", async () => {
+      provider("dreamshaper", async () => {
         throw new ImageProviderFailure("timed out", "indeterminate");
       }),
       provider("flux", async () => {
@@ -108,7 +113,7 @@ async function main(): Promise<void> {
     ],
   });
   assert.equal(indeterminate.success, true);
-  assert.equal(fallbackCalls, 1, "a gptimage timeout must not prevent Flux fallback");
+  assert.equal(fallbackCalls, 1, "a DreamShaper timeout must not prevent Flux fallback");
 
   const controller = new AbortController();
   controller.abort(new Error("user cancelled"));
@@ -122,7 +127,7 @@ async function main(): Promise<void> {
     /user cancelled/,
   );
 
-  console.log("Image routing idempotency and retry-disposition checks passed.");
+  console.log("Plan-tier image routing, idempotency, and retry-disposition checks passed.");
 }
 
 main().catch((error) => {
