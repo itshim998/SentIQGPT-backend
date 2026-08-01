@@ -55,12 +55,16 @@ replaceOnceOrVerify(
 for (const path of [
   "backend/orchestrator/toolExecutor.ts",
   "backend/server.ts",
-  "backend/testPriority5Stability.ts",
 ]) {
   const source = read(path);
   if (source.includes("preferredModel as any") || source.includes("adapterModelOverride as any")) {
     throw new Error(`${path}: image-routing any cast remains after patch`);
   }
+}
+
+const stabilityTest = read("backend/testPriority5Stability.ts");
+if (!stabilityTest.includes('!toolExecutor.includes("preferredModel as any")')) {
+  throw new Error("backend/testPriority5Stability.ts: missing no-any regression assertion");
 }
 
 console.log("Applied or verified image-policy Pass 2 call-site cleanup.");
