@@ -23,7 +23,9 @@ on:
       - "scripts/verifyNemotronFullRolloutLive.mjs"
       - "scripts/execAzureContainerAppCommand.sh"
       - "scripts/start-container-validated.sh"
+      - "scripts/applyImagePolicyPass2Patch.mjs"
       - "docs/ai/NEMOTRON_PRODUCTION_ROLLOUT.md"
+      - "docs/PLAN_TIER_IMAGE_POLICY_ROLLOUT.md"
       - "supabase/migrations/**"
       - "Dockerfile"
       - "package.json"
@@ -40,7 +42,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: nemotron-pass0-${{ github.workflow }}-${{ github.ref }}
@@ -72,12 +74,35 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
+
+      - name: Apply one-shot image policy source cleanup
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: node scripts/applyImagePolicyPass2Patch.mjs
+
+      - name: Commit one-shot image policy source cleanup
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if git diff --quiet; then
+            echo "Source cleanup already applied."
+            exit 0
+          fi
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/orchestrator/toolExecutor.ts backend/server.ts backend/testPriority5Stability.ts .env.example .env.template
+          git commit -m "Complete image policy Pass 2 source cleanup"
+          git push origin HEAD:${{ github.head_ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -110,6 +135,12 @@ jobs:
 
       - name: Image routing and plan quota policy
         run: npm run test:image-routing-safety
+
+      - name: Auth-only image quota migration
+        run: npx ts-node --project tsconfig.backend.json backend/billing/testImagePlanPolicyMigration.ts
+
+      - name: Priority 5 image routing stability
+        run: npx ts-node --project tsconfig.backend.json backend/testPriority5Stability.ts
 
       - name: Billing quota and payment safety
         run: npm run billing:test-quota
