@@ -3,23 +3,17 @@
 // Sequential fallback router with per-provider cooldowns, retry, and queue.
 // Tries each provider in priority order; returns as soon as one succeeds.
 //
-// Provider chain (standard and automatic default):
-//   1. Flux                       (primary - Pollinations CDN)
-//   2. zimage                     (Pollinations fallback)
-//   3. HuggingFace SDXL           (requires HUGGINGFACE_API_TOKEN)
-//   4. Z-Image Turbo              (Pollinations fallback)
-//
-// Provider chain (complex):
-//   1. Flux                       (primary)
-//   2. zimage                     (fallback)
-//   3. HuggingFace SDXL           (fallback)
-//   4. Z-Image Turbo              (fallback)
+// Plan-primary chains:
+//   Free:      dreamshaper -> flux -> zimage -> HuggingFace -> Z-Image Turbo
+//   Essential: zimage -> klein -> flux -> HuggingFace -> Z-Image Turbo
+//   Plus:      zimage -> klein -> flux -> HuggingFace -> Z-Image Turbo
+//   Pro:       gpt-image-2 -> kontext -> dreamshaper -> flux -> zimage -> HuggingFace -> Z-Image Turbo
 //
 // Features:
 //   - Fair in-process queue with per-user limits and bounded concurrency
 //   - Strictly sequential provider fallback within each request
 //   - 30-second cooldown on HTTP 429
-//   - 30-45 second timeout per Pollinations attempt
+//   - 30-60 second timeout per Pollinations attempt
 //   - 60-second timeout for HuggingFace (slow inference)
 //   - Single retry after 1-second wait on 429
 //   - Auth: &key= query parameter on Pollinations requests (gen.pollinations.ai API v2)
@@ -34,6 +28,7 @@ import {
   type ImageProvider,
   type ImageGenerationResult,
 } from "./types";
+import { DreamshaperProvider } from "./providers/dreamshaperProvider";
 import { ZimageProvider } from "./providers/zimageProvider";
 import { FluxSchnellProvider } from "./providers/fluxSchnellProvider";
 import { PollinationsProvider } from "./providers/pollinationsProvider";
@@ -44,20 +39,20 @@ import { GptImageProvider } from "./providers/gptImageProvider";
 // Provider registry (order = priority)
 // ==============================
 
-// Standard providers (simple/moderate prompts)
 const standardProviders: readonly ImageProvider[] = [
-  new FluxSchnellProvider(),      // 1. Pollinations Flux (reliable production default)
-  new ZimageProvider(),           // 2. Pollinations zimage fallback
-  new HuggingFaceProvider(),      // 3. HuggingFace SDXL fallback with API key
-  new PollinationsProvider(),     // 4. Pollinations Z-Image Turbo fallback
+  new DreamshaperProvider(),
+  new FluxSchnellProvider(),
+  new ZimageProvider(),
+  new HuggingFaceProvider(),
+  new PollinationsProvider(),
 ];
 
-// Complex providers (text, spatial, multi-element prompts)
 const complexProviders: readonly ImageProvider[] = [
-  new FluxSchnellProvider(),      // 1. Pollinations Flux (also primary for complex prompts)
-  new ZimageProvider(),           // 2. zimage fallback
-  new HuggingFaceProvider(),      // 3. HuggingFace SDXL fallback
-  new PollinationsProvider(),     // 4. Z-Image Turbo fallback
+  new DreamshaperProvider(),
+  new FluxSchnellProvider(),
+  new ZimageProvider(),
+  new HuggingFaceProvider(),
+  new PollinationsProvider(),
 ];
 
 // ==============================
@@ -80,18 +75,26 @@ const COMPLEXITY_PATTERNS: readonly RegExp[] = [
 
 /**
  * Detect whether a prompt requires complex generation (spatial reasoning, text, multi-element).
- * Returns true if the prompt likely benefits from the complex-provider path.
+ * Provider entitlement remains plan-based; complexity is retained for diagnostics.
  */
 export function detectPromptComplexity(prompt: string): boolean {
   let matchCount = 0;
   for (const pattern of COMPLEXITY_PATTERNS) {
     if (pattern.test(prompt)) matchCount++;
   }
-  // Require at least 1 match to route to complex
   return matchCount >= 1;
 }
 
-export type ImageModelPreference = "flux" | "zimage" | "wan-image" | "gptimage" | "gptimage-large";
+export type ImageModelPreference =
+  | "dreamshaper"
+  | "flux"
+  | "zimage"
+  | "klein"
+  | "gpt-image-2"
+  | "kontext"
+  | "wan-image"
+  | "gptimage"
+  | "gptimage-large";
 
 export function selectImageProviderMode(
   prompt: string,
@@ -100,23 +103,76 @@ export function selectImageProviderMode(
   if (detectPromptComplexity(prompt)) {
     return "complex";
   }
-  return preferredModel === "wan-image" || preferredModel === "gptimage" || preferredModel === "gptimage-large"
+  return preferredModel === "wan-image"
+    || preferredModel === "gptimage"
+    || preferredModel === "gptimage-large"
+    || preferredModel === "gpt-image-2"
+    || preferredModel === "kontext"
     ? "complex"
     : "standard";
 }
 
-function getProvidersForMode(mode: "standard" | "complex", preferredModel?: ImageModelPreference): readonly ImageProvider[] {
-  if (mode === "standard") return standardProviders;
-  if (preferredModel === "gptimage" || preferredModel === "gptimage-large" || preferredModel === "wan-image") {
-    return [
-      new GptImageProvider(preferredModel),
-      new FluxSchnellProvider(),
-      new ZimageProvider(),
-      new HuggingFaceProvider(),
-      new PollinationsProvider(),
-    ];
+function getProvidersForMode(
+  mode: "standard" | "complex",
+  preferredModel?: ImageModelPreference,
+): readonly ImageProvider[] {
+  switch (preferredModel) {
+    case undefined:
+    case "dreamshaper":
+      return mode === "complex" ? complexProviders : standardProviders;
+    case "flux":
+      return [
+        new FluxSchnellProvider(),
+        new ZimageProvider(),
+        new HuggingFaceProvider(),
+        new PollinationsProvider(),
+      ];
+    case "zimage":
+      return [
+        new ZimageProvider(),
+        new GptImageProvider("klein"),
+        new FluxSchnellProvider(),
+        new HuggingFaceProvider(),
+        new PollinationsProvider(),
+      ];
+    case "klein":
+      return [
+        new GptImageProvider("klein"),
+        new FluxSchnellProvider(),
+        new ZimageProvider(),
+        new HuggingFaceProvider(),
+        new PollinationsProvider(),
+      ];
+    case "gpt-image-2":
+      return [
+        new GptImageProvider("gpt-image-2"),
+        new GptImageProvider("kontext"),
+        new DreamshaperProvider(),
+        new FluxSchnellProvider(),
+        new ZimageProvider(),
+        new HuggingFaceProvider(),
+        new PollinationsProvider(),
+      ];
+    case "kontext":
+      return [
+        new GptImageProvider("kontext"),
+        new DreamshaperProvider(),
+        new FluxSchnellProvider(),
+        new ZimageProvider(),
+        new HuggingFaceProvider(),
+        new PollinationsProvider(),
+      ];
+    case "gptimage":
+    case "gptimage-large":
+    case "wan-image":
+      return [
+        new GptImageProvider(preferredModel),
+        new FluxSchnellProvider(),
+        new ZimageProvider(),
+        new HuggingFaceProvider(),
+        new PollinationsProvider(),
+      ];
   }
-  return complexProviders;
 }
 
 export function getImageProviderOrder(
@@ -375,21 +431,18 @@ async function executeImageGeneration(args: {
 
   for (const provider of selectedProviders) {
     throwIfAborted(args.signal);
-    // Skip unavailable providers (missing API keys, etc.)
     if (!provider.isAvailable()) {
       console.log(`[IMAGE] provider=${provider.name} skipped reason=not_configured`);
       errors.push(`${provider.name}: not configured`);
       continue;
     }
 
-    // Skip providers on cooldown from recent 429
     if (isOnCooldown(provider.name)) {
       console.log(`[IMAGE] provider=${provider.name} skipped reason=cooldown`);
       errors.push(`${provider.name}: on cooldown`);
       continue;
     }
 
-    // Attempt with optional single retry on 429
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         console.log(`[IMAGE] provider=${provider.name} attempt=${attempt}`);
@@ -417,17 +470,13 @@ async function executeImageGeneration(args: {
         if (is429(failure) && attempt === 1) {
           console.log(`[IMAGE] provider=${provider.name} got 429, retrying in 1s`);
           await sleep(1000, args.signal);
-          continue; // retry once
+          continue;
         }
 
-        // Final failure for this provider
         if (is429(failure)) setCooldown(provider.name);
         console.log(`[IMAGE] provider=${provider.name} failed outcome=${failure.outcome} error="${message}"`);
         errors.push(`${provider.name}: ${message}`);
-        // The request lifecycle accepts and persists only the first successful
-        // result. A timeout from an optional provider must not prevent a later
-        // working provider (notably Flux) from completing the user request.
-        break; // move to next provider
+        break;
       }
     }
   }
