@@ -2,14 +2,18 @@ import assert from "node:assert/strict";
 import {
   executeImageGenerationWithProviders,
   getImageProviderOrder,
-  type ImageModelPreference,
 } from "./tools/imageGeneration/imageRouter";
 import { getImageModelForPlan } from "./billing/modelEntitlementRouter";
 import { getPlanCatalog } from "./billing/planCatalog";
-import { buildPollinationsUrl } from "./tools/imageGeneration/pollinationsUtils";
+import {
+  buildPollinationsUrl,
+  describePollinationsRequest,
+} from "./tools/imageGeneration/pollinationsUtils";
+import { PollinationsImageModelProvider } from "./tools/imageGeneration/providers/pollinationsImageModelProvider";
 import {
   ImageProviderFailure,
   failureOutcomeForHttpStatus,
+  requireImageModelPreference,
   type ImageProvider,
   type ImageProviderRequestContext,
 } from "./tools/imageGeneration/types";
@@ -27,7 +31,7 @@ function provider(
 
 function routeOrder(planCode: "free" | "student_core" | "premium" | "pro", prompt: string): readonly string[] {
   const route = getImageModelForPlan(planCode, prompt);
-  return getImageProviderOrder(prompt, route.adapterModelOverride as ImageModelPreference);
+  return getImageProviderOrder(prompt, route.adapterModelOverride);
 }
 
 async function main(): Promise<void> {
@@ -57,6 +61,11 @@ async function main(): Promise<void> {
   assert.equal(getImageProviderOrder("a puppy in snow", "flux")[0], "flux");
   assert.deepEqual(getImageProviderOrder("a poster", "gptimage").slice(0, 2), ["gptimage", "flux"]);
 
+  assert.equal(requireImageModelPreference("GPT-IMAGE-2"), "gpt-image-2");
+  assert.throws(() => requireImageModelPreference("unknown-image-model"), /Unsupported image model preference/);
+  assert.equal(new PollinationsImageModelProvider("klein").name, "klein");
+  assert.equal(new PollinationsImageModelProvider("kontext").name, "kontext");
+
   assert.equal(failureOutcomeForHttpStatus(400), "definitive");
   assert.equal(failureOutcomeForHttpStatus(429), "definitive");
   assert.equal(failureOutcomeForHttpStatus(408), "indeterminate");
@@ -68,6 +77,15 @@ async function main(): Promise<void> {
   assert.equal(new URL(urlOne).searchParams.get("model"), "dreamshaper");
   assert.equal(new URL(urlOne).searchParams.get("seed"), new URL(urlReplay).searchParams.get("seed"));
   assert.notEqual(new URL(urlOne).searchParams.get("seed"), new URL(urlOther).searchParams.get("seed"));
+
+  const secretBearingUrl = `${urlOne}&key=do-not-log-this-secret`;
+  const safeDiagnostic = describePollinationsRequest(secretBearingUrl, true);
+  assert.match(safeDiagnostic, /model=dreamshaper/);
+  assert.match(safeDiagnostic, /width=1024 height=1024 auth=true/);
+  assert(!safeDiagnostic.includes("do-not-log-this-secret"));
+  assert(!safeDiagnostic.includes("a%20calm%20landscape"));
+  assert(!safeDiagnostic.includes("seed="));
+  assert(!safeDiagnostic.includes("key="));
 
   const definitiveCalls: string[] = [];
   const definitive = await executeImageGenerationWithProviders({
@@ -136,7 +154,7 @@ async function main(): Promise<void> {
     /user cancelled/,
   );
 
-  console.log("Plan-tier image routing, quotas, idempotency, and retry-disposition checks passed.");
+  console.log("Plan-tier image routing, typed preferences, safe logging, quotas, idempotency, and retry checks passed.");
 }
 
 main().catch((error) => {
