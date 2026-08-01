@@ -14,6 +14,8 @@ import type { SentIQToolName, ToolAvailabilityContext, ValidatedToolCall } from 
 import { deriveRequiredModelCapabilities, type RequiredModelCapability } from "./modelToolCapability";
 import { buildIntuitiveToolSelectionPrompt } from "../orchestrator/intuitiveTextLane";
 import { GenerationBudgetError } from "../orchestrator/contextBudgetManager";
+import type { ExecutionMode } from "../orchestrator/executionProfile";
+import { detectExplicitTextRenderingRequirement } from "../tools/imageGeneration/imageTextRenderingDecision";
 import { releaseFutureTokenObligation } from "../context/requestBudgetContext";
 
 const REASONING_MAX_OUTPUT_TOKENS = 2600;
@@ -87,6 +89,7 @@ export async function selectChatToolCalls(args: {
   readonly userId?: string;
   readonly modelToolContext: ToolAvailabilityContext;
   readonly allowedModelTools: readonly SentIQToolName[];
+  readonly executionMode?: ExecutionMode;
   readonly signal?: AbortSignal;
 }): Promise<readonly ValidatedToolCall[]> {
   if (args.allowedModelTools.length === 0) return [];
@@ -96,7 +99,7 @@ export async function selectChatToolCalls(args: {
     model_override: args.modelOverride,
     user_id: args.userId,
     max_output_tokens: 200,
-    execution_mode: "fast",
+    execution_mode: args.executionMode ?? "fast",
     skip_wrappers: true,
     signal: args.signal,
     budget_class: "auxiliary",
@@ -111,6 +114,54 @@ export async function selectChatToolCalls(args: {
   return result.assistant_turn?.kind === "tool_calls"
     ? result.assistant_turn.calls
     : [];
+}
+
+
+export interface ImageTextRenderingDecision {
+  readonly requiresTextRendering: boolean;
+  readonly source: "model" | "deterministic_fallback" | "free_not_applicable";
+}
+
+export async function classifyImageTextRendering(args: {
+  readonly prompt: string;
+  readonly executionMode: ExecutionMode;
+  readonly userId?: string;
+  readonly authenticated: boolean;
+  readonly signal?: AbortSignal;
+}): Promise<ImageTextRenderingDecision> {
+  try {
+    const calls = await selectChatToolCalls({
+      userMessage: args.prompt,
+      modelOverride: "gpt-oss-120b",
+      userId: args.userId,
+      modelToolContext: {
+        authenticated: args.authenticated,
+        executionMode: args.executionMode,
+        entitlements: { image_gen: true },
+      },
+      allowedModelTools: ["image_gen"],
+      executionMode: args.executionMode,
+      signal: args.signal,
+    });
+    const imageCall = calls.find((call) => call.name === "image_gen");
+    if (imageCall) {
+      return {
+        requiresTextRendering: imageCall.arguments.requires_text_rendering === true,
+        source: "model",
+      };
+    }
+  } catch (error) {
+    console.warn(JSON.stringify({
+      scope: "image_text_rendering",
+      event: "model_classification_unavailable",
+      execution_mode: args.executionMode,
+      error_type: error instanceof Error ? error.name : "unknown",
+    }));
+  }
+  return {
+    requiresTextRendering: detectExplicitTextRenderingRequirement(args.prompt),
+    source: "deterministic_fallback",
+  };
 }
 
 export async function handleChat(args: {

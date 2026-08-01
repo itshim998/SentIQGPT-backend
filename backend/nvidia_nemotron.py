@@ -56,6 +56,28 @@ def _extract_visible_content(value: object) -> str:
     return "".join(parts)
 
 
+def _serialize_sentiq_tools(request: Optional[Mapping[str, object]]) -> list[dict[str, object]]:
+    serialized: list[dict[str, object]] = []
+    if not isinstance(request, Mapping):
+        return serialized
+    for raw_tool in request.get("tools") or []:
+        if not isinstance(raw_tool, Mapping):
+            continue
+        name = str(raw_tool.get("name") or "").strip()
+        schema = raw_tool.get("input_schema")
+        if not name or not isinstance(schema, Mapping):
+            continue
+        serialized.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": str(raw_tool.get("description") or "").strip(),
+                "parameters": dict(schema),
+            },
+        })
+    return serialized
+
+
 def parse_retry_after_ms(value: object, now_seconds: Optional[float] = None) -> Optional[int]:
     raw = str(value or "").strip()
     if not raw:
@@ -418,16 +440,28 @@ class NvidiaNemotronProvider:
         *,
         max_tokens: int,
         reasoning_budget: int,
+        sentiq_tool_request: Optional[Mapping[str, object]] = None,
     ) -> dict[str, object]:
-        return {
+        messages: list[dict[str, object]] = []
+        policy = str((sentiq_tool_request or {}).get("tool_choice_policy") or "").strip()
+        if policy:
+            messages.append({"role": "system", "content": policy})
+        messages.append({"role": "user", "content": prompt})
+        payload: dict[str, object] = {
             "model": self.settings.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": True,
             "stream_options": {"include_usage": True},
             "max_tokens": max(1, int(max_tokens)),
             "chat_template_kwargs": {"enable_thinking": True},
             "reasoning_budget": max(0, int(reasoning_budget)),
         }
+        tools = _serialize_sentiq_tools(sentiq_tool_request)
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+            payload["parallel_tool_calls"] = False
+        return payload
 
     def _open_response(
         self,
@@ -436,6 +470,7 @@ class NvidiaNemotronProvider:
         *,
         max_tokens: int,
         reasoning_budget: int,
+        sentiq_tool_request: Optional[Mapping[str, object]] = None,
     ) -> object:
         try:
             response = self._request(
@@ -449,6 +484,7 @@ class NvidiaNemotronProvider:
                     prompt,
                     max_tokens=max_tokens,
                     reasoning_budget=reasoning_budget,
+                    sentiq_tool_request=sentiq_tool_request,
                 ),
                 timeout=(
                     max(0.001, self.settings.first_chunk_timeout_ms / 1000),
@@ -486,7 +522,8 @@ class NvidiaNemotronProvider:
         *,
         max_tokens: int,
         reasoning_budget: int,
-    ) -> Iterator[str]:
+        sentiq_tool_request: Optional[Mapping[str, object]] = None,
+    ) -> Iterator[object]:
         started = self._monotonic()
         deadline = started + (self.settings.total_timeout_ms / 1000)
         response = self._open_response(
@@ -494,6 +531,7 @@ class NvidiaNemotronProvider:
             prompt,
             max_tokens=max_tokens,
             reasoning_budget=reasoning_budget,
+            sentiq_tool_request=sentiq_tool_request,
         )
         first_chunk_ms: Optional[int] = None
         visible_parts: list[str] = []
@@ -501,6 +539,7 @@ class NvidiaNemotronProvider:
         reported_prompt_tokens: Optional[int] = None
         reported_completion_tokens: Optional[int] = None
         reported_total_tokens: Optional[int] = None
+        tool_call_state: dict[int, dict[str, object]] = {}
 
         try:
             try:
@@ -577,10 +616,53 @@ class NvidiaNemotronProvider:
                 if isinstance(reasoning, str) and reasoning:
                     hidden_reasoning_tokens += _estimate_tokens(reasoning)
 
+                raw_tool_calls = delta.get("tool_calls")
+                if isinstance(raw_tool_calls, list):
+                    for raw_call in raw_tool_calls:
+                        if not isinstance(raw_call, Mapping):
+                            continue
+                        index = int(raw_call.get("index") or 0)
+                        state = tool_call_state.setdefault(index, {"id": "", "name": "", "arguments": "", "started": False})
+                        call_id = str(raw_call.get("id") or "")
+                        function = raw_call.get("function") if isinstance(raw_call.get("function"), Mapping) else {}
+                        name_delta = str(function.get("name") or "")
+                        arguments_delta = str(function.get("arguments") or "")
+                        if call_id:
+                            state["id"] = call_id
+                        if name_delta:
+                            state["name"] = str(state.get("name") or "") + name_delta
+                        if arguments_delta:
+                            state["arguments"] = str(state.get("arguments") or "") + arguments_delta
+                        if sentiq_tool_request and not state.get("started") and state.get("name"):
+                            state["started"] = True
+                            yield {
+                                "kind": "tool_call_start",
+                                "id": str(state.get("id") or f"nvidia_call_{index}"),
+                                "name": str(state.get("name") or ""),
+                                "index": index,
+                            }
+                            buffered_arguments = str(state.get("arguments") or "")
+                            if buffered_arguments:
+                                yield {
+                                    "kind": "tool_argument_delta",
+                                    "id": str(state.get("id") or f"nvidia_call_{index}"),
+                                    "text": buffered_arguments,
+                                    "index": index,
+                                }
+                                state["arguments"] = ""
+                        elif sentiq_tool_request and state.get("started") and arguments_delta:
+                            yield {
+                                "kind": "tool_argument_delta",
+                                "id": str(state.get("id") or f"nvidia_call_{index}"),
+                                "text": arguments_delta,
+                                "index": index,
+                            }
+                            state["arguments"] = ""
+
                 visible = _extract_visible_content(delta.get("content"))
                 if visible:
                     visible_parts.append(visible)
-                    yield visible
+                    yield {"kind": "text_delta", "text": visible} if sentiq_tool_request else visible
         except GeneratorExit:
             raise
         except NvidiaProviderError:
@@ -600,14 +682,21 @@ class NvidiaNemotronProvider:
                 pass
 
         visible_text = "".join(visible_parts)
-        if not visible_text.strip():
+        if sentiq_tool_request:
+            if any(not state.get("started") for state in tool_call_state.values()):
+                raise NvidiaProviderError("Intuitive provider returned an incomplete tool call.", category="malformed")
+            if not visible_text.strip() and not tool_call_state:
+                raise NvidiaProviderError("Intuitive provider stream produced no answer or tool call.", category="empty_stream")
+            yield {"kind": "done", "finishReason": "tool_calls" if tool_call_state else "stop"}
+        elif not visible_text.strip():
             raise NvidiaProviderError(
                 "Intuitive provider stream produced no visible answer.",
                 category="empty_stream",
             )
 
         estimated_input_tokens = _estimate_tokens(prompt)
-        estimated_output_floor = _estimate_tokens(visible_text) + hidden_reasoning_tokens
+        tool_argument_text = json.dumps(tool_call_state, separators=(",", ":"), sort_keys=True) if tool_call_state else ""
+        estimated_output_floor = _estimate_tokens(visible_text + tool_argument_text) + hidden_reasoning_tokens
         input_tokens = reported_prompt_tokens
         output_tokens = reported_completion_tokens
         source = "reported"
@@ -646,6 +735,7 @@ class NvidiaNemotronProvider:
         *,
         max_tokens: int,
         reasoning_budget: int,
+        sentiq_tool_request: Optional[Mapping[str, object]] = None,
     ) -> Iterator[object]:
         self._assert_configured()
         attempted: set[str] = set()
@@ -663,6 +753,7 @@ class NvidiaNemotronProvider:
                     prompt,
                     max_tokens=max_tokens,
                     reasoning_budget=reasoning_budget,
+                    sentiq_tool_request=sentiq_tool_request,
                 )
                 while True:
                     try:
@@ -723,17 +814,34 @@ class NvidiaNemotronProvider:
         *,
         max_tokens: int,
         reasoning_budget: int,
-    ) -> tuple[str, NvidiaUsage, str]:
+        sentiq_tool_request: Optional[Mapping[str, object]] = None,
+    ) -> tuple[object, NvidiaUsage, str]:
         visible: list[str] = []
+        tool_calls: dict[int, dict[str, object]] = {}
         usage: Optional[NvidiaUsage] = None
         slot_id = ""
         for item in self.stream(
             prompt,
             max_tokens=max_tokens,
             reasoning_budget=reasoning_budget,
+            sentiq_tool_request=sentiq_tool_request,
         ):
             if isinstance(item, str):
                 visible.append(item)
+            elif isinstance(item, Mapping) and item.get("kind") == "text_delta":
+                visible.append(str(item.get("text") or ""))
+            elif isinstance(item, Mapping) and item.get("kind") == "tool_call_start":
+                index = int(item.get("index") or 0)
+                tool_calls[index] = {
+                    "id": str(item.get("id") or f"nvidia_call_{index}"),
+                    "name": str(item.get("name") or ""),
+                    "arguments": "",
+                    "index": index,
+                }
+            elif isinstance(item, Mapping) and item.get("kind") == "tool_argument_delta":
+                index = int(item.get("index") or 0)
+                state = tool_calls.setdefault(index, {"id": str(item.get("id") or f"nvidia_call_{index}"), "name": "", "arguments": "", "index": index})
+                state["arguments"] = str(state.get("arguments") or "") + str(item.get("text") or "")
             elif isinstance(item, Mapping) and item.get("kind") == "provider_usage":
                 raw_usage = item.get("usage")
                 if isinstance(raw_usage, Mapping):
@@ -747,6 +855,8 @@ class NvidiaNemotronProvider:
                 slot_id = str(item.get("slot_id") or "")
         if usage is None:
             raise NvidiaProviderError("Intuitive provider usage accounting was unavailable.")
+        if tool_calls:
+            return {"kind": "tool_calls", "calls": [tool_calls[index] for index in sorted(tool_calls)]}, usage, slot_id
         return "".join(visible), usage, slot_id
 
     def complete_on_slot(

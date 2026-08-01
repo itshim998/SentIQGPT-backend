@@ -29,8 +29,8 @@ function provider(
   };
 }
 
-function routeOrder(planCode: "free" | "student_core" | "premium" | "pro", prompt: string): readonly string[] {
-  const route = getImageModelForPlan(planCode, prompt);
+function routeOrder(planCode: "free" | "student_core" | "premium" | "pro", prompt: string, requiresTextRendering = false): readonly string[] {
+  const route = getImageModelForPlan(planCode, requiresTextRendering);
   return getImageProviderOrder(prompt, route.adapterModelOverride);
 }
 
@@ -43,20 +43,20 @@ async function main(): Promise<void> {
   assert.deepEqual(imageQuotas.premium, { limit: 8, windowSeconds: 43_200, label: "Images" });
   assert.deepEqual(imageQuotas.pro, { limit: 16, windowSeconds: 43_200, label: "Images" });
 
-  assert.equal(getImageModelForPlan("free", "a puppy in snow").model, "dreamshaper");
-  assert.equal(getImageModelForPlan("free", "a poster with a title").model, "dreamshaper");
-  assert.equal(getImageModelForPlan("student_core", "a puppy in snow").model, "zimage");
-  assert.equal(getImageModelForPlan("student_core", "a poster with a title").model, "zimage");
-  assert.equal(getImageModelForPlan("premium", "a puppy in snow").model, "zimage");
-  assert.equal(getImageModelForPlan("premium", "a poster with a title").model, "zimage");
-  assert.equal(getImageModelForPlan("pro", "a puppy in snow").model, "gpt-image-2");
-  assert.equal(getImageModelForPlan("pro", "a poster with a title").model, "gpt-image-2");
+  assert.equal(getImageModelForPlan("free", false).model, "dreamshaper");
+  assert.equal(getImageModelForPlan("free", false).model, "dreamshaper");
+  assert.equal(getImageModelForPlan("student_core", false).model, "zimage");
+  assert.equal(getImageModelForPlan("student_core", true).model, "zimage");
+  assert.equal(getImageModelForPlan("premium", false).model, "zimage");
+  assert.equal(getImageModelForPlan("premium", true).model, "zimage");
+  assert.equal(getImageModelForPlan("pro", false).model, "gpt-image-2");
+  assert.equal(getImageModelForPlan("pro", true).model, "gpt-image-2");
 
   assert.deepEqual(routeOrder("free", "a puppy in snow").slice(0, 2), ["dreamshaper", "flux"]);
   assert.deepEqual(routeOrder("free", "a detailed poster with text").slice(0, 2), ["dreamshaper", "flux"]);
   assert.deepEqual(routeOrder("student_core", "a puppy in snow").slice(0, 2), ["zimage", "klein"]);
-  assert.deepEqual(routeOrder("premium", "a detailed poster with text").slice(0, 2), ["zimage", "klein"]);
-  assert.deepEqual(routeOrder("pro", "a puppy in snow").slice(0, 2), ["gpt-image-2", "kontext"]);
+  assert.deepEqual(routeOrder("premium", "a detailed poster with text", true).slice(0, 2), ["gpt-image-2", "kontext"]);
+  assert.deepEqual(routeOrder("pro", "a puppy in snow").slice(0, 2), ["zimage", "klein"]);
   assert.deepEqual(routeOrder("pro", "a detailed poster with text").slice(0, 2), ["gpt-image-2", "kontext"]);
   assert.equal(getImageProviderOrder("a puppy in snow", "flux")[0], "flux");
   assert.deepEqual(getImageProviderOrder("a poster", "gptimage").slice(0, 2), ["gptimage", "flux"]);

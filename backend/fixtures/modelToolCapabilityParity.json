@@ -12,5 +12,6 @@
   { "alias": "gemma-4-31b-it", "provider": "gemini", "model": "gemma-4-31b-it", "buffered": false, "streaming": false },
   { "alias": "gemini:gemma-4-31b-it", "provider": "gemini", "model": "gemini:gemma-4-31b-it", "buffered": false, "streaming": false },
   { "alias": "groq:llama-3.3-70b-versatile", "provider": "groq", "model": "groq:llama-3.3-70b-versatile", "buffered": false, "streaming": false },
-  { "alias": "pollinations:mistral", "provider": "pollinations", "model": "pollinations:mistral", "buffered": false, "streaming": false }
+  { "alias": "pollinations:mistral", "provider": "pollinations", "model": "pollinations:mistral", "buffered": true, "streaming": true },
+  { "alias": "nvidia:nemotron-3-ultra", "provider": "nvidia", "model": "nvidia/nemotron-3-ultra-550b-a55b", "buffered": true, "streaming": true }
 ]

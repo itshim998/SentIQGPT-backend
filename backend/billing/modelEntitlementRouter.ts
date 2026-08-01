@@ -18,13 +18,6 @@ export interface ImageModelRoute extends ModelRoute {
   readonly route: "image";
 }
 
-const IMAGE_MODEL_BY_PLAN: Readonly<Record<BillingPlanCode, ImageModelPreference>> = Object.freeze({
-  free: "dreamshaper",
-  student_core: "zimage",
-  premium: "zimage",
-  pro: "gpt-image-2",
-});
-
 function stripProviderPrefix(value: string): { provider: string; model: string } {
   const normalized = value.trim();
   const match = normalized.match(/^([a-z0-9_-]+):(.+)$/i);
@@ -113,16 +106,24 @@ export function getGeminiAdvancedReasoningCapabilityRoute(): ModelRoute {
   };
 }
 
-export function getImageModelPreferenceForPlan(planCode: BillingPlanCode): ImageModelPreference {
-  return IMAGE_MODEL_BY_PLAN[planCode];
+export function getImageModelPreferenceForPlan(
+  planCode: BillingPlanCode,
+  requiresTextRendering: boolean,
+): ImageModelPreference {
+  if (planCode === "free") return "dreamshaper";
+  return requiresTextRendering ? "gpt-image-2" : "zimage";
 }
 
 /**
- * Resolve the image model strictly from the active billing plan.
- * Prompt wording must not upgrade or downgrade the entitled image model.
+ * Resolve the image model from the active billing plan and the validated
+ * texting-model decision carried by image_gen. Prompt wording is never parsed
+ * here, so plan enforcement remains server-owned and deterministic.
  */
-export function getImageModelForPlan(planCode: BillingPlanCode, _prompt: string): ImageModelRoute {
-  const model = getImageModelPreferenceForPlan(planCode);
+export function getImageModelForPlan(
+  planCode: BillingPlanCode,
+  requiresTextRendering: boolean,
+): ImageModelRoute {
+  const model = getImageModelPreferenceForPlan(planCode, requiresTextRendering);
   return {
     feature: "image_generation",
     provider: "pollinations",

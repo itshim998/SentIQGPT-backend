@@ -133,11 +133,13 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", GEMINI_STANDARD_MODEL)
 SENTIQ_MODEL_TOOL_REGISTRY_ENABLED = _parse_bool_env("SENTIQ_MODEL_TOOL_REGISTRY_ENABLED", False)
 SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = _parse_bool_env("SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED", False)
 SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED = _parse_bool_env("SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", False)
+SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED = _parse_bool_env("SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED", True)
 SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED = _parse_bool_env("SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED", False)
 CANONICAL_SENTIQ_MODEL_TOOL_ENV_NAMES = (
     "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED",
     "SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED",
     "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED",
+    "SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED",
     "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED",
     "SENTIQ_MODEL_IMAGE_SELECTION_ENABLED",
     "SENTIQ_MODEL_CHART_SELECTION_ENABLED",
@@ -326,6 +328,7 @@ logger.info("[ModelToolRuntime] %s", json.dumps({
     "registry_enabled": SENTIQ_MODEL_TOOL_REGISTRY_ENABLED,
     "groq_transport_enabled": SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
     "gemini_transport_enabled": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,
+    "pollinations_transport_enabled": SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED,
     "google_genai_sdk_available": bool(GOOGLE_GENAI_MODULE and GOOGLE_GENAI_TYPES_MODULE),
     "gemini_sdk_path": "google_genai" if GOOGLE_GENAI_MODULE and GOOGLE_GENAI_TYPES_MODULE else "unavailable",
 }, separators=(",", ":"), sort_keys=True))
@@ -794,9 +797,11 @@ def _nemotron_intuitive_lane_enabled(
         return False
     if _normalize_execution_mode(execution_mode) != "intuitive" or task not in CHATLIKE_TASKS:
         return False
-    if sentiq_tool_request:
+    if "image_input" in set(required_capabilities or []):
         return False
-    return "image_input" not in set(required_capabilities or [])
+    if sentiq_tool_request:
+        return bool(get_sentiq_tool_capability("nvidia", NVIDIA_NEMOTRON_MODEL).get("supported"))
+    return True
 
 
 def resolve_model_override(model_override: Optional[str], default_provider: str) -> tuple[str, Optional[str]]:
@@ -1060,6 +1065,16 @@ def get_sentiq_tool_capability(provider: str, model: Optional[str], streaming: b
             "streaming": False,
             "reason": "google_genai_buffered_function_transport" if enabled else "transport_disabled",
         }
+    if normalized_provider == "pollinations":
+        enabled = SENTIQ_MODEL_TOOL_REGISTRY_ENABLED and SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED
+        return {"provider": "pollinations", "supported": enabled, "streaming": enabled, "reason": "openai_function_transport" if enabled else "transport_disabled"}
+    if normalized_provider == "nvidia":
+        enabled = (
+            SENTIQ_MODEL_TOOL_REGISTRY_ENABLED
+            and _parse_bool_env("SENTIQ_NVIDIA_PROVIDER_ENABLED", False)
+            and _parse_bool_env("SENTIQ_NEMOTRON_INTUITIVE_ENABLED", False)
+        )
+        return {"provider": "nvidia", "supported": enabled, "streaming": enabled, "reason": "openai_function_transport" if enabled else "transport_disabled"}
     reason = "text_only_model" if _is_gemma_model(model) else "text_only_transport"
     return {"provider": normalized_provider or "unknown", "supported": False, "streaming": False, "reason": reason}
 
@@ -1112,6 +1127,7 @@ def _log_sentiq_tool_diagnostic(
         "registry_enabled": SENTIQ_MODEL_TOOL_REGISTRY_ENABLED,
         "groq_transport_enabled": SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
         "gemini_transport_enabled": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,
+    "pollinations_transport_enabled": SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED,
         "allowed_tool_count": len(tool_names),
         "allowed_tool_names": tool_names,
         "tool_declarations_attached": declarations_attached,
@@ -2359,6 +2375,7 @@ def _build_pollinations_payload(
     temperature: float,
     max_output_tokens: Optional[int] = None,
     image_attachments: Optional[list[dict[str, Any]]] = None,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
 ) -> dict:
     content: Any = prompt
     if image_attachments:
@@ -2375,11 +2392,21 @@ def _build_pollinations_payload(
                 "image_url": {"url": f"data:{mime_type};base64,{base64_data}"},
             })
         content = content_parts
+    messages: list[dict[str, Any]] = []
+    policy = str((sentiq_tool_request or {}).get("tool_choice_policy") or "").strip()
+    if policy:
+        messages.append({"role": "system", "content": policy})
+    messages.append({"role": "user", "content": content})
     payload = {
         "model": _normalize_pollinations_model(model),
-        "messages": [{"role": "user", "content": content}],
+        "messages": messages,
         "temperature": temperature,
     }
+    sentiq_tools = _serialize_openai_sentiq_tools(sentiq_tool_request) if sentiq_tool_request else []
+    if sentiq_tools:
+        payload["tools"] = sentiq_tools
+        payload["tool_choice"] = "auto"
+        payload["parallel_tool_calls"] = False
     if max_output_tokens is not None:
         payload["max_tokens"] = max_output_tokens
     return payload
@@ -2410,7 +2437,31 @@ def _extract_openai_text_stream(content) -> str:
     return _extract_openai_text(content, trim=False)
 
 
-def _extract_pollinations_response(resp: _requests_lib.Response) -> tuple[str, Optional[str]]:
+def _openai_dict_assistant_turn(message: Any) -> dict[str, Any]:
+    if not isinstance(message, dict):
+        return _assistant_text_turn("")
+    raw_calls = message.get("tool_calls")
+    if isinstance(raw_calls, list) and raw_calls:
+        calls: list[dict[str, Any]] = []
+        for index, call in enumerate(raw_calls):
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function") if isinstance(call.get("function"), dict) else {}
+            calls.append({
+                "id": str(call.get("id") or f"pollinations_call_{index}"),
+                "name": str(function.get("name") or ""),
+                "arguments": function.get("arguments") or "{}",
+                "index": index,
+            })
+        if calls:
+            return {"kind": "tool_calls", "calls": calls}
+    return _assistant_text_turn(_extract_openai_text(message.get("content")))
+
+
+def _extract_pollinations_response(
+    resp: _requests_lib.Response,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
+) -> tuple[Any, Optional[str]]:
     try:
         data = resp.json()
     except ValueError:
@@ -2426,6 +2477,8 @@ def _extract_pollinations_response(resp: _requests_lib.Response) -> tuple[str, O
                     finish_reason = first_choice.get("finish_reason")
                 message = first_choice.get("message")
                 if isinstance(message, dict):
+                    if sentiq_tool_request:
+                        return _openai_dict_assistant_turn(message), finish_reason
                     text = _extract_openai_text(message.get("content"))
                     if text:
                         return text, finish_reason
@@ -2440,7 +2493,8 @@ def _extract_pollinations_response(resp: _requests_lib.Response) -> tuple[str, O
                 finish_reason = data.get("finish_reason")
             return output_text.strip(), finish_reason
 
-    return resp.text.strip(), finish_reason
+    fallback_text = resp.text.strip()
+    return (_assistant_text_turn(fallback_text) if sentiq_tool_request else fallback_text), finish_reason
 
 
 def _pollinations_candidate_endpoints() -> list[str]:
@@ -2501,12 +2555,17 @@ def _parse_pollinations_sse_event(raw_line: str) -> dict[str, Any]:
             if isinstance(first_choice.get("finish_reason"), str):
                 finish_reason = first_choice["finish_reason"]
             delta = first_choice.get("delta")
+            tool_calls: list[dict[str, Any]] = []
             if isinstance(delta, dict):
                 text = _extract_openai_text_stream(delta.get("content"))
+                raw_tool_calls = delta.get("tool_calls")
+                if isinstance(raw_tool_calls, list):
+                    tool_calls = [call for call in raw_tool_calls if isinstance(call, dict)]
 
     return {
         "kind": "chunk",
         "text": text,
+        "tool_calls": tool_calls if "tool_calls" in locals() else [],
         "finish_reason": finish_reason,
         "payload": payload,
     }
@@ -2642,7 +2701,8 @@ def _call_pollinations(
     temperature: float = 0.7,
     max_output_tokens: Optional[int] = None,
     image_attachments: Optional[list[dict[str, Any]]] = None,
-) -> tuple[str, Optional[str], bool]:
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
+) -> tuple[Any, Optional[str], bool]:
     """Call Pollinations via its OpenAI-compatible chat completions endpoint."""
     if not pollinations_bucket.consume():
         raise RuntimeError("Pollinations rate limit exceeded")
@@ -2662,6 +2722,7 @@ def _call_pollinations(
         temperature,
         max_output_tokens,
         effective_images,
+        sentiq_tool_request,
     )
 
     endpoint_used, resp = _post_pollinations(
@@ -2670,20 +2731,33 @@ def _call_pollinations(
         timeout=_pollinations_request_timeout(model),
     )
 
-    result, finish_reason = _extract_pollinations_response(resp)
+    result, finish_reason = _extract_pollinations_response(resp, sentiq_tool_request)
     truncated = finish_reason in {"length", "max_tokens", "content_filter", "reason-length"}
+    response_chars = len(result.get("text", "")) if isinstance(result, dict) else len(result)
+    _log_sentiq_tool_diagnostic(
+        boundary="pollinations_provider_outcome",
+        provider="pollinations",
+        model=model,
+        streaming=False,
+        sentiq_tool_request=sentiq_tool_request,
+        declarations_attached=bool((sentiq_tool_request or {}).get("tools")),
+        tool_choice_mode="auto" if sentiq_tool_request else "none",
+        sdk_path="openai_compatible_http",
+        provider_outcome="function_call" if isinstance(result, dict) and result.get("kind") == "tool_calls" else "text",
+        selected_tool=(result.get("calls") or [{}])[0].get("name") if isinstance(result, dict) and result.get("kind") == "tool_calls" else None,
+    )
     logger.info(
         "[Pollinations] response received status=%s endpoint=%s chars=%d finish_reason=%s",
         resp.status_code,
         endpoint_used,
-        len(result),
+        response_chars,
         finish_reason,
     )
     if truncated:
         logger.warning(
             "[Pollinations] completion may be truncated finish_reason=%s chars=%d model=%s max_tokens=%s",
             finish_reason,
-            len(result),
+            response_chars,
             payload["model"],
             payload.get("max_tokens") if payload.get("max_tokens") is not None else "none",
         )
@@ -2696,6 +2770,7 @@ def _call_pollinations_stream(
     temperature: float = 0.7,
     image_attachments: Optional[list[dict[str, Any]]] = None,
     max_output_tokens: Optional[int] = None,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
 ):
     """
     True provider SSE stream for Pollinations.
@@ -2730,6 +2805,8 @@ def _call_pollinations_stream(
     first_text_ms: Optional[int] = None
     text_chunks = 0
     saw_done = False
+    emitted_sentiq_outcome = False
+    tool_call_state: dict[int, dict[str, Any]] = {}
 
     try:
         for raw_line in resp.iter_lines(decode_unicode=True):
@@ -2749,10 +2826,51 @@ def _call_pollinations_stream(
             if isinstance(event_finish_reason, str):
                 finish_reason = event_finish_reason
 
+            for raw_call in event.get("tool_calls") or []:
+                index = int(raw_call.get("index") or 0)
+                state = tool_call_state.setdefault(index, {"id": "", "name": "", "arguments": "", "started": False})
+                call_id = str(raw_call.get("id") or "")
+                function = raw_call.get("function") if isinstance(raw_call.get("function"), dict) else {}
+                name_delta = str(function.get("name") or "")
+                arguments_delta = str(function.get("arguments") or "")
+                if call_id:
+                    state["id"] = call_id
+                if name_delta:
+                    state["name"] = str(state.get("name") or "") + name_delta
+                if arguments_delta:
+                    state["arguments"] = str(state.get("arguments") or "") + arguments_delta
+                if sentiq_tool_request and not state.get("started") and state.get("name"):
+                    state["started"] = True
+                    emitted_sentiq_outcome = True
+                    yield {
+                        "kind": "tool_call_start",
+                        "id": str(state.get("id") or f"pollinations_call_{index}"),
+                        "name": str(state.get("name") or ""),
+                        "index": index,
+                    }
+                    buffered_arguments = str(state.get("arguments") or "")
+                    if buffered_arguments:
+                        yield {
+                            "kind": "tool_argument_delta",
+                            "id": str(state.get("id") or f"pollinations_call_{index}"),
+                            "text": buffered_arguments,
+                            "index": index,
+                        }
+                        state["arguments"] = ""
+                elif sentiq_tool_request and state.get("started") and arguments_delta:
+                    yield {
+                        "kind": "tool_argument_delta",
+                        "id": str(state.get("id") or f"pollinations_call_{index}"),
+                        "text": arguments_delta,
+                        "index": index,
+                    }
+                    state["arguments"] = ""
+
             text = event.get("text") or ""
             if not text:
                 continue
 
+            emitted_sentiq_outcome = True
             if first_text_ms is None:
                 first_text_ms = int((time.monotonic() - stream_started) * 1000)
                 logger.info(
@@ -2764,7 +2882,7 @@ def _call_pollinations_stream(
                 _set_response_socket_timeout(resp, _pollinations_stream_idle_timeout(stream_model))
 
             text_chunks += 1
-            yield text
+            yield {"kind": "text_delta", "text": text} if sentiq_tool_request else text
     finally:
         resp.close()
 
@@ -2779,6 +2897,25 @@ def _call_pollinations_stream(
         total_ms,
         "true" if saw_done else "false",
     )
+    if sentiq_tool_request:
+        if any(not state.get("started") for state in tool_call_state.values()):
+            raise RuntimeError("Pollinations stream produced an incomplete SentIQ tool call")
+        if not emitted_sentiq_outcome:
+            raise RuntimeError("Pollinations stream produced neither assistant text nor a tool call")
+        _log_sentiq_tool_diagnostic(
+            boundary="pollinations_provider_outcome",
+            provider="pollinations",
+            model=model,
+            streaming=True,
+            sentiq_tool_request=sentiq_tool_request,
+            declarations_attached=True,
+            tool_choice_mode="auto",
+            sdk_path="openai_compatible_http",
+            provider_outcome="function_call" if tool_call_state else "text",
+            selected_tool=next((str(state.get("name") or "") for state in tool_call_state.values()), None),
+        )
+        yield {"kind": "done", "finishReason": finish_reason} if finish_reason else {"kind": "done"}
+        return
     if first_text_ms is None:
         raise RuntimeError(
             f"Pollinations stream produced no text within {first_chunk_timeout}s"
@@ -3016,6 +3153,7 @@ def call_llm_router(
             pollinations_model,
             max_output_tokens=max_output_tokens,
             image_attachments=image_attachments,
+            sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "pollinations", pollinations_model),
         )
         payload = _build_response_payload(fallback_result)
         if cache_enabled:
@@ -3032,6 +3170,7 @@ def call_llm_router(
                 effective_prompt,
                 max_tokens=max_output_tokens or 6_000,
                 reasoning_budget=reasoning_budget,
+                sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "nvidia", NVIDIA_NEMOTRON_MODEL),
             )
             _nvidia_call_state.telemetry = {
                 "capacity": None,
@@ -3047,6 +3186,7 @@ def call_llm_router(
                 resolved_override or model,
                 max_output_tokens=max_output_tokens,
                 image_attachments=image_attachments,
+                sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "pollinations", resolved_override or model),
             )
         elif provider == "groq":
             max_output_tokens, force_capacity_fallback, reservation, _ = _select_groq_capacity_allocation(
@@ -3394,10 +3534,15 @@ def stream_llm_router(
                 prompt,
                 max_tokens=max_output_tokens or 6_000,
                 reasoning_budget=reasoning_budget,
+                sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "nvidia", NVIDIA_NEMOTRON_MODEL, streaming=True),
             ):
                 if isinstance(event, str):
                     if event.strip():
                         emitted_visible_text = True
+                    yield event
+                    continue
+                if isinstance(event, dict) and event.get("kind") in {"tool_call_start", "tool_argument_delta", "done"}:
+                    emitted_visible_text = True
                     yield event
                     continue
                 if isinstance(event, dict) and event.get("kind") == "provider_usage":
@@ -3428,6 +3573,7 @@ def stream_llm_router(
                 POLLINATIONS_INTUITIVE_MODEL,
                 image_attachments=None,
                 max_output_tokens=max_output_tokens,
+                sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "pollinations", POLLINATIONS_INTUITIVE_MODEL, streaming=True),
             )
             return
 
@@ -3502,6 +3648,7 @@ def stream_llm_router(
                 resolved_override or model,
                 image_attachments=image_attachments,
                 max_output_tokens=max_output_tokens,
+                sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "pollinations", resolved_override or model, streaming=True),
             ):
                 if chunk:
                     emitted_primary_text = True
@@ -3534,6 +3681,7 @@ def stream_llm_router(
                     alt_pollinations_model,
                     image_attachments=image_attachments,
                     max_output_tokens=max_output_tokens,
+                    sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "pollinations", alt_pollinations_model, streaming=True),
                 ):
                     if chunk:
                         emitted_alt_text = True
@@ -3643,6 +3791,7 @@ def stream_llm_router(
             pollinations_model,
             image_attachments=image_attachments,
             max_output_tokens=max_output_tokens,
+            sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "pollinations", pollinations_model, streaming=True),
         )
         return
 

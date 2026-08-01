@@ -395,6 +395,7 @@ async function execConversation(
         userId: ctx.userId,
         modelToolContext,
         allowedModelTools: automaticTools,
+        executionMode: profile.mode,
         signal,
       });
       if (selectedToolCalls.length > 0) {
@@ -536,7 +537,13 @@ export async function executeAutomaticModelToolCalls(
       },
       allowedTools,
       executeWebSurf: (query) => execWebSearch(query, ctx, profile, signal, originalUserRequest),
-      executeImage: (prompt) => execImageGeneration(prompt, ctx, profile, signal),
+      executeImage: (prompt, requiresTextRendering) => execImageGeneration(
+        prompt,
+        ctx,
+        profile,
+        signal,
+        requiresTextRendering,
+      ),
       executeChart: (request) => execChartGeneration(request, ctx, signal),
       executeFile: (request, format) => execFileGeneration(
         request,
@@ -573,6 +580,7 @@ async function execImageGeneration(
   ctx: BuiltContext,
   profile: ExecutionProfile,
   signal?: AbortSignal,
+  requiresTextRendering = false,
 ): Promise<StepResult> {
   const localQuota = ctx.imageQuotaKey ? getQuotaInfo(ctx.imageQuotaKey) : undefined;
   if (localQuota?.cooldownActive) {
@@ -606,7 +614,7 @@ async function execImageGeneration(
   let preferredModel: ImageModelPreference | undefined;
 
   if (ctx.billingIdentity) {
-    const initialRoute = getImageModelForPlan("free", input);
+    const initialRoute = getImageModelForPlan("free", false);
     reservation = await billingQuotaService.reserveFeature({
       identity: ctx.billingIdentity,
       feature: "image_generation",
@@ -616,7 +624,7 @@ async function execImageGeneration(
       clientRequestId: ctx.billingRequestId,
       metadata: { endpoint: "orchestrator", tool: "image_generation" },
     });
-    const entitledRoute = getImageModelForPlan(reservation.planCode, input);
+    const entitledRoute = getImageModelForPlan(reservation.planCode, requiresTextRendering);
     preferredModel = entitledRoute.adapterModelOverride;
     committedReservation = {
       ...reservation,

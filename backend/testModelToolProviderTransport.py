@@ -91,11 +91,11 @@ def test_capabilities_and_cache_dimensions():
             "gemini", adapter.GEMINI_STANDARD_MODEL, streaming=True
         )["supported"] is False
         assert adapter.get_sentiq_tool_capability("gemini", adapter.GEMMA_PRIMARY_MODEL)["supported"] is False
-        assert adapter.get_sentiq_tool_capability("pollinations", "openai-large")["supported"] is False
+        assert adapter.get_sentiq_tool_capability("pollinations", "openai-large")["supported"] is True
         assert adapter._sentiq_tool_request_for_route(TOOL_REQUEST, "groq", adapter.GROQ_CHAT_MODEL) is TOOL_REQUEST
         assert adapter._sentiq_tool_request_for_route(TOOL_REQUEST, "gemini", adapter.GEMINI_STANDARD_MODEL) is TOOL_REQUEST
         assert adapter._sentiq_tool_request_for_route(TOOL_REQUEST, "gemini", adapter.GEMMA_PRIMARY_MODEL) is None
-        assert adapter._sentiq_tool_request_for_route(TOOL_REQUEST, "pollinations", "openai-large") is None
+        assert adapter._sentiq_tool_request_for_route(TOOL_REQUEST, "pollinations", "openai-large") is TOOL_REQUEST
         assert adapter.resolve_model_override("gpt-oss-120b", "gemini") == ("groq", adapter.GROQ_CHAT_MODEL)
         assert adapter.resolve_model_override("openai/gpt-oss-120b", "gemini") == ("groq", adapter.GROQ_CHAT_MODEL)
         assert adapter.resolve_model_override("groq:gpt-oss-120b", "gemini") == ("groq", adapter.GROQ_CHAT_MODEL)

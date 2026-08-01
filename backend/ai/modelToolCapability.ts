@@ -1,6 +1,7 @@
 import type { SentIQToolName } from "../orchestrator/toolContract";
+import { getNemotronRolloutSnapshot } from "../nemotronRolloutFlags";
 
-export type LLMProviderKind = "groq" | "gemini" | "gemma" | "pollinations" | "unknown";
+export type LLMProviderKind = "groq" | "gemini" | "gemma" | "pollinations" | "nvidia" | "unknown";
 
 export type RequiredModelCapability =
   | "image_input"
@@ -34,6 +35,7 @@ export const SENTIQ_MODEL_TOOL_ENV = Object.freeze({
   registry: "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED",
   groqTransport: "SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED",
   geminiTransport: "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED",
+  pollinationsTransport: "SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED",
   webSurfSelection: "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED",
   imageSelection: "SENTIQ_MODEL_IMAGE_SELECTION_ENABLED",
   chartSelection: "SENTIQ_MODEL_CHART_SELECTION_ENABLED",
@@ -62,6 +64,8 @@ export interface ModelToolRuntimeSnapshot {
   readonly registryEnabled: boolean;
   readonly groqTransportEnabled: boolean;
   readonly geminiTransportEnabled: boolean;
+  readonly pollinationsTransportEnabled: boolean;
+  readonly nvidiaTransportEnabled: boolean;
   readonly webSurfSelectionEnabled: boolean;
   readonly imageSelectionEnabled: boolean;
   readonly chartSelectionEnabled: boolean;
@@ -74,7 +78,8 @@ const CAPABILITIES: Readonly<Record<LLMProviderKind, SentIQToolCapability>> = {
   groq: { provider: "groq", buffered: true, streaming: true, reason: "openai_function_transport" },
   gemini: { provider: "gemini", buffered: true, streaming: false, reason: "google_genai_buffered_function_transport" },
   gemma: { provider: "gemma", buffered: false, streaming: false, reason: "text_only_model" },
-  pollinations: { provider: "pollinations", buffered: false, streaming: false, reason: "text_only_transport" },
+  pollinations: { provider: "pollinations", buffered: true, streaming: true, reason: "openai_function_transport" },
+  nvidia: { provider: "nvidia", buffered: true, streaming: true, reason: "openai_function_transport" },
   unknown: { provider: "unknown", buffered: false, streaming: false, reason: "capability_not_declared" },
 };
 
@@ -108,7 +113,11 @@ export function resolveModelToolTransport(
     ? isGroqSentIQToolTransportEnabled()
     : provider === "gemini"
       ? isGeminiSentIQToolTransportEnabled()
-      : false;
+      : provider === "pollinations"
+        ? isPollinationsSentIQToolTransportEnabled()
+        : provider === "nvidia"
+          ? isNvidiaSentIQToolTransportEnabled()
+          : false;
   if (!isModelToolRegistryEnabled()) {
     return { provider, model: route.model, requestedMode, mode: "none", supported: false, reason: "registry_disabled" };
   }
@@ -136,7 +145,7 @@ export function normalizeRouteProvider(route: ModelCapabilityRoute): LLMProvider
   const model = route.model.trim().toLowerCase();
   if (provider === "gemini" && model.includes("gemma")) return "gemma";
   if (provider === "groq") return isGroqSentIQToolModel(model) ? "groq" : "unknown";
-  if (provider === "gemini" || provider === "gemma" || provider === "pollinations") {
+  if (provider === "gemini" || provider === "gemma" || provider === "pollinations" || provider === "nvidia") {
     return provider;
   }
   return "unknown";
@@ -170,6 +179,8 @@ export function routeCanServeRequiredCapabilities(
   const provider = normalizeRouteProvider(route);
   if (provider === "groq") return isGroqSentIQToolTransportEnabled();
   if (provider === "gemini") return isGeminiSentIQToolTransportEnabled();
+  if (provider === "pollinations") return isPollinationsSentIQToolTransportEnabled();
+  if (provider === "nvidia") return isNvidiaSentIQToolTransportEnabled();
   return false;
 }
 
@@ -238,6 +249,17 @@ export function isGeminiSentIQToolTransportEnabled(
   return value?.trim().toLowerCase() === "true";
 }
 
+export function isPollinationsSentIQToolTransportEnabled(
+  value = process.env[SENTIQ_MODEL_TOOL_ENV.pollinationsTransport],
+): boolean {
+  return value === undefined ? true : value.trim().toLowerCase() === "true";
+}
+
+export function isNvidiaSentIQToolTransportEnabled(): boolean {
+  const flags = getNemotronRolloutSnapshot();
+  return flags.nvidiaProvider && flags.nemotronIntuitive;
+}
+
 export function isModelWebSurfSelectionEnabled(
   value = process.env[SENTIQ_MODEL_TOOL_ENV.webSurfSelection],
 ): boolean {
@@ -279,6 +301,8 @@ export function getModelToolRuntimeSnapshot(): ModelToolRuntimeSnapshot {
     registryEnabled: isModelToolRegistryEnabled(),
     groqTransportEnabled: isGroqSentIQToolTransportEnabled(),
     geminiTransportEnabled: isGeminiSentIQToolTransportEnabled(),
+    pollinationsTransportEnabled: isPollinationsSentIQToolTransportEnabled(),
+    nvidiaTransportEnabled: isNvidiaSentIQToolTransportEnabled(),
     webSurfSelectionEnabled: isModelWebSurfSelectionEnabled(),
     imageSelectionEnabled: isModelImageSelectionEnabled(),
     chartSelectionEnabled: isModelChartSelectionEnabled(),
@@ -291,7 +315,12 @@ export function getModelToolRuntimeSnapshot(): ModelToolRuntimeSnapshot {
 export function getEnabledAutomaticSentIQTools(): readonly SentIQToolName[] {
   const flags = getModelToolRuntimeSnapshot();
   if (!flags.registryEnabled) return [];
-  if (!flags.groqTransportEnabled && !flags.geminiTransportEnabled) return [];
+  if (
+    !flags.groqTransportEnabled
+    && !flags.geminiTransportEnabled
+    && !flags.pollinationsTransportEnabled
+    && !flags.nvidiaTransportEnabled
+  ) return [];
   return [
     ...(flags.webSurfSelectionEnabled ? ["web_surf" as const] : []),
     ...(flags.imageSelectionEnabled ? ["image_gen" as const] : []),

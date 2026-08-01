@@ -244,7 +244,7 @@ replaceExact(
   "backend/server.ts",
   '                execution_mode: "fast" as const,',
   '                execution_mode: "intuitive" as const,',
-  2,
+  1,
 );
 
 // ---------------------------------------------------------------------------
@@ -333,6 +333,7 @@ replaceExact(
   "llm_adapter.py",
   '    "gemini_transport_enabled": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,\n',
   '    "gemini_transport_enabled": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,\n    "pollinations_transport_enabled": SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED,\n',
+  2,
 );
 replaceExact(
   "llm_adapter.py",
@@ -411,7 +412,7 @@ replaceExact(
   "llm_adapter.py",
   '        max_output_tokens,\n        effective_images,\n    )',
   '        max_output_tokens,\n        effective_images,\n        sentiq_tool_request,\n    )',
-  2,
+  1,
 );
 replaceExact(
   "llm_adapter.py",
@@ -652,13 +653,6 @@ replaceExact(
   '        assert adapter._sentiq_tool_request_for_route(TOOL_REQUEST, "pollinations", "openai-large") is None',
   '        assert adapter._sentiq_tool_request_for_route(TOOL_REQUEST, "pollinations", "openai-large") is TOOL_REQUEST',
 );
-replaceExact(
-  "backend/testModelToolProviderTransport.py",
-  '    ), patch.object(adapter, "GOOGLE_GENAI_MODULE", object()\n    ), patch.object(',
-  '    ), patch.object(adapter, "SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED", True), patch.object(adapter, "GOOGLE_GENAI_MODULE", object()\n    ), patch.object(',
-  1,
-);
-
 // Existing image routing tests now assert the Boolean-driven paid policy.
 replaceRegex(
   "backend/testImageRoutingSafety.ts",
@@ -709,8 +703,8 @@ import { getProviderToolDefinitions, validateModelToolCalls } from "./orchestrat
 for (const plan of ["student_core", "premium", "pro"] as const) {
   const visual = getImageModelForPlan(plan, false);
   const text = getImageModelForPlan(plan, true);
-  assert.equal(visual.model, "zimage", `${plan} non-text image route`);
-  assert.equal(text.model, "gpt-image-2", `${plan} text-rendering image route`);
+  assert.equal(visual.model, "zimage", plan + " non-text image route");
+  assert.equal(text.model, "gpt-image-2", plan + " text-rendering image route");
   assert.deepEqual(getImageProviderOrder("visual", visual.model).slice(0, 2), ["zimage", "klein"]);
   assert.deepEqual(getImageProviderOrder("text", text.model).slice(0, 2), ["gpt-image-2", "kontext"]);
 }
@@ -910,12 +904,6 @@ if __name__ == "__main__":
 `);
 
 // Documentation reflects model-decided routing and unchanged quota differences.
-replaceExact(
-  "docs/BILLING_AND_PRICING.md",
-  '- Free: `dreamshaper` primary, then `flux`.\n- Student Core: `zimage` primary, then `klein`.\n- Premium: `zimage` primary, then `klein`.\n- Pro: `gpt-image-2` primary, then `kontext`.\n\nThe plan decides the primary image model. Prompt wording does not silently upgrade or downgrade it.',
-  '- Free: `dreamshaper` primary, then `flux`.\n- Essential, Plus, and Pro without required readable text: `zimage` primary, then `klein`.\n- Essential, Plus, and Pro with required readable text: `gpt-image-2` primary, then `kontext`.\n\nFor paid plans, the validated `image_gen.requires_text_rendering` decision is made by the active texting model. Paid plans differ by image quota only, not model access. Free ignores this decision and retains its existing route.',
-);
-
 // Contract assertions ensure the patch did not leave legacy prompt-based routing.
 for (const path of [
   "backend/billing/modelEntitlementRouter.ts",

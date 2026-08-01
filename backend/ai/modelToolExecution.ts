@@ -84,7 +84,7 @@ export async function dispatchAutomaticModelToolCall<T>(args: {
   context: ToolAvailabilityContext;
   allowedTools: readonly SentIQToolName[];
   executeWebSurf: (query: string, call: ValidatedToolCall) => Promise<T>;
-  executeImage: (prompt: string, call: ValidatedToolCall) => Promise<T>;
+  executeImage: (prompt: string, requiresTextRendering: boolean, call: ValidatedToolCall) => Promise<T>;
   executeChart: (request: string, call: ValidatedToolCall) => Promise<T>;
   executeFile: (request: string, format: string | undefined, call: ValidatedToolCall) => Promise<T>;
   executeMemory: (content: string, type: "identity" | "preference" | "project" | undefined, scope: "global" | "chat" | undefined, call: ValidatedToolCall) => Promise<T>;
@@ -113,7 +113,11 @@ export async function dispatchAutomaticModelToolCall<T>(args: {
         result = await args.executeWebSurf(String(call.arguments.query), call);
         break;
       case "image_gen":
-        result = await args.executeImage(String(call.arguments.prompt), call);
+        result = await args.executeImage(
+          String(call.arguments.prompt),
+          call.arguments.requires_text_rendering === true,
+          call,
+        );
         break;
       case "chart_gen":
         result = await args.executeChart(String(call.arguments.request), call);
