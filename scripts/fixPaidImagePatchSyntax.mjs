@@ -1,7 +1,15 @@
 import fs from "node:fs";
 
-const path = "scripts/applyPaidImageTextRoutingPass2.mjs";
-let source = fs.readFileSync(path, "utf8");
+function replaceInFile(path, before, after) {
+  let content = fs.readFileSync(path, "utf8");
+  if (content.includes(after)) return;
+  if (!content.includes(before)) throw new Error(`Missing repair marker in ${path}: ${before}`);
+  content = content.replace(before, after);
+  fs.writeFileSync(path, content, "utf8");
+}
+
+const patchPath = "scripts/applyPaidImageTextRoutingPass2.mjs";
+let source = fs.readFileSync(patchPath, "utf8");
 const replacements = [
   [
     '  assert.equal(visual.model, "zimage", `${plan} non-text image route`);',
@@ -49,6 +57,22 @@ removeLastReplaceExactBefore(
   "// Contract assertions ensure the patch did not leave legacy prompt-based routing.",
   ["docs/BILLING_AND_PRICING.md", "Student Core", "gpt-image-2"],
 );
+fs.writeFileSync(patchPath, source, "utf8");
 
-fs.writeFileSync(path, source, "utf8");
-console.log("Fixed paid image routing patch syntax and occurrence counts.");
+replaceInFile(
+  "backend/billing/testQuota.ts",
+  '  const image = getImageModelForPlan("premium", "make a poster with the title SentIQ Chat");',
+  '  const image = getImageModelForPlan("premium", true);',
+);
+replaceInFile(
+  "backend/server.ts",
+  '      route: entitledImageRoute.route,\n      metadata: {\n        ...(imageReservation.metadata ?? {}),\n        requires_text_rendering: textRenderingDecision.requiresTextRendering,\n        text_rendering_decision_source: textRenderingDecision.source,\n      },\n    };',
+  '      route: entitledImageRoute.route,\n    };',
+);
+replaceInFile(
+  "backend/server.ts",
+  '    await billingQuotaService.commit(committedImageReservation, {\n      endpoint: "images.generate",\n      route: "image_generation",\n    });',
+  '    await billingQuotaService.commit(committedImageReservation, {\n      endpoint: "images.generate",\n      route: "image_generation",\n      requires_text_rendering: textRenderingDecision.requiresTextRendering,\n      text_rendering_decision_source: textRenderingDecision.source,\n    });',
+);
+
+console.log("Fixed paid image routing patch syntax, occurrence counts, and type contracts.");
