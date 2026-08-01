@@ -1,4 +1,5 @@
 import type { BillingPlanCode, BillableFeature } from "./entitlementTypes";
+import type { ImageModelPreference } from "../tools/imageGeneration/types";
 
 export interface ModelRoute {
   readonly feature: BillableFeature;
@@ -9,7 +10,15 @@ export interface ModelRoute {
   readonly route: "standard" | "lite" | "advanced_reasoning" | "image" | "deep_research";
 }
 
-const IMAGE_MODEL_BY_PLAN: Readonly<Record<BillingPlanCode, string>> = Object.freeze({
+export interface ImageModelRoute extends ModelRoute {
+  readonly feature: "image_generation";
+  readonly provider: "pollinations";
+  readonly model: ImageModelPreference;
+  readonly adapterModelOverride: ImageModelPreference;
+  readonly route: "image";
+}
+
+const IMAGE_MODEL_BY_PLAN: Readonly<Record<BillingPlanCode, ImageModelPreference>> = Object.freeze({
   free: "dreamshaper",
   student_core: "zimage",
   premium: "zimage",
@@ -104,12 +113,16 @@ export function getGeminiAdvancedReasoningCapabilityRoute(): ModelRoute {
   };
 }
 
+export function getImageModelPreferenceForPlan(planCode: BillingPlanCode): ImageModelPreference {
+  return IMAGE_MODEL_BY_PLAN[planCode];
+}
+
 /**
  * Resolve the image model strictly from the active billing plan.
  * Prompt wording must not upgrade or downgrade the entitled image model.
  */
-export function getImageModelForPlan(planCode: BillingPlanCode, _prompt: string): ModelRoute {
-  const model = IMAGE_MODEL_BY_PLAN[planCode];
+export function getImageModelForPlan(planCode: BillingPlanCode, _prompt: string): ImageModelRoute {
+  const model = getImageModelPreferenceForPlan(planCode);
   return {
     feature: "image_generation",
     provider: "pollinations",
