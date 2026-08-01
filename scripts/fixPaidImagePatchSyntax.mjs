@@ -30,19 +30,25 @@ for (const [before, after] of replacements) {
   source = source.replace(before, after);
 }
 
-const fixtureComment = source.indexOf("// Existing image routing tests now assert the Boolean-driven paid policy.");
-if (fixtureComment < 0) throw new Error("Missing image-routing fixture comment");
-const staleStart = source.lastIndexOf("replaceExact(", fixtureComment);
-if (staleStart >= 0) {
-  const candidate = source.slice(staleStart, fixtureComment);
-  if (
-    candidate.includes("backend/testModelToolProviderTransport.py")
-    && candidate.includes("GOOGLE_GENAI_MODULE")
-    && candidate.includes("SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED")
-  ) {
-    source = source.slice(0, staleStart) + source.slice(fixtureComment);
+function removeLastReplaceExactBefore(comment, requiredParts) {
+  const commentIndex = source.indexOf(comment);
+  if (commentIndex < 0) throw new Error(`Missing patch comment: ${comment}`);
+  const start = source.lastIndexOf("replaceExact(", commentIndex);
+  if (start < 0) return;
+  const candidate = source.slice(start, commentIndex);
+  if (requiredParts.every((part) => candidate.includes(part))) {
+    source = source.slice(0, start) + source.slice(commentIndex);
   }
 }
+
+removeLastReplaceExactBefore(
+  "// Existing image routing tests now assert the Boolean-driven paid policy.",
+  ["backend/testModelToolProviderTransport.py", "GOOGLE_GENAI_MODULE", "SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED"],
+);
+removeLastReplaceExactBefore(
+  "// Contract assertions ensure the patch did not leave legacy prompt-based routing.",
+  ["docs/BILLING_AND_PRICING.md", "Student Core", "gpt-image-2"],
+);
 
 fs.writeFileSync(path, source, "utf8");
 console.log("Fixed paid image routing patch syntax and occurrence counts.");
