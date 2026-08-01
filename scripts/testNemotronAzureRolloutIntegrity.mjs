@@ -118,6 +118,7 @@ const runtimeEnvironment = {
   SENTIQ_MODEL_TOOL_REGISTRY_ENABLED: "true",
   SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED: "true",
   SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED: "true",
+  SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED: "true",
   SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED: "true",
   SENTIQ_MODEL_IMAGE_SELECTION_ENABLED: "true",
   SENTIQ_MODEL_CHART_SELECTION_ENABLED: "true",
@@ -274,15 +275,30 @@ assert.equal(resolution.create.some((entry) => entry.environmentName === "POLLIN
 assert.equal(resolution.create.some((entry) => entry.environmentName === "SUPABASE_URL_1"), false);
 assert.equal(resolution.create.some((entry) => entry.environmentName === "SUPABASE_SERVICE_ROLE_KEY_1"), false);
 
-// O: all full-rollout flags become true.
+// O: provider, quota, and image-tool flags become true in the controlled rollout.
 for (const name of [
   "SENTIQ_NVIDIA_PROVIDER_ENABLED",
   "SENTIQ_NEMOTRON_INTUITIVE_ENABLED",
   "SENTIQ_UNIFIED_TEXT_TOKENS_V2_ENABLED",
   "SENTIQ_INTUITIVE_QUOTA_UI_ENABLED",
+  "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED",
+  "SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED",
+  "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED",
+  "SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED",
+  "SENTIQ_MODEL_IMAGE_SELECTION_ENABLED",
 ]) {
   assert.equal(FULL_ROLLOUT_PLAIN_ENV[name], "true");
   assert.equal(copiedEnvironment.find((entry) => entry.name === name).value, "true");
+}
+for (const name of [
+  "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED",
+  "SENTIQ_MODEL_CHART_SELECTION_ENABLED",
+  "SENTIQ_MODEL_FILE_SELECTION_ENABLED",
+  "SENTIQ_MODEL_MEMORY_SELECTION_ENABLED",
+  "SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED",
+]) {
+  assert.equal(FULL_ROLLOUT_PLAIN_ENV[name], "false");
+  assert.equal(copiedEnvironment.find((entry) => entry.name === name).value, "false");
 }
 
 // P: rollback restores the exact prior revision; it never reconstructs flags
