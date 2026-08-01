@@ -60,7 +60,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
-          python -m pip install --disable-pip-version-check requests python-dotenv
+          python -m pip install --disable-pip-version-check -r requirements.txt
 
       - name: Run focused contracts
         run: |
