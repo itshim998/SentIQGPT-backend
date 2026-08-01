@@ -136,6 +136,9 @@ jobs:
       - name: Image routing and plan quota policy
         run: npm run test:image-routing-safety
 
+      - name: Image policy Pass 2 contract
+        run: npx ts-node --project tsconfig.backend.json backend/testImagePolicyPass2.ts
+
       - name: Auth-only image quota migration
         run: npx ts-node --project tsconfig.backend.json backend/billing/testImagePlanPolicyMigration.ts
 
