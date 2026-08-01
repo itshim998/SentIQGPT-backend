@@ -172,7 +172,10 @@ async function main(): Promise<void> {
     const imageCall: ValidatedToolCall = {
       id: "call_image_1",
       name: "image_gen",
-      arguments: { prompt: "A concise executable image prompt for a puppy" },
+      arguments: {
+        prompt: "A concise executable image prompt for a puppy",
+        requires_text_rendering: false,
+      },
       index: 0,
     };
     let receivedPrompt = "";
