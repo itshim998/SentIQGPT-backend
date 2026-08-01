@@ -37,6 +37,7 @@ assert.deepEqual(
     "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED",
     "SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED",
     "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED",
+    "SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED",
     "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED",
     "SENTIQ_MODEL_IMAGE_SELECTION_ENABLED",
     "SENTIQ_MODEL_CHART_SELECTION_ENABLED",
@@ -60,7 +61,7 @@ assert.deepEqual(getSentIQToolCapability("groq"), {
 assert.equal(canUseSentIQTools("gemini", false), true);
 assert.equal(canUseSentIQTools("gemini", true), false);
 assert.equal(canUseSentIQTools("gemma", false), false);
-assert.equal(canUseSentIQTools("pollinations", true), false);
+assert.equal(canUseSentIQTools("pollinations", true), true);
 
 const parityFixtures = JSON.parse(
   readFileSync("backend/fixtures/modelToolCapabilityParity.json", "utf8"),
@@ -114,12 +115,17 @@ try {
     expectedAuthenticatedTools,
   );
   assert.deepEqual(getAutomaticSentIQToolsForRoute({ provider: "gemini", model: "gemma-4-31b-it" }, true), []);
-  assert.deepEqual(getAutomaticSentIQToolsForRoute({ provider: "pollinations", model: "mistral" }, false), []);
+  assert.deepEqual(
+    getAutomaticSentIQToolsForRoute({ provider: "pollinations", model: "mistral" }, false),
+    expectedAuthenticatedTools,
+  );
   assert.deepEqual(getAutomaticSentIQToolsForRoute({ provider: "groq", model: "llama-3.3-70b-versatile" }, true), []);
   assert.deepEqual(getModelToolRuntimeSnapshot(), {
     registryEnabled: true,
     groqTransportEnabled: true,
     geminiTransportEnabled: true,
+    pollinationsTransportEnabled: true,
+    nvidiaTransportEnabled: false,
     webSurfSelectionEnabled: true,
     imageSelectionEnabled: true,
     chartSelectionEnabled: true,
@@ -201,7 +207,7 @@ assert.deepEqual(normalizeBufferedProviderResult({ kind: "assistant_text", text:
 });
 assert.equal(normalizeBufferedProviderResult({
   kind: "tool_calls",
-  calls: [{ id: "buffered_1", name: "image_gen", arguments: '{"prompt":"A lighthouse"}' }],
+  calls: [{ id: "buffered_1", name: "image_gen", arguments: '{"prompt":"A lighthouse","requires_text_rendering":false}' }],
 }, guest).kind, "tool_calls");
 
 const explicitToolFixtures = [
@@ -211,7 +217,7 @@ const explicitToolFixtures = [
   },
   {
     userRequest: "Generate an image of a lighthouse.",
-    call: { id: "fixture_image", name: "image_gen", arguments: { prompt: "A lighthouse" } },
+    call: { id: "fixture_image", name: "image_gen", arguments: { prompt: "A lighthouse", requires_text_rendering: false } },
   },
   {
     userRequest: "Create a bar chart for this data.",
