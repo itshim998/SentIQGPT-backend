@@ -23,10 +23,17 @@ const replacements = [
     "  '        max_output_tokens,\\n        effective_images,\\n    )',\n  '        max_output_tokens,\\n        effective_images,\\n        sentiq_tool_request,\\n    )',\n  2,",
     "  '        max_output_tokens,\\n        effective_images,\\n    )',\n  '        max_output_tokens,\\n        effective_images,\\n        sentiq_tool_request,\\n    )',\n  1,",
   ],
+  [
+    "replaceExact(\n  \"backend/testModelToolProviderTransport.py\",\n  '    ), patch.object(adapter, \\\"GOOGLE_GENAI_MODULE\\\", object()\\n    ), patch.object(',\n  '    ), patch.object(adapter, \\\"SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED\\\", True), patch.object(adapter, \\\"GOOGLE_GENAI_MODULE\\\", object()\\n    ), patch.object(',\n  1,\n);\n",
+    "",
+  ],
 ];
 for (const [before, after] of replacements) {
-  if (source.includes(after)) continue;
-  if (!source.includes(before)) throw new Error(`Missing patch-script syntax marker: ${before}`);
+  if (after && source.includes(after)) continue;
+  if (!source.includes(before)) {
+    if (!after) continue;
+    throw new Error(`Missing patch-script syntax marker: ${before}`);
+  }
   source = source.replace(before, after);
 }
 fs.writeFileSync(path, source, "utf8");
