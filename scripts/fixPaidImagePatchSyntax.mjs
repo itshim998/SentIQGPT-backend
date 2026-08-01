@@ -74,7 +74,6 @@ replaceInFile(
   '    await billingQuotaService.commit(committedImageReservation, {\n      endpoint: "images.generate",\n      route: "image_generation",\n    });',
   '    await billingQuotaService.commit(committedImageReservation, {\n      endpoint: "images.generate",\n      route: "image_generation",\n      requires_text_rendering: textRenderingDecision.requiresTextRendering,\n      text_rendering_decision_source: textRenderingDecision.source,\n    });',
 );
-
 replaceInFile(
   "backend/testModelToolTransport.ts",
   '    "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED",\n    "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED",',
@@ -105,5 +104,10 @@ replaceInFile(
   'call: { id: "fixture_image", name: "image_gen", arguments: { prompt: "A lighthouse" } },',
   'call: { id: "fixture_image", name: "image_gen", arguments: { prompt: "A lighthouse", requires_text_rendering: false } },',
 );
+replaceInFile(
+  "backend/testModelToolProviderTransport.py",
+  '    ), patch.object(adapter, "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", True), patch.object(\n        adapter, "GOOGLE_GENAI_MODULE", object()\n    ),',
+  '    ), patch.object(adapter, "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED", True), patch.dict(\n        adapter.os.environ,\n        {\n            "SENTIQ_NVIDIA_PROVIDER_ENABLED": "true",\n            "SENTIQ_NEMOTRON_INTUITIVE_ENABLED": "true",\n        },\n    ), patch.object(\n        adapter, "GOOGLE_GENAI_MODULE", object()\n    ),',
+);
 
-console.log("Fixed paid image routing patch syntax, type contracts, and expanded transport fixtures.");
+console.log("Fixed paid image routing contracts and rollout-gated provider fixtures.");
