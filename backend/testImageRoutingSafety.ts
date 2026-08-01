@@ -5,6 +5,7 @@ import {
   type ImageModelPreference,
 } from "./tools/imageGeneration/imageRouter";
 import { getImageModelForPlan } from "./billing/modelEntitlementRouter";
+import { getPlanCatalog } from "./billing/planCatalog";
 import { buildPollinationsUrl } from "./tools/imageGeneration/pollinationsUtils";
 import {
   ImageProviderFailure,
@@ -30,6 +31,14 @@ function routeOrder(planCode: "free" | "student_core" | "premium" | "pro", promp
 }
 
 async function main(): Promise<void> {
+  const imageQuotas = Object.fromEntries(
+    getPlanCatalog().map((plan) => [plan.code, plan.entitlements.quotas.image_generation]),
+  );
+  assert.deepEqual(imageQuotas.free, { limit: 2, windowSeconds: 86_400, label: "Images" });
+  assert.deepEqual(imageQuotas.student_core, { limit: 4, windowSeconds: 43_200, label: "Images" });
+  assert.deepEqual(imageQuotas.premium, { limit: 8, windowSeconds: 43_200, label: "Images" });
+  assert.deepEqual(imageQuotas.pro, { limit: 16, windowSeconds: 43_200, label: "Images" });
+
   assert.equal(getImageModelForPlan("free", "a puppy in snow").model, "dreamshaper");
   assert.equal(getImageModelForPlan("free", "a poster with a title").model, "dreamshaper");
   assert.equal(getImageModelForPlan("student_core", "a puppy in snow").model, "zimage");
@@ -127,7 +136,7 @@ async function main(): Promise<void> {
     /user cancelled/,
   );
 
-  console.log("Plan-tier image routing, idempotency, and retry-disposition checks passed.");
+  console.log("Plan-tier image routing, quotas, idempotency, and retry-disposition checks passed.");
 }
 
 main().catch((error) => {
