@@ -139,7 +139,7 @@ async function main(): Promise<void> {
   const plans = getPlanCatalog();
   assert.deepEqual(plans.map((plan) => plan.name), ["Free", "Essential", "Plus", "Pro"]);
   assert.deepEqual(plans.map((plan) => plan.pricePaise), [0, 9_900, 24_900, 54_900]);
-  assert.deepEqual(plans.map((plan) => plan.entitlements.quotas.image_generation.limit), [2, 4, 8, 12]);
+  assert.deepEqual(plans.map((plan) => plan.entitlements.quotas.image_generation.limit), [2, 4, 8, 16]);
   assert.deepEqual(plans.map((plan) => plan.entitlements.quotas.deep_research.limit), [7, 15, 30, 50]);
   assert.deepEqual(plans.map((plan) => plan.entitlements.quotas.advanced_reasoning.limit), [0, 3, 8, 20]);
   assert(plans.every((plan) => plan.entitlements.quotas.premium_text.label === "Standard tokens"));
