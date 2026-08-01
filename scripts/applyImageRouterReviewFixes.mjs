@@ -30,6 +30,12 @@ replaceExact(
 
 replaceExact(
   "backend/testImageRoutingSafety.ts",
+  "  requireImageModelPreference,\n  type ImageProvider,\n",
+  "  requireImageModelPreference,\n  type ImageModelPreference,\n  type ImageProvider,\n",
+);
+
+replaceExact(
+  "backend/testImageRoutingSafety.ts",
   '  assert.equal(getImageProviderOrder("a puppy in snow", "flux")[0], "flux");\n',
   '  assert.equal(getImageProviderOrder("a puppy in snow", "flux")[0], "flux");\n  assert.deepEqual(\n    getImageProviderOrder("a puppy in snow", "unexpected-model" as ImageModelPreference).slice(0, 2),\n    ["dreamshaper", "flux"],\n    "an unexpected runtime preference degrades to the safe ordinary chain",\n  );\n',
 );
