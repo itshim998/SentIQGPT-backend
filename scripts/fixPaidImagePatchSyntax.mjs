@@ -30,9 +30,18 @@ for (const [before, after] of replacements) {
   source = source.replace(before, after);
 }
 
-const staleFixturePatch = /replaceExact\(\n  "backend\/testModelToolProviderTransport\.py",\n  '    \), patch\.object\(adapter, \\"GOOGLE_GENAI_MODULE\\", object\(\)\\n    \), patch\.object\(',[\s\S]*?\n\);\n\n(?=\/\/ Existing image routing tests)/;
-if (staleFixturePatch.test(source)) {
-  source = source.replace(staleFixturePatch, "");
+const fixtureComment = source.indexOf("// Existing image routing tests now assert the Boolean-driven paid policy.");
+if (fixtureComment < 0) throw new Error("Missing image-routing fixture comment");
+const staleStart = source.lastIndexOf("replaceExact(", fixtureComment);
+if (staleStart >= 0) {
+  const candidate = source.slice(staleStart, fixtureComment);
+  if (
+    candidate.includes("backend/testModelToolProviderTransport.py")
+    && candidate.includes("GOOGLE_GENAI_MODULE")
+    && candidate.includes("SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED")
+  ) {
+    source = source.slice(0, staleStart) + source.slice(fixtureComment);
+  }
 }
 
 fs.writeFileSync(path, source, "utf8");
