@@ -6536,11 +6536,6 @@ app.post(
       adapterModelOverride: entitledImageRoute.adapterModelOverride,
       safeModelLabel: entitledImageRoute.safeModelLabel,
       route: entitledImageRoute.route,
-      metadata: {
-        ...(imageReservation.metadata ?? {}),
-        requires_text_rendering: textRenderingDecision.requiresTextRendering,
-        text_rendering_decision_source: textRenderingDecision.source,
-      },
     };
     const preferredModel = entitledImageRoute.adapterModelOverride;
 
@@ -6599,6 +6594,8 @@ app.post(
     await billingQuotaService.commit(committedImageReservation, {
       endpoint: "images.generate",
       route: "image_generation",
+      requires_text_rendering: textRenderingDecision.requiresTextRendering,
+      text_rendering_decision_source: textRenderingDecision.source,
     });
 
     if (userDb && conversationId) {
