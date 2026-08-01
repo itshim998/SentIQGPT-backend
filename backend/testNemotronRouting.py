@@ -45,7 +45,7 @@ class FakeNvidiaProvider:
         self.complete_calls = []
         self.stream_calls = []
 
-    def complete(self, prompt, *, max_tokens, reasoning_budget):
+    def complete(self, prompt, *, max_tokens, reasoning_budget, sentiq_tool_request=None):
         self.complete_calls.append((prompt, max_tokens, reasoning_budget))
         if self.fail:
             raise RuntimeError("simulated primary exhaustion")
@@ -55,7 +55,7 @@ class FakeNvidiaProvider:
             "nvidia-slot-2",
         )
 
-    def stream(self, prompt, *, max_tokens, reasoning_budget):
+    def stream(self, prompt, *, max_tokens, reasoning_budget, sentiq_tool_request=None):
         self.stream_calls.append((prompt, max_tokens, reasoning_budget))
         if self.fail:
             raise RuntimeError("simulated primary exhaustion")
@@ -75,7 +75,7 @@ class FakeNvidiaProvider:
 
 
 class PartialFailureNvidiaProvider(FakeNvidiaProvider):
-    def stream(self, prompt, *, max_tokens, reasoning_budget):
+    def stream(self, prompt, *, max_tokens, reasoning_budget, sentiq_tool_request=None):
         self.stream_calls.append((prompt, max_tokens, reasoning_budget))
         yield "partial-visible"
         raise RuntimeError("simulated disconnect after visible output")
@@ -168,16 +168,19 @@ def test_fast_never_selects_nvidia():
     assert_equal(len(provider.complete_calls), 0, "Fast NVIDIA invocation count")
 
 
-def test_tool_selection_stays_on_existing_route():
-    with patched_flags(True, True):
+def test_tool_selection_routes_to_nvidia_when_enabled():
+    with patched_flags(True, True), patched(SENTIQ_MODEL_TOOL_REGISTRY_ENABLED=True):
         assert_true(
-            not adapter._nemotron_intuitive_lane_enabled(
+            adapter._nemotron_intuitive_lane_enabled(
                 "intuitive",
                 "chat",
-                sentiq_tool_request={"allowed_tools": ["web_search"]},
+                sentiq_tool_request={
+                    "allowed_tool_names": ["image_gen"],
+                    "tools": [{"name": "image_gen", "input_schema": {"type": "object"}}],
+                },
                 required_capabilities=["sentiq_tools_buffered"],
             ),
-            "tool-selection turn must not route to the final-answer provider",
+            "tool-selection turn must route to the enabled native Intuitive provider",
         )
         assert_equal(
             adapter._apply_execution_mode_output_cap(
@@ -300,7 +303,7 @@ def main() -> int:
     tests = [
         test_flag_matrix_and_buffered_routing,
         test_fast_never_selects_nvidia,
-        test_tool_selection_stays_on_existing_route,
+        test_tool_selection_routes_to_nvidia_when_enabled,
         test_pollinations_only_after_primary_failure,
         test_stream_usage_without_hidden_text,
         test_stream_does_not_fallback_after_visible_output,
