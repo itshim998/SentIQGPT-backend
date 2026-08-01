@@ -6526,7 +6526,7 @@ app.post(
       safeModelLabel: entitledImageRoute.safeModelLabel,
       route: entitledImageRoute.route,
     };
-    const preferredModel = entitledImageRoute.adapterModelOverride as any;
+    const preferredModel = entitledImageRoute.adapterModelOverride;
 
     let result: Awaited<ReturnType<typeof routeImageGeneration>>;
     const imageAbortController = new AbortController();

@@ -5,6 +5,7 @@
 import { handleChat, selectChatToolCalls } from "../ai/ChatHandler";
 import { createHash, randomUUID } from "crypto";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
+import type { ImageModelPreference } from "../tools/imageGeneration/types";
 import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
 import { routeFileGeneration } from "../tools/fileGeneration/fileGenerator";
 import { executeTavilySearchPipeline } from "../tools/webSearch/tavilySearchPipeline";
@@ -602,7 +603,7 @@ async function execImageGeneration(
   }
   let reservation: UsageReservation | null = null;
   let committedReservation: UsageReservation | null = null;
-  let preferredModel: string | undefined;
+  let preferredModel: ImageModelPreference | undefined;
 
   if (ctx.billingIdentity) {
     const initialRoute = getImageModelForPlan("free", input);
@@ -643,7 +644,7 @@ async function execImageGeneration(
       prompt: input,
       userId: ctx.userId,
       signal,
-      preferredModel: preferredModel as any,
+      preferredModel,
       requestKey,
     });
     if (result.success && committedReservation) {

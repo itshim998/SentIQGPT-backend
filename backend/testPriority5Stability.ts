@@ -55,7 +55,8 @@ assert(
     && toolExecutor.includes("prompt: input,")
     && toolExecutor.includes("userId: ctx.userId,")
     && toolExecutor.includes("signal,")
-    && toolExecutor.includes("preferredModel: preferredModel as any,")
+    && toolExecutor.includes("preferredModel,")
+    && !toolExecutor.includes("preferredModel as any")
     && toolExecutor.includes("requestKey,"),
   "orchestrator image tool passes user, signal, model preference, and stable request key",
 );
