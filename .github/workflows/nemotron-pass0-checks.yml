@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "scripts/fixPaidImagePatchSyntax.mjs"
+      - "scripts/fixPaidImageExecutionFixture.mjs"
       - "scripts/runPaidImageTextRoutingPass2.mjs"
       - "scripts/applyPaidImageTextRoutingPass2.mjs"
       - ".github/workflows/nemotron-pass0-checks.yml"
@@ -36,6 +37,9 @@ jobs:
 
       - name: Repair patch generator syntax
         run: node scripts/fixPaidImagePatchSyntax.mjs
+
+      - name: Repair model tool execution fixture
+        run: node scripts/fixPaidImageExecutionFixture.mjs
 
       - name: Apply implementation
         run: node scripts/runPaidImageTextRoutingPass2.mjs
