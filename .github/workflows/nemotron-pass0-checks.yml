@@ -28,6 +28,7 @@ on:
       - "docs/PLAN_TIER_IMAGE_POLICY_ROLLOUT.md"
       - "supabase/migrations/**"
       - "Dockerfile"
+      - "llm_adapter.py"
       - "package.json"
       - "package-lock.json"
       - "requirements.txt"
