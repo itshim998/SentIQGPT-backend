@@ -75,4 +75,35 @@ replaceInFile(
   '    await billingQuotaService.commit(committedImageReservation, {\n      endpoint: "images.generate",\n      route: "image_generation",\n      requires_text_rendering: textRenderingDecision.requiresTextRendering,\n      text_rendering_decision_source: textRenderingDecision.source,\n    });',
 );
 
-console.log("Fixed paid image routing patch syntax, occurrence counts, and type contracts.");
+replaceInFile(
+  "backend/testModelToolTransport.ts",
+  '    "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED",\n    "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED",',
+  '    "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED",\n    "SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED",\n    "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED",',
+);
+replaceInFile(
+  "backend/testModelToolTransport.ts",
+  'assert.equal(canUseSentIQTools("pollinations", true), false);',
+  'assert.equal(canUseSentIQTools("pollinations", true), true);',
+);
+replaceInFile(
+  "backend/testModelToolTransport.ts",
+  '  assert.deepEqual(getAutomaticSentIQToolsForRoute({ provider: "pollinations", model: "mistral" }, false), []);',
+  '  assert.deepEqual(\n    getAutomaticSentIQToolsForRoute({ provider: "pollinations", model: "mistral" }, false),\n    expectedAuthenticatedTools,\n  );',
+);
+replaceInFile(
+  "backend/testModelToolTransport.ts",
+  '    geminiTransportEnabled: true,\n    webSurfSelectionEnabled: true,',
+  '    geminiTransportEnabled: true,\n    pollinationsTransportEnabled: true,\n    nvidiaTransportEnabled: false,\n    webSurfSelectionEnabled: true,',
+);
+replaceInFile(
+  "backend/testModelToolTransport.ts",
+  'calls: [{ id: "buffered_1", name: "image_gen", arguments: \'{"prompt":"A lighthouse"}\' }],',
+  'calls: [{ id: "buffered_1", name: "image_gen", arguments: \'{"prompt":"A lighthouse","requires_text_rendering":false}\' }],',
+);
+replaceInFile(
+  "backend/testModelToolTransport.ts",
+  'call: { id: "fixture_image", name: "image_gen", arguments: { prompt: "A lighthouse" } },',
+  'call: { id: "fixture_image", name: "image_gen", arguments: { prompt: "A lighthouse", requires_text_rendering: false } },',
+);
+
+console.log("Fixed paid image routing patch syntax, type contracts, and expanded transport fixtures.");
