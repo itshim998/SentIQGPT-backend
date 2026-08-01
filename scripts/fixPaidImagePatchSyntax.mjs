@@ -19,6 +19,10 @@ const replacements = [
     "  '    \"gemini_transport_enabled\": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,\\n',\n  '    \"gemini_transport_enabled\": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,\\n    \"pollinations_transport_enabled\": SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED,\\n',\n);",
     "  '    \"gemini_transport_enabled\": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,\\n',\n  '    \"gemini_transport_enabled\": SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED,\\n    \"pollinations_transport_enabled\": SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED,\\n',\n  2,\n);",
   ],
+  [
+    "  '        max_output_tokens,\\n        effective_images,\\n    )',\n  '        max_output_tokens,\\n        effective_images,\\n        sentiq_tool_request,\\n    )',\n  2,",
+    "  '        max_output_tokens,\\n        effective_images,\\n    )',\n  '        max_output_tokens,\\n        effective_images,\\n        sentiq_tool_request,\\n    )',\n  1,",
+  ],
 ];
 for (const [before, after] of replacements) {
   if (source.includes(after)) continue;
