@@ -1,0 +1,48 @@
+name: Apply image policy Pass 2 source cleanup
+
+on:
+  push:
+    branches:
+      - fix/plan-tier-image-routing-pass1
+    paths:
+      - scripts/applyImagePolicyPass2Patch.mjs
+      - .github/workflows/apply-image-policy-pass2-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-source-cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Pass 2 branch
+        uses: actions/checkout@v6
+        with:
+          ref: fix/plan-tier-image-routing-pass1
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Apply exact source transformations
+        run: node scripts/applyImagePolicyPass2Patch.mjs
+
+      - name: Validate patch whitespace
+        run: git diff --check
+
+      - name: Commit source cleanup
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if git diff --quiet; then
+            echo "No source cleanup changes were required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/orchestrator/toolExecutor.ts backend/server.ts backend/testPriority5Stability.ts .env.example .env.template
+          git commit -m "Complete image policy Pass 2 source cleanup"
+          git push origin HEAD:fix/plan-tier-image-routing-pass1
