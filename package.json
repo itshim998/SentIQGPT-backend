@@ -31,7 +31,7 @@
     "test:supabase-canonicalization": "ts-node --project tsconfig.backend.json backend/testSupabaseCanonicalization.ts",
     "test:execution-profiles": "ts-node --project tsconfig.backend.json backend/testExecutionProfiles.ts",
     "test:nemotron-rollout-flags": "ts-node --project tsconfig.backend.json backend/testNemotronRolloutFlags.ts",
-    "test:nemotron-provider": "python backend/testPollinationsIntuitiveModelConfig.py && python backend/testNvidiaNemotronProvider.py && python backend/testNemotronRouting.py && ts-node --project tsconfig.backend.json backend/testNemotronIntuitiveLane.ts",
+    "test:nemotron-provider": "python backend/testPollinationsIntuitiveModelConfig.py && python backend/testPollinationsIntuitiveLive.py && python backend/testNvidiaNemotronProvider.py && python backend/testNemotronRouting.py && ts-node --project tsconfig.backend.json backend/testNemotronIntuitiveLane.ts",
     "test:nemotron-deployment-readiness": "ts-node --project tsconfig.backend.json backend/testNemotronDeploymentReadiness.ts && node scripts/testNemotronCanaryContract.mjs",
     "test:nemotron-production-readiness": "ts-node --project tsconfig.backend.json backend/testUnifiedTextProductionReadiness.ts",
     "verify:nemotron-deployment-readiness": "ts-node --project tsconfig.backend.json backend/verifyNemotronDeploymentReadiness.ts",
