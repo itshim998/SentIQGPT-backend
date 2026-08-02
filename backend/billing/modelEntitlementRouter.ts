@@ -1,4 +1,5 @@
 import type { BillingPlanCode, BillableFeature } from "./entitlementTypes";
+import type { ImageModelPreference } from "../tools/imageGeneration/types";
 
 export interface ModelRoute {
   readonly feature: BillableFeature;
@@ -9,10 +10,13 @@ export interface ModelRoute {
   readonly route: "standard" | "lite" | "advanced_reasoning" | "image" | "deep_research";
 }
 
-const TEXT_RENDERING_PATTERNS: readonly RegExp[] = [
-  /\b(?:logo|poster|banner|title|text|typography|label|sign|quote|words|heading|ui\s*mockup|chart\s*label)\b/i,
-  /["'“”‘’][^"'“”‘’]{2,}["'“”‘’]/,
-];
+export interface ImageModelRoute extends ModelRoute {
+  readonly feature: "image_generation";
+  readonly provider: "pollinations";
+  readonly model: ImageModelPreference;
+  readonly adapterModelOverride: ImageModelPreference;
+  readonly route: "image";
+}
 
 function stripProviderPrefix(value: string): { provider: string; model: string } {
   const normalized = value.trim();
@@ -102,35 +106,30 @@ export function getGeminiAdvancedReasoningCapabilityRoute(): ModelRoute {
   };
 }
 
-export function imagePromptNeedsTextRendering(prompt: string): boolean {
-  return TEXT_RENDERING_PATTERNS.some((pattern) => pattern.test(prompt));
+export function getImageModelPreferenceForPlan(
+  planCode: BillingPlanCode,
+  requiresTextRendering: boolean,
+): ImageModelPreference {
+  if (planCode === "free") return "dreamshaper";
+  return requiresTextRendering ? "gpt-image-2" : "zimage";
 }
 
-export function getImageModelForPlan(planCode: BillingPlanCode, prompt: string): ModelRoute {
-  const needsText = imagePromptNeedsTextRendering(prompt);
-  if (!needsText) {
-    const model = readModel("SENTIQ_IMAGE_MODEL_NORMAL", "pollinations:flux");
-    return {
-      feature: "image_generation",
-      provider: model.provider || "pollinations",
-      model: model.model,
-      adapterModelOverride: model.adapterModelOverride,
-      safeModelLabel: "Image",
-      route: "image",
-    };
-  }
-
-  const premium = planCode === "premium" || planCode === "pro";
-  const model = readModel(
-    premium ? "SENTIQ_IMAGE_MODEL_TEXT_PREMIUM" : "SENTIQ_IMAGE_MODEL_TEXT_CORE",
-    "pollinations:flux",
-  );
+/**
+ * Resolve the image model from the active billing plan and the validated
+ * texting-model decision carried by image_gen. Prompt wording is never parsed
+ * here, so plan enforcement remains server-owned and deterministic.
+ */
+export function getImageModelForPlan(
+  planCode: BillingPlanCode,
+  requiresTextRendering: boolean,
+): ImageModelRoute {
+  const model = getImageModelPreferenceForPlan(planCode, requiresTextRendering);
   return {
     feature: "image_generation",
-    provider: model.provider || "pollinations",
-    model: model.model,
-    adapterModelOverride: model.adapterModelOverride,
-    safeModelLabel: "Precision Image",
+    provider: "pollinations",
+    model,
+    adapterModelOverride: model,
+    safeModelLabel: planCode === "free" ? "Image" : "Precision Image",
     route: "image",
   };
 }

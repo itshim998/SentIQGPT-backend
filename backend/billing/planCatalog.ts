@@ -177,7 +177,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
         quotas: buildQuotas({
           premiumText: quota(TEXT_TOKEN_PLAN_POLICY.pro.standardTokens, 6 * 60 * 60, "Standard tokens"),
           liteText: quota(TEXT_TOKEN_PLAN_POLICY.pro.liteTokens, 24 * 60 * 60, "Lite tokens"),
-          imageGeneration: quota(12, 12 * 60 * 60, "Images"),
+          imageGeneration: quota(16, 12 * 60 * 60, "Images"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_PRO_DAILY", 20), 24 * 60 * 60, "Advanced reasoning"),
           deepResearch: quota(50, 2592000, "Deep Researches"),
         }),

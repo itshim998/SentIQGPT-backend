@@ -12,10 +12,13 @@ These are primary logical answer-model call counts for the successful request pa
 | Automatic file generation | 2 (selection + artifact content) | 1 |
 | Automatic memory update | 1 | 1 |
 | Manual WebSurf | 1 bounded synthesis | 1 |
-| Manual image generation | 0 | 1 |
+| Direct Free image generation | 0 | 1 |
+| Direct paid image generation | 1 text-rendering classification | 1 |
 | Ambiguous request requiring clarification | 1 | 0 |
 
 The clarification row is an ordinary assistant text response. The user's answer starts a new ordinary turn. Terminal tools do not trigger a post-tool text continuation. Automatic memory writes do not run the legacy memory classifier or summarizer. Automatic WebSurf disables SentIQ tools during its single synthesis continuation.
+
+For automatic image generation, the existing model-tool selection call returns both the executable image prompt and `requires_text_rendering`; it does not add a second answer-model call. The direct paid image endpoint has no preceding model-tool turn, so it makes one bounded structured classification call after quota reservation. Free ignores the text-rendering decision and therefore skips that classification call. If paid classification is unavailable, the server uses the bounded deterministic fallback rather than making another model call.
 
 When `SENTIQ_WEBSURF_V2_ENABLED` is false, the legacy retrieval branch asks Tavily for its generated answer and sets `skipLLMSynthesis: true`. In that configuration, automatic WebSurf is one answer-model selection call plus one retrieval tool call, while manual WebSurf has no answer-model call.
 
@@ -30,7 +33,7 @@ When `SENTIQ_WEBSURF_V2_ENABLED` is false, the legacy retrieval branch asks Tavi
 
 These paths must be measured separately from the primary user-turn decision cost. Reflection is not part of the current request path.
 
-Groq GPT-OSS automatic-tool turns can use the streaming local-function transport. Gemini automatic-tool turns use buffered `google-genai` function calling; their normalized text or single validated function call is then emitted through the existing SSE lifecycle. Ordinary Gemini text remains eligible for provider streaming. A pre-output Groq streaming failure may recover once through the Gemini buffered function transport. Recovery is forbidden after visible text or tool selection begins.
+Groq GPT-OSS automatic-tool turns use native OpenAI-compatible function calling. Gemini automatic-tool turns use buffered `google-genai` function calling; their normalized text or single validated function call is then emitted through the existing SSE lifecycle. Pollinations fallback turns use its OpenAI-compatible buffered or streaming function transport, subject to the selected model's live support. Intuitive tool-selection turns use Nvidia Nemotron's OpenAI-compatible transport when both Intuitive rollout flags are enabled. Ordinary provider text remains eligible for its existing streaming behavior. Recovery is forbidden after visible text or tool selection begins.
 
 ## Image retry boundary
 
@@ -40,20 +43,25 @@ Image providers do not offer a shared cross-provider idempotency contract. The e
 
 ## Controlled enablement
 
-Repository defaults remain off. A controlled environment must set `SENTIQ_MODEL_TOOL_REGISTRY_ENABLED=true`, enable the transport for every serving provider (`SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED=true` and, when Gemini fallback must retain tools, `SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED=true`), then enable only the approved product tools:
+Repository defaults remain safe. A controlled image-tool environment sets:
 
-- `SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED=true`
+- `SENTIQ_MODEL_TOOL_REGISTRY_ENABLED=true`
+- `SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED=true`
+- `SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED=true`
+- `SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED=true`
 - `SENTIQ_MODEL_IMAGE_SELECTION_ENABLED=true`
-- `SENTIQ_MODEL_CHART_SELECTION_ENABLED=true`
-- `SENTIQ_MODEL_FILE_SELECTION_ENABLED=true`
-- `SENTIQ_MODEL_MEMORY_SELECTION_ENABLED=true`
 
-Turning the registry or a selection flag off leaves ordinary chat and explicit manual controls available. It does not reactivate any keyword router. Real `.env` values are a deployment decision and are not changed by this pass.
+Intuitive Nvidia tool selection additionally requires:
 
-For a controlled diagnosis, set `SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED=true` temporarily. Node, FastAPI, and the Groq/Gemini payload builders then log only provider/model identifiers, flag booleans, streaming mode, allowed-tool counts/names, declaration presence, and tool-choice mode. Prompts, credentials, memory contents, and raw provider payloads are never logged. Return the flag to `false` after verification.
+- `SENTIQ_NVIDIA_PROVIDER_ENABLED=true`
+- `SENTIQ_NEMOTRON_INTUITIVE_ENABLED=true`
+
+The controlled paid-image rollout explicitly leaves WebSurf, chart, file, memory, and diagnostic selection off. Turning the registry or image-selection flag off leaves ordinary chat and explicit manual controls available. It does not reactivate any keyword router.
+
+For a controlled diagnosis, set `SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED=true` temporarily. Node, FastAPI, and the provider payload builders then log only provider/model identifiers, flag booleans, streaming mode, allowed-tool counts/names, declaration presence, and tool-choice mode. Prompts, credentials, memory contents, and raw provider payloads are never logged. Return the flag to `false` after verification.
 
 ## Release verification
 
 Run `npm run verify:model-native-tools` for the safe offline release gate. It checks configuration and deployment surfaces, Node/Python capability parity, provider serialization and parsing, recovery states, executor safety, frontend lifecycle replay, compilation and syntax, focused integrations, the golden evaluation, and `git diff --check`.
 
-Live provider and executor work is opt-in: `npm run verify:model-native-tools -- --live`. The live mode first requires the full offline gate to pass, then enables the nine canonical flags only in child-process memory. It runs five selection prompts, three ordinary-text negative prompts, one logical Tavily retrieval, one bounded image-provider path, one deterministic chart, and disposable file and memory flows. It does not edit `.env`, deploy, run Deep Research, write personal memory, or apply migrations.
+Live provider and executor work is opt-in: `npm run verify:model-native-tools -- --live`. The live mode first requires the full offline gate to pass, then enables the ten canonical flags only in child-process memory. It runs a bounded selection matrix and disposable executor flows. It does not edit `.env`, deploy, run Deep Research, write personal memory, or apply migrations.

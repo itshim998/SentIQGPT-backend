@@ -53,6 +53,7 @@ async function main(): Promise<void> {
     file: process.env.SENTIQ_MODEL_FILE_SELECTION_ENABLED,
     memory: process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED,
     groq: process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED,
+    pollinations: process.env.SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED,
   };
   process.env.SENTIQ_MODEL_TOOL_REGISTRY_ENABLED = "true";
   process.env.SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED = "true";
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
   process.env.SENTIQ_MODEL_FILE_SELECTION_ENABLED = "false";
   process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED = "false";
   process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = "false";
+  process.env.SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED = "false";
   try {
     assert.deepEqual(getEnabledAutomaticSentIQTools(), [], "selection flags require an enabled provider transport");
     process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = "true";
@@ -170,7 +172,10 @@ async function main(): Promise<void> {
     const imageCall: ValidatedToolCall = {
       id: "call_image_1",
       name: "image_gen",
-      arguments: { prompt: "A concise executable image prompt for a puppy" },
+      arguments: {
+        prompt: "A concise executable image prompt for a puppy",
+        requires_text_rendering: false,
+      },
       index: 0,
     };
     let receivedPrompt = "";
@@ -344,6 +349,8 @@ async function main(): Promise<void> {
     else process.env.SENTIQ_MODEL_MEMORY_SELECTION_ENABLED = previous.memory;
     if (previous.groq === undefined) delete process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED;
     else process.env.SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED = previous.groq;
+    if (previous.pollinations === undefined) delete process.env.SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED;
+    else process.env.SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED = previous.pollinations;
   }
   console.log("Model-native tool execution checks passed.");
 }

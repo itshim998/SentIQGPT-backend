@@ -27,7 +27,7 @@ bootProfiler.enable();
 bootProfiler.mark("env.loaded");
 
 // AI handlers
-import { handleChat } from "./ai/ChatHandler";
+import { classifyImageTextRendering, handleChat } from "./ai/ChatHandler";
 import { processMessageForMemory, compressMemories } from "./ai/MemoryProcessor";
 import { extractTextFromFile, validateFileUpload } from "./ai/FileIngestionHandler";
 import { routeImageGeneration } from "./tools/imageGeneration/imageRouter";
@@ -4021,7 +4021,7 @@ app.post(
             ? {
                 prompt: buildIntuitiveToolSelectionPrompt(effectiveUserMessage, automaticTools),
                 max_output_tokens: 200,
-                execution_mode: "fast" as const,
+                execution_mode: "intuitive" as const,
                 budget_class: "auxiliary" as const,
                 auxiliary_budget: "routing" as const,
                 skip_wrappers: true,
@@ -6507,7 +6507,7 @@ app.post(
       await ensureNamedWorkspaceProfile(userId, "images.generate", userDb);
     }
 
-    const initialImageRoute = getImageModelForPlan("free", providerPrompt);
+    const initialImageRoute = getImageModelForPlan("free", false);
     const imageReservation = await billingQuotaService.reserveFeature({
       identity: billingIdentity,
       feature: "image_generation",
@@ -6517,7 +6517,18 @@ app.post(
       clientRequestId: clientRequestId || null,
       metadata: { endpoint: "images.generate" },
     });
-    const entitledImageRoute = getImageModelForPlan(imageReservation.planCode, providerPrompt);
+    const textRenderingDecision = imageReservation.planCode === "free"
+      ? { requiresTextRendering: false, source: "free_not_applicable" as const }
+      : await classifyImageTextRendering({
+          prompt: providerPrompt,
+          executionMode: parsed.data.executionMode,
+          userId,
+          authenticated: !isGuest,
+        });
+    const entitledImageRoute = getImageModelForPlan(
+      imageReservation.planCode,
+      textRenderingDecision.requiresTextRendering,
+    );
     const committedImageReservation: UsageReservation = {
       ...imageReservation,
       provider: entitledImageRoute.provider,
@@ -6526,7 +6537,7 @@ app.post(
       safeModelLabel: entitledImageRoute.safeModelLabel,
       route: entitledImageRoute.route,
     };
-    const preferredModel = entitledImageRoute.adapterModelOverride as any;
+    const preferredModel = entitledImageRoute.adapterModelOverride;
 
     let result: Awaited<ReturnType<typeof routeImageGeneration>>;
     const imageAbortController = new AbortController();
@@ -6583,6 +6594,8 @@ app.post(
     await billingQuotaService.commit(committedImageReservation, {
       endpoint: "images.generate",
       route: "image_generation",
+      requires_text_rendering: textRenderingDecision.requiresTextRendering,
+      text_rendering_decision_source: textRenderingDecision.source,
     });
 
     if (userDb && conversationId) {

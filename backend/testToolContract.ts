@@ -13,7 +13,7 @@ import {
 const guest = { authenticated: false } as const;
 const authenticated = { authenticated: true } as const;
 
-assert.match(SENTIQ_TOOL_REGISTRY_VERSION, /^2026-07-pass5-v\d+$/);
+assert.match(SENTIQ_TOOL_REGISTRY_VERSION, /^2026-08-paid-image-text-routing-v\d+$/);
 assert.deepEqual(
   SENTIQ_TOOL_REGISTRY.map((tool) => tool.name),
   ["web_surf", "image_gen", "chart_gen", "file_gen", "memory_update"],
@@ -97,6 +97,12 @@ assert.throws(() => validateModelToolCalls([
   { id: "call_missing", name: "web_surf", arguments: {} },
 ], authenticated), /Required/);
 assert.throws(() => validateModelToolCalls([
+  { id: "image_missing_text_decision", name: "image_gen", arguments: { prompt: "A lake" } },
+], authenticated), /Required/);
+assert.equal(validateModelToolCalls([
+  { id: "image_with_text", name: "image_gen", arguments: { prompt: "A poster reading Welcome", requires_text_rendering: true } },
+], authenticated)[0]?.arguments.requires_text_rendering, true);
+assert.throws(() => validateModelToolCalls([
   { id: "call_5", name: "file_gen", arguments: { request: "Make it", format: "exe" } },
 ], authenticated), /Invalid enum value/);
 assert.deepEqual(validateModelToolCalls([
@@ -110,11 +116,11 @@ assert.throws(() => validateModelToolCalls([
 ], authenticated), /unrecognized key/i);
 assert.throws(() => validateModelToolCalls([
   { id: "duplicate", name: "web_surf", arguments: { query: "one" } },
-  { id: "duplicate", name: "image_gen", arguments: { prompt: "two" } },
+  { id: "duplicate", name: "image_gen", arguments: { prompt: "two", requires_text_rendering: false } },
 ], authenticated), /Duplicate/);
 assert.throws(() => validateModelToolCalls([
   { id: "index_1", name: "web_surf", arguments: { query: "one" }, index: 0 },
-  { id: "index_2", name: "image_gen", arguments: { prompt: "two" }, index: 0 },
+  { id: "index_2", name: "image_gen", arguments: { prompt: "two", requires_text_rendering: false }, index: 0 },
 ], authenticated), /Duplicate tool call index/);
 assert.throws(() => validateModelToolCalls([
   { id: "bad id", name: "web_surf", arguments: { query: "news" } },
@@ -130,7 +136,7 @@ assert.deepEqual(normalizeAssistantTurn({ kind: "assistant_text", text: "Hello" 
 assert.equal(
   normalizeAssistantTurn({
     kind: "tool_calls",
-    calls: [{ id: "call_7", name: "image_gen", arguments: { prompt: "A calm lake" } }],
+    calls: [{ id: "call_7", name: "image_gen", arguments: { prompt: "A calm lake", requires_text_rendering: false } }],
   }, guest).kind,
   "tool_calls",
 );

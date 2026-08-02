@@ -1,7 +1,8 @@
-// SentIQ Chat v2 — Pollinations Shared Utilities
+// SentIQ Chat v3 — Pollinations Shared Utilities
 //
 // Common helpers for all Pollinations-based image providers.
-// Handles prompt enhancement, URL construction, and authenticated image fetching.
+// Handles prompt enhancement, URL construction, authenticated image fetching,
+// and credential-safe request diagnostics.
 //
 // Reads API key from POLLINATIONS_API_KEY (preferred) or FLUX_API_KEY (legacy).
 // The key is sent as a &key= query parameter (Pollinations API v2 format).
@@ -75,6 +76,25 @@ export function buildPollinationsUrl(
 }
 
 /**
+ * Produce a request diagnostic without exposing the prompt path, seed, API key,
+ * or any other query-string material.
+ */
+export function describePollinationsRequest(
+  imageUrl: string,
+  authenticated: boolean,
+): string {
+  try {
+    const parsed = new URL(imageUrl);
+    const model = parsed.searchParams.get("model") || "unknown";
+    const width = parsed.searchParams.get("width") || "unknown";
+    const height = parsed.searchParams.get("height") || "unknown";
+    return `[POLLINATIONS] request model=${model} width=${width} height=${height} auth=${authenticated}`;
+  } catch {
+    return `[POLLINATIONS] request model=unknown width=unknown height=unknown auth=${authenticated}`;
+  }
+}
+
+/**
  * Download a Pollinations image via GET and return it as base64.
  * Auth is handled via the &key= query parameter in the URL.
  */
@@ -90,7 +110,7 @@ export async function fetchPollinationsImage(
   else signal?.addEventListener("abort", abortFromParent, { once: true });
 
   const apiKey = getPollinationsApiKey();
-  console.log(`[POLLINATIONS] request url=${imageUrl.slice(0, 120)}... auth=${!!apiKey}`);
+  console.log(describePollinationsRequest(imageUrl, Boolean(apiKey)));
 
   try {
     const response = await fetch(imageUrl, {

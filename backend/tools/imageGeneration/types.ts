@@ -1,6 +1,35 @@
-// SentIQ Chat v2 — Image Generation Types
+// SentIQ Chat v3 — Image Generation Types
 //
-// Shared interface for all image providers and the router.
+// Shared interface and model-preference contract for all image providers and
+// every image-routing call site.
+
+export const IMAGE_MODEL_PREFERENCES = Object.freeze([
+  "dreamshaper",
+  "flux",
+  "zimage",
+  "klein",
+  "gpt-image-2",
+  "kontext",
+  "wan-image",
+  "gptimage",
+  "gptimage-large",
+] as const);
+
+export type ImageModelPreference = (typeof IMAGE_MODEL_PREFERENCES)[number];
+
+const IMAGE_MODEL_PREFERENCE_SET: ReadonlySet<string> = new Set(IMAGE_MODEL_PREFERENCES);
+
+export function isImageModelPreference(value: string): value is ImageModelPreference {
+  return IMAGE_MODEL_PREFERENCE_SET.has(value.trim().toLowerCase());
+}
+
+export function requireImageModelPreference(value: string): ImageModelPreference {
+  const normalized = value.trim().toLowerCase();
+  if (!isImageModelPreference(normalized)) {
+    throw new Error(`Unsupported image model preference: ${value}`);
+  }
+  return normalized;
+}
 
 /**
  * Common result shape returned by every image provider.

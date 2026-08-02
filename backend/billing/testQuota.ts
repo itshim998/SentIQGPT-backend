@@ -81,7 +81,7 @@ function testPlanCatalog() {
 
   const premium = getPremiumTextRoute();
   const lite = getLiteTextRoute();
-  const image = getImageModelForPlan("premium", "make a poster with the title SentIQ Chat");
+  const image = getImageModelForPlan("premium", true);
   assert(premium.safeModelLabel === "Standard", "premium route must expose safe Standard label");
   assert(lite.safeModelLabel === "Lite", "lite route must expose safe Lite label");
   assert(image.safeModelLabel === "Precision Image", "text-image route must expose safe Precision Image label");

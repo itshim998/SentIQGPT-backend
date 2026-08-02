@@ -23,11 +23,15 @@ on:
       - "scripts/verifyNemotronFullRolloutLive.mjs"
       - "scripts/execAzureContainerAppCommand.sh"
       - "scripts/start-container-validated.sh"
+      - "docs/BILLING_AND_PRICING.md"
       - "docs/ai/NEMOTRON_PRODUCTION_ROLLOUT.md"
+      - "docs/PLAN_TIER_IMAGE_POLICY_ROLLOUT.md"
       - "supabase/migrations/**"
       - "Dockerfile"
+      - "llm_adapter.py"
       - "package.json"
       - "package-lock.json"
+      - "requirements.txt"
       - "tsconfig.backend.json"
       - ".env.example"
       - ".env.template"
@@ -87,7 +91,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
-          python -m pip install --disable-pip-version-check requests python-dotenv
+          python -m pip install --disable-pip-version-check -r requirements.txt
 
       - name: Validate GitHub workflow schemas
         shell: bash
@@ -108,6 +112,24 @@ jobs:
       - name: TypeScript build
         run: npm run build
 
+      - name: Image routing and plan quota policy
+        run: npm run test:image-routing-safety
+
+      - name: Paid image text-rendering policy
+        run: npx ts-node --project tsconfig.backend.json backend/testPaidImageTextRouting.ts
+
+      - name: Image policy Pass 2 contract
+        run: npx ts-node --project tsconfig.backend.json backend/testImagePolicyPass2.ts
+
+      - name: Auth-only image quota migration
+        run: npx ts-node --project tsconfig.backend.json backend/billing/testImagePlanPolicyMigration.ts
+
+      - name: Priority 5 image routing stability
+        run: npx ts-node --project tsconfig.backend.json backend/testPriority5Stability.ts
+
+      - name: Billing quota and payment safety
+        run: npm run billing:test-quota
+
       - name: Independent rollout flags
         run: npm run test:nemotron-rollout-flags
 
@@ -124,9 +146,19 @@ jobs:
         run: |
           python -m py_compile backend/verifyNvidiaNemotronLive.py
           python -m py_compile backend/verifyPollinationsIntuitiveLive.py
+          python -m py_compile llm_adapter.py backend/nvidia_nemotron.py
 
       - name: NVIDIA and Pollinations Intuitive provider tests
         run: npm run test:nemotron-provider
+
+      - name: Provider-neutral model tool transports
+        run: npm run test:model-tool-transport
+
+      - name: Expanded Pollinations and NVIDIA tool transports
+        run: python backend/testExpandedModelToolProviders.py
+
+      - name: Model-native tool execution
+        run: npm run test:model-tool-execution
 
       - name: Existing token allowances
         run: npm run billing:test-token-allowances

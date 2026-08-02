@@ -1,4 +1,5 @@
 import type { ExecutionMode } from "./executionProfile";
+import type { ImageModelPreference } from "../tools/imageGeneration/types";
 
 export interface CapabilityModelSelection {
   readonly provider: "groq" | "gemini";
@@ -6,8 +7,6 @@ export interface CapabilityModelSelection {
   readonly source: "capability";
   readonly fallback_reason?: string;
 }
-
-export type ImageModelPreference = "zimage" | "wan-image";
 
 interface CapabilityContext {
   readonly hasImage?: boolean;

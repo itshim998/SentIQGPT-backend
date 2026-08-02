@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ExecutionMode } from "./executionProfile";
 
-export const SENTIQ_TOOL_REGISTRY_VERSION = "2026-07-pass5-v2";
+export const SENTIQ_TOOL_REGISTRY_VERSION = "2026-08-paid-image-text-routing-v1";
 export const MAX_TOOL_ARGUMENT_BYTES = 16 * 1024;
 export const MAX_TOOL_CALLS_PER_TURN = 4;
 
@@ -97,7 +97,10 @@ const fileFormat = z.enum(["html", "txt", "xlsx", "pptx", "docx", "pdf"]);
 
 const schemas = {
   web_surf: z.object({ query: boundedText }).strict(),
-  image_gen: z.object({ prompt: boundedText }).strict(),
+  image_gen: z.object({
+    prompt: boundedText,
+    requires_text_rendering: z.boolean(),
+  }).strict(),
   chart_gen: z.object({ request: boundedText }).strict(),
   file_gen: z.object({ request: boundedText, format: fileFormat.optional() }).strict(),
   memory_update: z.object({
@@ -123,6 +126,11 @@ const stringProperty = (description: string, extra: Record<string, unknown> = {}
   maxLength: 12_000,
   description,
   ...extra,
+});
+
+const booleanProperty = (description: string): JsonSchema => ({
+  type: "boolean",
+  description,
 });
 
 function authenticated(context: ToolAvailabilityContext): boolean {
@@ -155,8 +163,13 @@ export const SENTIQ_TOOL_REGISTRY: readonly ToolDefinition[] = [
   }),
   definition({
     name: "image_gen",
-    description: "Generate a new image or visual asset. Use this for explicit image-generation requests instead of describing an image in chat text.",
-    inputSchema: objectSchema({ prompt: stringProperty("The image the user wants generated.") }, ["prompt"]),
+    description: "Generate a new image or visual asset. Use this for explicit image-generation requests instead of describing an image in chat text. Decide whether readable text must be rendered inside the generated pixels.",
+    inputSchema: objectSchema({
+      prompt: stringProperty("The image the user wants generated. Preserve all material visual and wording constraints."),
+      requires_text_rendering: booleanProperty(
+        "True only when the generated image must visibly render user-requested words, letters, numbers, captions, labels, signage, titles, slogans, logos, UI copy, or other readable text. False for purely visual scenes without required readable text.",
+      ),
+    }, ["prompt", "requires_text_rendering"]),
     resultSchema: objectSchema({ image: { type: "object" } }, ["image"]),
     authorization: "entitled",
     handoff: "terminal_structured",
