@@ -212,7 +212,7 @@ jobs:
             echo 'The last-ready revision has no running replica.'
             exit 1
           }
-          runtime_command="$(node scripts/verifyAzureRuntimeEnvironment.mjs --emit-command)"
+          runtime_command="$(node scripts/verifyAzureRuntimeEnvironment.mjs --emit-command --allow-missing=SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED_PRESENT)"
           bash scripts/execAzureContainerAppCommand.sh \
             --name "${APP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
@@ -690,6 +690,16 @@ jobs:
               "SENTIQ_NEMOTRON_INTUITIVE_ENABLED=true" \
               "SENTIQ_UNIFIED_TEXT_TOKENS_V2_ENABLED=true" \
               "SENTIQ_INTUITIVE_QUOTA_UI_ENABLED=true" \
+              "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED=true" \
+              "SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED=true" \
+              "SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED=true" \
+              "SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED=true" \
+              "SENTIQ_MODEL_IMAGE_SELECTION_ENABLED=true" \
+              "SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED=false" \
+              "SENTIQ_MODEL_CHART_SELECTION_ENABLED=false" \
+              "SENTIQ_MODEL_FILE_SELECTION_ENABLED=false" \
+              "SENTIQ_MODEL_MEMORY_SELECTION_ENABLED=false" \
+              "SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED=false" \
               "NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1" \
               "NVIDIA_NEMOTRON_MODEL=nvidia/nemotron-3-ultra-550b-a55b" \
               "POLLINATIONS_OPENAI_ENDPOINT=https://gen.pollinations.ai/v1/chat/completions" \
@@ -797,6 +807,40 @@ jobs:
               "${revision_json}")"
             [[ "${flag_value}" == "true" ]] || {
               echo "${flag_name} is not active on the rollout revision."
+              exit 1
+            }
+          done
+          # Verify the image-only model-tool activation bundle before live probes.
+          for flag_name in \
+            SENTIQ_MODEL_TOOL_REGISTRY_ENABLED \
+            SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED \
+            SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED \
+            SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED \
+            SENTIQ_MODEL_IMAGE_SELECTION_ENABLED; do
+            flag_value="$(jq -r --arg container "${IMAGE_REPOSITORY}" --arg name "${flag_name}" \
+              '.properties.template.containers[] | select(.name == $container)
+                | [.env[]? | select(.name == $name) | .value]
+                | first // empty' \
+              "${revision_json}")"
+            [[ "${flag_value}" == "true" ]] || {
+              echo "${flag_name} is not enabled on the rollout revision."
+              exit 1
+            }
+          done
+
+          for flag_name in \
+            SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED \
+            SENTIQ_MODEL_CHART_SELECTION_ENABLED \
+            SENTIQ_MODEL_FILE_SELECTION_ENABLED \
+            SENTIQ_MODEL_MEMORY_SELECTION_ENABLED \
+            SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED; do
+            flag_value="$(jq -r --arg container "${IMAGE_REPOSITORY}" --arg name "${flag_name}" \
+              '.properties.template.containers[] | select(.name == $container)
+                | [.env[]? | select(.name == $name) | .value]
+                | first // empty' \
+              "${revision_json}")"
+            [[ "${flag_value}" == "false" ]] || {
+              echo "${flag_name} is not disabled on the rollout revision."
               exit 1
             }
           done
