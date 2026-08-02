@@ -14,6 +14,7 @@ import {
 } from "./resolveAzureSecretReferences.mjs";
 import {
   buildAzureRuntimeProbeCommand,
+  LEGACY_ROLLBACK_ALLOWED_MISSING_CHECKS,
   verifyAzureRuntimeEnvironment,
 } from "./verifyAzureRuntimeEnvironment.mjs";
 import {
@@ -140,6 +141,89 @@ assert.equal(runtimeProbeExecution.status, 0, runtimeProbeExecution.stderr);
 const encodedRuntimeReport = JSON.parse(runtimeProbeExecution.stdout);
 assert.equal(encodedRuntimeReport.ok, true);
 assert(!runtimeProbeExecution.stdout.includes("synthetic-credential-value"));
+
+// Legacy rollback compatibility is narrow and explicit. Strict verification
+// still rejects the missing Pollinations transport flag.
+const legacyRuntimeEnvironment = { ...runtimeEnvironment };
+delete legacyRuntimeEnvironment.SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED;
+
+const strictLegacyRuntimeReport = verifyAzureRuntimeEnvironment(
+  legacyRuntimeEnvironment,
+);
+assert.equal(strictLegacyRuntimeReport.ok, false);
+assert.deepEqual(
+  strictLegacyRuntimeReport.failedChecks,
+  ["SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED_PRESENT"],
+);
+assert.deepEqual(strictLegacyRuntimeReport.compatibilityExceptions, []);
+
+// The rollback-source preflight may allow only the newly introduced
+// Pollinations transport check to be absent.
+const compatibleLegacyRuntimeReport = verifyAzureRuntimeEnvironment(
+  legacyRuntimeEnvironment,
+  {
+    allowedMissingChecks: LEGACY_ROLLBACK_ALLOWED_MISSING_CHECKS,
+  },
+);
+assert.equal(compatibleLegacyRuntimeReport.ok, true);
+assert.deepEqual(compatibleLegacyRuntimeReport.failedChecks, []);
+assert.deepEqual(
+  compatibleLegacyRuntimeReport.compatibilityExceptions,
+  ["SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED_PRESENT"],
+);
+
+// A different missing requirement still fails closed.
+const invalidLegacyRuntimeEnvironment = { ...legacyRuntimeEnvironment };
+delete invalidLegacyRuntimeEnvironment.SENTIQ_MODEL_TOOL_REGISTRY_ENABLED;
+
+const invalidLegacyRuntimeReport = verifyAzureRuntimeEnvironment(
+  invalidLegacyRuntimeEnvironment,
+  {
+    allowedMissingChecks: LEGACY_ROLLBACK_ALLOWED_MISSING_CHECKS,
+  },
+);
+assert.equal(invalidLegacyRuntimeReport.ok, false);
+assert(
+  invalidLegacyRuntimeReport.failedChecks.includes(
+    "SENTIQ_MODEL_TOOL_REGISTRY_ENABLED_PRESENT",
+  ),
+);
+
+// The actual Python command used inside Azure follows the same compatibility
+// policy and reports the exception without exposing any values.
+const legacyRuntimeProbeCommand = buildAzureRuntimeProbeCommand({
+  allowedMissingChecks: LEGACY_ROLLBACK_ALLOWED_MISSING_CHECKS,
+});
+const legacyRuntimeProbeExecution = spawnSync(
+  "python",
+  ["-c", legacyRuntimeProbeCommand.slice("python -c ".length)],
+  {
+    encoding: "utf8",
+    env: { ...process.env, ...legacyRuntimeEnvironment },
+  },
+);
+assert.equal(
+  legacyRuntimeProbeExecution.status,
+  0,
+  legacyRuntimeProbeExecution.stderr,
+);
+const encodedLegacyRuntimeReport = JSON.parse(
+  legacyRuntimeProbeExecution.stdout,
+);
+assert.equal(encodedLegacyRuntimeReport.ok, true);
+assert.deepEqual(encodedLegacyRuntimeReport.failedChecks, []);
+assert.deepEqual(
+  encodedLegacyRuntimeReport.compatibilityExceptions,
+  ["SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED_PRESENT"],
+);
+
+// Arbitrary compatibility exceptions are rejected.
+assert.throws(
+  () => verifyAzureRuntimeEnvironment(runtimeEnvironment, {
+    allowedMissingChecks: ["DATABASE_CONFIGURATION_AVAILABLE"],
+  }),
+  /Unsupported runtime compatibility exception/,
+);
 
 function revisionFixture({
   name = rollbackRevisionName,
@@ -300,6 +384,55 @@ for (const name of [
   assert.equal(FULL_ROLLOUT_PLAIN_ENV[name], "false");
   assert.equal(copiedEnvironment.find((entry) => entry.name === name).value, "false");
 }
+
+// The executable workflow must apply the compatibility exception only to the
+// old rollback source and must explicitly configure the new revision.
+const rolloutWorkflow = fs.readFileSync(
+  new URL("../.github/workflows/nemotron-full-rollout.yml", import.meta.url),
+  "utf8",
+);
+
+assert.equal(
+  (
+    rolloutWorkflow.match(
+      /--allow-missing=SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED_PRESENT/g,
+    ) ?? []
+  ).length,
+  1,
+);
+
+assert.equal(
+  (
+    rolloutWorkflow.match(
+      /verifyAzureRuntimeEnvironment\.mjs --emit-command/g,
+    ) ?? []
+  ).length,
+  2,
+);
+
+for (const [name, value] of Object.entries({
+  SENTIQ_MODEL_TOOL_REGISTRY_ENABLED: "true",
+  SENTIQ_GROQ_TOOL_TRANSPORT_ENABLED: "true",
+  SENTIQ_GEMINI_TOOL_TRANSPORT_ENABLED: "true",
+  SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED: "true",
+  SENTIQ_MODEL_IMAGE_SELECTION_ENABLED: "true",
+  SENTIQ_MODEL_WEBSURF_SELECTION_ENABLED: "false",
+  SENTIQ_MODEL_CHART_SELECTION_ENABLED: "false",
+  SENTIQ_MODEL_FILE_SELECTION_ENABLED: "false",
+  SENTIQ_MODEL_MEMORY_SELECTION_ENABLED: "false",
+  SENTIQ_MODEL_TOOL_DIAGNOSTICS_ENABLED: "false",
+})) {
+  assert(
+    rolloutWorkflow.includes(`"${name}=${value}"`),
+    `${name}=${value} is missing from the executable rollout environment`,
+  );
+}
+
+assert(
+  rolloutWorkflow.includes(
+    "Verify the image-only model-tool activation bundle before live probes.",
+  ),
+);
 
 // P: rollback restores the exact prior revision; it never reconstructs flags
 // from redacted metadata.
