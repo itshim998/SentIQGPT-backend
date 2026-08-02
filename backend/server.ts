@@ -4021,7 +4021,7 @@ app.post(
             ? {
                 prompt: buildIntuitiveToolSelectionPrompt(effectiveUserMessage, automaticTools),
                 max_output_tokens: 200,
-                execution_mode: "intuitive" as const,
+                execution_mode: "fast" as const,
                 budget_class: "auxiliary" as const,
                 auxiliary_budget: "routing" as const,
                 skip_wrappers: true,

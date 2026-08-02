@@ -175,6 +175,14 @@ function main(): void {
 
     const serverSource = readFileSync(join(__dirname, "server.ts"), "utf8");
     assert(serverSource.includes("const intuitiveToolSelectionActive = intuitiveLaneActive && automaticTools.length > 0"));
+    const selectorExecutionModes = [...serverSource.matchAll(
+      /prompt:\s*buildIntuitiveToolSelectionPrompt\([^)]*\)[\s\S]{0,240}?execution_mode:\s*"([^"]+)"/g,
+    )].map((match) => match[1]);
+    assert.deepStrictEqual(
+      selectorExecutionModes,
+      ["fast", "fast"],
+      "guest and authenticated Intuitive tool-decision turns must stay on the Fast auxiliary lane",
+    );
     assert(
       serverSource.includes("if (intuitiveToolSelectionActive) return;"),
       "selection text must never be forwarded as a client-visible answer",
