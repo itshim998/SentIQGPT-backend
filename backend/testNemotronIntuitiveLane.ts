@@ -173,15 +173,32 @@ function main(): void {
       "nested WebSurf synthesis must reuse the outer request-local ledger",
     );
 
+    const chatHandlerSource = readFileSync(join(__dirname, "ai", "ChatHandler.ts"), "utf8");
+    const selectorFunctionStart = chatHandlerSource.indexOf("export async function selectChatToolCalls");
+    const selectorFunctionEnd = chatHandlerSource.indexOf("export interface ImageTextRenderingDecision", selectorFunctionStart);
+    const selectorFunction = chatHandlerSource.slice(selectorFunctionStart, selectorFunctionEnd);
+    assert(selectorFunctionStart >= 0 && selectorFunctionEnd > selectorFunctionStart);
+    assert(
+      selectorFunction.includes('execution_mode: "fast"'),
+      "shared Intuitive tool-decision turns must stay on the Fast auxiliary lane",
+    );
+    assert(
+      selectorFunction.includes('reasoning_effort: "low"'),
+      "shared Intuitive tool-decision turns must reserve their bounded output for the decision",
+    );
+
     const serverSource = readFileSync(join(__dirname, "server.ts"), "utf8");
     assert(serverSource.includes("const intuitiveToolSelectionActive = intuitiveLaneActive && automaticTools.length > 0"));
-    const selectorExecutionModes = [...serverSource.matchAll(
-      /prompt:\s*buildIntuitiveToolSelectionPrompt\([^)]*\)[\s\S]{0,240}?execution_mode:\s*"([^"]+)"/g,
-    )].map((match) => match[1]);
+    const selectorConfigs = [...serverSource.matchAll(
+      /prompt:\s*buildIntuitiveToolSelectionPrompt\([^)]*\)[\s\S]{0,240}?execution_mode:\s*"([^"]+)"[\s\S]{0,120}?reasoning_effort:\s*"([^"]+)"/g,
+    )].map((match) => ({ executionMode: match[1], reasoningEffort: match[2] }));
     assert.deepStrictEqual(
-      selectorExecutionModes,
-      ["fast", "fast"],
-      "guest and authenticated Intuitive tool-decision turns must stay on the Fast auxiliary lane",
+      selectorConfigs,
+      [
+        { executionMode: "fast", reasoningEffort: "low" },
+        { executionMode: "fast", reasoningEffort: "low" },
+      ],
+      "guest and authenticated Intuitive tool-decision turns must stay on the bounded Fast/low auxiliary lane",
     );
     assert(
       serverSource.includes("if (intuitiveToolSelectionActive) return;"),
