@@ -434,6 +434,40 @@ assert(
   ),
 );
 
+// Runtime reports may be compact or conventionally spaced JSON. Both
+// rollback-source and new-revision probes must be serialization-independent.
+const runtimeReportMatcher =
+  `grep -aE '"event"[[:space:]]*:[[:space:]]*"azure_runtime_environment"'`;
+
+assert.equal(
+  rolloutWorkflow.split(runtimeReportMatcher).length - 1,
+  2,
+);
+
+assert.equal(
+  rolloutWorkflow.includes(
+    `grep -a '"event": "azure_runtime_environment"'`,
+  ),
+  false,
+);
+
+const runtimeReportEventPattern =
+  /"event"\s*:\s*"azure_runtime_environment"/;
+
+assert.equal(
+  runtimeReportEventPattern.test(
+    '{"event":"azure_runtime_environment","ok":true}',
+  ),
+  true,
+);
+
+assert.equal(
+  runtimeReportEventPattern.test(
+    '{"event": "azure_runtime_environment", "ok": true}',
+  ),
+  true,
+);
+
 // P: rollback restores the exact prior revision; it never reconstructs flags
 // from redacted metadata.
 const rollbackPlan = buildExactRollbackPlan({

@@ -220,7 +220,7 @@ jobs:
             --replica "${rollback_replica}" \
             --container "${IMAGE_REPOSITORY}" \
             --command "${runtime_command}" | tee "${runtime_exec_log}"
-          grep -a '"event": "azure_runtime_environment"' "${runtime_exec_log}" \
+          grep -aE '"event"[[:space:]]*:[[:space:]]*"azure_runtime_environment"' "${runtime_exec_log}" \
             | tail -1 \
             | tr -d '\r' > "${runtime_report_json}"
           jq -e '.event == "azure_runtime_environment" and .ok == true' \
@@ -870,7 +870,7 @@ jobs:
             --replica "${replica}" \
             --container "${IMAGE_REPOSITORY}" \
             --command "${runtime_command}" | tee azure-runtime-report.jsonl
-          grep -a '"event": "azure_runtime_environment"' azure-runtime-report.jsonl \
+          grep -aE '"event"[[:space:]]*:[[:space:]]*"azure_runtime_environment"' azure-runtime-report.jsonl \
             | tail -1 \
             | jq -e '.ok == true' >/dev/null
 
