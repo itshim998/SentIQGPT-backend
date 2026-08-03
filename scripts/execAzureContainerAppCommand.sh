@@ -66,7 +66,9 @@ done
 
 provider_bundle_nvidia_command='python backend/verifyNvidiaNemotronLive.py'
 provider_bundle_pollinations_command='python backend/verifyPollinationsIntuitiveLive.py'
-provider_bundle_remote_command='python backend/verifyNvidiaNemotronLive.py && python backend/verifyPollinationsIntuitiveLive.py'
+provider_bundle_python_source="import subprocess,sys;a=subprocess.call([sys.executable,'backend/verifyNvidiaNemotronLive.py']);b=subprocess.call([sys.executable,'backend/verifyPollinationsIntuitiveLive.py']) if a==0 else 1;sys.exit(a or b)"
+provider_bundle_encoded="$(printf '%s' "${provider_bundle_python_source}" | base64 | tr -d '\r\n')"
+provider_bundle_remote_command="python -c exec(__import__('base64').b64decode('${provider_bundle_encoded}'))"
 provider_bundle_enabled="${SENTIQ_AZURE_EXEC_PROVIDER_BUNDLE_ENABLED:-true}"
 provider_bundle_mode=""
 
