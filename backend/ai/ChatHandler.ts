@@ -98,6 +98,7 @@ export async function selectChatToolCalls(args: {
     prompt: buildIntuitiveToolSelectionPrompt(args.userMessage, args.allowedModelTools),
     model_override: args.modelOverride,
     user_id: args.userId,
+    safety_mode: "low_risk_text",
     max_output_tokens: 200,
     execution_mode: "fast",
     reasoning_effort: "low",
