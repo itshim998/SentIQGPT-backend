@@ -34,9 +34,19 @@ if (!window[INSTALL_FLAG]) {
     };
   }
 
+  function canCaptureSendIntent(target = null) {
+    const button = target || document.getElementById?.("send-btn");
+    return Boolean(
+      button
+      && !button.disabled
+      && !button.classList?.contains("is-stop")
+      && button.getAttribute?.("aria-label") !== "Stop generating"
+    );
+  }
+
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target.closest("#send-btn") : null;
-    if (target) captureSendIntent("send_button");
+    if (target && canCaptureSendIntent(target)) captureSendIntent("send_button");
   }, true);
 
   document.addEventListener("keydown", (event) => {
@@ -46,17 +56,23 @@ if (!window[INSTALL_FLAG]) {
       && !event.isComposing
       && event.target instanceof HTMLTextAreaElement
       && event.target.id === "chat-input"
+      && canCaptureSendIntent()
     ) {
       captureSendIntent("enter_key");
     }
   }, true);
 
   function getIntentSnapshot(startPerfMs) {
-    if (lastSendIntent && startPerfMs - lastSendIntent.perfMs <= MAX_INTENT_AGE_MS) {
+    if (
+      lastSendIntent
+      && startPerfMs >= lastSendIntent.perfMs
+      && startPerfMs - lastSendIntent.perfMs <= MAX_INTENT_AGE_MS
+    ) {
       const snapshot = { ...lastSendIntent, inferred: false };
       lastSendIntent = null;
       return snapshot;
     }
+    lastSendIntent = null;
     return {
       source: "stream_call",
       perfMs: startPerfMs,
