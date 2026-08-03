@@ -19,10 +19,9 @@ jobs:
       - name: List matching master full rollout runs
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -Eeuo pipefail
-          # Refreshed after the Azure exec throttle hardening rollout.
+          expected_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/master" --jq '.sha')"
           runs="$(gh run list \
             --repo "${GITHUB_REPOSITORY}" \
             --workflow nemotron-full-rollout.yml \
@@ -31,4 +30,4 @@ jobs:
             --limit 10 \
             --json databaseId,headSha,status,conclusion,url,createdAt)"
           jq . <<<"${runs}"
-          jq -e --arg sha "${EXPECTED_SHA}" '.[] | select(.headSha == $sha)' <<<"${runs}" >/dev/null
+          jq -e --arg sha "${expected_sha}" '.[] | select(.headSha == $sha)' <<<"${runs}" >/dev/null
