@@ -56,7 +56,11 @@ COPY backend/llm_service.py \
      backend/nvidia_nemotron.py \
      backend/verifyNvidiaNemotronLive.py \
      backend/verifyPollinationsIntuitiveLive.py \
+     backend/run_llm_service.py \
+     backend/fast_latency_observability.py \
+     backend/fast_latency_httpx_stream.py \
      ./backend/
+COPY backend/observability/fast-latency-preload.cjs ./backend/observability/
 COPY llm_adapter.py task_registry.json ./
 COPY scripts/start-container.sh scripts/start-container-validated.sh ./scripts/
 
