@@ -1,6 +1,13 @@
 name: Fast latency production baseline
 
 on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/fast-latency-production-baseline.yml"
+      - "scripts/runFastLatencyProductionProbes.mjs"
+      - "scripts/analyze_fast_latency_baseline.py"
   pull_request:
     paths:
       - ".github/workflows/fast-latency-production-baseline.yml"
@@ -21,8 +28,25 @@ env:
   PROBE_COUNT: "12"
 
 jobs:
+  validate:
+    name: Validate production baseline tooling
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate probe and analyzer syntax
+        run: |
+          set -Eeuo pipefail
+          node --check scripts/runFastLatencyProductionProbes.mjs
+          python -m py_compile scripts/analyze_fast_latency_baseline.py
+
   baseline:
     name: Probe deployed Fast path and attribute TTFT
+    if: github.event_name != 'pull_request'
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -52,7 +76,7 @@ jobs:
         env:
           APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-          EXPECTED_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
           set -Eeuo pipefail
           mkdir -p fast-latency-baseline
