@@ -30,3 +30,12 @@ window.SENTIQ_SUPABASE_URL = SENTIQ_SUPABASE_URL;
 window.SENTIQ_SUPABASE_ANON_KEY = SENTIQ_SUPABASE_ANON_KEY;
 window.SENTIQ_API_BASE = SENTIQ_API_BASE;
 window.SENTIQ_SUPPORT_EMAIL = SENTIQ_SUPPORT_EMAIL;
+
+// Wave 0 Fast-mode latency attribution is loaded outside the chat controller so
+// it can observe send intent, network dispatch, stream delivery, and first paint
+// without changing request behavior or answer generation.
+queueMicrotask(() => {
+  import("./observability/fast-latency.js").catch((error) => {
+    console.warn("[FastLatency] Browser observability failed to load:", error?.name || "unknown_error");
+  });
+});
