@@ -2,6 +2,7 @@
 
 // This diagnostic is intentionally committed with the controlled full-rollout trigger
 // so the baseline and immutable production image share the exact same master SHA.
+// Wave 0 rerun: sample the active revision after the shared Groq reset window.
 import { appendFile, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { randomUUID } from "node:crypto";
