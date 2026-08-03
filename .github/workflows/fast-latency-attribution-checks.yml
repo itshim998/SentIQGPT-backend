@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "backend/fast_latency_observability.py"
+      - "backend/fast_latency_httpx_stream.py"
       - "backend/observability/fast-latency-preload.cjs"
       - "backend/run_llm_service.py"
       - "backend/test_fast_latency_observability.py"
@@ -50,7 +51,10 @@ jobs:
           set -Eeuo pipefail
           node --check frontend/scripts/observability/fast-latency.js
           node --check backend/observability/fast-latency-preload.cjs
-          python -m py_compile backend/fast_latency_observability.py backend/run_llm_service.py
+          python -m py_compile \
+            backend/fast_latency_observability.py \
+            backend/fast_latency_httpx_stream.py \
+            backend/run_llm_service.py
           bash -n scripts/start-container.sh
 
       - name: Browser first-token and paint attribution
