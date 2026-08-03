@@ -1,0 +1,33 @@
+name: Find full rollout master run
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/find-full-rollout-run.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  find:
+    name: List trusted full rollout runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: List matching master full rollout runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -Eeuo pipefail
+          runs="$(gh run list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --workflow nemotron-full-rollout.yml \
+            --branch master \
+            --event push \
+            --limit 10 \
+            --json databaseId,headSha,status,conclusion,url,createdAt)"
+          jq . <<<"${runs}"
+          jq -e --arg sha "${EXPECTED_SHA}" '.[] | select(.headSha == $sha)' <<<"${runs}" >/dev/null
