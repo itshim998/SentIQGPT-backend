@@ -22,7 +22,7 @@ jobs:
           EXPECTED_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -Eeuo pipefail
-          # Refreshed after the controlled full-rollout trigger.
+          # Refreshed after the Azure exec throttle hardening rollout.
           runs="$(gh run list \
             --repo "${GITHUB_REPOSITORY}" \
             --workflow fast-latency-production-baseline.yml \
