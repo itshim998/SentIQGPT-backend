@@ -85,7 +85,7 @@ jobs:
             test -f /app/backend/observability/fast-latency-preload.cjs
             node --require=/app/backend/observability/fast-latency-preload.cjs \
               -e "if (!globalThis.__sentiqFastLatencyNodeInstalled) process.exit(1)"
-            python -m py_compile \
+            /opt/venv/bin/python -m py_compile \
               /app/backend/run_llm_service.py \
               /app/backend/fast_latency_observability.py \
               /app/backend/fast_latency_httpx_stream.py
