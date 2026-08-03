@@ -1,0 +1,224 @@
+name: Fast latency production baseline
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/fast-latency-production-baseline.yml"
+      - "scripts/runFastLatencyProductionProbes.mjs"
+      - "scripts/analyze_fast_latency_baseline.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: fast-latency-production-baseline
+  cancel-in-progress: true
+
+env:
+  IMAGE_REPOSITORY: sentiqgpt-backend
+  PROBE_COUNT: "12"
+
+jobs:
+  baseline:
+    name: Probe deployed Fast path and attribute TTFT
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install verified Container Apps CLI extension
+        run: >-
+          az extension add
+          --name containerapp
+          --version 1.3.0b4
+          --upgrade
+          --only-show-errors
+          --output none
+
+      - name: Wait for exact Wave 0 image
+        id: deployment
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          EXPECTED_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p fast-latency-baseline
+          state_path="fast-latency-baseline/deployment-state.json"
+          revision=""
+          image=""
+          fqdn=""
+          mode=""
+
+          for attempt in $(seq 1 150); do
+            mode="$(az containerapp show \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --query 'properties.configuration.activeRevisionsMode' \
+              -o tsv 2>/dev/null || true)"
+            fqdn="$(az containerapp show \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --query 'properties.configuration.ingress.fqdn' \
+              -o tsv 2>/dev/null || true)"
+            revision="$(az containerapp revision list \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --query "[?contains(properties.template.containers[0].image, ':${EXPECTED_SHA}') && properties.healthState=='Healthy'].name | [0]" \
+              -o tsv 2>/dev/null || true)"
+            if [[ -n "${revision}" && "${revision}" != "None" ]]; then
+              image="$(az containerapp revision show \
+                --name "${APP_NAME}" \
+                --resource-group "${RESOURCE_GROUP}" \
+                --revision "${revision}" \
+                --query "properties.template.containers[?name=='${IMAGE_REPOSITORY}'].image | [0]" \
+                -o tsv)"
+              break
+            fi
+            sleep 4
+          done
+
+          jq -n \
+            --arg expected_sha "${EXPECTED_SHA}" \
+            --arg mode "${mode}" \
+            --arg revision "${revision}" \
+            --arg image "${image}" \
+            --arg fqdn "${fqdn}" \
+            '{expected_sha:$expected_sha,active_revisions_mode:$mode,revision:$revision,image:$image,fqdn:$fqdn}' \
+            > "${state_path}"
+
+          [[ -n "${revision}" && "${revision}" != "None" && -n "${fqdn}" ]] || {
+            echo "The exact master image ${EXPECTED_SHA} did not become a healthy Azure revision."
+            cat "${state_path}"
+            exit 1
+          }
+
+          ready_status="$(curl \
+            --silent \
+            --output /dev/null \
+            --write-out '%{http_code}' \
+            --max-time 20 \
+            "https://${fqdn}/ready" || true)"
+          [[ "${ready_status}" == "200" ]] || {
+            echo "The expected revision exists but public /ready returned ${ready_status}."
+            exit 1
+          }
+
+          replica="$(az containerapp replica list \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${revision}" \
+            --query '[0].name' \
+            -o tsv)"
+          [[ -n "${replica}" && "${replica}" != "None" ]] || {
+            echo "The expected revision has no running replica."
+            exit 1
+          }
+
+          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
+          echo "replica=${replica}" >> "${GITHUB_OUTPUT}"
+          echo "fqdn=${fqdn}" >> "${GITHUB_OUTPUT}"
+          echo "image=${image}" >> "${GITHUB_OUTPUT}"
+          echo "Expected Wave 0 image is ready on ${revision}."
+
+      - name: Verify observer files in deployed replica
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          REVISION: ${{ steps.deployment.outputs.revision }}
+          REPLICA: ${{ steps.deployment.outputs.replica }}
+        run: |
+          set -Eeuo pipefail
+          command='test -f /app/backend/run_llm_service.py && test -f /app/backend/fast_latency_observability.py && test -f /app/backend/fast_latency_httpx_stream.py && test -f /app/backend/observability/fast-latency-preload.cjs && printf "%s\n" wave0-runtime-hooks-present'
+          bash scripts/execAzureContainerAppCommand.sh \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${REVISION}" \
+            --replica "${REPLICA}" \
+            --container "${IMAGE_REPOSITORY}" \
+            --command "${command}" \
+            | tee fast-latency-baseline/runtime-verification.log
+          grep -a 'wave0-runtime-hooks-present' fast-latency-baseline/runtime-verification.log >/dev/null
+
+      - name: Capture logs and send controlled Fast probes
+        id: probes
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          REVISION: ${{ steps.deployment.outputs.revision }}
+          REPLICA: ${{ steps.deployment.outputs.replica }}
+          FQDN: ${{ steps.deployment.outputs.fqdn }}
+          SENTIQ_BASELINE_PROBE_COUNT: ${{ env.PROBE_COUNT }}
+          SENTIQ_BASELINE_PAUSE_MS: "1200"
+          SENTIQ_BASELINE_REQUEST_TIMEOUT_MS: "90000"
+        run: |
+          set -Eeuo pipefail
+          log_path="fast-latency-baseline/console.log"
+          probe_path="fast-latency-baseline/probes.jsonl"
+          trace_prefix="wave0-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          timeout 360s az containerapp logs show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${REVISION}" \
+            --replica "${REPLICA}" \
+            --container "${IMAGE_REPOSITORY}" \
+            --type console \
+            --follow \
+            --tail 50 \
+            --format text \
+            > "${log_path}" 2>&1 &
+          log_pid="$!"
+          cleanup() {
+            kill "${log_pid}" 2>/dev/null || true
+            wait "${log_pid}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          sleep 8
+
+          SENTIQ_BASELINE_API_BASE="https://${FQDN}" \
+          SENTIQ_BASELINE_PROBE_OUTPUT="${probe_path}" \
+          SENTIQ_BASELINE_TRACE_PREFIX="${trace_prefix}" \
+          node scripts/runFastLatencyProductionProbes.mjs
+
+          sleep 15
+          cleanup
+          trap - EXIT
+          echo "trace_prefix=${trace_prefix}" >> "${GITHUB_OUTPUT}"
+
+      - name: Analyze correlated production traces
+        shell: bash
+        env:
+          SENTIQ_BASELINE_PROBE_OUTPUT: fast-latency-baseline/probes.jsonl
+          SENTIQ_BASELINE_LOG_OUTPUT: fast-latency-baseline/console.log
+          SENTIQ_BASELINE_SUMMARY_JSON: fast-latency-baseline/summary.json
+          SENTIQ_BASELINE_SUMMARY_MD: fast-latency-baseline/summary.md
+        run: |
+          set -Eeuo pipefail
+          python scripts/analyze_fast_latency_baseline.py | tee fast-latency-baseline/analyzer.log
+          cat fast-latency-baseline/summary.md >> "${GITHUB_STEP_SUMMARY}"
+          jq -e '.coverage.successful_probes >= 5' fast-latency-baseline/summary.json >/dev/null
+          jq -e '.coverage.python_traces >= 3' fast-latency-baseline/summary.json >/dev/null
+
+      - name: Upload production baseline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-latency-production-baseline-${{ github.run_id }}
+          path: fast-latency-baseline/
+          if-no-files-found: warn
+          retention-days: 14
