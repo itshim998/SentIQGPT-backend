@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// This diagnostic is intentionally committed with the controlled full-rollout trigger
+// so the baseline and immutable production image share the exact same master SHA.
 import { appendFile, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { randomUUID } from "node:crypto";
