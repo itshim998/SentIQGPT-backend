@@ -21,6 +21,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
+          # Refreshed for the encoded single-command provider bundle rollout.
           expected_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/master" --jq '.sha')"
           runs="$(gh run list \
             --repo "${GITHUB_REPOSITORY}" \
