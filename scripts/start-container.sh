@@ -124,7 +124,7 @@ monitor_python_health() {
 }
 
 start_python_process() {
-  python backend/llm_service.py &
+  python backend/run_llm_service.py &
   python_pid="$!"
 }
 
@@ -171,6 +171,19 @@ validate_runtime_configuration() {
   fi
 }
 
+configure_fast_latency_observability() {
+  local repo_root
+  repo_root="$(pwd)"
+  local node_preload="${repo_root}/backend/observability/fast-latency-preload.cjs"
+
+  export SENTIQ_FAST_LATENCY_OBSERVABILITY_ENABLED="${SENTIQ_FAST_LATENCY_OBSERVABILITY_ENABLED:-true}"
+  export SENTIQ_FAST_LATENCY_SAMPLE_RATE="${SENTIQ_FAST_LATENCY_SAMPLE_RATE:-1}"
+
+  if [[ " ${NODE_OPTIONS:-} " != *" --require=${node_preload} "* ]]; then
+    export NODE_OPTIONS="${NODE_OPTIONS:+${NODE_OPTIONS} }--require=${node_preload}"
+  fi
+}
+
 main() {
   startup_started_ms="$(startup_now_ms)"
   startup_phase="script"
@@ -185,6 +198,7 @@ main() {
   export LLM_SERVICE_PORT="${LLM_SERVICE_PORT:-3002}"
   export LLM_SERVICE_HOST="${LLM_SERVICE_HOST:-127.0.0.1}"
   export LLM_SERVICE_URL="${LLM_SERVICE_URL:-http://127.0.0.1:${LLM_SERVICE_PORT}}"
+  configure_fast_latency_observability
   validate_runtime_configuration
 
   startup_phase="python.process"
