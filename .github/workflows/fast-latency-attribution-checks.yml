@@ -13,6 +13,7 @@ on:
       - "scripts/start-container.sh"
       - "scripts/test-fast-latency-*.mjs"
       - "docs/performance/FAST_MODE_WAVE0_LATENCY_ATTRIBUTION.md"
+      - "Dockerfile"
       - ".github/workflows/fast-latency-attribution-checks.yml"
   workflow_dispatch:
 
@@ -27,7 +28,7 @@ jobs:
   contracts:
     name: Trace lifecycle, privacy, and startup contracts
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -70,3 +71,22 @@ jobs:
         run: |
           npm ci
           npm run build
+
+      - name: Production image contains Wave 0 runtime hooks
+        run: |
+          set -Eeuo pipefail
+          image="sentiq-fast-latency:${GITHUB_SHA}"
+          docker build --tag "${image}" .
+          docker run --rm --entrypoint bash "${image}" -lc '
+            set -Eeuo pipefail
+            test -f /app/backend/run_llm_service.py
+            test -f /app/backend/fast_latency_observability.py
+            test -f /app/backend/fast_latency_httpx_stream.py
+            test -f /app/backend/observability/fast-latency-preload.cjs
+            node --require=/app/backend/observability/fast-latency-preload.cjs \
+              -e "if (!globalThis.__sentiqFastLatencyNodeInstalled) process.exit(1)"
+            python -m py_compile \
+              /app/backend/run_llm_service.py \
+              /app/backend/fast_latency_observability.py \
+              /app/backend/fast_latency_httpx_stream.py
+          '
