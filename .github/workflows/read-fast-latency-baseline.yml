@@ -1,0 +1,123 @@
+name: Read Fast latency baseline evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/read-fast-latency-baseline.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: read-fast-latency-baseline-${{ github.event.pull_request.base.sha }}
+  cancel-in-progress: true
+
+jobs:
+  mirror:
+    name: Mirror trusted master baseline evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Find and wait for master baseline
+        id: baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p fast-latency-baseline-mirror
+          run_id=""
+
+          for attempt in $(seq 1 120); do
+            runs="$(gh run list \
+              --repo "${GITHUB_REPOSITORY}" \
+              --workflow fast-latency-production-baseline.yml \
+              --branch master \
+              --event push \
+              --limit 10 \
+              --json databaseId,headSha,status,conclusion,url,createdAt)"
+            run_id="$(jq -r --arg sha "${EXPECTED_SHA}" '[.[] | select(.headSha == $sha)] | sort_by(.createdAt) | last | .databaseId // empty' <<<"${runs}")"
+            if [[ -n "${run_id}" ]]; then
+              break
+            fi
+            sleep 5
+          done
+
+          [[ -n "${run_id}" ]] || {
+            echo "No master Fast latency baseline run was found for ${EXPECTED_SHA}."
+            exit 1
+          }
+
+          for attempt in $(seq 1 300); do
+            state="$(gh run view "${run_id}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --json status,conclusion,url,headSha,name)"
+            status="$(jq -r '.status' <<<"${state}")"
+            if [[ "${status}" == "completed" ]]; then
+              break
+            fi
+            sleep 5
+          done
+
+          state="$(gh run view "${run_id}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --json status,conclusion,url,headSha,name)"
+          jq . <<<"${state}" | tee fast-latency-baseline-mirror/run-state.json
+          [[ "$(jq -r '.status' <<<"${state}")" == "completed" ]] || {
+            echo "Baseline run ${run_id} did not complete within the mirror window."
+            exit 1
+          }
+
+          echo "run_id=${run_id}" >> "${GITHUB_OUTPUT}"
+          echo "conclusion=$(jq -r '.conclusion // ""' <<<"${state}")" >> "${GITHUB_OUTPUT}"
+
+      - name: Download baseline artifact and logs
+        if: always() && steps.baseline.outputs.run_id != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.baseline.outputs.run_id }}
+        run: |
+          set -Eeuo pipefail
+          artifact="fast-latency-production-baseline-${RUN_ID}"
+          gh run download "${RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "${artifact}" \
+            --dir fast-latency-baseline-mirror/evidence \
+            || true
+          gh run view "${RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --log \
+            > fast-latency-baseline-mirror/workflow.log \
+            2>&1 || true
+
+          if [[ -f fast-latency-baseline-mirror/evidence/summary.md ]]; then
+            cat fast-latency-baseline-mirror/evidence/summary.md
+            cat fast-latency-baseline-mirror/evidence/summary.md >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload mirrored baseline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirrored-fast-latency-baseline-${{ github.run_id }}
+          path: fast-latency-baseline-mirror/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Require successful production baseline
+        if: always() && steps.baseline.outputs.run_id != ''
+        shell: bash
+        env:
+          CONCLUSION: ${{ steps.baseline.outputs.conclusion }}
+        run: |
+          [[ "${CONCLUSION}" == "success" ]] || {
+            echo "The trusted production baseline concluded ${CONCLUSION:-unknown}."
+            exit 1
+          }
