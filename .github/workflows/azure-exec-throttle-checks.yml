@@ -1,0 +1,35 @@
+name: Azure exec throttle checks
+
+on:
+  pull_request:
+    paths:
+      - "scripts/execAzureContainerAppCommand.sh"
+      - "scripts/testAzureContainerAppExecThrottle.sh"
+      - ".github/workflows/azure-exec-throttle-checks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-exec-throttle-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Provider bundling and transient retry contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Shell syntax
+        run: |
+          set -Eeuo pipefail
+          bash -n scripts/execAzureContainerAppCommand.sh
+          bash -n scripts/testAzureContainerAppExecThrottle.sh
+
+      - name: Azure exec throttle contracts
+        run: bash scripts/testAzureContainerAppExecThrottle.sh
