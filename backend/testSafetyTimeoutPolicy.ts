@@ -5,6 +5,7 @@ import { join } from "path";
 const root = process.cwd();
 const promptBuilders = readFileSync(join(root, "backend", "ai", "PromptBuilders.ts"), "utf8");
 const chatHandler = readFileSync(join(root, "backend", "ai", "ChatHandler.ts"), "utf8");
+const server = readFileSync(join(root, "backend", "server.ts"), "utf8");
 const llmService = readFileSync(join(root, "backend", "llm_service.py"), "utf8");
 const fileGenerator = readFileSync(join(root, "backend", "tools", "fileGeneration", "fileGenerator.ts"), "utf8");
 const webSearchPipeline = readFileSync(join(root, "backend", "tools", "webSearch", "tavilySearchPipeline.ts"), "utf8");
@@ -30,7 +31,20 @@ function functionSlice(source: string, startNeedle: string, endNeedle: string): 
   );
   assert(promptBuilders.includes("safety_mode: safetyMode"), "chat prompt should pass computed safety mode");
   assert(promptBuilders.includes('safety_mode: "low_risk_text"'), "title generation should use low-risk safety mode");
-  console.log("PASS | Node adapter forwards low-risk safety mode only for eligible text/title calls");
+  const sharedToolSelector = functionSlice(
+    chatHandler,
+    "export async function selectChatToolCalls",
+    "export interface ImageTextRenderingDecision",
+  );
+  assert(
+    sharedToolSelector.includes('safety_mode: "low_risk_text"'),
+    "the text-only tool selector should allow degraded safety-provider availability while preserving explicit blocks",
+  );
+  const streamToolSelectors = [...server.matchAll(
+    /prompt:\s*buildIntuitiveToolSelectionPrompt\([^)]*\)[\s\S]{0,360}?safety_mode:\s*"low_risk_text"/g,
+  )];
+  assert.equal(streamToolSelectors.length, 2, "guest and authenticated text-only stream selectors should carry low-risk safety metadata");
+  console.log("PASS | Node adapter forwards low-risk safety mode to eligible text, title, and tool-selection calls");
 }
 
 {

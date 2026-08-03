@@ -186,19 +186,23 @@ function main(): void {
       selectorFunction.includes('reasoning_effort: "low"'),
       "shared Intuitive tool-decision turns must reserve their bounded output for the decision",
     );
+    assert(
+      selectorFunction.includes('safety_mode: "low_risk_text"'),
+      "shared text-only tool-decision turns must tolerate degraded safety-provider availability",
+    );
 
     const serverSource = readFileSync(join(__dirname, "server.ts"), "utf8");
     assert(serverSource.includes("const intuitiveToolSelectionActive = intuitiveLaneActive && automaticTools.length > 0"));
     const selectorConfigs = [...serverSource.matchAll(
-      /prompt:\s*buildIntuitiveToolSelectionPrompt\([^)]*\)[\s\S]{0,240}?execution_mode:\s*"([^"]+)"[\s\S]{0,120}?reasoning_effort:\s*"([^"]+)"/g,
-    )].map((match) => ({ executionMode: match[1], reasoningEffort: match[2] }));
+      /prompt:\s*buildIntuitiveToolSelectionPrompt\([^)]*\)[\s\S]{0,240}?execution_mode:\s*"([^"]+)"[\s\S]{0,120}?reasoning_effort:\s*"([^"]+)"[\s\S]{0,120}?safety_mode:\s*"([^"]+)"/g,
+    )].map((match) => ({ executionMode: match[1], reasoningEffort: match[2], safetyMode: match[3] }));
     assert.deepStrictEqual(
       selectorConfigs,
       [
-        { executionMode: "fast", reasoningEffort: "low" },
-        { executionMode: "fast", reasoningEffort: "low" },
+        { executionMode: "fast", reasoningEffort: "low", safetyMode: "low_risk_text" },
+        { executionMode: "fast", reasoningEffort: "low", safetyMode: "low_risk_text" },
       ],
-      "guest and authenticated Intuitive tool-decision turns must stay on the bounded Fast/low auxiliary lane",
+      "guest and authenticated Intuitive tool-decision turns must stay on the bounded Fast/low text-only auxiliary lane",
     );
     assert(
       serverSource.includes("if (intuitiveToolSelectionActive) return;"),
