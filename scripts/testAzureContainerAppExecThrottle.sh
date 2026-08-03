@@ -57,6 +57,15 @@ if [[ "${command_value}" == *"transient-probe"* ]]; then
   exit 0
 fi
 
+if [[ "${command_value}" == *"__import__('base64').b64decode"* ]]; then
+  for slot in 1 2 3 4 5 6; do
+    printf '{"event":"independent_slot","slot":%s,"status":"pass"}\n' "${slot}"
+  done
+  echo '{"event":"summary","failures":0}'
+  echo '{"event":"pollinations_intuitive_verification","status":"pass"}'
+  exit 0
+fi
+
 if [[ "${command_value}" == *"verifyNvidiaNemotronLive.py"* ]]; then
   for slot in 1 2 3 4 5 6; do
     printf '{"event":"independent_slot","slot":%s,"status":"pass"}\n' "${slot}"
@@ -94,6 +103,8 @@ bash "${wrapper}" \
   > "${temp_root}/pollinations.out"
 
 [[ "$(wc -l < "${FAKE_AZ_CALL_LOG}" | tr -d ' ')" == "1" ]]
+grep -Eq '__import__.*base64.*b64decode' "${FAKE_AZ_CALL_LOG}"
+! grep -Fq ' && ' "${FAKE_AZ_CALL_LOG}"
 grep -Eq '"event":"summary","failures":0' "${temp_root}/nvidia.out"
 [[ "$(grep -Ec '"event":"independent_slot".*"status":"pass"' "${temp_root}/nvidia.out")" == "6" ]]
 grep -Eq '"event":"pollinations_intuitive_verification","status":"pass"' "${temp_root}/pollinations.out"
