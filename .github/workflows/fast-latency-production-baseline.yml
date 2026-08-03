@@ -43,8 +43,34 @@ jobs:
           node --check scripts/runFastLatencyProductionProbes.mjs
           python -m py_compile scripts/analyze_fast_latency_baseline.py
 
+      - name: Validate Azure JSON-array log parsing
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          fixture="${RUNNER_TEMP}/fast-latency-fixture"
+          mkdir -p "${fixture}"
+          trace_id='fixture-trace-12345678'
+          cat > "${fixture}/probes.jsonl" <<JSONL
+          {"trace_id":"${trace_id}","outcome":"complete","status_code":200,"request_to_headers_ms":100,"headers_to_first_token_ms":900,"request_to_first_token_ms":1000,"request_total_ms":1200}
+          JSONL
+          cat > "${fixture}/console.json" <<JSON
+          [
+            {"TimeStamp":"2026-08-03T00:00:00Z","Log":"{\"scope\":\"fast_latency\",\"layer\":\"node\",\"phase\":\"server.request_received\",\"trace_id\":\"${trace_id}\",\"elapsed_ms\":0,\"epoch_ms\":1}"},
+            {"TimeStamp":"2026-08-03T00:00:00Z","Log":"{\"scope\":\"fast_latency\",\"layer\":\"node\",\"phase\":\"server.internal_gateway_started\",\"trace_id\":\"${trace_id}\",\"elapsed_ms\":100,\"epoch_ms\":2}"},
+            {"TimeStamp":"2026-08-03T00:00:01Z","Log":"{\"scope\":\"fast_latency\",\"layer\":\"python\",\"phase\":\"python.provider_request_started\",\"trace_id\":\"${trace_id}\",\"elapsed_ms\":200,\"epoch_ms\":3}"},
+            {"TimeStamp":"2026-08-03T00:00:02Z","Log":"{\"scope\":\"fast_latency\",\"layer\":\"python\",\"phase\":\"python.provider_first_visible_delta\",\"trace_id\":\"${trace_id}\",\"elapsed_ms\":900,\"epoch_ms\":4}"}
+          ]
+          JSON
+          SENTIQ_BASELINE_PROBE_OUTPUT="${fixture}/probes.jsonl" \
+          SENTIQ_BASELINE_LOG_OUTPUT="${fixture}/console.json" \
+          SENTIQ_BASELINE_SUMMARY_JSON="${fixture}/summary.json" \
+          SENTIQ_BASELINE_SUMMARY_MD="${fixture}/summary.md" \
+            python scripts/analyze_fast_latency_baseline.py >/dev/null
+          jq -e '.coverage.node_traces == 1 and .coverage.python_traces == 1 and .coverage.latency_events == 4' \
+            "${fixture}/summary.json" >/dev/null
+
   baseline:
-    name: Probe deployed Fast path and attribute TTFT
+    name: Probe active Fast path and attribute TTFT
     if: github.event_name != 'pull_request'
     needs: validate
     runs-on: ubuntu-latest
@@ -70,94 +96,84 @@ jobs:
           --only-show-errors
           --output none
 
-      - name: Wait for exact Wave 0 image
+      - name: Resolve healthy 100-percent production revision
         id: deployment
         shell: bash
         env:
           APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-          EXPECTED_SHA: ${{ github.sha }}
         run: |
           set -Eeuo pipefail
           mkdir -p fast-latency-baseline
           state_path="fast-latency-baseline/deployment-state.json"
           revision=""
+          replica=""
           image=""
-          fqdn=""
+          public_fqdn=""
+          revision_fqdn=""
           mode=""
 
-          for attempt in $(seq 1 150); do
-            mode="$(az containerapp show \
+          for attempt in $(seq 1 120); do
+            app_state="$(az containerapp show \
               --name "${APP_NAME}" \
               --resource-group "${RESOURCE_GROUP}" \
-              --query 'properties.configuration.activeRevisionsMode' \
-              -o tsv 2>/dev/null || true)"
-            fqdn="$(az containerapp show \
-              --name "${APP_NAME}" \
-              --resource-group "${RESOURCE_GROUP}" \
-              --query 'properties.configuration.ingress.fqdn' \
-              -o tsv 2>/dev/null || true)"
+              -o json 2>/dev/null || printf '{}')"
+            mode="$(jq -r '.properties.configuration.activeRevisionsMode // empty' <<<"${app_state}")"
+            public_fqdn="$(jq -r '.properties.configuration.ingress.fqdn // empty' <<<"${app_state}")"
             revision="$(az containerapp revision list \
               --name "${APP_NAME}" \
               --resource-group "${RESOURCE_GROUP}" \
-              --query "[?contains(properties.template.containers[0].image, ':${EXPECTED_SHA}') && properties.healthState=='Healthy'].name | [0]" \
+              --query "[?properties.active==\`true\` && properties.trafficWeight==\`100\` && properties.healthState=='Healthy' && properties.provisioningState=='Provisioned'].name | [0]" \
               -o tsv 2>/dev/null || true)"
             if [[ -n "${revision}" && "${revision}" != "None" ]]; then
-              image="$(az containerapp revision show \
+              revision_state="$(az containerapp revision show \
                 --name "${APP_NAME}" \
                 --resource-group "${RESOURCE_GROUP}" \
                 --revision "${revision}" \
-                --query "properties.template.containers[?name=='${IMAGE_REPOSITORY}'].image | [0]" \
-                -o tsv)"
-              break
+                -o json 2>/dev/null || printf '{}')"
+              image="$(jq -r --arg container "${IMAGE_REPOSITORY}" '.properties.template.containers[]? | select(.name == $container) | .image // empty' <<<"${revision_state}")"
+              revision_fqdn="$(jq -r '.properties.fqdn // empty' <<<"${revision_state}")"
+              public_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 20 "https://${public_fqdn}/ready" || true)"
+              if [[ -n "${image}" && -n "${revision_fqdn}" && "${public_status}" == "200" ]]; then
+                replica="$(az containerapp replica list \
+                  --name "${APP_NAME}" \
+                  --resource-group "${RESOURCE_GROUP}" \
+                  --revision "${revision}" \
+                  --query '[0].name' \
+                  -o tsv 2>/dev/null || true)"
+                if [[ -n "${replica}" && "${replica}" != "None" ]]; then
+                  break
+                fi
+              fi
             fi
-            sleep 4
+            revision=""
+            sleep 5
           done
 
           jq -n \
-            --arg expected_sha "${EXPECTED_SHA}" \
+            --arg workflow_sha "${GITHUB_SHA}" \
             --arg mode "${mode}" \
             --arg revision "${revision}" \
+            --arg replica "${replica}" \
             --arg image "${image}" \
-            --arg fqdn "${fqdn}" \
-            '{expected_sha:$expected_sha,active_revisions_mode:$mode,revision:$revision,image:$image,fqdn:$fqdn}' \
+            --arg public_fqdn "${public_fqdn}" \
+            --arg revision_fqdn "${revision_fqdn}" \
+            '{workflow_sha:$workflow_sha,active_revisions_mode:$mode,revision:$revision,replica:$replica,image:$image,public_fqdn:$public_fqdn,revision_fqdn:$revision_fqdn}' \
             > "${state_path}"
 
-          [[ -n "${revision}" && "${revision}" != "None" && -n "${fqdn}" ]] || {
-            echo "The exact master image ${EXPECTED_SHA} did not become a healthy Azure revision."
+          [[ -n "${revision}" && -n "${replica}" && -n "${public_fqdn}" ]] || {
+            echo 'No healthy 100-percent production revision became available.'
             cat "${state_path}"
-            exit 1
-          }
-
-          ready_status="$(curl \
-            --silent \
-            --output /dev/null \
-            --write-out '%{http_code}' \
-            --max-time 20 \
-            "https://${fqdn}/ready" || true)"
-          [[ "${ready_status}" == "200" ]] || {
-            echo "The expected revision exists but public /ready returned ${ready_status}."
-            exit 1
-          }
-
-          replica="$(az containerapp replica list \
-            --name "${APP_NAME}" \
-            --resource-group "${RESOURCE_GROUP}" \
-            --revision "${revision}" \
-            --query '[0].name' \
-            -o tsv)"
-          [[ -n "${replica}" && "${replica}" != "None" ]] || {
-            echo "The expected revision has no running replica."
             exit 1
           }
 
           echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
           echo "replica=${replica}" >> "${GITHUB_OUTPUT}"
-          echo "fqdn=${fqdn}" >> "${GITHUB_OUTPUT}"
+          echo "fqdn=${public_fqdn}" >> "${GITHUB_OUTPUT}"
           echo "image=${image}" >> "${GITHUB_OUTPUT}"
-          echo "Expected Wave 0 image is ready on ${revision}."
+          echo "Resolved active production revision ${revision} with image ${image}."
 
-      - name: Verify observer files in deployed replica
+      - name: Verify Wave 0 hooks in active replica
         shell: bash
         env:
           APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
@@ -177,58 +193,65 @@ jobs:
             | tee fast-latency-baseline/runtime-verification.log
           grep -a 'wave0-runtime-hooks-present' fast-latency-baseline/runtime-verification.log >/dev/null
 
-      - name: Capture logs and send controlled Fast probes
-        id: probes
+      - name: Send controlled Fast probes
         shell: bash
         env:
-          APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
-          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-          REVISION: ${{ steps.deployment.outputs.revision }}
-          REPLICA: ${{ steps.deployment.outputs.replica }}
           FQDN: ${{ steps.deployment.outputs.fqdn }}
           SENTIQ_BASELINE_PROBE_COUNT: ${{ env.PROBE_COUNT }}
           SENTIQ_BASELINE_PAUSE_MS: "1200"
           SENTIQ_BASELINE_REQUEST_TIMEOUT_MS: "90000"
         run: |
           set -Eeuo pipefail
-          log_path="fast-latency-baseline/console.log"
           probe_path="fast-latency-baseline/probes.jsonl"
           trace_prefix="wave0-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-
-          timeout 360s az containerapp logs show \
-            --name "${APP_NAME}" \
-            --resource-group "${RESOURCE_GROUP}" \
-            --revision "${REVISION}" \
-            --replica "${REPLICA}" \
-            --container "${IMAGE_REPOSITORY}" \
-            --type console \
-            --follow \
-            --tail 50 \
-            --format text \
-            > "${log_path}" 2>&1 &
-          log_pid="$!"
-          cleanup() {
-            kill "${log_pid}" 2>/dev/null || true
-            wait "${log_pid}" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-          sleep 8
-
           SENTIQ_BASELINE_API_BASE="https://${FQDN}" \
           SENTIQ_BASELINE_PROBE_OUTPUT="${probe_path}" \
           SENTIQ_BASELINE_TRACE_PREFIX="${trace_prefix}" \
-          node scripts/runFastLatencyProductionProbes.mjs
+            node scripts/runFastLatencyProductionProbes.mjs
+          printf '%s\n' "${trace_prefix}" > fast-latency-baseline/trace-prefix.txt
 
-          sleep 15
-          cleanup
-          trap - EXIT
-          echo "trace_prefix=${trace_prefix}" >> "${GITHUB_OUTPUT}"
+      - name: Retrieve bounded active-replica console logs
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          REVISION: ${{ steps.deployment.outputs.revision }}
+          REPLICA: ${{ steps.deployment.outputs.replica }}
+        run: |
+          set -Eeuo pipefail
+          log_path="fast-latency-baseline/console.json"
+          trace_prefix="$(cat fast-latency-baseline/trace-prefix.txt)"
+          captured=0
+          for attempt in $(seq 1 8); do
+            az containerapp logs show \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --revision "${REVISION}" \
+              --replica "${REPLICA}" \
+              --container "${IMAGE_REPOSITORY}" \
+              --type console \
+              --follow false \
+              --tail 300 \
+              --format json \
+              --only-show-errors \
+              > "${log_path}"
+            if [[ -s "${log_path}" ]] && grep -aF "${trace_prefix}" "${log_path}" >/dev/null; then
+              captured=1
+              break
+            fi
+            sleep 8
+          done
+          [[ "${captured}" == "1" ]] || {
+            echo 'Azure returned no correlated Fast latency events for the active replica.'
+            wc -c "${log_path}" || true
+            exit 1
+          }
 
       - name: Analyze correlated production traces
         shell: bash
         env:
           SENTIQ_BASELINE_PROBE_OUTPUT: fast-latency-baseline/probes.jsonl
-          SENTIQ_BASELINE_LOG_OUTPUT: fast-latency-baseline/console.log
+          SENTIQ_BASELINE_LOG_OUTPUT: fast-latency-baseline/console.json
           SENTIQ_BASELINE_SUMMARY_JSON: fast-latency-baseline/summary.json
           SENTIQ_BASELINE_SUMMARY_MD: fast-latency-baseline/summary.md
         run: |
@@ -236,6 +259,7 @@ jobs:
           python scripts/analyze_fast_latency_baseline.py | tee fast-latency-baseline/analyzer.log
           cat fast-latency-baseline/summary.md >> "${GITHUB_STEP_SUMMARY}"
           jq -e '.coverage.successful_probes >= 5' fast-latency-baseline/summary.json >/dev/null
+          jq -e '.coverage.node_traces >= 3' fast-latency-baseline/summary.json >/dev/null
           jq -e '.coverage.python_traces >= 3' fast-latency-baseline/summary.json >/dev/null
 
       - name: Upload production baseline evidence
