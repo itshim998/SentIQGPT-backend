@@ -26,6 +26,8 @@ ENV NODE_ENV=production \
     LLM_SERVICE_HOST=127.0.0.1 \
     LLM_SERVICE_URL=http://127.0.0.1:3002 \
     SENTIQ_CACHE_FILE=/tmp/sentiq_cache.db \
+    SENTIQ_FAST_PARALLEL_INPUT_SAFETY_ENABLED=true \
+    SENTIQ_FAST_SPECULATIVE_BUFFER_ITEMS=512 \
     MPLCONFIGDIR=/tmp/matplotlib \
     XDG_CACHE_HOME=/tmp/.cache
 
@@ -57,6 +59,7 @@ COPY backend/llm_service.py \
      backend/verifyNvidiaNemotronLive.py \
      backend/verifyPollinationsIntuitiveLive.py \
      backend/run_llm_service.py \
+     backend/fast_speculative_input_safety.py \
      backend/fast_latency_observability.py \
      backend/fast_latency_httpx_stream.py \
      ./backend/
