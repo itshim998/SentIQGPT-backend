@@ -11,6 +11,7 @@ import contextvars
 import json
 import os
 import queue
+import re
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -28,7 +29,33 @@ FORCE_DISABLE_FLAG = "SENTIQ_FAST_PARALLEL_INPUT_SAFETY_FORCE_DISABLED"
 BUFFER_ITEMS_ENV = "SENTIQ_FAST_SPECULATIVE_BUFFER_ITEMS"
 DEFAULT_BUFFER_ITEMS = 512
 ELIGIBLE_TASKS = frozenset({"chat", "general"})
+_IMAGE_TOOL_NAME = "image_gen"
+_TOOL_CAPABILITY_PREFIX = "sentiq_tools_"
 _END = object()
+
+_IMAGE_INTENT_PATTERNS = (
+    re.compile(
+        r"\b(?:generate|create|make|draw|paint|sketch|render|design|produce)\b"
+        r".{0,100}\b(?:image|picture|photo|art|illustration|artwork|portrait|landscape|"
+        r"wallpaper|icon|logo|poster|banner|diagram|scene|visual)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b(?:image|picture|photo|art|illustration|artwork|portrait|logo|poster|banner)\b"
+        r".{0,80}\b(?:of|for|with|showing|depicting|featuring)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(r"\b(?:generate|create)\s+(?:an?\s+)?image\b", re.IGNORECASE),
+    re.compile(r"\bshow\s+me\s+(?:an?\s+)?(?:image|picture|photo)\b", re.IGNORECASE),
+    re.compile(r"\b(?:image|picture|photo)\s+of\b", re.IGNORECASE),
+    re.compile(r"\bvisuali[sz]e\b", re.IGNORECASE),
+    re.compile(r"\billustrate\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:draw|paint|sketch)\s+(?!a\s+conclusion\b|a\s+comparison\b|"
+        r"a\s+distinction\b|an\s+inference\b)",
+        re.IGNORECASE,
+    ),
+)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -60,6 +87,69 @@ def _execution_mode(request: Any) -> str:
     return "fast"
 
 
+def _explicit_image_generation_intent(prompt: Any) -> bool:
+    text = str(prompt or "").strip()
+    if not text:
+        return True
+    return any(pattern.search(text) for pattern in _IMAGE_INTENT_PATTERNS)
+
+
+def _tool_request_allowed_names(tool_request: Any) -> frozenset[str]:
+    if not isinstance(tool_request, dict):
+        return frozenset()
+
+    names: set[str] = set()
+    allowed = tool_request.get("allowed_tool_names")
+    if isinstance(allowed, (list, tuple, set)):
+        names.update(str(value).strip() for value in allowed if str(value).strip())
+
+    tools = tool_request.get("tools")
+    if isinstance(tools, (list, tuple)):
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+            name = tool.get("name")
+            if not name and isinstance(tool.get("function"), dict):
+                name = tool["function"].get("name")
+            normalized = str(name or "").strip()
+            if normalized:
+                names.add(normalized)
+    return frozenset(names)
+
+
+def _can_suppress_implicit_image_tool_envelope(request: Any) -> bool:
+    tool_request = getattr(request, "sentiq_tool_request", None)
+    if not isinstance(tool_request, dict):
+        return False
+    if _tool_request_allowed_names(tool_request) != frozenset({_IMAGE_TOOL_NAME}):
+        return False
+    if getattr(request, "image_attachments", None):
+        return False
+    required = getattr(request, "required_capabilities", None) or []
+    if any(str(value).strip() == "image_input" for value in required):
+        return False
+    return not _explicit_image_generation_intent(getattr(request, "prompt", ""))
+
+
+def _effective_provider_transport(request: Any) -> tuple[Any, Any, str, bool]:
+    suppress_image_envelope = _can_suppress_implicit_image_tool_envelope(request)
+    if not suppress_image_envelope:
+        return (
+            getattr(request, "sentiq_tool_request", None),
+            getattr(request, "required_capabilities", None),
+            str(getattr(request, "tool_transport_mode", "none") or "none"),
+            False,
+        )
+
+    required = getattr(request, "required_capabilities", None) or []
+    filtered_required = [
+        value
+        for value in required
+        if not str(value).strip().startswith(_TOOL_CAPABILITY_PREFIX)
+    ]
+    return None, filtered_required, "none", True
+
+
 def _eligibility_rejection_reason(request: Any, service: Any) -> str:
     if not _feature_enabled():
         return "force_disabled"
@@ -73,10 +163,16 @@ def _eligibility_rejection_reason(request: Any, service: Any) -> str:
         return "simulation"
     if getattr(request, "image_attachments", None):
         return "image_input"
-    if getattr(request, "sentiq_tool_request", None):
+
+    suppressible_image_envelope = _can_suppress_implicit_image_tool_envelope(request)
+    if getattr(request, "sentiq_tool_request", None) and not suppressible_image_envelope:
         return "tool_request"
-    if str(getattr(request, "tool_transport_mode", "none") or "none") != "none":
+    if (
+        str(getattr(request, "tool_transport_mode", "none") or "none") != "none"
+        and not suppressible_image_envelope
+    ):
         return "tool_transport"
+
     # required_capabilities may contain benign transport descriptors for an
     # ordinary text request. The concrete task, image, and tool gates above are
     # the authoritative exclusions and keep this lane narrow without rejecting
@@ -208,6 +304,7 @@ def _resolve_stream_identity(service: Any, request: Any) -> tuple[str, Optional[
 
 
 def _provider_iterator(service: Any, request: Any, user_id: str, model_override: Optional[str]) -> Iterator[Any]:
+    sentiq_tool_request, required_capabilities, tool_transport_mode, _ = _effective_provider_transport(request)
     return service.stream_llm_router(
         prompt=request.prompt,
         task=request.task,
@@ -219,9 +316,9 @@ def _provider_iterator(service: Any, request: Any, user_id: str, model_override:
         execution_mode=request.execution_mode,
         skip_wrappers=bool(request.skip_wrappers),
         budget_policy=request.budget_policy,
-        sentiq_tool_request=request.sentiq_tool_request,
-        required_capabilities=request.required_capabilities,
-        tool_transport_mode=request.tool_transport_mode,
+        sentiq_tool_request=sentiq_tool_request,
+        required_capabilities=required_capabilities,
+        tool_transport_mode=tool_transport_mode,
     )
 
 
@@ -310,7 +407,7 @@ def build_stream_endpoint(service: Any, original_stream: Callable[..., Any]) -> 
     async def endpoint(request: Any):
         rejection_reason = _eligibility_rejection_reason(request, service)
         if rejection_reason:
-            service.logger.debug(
+            service.logger.info(
                 "[FastSpeculation] bypassed reason=%s task=%s mode=%s",
                 rejection_reason,
                 getattr(request, "task", None),
@@ -320,10 +417,12 @@ def build_stream_endpoint(service: Any, original_stream: Callable[..., Any]) -> 
 
         user_id, effective_model_override = _resolve_stream_identity(service, request)
         service.log_model_tool_gateway_diagnostic(request, effective_model_override, streaming=True)
+        _, _, _, suppressed_image_envelope = _effective_provider_transport(request)
         service.logger.info(
-            "[FastSpeculation] provider_started user=%s task=%s mode=fast release_gate=input_safety",
+            "[FastSpeculation] provider_started user=%s task=%s mode=fast release_gate=input_safety implicit_image_tool_suppressed=%s",
             user_id,
             request.task,
+            suppressed_image_envelope,
         )
 
         source = SpeculativeProviderBuffer(
