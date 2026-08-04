@@ -36,6 +36,7 @@ const MAX_MEMORY_ITEM_TOKENS = 320;
 const MAX_EVIDENCE_ITEM_TOKENS = 900;
 const MAX_SUMMARY_TOKENS = 800;
 const MAX_HISTORY_ITEM_TOKENS = 1_200;
+const MAX_PROTECTED_RECENT_ITEM_TOKENS = 160;
 const OPTIONAL_BLOCK_MIN_CONTENT_TOKENS = 20;
 const PROTECTED_RECENT_MIN_CONTENT_TOKENS = 18;
 export const MIN_RETAINED_CURRENT_USER_TOKENS = 64;
@@ -808,7 +809,7 @@ function buildRecentCandidates(input: ComposerInput): {
       prefix: `  ${role}:`,
       content: trimTextToTokenBudget(
         characterGuard(message.content, MAX_DYNAMIC_ITEM_CHARS),
-        MAX_HISTORY_ITEM_TOKENS,
+        protectedRecent ? MAX_PROTECTED_RECENT_ITEM_TOKENS : MAX_HISTORY_ITEM_TOKENS,
         "head_tail",
       ),
       suffix: "",
@@ -887,19 +888,19 @@ function admissionGroups(policy: ContextQueryPolicy): readonly string[] {
       "rollingSummary", "memories", "optionalRecall", "optionalRoute", "stableContext", "fileChunks",
     ],
     personal_recall: [
-      "memories", "optionalRecall", "workspaceCapsule", "conversationCapsule", "protectedRecent",
+      "protectedRecent", "memories", "optionalRecall", "workspaceCapsule", "conversationCapsule",
       "olderRecent", "stableContext", "rollingSummary", "optionalRoute", "fileChunks",
     ],
     file_question: [
-      "fileChunks", "protectedRecent", "conversationCapsule", "memories", "optionalRoute",
+      "protectedRecent", "fileChunks", "conversationCapsule", "memories", "optionalRoute",
       "optionalRecall", "workspaceCapsule", "rollingSummary", "olderRecent", "stableContext",
     ],
     whole_document_summary: [
-      "documentMap", "fileChunks", "protectedRecent", "conversationCapsule", "optionalRoute",
+      "protectedRecent", "documentMap", "fileChunks", "conversationCapsule", "optionalRoute",
       "optionalRecall", "memories", "olderRecent", "workspaceCapsule", "rollingSummary", "stableContext",
     ],
     multi_file_comparison: [
-      "fileChunks", "protectedRecent", "conversationCapsule", "optionalRoute", "optionalRecall",
+      "protectedRecent", "fileChunks", "conversationCapsule", "optionalRoute", "optionalRecall",
       "memories", "olderRecent", "workspaceCapsule", "rollingSummary", "stableContext",
     ],
     tool_result: [
@@ -907,8 +908,8 @@ function admissionGroups(policy: ContextQueryPolicy): readonly string[] {
       "workspaceCapsule", "olderRecent", "fileChunks", "stableContext", "rollingSummary",
     ],
     general: [
-      "fileChunks", "optionalRoute", "optionalRecall", "memories", "stableContext",
-      "workspaceCapsule", "rollingSummary", "conversationCapsule", "protectedRecent", "olderRecent",
+      "protectedRecent", "fileChunks", "optionalRoute", "optionalRecall", "memories", "stableContext",
+      "workspaceCapsule", "rollingSummary", "conversationCapsule", "olderRecent",
     ],
   };
   return policies[policy];
