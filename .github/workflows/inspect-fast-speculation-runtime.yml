@@ -1,6 +1,5 @@
 name: Inspect Fast speculation runtime
 
-# Explicit follow-up push so the newly introduced workflow runs on trusted master.
 on:
   pull_request:
     paths:
@@ -35,7 +34,7 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
 
     steps:
       - name: Checkout
@@ -57,7 +56,7 @@ jobs:
           --only-show-errors
           --output none
 
-      - name: Resolve active production replica
+      - name: Wake and resolve active production replica
         id: deployment
         shell: bash
         env:
@@ -65,18 +64,47 @@ jobs:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
         run: |
           set -Eeuo pipefail
-          revision="$(az containerapp revision list \
+          public_fqdn="$(az containerapp show \
             --name "${APP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
-            --query "[?properties.active==\`true\` && properties.trafficWeight==\`100\` && properties.healthState=='Healthy'].name | [0]" \
+            --query 'properties.configuration.ingress.fqdn' \
             -o tsv)"
-          replica="$(az containerapp replica list \
-            --name "${APP_NAME}" \
-            --resource-group "${RESOURCE_GROUP}" \
-            --revision "${revision}" \
-            --query '[0].name' \
-            -o tsv)"
-          [[ -n "${revision}" && -n "${replica}" ]] || exit 1
+          [[ -n "${public_fqdn}" ]] || exit 1
+
+          revision=''
+          replica=''
+          for attempt in $(seq 1 90); do
+            curl --silent --output /dev/null --max-time 20 "https://${public_fqdn}/ready" || true
+            revision="$(az containerapp revision list \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --query "[?properties.active==\`true\` && properties.trafficWeight==\`100\` && properties.healthState=='Healthy'].name | [0]" \
+              -o tsv 2>/dev/null || true)"
+            if [[ -z "${revision}" || "${revision}" == "None" ]]; then
+              revision="$(az containerapp show \
+                --name "${APP_NAME}" \
+                --resource-group "${RESOURCE_GROUP}" \
+                --query 'properties.latestReadyRevisionName' \
+                -o tsv 2>/dev/null || true)"
+            fi
+            if [[ -n "${revision}" && "${revision}" != "None" ]]; then
+              replica="$(az containerapp replica list \
+                --name "${APP_NAME}" \
+                --resource-group "${RESOURCE_GROUP}" \
+                --revision "${revision}" \
+                --query '[0].name' \
+                -o tsv 2>/dev/null || true)"
+              if [[ -n "${replica}" && "${replica}" != "None" ]]; then
+                break
+              fi
+            fi
+            sleep 4
+          done
+
+          [[ -n "${revision}" && -n "${replica}" ]] || {
+            echo 'The scale-to-zero application did not expose a running replica.'
+            exit 1
+          }
           echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
           echo "replica=${replica}" >> "${GITHUB_OUTPUT}"
 
