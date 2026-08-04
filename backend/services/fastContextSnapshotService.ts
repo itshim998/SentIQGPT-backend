@@ -58,10 +58,7 @@ export interface FastContextSnapshot {
   readonly schemaVersion: number;
   readonly conversationId: string;
   readonly messages: readonly FastSnapshotMessage[];
-  readonly messageCursor?: {
-    readonly id: string;
-    readonly createdAt: string;
-  };
+  readonly messageCursor?: { readonly id: string; readonly createdAt: string };
   readonly conversationCapsule?: FastSnapshotCapsule;
   readonly workspaceCapsule?: FastSnapshotCapsule;
   readonly memories: readonly FastSnapshotMemory[];
@@ -96,8 +93,7 @@ function isGuestIdentity(userId: string | undefined): boolean {
 
 function positiveInteger(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, Math.floor(parsed)));
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.floor(parsed))) : fallback;
 }
 
 export function resolveFastContextSnapshotTimeoutMs(explicit?: number): number {
@@ -113,8 +109,9 @@ export function resolveFastContextSnapshotTimeoutMs(explicit?: number): number {
 }
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  return value as Record<string, unknown>;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function asString(value: unknown): string | undefined {
@@ -125,20 +122,24 @@ function asRecord(value: unknown): Readonly<Record<string, unknown>> {
   return asObject(value) ?? {};
 }
 
+function asArray(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
 function normalizeMessage(value: unknown): FastSnapshotMessage | undefined {
   const row = asObject(value);
   const role = row?.role === "user" || row?.role === "assistant" ? row.role : undefined;
   const id = asString(row?.id);
   const content = asString(row?.content);
   const createdAt = asString(row?.created_at ?? row?.createdAt);
-  if (!row || !role || !id || !content || !createdAt) return undefined;
+  if (!role || !id || !content || !createdAt) return undefined;
   return {
     id,
     role,
     content,
     createdAt,
-    clientRequestId: asString(row.client_request_id ?? row.clientRequestId),
-    messageType: asString(row.message_type ?? row.messageType),
+    clientRequestId: asString(row?.client_request_id ?? row?.clientRequestId),
+    messageType: asString(row?.message_type ?? row?.messageType),
   };
 }
 
@@ -150,18 +151,14 @@ function normalizeCapsule(value: unknown): FastSnapshotCapsule | undefined {
   const updatedAt = asString(row?.updated_at ?? row?.updatedAt);
   const version = Number(row?.version);
   const sourceMessageCount = Number(row?.source_message_count ?? row?.sourceMessageCount);
-  if (!row || !scope || !id || !content || !updatedAt || !Number.isFinite(version) || version < 1) {
-    return undefined;
-  }
+  if (!scope || !id || !content || !updatedAt || !Number.isFinite(version) || version < 1) return undefined;
   return {
     id,
     scope,
-    conversationId: asString(row.conversation_id ?? row.conversationId),
+    conversationId: asString(row?.conversation_id ?? row?.conversationId),
     content,
-    sourceMessageCount: Number.isFinite(sourceMessageCount)
-      ? Math.max(0, Math.floor(sourceMessageCount))
-      : 0,
-    sourceCursor: asString(row.source_cursor ?? row.sourceCursor),
+    sourceMessageCount: Number.isFinite(sourceMessageCount) ? Math.max(0, Math.floor(sourceMessageCount)) : 0,
+    sourceCursor: asString(row?.source_cursor ?? row?.sourceCursor),
     version: Math.floor(version),
     updatedAt,
   };
@@ -172,17 +169,17 @@ function normalizeMemory(value: unknown): FastSnapshotMemory | undefined {
   const id = asString(row?.id);
   const type = asString(row?.type);
   const summary = asString(row?.summary);
-  if (!row || !id || !type || !summary) return undefined;
-  const importance = Number(row.importance);
-  const lexicalRank = Number(row.lexical_rank ?? row.lexicalRank);
+  if (!id || !type || !summary) return undefined;
+  const importance = Number(row?.importance);
+  const lexicalRank = Number(row?.lexical_rank ?? row?.lexicalRank);
   return {
     id,
     type,
     summary,
     importance: Number.isFinite(importance) ? Math.max(1, Math.min(10, Math.floor(importance))) : undefined,
-    scope: row.scope === "chat" ? "chat" : "global",
-    chatId: asString(row.chat_id ?? row.chatId),
-    createdAt: asString(row.created_at ?? row.createdAt),
+    scope: row?.scope === "chat" ? "chat" : "global",
+    chatId: asString(row?.chat_id ?? row?.chatId),
+    createdAt: asString(row?.created_at ?? row?.createdAt),
     lexicalRank: Number.isFinite(lexicalRank) ? Math.max(0, lexicalRank) : 0,
   };
 }
@@ -193,25 +190,24 @@ function normalizeSourceDocument(value: unknown): FastSnapshotSourceDocument | u
   const title = asString(row?.title);
   const originalFilename = asString(row?.original_filename ?? row?.originalFilename);
   const mimeType = asString(row?.mime_type ?? row?.mimeType);
-  const sourceType = row?.source_type === "pdf" || row?.source_type === "text" || row?.source_type === "code"
-    ? row.source_type
-    : row?.sourceType === "pdf" || row?.sourceType === "text" || row?.sourceType === "code"
-      ? row.sourceType
-      : undefined;
+  const sourceTypeValue = row?.source_type ?? row?.sourceType;
+  const sourceType = sourceTypeValue === "pdf" || sourceTypeValue === "text" || sourceTypeValue === "code"
+    ? sourceTypeValue
+    : undefined;
   const status = row?.status === "processing" || row?.status === "ready" || row?.status === "failed"
     ? row.status
     : undefined;
-  if (!row || !id || !title || !originalFilename || !mimeType || !sourceType || !status) return undefined;
+  if (!id || !title || !originalFilename || !mimeType || !sourceType || !status) return undefined;
   return {
     id,
-    conversationId: asString(row.conversation_id ?? row.conversationId),
+    conversationId: asString(row?.conversation_id ?? row?.conversationId),
     title,
     originalFilename,
     mimeType,
     sourceType,
     status,
-    createdAt: asString(row.created_at ?? row.createdAt),
-    metadata: asRecord(row.metadata),
+    createdAt: asString(row?.created_at ?? row?.createdAt),
+    metadata: asRecord(row?.metadata),
   };
 }
 
@@ -220,6 +216,11 @@ function normalizeCursor(value: unknown): FastContextSnapshot["messageCursor"] {
   const id = asString(row?.id);
   const createdAt = asString(row?.created_at ?? row?.createdAt);
   return id && createdAt ? { id, createdAt } : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
 }
 
 export function normalizeFastContextSnapshot(value: unknown): FastContextSnapshot | undefined {
@@ -235,21 +236,21 @@ export function normalizeFastContextSnapshot(value: unknown): FastContextSnapsho
   const row = asObject(candidate);
   const conversationId = asString(row?.conversation_id ?? row?.conversationId);
   if (!row || !conversationId) return undefined;
-  const messages = Array.isArray(row.messages)
-    ? row.messages.map(normalizeMessage).filter((message): message is FastSnapshotMessage => Boolean(message))
-    : [];
-  const memories = Array.isArray(row.memories)
-    ? row.memories.map(normalizeMemory).filter((memory): memory is FastSnapshotMemory => Boolean(memory))
-    : [];
-  const sourceDocuments = Array.isArray(row.source_documents ?? row.sourceDocuments)
-    ? (row.source_documents ?? row.sourceDocuments as unknown[])
-        .map(normalizeSourceDocument)
-        .filter((document): document is FastSnapshotSourceDocument => Boolean(document))
-    : [];
+
+  const messages = asArray(row.messages)
+    .map(normalizeMessage)
+    .filter((message): message is FastSnapshotMessage => Boolean(message));
+  const memories = asArray(row.memories)
+    .map(normalizeMemory)
+    .filter((memory): memory is FastSnapshotMemory => Boolean(memory));
+  const sourceDocuments = asArray(row.source_documents ?? row.sourceDocuments)
+    .map(normalizeSourceDocument)
+    .filter((document): document is FastSnapshotSourceDocument => Boolean(document));
   const conversationCapsule = normalizeCapsule(row.conversation_capsule ?? row.conversationCapsule);
   const workspaceCapsule = normalizeCapsule(row.workspace_capsule ?? row.workspaceCapsule);
   const messageCursor = normalizeCursor(row.message_cursor ?? row.messageCursor);
-  const rawCursors = asObject(row.cursors);
+  const cursors = asObject(row.cursors);
+
   return {
     schemaVersion: positiveInteger(
       row.schema_version ?? row.schemaVersion,
@@ -265,34 +266,26 @@ export function normalizeFastContextSnapshot(value: unknown): FastContextSnapsho
     memories,
     sourceDocuments,
     cursors: {
-      messageId: asString(rawCursors?.message_id ?? rawCursors?.messageId) ?? messageCursor?.id,
-      messageCreatedAt: asString(rawCursors?.message_created_at ?? rawCursors?.messageCreatedAt) ?? messageCursor?.createdAt,
+      messageId: asString(cursors?.message_id ?? cursors?.messageId) ?? messageCursor?.id,
+      messageCreatedAt: asString(cursors?.message_created_at ?? cursors?.messageCreatedAt) ?? messageCursor?.createdAt,
       conversationCapsuleSourceCursor: asString(
-        rawCursors?.conversation_capsule_source_cursor ?? rawCursors?.conversationCapsuleSourceCursor,
+        cursors?.conversation_capsule_source_cursor ?? cursors?.conversationCapsuleSourceCursor,
       ) ?? conversationCapsule?.sourceCursor,
-      conversationCapsuleVersion: Number.isFinite(Number(
-        rawCursors?.conversation_capsule_version ?? rawCursors?.conversationCapsuleVersion,
-      ))
-        ? Number(rawCursors?.conversation_capsule_version ?? rawCursors?.conversationCapsuleVersion)
-        : conversationCapsule?.version,
+      conversationCapsuleVersion: optionalNumber(
+        cursors?.conversation_capsule_version ?? cursors?.conversationCapsuleVersion,
+      ) ?? conversationCapsule?.version,
       workspaceCapsuleSourceCursor: asString(
-        rawCursors?.workspace_capsule_source_cursor ?? rawCursors?.workspaceCapsuleSourceCursor,
+        cursors?.workspace_capsule_source_cursor ?? cursors?.workspaceCapsuleSourceCursor,
       ) ?? workspaceCapsule?.sourceCursor,
-      workspaceCapsuleVersion: Number.isFinite(Number(
-        rawCursors?.workspace_capsule_version ?? rawCursors?.workspaceCapsuleVersion,
-      ))
-        ? Number(rawCursors?.workspace_capsule_version ?? rawCursors?.workspaceCapsuleVersion)
-        : workspaceCapsule?.version,
+      workspaceCapsuleVersion: optionalNumber(
+        cursors?.workspace_capsule_version ?? cursors?.workspaceCapsuleVersion,
+      ) ?? workspaceCapsule?.version,
     },
   };
 }
 
 function normalizeMessageContent(value: string): string {
-  return value
-    .normalize("NFKC")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+  return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function messageFingerprint(message: FastContextMessageHint): string {
@@ -313,8 +306,7 @@ export function mergeServerAuthoritativeMessages(args: {
 }): readonly { role: "user" | "assistant"; content: string }[] {
   const limit = positiveInteger(args.limit, FAST_CONTEXT_SNAPSHOT_MESSAGE_LIMIT, 1, 100);
   const canonical = args.canonicalMessages
-    .map((message) => ({ role: message.role, content: message.content }))
-    .map(normalizeHint)
+    .map((message) => normalizeHint({ role: message.role, content: message.content }))
     .filter((message): message is { role: "user" | "assistant"; content: string } => Boolean(message));
   const client = args.clientMessages
     .map(normalizeHint)
