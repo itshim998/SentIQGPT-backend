@@ -42,9 +42,12 @@ const responsive = await readFile(new URL("../styles/modules/46-adaptive-panel-r
 for (const token of [
   "MutationObserver",
   "inertAround",
+  "releaseActiveRoot",
   'setAttribute("inert", "")',
   'setAttribute("aria-hidden", "true")',
   "entryByRoot.has(element)",
+  "entryByRoot.get(element)",
+  "registeredEntry && !registeredEntry.open",
   'if (!isRegisteredPanelRoot) element.setAttribute("aria-hidden", "true")',
   'event.key === "Escape"',
   'event.key !== "Tab"',
@@ -58,7 +61,20 @@ for (const token of [
 const registeredRootGuard = framework.indexOf("const isRegisteredPanelRoot = entryByRoot.has(element);");
 const guardedAriaHidden = framework.indexOf('if (!isRegisteredPanelRoot) element.setAttribute("aria-hidden", "true");');
 assert.ok(registeredRootGuard >= 0 && guardedAriaHidden > registeredRootGuard,
-  "Nested adaptive panels must stay registered as open while the top panel makes them inert");
+  "Open registered panel roots must remain visible to the adaptive panel state machine while inert");
+
+const closedPanelLookup = framework.indexOf("const registeredEntry = entryByRoot.get(element);");
+const closedPanelSkip = framework.indexOf("registeredEntry && !registeredEntry.open", closedPanelLookup);
+assert.ok(closedPanelLookup >= 0 && closedPanelSkip > closedPanelLookup,
+  "Closed registered panels must not be inerted before they are opened as a nested modal");
+
+const inertAroundStart = framework.indexOf("function inertAround(activeRoot)");
+const releaseActiveCall = framework.indexOf("releaseActiveRoot(activeRoot);", inertAroundStart);
+const restoreBackgroundCall = framework.indexOf("restoreBackground();", inertAroundStart);
+assert.ok(
+  inertAroundStart >= 0 && releaseActiveCall > inertAroundStart && restoreBackgroundCall > releaseActiveCall,
+  "A newly active nested panel must be released from stale inert state before background snapshots are restored",
+);
 
 for (const forbidden of ["fetch(", "SentIQAPI", "localStorage", "sessionStorage", "WebSocket", "getUserMedia"]) {
   assert.equal(framework.includes(forbidden), false, `framework must not contain ${forbidden}`);
