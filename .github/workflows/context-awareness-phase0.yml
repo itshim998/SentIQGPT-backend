@@ -1,4 +1,4 @@
-name: Context Awareness Phase 0
+name: Context Awareness
 
 on:
   workflow_dispatch:
@@ -15,6 +15,9 @@ on:
       - "backend/services/sourceRetrievalService.ts"
       - "backend/ai/FileIngestionHandler.ts"
       - "backend/testContextAwarenessPhase0.ts"
+      - "backend/testContextAwarenessPhase1.ts"
+      - "backend/testContextComposition.ts"
+      - "backend/testProtectedContextSafety.ts"
       - "docs/context-awareness/**"
       - ".github/workflows/context-awareness-phase0.yml"
 
@@ -22,9 +25,9 @@ permissions:
   contents: read
 
 jobs:
-  baseline:
+  contextual-awareness:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       SENTIQ_CONTEXT_EVAL_REPORT: artifacts/context-awareness-phase-0.json
       SENTIQ_CONTEXT_EVAL_ENFORCE_TARGETS: ${{ inputs.enforce_targets == true && '1' || '0' }}
@@ -44,10 +47,19 @@ jobs:
       - name: Build backend
         run: npm run build
 
+      - name: Run canonical context-budget regressions
+        run: npm run test:context-budget
+
+      - name: Run protected-context safety regressions
+        run: npm run test:protected-context-safety
+
       - name: Run Phase 0 evaluator
         run: |
           mkdir -p artifacts
           npx ts-node --project tsconfig.backend.json backend/testContextAwarenessPhase0.ts
+
+      - name: Run Phase 1 query-aware policy regressions
+        run: npx ts-node --project tsconfig.backend.json backend/testContextAwarenessPhase1.ts
 
       - name: Upload evaluation report
         if: always()
