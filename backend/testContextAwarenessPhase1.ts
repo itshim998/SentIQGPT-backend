@@ -219,7 +219,7 @@ async function main(): Promise<void> {
         userMessage: "What changed today?",
         routeEvidence: [{
           label: "web result",
-          content: `REQUIRED-TOOL-EVIDENCE ${repeated("tool", 700)}`,
+          content: `REQUIRED-TOOL-EVIDENCE ${repeated("tool", 80)}`,
           required: true,
           relevance: 1,
         }],
