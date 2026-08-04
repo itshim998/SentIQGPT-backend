@@ -1,0 +1,59 @@
+name: Context Awareness Phase 0
+
+on:
+  workflow_dispatch:
+    inputs:
+      enforce_targets:
+        description: Enforce the future contextual-awareness target gates
+        required: false
+        default: false
+        type: boolean
+  pull_request:
+    paths:
+      - "backend/context/**"
+      - "backend/orchestrator/contextComposer.ts"
+      - "backend/services/sourceRetrievalService.ts"
+      - "backend/ai/FileIngestionHandler.ts"
+      - "backend/testContextAwarenessPhase0.ts"
+      - "docs/context-awareness/**"
+      - ".github/workflows/context-awareness-phase0.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SENTIQ_CONTEXT_EVAL_REPORT: artifacts/context-awareness-phase-0.json
+      SENTIQ_CONTEXT_EVAL_ENFORCE_TARGETS: ${{ inputs.enforce_targets == true && '1' || '0' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build backend
+        run: npm run build
+
+      - name: Run Phase 0 evaluator
+        run: |
+          mkdir -p artifacts
+          npx ts-node --project tsconfig.backend.json backend/testContextAwarenessPhase0.ts
+
+      - name: Upload evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: context-awareness-phase-0-${{ github.sha }}
+          path: artifacts/context-awareness-phase-0.json
+          if-no-files-found: warn
+          retention-days: 30
