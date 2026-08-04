@@ -10,6 +10,7 @@ on:
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
       - "scripts/testFrontendRuntimeSmoke.mjs"
+      - "scripts/testNestedTrustPanelRuntime.mjs"
       - "scripts/testFrontendUiStabilityRuntime.mjs"
       - "scripts/testLongThreadScrollRuntime.mjs"
       - "scripts/testPriorityPolishRuntime.mjs"
@@ -34,6 +35,7 @@ on:
       - "scripts/runFrontendChecks.mjs"
       - "scripts/runFrontendUiStateTests.mjs"
       - "scripts/testFrontendRuntimeSmoke.mjs"
+      - "scripts/testNestedTrustPanelRuntime.mjs"
       - "scripts/testFrontendUiStabilityRuntime.mjs"
       - "scripts/testLongThreadScrollRuntime.mjs"
       - "scripts/testPriorityPolishRuntime.mjs"
@@ -127,6 +129,7 @@ jobs:
         run: |
           set -o pipefail
           node scripts/testFrontendRuntimeSmoke.mjs 2>&1 | tee frontend-runtime.log
+          node scripts/testNestedTrustPanelRuntime.mjs 2>&1 | tee -a frontend-runtime.log
           node scripts/testFrontendUiStabilityRuntime.mjs 2>&1 | tee -a frontend-runtime.log
           node scripts/testLongThreadScrollRuntime.mjs 2>&1 | tee -a frontend-runtime.log
           node scripts/testPriorityPolishRuntime.mjs 2>&1 | tee -a frontend-runtime.log
