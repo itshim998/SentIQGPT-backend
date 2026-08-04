@@ -243,7 +243,7 @@ async function main(): Promise<void> {
           { type: "project", summary: `ROLLBACK-FACT-COPY ${repeated("same rollout wording", 80)}`, relevance: 0.99 },
           { type: "project", summary: "COMPLEMENTARY-CANARY-FACT: canary traffic must be checked separately.", relevance: 0.8 },
         ],
-        tokenBudget: 420,
+        tokenBudget: 620,
       });
       assert(diverseMemories.prompt.includes("COMPLEMENTARY-CANARY-FACT"),
         "deterministic MMR must preserve complementary evidence before a near-duplicate crowds it out");
