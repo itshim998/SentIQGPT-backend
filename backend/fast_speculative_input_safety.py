@@ -20,7 +20,11 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
+# The implementation is active for its deliberately narrow request class. A
+# separate, explicit negative switch is used for emergency rollback so stale
+# inherited Azure values cannot silently leave the optimized image disabled.
 FEATURE_FLAG = "SENTIQ_FAST_PARALLEL_INPUT_SAFETY_ENABLED"
+FORCE_DISABLE_FLAG = "SENTIQ_FAST_PARALLEL_INPUT_SAFETY_FORCE_DISABLED"
 BUFFER_ITEMS_ENV = "SENTIQ_FAST_SPECULATIVE_BUFFER_ITEMS"
 DEFAULT_BUFFER_ITEMS = 512
 ELIGIBLE_TASKS = frozenset({"chat", "general"})
@@ -32,6 +36,10 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _feature_enabled() -> bool:
+    return not _env_bool(FORCE_DISABLE_FLAG, False)
 
 
 def _buffer_item_limit() -> int:
@@ -52,27 +60,33 @@ def _execution_mode(request: Any) -> str:
     return "fast"
 
 
+def _eligibility_rejection_reason(request: Any, service: Any) -> str:
+    if not _feature_enabled():
+        return "force_disabled"
+    if bool(getattr(service, "PYTHON_LLM_QUOTA_ENFORCEMENT", False)):
+        return "python_quota_enforcement"
+    if _execution_mode(request) != "fast":
+        return "non_fast_mode"
+    if str(getattr(request, "task", "") or "").strip().lower() not in ELIGIBLE_TASKS:
+        return "non_text_task"
+    if bool(getattr(request, "use_simulation", False)):
+        return "simulation"
+    if getattr(request, "image_attachments", None):
+        return "image_input"
+    if getattr(request, "sentiq_tool_request", None):
+        return "tool_request"
+    if str(getattr(request, "tool_transport_mode", "none") or "none") != "none":
+        return "tool_transport"
+    # required_capabilities may contain benign transport descriptors for an
+    # ordinary text request. The concrete task, image, and tool gates above are
+    # the authoritative exclusions and keep this lane narrow without rejecting
+    # normal Fast chat payloads.
+    return ""
+
+
 def is_ordinary_fast_text_request(request: Any, service: Any) -> bool:
     """Return True only for the narrow, reversible speculative lane."""
-    if not _env_bool(FEATURE_FLAG, False):
-        return False
-    if bool(getattr(service, "PYTHON_LLM_QUOTA_ENFORCEMENT", False)):
-        return False
-    if _execution_mode(request) != "fast":
-        return False
-    if str(getattr(request, "task", "") or "").strip().lower() not in ELIGIBLE_TASKS:
-        return False
-    if bool(getattr(request, "use_simulation", False)):
-        return False
-    if getattr(request, "image_attachments", None):
-        return False
-    if getattr(request, "sentiq_tool_request", None):
-        return False
-    if str(getattr(request, "tool_transport_mode", "none") or "none") != "none":
-        return False
-    if getattr(request, "required_capabilities", None):
-        return False
-    return True
+    return not _eligibility_rejection_reason(request, service)
 
 
 class SpeculativeProviderBuffer:
@@ -294,7 +308,14 @@ def _speculative_event_generator(
 
 def build_stream_endpoint(service: Any, original_stream: Callable[..., Any]) -> Callable[..., Any]:
     async def endpoint(request: Any):
-        if not is_ordinary_fast_text_request(request, service):
+        rejection_reason = _eligibility_rejection_reason(request, service)
+        if rejection_reason:
+            service.logger.debug(
+                "[FastSpeculation] bypassed reason=%s task=%s mode=%s",
+                rejection_reason,
+                getattr(request, "task", None),
+                _execution_mode(request),
+            )
             return await original_stream(request)
 
         user_id, effective_model_override = _resolve_stream_identity(service, request)
@@ -389,8 +410,9 @@ def install(service: Any) -> None:
     app.add_api_route("/llm/stream", endpoint, methods=["POST"])
     app.state.fast_speculative_input_safety_installed = True
     service.logger.info(
-        "[FastSpeculation] installed enabled=%s buffer_items=%s eligible_tasks=%s",
-        _env_bool(FEATURE_FLAG, False),
+        "[FastSpeculation] installed enabled=%s force_disabled=%s buffer_items=%s eligible_tasks=%s",
+        _feature_enabled(),
+        _env_bool(FORCE_DISABLE_FLAG, False),
         _buffer_item_limit(),
         ",".join(sorted(ELIGIBLE_TASKS)),
     )
