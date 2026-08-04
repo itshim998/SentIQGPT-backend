@@ -1,0 +1,31 @@
+name: Find Fast speculation inspection run
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/find-fast-speculation-inspection-run.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  find:
+    name: List trusted runtime inspection runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: List matching master inspection runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          runs="$(gh run list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --workflow inspect-fast-speculation-runtime.yml \
+            --branch master \
+            --event push \
+            --limit 10 \
+            --json databaseId,headSha,status,conclusion,url,createdAt)"
+          jq . <<<"${runs}"
+          jq -e 'length > 0' <<<"${runs}" >/dev/null
