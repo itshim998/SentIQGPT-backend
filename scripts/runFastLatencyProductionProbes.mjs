@@ -2,7 +2,7 @@
 
 // This diagnostic is intentionally committed with the controlled full-rollout trigger
 // so the baseline and immutable production image share the exact same master SHA.
-// Post-rollout verification: measure ordinary Fast TTFT with buffered input-safety speculation active.
+// Corrected rollout verification: prove ordinary Fast provider work overlaps input safety in production.
 import { appendFile, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { randomUUID } from "node:crypto";
