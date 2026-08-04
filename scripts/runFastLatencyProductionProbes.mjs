@@ -2,7 +2,7 @@
 
 // This diagnostic is intentionally committed with the controlled full-rollout trigger
 // so the baseline and immutable production image share the exact same master SHA.
-// Corrected rollout verification: prove ordinary Fast provider work overlaps input safety in production.
+// Final proof: ordinary Fast text suppresses only the implicit image envelope and overlaps input safety.
 import { appendFile, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { randomUUID } from "node:crypto";
