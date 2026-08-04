@@ -891,8 +891,8 @@ function admissionGroups(policy: ContextQueryPolicy): readonly string[] {
       "olderRecent", "stableContext", "rollingSummary", "optionalRoute", "fileChunks",
     ],
     file_question: [
-      "fileChunks", "protectedRecent", "conversationCapsule", "optionalRoute", "optionalRecall",
-      "memories", "workspaceCapsule", "rollingSummary", "olderRecent", "stableContext",
+      "fileChunks", "protectedRecent", "conversationCapsule", "memories", "optionalRoute",
+      "optionalRecall", "workspaceCapsule", "rollingSummary", "olderRecent", "stableContext",
     ],
     whole_document_summary: [
       "documentMap", "fileChunks", "protectedRecent", "conversationCapsule", "optionalRoute",
