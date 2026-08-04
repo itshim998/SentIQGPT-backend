@@ -44,6 +44,7 @@ class FakeService:
         self.check_input_safety = safety_check
         self._provider_factory = provider_factory
         self.log_calls = 0
+        self.provider_calls: list[dict[str, Any]] = []
 
     @staticmethod
     def is_guest_user(user_id: str | None) -> bool:
@@ -58,7 +59,8 @@ class FakeService:
     def log_model_tool_gateway_diagnostic(self, *_args: Any, **_kwargs: Any) -> None:
         self.log_calls += 1
 
-    def stream_llm_router(self, **_kwargs: Any):
+    def stream_llm_router(self, **kwargs: Any):
+        self.provider_calls.append(dict(kwargs))
         return self._provider_factory()
 
     @staticmethod
@@ -68,6 +70,24 @@ class FakeService:
     @staticmethod
     def check_output_safety(*_args: Any, **_kwargs: Any) -> tuple[bool, str, str]:
         return True, "SAFE", "SAFE"
+
+
+def image_tool_request(*names: str) -> dict[str, Any]:
+    requested = list(names or ("image_gen",))
+    return {
+        "registry_version": "test",
+        "allowed_tool_fingerprint": "test",
+        "tool_choice_policy": "auto",
+        "allowed_tool_names": requested,
+        "availability_context": {"authenticated": True, "executionMode": "fast"},
+        "tools": [
+            {
+                "type": "function",
+                "function": {"name": name, "description": name, "parameters": {"type": "object"}},
+            }
+            for name in requested
+        ],
+    }
 
 
 def request(**overrides: Any) -> SimpleNamespace:
@@ -91,6 +111,15 @@ def request(**overrides: Any) -> SimpleNamespace:
     }
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def production_plain_text_request(**overrides: Any) -> SimpleNamespace:
+    return request(
+        sentiq_tool_request=image_tool_request("image_gen"),
+        tool_transport_mode="streaming",
+        required_capabilities=["sentiq_tools_streaming"],
+        **overrides,
+    )
 
 
 def assert_true(value: Any, label: str) -> None:
@@ -135,15 +164,59 @@ def test_eligibility_is_narrow_and_runtime_stable() -> None:
             ),
             "benign text transport capabilities must not bypass speculation",
         )
+        assert_true(
+            speculative.is_ordinary_fast_text_request(production_plain_text_request(), service),
+            "implicit image-only envelope on ordinary text should qualify",
+        )
+        assert_true(
+            not speculative.is_ordinary_fast_text_request(
+                production_plain_text_request(prompt="Generate an image of a black SUV on a beach"),
+                service,
+            ),
+            "explicit image generation must retain the original tool path",
+        )
+        assert_true(
+            not speculative.is_ordinary_fast_text_request(
+                request(
+                    sentiq_tool_request=image_tool_request("image_gen", "file_gen"),
+                    tool_transport_mode="streaming",
+                    required_capabilities=["sentiq_tools_streaming"],
+                ),
+                service,
+            ),
+            "mixed tool envelopes must remain serial",
+        )
         assert_true(not speculative.is_ordinary_fast_text_request(request(execution_mode="intuitive"), service), "Intuitive must not qualify")
         assert_true(not speculative.is_ordinary_fast_text_request(request(task="chart_generate"), service), "artifact task must not qualify")
         assert_true(not speculative.is_ordinary_fast_text_request(request(image_attachments=[{"base64": "x"}]), service), "image input must not qualify")
-        assert_true(not speculative.is_ordinary_fast_text_request(request(sentiq_tool_request={"tools": []}, tool_transport_mode="streaming"), service), "tools must not qualify")
+        assert_true(not speculative.is_ordinary_fast_text_request(request(sentiq_tool_request={"tools": []}, tool_transport_mode="streaming"), service), "unknown tool envelopes must remain serial")
         service.PYTHON_LLM_QUOTA_ENFORCEMENT = True
         assert_true(not speculative.is_ordinary_fast_text_request(request(), service), "Python quota enforcement must force serial path")
         service.PYTHON_LLM_QUOTA_ENFORCEMENT = False
         os.environ[speculative.FORCE_DISABLE_FLAG] = "true"
         assert_true(not speculative.is_ordinary_fast_text_request(request(), service), "explicit emergency disable must force serial path")
+
+
+def test_image_intent_and_transport_normalization() -> None:
+    assert_true(not speculative._explicit_image_generation_intent("Explain how image processing works"), "image discussion is not generation intent")
+    assert_true(speculative._explicit_image_generation_intent("Draw a futuristic city"), "draw request is image intent")
+    assert_true(speculative._explicit_image_generation_intent("Create a logo for SentIQ"), "logo request is image intent")
+    assert_true(speculative._explicit_image_generation_intent("Visualize a neural network"), "visualize request is image intent")
+
+    tool_request, capabilities, mode, suppressed = speculative._effective_provider_transport(
+        production_plain_text_request(required_capabilities=["text", "sentiq_tools_streaming"]),
+    )
+    assert_equal(tool_request, None, "implicit image tool request is removed")
+    assert_equal(capabilities, ["text"], "only tool capability is removed")
+    assert_equal(mode, "none", "tool transport is removed")
+    assert_true(suppressed, "suppression metadata")
+
+    explicit = production_plain_text_request(prompt="Create an image of a cherry blossom garden")
+    tool_request, capabilities, mode, suppressed = speculative._effective_provider_transport(explicit)
+    assert_true(isinstance(tool_request, dict), "explicit image request keeps tool envelope")
+    assert_equal(capabilities, ["sentiq_tools_streaming"], "explicit image capabilities stay unchanged")
+    assert_equal(mode, "streaming", "explicit image transport stays unchanged")
+    assert_true(not suppressed, "explicit image request is not suppressed")
 
 
 def test_buffer_preserves_context_and_order() -> None:
@@ -198,9 +271,7 @@ async def test_provider_overlaps_safety_without_early_release() -> None:
 
     endpoint = speculative.build_stream_endpoint(service, original_stream)
     with speculative_enabled_environment():
-        task = asyncio.create_task(
-            endpoint(request(required_capabilities=["text", "streaming"])),
-        )
+        task = asyncio.create_task(endpoint(production_plain_text_request()))
         try:
             started = await asyncio.to_thread(provider_started.wait, 1.0)
             assert_true(started, "provider must start while safety is pending")
@@ -213,6 +284,11 @@ async def test_provider_overlaps_safety_without_early_release() -> None:
             assert_true("[DONE]" in body, "approved stream must terminate normally")
             assert_true(not delegated, "eligible request must not use serial endpoint")
             assert_equal(service.log_calls, 1, "route diagnostic count")
+            assert_equal(len(service.provider_calls), 1, "provider invocation count")
+            provider_call = service.provider_calls[0]
+            assert_equal(provider_call["sentiq_tool_request"], None, "provider receives no implicit image tool")
+            assert_equal(provider_call["required_capabilities"], [], "provider receives no implicit tool capability")
+            assert_equal(provider_call["tool_transport_mode"], "none", "provider receives text-only transport")
         finally:
             safety_release.set()
 
@@ -240,7 +316,7 @@ async def test_blocked_input_discards_speculative_output() -> None:
     endpoint = speculative.build_stream_endpoint(service, original_stream)
     with speculative_enabled_environment():
         try:
-            await endpoint(request())
+            await endpoint(production_plain_text_request())
         except HTTPException as error:
             assert_equal(error.status_code, 400, "blocked HTTP status")
             assert_equal(error.detail, {"status": "blocked", "reason": "safety_violation"}, "blocked response contract")
@@ -260,14 +336,19 @@ async def test_ineligible_request_delegates_unchanged() -> None:
 
     endpoint = speculative.build_stream_endpoint(service, original_stream)
     with speculative_enabled_environment():
-        result = await endpoint(request(execution_mode="intuitive"))
-        assert_equal(result, "serial-result", "delegated result")
+        result = await endpoint(
+            production_plain_text_request(prompt="Generate an image of a lighthouse at sunset"),
+        )
+        assert_equal(result, "serial-result", "explicit image request delegated result")
         assert_equal(calls, 1, "serial endpoint call count")
+        assert_equal(service.provider_calls, [], "wrapper must not start provider for delegated image request")
 
 
 def main() -> None:
     test_eligibility_is_narrow_and_runtime_stable()
     print("PASS | eligibility_is_narrow_and_runtime_stable")
+    test_image_intent_and_transport_normalization()
+    print("PASS | image_intent_and_transport_normalization")
     test_buffer_preserves_context_and_order()
     print("PASS | buffer_preserves_context_and_order")
     asyncio.run(test_provider_overlaps_safety_without_early_release())
