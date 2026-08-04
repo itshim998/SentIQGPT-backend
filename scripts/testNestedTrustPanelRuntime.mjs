@@ -14,7 +14,7 @@ const MIME_TYPES = Object.freeze({
   ".html": "text/html; charset=utf-8",
   ".ico": "image/x-icon",
   ".jpeg": "image/jpeg",
-  ".jpg": "image/jpeg",
+  ".jpg": "image/jpg",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json",
   ".mjs": "text/javascript; charset=utf-8",
@@ -112,7 +112,7 @@ try {
   browser = await puppeteer.launch({
     executablePath: findChromeExecutable(),
     headless: true,
-    protocolTimeout: 15_000,
+    protocolTimeout: 30_000,
     args: [
       "--disable-background-networking",
       "--disable-breakpad",
@@ -142,30 +142,30 @@ try {
     else request.abort("blockedbyclient");
   });
 
+  console.log("nested-trust: loading frontend");
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => (
-    typeof window.SentIQPanels?.sync === "function"
+    typeof window.SentIQPanels?.isOpen === "function"
     && typeof window.SentIQTrustPanel?.open === "function"
   ));
   await sleep(120);
 
+  console.log("nested-trust: opening Settings through its real observer lifecycle");
   await page.evaluate(() => {
     const settings = document.getElementById("settings-modal");
     settings.style.display = "flex";
     settings.setAttribute("aria-hidden", "false");
-    window.SentIQPanels.sync();
   });
-  await sleep(120);
+  await page.waitForFunction(() => window.SentIQPanels?.isOpen?.("settings-modal") === true);
 
   const settingsOnly = await snapshot(page);
   assert.equal(settingsOnly.settingsOpen, true, "Settings must be registered as open before nesting Privacy & support");
   assert.equal(settingsOnly.settingsInert, false, "The active Settings panel must remain interactive");
 
-  await page.evaluate(() => {
-    window.SentIQTrustPanel.open("privacy");
-    window.SentIQPanels.sync();
-  });
-  await sleep(160);
+  console.log("nested-trust: opening Privacy & support above Settings");
+  await page.evaluate(() => window.SentIQTrustPanel.open("privacy"));
+  await page.waitForFunction(() => window.SentIQPanels?.isOpen?.("trust-modal") === true);
+  await sleep(120);
 
   const nestedOpen = await snapshot(page);
   assert.equal(nestedOpen.activeAdaptivePanel, "trust-modal", "Privacy & support must be the top adaptive panel");
@@ -179,6 +179,7 @@ try {
     ["controls", "trust-tab-controls"],
     ["support", "trust-tab-support"],
   ]) {
+    console.log(`nested-trust: clicking ${tabName}`);
     await page.click(`#trust-modal .trust-tab[data-trust-tab='${tabName}']`);
     await sleep(60);
     const tabState = await snapshot(page);
@@ -186,8 +187,9 @@ try {
     assert.equal(tabState.activePanel, panelId, `${panelId} must become visible after its tab is clicked`);
   }
 
+  console.log("nested-trust: closing with the X button");
   await page.click("#close-trust-btn");
-  await sleep(140);
+  await page.waitForFunction(() => window.SentIQPanels?.isOpen?.("trust-modal") === false);
   const closedByButton = await snapshot(page);
   assert.equal(closedByButton.trustDisplay, "none", "The close button must hide Privacy & support");
   assert.equal(closedByButton.trustAriaHidden, "true", "The close button must mark Privacy & support hidden");
@@ -195,13 +197,11 @@ try {
   assert.equal(closedByButton.activeAdaptivePanel, "settings-modal", "Settings must become the active panel again");
   assert.equal(closedByButton.settingsInert, false, "Settings must be interactive again after closing Privacy & support");
 
-  await page.evaluate(() => {
-    window.SentIQTrustPanel.open("privacy");
-    window.SentIQPanels.sync();
-  });
-  await sleep(140);
+  console.log("nested-trust: reopening and closing with Escape");
+  await page.evaluate(() => window.SentIQTrustPanel.open("privacy"));
+  await page.waitForFunction(() => window.SentIQPanels?.isOpen?.("trust-modal") === true);
   await page.keyboard.press("Escape");
-  await sleep(140);
+  await page.waitForFunction(() => window.SentIQPanels?.isOpen?.("trust-modal") === false);
   const closedByEscape = await snapshot(page);
   assert.equal(closedByEscape.trustDisplay, "none", "Escape must hide Privacy & support");
   assert.equal(closedByEscape.trustOpen, false, "Escape must update adaptive panel state");
