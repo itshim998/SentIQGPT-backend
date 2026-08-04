@@ -1,0 +1,31 @@
+name: Inspect Fast payload source
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/inspect-fast-payload-source.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    name: Locate Node-to-Python eligibility fields
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Print request construction matches
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo '=== SENTIQ TOOL REQUEST ==='
+          grep -R -n -C 4 --include='*.ts' --include='*.js' 'sentiq_tool_request' backend scripts || true
+          echo '=== REQUIRED CAPABILITIES ==='
+          grep -R -n -C 4 --include='*.ts' --include='*.js' 'required_capabilities' backend scripts || true
+          echo '=== TOOL TRANSPORT MODE ==='
+          grep -R -n -C 4 --include='*.ts' --include='*.js' 'tool_transport_mode' backend scripts || true
+          echo '=== PYTHON STREAM CALLS ==='
+          grep -R -n -C 8 --include='*.ts' --include='*.js' '/llm/stream' backend scripts || true
