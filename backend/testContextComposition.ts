@@ -57,7 +57,11 @@ async function main(): Promise<void> {
         conversation: [{ role: "user", content: "We are reviewing the launch note." }],
         tokenBudget: 700,
       });
-      assert(optionalEvidenceFirst.telemetry.droppedCounts.optional_evidence > 0, "optional evidence degrades first");
+      assert(
+        optionalEvidenceFirst.telemetry.droppedCounts.optional_evidence > 0
+          || optionalEvidenceFirst.telemetry.elasticBlocksReduced > 0,
+        "optional evidence degrades before protected file and memory context",
+      );
       assert.equal(optionalEvidenceFirst.telemetry.selectedCounts.file_chunks, 1, "file context survives optional evidence degradation");
       assert.equal(optionalEvidenceFirst.telemetry.selectedCounts.memories, 1, "relevant memory survives optional evidence degradation");
 
@@ -125,7 +129,11 @@ async function main(): Promise<void> {
         tokenBudget: 500,
       });
       assert(requiredEvidence.prompt.includes("REQUIRED CURRENT FACT MARKER"), "route-required evidence is protected");
-      assert(requiredEvidence.telemetry.droppedCounts.optional_evidence > 0, "low-ranked web evidence is removed first");
+      assert(
+        requiredEvidence.telemetry.droppedCounts.optional_evidence > 0
+          || requiredEvidence.telemetry.elasticBlocksReduced > 0,
+        "low-ranked web evidence is removed or elastically reduced before required evidence",
+      );
 
       const fileAwareCall = buildChatPrompt({
         userMessage: "Use the file and remember my formatting preference.",

@@ -2,12 +2,12 @@
 //
 // Compresses conversation history before it reaches the reasoning model:
 //
-//   1. Conversation Window  — keep only the last N messages (default 6)
-//   2. Older Message Summary — summarize everything before the window
+//   1. Candidate window — submit up to the latest 20 messages verbatim
+//   2. Older-message summary — summarize everything before the candidate window
 //      via Groq (memory_compress task → fast, cheap)
 //
-// This dramatically reduces token usage on long conversations while
-// preserving essential context through the summary.
+// The query-aware Context Composer decides which candidate turns fit. The
+// compressor no longer pre-reduces every request to six messages.
 
 import { callLLMAdapter } from "../ai/PromptBuilders";
 import type { LLMAdapterCall } from "../ai/PromptBuilders";
@@ -17,14 +17,14 @@ import { trimTextToTokenBudget } from "../orchestrator/contextBudgetManager";
 // Configuration
 // ==============================
 
-/** Number of recent messages kept verbatim in the prompt. */
-export const CONVERSATION_WINDOW = 6;
+/** Maximum recent-message candidate set submitted to token-aware composition. */
+export const CONVERSATION_WINDOW = 20;
 
 /** Minimum older-message count before triggering summarization. */
 const SUMMARY_THRESHOLD = 2;
 
-/** Skip compression for conversations shorter than this (optimization) */
-const SKIP_COMPRESSION_THRESHOLD = 10;
+/** Skip compression when only a very small prefix lies outside the candidate window. */
+const SKIP_COMPRESSION_THRESHOLD = 24;
 
 // ==============================
 // Types
@@ -40,18 +40,17 @@ export interface CompressedConversation {
 // ==============================
 
 /**
- * Compress a conversation history into a recent-message window plus
+ * Compress a conversation history into a recent-message candidate window plus
  * an optional Groq-generated summary of older messages.
  *
- * OPTIMIZATION: Skips LLM compression for short conversations (<10 messages)
- * to avoid unnecessary latency. Compression is only valuable for long
- * conversations where token savings outweigh the LLM call overhead.
+ * Short conversations avoid an auxiliary model call. Longer conversations
+ * retain up to 20 verbatim candidates so query-aware composition can preserve
+ * complete recent exchanges instead of receiving a fixed six-message slice.
  */
 export async function compressConversation(
   messages: readonly { role: string; content: string }[],
   userId?: string,
 ): Promise<CompressedConversation> {
-  // Short conversations — no compression needed
   if (messages.length <= CONVERSATION_WINDOW) {
     return { recentMessages: [...messages] };
   }
@@ -59,17 +58,13 @@ export async function compressConversation(
   const recentMessages = messages.slice(-CONVERSATION_WINDOW);
   const olderMessages = messages.slice(0, -CONVERSATION_WINDOW);
 
-  // OPTIMIZATION: Skip LLM compression for moderately short conversations
-  // The latency cost of the Groq call (~1-2s) outweighs the benefit
-  // for conversations with only a few messages outside the window.
   if (messages.length < SKIP_COMPRESSION_THRESHOLD || olderMessages.length < SUMMARY_THRESHOLD) {
     console.log(`[COMPRESSOR] skipping LLM compression (${messages.length} messages < ${SKIP_COMPRESSION_THRESHOLD} threshold)`);
     return { recentMessages };
   }
 
-  // Build a compact transcript of older messages
   const transcript = olderMessages
-    .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+    .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
     .join("\n");
   const budgetedTranscript = trimTextToTokenBudget(transcript, 600, "head_tail");
 
@@ -88,7 +83,6 @@ export async function compressConversation(
     const summary = raw.trim();
     return { recentMessages, summary: summary || undefined };
   } catch {
-    // Summarization failure is non-fatal — just skip the summary
     return { recentMessages };
   }
 }
