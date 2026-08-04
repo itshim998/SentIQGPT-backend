@@ -1,19 +1,8 @@
 // SentIQ Chat v2 — Context Builder (with Compression + Semantic Retrieval)
 //
-// Assembles the context window before sending to the reasoning model.
-// Combines: recent messages + relevant memories + smart file chunks
-// into a structured context object for ChatHandler.
-//
-// Compression pipeline:
-//   1. Conversation window  — last 6 messages kept verbatim
-//   2. Older-message summary — Groq-generated 1-2 sentence summary
-//   3. Memory retrieval      — semantic (cosine) when embeddings exist,
-//                               keyword fallback otherwise
-//   4. File chunking — most relevant chunks for the query
-//
-// PERFORMANCE OPTIMIZATION:
-//   - buildContextFast() skips compression for streaming (latency-critical)
-//   - buildContext() uses full compression for non-streaming requests
+// Assembles recent messages, durable memory, capsules, and source evidence.
+// Fast mode uses a bounded, read-only database snapshot and never performs an
+// extra AI call, embedding maintenance, or capsule refresh in the request path.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatMemoriesForPrompt } from "../memory/memoryStore";
@@ -34,6 +23,13 @@ import {
   sourceRetrievalService,
   type PromptSourceReference,
 } from "../services/sourceRetrievalService";
+import {
+  collectSourceDocumentIds,
+  fetchFastContextSnapshot,
+  mergeServerAuthoritativeMessages,
+  type FastContextSnapshotFetchResult,
+  type FastSnapshotSourceDocument,
+} from "../services/fastContextSnapshotService";
 
 export interface RawMessageContext {
   readonly recent_messages?: readonly { role: string; content: string }[];
@@ -93,6 +89,16 @@ export interface BuiltContext {
   readonly conversationSummary?: string;
   readonly conversationCapsule?: string;
   readonly workspaceCapsule?: string;
+  readonly sourceDocumentIdentities?: readonly FastSnapshotSourceDocument[];
+  readonly fastContextSnapshot?: {
+    readonly status: FastContextSnapshotFetchResult["status"];
+    readonly elapsedMs: number;
+    readonly timeoutMs: number;
+    readonly messageCursorId?: string;
+    readonly messageCursorCreatedAt?: string;
+    readonly conversationCapsuleVersion?: number;
+    readonly workspaceCapsuleVersion?: number;
+  };
   readonly hasFileContext: boolean;
   readonly webSearchMode?: WebSearchMode;
   readonly webSearchTrigger?: "manual" | "auto";
@@ -116,6 +122,8 @@ export interface BuiltContext {
 
 export interface BuildContextOptions {
   readonly profile?: ExecutionProfile;
+  readonly fastSnapshotPromise?: Promise<FastContextSnapshotFetchResult>;
+  readonly fastSnapshotTimeoutMs?: number;
 }
 
 type ContextMemory = {
@@ -198,12 +206,8 @@ async function fetchCloudMemories(
     : Promise.resolve({ data: [] as CloudMemoryRow[], error: null });
 
   const [globalResult, chatResult] = await Promise.all([globalQuery, chatQuery]);
-  if (globalResult.error) {
-    throw globalResult.error;
-  }
-  if (chatResult.error) {
-    throw chatResult.error;
-  }
+  if (globalResult.error) throw globalResult.error;
+  if (chatResult.error) throw chatResult.error;
 
   const rows = [
     ...((globalResult.data ?? []) as CloudMemoryRow[]),
@@ -217,15 +221,14 @@ async function fetchCloudMemories(
     .slice(0, 20);
   await maintainCloudMemoryEmbeddings(userDb, userId, rows);
 
-  return rows
-    .map((memory) => ({
-      type: memory.type,
-      summary: memory.summary,
-      importance: memory.importance,
-      embedding: normalizeEmbedding(memory.embedding),
-      scope: memory.scope === "chat" ? "chat" : "global",
-      chat_id: memory.chat_id ?? null,
-    }));
+  return rows.map((memory) => ({
+    type: memory.type,
+    summary: memory.summary,
+    importance: memory.importance,
+    embedding: normalizeEmbedding(memory.embedding),
+    scope: memory.scope === "chat" ? "chat" : "global",
+    chat_id: memory.chat_id ?? null,
+  }));
 }
 
 function mergeMemoryCandidates(
@@ -326,18 +329,14 @@ export async function fetchPriorConversationRecallEvidence(args: {
 
   const normalizedSubject = extractRecallSubject(args.query);
   const subjectTokens = tokenizeRecallText(normalizedSubject);
-  if (!normalizedSubject || subjectTokens.length === 0) {
-    return [];
-  }
+  if (!normalizedSubject || subjectTokens.length === 0) return [];
 
   const { data, error } = await getPriorConversationUserMessages(
     args.userDb,
     args.userId,
     args.currentConversationId,
   );
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 
   const uniqueMessages = new Set<string>();
   const scored = (data ?? [])
@@ -348,9 +347,7 @@ export async function fetchPriorConversationRecallEvidence(args: {
       const exactPhraseHit = normalizedSubject.length >= 5 && normalizedContent.includes(normalizedSubject);
       const contentTokens = new Set(tokenizeRecallText(normalizedContent));
       const overlapCount = subjectTokens.reduce((count, token) => count + (contentTokens.has(token) ? 1 : 0), 0);
-      if (!exactPhraseHit && overlapCount === 0) {
-        return null;
-      }
+      if (!exactPhraseHit && overlapCount === 0) return null;
 
       const recencyScore = Math.max(0, (items.length - index) / Math.max(items.length, 1));
       return {
@@ -373,23 +370,9 @@ export async function fetchPriorConversationRecallEvidence(args: {
     selected.push(item.evidence);
     if (selected.length >= 3) break;
   }
-
   return selected;
 }
 
-/**
- * Build the full compressed context for the reasoning model.
- *
- * Steps:
- *  1. Compress conversation (window + optional summary via Groq)
- *  2. Select memories — semantic search (cosine) if embeddings exist,
- *     keyword fallback otherwise
- *  3. Chunk files and select relevant chunks for the query
- *  4. Pre-build the memory prompt block for injection
- *
- * OPTIMIZATION: Cloud memory fetch now runs in parallel with compression
- * and semantic search to minimize total latency.
- */
 export async function buildContext(
   raw: RawMessageContext,
   userDb?: SupabaseClient,
@@ -398,39 +381,37 @@ export async function buildContext(
 ): Promise<BuiltContext> {
   const profile = options.profile ?? INTUITIVE_PROFILE;
   const ctxStart = Date.now();
-
-  // Derive the query early so all pipelines can use it.
   const allMessages = collapseAdjacentDuplicateMessages(raw.recent_messages ?? []);
   const query = raw.userMessage || allMessages[allMessages.length - 1]?.content || "";
   const isExplicitRecallQuery = isExplicitPriorConversationRecallQuery(query);
 
-  const rawMemories: ContextMemory[] = (raw.memories ?? []).map((m) => ({
-    type: m.type,
-    summary: m.summary,
-    importance: m.importance,
-    embedding: m.embedding,
-    scope: m.scope === "chat" ? "chat" : "global",
-    chat_id: m.chat_id ?? null,
+  const rawMemories: ContextMemory[] = (raw.memories ?? []).map((memory) => ({
+    type: memory.type,
+    summary: memory.summary,
+    importance: memory.importance,
+    embedding: memory.embedding,
+    scope: memory.scope === "chat" ? "chat" : "global",
+    chat_id: memory.chat_id ?? null,
   }));
-
   const normalizedUserId = userId?.trim();
+  const effectiveUserDb = userDb ?? raw.userDb;
 
-  // ── PARALLEL: conversation compression + semantic memory search + cloud memory fetch ──
-  // All three operations are independent and can run concurrently.
-  const cloudMemoryPromise = (profile.context.cloudMemories && userDb && normalizedUserId)
-    ? fetchCloudMemories(userDb, normalizedUserId, raw.conversationId)
+  const cloudMemoryPromise = (profile.context.cloudMemories && effectiveUserDb && normalizedUserId)
+    ? fetchCloudMemories(effectiveUserDb, normalizedUserId, raw.conversationId)
     : Promise.resolve([] as readonly ContextMemory[]);
-  const recallEvidencePromise = (profile.context.priorConversationRecall && userDb && normalizedUserId && isExplicitRecallQuery)
+  const recallEvidencePromise = (
+    profile.context.priorConversationRecall && effectiveUserDb && normalizedUserId && isExplicitRecallQuery
+  )
     ? fetchPriorConversationRecallEvidence({
-      query,
-      userDb,
-      userId: normalizedUserId,
-      currentConversationId: raw.conversationId,
-    })
+        query,
+        userDb: effectiveUserDb,
+        userId: normalizedUserId,
+        currentConversationId: raw.conversationId,
+      })
     : Promise.resolve([] as readonly ContextRecallEvidence[]);
-  const capsulePromise: Promise<ContextCapsulePair> = normalizedUserId && userDb
+  const capsulePromise: Promise<ContextCapsulePair> = normalizedUserId && effectiveUserDb
     ? contextCapsuleService.readCapsules({
-        userDb,
+        userDb: effectiveUserDb,
         ownerUserId: normalizedUserId,
         conversationId: raw.conversationId,
       })
@@ -438,12 +419,11 @@ export async function buildContext(
         ? contextCapsuleService.peekCachedCapsules(normalizedUserId, raw.conversationId)
         : {});
   const sourceRetrievalPromise = sourceRetrievalService.retrieveForPrompt({
-    userDb,
+    userDb: effectiveUserDb,
     ownerUserId: normalizedUserId,
     query,
     fileReferences: raw.file_references ?? [],
   });
-
   const compressionPromise = profile.context.compressConversation
     ? compressConversation(allMessages, userId)
     : Promise.resolve({
@@ -458,9 +438,7 @@ export async function buildContext(
     capsulePromise,
     sourceRetrievalPromise,
   ]);
-
   const { recentMessages, summary } = compressionResult;
-
   const memoryCandidates = mergeMemoryCandidates(rawMemories, cloudMemories);
   const semanticResults = profile.context.semanticMemorySearch
     ? await semanticMemorySearch(memoryCandidates, query, 3)
@@ -480,12 +458,9 @@ export async function buildContext(
     console.log(`[CONTEXT] memory retrieval: keyword fallback (${memories.length} selected)`);
   }
 
-  // 3. Keep extracted text internal until token-aware prompt composition.
-  //    The token-aware Context Composer chunks, ranks, and trims this text
-  //    before it is injected into a model prompt.
   const fileReferences = sourceRetrieval.fileReferences;
   if (fileReferences.length > 0) {
-    const totalChars = fileReferences.reduce((s, f) => s + f.extractedText.length, 0);
+    const totalChars = fileReferences.reduce((sum, file) => sum + file.extractedText.length, 0);
     console.log(`[CONTEXT] file inputs queued for token-aware composition: ${fileReferences.length} file(s), ${totalChars} total chars`);
   }
   const imageAttachments = (raw.image_attachments ?? []).map((image) => ({
@@ -494,14 +469,9 @@ export async function buildContext(
     base64: image.base64,
     size_bytes: image.size_bytes,
   }));
-  if (imageAttachments.length > 0) {
-    console.log(`[CONTEXT] image attachments: ${imageAttachments.length}`);
-  }
+  if (imageAttachments.length > 0) console.log(`[CONTEXT] image attachments: ${imageAttachments.length}`);
 
-  // 4. Pre-build the memory prompt block
   const memoryPromptBlock = formatMemoriesForPrompt(memories);
-
-  // Diagnostic logging
   console.log(`[CONTEXT] memory selected: ${memories.length}`);
   console.log(`[CONTEXT] messages included: ${recentMessages.length}`);
   console.log(`[CONTEXT] summary used: ${!!summary}`);
@@ -523,7 +493,7 @@ export async function buildContext(
     webSearchMode: raw.web_search_mode,
     webSearchTrigger: raw.web_search_trigger,
     userId: normalizedUserId,
-    userDb: userDb ?? raw.userDb,
+    userDb: effectiveUserDb,
     conversationId: raw.conversationId,
     billingIdentity: raw.billingIdentity,
     billingRequestId: raw.billingRequestId,
@@ -536,17 +506,10 @@ export async function buildContext(
 }
 
 /**
- * FAST context builder for streaming - optimized for minimum latency.
- *
- * Key differences from buildContext():
- *  1. SKIPS conversation compression (no Groq LLM call)
- *  2. Uses only the recent message window directly
- *  3. Runs memory selection synchronously (keyword fallback) for speed
- *  4. Still processes files if present
- *  5. OPTIMIZATION: Cloud memory fetch runs in parallel with setup
- *
- * Use this for /api/chat/stream where time-to-first-token is critical.
- * The tradeoff is slightly less context for very long conversations.
+ * Fast context builder. It performs no conversation-compression model call,
+ * embedding generation, cloud-memory maintenance, or capsule refresh.
+ * A single bounded snapshot RPC supplies durable server history and context;
+ * timeout/degradation continues immediately with client history and cache.
  */
 export async function buildContextFast(
   raw: RawMessageContext,
@@ -556,64 +519,84 @@ export async function buildContextFast(
 ): Promise<BuiltContext> {
   const profile = options.profile ?? FAST_PROFILE;
   const ctxStart = Date.now();
-
-  // Get recent messages directly - no compression, no LLM call
-  const allMessages = collapseAdjacentDuplicateMessages(raw.recent_messages ?? []);
-  const recentMessages = allMessages.slice(-CONVERSATION_WINDOW);
-  const query = raw.userMessage || recentMessages[recentMessages.length - 1]?.content || "";
+  const clientMessages = collapseAdjacentDuplicateMessages(raw.recent_messages ?? []);
+  const query = raw.userMessage || clientMessages[clientMessages.length - 1]?.content || "";
   const isExplicitRecallQuery = isExplicitPriorConversationRecallQuery(query);
-
-  const rawMemories: ContextMemory[] = (raw.memories ?? []).map((m) => ({
-    type: m.type,
-    summary: m.summary,
-    importance: m.importance,
-    embedding: m.embedding,
-    scope: m.scope === "chat" ? "chat" : "global",
-    chat_id: m.chat_id ?? null,
-  }));
-
   const normalizedUserId = userId?.trim();
+  const effectiveUserDb = userDb ?? raw.userDb;
 
-  // Start cloud memory fetch early (async)
-  const cloudMemoryPromise = (profile.context.cloudMemories && userDb && normalizedUserId)
-    ? fetchCloudMemories(userDb, normalizedUserId, raw.conversationId)
-    : Promise.resolve([] as readonly ContextMemory[]);
-  const recallEvidencePromise = (profile.context.priorConversationRecall && userDb && normalizedUserId && isExplicitRecallQuery)
-    ? fetchPriorConversationRecallEvidence({
-      query,
-      userDb,
-      userId: normalizedUserId,
-      currentConversationId: raw.conversationId,
-    })
-    : Promise.resolve([] as readonly ContextRecallEvidence[]);
-  // Keep the Fast path free of new shard reads so capsule support cannot add
-  // first-token latency. Normal context builds and background refreshes warm
-  // this process-local cache for subsequent Fast turns.
-  const capsulePromise: Promise<ContextCapsulePair> = Promise.resolve(normalizedUserId
+  const rawMemories: ContextMemory[] = (raw.memories ?? []).map((memory) => ({
+    type: memory.type,
+    summary: memory.summary,
+    importance: memory.importance,
+    embedding: memory.embedding,
+    scope: memory.scope === "chat" ? "chat" : "global",
+    chat_id: memory.chat_id ?? null,
+  }));
+  const cachedCapsules = normalizedUserId
     ? contextCapsuleService.peekCachedCapsules(normalizedUserId, raw.conversationId)
-    : {});
+    : {};
+  const sourceDocumentIds = collectSourceDocumentIds(
+    (raw.file_references ?? []) as unknown as readonly Record<string, unknown>[],
+  );
+  const snapshotPromise = options.fastSnapshotPromise ?? fetchFastContextSnapshot({
+    userDb: effectiveUserDb,
+    ownerUserId: normalizedUserId,
+    conversationId: raw.conversationId,
+    query,
+    clientRequestId: raw.clientRequestId,
+    sourceDocumentIds,
+    timeoutMs: options.fastSnapshotTimeoutMs,
+  });
+  const recallEvidencePromise = (
+    profile.context.priorConversationRecall && effectiveUserDb && normalizedUserId && isExplicitRecallQuery
+  )
+    ? fetchPriorConversationRecallEvidence({
+        query,
+        userDb: effectiveUserDb,
+        userId: normalizedUserId,
+        currentConversationId: raw.conversationId,
+      })
+    : Promise.resolve([] as readonly ContextRecallEvidence[]);
   const sourceRetrievalPromise = sourceRetrievalService.retrieveForPrompt({
-    userDb,
+    userDb: effectiveUserDb,
     ownerUserId: normalizedUserId,
     query,
     fileReferences: raw.file_references ?? [],
   });
 
-  // Use fast keyword-based memory selection (synchronous)
-  let memories: readonly ContextMemory[] = selectMemoriesForPrompt(rawMemories, query, 3, isExplicitRecallQuery);
-
-  // Await cloud memories (started earlier, likely already resolved)
-  const [cloudMemories, priorConversationEvidence, capsules, sourceRetrieval] = await Promise.all([
-    cloudMemoryPromise,
+  const [snapshotResult, priorConversationEvidence, sourceRetrieval] = await Promise.all([
+    snapshotPromise,
     recallEvidencePromise,
-    capsulePromise,
     sourceRetrievalPromise,
   ]);
-  if (cloudMemories.length > 0) {
-    memories = selectMemoriesForPrompt(mergeMemoryCandidates(memories, cloudMemories), query, 6, isExplicitRecallQuery);
-  }
+  const snapshot = snapshotResult.status === "available" ? snapshotResult.snapshot : undefined;
+  const recentMessages = snapshot
+    ? mergeServerAuthoritativeMessages({
+        canonicalMessages: snapshot.messages,
+        clientMessages,
+        currentUserMessage: raw.userMessage,
+        limit: CONVERSATION_WINDOW,
+      })
+    : clientMessages.slice(-CONVERSATION_WINDOW);
 
-  // Preserve extracted text internally; prompt composition performs chunk selection.
+  const snapshotMemories: ContextMemory[] = (snapshot?.memories ?? []).map((memory) => ({
+    type: memory.type,
+    summary: memory.summary,
+    importance: memory.importance,
+    relevance: memory.lexicalRank,
+    scope: memory.scope,
+    chat_id: memory.chatId ?? null,
+  }));
+  const memoryCandidates = mergeMemoryCandidates(rawMemories, snapshotMemories);
+  const memories = selectMemoriesForPrompt(
+    memoryCandidates,
+    query,
+    snapshotMemories.length > 0 ? 6 : 3,
+    isExplicitRecallQuery,
+  );
+  const conversationCapsule = snapshot?.conversationCapsule?.content ?? cachedCapsules.conversation?.content;
+  const workspaceCapsule = snapshot?.workspaceCapsule?.content ?? cachedCapsules.workspace?.content;
   const fileReferences = sourceRetrieval.fileReferences;
   const imageAttachments = (raw.image_attachments ?? []).map((image) => ({
     filename: image.filename,
@@ -621,15 +604,14 @@ export async function buildContextFast(
     base64: image.base64,
     size_bytes: image.size_bytes,
   }));
-
-  // Pre-build the memory prompt block
   const memoryPromptBlock = formatMemoriesForPrompt(memories);
 
-  console.log(`[CONTEXT-FAST] memory selected: ${memories.length} (keyword)`);
-  console.log(`[CONTEXT-FAST] messages included: ${recentMessages.length}`);
+  console.log(`[CONTEXT-FAST] snapshot status=${snapshotResult.status} elapsed=${snapshotResult.elapsedMs}ms timeout=${snapshotResult.timeoutMs}ms`);
+  console.log(`[CONTEXT-FAST] memory selected: ${memories.length} (lexical snapshot + local)`);
+  console.log(`[CONTEXT-FAST] messages included: ${recentMessages.length} canonical=${snapshot?.messages.length ?? 0}`);
   console.log(`[CONTEXT-FAST] recall evidence selected: ${priorConversationEvidence.length}`);
-  console.log(`[CONTEXT-FAST] capsules selected: conversation=${capsules.conversation ? 1 : 0} workspace=${capsules.workspace ? 1 : 0}`);
-  console.log(`[CONTEXT-FAST] source retrieval: mode=${sourceRetrieval.mode} selected=${sourceRetrieval.selectedChunks} dropped=${sourceRetrieval.droppedChunks}`);
+  console.log(`[CONTEXT-FAST] capsules selected: conversation=${conversationCapsule ? 1 : 0} workspace=${workspaceCapsule ? 1 : 0}`);
+  console.log(`[CONTEXT-FAST] source identities=${snapshot?.sourceDocuments.length ?? 0} retrieval mode=${sourceRetrieval.mode} selected=${sourceRetrieval.selectedChunks} dropped=${sourceRetrieval.droppedChunks}`);
   console.log(`[CONTEXT-FAST] profile=${profile.mode} buildContextFast completed in ${Date.now() - ctxStart}ms`);
 
   return {
@@ -638,14 +620,24 @@ export async function buildContextFast(
     fileReferences,
     imageAttachments,
     memoryPromptBlock,
-    conversationSummary: undefined, // No compression = no summary
-    conversationCapsule: capsules.conversation?.content,
-    workspaceCapsule: capsules.workspace?.content,
+    conversationSummary: undefined,
+    conversationCapsule,
+    workspaceCapsule,
+    sourceDocumentIdentities: snapshot?.sourceDocuments ?? [],
+    fastContextSnapshot: {
+      status: snapshotResult.status,
+      elapsedMs: snapshotResult.elapsedMs,
+      timeoutMs: snapshotResult.timeoutMs,
+      messageCursorId: snapshot?.cursors.messageId,
+      messageCursorCreatedAt: snapshot?.cursors.messageCreatedAt,
+      conversationCapsuleVersion: snapshot?.cursors.conversationCapsuleVersion,
+      workspaceCapsuleVersion: snapshot?.cursors.workspaceCapsuleVersion,
+    },
     hasFileContext: fileReferences.length > 0 || imageAttachments.length > 0,
     webSearchMode: raw.web_search_mode,
     webSearchTrigger: raw.web_search_trigger,
     userId: normalizedUserId,
-    userDb: userDb ?? raw.userDb,
+    userDb: effectiveUserDb,
     conversationId: raw.conversationId,
     billingIdentity: raw.billingIdentity,
     billingRequestId: raw.billingRequestId,
