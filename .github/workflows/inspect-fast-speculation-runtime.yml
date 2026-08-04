@@ -1,0 +1,178 @@
+name: Inspect Fast speculation runtime
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/inspect-fast-speculation-runtime.yml"
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/inspect-fast-speculation-runtime.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate:
+    name: Validate runtime inspection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Validate workflow source
+        run: |
+          set -Eeuo pipefail
+          grep -Fq 'fast_speculative_input_safety' .github/workflows/inspect-fast-speculation-runtime.yml
+          grep -Fq 'SENTIQ_FAST_PARALLEL_INPUT_SAFETY_FORCE_DISABLED' .github/workflows/inspect-fast-speculation-runtime.yml
+
+  inspect:
+    name: Inspect active production request shape
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install verified Container Apps CLI extension
+        run: >-
+          az extension add
+          --name containerapp
+          --version 1.3.0b4
+          --upgrade
+          --only-show-errors
+          --output none
+
+      - name: Resolve active production replica
+        id: deployment
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -Eeuo pipefail
+          revision="$(az containerapp revision list \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query "[?properties.active==\`true\` && properties.trafficWeight==\`100\` && properties.healthState=='Healthy'].name | [0]" \
+            -o tsv)"
+          replica="$(az containerapp replica list \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${revision}" \
+            --query '[0].name' \
+            -o tsv)"
+          [[ -n "${revision}" && -n "${replica}" ]] || exit 1
+          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
+          echo "replica=${replica}" >> "${GITHUB_OUTPUT}"
+
+      - name: Inspect route and compiled request shape
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          REVISION: ${{ steps.deployment.outputs.revision }}
+          REPLICA: ${{ steps.deployment.outputs.replica }}
+        run: |
+          set -Eeuo pipefail
+          inspection_source="$(cat <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          sys.path.insert(0, '/app/backend')
+          import fast_speculative_input_safety as speculation
+          import llm_service
+
+          route_endpoints = []
+          for route in llm_service.app.router.routes:
+              if getattr(route, 'path', None) == '/llm/stream':
+                  route_endpoints.append({
+                      'path': route.path,
+                      'methods': sorted(getattr(route, 'methods', set()) or set()),
+                      'endpoint': getattr(getattr(route, 'endpoint', None), '__name__', 'unknown'),
+                  })
+
+          model_fields = {}
+          for name in (
+              'task', 'execution_mode', 'use_simulation', 'image_attachments',
+              'sentiq_tool_request', 'tool_transport_mode', 'required_capabilities',
+          ):
+              field = llm_service.LLMInvokeRequest.model_fields.get(name)
+              model_fields[name] = {
+                  'default': None if field is None or field.default is None else repr(field.default),
+                  'required': bool(field.is_required()) if field is not None else None,
+              }
+
+          matches = []
+          needles = ('sentiq_tool_request', 'required_capabilities', 'tool_transport_mode')
+          for path in pathlib.Path('/app/dist/backend').rglob('*.js'):
+              try:
+                  lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
+              except Exception:
+                  continue
+              for index, line in enumerate(lines):
+                  if any(needle in line for needle in needles):
+                      start = max(0, index - 2)
+                      end = min(len(lines), index + 3)
+                      matches.append({
+                          'path': str(path.relative_to('/app')),
+                          'line': index + 1,
+                          'snippet': '\n'.join(lines[start:end])[:1800],
+                      })
+                      if len(matches) >= 30:
+                          break
+              if len(matches) >= 30:
+                  break
+
+          report = {
+              'event': 'fast_speculation_runtime_inspection',
+              'environment': {
+                  'legacy_enabled': os.getenv(speculation.FEATURE_FLAG),
+                  'force_disabled': os.getenv(speculation.FORCE_DISABLE_FLAG),
+                  'python_quota_enforcement': bool(llm_service.PYTHON_LLM_QUOTA_ENFORCEMENT),
+              },
+              'feature_enabled': speculation._feature_enabled(),
+              'route_endpoints': route_endpoints,
+              'request_model_fields': model_fields,
+              'compiled_payload_matches': matches,
+          }
+          print(json.dumps(report, separators=(',', ':'), sort_keys=True))
+          PY
+          )"
+          encoded="$(printf '%s' "${inspection_source}" | base64 -w0)"
+          command="python -c exec(__import__('base64').b64decode('${encoded}'))"
+          bash scripts/execAzureContainerAppCommand.sh \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${REVISION}" \
+            --replica "${REPLICA}" \
+            --container sentiqgpt-backend \
+            --command "${command}" \
+            | tee fast-speculation-runtime-inspection.jsonl
+          grep -a '"event":"fast_speculation_runtime_inspection"' \
+            fast-speculation-runtime-inspection.jsonl \
+            | tail -1 \
+            | jq . > fast-speculation-runtime-inspection.json
+
+      - name: Upload inspection evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: fast-speculation-runtime-inspection-${{ github.run_id }}
+          path: fast-speculation-runtime-inspection.json
+          if-no-files-found: error
+          retention-days: 7
