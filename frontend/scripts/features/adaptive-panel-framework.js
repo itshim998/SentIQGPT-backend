@@ -25,6 +25,7 @@ function initializeAdaptivePanels() {
   const inerted = new Map();
   let sequence = 0;
   let resizeFrame = 0;
+  let backgroundUpdateInProgress = false;
 
   function isVisible(root) {
     if (!(root instanceof HTMLElement)) return false;
@@ -117,11 +118,18 @@ function initializeAdaptivePanels() {
   function restoreBackground() {
     inerted.forEach((previous, element) => {
       if (!(element instanceof HTMLElement)) return;
-      element.inert = previous.inert;
-      if (previous.hadInertAttribute) element.setAttribute("inert", "");
-      else element.removeAttribute("inert");
-      if (previous.ariaHidden === null) element.removeAttribute("aria-hidden");
-      else element.setAttribute("aria-hidden", previous.ariaHidden);
+      if (element.inert !== previous.inert) element.inert = previous.inert;
+      if (previous.hadInertAttribute) {
+        if (!element.hasAttribute("inert")) element.setAttribute("inert", "");
+      } else if (element.hasAttribute("inert")) {
+        element.removeAttribute("inert");
+      }
+      const currentAriaHidden = element.getAttribute("aria-hidden");
+      if (previous.ariaHidden === null) {
+        if (currentAriaHidden !== null) element.removeAttribute("aria-hidden");
+      } else if (currentAriaHidden !== previous.ariaHidden) {
+        element.setAttribute("aria-hidden", previous.ariaHidden);
+      }
     });
     inerted.clear();
   }
@@ -142,9 +150,11 @@ function initializeAdaptivePanels() {
       hadInertAttribute: element.hasAttribute("inert"),
       ariaHidden: element.getAttribute("aria-hidden"),
     });
-    element.inert = true;
-    element.setAttribute("inert", "");
-    if (!isRegisteredPanelRoot) element.setAttribute("aria-hidden", "true");
+    if (!element.inert) element.inert = true;
+    if (!element.hasAttribute("inert")) element.setAttribute("inert", "");
+    if (!isRegisteredPanelRoot && element.getAttribute("aria-hidden") !== "true") {
+      element.setAttribute("aria-hidden", "true");
+    }
   }
 
   function inertAround(activeRoot) {
@@ -171,11 +181,17 @@ function initializeAdaptivePanels() {
   }
 
   function updateBackgroundState() {
-    const activeModal = activeEntry(true);
-    document.body.classList.toggle("adaptive-panel-modal-open", Boolean(activeModal));
-    document.body.classList.toggle("adaptive-panel-open", openEntries().length > 0);
-    if (activeModal) inertAround(activeModal.root);
-    else restoreBackground();
+    if (backgroundUpdateInProgress) return;
+    backgroundUpdateInProgress = true;
+    try {
+      const activeModal = activeEntry(true);
+      document.body.classList.toggle("adaptive-panel-modal-open", Boolean(activeModal));
+      document.body.classList.toggle("adaptive-panel-open", openEntries().length > 0);
+      if (activeModal) inertAround(activeModal.root);
+      else restoreBackground();
+    } finally {
+      backgroundUpdateInProgress = false;
+    }
   }
 
   function applyMode(entry) {
@@ -218,10 +234,7 @@ function initializeAdaptivePanels() {
   function syncEntry(entry) {
     applyMode(entry);
     const visible = isVisible(entry.root);
-    if (visible === entry.open) {
-      if (visible) updateBackgroundState();
-      return;
-    }
+    if (visible === entry.open) return;
 
     entry.open = visible;
     entry.root.dataset.adaptivePanelOpen = String(visible);
