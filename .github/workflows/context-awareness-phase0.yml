@@ -13,11 +13,14 @@ on:
       - "backend/context/**"
       - "backend/orchestrator/contextComposer.ts"
       - "backend/services/sourceRetrievalService.ts"
+      - "backend/services/fastContextSnapshotService.ts"
       - "backend/ai/FileIngestionHandler.ts"
       - "backend/testContextAwarenessPhase0.ts"
       - "backend/testContextAwarenessPhase1.ts"
+      - "backend/testFastContextSnapshot.ts"
       - "backend/testContextComposition.ts"
       - "backend/testProtectedContextSafety.ts"
+      - "supabase/migrations/*fast_context_snapshot*.sql"
       - "docs/context-awareness/**"
       - ".github/workflows/context-awareness-phase0.yml"
 
@@ -60,6 +63,9 @@ jobs:
 
       - name: Run Phase 1 query-aware policy regressions
         run: npx ts-node --project tsconfig.backend.json backend/testContextAwarenessPhase1.ts
+
+      - name: Run Phase 2 Fast snapshot regressions
+        run: npx ts-node --project tsconfig.backend.json backend/testFastContextSnapshot.ts
 
       - name: Upload evaluation report
         if: always()
