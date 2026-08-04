@@ -33,6 +33,25 @@ function setTexts(selector, values) {
   });
 }
 
+function setParagraphs(sectionSelector, values) {
+  const section = document.querySelector(sectionSelector);
+  if (!section) return;
+  const paragraphs = Array.from(section.querySelectorAll(":scope > p"));
+  while (paragraphs.length < values.length) {
+    const paragraph = document.createElement("p");
+    section.appendChild(paragraph);
+    paragraphs.push(paragraph);
+  }
+  paragraphs.forEach((paragraph, index) => {
+    if (index >= values.length) {
+      paragraph.remove();
+      return;
+    }
+    const next = String(values[index] || "");
+    if (paragraph.textContent !== next) paragraph.textContent = next;
+  });
+}
+
 function hideElement(selector) {
   const element = document.querySelector(selector);
   if (!element) return;
@@ -67,14 +86,14 @@ function applyFinalRestraintCopy() {
   setText("#trust-modal-title", "Privacy & support");
   setText(".trust-tab[data-trust-tab='controls']", "Data");
   setText("#trust-tab-privacy h3", "Privacy");
-  setTexts("#trust-tab-privacy p", [
+  setParagraphs("#trust-tab-privacy", [
     "SentIQ Chat can be used for conversations, files, web search, deep research, and content creation. As with any AI-powered tool, we recommend reviewing important outputs before relying on them.",
     "Guest sessions are temporary by design. Conversations started without an account are not saved and will not persist once the session ends.",
     "Signing in to your account allows your conversations, messages, memories, and created files to be securely saved and accessible across sessions.",
     "Files you share with SentIQ Chat are used solely to fulfill your request.",
   ]);
   setText("#trust-tab-terms h3", "Terms of use");
-  setTexts("#trust-tab-terms p", [
+  setParagraphs("#trust-tab-terms", [
     "By using SentIQ Chat, you agree to use the service lawfully and responsibly. You are responsible for ensuring that any material you upload or share is content you have the right to use.",
     "We recommend reviewing important outputs before relying on them, as SentIQ Chat, like any AI-powered tool, may occasionally produce inaccurate or incomplete results.",
   ]);
