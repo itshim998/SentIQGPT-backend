@@ -43,12 +43,14 @@ for (const token of [
   "MutationObserver",
   "inertAround",
   "releaseActiveRoot",
+  "backgroundUpdateInProgress",
   'setAttribute("inert", "")',
   'setAttribute("aria-hidden", "true")',
   "entryByRoot.has(element)",
   "entryByRoot.get(element)",
   "registeredEntry && !registeredEntry.open",
-  'if (!isRegisteredPanelRoot) element.setAttribute("aria-hidden", "true")',
+  "currentAriaHidden !== previous.ariaHidden",
+  "if (visible === entry.open) return;",
   'event.key === "Escape"',
   'event.key !== "Tab"',
   "stopImmediatePropagation",
@@ -59,7 +61,7 @@ for (const token of [
 ]) assert.ok(framework.includes(token), `framework missing ${token}`);
 
 const registeredRootGuard = framework.indexOf("const isRegisteredPanelRoot = entryByRoot.has(element);");
-const guardedAriaHidden = framework.indexOf('if (!isRegisteredPanelRoot) element.setAttribute("aria-hidden", "true");');
+const guardedAriaHidden = framework.indexOf("if (!isRegisteredPanelRoot && element.getAttribute", registeredRootGuard);
 assert.ok(registeredRootGuard >= 0 && guardedAriaHidden > registeredRootGuard,
   "Open registered panel roots must remain visible to the adaptive panel state machine while inert");
 
@@ -75,6 +77,18 @@ assert.ok(
   inertAroundStart >= 0 && releaseActiveCall > inertAroundStart && restoreBackgroundCall > releaseActiveCall,
   "A newly active nested panel must be released from stale inert state before background snapshots are restored",
 );
+
+const updateStart = framework.indexOf("function updateBackgroundState()");
+const reentryGuard = framework.indexOf("if (backgroundUpdateInProgress) return;", updateStart);
+const updateFinally = framework.indexOf("backgroundUpdateInProgress = false;", reentryGuard);
+assert.ok(updateStart >= 0 && reentryGuard > updateStart && updateFinally > reentryGuard,
+  "Background inerting must be protected from synchronous observer re-entry");
+
+const syncStart = framework.indexOf("function syncEntry(entry)");
+const unchangedReturn = framework.indexOf("if (visible === entry.open) return;", syncStart);
+const stateAssignment = framework.indexOf("entry.open = visible;", syncStart);
+assert.ok(syncStart >= 0 && unchangedReturn > syncStart && stateAssignment > unchangedReturn,
+  "Observer callbacks that do not change panel visibility must not rebuild the modal background");
 
 for (const forbidden of ["fetch(", "SentIQAPI", "localStorage", "sessionStorage", "WebSocket", "getUserMedia"]) {
   assert.equal(framework.includes(forbidden), false, `framework must not contain ${forbidden}`);
