@@ -107,6 +107,13 @@ function initializeAdaptivePanels() {
     }
   }
 
+  function releaseActiveRoot(activeRoot) {
+    if (!(activeRoot instanceof HTMLElement) || !inerted.has(activeRoot)) return;
+    activeRoot.inert = false;
+    activeRoot.removeAttribute("inert");
+    inerted.delete(activeRoot);
+  }
+
   function restoreBackground() {
     inerted.forEach((previous, element) => {
       if (!(element instanceof HTMLElement)) return;
@@ -120,9 +127,11 @@ function initializeAdaptivePanels() {
   }
 
   function shouldSkipBackgroundNode(element) {
+    const registeredEntry = entryByRoot.get(element);
     return !(element instanceof HTMLElement)
       || ["SCRIPT", "STYLE", "LINK"].includes(element.tagName)
-      || element.id === "toast-container";
+      || element.id === "toast-container"
+      || Boolean(registeredEntry && !registeredEntry.open);
   }
 
   function makeInert(element) {
@@ -139,6 +148,7 @@ function initializeAdaptivePanels() {
   }
 
   function inertAround(activeRoot) {
+    releaseActiveRoot(activeRoot);
     restoreBackground();
     let activeBranch = activeRoot;
     while (activeBranch?.parentElement) {
