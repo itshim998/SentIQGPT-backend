@@ -39,11 +39,17 @@ for (const token of [
 for (const token of [
   'const FINAL_RESTRAINT_VERSION = "12.4"',
   "ensureFinalRestraintStylesheet()",
+  "function setParagraphs",
+  'document.createElement("p")',
+  'setParagraphs("#trust-tab-terms"',
   'setText("#account-upgrade-btn span", "Plan")',
   'setText("#settings-tab-button-memory", "Memory")',
   'setText("#support-email-link", "Email support")',
   "Guest chats are temporary. Sign in to keep conversations across devices.",
-  "Files are processed only to complete your request.",
+  "SentIQ Chat can be used for conversations, files, web search, deep research, and content creation.",
+  "Files you share with SentIQ Chat are used solely to fulfill your request.",
+  "By using SentIQ Chat, you agree to use the service lawfully and responsibly.",
+  "may occasionally produce inaccurate or incomplete results.",
 ]) {
   assert.ok(behavior.includes(token), `Final restraint copy policy is missing ${token}`);
 }
@@ -55,6 +61,8 @@ for (const forbidden of [
   "AI assistant",
   "backend session cache",
   "generated artifacts",
+  "approximately one hour",
+  "retained for up to about one hour",
 ]) {
   assert.equal(behavior.includes(forbidden), false, `Final restraint must not introduce ${forbidden}`);
 }

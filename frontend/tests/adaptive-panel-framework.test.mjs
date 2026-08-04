@@ -44,6 +44,8 @@ for (const token of [
   "inertAround",
   'setAttribute("inert", "")',
   'setAttribute("aria-hidden", "true")',
+  "entryByRoot.has(element)",
+  'if (!isRegisteredPanelRoot) element.setAttribute("aria-hidden", "true")',
   'event.key === "Escape"',
   'event.key !== "Tab"',
   "stopImmediatePropagation",
@@ -52,6 +54,11 @@ for (const token of [
   "aria-modal",
   "requestClose",
 ]) assert.ok(framework.includes(token), `framework missing ${token}`);
+
+const registeredRootGuard = framework.indexOf("const isRegisteredPanelRoot = entryByRoot.has(element);");
+const guardedAriaHidden = framework.indexOf('if (!isRegisteredPanelRoot) element.setAttribute("aria-hidden", "true");');
+assert.ok(registeredRootGuard >= 0 && guardedAriaHidden > registeredRootGuard,
+  "Nested adaptive panels must stay registered as open while the top panel makes them inert");
 
 for (const forbidden of ["fetch(", "SentIQAPI", "localStorage", "sessionStorage", "WebSocket", "getUserMedia"]) {
   assert.equal(framework.includes(forbidden), false, `framework must not contain ${forbidden}`);
