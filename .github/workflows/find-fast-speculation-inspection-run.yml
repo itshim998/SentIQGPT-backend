@@ -20,6 +20,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
+          # Refreshed after the scale-to-zero wake resolver correction.
           runs="$(gh run list \
             --repo "${GITHUB_REPOSITORY}" \
             --workflow inspect-fast-speculation-runtime.yml \
