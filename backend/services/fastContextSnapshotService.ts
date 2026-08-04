@@ -368,7 +368,12 @@ export async function fetchFastContextSnapshot(args: {
 }): Promise<FastContextSnapshotFetchResult> {
   const timeoutMs = resolveFastContextSnapshotTimeoutMs(args.timeoutMs);
   const startedAt = Date.now();
-  if (isGuestIdentity(args.ownerUserId) || !args.userDb || !args.conversationId) {
+  if (
+    isGuestIdentity(args.ownerUserId) ||
+    !args.userDb ||
+    typeof args.userDb.rpc !== "function" ||
+    !args.conversationId
+  ) {
     return { status: "skipped", elapsedMs: Date.now() - startedAt, timeoutMs };
   }
 
