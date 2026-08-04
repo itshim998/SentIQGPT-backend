@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   contracts:
-    name: No-release, cancellation, and packaging contracts
+    name: No-release, cancellation, eligibility, and packaging contracts
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -52,5 +52,7 @@ jobs:
       - name: Verify production image contract
         run: |
           grep -Fq 'SENTIQ_FAST_PARALLEL_INPUT_SAFETY_ENABLED=true' Dockerfile
+          grep -Fq 'SENTIQ_FAST_PARALLEL_INPUT_SAFETY_FORCE_DISABLED=false' Dockerfile
           grep -Fq 'backend/fast_speculative_input_safety.py' Dockerfile
           grep -Fq 'install_fast_speculative_input_safety(service)' backend/run_llm_service.py
+          grep -Fq 'FORCE_DISABLE_FLAG = "SENTIQ_FAST_PARALLEL_INPUT_SAFETY_FORCE_DISABLED"' backend/fast_speculative_input_safety.py

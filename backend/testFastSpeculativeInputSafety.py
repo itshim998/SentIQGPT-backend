@@ -8,7 +8,7 @@ import contextvars
 import logging
 import os
 import threading
-import time
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
 
@@ -103,24 +103,47 @@ def assert_equal(actual: Any, expected: Any, label: str) -> None:
         raise AssertionError(f"{label}: expected {expected!r}, got {actual!r}")
 
 
-def test_eligibility_is_narrow() -> None:
-    previous = os.environ.get(speculative.FEATURE_FLAG)
-    os.environ[speculative.FEATURE_FLAG] = "true"
-    service = SimpleNamespace(PYTHON_LLM_QUOTA_ENFORCEMENT=False)
+@contextmanager
+def speculative_enabled_environment():
+    previous_legacy = os.environ.get(speculative.FEATURE_FLAG)
+    previous_disable = os.environ.get(speculative.FORCE_DISABLE_FLAG)
+    # Reproduce the stale Azure value observed in production. It must not
+    # disable the optimized image; only the explicit negative switch may do so.
+    os.environ[speculative.FEATURE_FLAG] = "false"
+    os.environ.pop(speculative.FORCE_DISABLE_FLAG, None)
     try:
+        yield
+    finally:
+        if previous_legacy is None:
+            os.environ.pop(speculative.FEATURE_FLAG, None)
+        else:
+            os.environ[speculative.FEATURE_FLAG] = previous_legacy
+        if previous_disable is None:
+            os.environ.pop(speculative.FORCE_DISABLE_FLAG, None)
+        else:
+            os.environ[speculative.FORCE_DISABLE_FLAG] = previous_disable
+
+
+def test_eligibility_is_narrow_and_runtime_stable() -> None:
+    service = SimpleNamespace(PYTHON_LLM_QUOTA_ENFORCEMENT=False)
+    with speculative_enabled_environment():
         assert_true(speculative.is_ordinary_fast_text_request(request(), service), "ordinary Fast chat should qualify")
+        assert_true(
+            speculative.is_ordinary_fast_text_request(
+                request(required_capabilities=["text", "streaming"]),
+                service,
+            ),
+            "benign text transport capabilities must not bypass speculation",
+        )
         assert_true(not speculative.is_ordinary_fast_text_request(request(execution_mode="intuitive"), service), "Intuitive must not qualify")
         assert_true(not speculative.is_ordinary_fast_text_request(request(task="chart_generate"), service), "artifact task must not qualify")
         assert_true(not speculative.is_ordinary_fast_text_request(request(image_attachments=[{"base64": "x"}]), service), "image input must not qualify")
         assert_true(not speculative.is_ordinary_fast_text_request(request(sentiq_tool_request={"tools": []}, tool_transport_mode="streaming"), service), "tools must not qualify")
-        assert_true(not speculative.is_ordinary_fast_text_request(request(required_capabilities=["image_input"]), service), "capability-bearing request must not qualify")
         service.PYTHON_LLM_QUOTA_ENFORCEMENT = True
         assert_true(not speculative.is_ordinary_fast_text_request(request(), service), "Python quota enforcement must force serial path")
-    finally:
-        if previous is None:
-            os.environ.pop(speculative.FEATURE_FLAG, None)
-        else:
-            os.environ[speculative.FEATURE_FLAG] = previous
+        service.PYTHON_LLM_QUOTA_ENFORCEMENT = False
+        os.environ[speculative.FORCE_DISABLE_FLAG] = "true"
+        assert_true(not speculative.is_ordinary_fast_text_request(request(), service), "explicit emergency disable must force serial path")
 
 
 def test_buffer_preserves_context_and_order() -> None:
@@ -153,8 +176,6 @@ async def consume_response(response) -> str:
 
 
 async def test_provider_overlaps_safety_without_early_release() -> None:
-    previous = os.environ.get(speculative.FEATURE_FLAG)
-    os.environ[speculative.FEATURE_FLAG] = "true"
     safety_release = threading.Event()
     provider_started = threading.Event()
 
@@ -176,30 +197,27 @@ async def test_provider_overlaps_safety_without_early_release() -> None:
         return "delegated"
 
     endpoint = speculative.build_stream_endpoint(service, original_stream)
-    task = asyncio.create_task(endpoint(request()))
-    try:
-        started = await asyncio.to_thread(provider_started.wait, 1.0)
-        assert_true(started, "provider must start while safety is pending")
-        await asyncio.sleep(0.05)
-        assert_true(not task.done(), "no response may be returned before safety approval")
-        safety_release.set()
-        response = await asyncio.wait_for(task, 2.0)
-        body = await asyncio.wait_for(consume_response(response), 2.0)
-        assert_true("OK" in body, "approved provider output must be released")
-        assert_true("[DONE]" in body, "approved stream must terminate normally")
-        assert_true(not delegated, "eligible request must not use serial endpoint")
-        assert_equal(service.log_calls, 1, "route diagnostic count")
-    finally:
-        safety_release.set()
-        if previous is None:
-            os.environ.pop(speculative.FEATURE_FLAG, None)
-        else:
-            os.environ[speculative.FEATURE_FLAG] = previous
+    with speculative_enabled_environment():
+        task = asyncio.create_task(
+            endpoint(request(required_capabilities=["text", "streaming"])),
+        )
+        try:
+            started = await asyncio.to_thread(provider_started.wait, 1.0)
+            assert_true(started, "provider must start while safety is pending")
+            await asyncio.sleep(0.05)
+            assert_true(not task.done(), "no response may be returned before safety approval")
+            safety_release.set()
+            response = await asyncio.wait_for(task, 2.0)
+            body = await asyncio.wait_for(consume_response(response), 2.0)
+            assert_true("OK" in body, "approved provider output must be released")
+            assert_true("[DONE]" in body, "approved stream must terminate normally")
+            assert_true(not delegated, "eligible request must not use serial endpoint")
+            assert_equal(service.log_calls, 1, "route diagnostic count")
+        finally:
+            safety_release.set()
 
 
 async def test_blocked_input_discards_speculative_output() -> None:
-    previous = os.environ.get(speculative.FEATURE_FLAG)
-    os.environ[speculative.FEATURE_FLAG] = "true"
     provider_started = threading.Event()
     provider_finished = threading.Event()
 
@@ -220,7 +238,7 @@ async def test_blocked_input_discards_speculative_output() -> None:
         raise AssertionError("blocked eligible request delegated unexpectedly")
 
     endpoint = speculative.build_stream_endpoint(service, original_stream)
-    try:
+    with speculative_enabled_environment():
         try:
             await endpoint(request())
         except HTTPException as error:
@@ -229,16 +247,9 @@ async def test_blocked_input_discards_speculative_output() -> None:
         else:
             raise AssertionError("blocked request returned a streaming response")
         assert_true(provider_finished.wait(1.0), "speculative provider iterator must close")
-    finally:
-        if previous is None:
-            os.environ.pop(speculative.FEATURE_FLAG, None)
-        else:
-            os.environ[speculative.FEATURE_FLAG] = previous
 
 
 async def test_ineligible_request_delegates_unchanged() -> None:
-    previous = os.environ.get(speculative.FEATURE_FLAG)
-    os.environ[speculative.FEATURE_FLAG] = "true"
     service = FakeService(lambda *_args, **_kwargs: (True, "SAFE", "SAFE"), lambda: iter(["unused"]))
     calls = 0
 
@@ -248,20 +259,15 @@ async def test_ineligible_request_delegates_unchanged() -> None:
         return "serial-result"
 
     endpoint = speculative.build_stream_endpoint(service, original_stream)
-    try:
+    with speculative_enabled_environment():
         result = await endpoint(request(execution_mode="intuitive"))
         assert_equal(result, "serial-result", "delegated result")
         assert_equal(calls, 1, "serial endpoint call count")
-    finally:
-        if previous is None:
-            os.environ.pop(speculative.FEATURE_FLAG, None)
-        else:
-            os.environ[speculative.FEATURE_FLAG] = previous
 
 
 def main() -> None:
-    test_eligibility_is_narrow()
-    print("PASS | eligibility_is_narrow")
+    test_eligibility_is_narrow_and_runtime_stable()
+    print("PASS | eligibility_is_narrow_and_runtime_stable")
     test_buffer_preserves_context_and_order()
     print("PASS | buffer_preserves_context_and_order")
     asyncio.run(test_provider_overlaps_safety_without_early_release())
