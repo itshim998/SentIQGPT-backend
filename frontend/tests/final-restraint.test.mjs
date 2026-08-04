@@ -39,6 +39,9 @@ for (const token of [
 for (const token of [
   'const FINAL_RESTRAINT_VERSION = "12.4"',
   "ensureFinalRestraintStylesheet()",
+  "function setParagraphs",
+  'document.createElement("p")',
+  'setParagraphs("#trust-tab-terms"',
   'setText("#account-upgrade-btn span", "Plan")',
   'setText("#settings-tab-button-memory", "Memory")',
   'setText("#support-email-link", "Email support")',
