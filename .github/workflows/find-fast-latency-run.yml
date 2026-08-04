@@ -21,7 +21,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          # Refreshed for the corrected Fast speculation production proof.
+          # Refreshed for the final request-scoped Fast speculation proof.
           expected_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/master" --jq '.sha')"
           runs="$(gh run list \
             --repo "${GITHUB_REPOSITORY}" \
