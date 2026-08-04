@@ -1,5 +1,6 @@
 name: Inspect Fast speculation runtime
 
+# Explicit follow-up push so the newly introduced workflow runs on trusted master.
 on:
   pull_request:
     paths:
