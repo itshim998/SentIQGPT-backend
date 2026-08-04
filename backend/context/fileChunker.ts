@@ -6,6 +6,8 @@
 
 const DEFAULT_CHUNK_SIZE = 800;   // characters per chunk
 const DEFAULT_OVERLAP = 100;      // overlap between chunks
+const COMPARISON_EXCERPT_CHARS = 900;
+const COMPARISON_TRIM_MARKER = "\n[... comparison excerpt shortened ...]\n";
 
 export interface TextChunk {
   readonly index: number;
@@ -82,22 +84,49 @@ export function scoreChunkRelevance(chunk: TextChunk, query: string): number {
   return queryWords.size > 0 ? hits / queryWords.size : 0;
 }
 
+function isComparisonQuery(query: string): boolean {
+  return /\b(?:compare|comparison|contrast|difference|differences|between|across|versus|vs|common|each document|all files)\b/i.test(query);
+}
+
+function boundComparisonExcerpt(chunk: TextChunk): TextChunk {
+  if (chunk.text.length <= COMPARISON_EXCERPT_CHARS) return chunk;
+  const retained = Math.max(0, COMPARISON_EXCERPT_CHARS - COMPARISON_TRIM_MARKER.length);
+  const head = Math.ceil(retained / 2);
+  const tail = Math.floor(retained / 2);
+  return {
+    ...chunk,
+    text: chunk.text.slice(0, head).trimEnd()
+      + COMPARISON_TRIM_MARKER
+      + chunk.text.slice(chunk.text.length - tail).trimStart(),
+  };
+}
+
 /**
  * Select the most relevant chunks for a given query.
  * Returns up to `maxChunks` chunks, sorted by relevance.
+ *
+ * Comparison queries receive bounded excerpts before the composer applies its
+ * per-document round-robin ordering. This guarantees that one document cannot
+ * consume the comparison budget before another document contributes evidence.
  */
 export function selectRelevantChunks(
   allChunks: readonly TextChunk[],
   query: string,
   maxChunks: number = 5,
 ): TextChunk[] {
-  if (allChunks.length <= maxChunks) return [...allChunks];
+  const comparison = isComparisonQuery(query);
+  if (allChunks.length <= maxChunks) {
+    return comparison
+      ? allChunks.map(boundComparisonExcerpt)
+      : [...allChunks];
+  }
 
   const scored = allChunks.map((chunk) => ({
     chunk,
     score: scoreChunkRelevance(chunk, query),
   }));
 
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, maxChunks).map((s) => s.chunk);
+  scored.sort((a, b) => b.score - a.score || a.chunk.index - b.chunk.index);
+  const selected = scored.slice(0, maxChunks).map((item) => item.chunk);
+  return comparison ? selected.map(boundComparisonExcerpt) : selected;
 }
