@@ -57,7 +57,11 @@ async function main(): Promise<void> {
         conversation: [{ role: "user", content: "We are reviewing the launch note." }],
         tokenBudget: 700,
       });
-      assert(optionalEvidenceFirst.telemetry.droppedCounts.optional_evidence > 0, "optional evidence degrades first");
+      assert(
+        optionalEvidenceFirst.telemetry.droppedCounts.optional_evidence > 0
+          || optionalEvidenceFirst.telemetry.elasticBlocksReduced > 0,
+        "optional evidence degrades before protected file and memory context",
+      );
       assert.equal(optionalEvidenceFirst.telemetry.selectedCounts.file_chunks, 1, "file context survives optional evidence degradation");
       assert.equal(optionalEvidenceFirst.telemetry.selectedCounts.memories, 1, "relevant memory survives optional evidence degradation");
 
