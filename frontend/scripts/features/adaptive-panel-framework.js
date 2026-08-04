@@ -127,6 +127,7 @@ function initializeAdaptivePanels() {
 
   function makeInert(element) {
     if (shouldSkipBackgroundNode(element) || inerted.has(element)) return;
+    const isRegisteredPanelRoot = entryByRoot.has(element);
     inerted.set(element, {
       inert: Boolean(element.inert),
       hadInertAttribute: element.hasAttribute("inert"),
@@ -134,7 +135,7 @@ function initializeAdaptivePanels() {
     });
     element.inert = true;
     element.setAttribute("inert", "");
-    element.setAttribute("aria-hidden", "true");
+    if (!isRegisteredPanelRoot) element.setAttribute("aria-hidden", "true");
   }
 
   function inertAround(activeRoot) {
