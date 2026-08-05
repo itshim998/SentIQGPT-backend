@@ -139,6 +139,11 @@ type ContextRecallEvidence = {
   messageId?: string;
   role?: "user" | "assistant";
 };
+type ScoredRecallEvidence = {
+  evidence: ContextRecallEvidence;
+  normalizedContent: string;
+  score: number;
+};
 
 function normalizeEmbedding(value: unknown): readonly number[] | undefined {
   if (!Array.isArray(value) || value.length === 0) return undefined;
@@ -277,15 +282,15 @@ export async function fetchPriorConversationRecallEvidence(args: {
   if (error) throw error;
 
   const uniqueMessages = new Set<string>();
-  const scored = (data ?? []).map((message, index, items) => {
+  const scored = (data ?? []).flatMap<ScoredRecallEvidence>((message, index, items) => {
     const normalizedContent = normalizeRecallText(message.content || "");
-    if (!normalizedContent) return null;
+    if (!normalizedContent) return [];
     const exactPhraseHit = normalizedSubject.length >= 5 && normalizedContent.includes(normalizedSubject);
     const contentTokens = new Set(tokenizeRecallText(normalizedContent));
     const overlapCount = subjectTokens.reduce((count, token) => count + (contentTokens.has(token) ? 1 : 0), 0);
-    if (!exactPhraseHit && overlapCount === 0) return null;
+    if (!exactPhraseHit && overlapCount === 0) return [];
     const recencyScore = Math.max(0, (items.length - index) / Math.max(items.length, 1));
-    return {
+    return [{
       evidence: {
         conversationId: message.conversation_id,
         content: message.content,
@@ -294,12 +299,8 @@ export async function fetchPriorConversationRecallEvidence(args: {
       },
       normalizedContent,
       score: (exactPhraseHit ? 8 : 0) + overlapCount * 2 + recencyScore,
-    };
-  }).filter((item): item is {
-    evidence: ContextRecallEvidence;
-    normalizedContent: string;
-    score: number;
-  } => Boolean(item)).sort((left, right) => right.score - left.score);
+    }];
+  }).sort((left, right) => right.score - left.score);
 
   const selected: ContextRecallEvidence[] = [];
   for (const item of scored) {
