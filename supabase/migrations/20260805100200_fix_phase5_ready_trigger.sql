@@ -14,6 +14,10 @@ set search_path = public, pg_temp
 as $$
 declare
   v_document record;
+  v_failure_message text;
+  v_failure_detail text;
+  v_failure_hint text;
+  v_failure_context text;
 begin
   for v_document in
     select new_row.id, new_row.owner_user_id
@@ -33,11 +37,21 @@ begin
         v_document.owner_user_id
       );
     exception when others then
+      get stacked diagnostics
+        v_failure_message = message_text,
+        v_failure_detail = pg_exception_detail,
+        v_failure_hint = pg_exception_hint,
+        v_failure_context = pg_exception_context;
+
       update public.source_documents document
       set metadata = coalesce(document.metadata, '{}'::jsonb)
         || jsonb_build_object(
           'document_map_status', 'failed',
-          'document_map_failure_type', sqlstate
+          'document_map_failure_type', sqlstate,
+          'document_map_failure_message', left(coalesce(v_failure_message, ''), 1000),
+          'document_map_failure_detail', left(coalesce(v_failure_detail, ''), 1000),
+          'document_map_failure_hint', left(coalesce(v_failure_hint, ''), 1000),
+          'document_map_failure_context', left(coalesce(v_failure_context, ''), 4000)
         )
       where document.id = v_document.id
         and document.owner_user_id = v_document.owner_user_id;
@@ -63,4 +77,4 @@ revoke all on function public.refresh_source_document_maps_after_statement()
   from public, anon;
 
 comment on function public.refresh_source_document_maps_after_statement() is
-  'Builds Phase 5 maps after ready-state update statements complete, avoiding same-row trigger modification.';
+  'Builds Phase 5 maps after ready-state update statements complete, avoiding same-row trigger modification and retaining bounded failure diagnostics.';
