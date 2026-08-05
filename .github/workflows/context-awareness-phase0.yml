@@ -102,9 +102,15 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: |
-          sed '/20260805100300_fix_phase5_map_ambiguity.sql/a \\i supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql' \
-            backend/testStrongSourceRetrievalV3.sql \
+          awk '
+            { print }
+            /20260805100300_fix_phase5_map_ambiguity.sql/ {
+              print "\\i supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql"
+            }
+          ' backend/testStrongSourceRetrievalV3.sql \
             > /tmp/testStrongSourceRetrievalV4.sql
+          grep -F '\i supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql' \
+            /tmp/testStrongSourceRetrievalV4.sql
           psql -h 127.0.0.1 -U postgres -d postgres \
             -v ON_ERROR_STOP=1 \
             -f /tmp/testStrongSourceRetrievalV4.sql
