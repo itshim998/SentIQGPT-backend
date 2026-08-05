@@ -16,11 +16,15 @@ begin
     raise exception 'Phase 5 base source tables are missing';
   end if;
 
-  select pg_get_expr(attribute.attgenerated::text::pg_node_tree, attribute.attrelid)
+  select pg_get_expr(attribute_default.adbin, attribute_default.adrelid)
   into v_generated
   from pg_attribute as attribute
+  join pg_attrdef as attribute_default
+    on attribute_default.adrelid = attribute.attrelid
+   and attribute_default.adnum = attribute.attnum
   where attribute.attrelid = 'public.source_chunks'::regclass
     and attribute.attname = 'fts_weighted'
+    and attribute.attgenerated = 's'
     and not attribute.attisdropped;
 
   if v_generated is null then
