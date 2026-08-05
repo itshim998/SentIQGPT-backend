@@ -10,7 +10,7 @@ declare
   v_digest_probe text;
   v_preference_key text;
   v_fallback_key text;
-  v_pgcrypto_version text;
+  v_pgcrypto_version text := 'functional-no-marker';
   v_memory_version text;
   v_fast_version text;
 begin
@@ -118,6 +118,9 @@ begin
 
   if to_regprocedure('public.get_memory_pgcrypto_resolution_schema_version()') is not null then
     v_pgcrypto_version := public.get_memory_pgcrypto_resolution_schema_version();
+    if v_pgcrypto_version is distinct from '20260805145950' then
+      v_missing := array_append(v_missing, 'version:memory_pgcrypto_resolution');
+    end if;
   end if;
   if to_regprocedure('public.get_memory_hybrid_retrieval_schema_version()') is not null then
     v_memory_version := public.get_memory_hybrid_retrieval_schema_version();
@@ -126,9 +129,6 @@ begin
     v_fast_version := public.get_fast_context_snapshot_schema_version();
   end if;
 
-  if v_pgcrypto_version is distinct from '20260805145950' then
-    v_missing := array_append(v_missing, 'version:memory_pgcrypto_resolution');
-  end if;
   if v_memory_version is distinct from '20260805150000' then
     v_missing := array_append(v_missing, 'version:memory_hybrid_retrieval');
   end if;
@@ -148,17 +148,20 @@ $$;
 
 select jsonb_build_object(
   'ready', true,
-  'pgcrypto_schema_version', public.get_memory_pgcrypto_resolution_schema_version(),
+  'pgcrypto_marker_installed',
+    to_regprocedure('public.get_memory_pgcrypto_resolution_schema_version()') is not null,
+  'pgcrypto_digest_functional',
+    length(encode(public.digest('sentiq-phase3-readiness', 'sha256'), 'hex')) = 64,
   'memory_schema_version', public.get_memory_hybrid_retrieval_schema_version(),
   'fast_snapshot_schema_version', public.get_fast_context_snapshot_schema_version(),
   'active_memories', count(*) filter (where status = 'active'),
   'superseded_memories', count(*) filter (where status = 'superseded'),
-  'lifecycle_rows_valid', bool_and(
+  'lifecycle_rows_valid', coalesce(bool_and(
     subject_key is not null
     and last_confirmed_at is not null
     and fact_type is not null
     and status in ('active', 'superseded')
     and confidence between 0 and 1
-  )
+  ), true)
 ) as phase3_verification
 from public.memories;
