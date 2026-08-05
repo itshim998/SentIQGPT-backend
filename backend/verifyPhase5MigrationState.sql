@@ -1,7 +1,7 @@
 \set ON_ERROR_STOP on
 
 -- Safe read-only Phase 5 applied-state verifier for Database 2/3/4.
--- It validates installed schema objects and function bodies rather than relying
+-- It validates installed schema objects and runtime behavior rather than relying
 -- only on migration-history rows, so it also works when migrations were applied
 -- manually through the Supabase SQL editor.
 
@@ -10,6 +10,7 @@ declare
   v_definition text;
   v_generated text;
   v_trigger_definition text;
+  v_search_count integer;
 begin
   if to_regclass('public.source_documents') is null
      or to_regclass('public.source_chunks') is null then
@@ -55,27 +56,42 @@ begin
     raise exception 'PostgreSQL-safe sentence helpers are missing';
   end if;
 
-  select pg_get_functiondef(
-    'public.refresh_source_document_maps_after_statement()'::regprocedure
+  select regexp_replace(
+    lower(pg_get_functiondef(
+      'public.refresh_source_document_maps_after_statement()'::regprocedure
+    )),
+    '[[:space:]]+',
+    ' ',
+    'g'
   ) into v_definition;
-  if position('old_row.status is distinct from new_row.status' in lower(v_definition)) = 0 then
+  if position('old_row.status is distinct from new_row.status' in v_definition) = 0 then
     raise exception 'ready trigger function is not transition-only';
   end if;
-  if position('left(coalesce(v_failure_context' in lower(v_definition)) = 0 then
+  if position('left(coalesce(v_failure_context' in v_definition) = 0 then
     raise exception 'ready trigger diagnostics are not bounded';
   end if;
 
-  select pg_get_functiondef(
-    'public.search_source_chunks(uuid,uuid[],text,integer)'::regprocedure
-  ) into v_definition;
-  if position('#variable_conflict use_column' in lower(v_definition)) = 0 then
-    raise exception 'search_source_chunks variable-conflict guard is missing';
-  end if;
-  if position('selected_counts.document_id = deduped.document_id' in lower(v_definition)) = 0 then
-    raise exception 'search_source_chunks qualified join correction is missing';
+  -- Runtime execution proves the corrected RETURNS TABLE function resolves all
+  -- column references. The previous SQLSTATE 42702 bug fails here even with an
+  -- empty authorized document set.
+  select count(*)
+  into v_search_count
+  from public.search_source_chunks(
+    '00000000-0000-4000-8000-000000000099'::uuid,
+    array[]::uuid[],
+    'phase five migration verification',
+    1
+  );
+  if v_search_count <> 0 then
+    raise exception 'search_source_chunks empty-set smoke check returned unexpected rows';
   end if;
 
-  select pg_get_triggerdef(trigger.oid, true)
+  select regexp_replace(
+    lower(pg_get_triggerdef(trigger.oid, true)),
+    '[[:space:]]+',
+    ' ',
+    'g'
+  )
   into v_trigger_definition
   from pg_trigger as trigger
   where trigger.tgrelid = 'public.source_documents'::regclass
@@ -85,8 +101,8 @@ begin
   if v_trigger_definition is null then
     raise exception 'source_documents_refresh_map_on_ready trigger is missing';
   end if;
-  if position('referencing old table as phase5_old_source_documents' in lower(v_trigger_definition)) = 0
-     or position('new table as phase5_new_source_documents' in lower(v_trigger_definition)) = 0 then
+  if position('referencing old table as phase5_old_source_documents' in v_trigger_definition) = 0
+     or position('new table as phase5_new_source_documents' in v_trigger_definition) = 0 then
     raise exception 'ready trigger transition tables are missing';
   end if;
 
