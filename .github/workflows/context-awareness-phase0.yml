@@ -106,10 +106,13 @@ jobs:
             { print }
             /20260805100300_fix_phase5_map_ambiguity.sql/ {
               print "\\i supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql"
+              print "\\i supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql"
             }
           ' backend/testStrongSourceRetrievalV3.sql \
             > /tmp/testStrongSourceRetrievalV4.sql
           grep -F '\i supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql' \
+            /tmp/testStrongSourceRetrievalV4.sql
+          grep -F '\i supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql' \
             /tmp/testStrongSourceRetrievalV4.sql
 
           set +e
@@ -122,9 +125,16 @@ jobs:
           cat /tmp/phase5-postgres.log
 
           if [ "$phase5_status" -ne 0 ]; then
-            phase5_error=$(tail -n 24 /tmp/phase5-postgres.log \
+            phase5_error=$(grep -E '^(psql:|ERROR:|DETAIL:|HINT:|CONTEXT:)' \
+              /tmp/phase5-postgres.log \
+              | tail -n 30 \
               | tr '\n' ' ' \
               | sed 's/%/%25/g; s/\r/%0D/g')
+            if [ -z "$phase5_error" ]; then
+              phase5_error=$(tail -n 24 /tmp/phase5-postgres.log \
+                | tr '\n' ' ' \
+                | sed 's/%/%25/g; s/\r/%0D/g')
+            fi
             echo "::error file=backend/testStrongSourceRetrievalV3.sql,title=Phase 5 PostgreSQL failure::$phase5_error"
             exit "$phase5_status"
           fi
