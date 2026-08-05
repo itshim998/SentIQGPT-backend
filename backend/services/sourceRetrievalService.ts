@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { chunkSourceText } from "../context/sourceChunker";
 import { estimateTextTokens, trimTextToTokenBudget } from "../orchestrator/contextBudgetManager";
+import { consumePendingPdfCanonicalSource } from "../ai/pdfCanonicalSourceRegistry";
+import { persistCanonicalPdfSource } from "./longPdfPersistenceService";
 
 export interface UploadedSourceReference {
   readonly filename: string;
@@ -119,6 +121,22 @@ export interface SourceRetrievalDependencies {
     ownerUserId: string,
     status: "ready" | "failed",
     metadata: Record<string, unknown>,
+  ) => Promise<void>;
+  readonly updateDocumentProgress?: (
+    userDb: SupabaseClient | any,
+    documentId: string,
+    ownerUserId: string,
+    metadata: Record<string, unknown>,
+  ) => Promise<void>;
+  readonly findExistingDocuments?: (
+    userDb: SupabaseClient | any,
+    ownerUserId: string,
+    contentHash: string,
+  ) => Promise<readonly SourceDocumentRow[]>;
+  readonly deleteDocument?: (
+    userDb: SupabaseClient | any,
+    documentId: string,
+    ownerUserId: string,
   ) => Promise<void>;
   readonly resolveDocuments?: (args: {
     userDb: SupabaseClient | any;
@@ -259,6 +277,56 @@ async function defaultUpdateDocumentStatus(
   const result = await userDb
     .from("source_documents")
     .update({ status, metadata })
+    .eq("id", documentId)
+    .eq("owner_user_id", ownerUserId);
+  if (result.error) throw result.error;
+}
+
+async function defaultUpdateDocumentProgress(
+  userDb: SupabaseClient | any,
+  documentId: string,
+  ownerUserId: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  if (typeof userDb?.from !== "function") return;
+  const result = await userDb
+    .from("source_documents")
+    .update({ metadata })
+    .eq("id", documentId)
+    .eq("owner_user_id", ownerUserId)
+    .eq("status", "processing");
+  if (result.error) throw result.error;
+}
+
+async function defaultFindExistingDocuments(
+  userDb: SupabaseClient | any,
+  ownerUserId: string,
+  contentHash: string,
+): Promise<readonly SourceDocumentRow[]> {
+  if (typeof userDb?.from !== "function") return [];
+  const result = await userDb
+    .from("source_documents")
+    .select(DOCUMENT_COLUMNS)
+    .eq("owner_user_id", ownerUserId)
+    .eq("content_hash", contentHash)
+    .in("status", ["ready", "processing", "failed"])
+    .order("updated_at", { ascending: false })
+    .limit(10);
+  if (result.error) throw result.error;
+  return (result.data ?? [])
+    .map(normalizeDocument)
+    .filter((document: SourceDocumentRow | undefined): document is SourceDocumentRow => Boolean(document));
+}
+
+async function defaultDeleteDocument(
+  userDb: SupabaseClient | any,
+  documentId: string,
+  ownerUserId: string,
+): Promise<void> {
+  if (typeof userDb?.from !== "function") return;
+  const result = await userDb
+    .from("source_documents")
+    .delete()
     .eq("id", documentId)
     .eq("owner_user_id", ownerUserId);
   if (result.error) throw result.error;
@@ -473,6 +541,27 @@ function inferSourceType(filename: string, extractionType: "pdf" | "txt"): "pdf"
   return CODE_EXTENSIONS.has(extension) ? "code" : "text";
 }
 
+function metadataCount(document: SourceDocumentRow, key: string): number {
+  const value = Number(document.metadata[key]);
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
+}
+
+function isStaleProcessingDocument(document: SourceDocumentRow): boolean {
+  if (document.status !== "processing") return false;
+  const parsed = Number.parseInt(process.env.SENTIQ_SOURCE_PROCESSING_STALE_MS ?? "", 10);
+  const staleMs = Number.isFinite(parsed) && parsed >= 60_000
+    ? Math.min(parsed, 24 * 60 * 60_000)
+    : 15 * 60_000;
+  const updatedAt = Date.parse(document.updated_at ?? document.created_at ?? "");
+  return !Number.isFinite(updatedAt) || Date.now() - updatedAt >= staleMs;
+}
+
+function looksLikePdfExtractionFailure(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return normalized.startsWith("[could not extract text from this pdf")
+    || normalized.startsWith("[pdf text extraction failed");
+}
+
 export class SourceRetrievalService {
   private readonly dependencies: Required<Omit<SourceRetrievalDependencies, "semanticSearch">>;
   private readonly semanticSearch?: NonNullable<SourceRetrievalDependencies["semanticSearch"]>;
@@ -482,6 +571,9 @@ export class SourceRetrievalService {
       insertDocument: dependencies.insertDocument ?? defaultInsertDocument,
       insertChunks: dependencies.insertChunks ?? defaultInsertChunks,
       updateDocumentStatus: dependencies.updateDocumentStatus ?? defaultUpdateDocumentStatus,
+      updateDocumentProgress: dependencies.updateDocumentProgress ?? defaultUpdateDocumentProgress,
+      findExistingDocuments: dependencies.findExistingDocuments ?? defaultFindExistingDocuments,
+      deleteDocument: dependencies.deleteDocument ?? defaultDeleteDocument,
       resolveDocuments: dependencies.resolveDocuments ?? defaultResolveDocuments,
       lexicalSearch: dependencies.lexicalSearch ?? defaultLexicalSearch,
     };
@@ -503,9 +595,84 @@ export class SourceRetrievalService {
       logSource("document_skipped", { reason: "guest_or_missing_context" });
       return { status: "skipped", parentChunksCreated: 0, childChunksCreated: 0, reason: "guest_or_missing_context" };
     }
-    if (args.extractionType === "image" || !args.extractedText.trim()) {
+    if (args.extractionType === "image") {
       logSource("document_skipped", { reason: "unsupported_or_empty_source" });
       return { status: "skipped", parentChunksCreated: 0, childChunksCreated: 0, reason: "unsupported_or_empty_source" };
+    }
+
+    if (args.extractionType === "pdf") {
+      const pendingPdf = consumePendingPdfCanonicalSource({
+        ownerUserId: args.ownerUserId!,
+        filename: args.filename,
+        sizeBytes: args.sizeBytes,
+        previewText: args.extractedText,
+      });
+      if (pendingPdf) {
+        const result = await persistCanonicalPdfSource({
+          userDb: args.userDb,
+          ownerUserId: args.ownerUserId!,
+          conversationId: args.conversationId,
+          filename: args.filename,
+          mimeType: args.mimeType,
+          sizeBytes: args.sizeBytes,
+          analysisId: args.analysisId,
+          source: pendingPdf,
+        }, this.dependencies);
+        logSource("document_persisted", {
+          source_type: "pdf",
+          parent_chunks_created: result.parentChunksCreated,
+          child_chunks_created: result.childChunksCreated,
+          ingestion_status: result.document?.metadata.ingestion_status,
+          reason: result.reason,
+        });
+        return result;
+      }
+      if (looksLikePdfExtractionFailure(args.extractedText)) {
+        logSource("document_skipped", { reason: "pdf_extraction_failed" });
+        return { status: "skipped", parentChunksCreated: 0, childChunksCreated: 0, reason: "pdf_extraction_failed" };
+      }
+    }
+
+    if (!args.extractedText.trim()) {
+      logSource("document_skipped", { reason: "unsupported_or_empty_source" });
+      return { status: "skipped", parentChunksCreated: 0, childChunksCreated: 0, reason: "unsupported_or_empty_source" };
+    }
+
+    const contentHash = createHash("sha256").update(args.extractedText, "utf8").digest("hex");
+    const existingDocuments = await this.dependencies.findExistingDocuments(
+      args.userDb,
+      args.ownerUserId!,
+      contentHash,
+    ).catch(() => [] as readonly SourceDocumentRow[]);
+    const readyDocument = existingDocuments.find((document) => document.status === "ready");
+    if (readyDocument) {
+      logSource("document_reused", { source_type: readyDocument.source_type, reason: "content_hash_reused" });
+      return {
+        status: "persisted",
+        document: readyDocument,
+        parentChunksCreated: metadataCount(readyDocument, "parent_chunk_count"),
+        childChunksCreated: metadataCount(readyDocument, "child_chunk_count"),
+        reason: "content_hash_reused",
+      };
+    }
+    const activeProcessing = existingDocuments.find((document) =>
+      document.status === "processing" && !isStaleProcessingDocument(document));
+    if (activeProcessing) {
+      return {
+        status: "persisted",
+        document: activeProcessing,
+        parentChunksCreated: metadataCount(activeProcessing, "parent_chunk_count"),
+        childChunksCreated: metadataCount(activeProcessing, "child_chunk_count"),
+        reason: "already_processing",
+      };
+    }
+    for (const staleOrFailed of existingDocuments.filter((document) =>
+      document.status === "failed" || isStaleProcessingDocument(document))) {
+      await this.dependencies.deleteDocument(
+        args.userDb,
+        staleOrFailed.id,
+        args.ownerUserId!,
+      ).catch(() => undefined);
     }
 
     const chunks = chunkSourceText({ text: args.extractedText, title: args.filename, path: args.filename });
@@ -517,6 +684,9 @@ export class SourceRetrievalService {
       analysis_id: args.analysisId ?? null,
       size_bytes: args.sizeBytes,
       embedding_status: "pending_embedding",
+      ingestion_status: "processing",
+      ingestion_version: 2,
+      extraction_mode: "bounded_text",
     };
     const document = await this.dependencies.insertDocument(args.userDb, {
       owner_user_id: args.ownerUserId!,
@@ -525,7 +695,7 @@ export class SourceRetrievalService {
       original_filename: args.filename,
       mime_type: args.mimeType,
       source_type: inferSourceType(args.filename, args.extractionType),
-      content_hash: createHash("sha256").update(args.extractedText, "utf8").digest("hex"),
+      content_hash: contentHash,
       status: "processing",
       metadata: baseMetadata,
     });
@@ -583,9 +753,12 @@ export class SourceRetrievalService {
       const childRows = await insertInBatches(childInputs);
       const readyMetadata = {
         ...baseMetadata,
+        ingestion_status: "ready",
         parent_chunk_count: parentRows.length,
         child_chunk_count: childRows.length,
+        canonical_character_count: args.extractedText.length,
         estimated_source_tokens: estimateTextTokens(args.extractedText),
+        completed_at: new Date().toISOString(),
       };
       await this.dependencies.updateDocumentStatus(args.userDb, document.id, args.ownerUserId!, "ready", readyMetadata);
       const readyDocument: SourceDocumentRow = { ...document, status: "ready", metadata: readyMetadata };
@@ -604,6 +777,7 @@ export class SourceRetrievalService {
     } catch (error) {
       await this.dependencies.updateDocumentStatus(args.userDb, document.id, args.ownerUserId!, "failed", {
         ...baseMetadata,
+        ingestion_status: "failed",
         failure_type: error instanceof Error ? error.name : "unknown",
       }).catch(() => undefined);
       logSource("document_skipped", {

@@ -14,13 +14,17 @@ on:
       - "backend/orchestrator/contextComposer.ts"
       - "backend/services/sourceRetrievalService.ts"
       - "backend/services/fastContextSnapshotService.ts"
+      - "backend/services/longPdfPersistenceService.ts"
       - "backend/ai/FileIngestionHandler.ts"
+      - "backend/ai/pdfCanonicalSourceRegistry.ts"
       - "backend/testContextAwarenessPhase0.ts"
       - "backend/testContextAwarenessPhase1.ts"
       - "backend/testFastContextSnapshot.ts"
+      - "backend/testLongPdfIngestion.ts"
       - "backend/testContextComposition.ts"
       - "backend/testProtectedContextSafety.ts"
       - "supabase/migrations/*fast_context_snapshot*.sql"
+      - "supabase/migrations/*long_pdf_ingestion*.sql"
       - "docs/context-awareness/**"
       - ".github/workflows/context-awareness-phase0.yml"
 
@@ -56,6 +60,9 @@ jobs:
       - name: Run protected-context safety regressions
         run: npm run test:protected-context-safety
 
+      - name: Run source retrieval regressions
+        run: npm run test:source-retrieval
+
       - name: Run Phase 0 evaluator
         run: |
           mkdir -p artifacts
@@ -66,6 +73,9 @@ jobs:
 
       - name: Run Phase 2 Fast snapshot regressions
         run: npx ts-node --project tsconfig.backend.json backend/testFastContextSnapshot.ts
+
+      - name: Run Phase 4 long PDF ingestion regressions
+        run: npx ts-node --project tsconfig.backend.json backend/testLongPdfIngestion.ts
 
       - name: Upload evaluation report
         if: always()
