@@ -57,6 +57,14 @@ function rankContribution(rank: number, weight: number): number {
   return weight / (RRF_K + Math.max(1, rank));
 }
 
+function isExactMemoryMatch(memory: HybridMemoryCandidate, query: string): boolean {
+  if (memory.exact_phrase_match === true) return true;
+  const normalizedQuery = normalizedSummary(query);
+  const normalizedMemory = normalizedSummary(memory.summary);
+  if (normalizedQuery.length < 4 || normalizedMemory.length < 4) return false;
+  return normalizedQuery.includes(normalizedMemory) || normalizedMemory.includes(normalizedQuery);
+}
+
 function isHighImportanceAnchor(memory: HybridMemoryCandidate): boolean {
   if ((memory.importance ?? 5) < 8) return false;
   return [
@@ -80,9 +88,9 @@ function lexicalOrder(
   query: string,
 ): readonly HybridMemoryCandidate[] {
   const databaseRanked = [...candidates].sort((left, right) => {
-    if (Boolean(left.exact_phrase_match) !== Boolean(right.exact_phrase_match)) {
-      return left.exact_phrase_match ? -1 : 1;
-    }
+    const leftExact = isExactMemoryMatch(left, query);
+    const rightExact = isExactMemoryMatch(right, query);
+    if (leftExact !== rightExact) return leftExact ? -1 : 1;
     if (Boolean(left.entity_or_project_match) !== Boolean(right.entity_or_project_match)) {
       return left.entity_or_project_match ? -1 : 1;
     }
@@ -133,7 +141,7 @@ export function fuseMemoryRetrieval(args: {
   const limit = Math.max(1, Math.min(args.limit ?? 6, 12));
   const activeCandidates = args.candidates.filter((memory) => memory.status !== "superseded");
   const lexical = lexicalOrder(activeCandidates, args.query);
-  const exact = lexical.filter((memory) => memory.exact_phrase_match);
+  const exact = lexical.filter((memory) => isExactMemoryMatch(memory, args.query));
   const semantic = semanticOrder(args.semanticResults)
     .filter((memory) => memory.status !== "superseded");
   const anchors = activeCandidates
@@ -168,15 +176,16 @@ export function fuseMemoryRetrieval(args: {
   ) => {
     memories.forEach((memory, index) => {
       const key = memoryIdentity(memory);
+      const exactMatch = isExactMemoryMatch(memory, args.query);
       const current = fused.get(key) ?? {
         memory,
         score: 0,
         sources: new Set<string>(),
-        exact: Boolean(memory.exact_phrase_match),
+        exact: exactMatch,
       };
       current.score += rankContribution(index + 1, weight);
       current.sources.add(source);
-      current.exact ||= Boolean(memory.exact_phrase_match);
+      current.exact ||= exactMatch;
       if ((memory.retrieval_rank ?? 0) > (current.memory.retrieval_rank ?? 0)) {
         current.memory = memory;
       }
