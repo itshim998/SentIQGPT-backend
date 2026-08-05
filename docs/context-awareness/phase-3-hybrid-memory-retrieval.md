@@ -18,11 +18,12 @@ Run on Database 2, 3, and 4 only, never on the control database:
 
 ```text
 supabase/migrations/20260805150000_improve_memory_hybrid_retrieval.sql
+supabase/migrations/20260805150025_infer_memory_project_scope.sql
 supabase/migrations/20260805150050_guard_direct_memory_writes.sql
 supabase/migrations/20260805150100_upgrade_fast_memory_snapshot.sql
 ```
 
-The first migration adds lifecycle metadata, weighted FTS, full-collection lexical retrieval, deterministic conflict handling, and lifecycle-aware persistence. The second guarantees that legacy or administrative direct writes receive required deterministic metadata. The third upgrades Fast mode's existing snapshot RPC to consume the same active-only lexical search without an additional database round trip.
+The first migration adds lifecycle metadata, weighted FTS, full-collection lexical retrieval, deterministic conflict handling, and lifecycle-aware persistence. The second conservatively infers canonical named-project scope from existing summaries so the legacy automatic insertion path can supersede later states of the same project without another model call. The third guarantees that legacy or administrative direct writes receive required deterministic metadata. The fourth upgrades Fast mode's existing snapshot RPC to consume the same active-only lexical search without an additional database round trip.
 
 ## Candidate retrieval
 
@@ -50,7 +51,7 @@ The RPC intentionally admits high-importance anchors and active-chat memories ev
 
 Exact matches receive the strongest weight and remain protected during diversity selection. Semantic results are unioned rather than replacing lexical results. Diversity limits repeated subjects and over-concentration in one fact type.
 
-No function in the hybrid fusion or Supabase search layer generates an embedding. Intuitive mode still calls `semanticMemorySearch` once, using the same query embedding behavior as before, after PostgreSQL has reduced the candidate collection. Fast mode never calls semantic search.
+No function in the hybrid fusion or Supabase search layer generates an embedding. Intuitive mode still calls `semanticMemorySearch` once, using the same query embedding behavior as before, after PostgreSQL has reduced the candidate collection. Fast mode never calls semantic search. Memory-embedding backfill is not performed in either retrieval request path.
 
 ## Lifecycle and supersession
 
@@ -78,7 +79,7 @@ Fact types are:
 
 A repeated identical memory confirms the existing row by refreshing `last_confirmed_at`, increasing confidence when appropriate, and avoiding duplicate storage. A conflicting memory with the same deterministic subject key marks the old row `superseded` and links the new active row through `supersedes_memory_id`.
 
-For example, an active `preference:response_length` memory stating that the user prefers detailed answers supersedes an older active memory stating that the user prefers concise answers.
+For example, an active `preference:response_length` memory stating that the user prefers detailed answers supersedes an older active memory stating that the user prefers concise answers. Named project summaries such as “Project Aster uses…” and “Project Aster now uses…” both deterministically resolve to `project:aster`, so the newer project state supersedes the older one even when the legacy caller does not explicitly provide `project_scope`.
 
 ## Verification
 
@@ -86,13 +87,14 @@ The Context Awareness workflow runs:
 
 - TypeScript reciprocal-rank-fusion and wiring tests;
 - PostgreSQL 16 migration replay for Phase 3;
-- reconfirmation and conflict-supersession tests;
+- reconfirmation and preference-conflict supersession tests;
+- deterministic named-project scope and project-state supersession tests;
 - full-collection recall beyond the old recent-20 boundary;
 - stable identity and active-chat anchor coverage;
 - Fast snapshot active-only retrieval;
 - direct-write metadata normalization;
 - all earlier context-awareness regressions.
 
-`backend/verifyPhase5MigrationState.sql` is a separate read-only verifier for Phase 5. It checks actual installed objects and function bodies, not only migration-history rows, so it is suitable after manual Supabase SQL-editor deployment. It validates the generated FTS column, GIN index, search RPC corrections, transition-only trigger, bounded diagnostics, sentence helpers, and smoke behavior.
+`backend/verifyPhase5MigrationState.sql` is a separate read-only verifier for Phase 5. It checks actual installed objects and runtime behavior, not only migration-history rows, so it is suitable after manual Supabase SQL-editor deployment. It validates the generated FTS column, GIN index, search RPC execution, transition-only trigger, bounded diagnostics, sentence helpers, and retrieval-mode smoke behavior.
 
 Passing CI proves that the complete migration sequences install and operate correctly on PostgreSQL 16. It does not by itself prove that a particular live Supabase shard has been updated; run the read-only verifier against each live data shard to confirm that shard's installed state.
