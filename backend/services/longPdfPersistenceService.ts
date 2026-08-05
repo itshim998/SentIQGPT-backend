@@ -69,6 +69,7 @@ const DEFAULT_INSERT_BATCH_SIZE = 100;
 const DEFAULT_PROGRESS_PAGE_BATCH = 8;
 const DEFAULT_MAX_STORED_TOKENS = 1_000_000;
 const DEFAULT_STALE_PROCESSING_MS = 15 * 60_000;
+const DEFAULT_INGESTION_TIMEOUT_MS = 90_000;
 
 function readBoundedInteger(
   raw: string | undefined,
@@ -114,6 +115,15 @@ function getStaleProcessingMs(): number {
     DEFAULT_STALE_PROCESSING_MS,
     60_000,
     24 * 60 * 60_000,
+  );
+}
+
+function getIngestionTimeoutMs(): number {
+  return readBoundedInteger(
+    process.env.SENTIQ_PDF_INGESTION_TIMEOUT_MS,
+    DEFAULT_INGESTION_TIMEOUT_MS,
+    10_000,
+    10 * 60_000,
   );
 }
 
@@ -164,6 +174,8 @@ function buildProgressMetadata(args: {
   readonly canonicalCharacters: number;
   readonly estimatedSourceTokens: number;
   readonly tokenLimitExceeded: boolean;
+  readonly timeoutExceeded: boolean;
+  readonly ingestionTimeoutMs: number;
   readonly ingestionStatus: "processing" | "ready" | "partial" | "ocr_required" | "failed";
 }): Record<string, unknown> {
   return {
@@ -178,6 +190,8 @@ function buildProgressMetadata(args: {
     failed_pages: args.failedPages.slice(0, 100),
     page_limit_exceeded: args.source.pageLimitExceeded,
     token_limit_exceeded: args.tokenLimitExceeded,
+    timeout_exceeded: args.timeoutExceeded,
+    ingestion_timeout_ms: args.ingestionTimeoutMs,
     progress_percent: args.source.pageCount > 0
       ? Math.min(100, Math.floor((args.processedPages / args.source.pageCount) * 100))
       : 0,
@@ -228,6 +242,8 @@ export async function persistCanonicalPdfSource(
       ).catch(() => undefined);
     }
 
+    const ingestionTimeoutMs = getIngestionTimeoutMs();
+    const ingestionStartedAt = Date.now();
     const baseMetadata: Record<string, unknown> = {
       analysis_id: args.analysisId ?? null,
       size_bytes: args.sizeBytes,
@@ -235,7 +251,7 @@ export async function persistCanonicalPdfSource(
       preview_character_count: args.source.previewText.length,
       ingestion_version: 2,
       extraction_mode: "page_by_page",
-      started_at: new Date().toISOString(),
+      started_at: new Date(ingestionStartedAt).toISOString(),
     };
     const document = await dependencies.insertDocument(args.userDb, {
       owner_user_id: args.ownerUserId,
@@ -258,6 +274,8 @@ export async function persistCanonicalPdfSource(
         canonicalCharacters: 0,
         estimatedSourceTokens: 0,
         tokenLimitExceeded: false,
+        timeoutExceeded: false,
+        ingestionTimeoutMs,
         ingestionStatus: "processing",
       }),
     });
@@ -273,11 +291,16 @@ export async function persistCanonicalPdfSource(
     let canonicalCharacters = 0;
     let estimatedSourceTokens = 0;
     let tokenLimitExceeded = false;
+    let timeoutExceeded = false;
     const maxStoredTokens = getMaxStoredTokens();
     const progressPageBatch = getProgressPageBatch();
 
     try {
       for (let pageNumber = 1; pageNumber <= args.source.pageCount; pageNumber += 1) {
+        if (Date.now() - ingestionStartedAt >= ingestionTimeoutMs) {
+          timeoutExceeded = true;
+          break;
+        }
         const page = await args.source.readPage(pageNumber);
         processedPages += 1;
         if (page.extractionStatus === "failed") {
@@ -402,6 +425,8 @@ export async function persistCanonicalPdfSource(
               canonicalCharacters,
               estimatedSourceTokens,
               tokenLimitExceeded,
+              timeoutExceeded,
+              ingestionTimeoutMs,
               ingestionStatus: "processing",
             }),
           );
@@ -409,7 +434,9 @@ export async function persistCanonicalPdfSource(
       }
 
       if (indexedPages === 0) {
-        const ingestionStatus = failedPages.length > 0 ? "failed" : "ocr_required";
+        const ingestionStatus = failedPages.length > 0 || timeoutExceeded || tokenLimitExceeded
+          ? "failed"
+          : "ocr_required";
         const metadata = {
           ...buildProgressMetadata({
             baseMetadata,
@@ -423,6 +450,8 @@ export async function persistCanonicalPdfSource(
             canonicalCharacters,
             estimatedSourceTokens,
             tokenLimitExceeded,
+            timeoutExceeded,
+            ingestionTimeoutMs,
             ingestionStatus,
           }),
           completed_at: new Date().toISOString(),
@@ -443,7 +472,10 @@ export async function persistCanonicalPdfSource(
         };
       }
 
-      const partial = args.source.pageLimitExceeded || tokenLimitExceeded || failedPages.length > 0;
+      const partial = args.source.pageLimitExceeded
+        || tokenLimitExceeded
+        || timeoutExceeded
+        || failedPages.length > 0;
       const ingestionStatus = partial ? "partial" : "ready";
       const metadata = {
         ...buildProgressMetadata({
@@ -458,6 +490,8 @@ export async function persistCanonicalPdfSource(
           canonicalCharacters,
           estimatedSourceTokens,
           tokenLimitExceeded,
+          timeoutExceeded,
+          ingestionTimeoutMs,
           ingestionStatus,
         }),
         completed_at: new Date().toISOString(),
@@ -490,6 +524,8 @@ export async function persistCanonicalPdfSource(
           canonicalCharacters,
           estimatedSourceTokens,
           tokenLimitExceeded,
+          timeoutExceeded,
+          ingestionTimeoutMs,
           ingestionStatus: "failed",
         }),
         failure_type: error instanceof Error ? error.name : "unknown",
