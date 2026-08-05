@@ -6,23 +6,15 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatMemoriesForPrompt } from "../memory/memoryStore";
-import { selectMemoriesForQuery } from "./memorySelector";
 import { compressConversation, CONVERSATION_WINDOW } from "./contextCompressor";
 import { semanticMemorySearch } from "../memory/semanticSearch";
 import {
   fuseMemoryRetrieval,
   type HybridMemoryCandidate,
 } from "../memory/hybridRetrieval";
-import {
-  enqueueMemoryEmbeddingBackfill,
-  processQueuedMemoryEmbeddingBackfill,
-} from "../memory/memoryMaintenance";
 import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 import { getPriorConversationUserMessages } from "../services/conversationService";
-import {
-  searchUserMemoriesLexically,
-  type MemorySearchRow,
-} from "../services/memoryService";
+import { searchUserMemoriesLexically } from "../services/memoryService";
 import { collapseAdjacentDuplicateMessages } from "./messageDeduper";
 import { FAST_PROFILE, INTUITIVE_PROFILE, type ExecutionProfile } from "../orchestrator/executionProfile";
 import type { BillingIdentity } from "../billing/entitlementTypes";
@@ -149,28 +141,12 @@ type ContextRecallEvidence = {
   createdAt: string;
 };
 
-type CloudMemoryRow = MemorySearchRow;
-
 function normalizeEmbedding(value: unknown): readonly number[] | undefined {
   if (!Array.isArray(value) || value.length === 0) return undefined;
   const vector = value
     .map((item) => typeof item === "number" ? item : Number(item))
     .filter((item) => Number.isFinite(item));
   return vector.length === value.length ? vector : undefined;
-}
-
-async function maintainCloudMemoryEmbeddings(
-  userDb: SupabaseClient,
-  userId: string,
-  memories: readonly CloudMemoryRow[],
-): Promise<void> {
-  try {
-    await enqueueMemoryEmbeddingBackfill(userDb, userId, memories);
-    await processQueuedMemoryEmbeddingBackfill(userDb, userId, 2);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[CONTEXT] memory embedding maintenance failed userId=${userId} error=${message}`);
-  }
 }
 
 async function fetchCloudMemories(
@@ -188,11 +164,9 @@ async function fetchCloudMemories(
   });
   if (error) throw error;
 
-  // Intuitive mode keeps the pre-existing embedding maintenance allowance, but
-  // now it operates only on the compact lexical/anchor candidate set. No new
-  // query-embedding or memory-embedding call is added by hybrid retrieval.
-  await maintainCloudMemoryEmbeddings(userDb, userId, rows);
-
+  // Retrieval remains read-only with respect to embedding state. Intuitive mode
+  // may generate its existing single query embedding after this compact set is
+  // returned, but no memory embedding backfill is performed in the request path.
   return rows.map((memory) => ({
     id: memory.id,
     type: memory.type,
@@ -235,26 +209,6 @@ function mergeMemoryCandidates(
   }
 
   return merged;
-}
-
-function selectMemoriesForPrompt(
-  candidates: readonly ContextMemory[],
-  query: string,
-  limit: number,
-  isExplicitRecallQuery: boolean,
-): readonly ContextMemory[] {
-  const selected = selectMemoriesForQuery(candidates, query, limit) as ContextMemory[];
-  if (!isExplicitRecallQuery) return selected;
-
-  const recallAnchors = candidates
-    .filter((memory) => {
-      if (!["identity", "preference", "project"].includes(memory.type)) return false;
-      return (memory.importance ?? 5) >= 7;
-    })
-    .sort((a, b) => (b.importance ?? 5) - (a.importance ?? 5))
-    .slice(0, limit);
-
-  return mergeMemoryCandidates(selected, recallAnchors).slice(0, limit);
 }
 
 const RECALL_QUERY_PATTERNS: readonly RegExp[] = [
@@ -591,10 +545,21 @@ export async function buildContextFast(
     summary: memory.summary,
     importance: memory.importance,
     relevance: memory.lexicalRank,
-    lexical_rank: memory.lexicalRank,
     scope: memory.scope,
     chat_id: memory.chatId ?? null,
     created_at: memory.createdAt,
+    subject_key: memory.subjectKey,
+    fact_type: memory.factType,
+    last_confirmed_at: memory.lastConfirmedAt,
+    status: memory.status,
+    confidence: memory.confidence,
+    project_scope: memory.projectScope,
+    temporal_scope: memory.temporalScope,
+    exact_phrase_match: memory.exactPhraseMatch,
+    entity_or_project_match: memory.entityOrProjectMatch,
+    lexical_rank: memory.lexicalRank,
+    retrieval_rank: memory.retrievalRank,
+    anchor_rank: memory.anchorRank,
   }));
   const memoryCandidates = mergeMemoryCandidates(rawMemories, snapshotMemories);
   const memories = fuseMemoryRetrieval({
