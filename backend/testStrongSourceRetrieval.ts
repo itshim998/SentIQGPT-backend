@@ -2,14 +2,20 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-const MIGRATION = "supabase/migrations/20260805100000_strengthen_source_fts_retrieval.sql";
+const MIGRATIONS = [
+  "supabase/migrations/20260805095900_defer_phase5_document_map_backfill.sql",
+  "supabase/migrations/20260805100000_strengthen_source_fts_retrieval.sql",
+  "supabase/migrations/20260805100100_harden_phase5_document_maps.sql",
+] as const;
 
 function mustMatch(source: string, pattern: RegExp, message: string): void {
   assert.match(source, pattern, message);
 }
 
 async function main(): Promise<void> {
-  const migration = await readFile(path.resolve(MIGRATION), "utf8");
+  const migration = (await Promise.all(
+    MIGRATIONS.map((file) => readFile(path.resolve(file), "utf8")),
+  )).join("\n\n");
   const service = await readFile(path.resolve("backend/services/sourceRetrievalService.ts"), "utf8");
 
   mustMatch(migration, /Database 2, 3, 4 only/i, "migration must stay data-shard-only");
@@ -20,6 +26,7 @@ async function main(): Promise<void> {
   mustMatch(migration, /source_expand_query_terms/i, "deterministic query expansion function is required");
   mustMatch(migration, /v_token \|\| ' percent'/i, "percentage wording must be expanded");
   mustMatch(migration, /v_number := v_base::numeric \/ 100/i, "percentage decimals must be expanded");
+  mustMatch(migration, /v_number \* 100/i, "decimal fractions must expand back to percentage forms");
   mustMatch(migration, /acronym_expansions/i, "document-derived acronym expansions must be used");
   mustMatch(migration, /regexp_replace\(v_normalized, '\[-_\/\]\+'/i, "hyphenated and unhyphenated forms must be normalized");
   mustMatch(migration, /v_token \|\| 's'/i, "singular/plural variants must be generated");
@@ -29,7 +36,7 @@ async function main(): Promise<void> {
   mustMatch(migration, /ts_rank_cd\(base\.fts_weighted, v_original_query\) \* 4\.0/i, "original field-aware query must dominate ranking");
   mustMatch(migration, /to_tsvector\('simple', coalesce\(base\.title/i, "document title must contribute to ranking");
 
-  mustMatch(migration, /neighbour\.chunk_index in \(anchor\.chunk_index - 1, anchor\.chunk_index \+ 1\)/i,
+  mustMatch(migration, /neighbour\.chunk_index\s+in\s*\(\s*anchor\.chunk_index\s*-\s*1\s*,\s*anchor\.chunk_index\s*\+\s*1\s*\)/i,
     "preceding and following child chunks must be expanded around anchors");
   mustMatch(migration, /parent_rank <= 2 and page_rank <= 2/i, "pinpoint retrieval needs parent/page concentration limits");
   mustMatch(migration, /ntile\(v_per_document\)/i, "summary retrieval needs deterministic page/section diversity buckets");
@@ -45,6 +52,16 @@ async function main(): Promise<void> {
   mustMatch(migration, /refresh_source_document_map\(/i, "deterministic document-map builder is required");
   mustMatch(migration, /after update of status on public\.source_documents/i,
     "document maps must be generated when ingestion marks a document ready");
+  mustMatch(migration, /deferred_phase5_backfill/i, "legacy backfill must be deferred until the hardened builder exists");
+  mustMatch(migration, /exception when others[\s\S]+document_map_status'[\s\S]+'failed'/i,
+    "one malformed legacy document must not abort the entire backfill");
+  mustMatch(migration, /coalesce\(v_metadata ->> 'page_count', ''\) ~ '\^\[0-9\]\+\$'/i,
+    "legacy numeric metadata must be guarded before integer casts");
+  mustMatch(migration, /source_first_sentence/i, "section maps must use deterministic first sentences");
+  mustMatch(migration, /source_last_sentence/i, "section maps must use deterministic last sentences");
+  mustMatch(migration, /revoke all on function public\.refresh_source_document_map_on_ready\(\) from public, anon/i,
+    "the trigger helper must not be callable by public or anon roles");
+
   for (const field of [
     "table_of_contents",
     "heading_hierarchy",
@@ -71,7 +88,7 @@ async function main(): Promise<void> {
 
   assert(!/embedding\s*\(/i.test(migration), "Phase 5 must not generate embeddings");
   assert(!/provider|openai|gemini|groq|nvidia|pollinations/i.test(migration),
-    "Phase 5 migration must remain provider-neutral and no-model-cost");
+    "Phase 5 migration must remain implementation-neutral and no-model-cost");
 
   console.log("Strong PostgreSQL FTS retrieval Phase 5 tests passed.");
 }
