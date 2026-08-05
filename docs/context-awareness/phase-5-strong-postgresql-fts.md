@@ -16,9 +16,10 @@ Apply these migrations in filename order to data shards 2, 3, and 4 only:
 supabase/migrations/20260805095900_defer_phase5_document_map_backfill.sql
 supabase/migrations/20260805100000_strengthen_source_fts_retrieval.sql
 supabase/migrations/20260805100100_harden_phase5_document_maps.sql
+supabase/migrations/20260805100200_fix_phase5_ready_trigger.sql
 ```
 
-The first file safely defers legacy map backfill, the second installs weighted FTS and retrieval modes, and the third installs guarded map generation and performs an independently fault-tolerant backfill. Until all three are applied, the existing lexical RPC remains active or Phase 5 is only partially installed.
+The first file safely defers legacy map backfill. The second installs weighted FTS and retrieval modes. The third installs guarded map generation and performs an independently fault-tolerant backfill. The fourth replaces the ready-state row trigger with a PostgreSQL-safe statement trigger so map metadata is persisted only after the original status update completes. Until all four are applied, the existing lexical RPC remains active or Phase 5 is only partially installed.
 
 ## Weighted field-aware FTS
 
@@ -68,7 +69,7 @@ Summary and exhaustive modes explicitly state that the model did not inspect eve
 
 ## Deterministic ingestion-time document map
 
-When a `source_documents` row changes to `ready`, a database trigger builds a compact map and stores it in `metadata.document_map`.
+When a `source_documents` update marks one or more rows `ready`, an after-statement trigger builds compact maps and stores them in `metadata.document_map`. Using a transition-table statement trigger prevents same-row self-modification errors while supporting multi-document updates.
 
 The map contains:
 
@@ -96,16 +97,16 @@ For non-pinpoint modes, the first retrieved parent includes the compact map befo
 
 ## Validation
 
-`backend/testStrongSourceRetrieval.ts` verifies:
+`backend/testStrongSourceRetrieval.ts` verifies the static migration and wiring contracts.
 
-- weighted FTS and GIN indexing;
-- field-aware boosts;
-- deterministic expansion contracts;
-- neighbour expansion;
-- per-parent, per-page and per-document quotas;
-- all six retrieval modes;
-- timeline ordering and coverage disclosure;
-- ingestion-time map fields and trigger;
-- guarded, failure-isolated map backfill;
-- backward-compatible RPC wiring;
-- absence of embeddings and AI-specific retrieval logic.
+`backend/testStrongSourceRetrievalV2.sql` installs the source schema and every Phase 5 migration on PostgreSQL 16, then verifies:
+
+- ready-state document-map generation for multiple documents;
+- guarded malformed metadata;
+- weighted FTS and percentage normalization;
+- preceding and following neighbour expansion;
+- heading-filtered section retrieval;
+- summary section diversity, document-map injection and coverage disclosure;
+- independent comparison coverage per document;
+- chronological timeline ordering;
+- exhaustive-extraction coverage disclosure.
