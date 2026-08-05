@@ -24,6 +24,7 @@ on:
       - "backend/testFastContextSnapshot.ts"
       - "backend/testMemoryHybridRetrieval.ts"
       - "backend/testMemoryHybridRetrieval.sql"
+      - "backend/testMemoryPgcryptoResolution.sql"
       - "backend/verifyPhase5MigrationState.sql"
       - "backend/testLongPdfIngestion.ts"
       - "backend/testStrongSourceRetrieval.ts"
@@ -38,6 +39,7 @@ on:
       - "supabase/migrations/*source_fts_retrieval*.sql"
       - "supabase/migrations/*phase5*.sql"
       - "supabase/migrations/*memory_hybrid_retrieval*.sql"
+      - "supabase/migrations/*memory_pgcrypto*.sql"
       - "supabase/migrations/*memory_project_scope*.sql"
       - "supabase/migrations/*memory_snapshot*.sql"
       - "supabase/migrations/*memory_writes*.sql"
@@ -104,6 +106,16 @@ jobs:
 
       - name: Run Phase 3 hybrid memory regressions
         run: npx ts-node --project tsconfig.backend.json backend/testMemoryHybridRetrieval.ts
+
+      - name: Run Phase 3 Supabase pgcrypto resolution integration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          dropdb -h 127.0.0.1 -U postgres --if-exists sentiq_phase3_pgcrypto
+          createdb -h 127.0.0.1 -U postgres sentiq_phase3_pgcrypto
+          psql -h 127.0.0.1 -U postgres -d sentiq_phase3_pgcrypto \
+            -v ON_ERROR_STOP=1 \
+            -f backend/testMemoryPgcryptoResolution.sql
 
       - name: Run Phase 3 live PostgreSQL integration
         env:
