@@ -49,6 +49,11 @@ begin
     revoke all on function public.digest(text, text) from public, anon;
     grant execute on function public.digest(text, text)
       to authenticated, service_role;
+
+    execute $comment$
+      comment on function public.digest(text, text) is
+        'SentIQ compatibility wrapper for pgcrypto digest when Supabase installs pgcrypto outside public.'
+    $comment$;
   end if;
 end;
 $$;
@@ -63,9 +68,6 @@ begin
   end if;
 end;
 $$;
-
-comment on function public.digest(text, text) is
-  'SentIQ compatibility wrapper for pgcrypto digest when Supabase installs pgcrypto outside public.';
 
 create or replace function public.get_memory_pgcrypto_resolution_schema_version()
 returns text
