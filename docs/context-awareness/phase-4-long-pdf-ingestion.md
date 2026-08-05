@@ -63,7 +63,10 @@ Defaults:
 - `SENTIQ_SOURCE_INSERT_BATCH_SIZE=100`
 - `SENTIQ_PDF_PROGRESS_PAGE_BATCH=8`
 - `SENTIQ_PDF_MAX_STORED_TOKENS=1000000`
+- `SENTIQ_PDF_INGESTION_TIMEOUT_MS=90000`
 - `SENTIQ_SOURCE_PROCESSING_STALE_MS=900000`
+
+The ingestion deadline is checked before each page. If it is reached after some pages were indexed, the document is retained as an explicit partial index. If no page was indexed, the document is marked failed.
 
 ### Completion states
 
@@ -84,6 +87,7 @@ A partial result is explicit when any of the following occurs:
 
 - the configured page ceiling is reached;
 - the configured stored-token ceiling is reached;
+- the configured ingestion deadline is reached;
 - one or more pages fail extraction.
 
 ### Scanned PDFs
@@ -126,6 +130,8 @@ The migration is index-only. The code remains functionally compatible before it 
 
 `backend/testLongPdfIngestion.ts` covers:
 
+- a generated 14-page real PDF whose canonical text exceeds the former 50,000-character boundary;
+- late-page content and page-number preservation;
 - page-aware incremental parent/child persistence;
 - bounded preview/canonical separation contracts;
 - failed and empty page accounting;
