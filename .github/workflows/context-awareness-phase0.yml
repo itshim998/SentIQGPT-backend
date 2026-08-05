@@ -60,6 +60,9 @@ jobs:
       - name: Run protected-context safety regressions
         run: npm run test:protected-context-safety
 
+      - name: Run source retrieval regressions
+        run: npm run test:source-retrieval
+
       - name: Run Phase 0 evaluator
         run: |
           mkdir -p artifacts
