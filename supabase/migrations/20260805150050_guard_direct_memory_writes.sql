@@ -16,6 +16,12 @@ begin
     raise exception 'Memory summary is required';
   end if;
 
+  if new.type = 'project' then
+    new.project_scope := coalesce(
+      nullif(btrim(new.project_scope), ''),
+      public.infer_memory_project_scope(new.summary)
+    );
+  end if;
   new.subject_key := coalesce(
     nullif(btrim(new.subject_key), ''),
     public.normalize_memory_subject_key(new.type, new.summary, new.project_scope)
