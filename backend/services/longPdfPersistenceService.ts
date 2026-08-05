@@ -194,202 +194,224 @@ export async function persistCanonicalPdfSource(
   args: PersistCanonicalPdfArgs,
   dependencies: LongPdfPersistenceDependencies,
 ): Promise<PersistSourceResult> {
-  const existingDocuments = await dependencies.findExistingDocuments(
-    args.userDb,
-    args.ownerUserId,
-    args.source.contentHash,
-  );
-  const existing = selectExistingDocument(existingDocuments);
-  if (existing?.status === "ready") {
-    return {
-      status: "persisted",
-      document: existing,
-      parentChunksCreated: numberFromMetadata(existing.metadata, "parent_chunk_count"),
-      childChunksCreated: numberFromMetadata(existing.metadata, "child_chunk_count"),
-      reason: "content_hash_reused",
-    };
-  }
-  if (existing?.status === "processing" && !isStaleProcessing(existing)) {
-    return {
-      status: "persisted",
-      document: existing,
-      parentChunksCreated: numberFromMetadata(existing.metadata, "parent_chunk_count"),
-      childChunksCreated: numberFromMetadata(existing.metadata, "child_chunk_count"),
-      reason: "already_processing",
-    };
-  }
-  for (const staleOrFailed of existingDocuments.filter((document) =>
-    document.status === "failed" || isStaleProcessing(document))) {
-    await dependencies.deleteDocument(
-      args.userDb,
-      staleOrFailed.id,
-      args.ownerUserId,
-    ).catch(() => undefined);
-  }
-
-  const baseMetadata: Record<string, unknown> = {
-    analysis_id: args.analysisId ?? null,
-    size_bytes: args.sizeBytes,
-    canonical_content_hash: args.source.contentHash,
-    preview_character_count: args.source.previewText.length,
-    ingestion_version: 2,
-    extraction_mode: "page_by_page",
-    started_at: new Date().toISOString(),
-  };
-  const document = await dependencies.insertDocument(args.userDb, {
-    owner_user_id: args.ownerUserId,
-    conversation_id: args.conversationId ?? null,
-    title: args.filename,
-    original_filename: args.filename,
-    mime_type: args.mimeType,
-    source_type: "pdf",
-    content_hash: args.source.contentHash,
-    status: "processing",
-    metadata: buildProgressMetadata({
-      baseMetadata,
-      source: args.source,
-      processedPages: 0,
-      indexedPages: 0,
-      emptyPages: 0,
-      failedPages: [],
-      parentChunks: 0,
-      childChunks: 0,
-      canonicalCharacters: 0,
-      estimatedSourceTokens: 0,
-      tokenLimitExceeded: false,
-      ingestionStatus: "processing",
-    }),
-  });
-
-  let processedPages = 0;
-  let indexedPages = 0;
-  let emptyPages = 0;
-  const failedPages: number[] = [];
-  let parentChunksCreated = 0;
-  let childChunksCreated = 0;
-  let parentIndexOffset = 0;
-  let childIndexOffset = 0;
-  let canonicalCharacters = 0;
-  let estimatedSourceTokens = 0;
-  let tokenLimitExceeded = false;
-  const maxStoredTokens = getMaxStoredTokens();
-  const progressPageBatch = getProgressPageBatch();
-
   try {
-    for (let pageNumber = 1; pageNumber <= args.source.pageCount; pageNumber += 1) {
-      const page = await args.source.readPage(pageNumber);
-      processedPages += 1;
-      if (page.extractionStatus === "failed") {
-        failedPages.push(pageNumber);
-      } else if (page.extractionStatus === "empty") {
-        emptyPages += 1;
-      } else {
-        const pageChunks = chunkSourceText({
-          text: page.text,
-          title: args.filename,
-          path: `${args.filename} > Page ${pageNumber}`,
-          pageNumber,
-        });
-        const pageTokenEstimate = pageChunks.parents.reduce(
-          (sum, parent) => sum + Math.max(1, parent.tokenEstimate),
-          0,
-        );
-        if (estimatedSourceTokens + pageTokenEstimate > maxStoredTokens) {
-          tokenLimitExceeded = true;
-          break;
+    const existingDocuments = await dependencies.findExistingDocuments(
+      args.userDb,
+      args.ownerUserId,
+      args.source.contentHash,
+    );
+    const existing = selectExistingDocument(existingDocuments);
+    if (existing?.status === "ready") {
+      return {
+        status: "persisted",
+        document: existing,
+        parentChunksCreated: numberFromMetadata(existing.metadata, "parent_chunk_count"),
+        childChunksCreated: numberFromMetadata(existing.metadata, "child_chunk_count"),
+        reason: "content_hash_reused",
+      };
+    }
+    if (existing?.status === "processing" && !isStaleProcessing(existing)) {
+      return {
+        status: "persisted",
+        document: existing,
+        parentChunksCreated: numberFromMetadata(existing.metadata, "parent_chunk_count"),
+        childChunksCreated: numberFromMetadata(existing.metadata, "child_chunk_count"),
+        reason: "already_processing",
+      };
+    }
+    for (const staleOrFailed of existingDocuments.filter((document) =>
+      document.status === "failed" || isStaleProcessing(document))) {
+      await dependencies.deleteDocument(
+        args.userDb,
+        staleOrFailed.id,
+        args.ownerUserId,
+      ).catch(() => undefined);
+    }
+
+    const baseMetadata: Record<string, unknown> = {
+      analysis_id: args.analysisId ?? null,
+      size_bytes: args.sizeBytes,
+      canonical_content_hash: args.source.contentHash,
+      preview_character_count: args.source.previewText.length,
+      ingestion_version: 2,
+      extraction_mode: "page_by_page",
+      started_at: new Date().toISOString(),
+    };
+    const document = await dependencies.insertDocument(args.userDb, {
+      owner_user_id: args.ownerUserId,
+      conversation_id: args.conversationId ?? null,
+      title: args.filename,
+      original_filename: args.filename,
+      mime_type: args.mimeType,
+      source_type: "pdf",
+      content_hash: args.source.contentHash,
+      status: "processing",
+      metadata: buildProgressMetadata({
+        baseMetadata,
+        source: args.source,
+        processedPages: 0,
+        indexedPages: 0,
+        emptyPages: 0,
+        failedPages: [],
+        parentChunks: 0,
+        childChunks: 0,
+        canonicalCharacters: 0,
+        estimatedSourceTokens: 0,
+        tokenLimitExceeded: false,
+        ingestionStatus: "processing",
+      }),
+    });
+
+    let processedPages = 0;
+    let indexedPages = 0;
+    let emptyPages = 0;
+    const failedPages: number[] = [];
+    let parentChunksCreated = 0;
+    let childChunksCreated = 0;
+    let parentIndexOffset = 0;
+    let childIndexOffset = 0;
+    let canonicalCharacters = 0;
+    let estimatedSourceTokens = 0;
+    let tokenLimitExceeded = false;
+    const maxStoredTokens = getMaxStoredTokens();
+    const progressPageBatch = getProgressPageBatch();
+
+    try {
+      for (let pageNumber = 1; pageNumber <= args.source.pageCount; pageNumber += 1) {
+        const page = await args.source.readPage(pageNumber);
+        processedPages += 1;
+        if (page.extractionStatus === "failed") {
+          failedPages.push(pageNumber);
+        } else if (page.extractionStatus === "empty") {
+          emptyPages += 1;
+        } else {
+          const pageChunks = chunkSourceText({
+            text: page.text,
+            title: args.filename,
+            path: `${args.filename} > Page ${pageNumber}`,
+            pageNumber,
+          });
+          const pageTokenEstimate = pageChunks.parents.reduce(
+            (sum, parent) => sum + Math.max(1, parent.tokenEstimate),
+            0,
+          );
+          if (estimatedSourceTokens + pageTokenEstimate > maxStoredTokens) {
+            tokenLimitExceeded = true;
+            break;
+          }
+
+          const globalParents = pageChunks.parents.map((parent) => ({
+            ...parent,
+            index: parent.index + parentIndexOffset,
+          }));
+          const globalChildren = pageChunks.children.map((child) => ({
+            ...child,
+            index: child.index + childIndexOffset,
+            parentIndex: child.parentIndex + parentIndexOffset,
+          }));
+          const childCountByParent = new Map<number, number>();
+          globalChildren.forEach((child) => {
+            childCountByParent.set(
+              child.parentIndex,
+              (childCountByParent.get(child.parentIndex) ?? 0) + 1,
+            );
+          });
+
+          const parentRows = await insertInBatches(
+            args.userDb,
+            globalParents.map((parent): SourceChunkInsert => ({
+              document_id: document.id,
+              owner_user_id: args.ownerUserId,
+              conversation_id: args.conversationId ?? null,
+              parent_chunk_id: null,
+              chunk_role: "parent",
+              chunk_index: parent.index,
+              heading: parent.heading ?? null,
+              path: parent.path ?? null,
+              page_number: pageNumber,
+              content: parent.content,
+              context_prefix: parent.contextPrefix ?? null,
+              token_estimate: Math.max(1, parent.tokenEstimate),
+              embedding_status: "pending_embedding",
+              metadata: {
+                child_count: childCountByParent.get(parent.index) ?? 0,
+                page_start: pageNumber,
+                page_end: pageNumber,
+                parent_index: parent.index,
+                extraction_status: page.extractionStatus,
+              },
+            })),
+            dependencies.insertChunks,
+          );
+          const parentIds = new Map(parentRows.map((parent) => [parent.chunk_index, parent.id]));
+          const childInputs = globalChildren.flatMap((child): SourceChunkInsert[] => {
+            const parentId = parentIds.get(child.parentIndex);
+            if (!parentId) return [];
+            return [{
+              document_id: document.id,
+              owner_user_id: args.ownerUserId,
+              conversation_id: args.conversationId ?? null,
+              parent_chunk_id: parentId,
+              chunk_role: "child",
+              chunk_index: child.index,
+              heading: child.heading ?? null,
+              path: child.path ?? null,
+              page_number: pageNumber,
+              content: child.content,
+              context_prefix: child.contextPrefix ?? null,
+              token_estimate: Math.max(1, child.tokenEstimate),
+              embedding_status: "pending_embedding",
+              metadata: {
+                parent_index: child.parentIndex,
+                child_index: child.index,
+                page_start: pageNumber,
+                page_end: pageNumber,
+                extraction_status: page.extractionStatus,
+              },
+            }];
+          });
+          const childRows = await insertInBatches(
+            args.userDb,
+            childInputs,
+            dependencies.insertChunks,
+          );
+
+          indexedPages += 1;
+          canonicalCharacters += page.characterCount;
+          estimatedSourceTokens += pageTokenEstimate;
+          parentChunksCreated += parentRows.length;
+          childChunksCreated += childRows.length;
+          parentIndexOffset += pageChunks.parents.length;
+          childIndexOffset += pageChunks.children.length;
         }
 
-        const globalParents = pageChunks.parents.map((parent) => ({
-          ...parent,
-          index: parent.index + parentIndexOffset,
-        }));
-        const globalChildren = pageChunks.children.map((child) => ({
-          ...child,
-          index: child.index + childIndexOffset,
-          parentIndex: child.parentIndex + parentIndexOffset,
-        }));
-        const childCountByParent = new Map<number, number>();
-        globalChildren.forEach((child) => {
-          childCountByParent.set(
-            child.parentIndex,
-            (childCountByParent.get(child.parentIndex) ?? 0) + 1,
+        if (processedPages % progressPageBatch === 0 || processedPages === args.source.pageCount) {
+          await dependencies.updateDocumentProgress(
+            args.userDb,
+            document.id,
+            args.ownerUserId,
+            buildProgressMetadata({
+              baseMetadata,
+              source: args.source,
+              processedPages,
+              indexedPages,
+              emptyPages,
+              failedPages,
+              parentChunks: parentChunksCreated,
+              childChunks: childChunksCreated,
+              canonicalCharacters,
+              estimatedSourceTokens,
+              tokenLimitExceeded,
+              ingestionStatus: "processing",
+            }),
           );
-        });
-
-        const parentRows = await insertInBatches(
-          args.userDb,
-          globalParents.map((parent): SourceChunkInsert => ({
-            document_id: document.id,
-            owner_user_id: args.ownerUserId,
-            conversation_id: args.conversationId ?? null,
-            parent_chunk_id: null,
-            chunk_role: "parent",
-            chunk_index: parent.index,
-            heading: parent.heading ?? null,
-            path: parent.path ?? null,
-            page_number: pageNumber,
-            content: parent.content,
-            context_prefix: parent.contextPrefix ?? null,
-            token_estimate: Math.max(1, parent.tokenEstimate),
-            embedding_status: "pending_embedding",
-            metadata: {
-              child_count: childCountByParent.get(parent.index) ?? 0,
-              page_start: pageNumber,
-              page_end: pageNumber,
-              parent_index: parent.index,
-              extraction_status: page.extractionStatus,
-            },
-          })),
-          dependencies.insertChunks,
-        );
-        const parentIds = new Map(parentRows.map((parent) => [parent.chunk_index, parent.id]));
-        const childInputs = globalChildren.flatMap((child): SourceChunkInsert[] => {
-          const parentId = parentIds.get(child.parentIndex);
-          if (!parentId) return [];
-          return [{
-            document_id: document.id,
-            owner_user_id: args.ownerUserId,
-            conversation_id: args.conversationId ?? null,
-            parent_chunk_id: parentId,
-            chunk_role: "child",
-            chunk_index: child.index,
-            heading: child.heading ?? null,
-            path: child.path ?? null,
-            page_number: pageNumber,
-            content: child.content,
-            context_prefix: child.contextPrefix ?? null,
-            token_estimate: Math.max(1, child.tokenEstimate),
-            embedding_status: "pending_embedding",
-            metadata: {
-              parent_index: child.parentIndex,
-              child_index: child.index,
-              page_start: pageNumber,
-              page_end: pageNumber,
-              extraction_status: page.extractionStatus,
-            },
-          }];
-        });
-        const childRows = await insertInBatches(
-          args.userDb,
-          childInputs,
-          dependencies.insertChunks,
-        );
-
-        indexedPages += 1;
-        canonicalCharacters += page.characterCount;
-        estimatedSourceTokens += pageTokenEstimate;
-        parentChunksCreated += parentRows.length;
-        childChunksCreated += childRows.length;
-        parentIndexOffset += pageChunks.parents.length;
-        childIndexOffset += pageChunks.children.length;
+        }
       }
 
-      if (processedPages % progressPageBatch === 0 || processedPages === args.source.pageCount) {
-        await dependencies.updateDocumentProgress(
-          args.userDb,
-          document.id,
-          args.ownerUserId,
-          buildProgressMetadata({
+      if (indexedPages === 0) {
+        const ingestionStatus = failedPages.length > 0 ? "failed" : "ocr_required";
+        const metadata = {
+          ...buildProgressMetadata({
             baseMetadata,
             source: args.source,
             processedPages,
@@ -401,103 +423,87 @@ export async function persistCanonicalPdfSource(
             canonicalCharacters,
             estimatedSourceTokens,
             tokenLimitExceeded,
-            ingestionStatus: "processing",
+            ingestionStatus,
           }),
+          completed_at: new Date().toISOString(),
+        };
+        await dependencies.updateDocumentStatus(
+          args.userDb,
+          document.id,
+          args.ownerUserId,
+          "failed",
+          metadata,
         );
+        return {
+          status: "persisted",
+          document: { ...document, status: "failed", metadata },
+          parentChunksCreated,
+          childChunksCreated,
+          reason: ingestionStatus,
+        };
       }
-    }
 
-    if (indexedPages === 0 && failedPages.length === 0) {
-      const metadata = buildProgressMetadata({
-        baseMetadata,
-        source: args.source,
-        processedPages,
-        indexedPages,
-        emptyPages,
-        failedPages,
-        parentChunks: parentChunksCreated,
-        childChunks: childChunksCreated,
-        canonicalCharacters,
-        estimatedSourceTokens,
-        tokenLimitExceeded,
-        ingestionStatus: "ocr_required",
-      });
+      const partial = args.source.pageLimitExceeded || tokenLimitExceeded || failedPages.length > 0;
+      const ingestionStatus = partial ? "partial" : "ready";
+      const metadata = {
+        ...buildProgressMetadata({
+          baseMetadata,
+          source: args.source,
+          processedPages,
+          indexedPages,
+          emptyPages,
+          failedPages,
+          parentChunks: parentChunksCreated,
+          childChunks: childChunksCreated,
+          canonicalCharacters,
+          estimatedSourceTokens,
+          tokenLimitExceeded,
+          ingestionStatus,
+        }),
+        completed_at: new Date().toISOString(),
+      };
+      await dependencies.updateDocumentStatus(
+        args.userDb,
+        document.id,
+        args.ownerUserId,
+        "ready",
+        metadata,
+      );
+      return {
+        status: "persisted",
+        document: { ...document, status: "ready", metadata },
+        parentChunksCreated,
+        childChunksCreated,
+        reason: partial ? "partial" : undefined,
+      };
+    } catch (error) {
+      const metadata = {
+        ...buildProgressMetadata({
+          baseMetadata,
+          source: args.source,
+          processedPages,
+          indexedPages,
+          emptyPages,
+          failedPages,
+          parentChunks: parentChunksCreated,
+          childChunks: childChunksCreated,
+          canonicalCharacters,
+          estimatedSourceTokens,
+          tokenLimitExceeded,
+          ingestionStatus: "failed",
+        }),
+        failure_type: error instanceof Error ? error.name : "unknown",
+        failed_at: new Date().toISOString(),
+      };
       await dependencies.updateDocumentStatus(
         args.userDb,
         document.id,
         args.ownerUserId,
         "failed",
         metadata,
-      );
-      return {
-        status: "persisted",
-        document: { ...document, status: "failed", metadata },
-        parentChunksCreated,
-        childChunksCreated,
-        reason: "ocr_required",
-      };
+      ).catch(() => undefined);
+      throw error;
     }
-
-    const partial = args.source.pageLimitExceeded || tokenLimitExceeded || failedPages.length > 0;
-    const ingestionStatus = partial ? "partial" : "ready";
-    const metadata = {
-      ...buildProgressMetadata({
-        baseMetadata,
-        source: args.source,
-        processedPages,
-        indexedPages,
-        emptyPages,
-        failedPages,
-        parentChunks: parentChunksCreated,
-        childChunks: childChunksCreated,
-        canonicalCharacters,
-        estimatedSourceTokens,
-        tokenLimitExceeded,
-        ingestionStatus,
-      }),
-      completed_at: new Date().toISOString(),
-    };
-    await dependencies.updateDocumentStatus(
-      args.userDb,
-      document.id,
-      args.ownerUserId,
-      "ready",
-      metadata,
-    );
-    return {
-      status: "persisted",
-      document: { ...document, status: "ready", metadata },
-      parentChunksCreated,
-      childChunksCreated,
-      reason: partial ? "partial" : undefined,
-    };
-  } catch (error) {
-    const metadata = {
-      ...buildProgressMetadata({
-        baseMetadata,
-        source: args.source,
-        processedPages,
-        indexedPages,
-        emptyPages,
-        failedPages,
-        parentChunks: parentChunksCreated,
-        childChunks: childChunksCreated,
-        canonicalCharacters,
-        estimatedSourceTokens,
-        tokenLimitExceeded,
-        ingestionStatus: "failed",
-      }),
-      failure_type: error instanceof Error ? error.name : "unknown",
-      failed_at: new Date().toISOString(),
-    };
-    await dependencies.updateDocumentStatus(
-      args.userDb,
-      document.id,
-      args.ownerUserId,
-      "failed",
-      metadata,
-    ).catch(() => undefined);
-    throw error;
   } finally {
     await args.source.destroy().catch(() => undefined);
   }
