@@ -25,6 +25,7 @@ on:
       - "backend/testStrongSourceRetrieval.sql"
       - "backend/testStrongSourceRetrievalV2.sql"
       - "backend/testStrongSourceRetrievalV3.sql"
+      - "backend/testPhase5ExistingReadyBackfill.sql"
       - "backend/testContextComposition.ts"
       - "backend/testProtectedContextSafety.ts"
       - "supabase/migrations/*fast_context_snapshot*.sql"
@@ -104,6 +105,9 @@ jobs:
         run: |
           awk '
             { print }
+            /20260805100200_fix_phase5_ready_trigger.sql/ {
+              print "\\i supabase/migrations/20260805100250_prepare_phase5_safe_backfill.sql"
+            }
             /20260805100300_fix_phase5_map_ambiguity.sql/ {
               print "\\i supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql"
               print "\\i supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql"
@@ -111,6 +115,8 @@ jobs:
             }
           ' backend/testStrongSourceRetrievalV3.sql \
             > /tmp/testStrongSourceRetrievalV4.sql
+          grep -F '\i supabase/migrations/20260805100250_prepare_phase5_safe_backfill.sql' \
+            /tmp/testStrongSourceRetrievalV4.sql
           grep -F '\i supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql' \
             /tmp/testStrongSourceRetrievalV4.sql
           grep -F '\i supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql' \
@@ -141,6 +147,16 @@ jobs:
             echo "::error file=backend/testStrongSourceRetrievalV3.sql,title=Phase 5 PostgreSQL failure::$phase5_error"
             exit "$phase5_status"
           fi
+
+      - name: Run Phase 5 existing-ready backfill integration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          dropdb -h 127.0.0.1 -U postgres --if-exists sentiq_phase5_existing
+          createdb -h 127.0.0.1 -U postgres sentiq_phase5_existing
+          psql -h 127.0.0.1 -U postgres -d sentiq_phase5_existing \
+            -v ON_ERROR_STOP=1 \
+            -f backend/testPhase5ExistingReadyBackfill.sql
 
       - name: Upload evaluation report
         if: always()
