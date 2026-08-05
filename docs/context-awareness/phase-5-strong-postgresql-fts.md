@@ -19,9 +19,10 @@ supabase/migrations/20260805100100_harden_phase5_document_maps.sql
 supabase/migrations/20260805100200_fix_phase5_ready_trigger.sql
 supabase/migrations/20260805100300_fix_phase5_map_ambiguity.sql
 supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql
+supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql
 ```
 
-The first file safely defers legacy map backfill. The second installs weighted FTS and retrieval modes. The third installs guarded map generation and performs an independently fault-tolerant backfill. The fourth replaces the ready-state row trigger with a PostgreSQL-safe statement trigger so map metadata is persisted only after the original status update completes. The fifth fully qualifies every map-builder CTE reference, removes SQLSTATE `42702` ambiguity in document-map generation, and safely retries failed ready-document maps. The sixth fully qualifies every CTE reference inside the `RETURNS TABLE` search RPC and replaces `USING` joins with explicit qualified `ON` clauses, removing the remaining SQLSTATE `42702` execution blocker. Until all six are applied, Phase 5 is only partially installed.
+The first file safely defers legacy map backfill. The second installs weighted FTS and retrieval modes. The third installs guarded map generation and performs an independently fault-tolerant backfill. The fourth replaces the ready-state row trigger with a PostgreSQL-safe statement trigger so map metadata is persisted only after the original status update completes. The fifth fully qualifies every map-builder CTE reference, removes SQLSTATE `42702` ambiguity in document-map generation, and safely retries failed ready-document maps. The sixth fully qualifies every CTE reference inside the `RETURNS TABLE` search RPC and replaces `USING` joins with explicit qualified `ON` clauses. The seventh restricts automatic map generation to the actual transition into `ready`, preventing failure-metadata updates from recursively invoking the trigger. Until all seven are applied, Phase 5 is only partially installed.
 
 ## Weighted field-aware FTS
 
@@ -71,7 +72,9 @@ Summary and exhaustive modes explicitly state that the model did not inspect eve
 
 ## Deterministic ingestion-time document map
 
-When a `source_documents` update marks one or more rows `ready`, an after-statement trigger builds compact maps and stores them in `metadata.document_map`. Using a transition-table statement trigger prevents same-row self-modification errors while supporting multi-document updates.
+When a `source_documents` update changes one or more rows from a non-ready state into `ready`, an after-statement trigger builds compact maps and stores them in `metadata.document_map`. Using a transition-table statement trigger prevents same-row self-modification errors while supporting multi-document updates.
+
+The trigger does not retry based on later metadata-only updates. Legacy and failed ready documents are retried only by the explicit, independently fault-tolerant migration backfill. This prevents a failed map write from recursively invoking its own failure handler.
 
 The map contains:
 
@@ -112,9 +115,9 @@ This correction changes no ranking weights, retrieval quotas, RPC parameters, re
 
 ## Validation
 
-`backend/testStrongSourceRetrieval.ts` verifies the static migration, namespace-safety and production-wiring contracts.
+`backend/testStrongSourceRetrieval.ts` verifies the static migration, namespace-safety, trigger-recursion and production-wiring contracts.
 
-The Context Awareness workflow constructs the final PostgreSQL fixture from `backend/testStrongSourceRetrievalV3.sql`, inserts the sixth corrective migration immediately after the fifth, and installs the complete sequence on PostgreSQL 16 before any source data is seeded. It then verifies:
+The Context Awareness workflow constructs the final PostgreSQL fixture from `backend/testStrongSourceRetrievalV3.sql`, inserts the sixth and seventh corrective migrations immediately after the fifth, and installs the complete sequence on PostgreSQL 16 before any source data is seeded. It then verifies:
 
 - ready-state document-map generation for multiple documents;
 - guarded malformed metadata;
