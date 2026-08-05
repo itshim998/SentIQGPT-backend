@@ -38,6 +38,7 @@ on:
       - "supabase/migrations/*source_fts_retrieval*.sql"
       - "supabase/migrations/*phase5*.sql"
       - "supabase/migrations/*memory_hybrid_retrieval*.sql"
+      - "supabase/migrations/*memory_project_scope*.sql"
       - "supabase/migrations/*memory_snapshot*.sql"
       - "supabase/migrations/*memory_writes*.sql"
       - "docs/context-awareness/**"
@@ -110,9 +111,30 @@ jobs:
         run: |
           dropdb -h 127.0.0.1 -U postgres --if-exists sentiq_phase3_memory
           createdb -h 127.0.0.1 -U postgres sentiq_phase3_memory
+
+          set +e
           psql -h 127.0.0.1 -U postgres -d sentiq_phase3_memory \
             -v ON_ERROR_STOP=1 \
-            -f backend/testMemoryHybridRetrieval.sql
+            -f backend/testMemoryHybridRetrieval.sql \
+            > /tmp/phase3-postgres.log 2>&1
+          phase3_status=$?
+          set -e
+          cat /tmp/phase3-postgres.log
+
+          if [ "$phase3_status" -ne 0 ]; then
+            phase3_error=$(grep -E '^(psql:|ERROR:|DETAIL:|HINT:|CONTEXT:)' \
+              /tmp/phase3-postgres.log \
+              | tail -n 30 \
+              | tr '\n' ' ' \
+              | sed 's/%/%25/g; s/\r/%0D/g')
+            if [ -z "$phase3_error" ]; then
+              phase3_error=$(tail -n 24 /tmp/phase3-postgres.log \
+                | tr '\n' ' ' \
+                | sed 's/%/%25/g; s/\r/%0D/g')
+            fi
+            echo "::error file=backend/testMemoryHybridRetrieval.sql,title=Phase 3 PostgreSQL failure::$phase3_error"
+            exit "$phase3_status"
+          fi
 
       - name: Run Phase 4 long PDF ingestion regressions
         run: npx ts-node --project tsconfig.backend.json backend/testLongPdfIngestion.ts
