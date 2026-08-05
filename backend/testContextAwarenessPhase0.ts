@@ -216,7 +216,12 @@ async function evaluatePdfRetrieval(): Promise<PdfRetrievalResult[]> {
 
 async function scanStaticFindings(): Promise<StaticFinding[]> {
   const ingestionSource = await readFile(resolve(__dirname, "ai/FileIngestionHandler.ts"), "utf8");
+  const persistenceSource = await readFile(resolve(__dirname, "services/longPdfPersistenceService.ts"), "utf8");
   const retrievalSource = await readFile(resolve(__dirname, "services/sourceRetrievalService.ts"), "utf8");
+  const serverSource = await readFile(resolve(__dirname, "server.ts"), "utf8");
+  const pageAwareCanonicalIngestion = /getText\(\{\s*partial:\s*\[boundedPageNumber\]\s*\}\)/.test(ingestionSource)
+    && /chunkSourceText\(\{[\s\S]*?pageNumber,[\s\S]*?\}\)/.test(persistenceSource)
+    && /page_number:\s*pageNumber/.test(persistenceSource);
   return [
     {
       id: "pdf-canonical-text-truncated",
@@ -227,15 +232,16 @@ async function scanStaticFindings(): Promise<StaticFinding[]> {
     },
     {
       id: "pdf-upload-cap-10mb",
-      detected: /MAX_FILE_SIZE\s*=\s*10\s*\*\s*1024\s*\*\s*1024/.test(ingestionSource),
+      detected: /DEFAULT_MAX_FILE_SIZE_BYTES\s*=\s*10\s*\*\s*1024\s*\*\s*1024/.test(ingestionSource)
+        || /fileSize:\s*10\s*\*\s*1024\s*\*\s*1024/.test(serverSource),
       severity: "medium",
-      description: "The upload path currently rejects files larger than 10 MB.",
+      description: "The upload transport still defaults to rejecting files larger than 10 MB.",
     },
     {
       id: "pdf-page-provenance-missing",
-      detected: /chunkSourceText\(\{\s*text:\s*args\.extractedText,\s*title:\s*args\.filename,\s*path:\s*args\.filename\s*\}\)/s.test(retrievalSource),
+      detected: !pageAwareCanonicalIngestion,
       severity: "high",
-      description: "Persisted source chunking receives the combined text without page boundaries, so PDF page metadata cannot be populated.",
+      description: "Canonical PDF chunks do not preserve page-aware extraction and page_number provenance.",
     },
     {
       id: "source-semantic-retriever-unwired",
