@@ -17,9 +17,10 @@ supabase/migrations/20260805095900_defer_phase5_document_map_backfill.sql
 supabase/migrations/20260805100000_strengthen_source_fts_retrieval.sql
 supabase/migrations/20260805100100_harden_phase5_document_maps.sql
 supabase/migrations/20260805100200_fix_phase5_ready_trigger.sql
+supabase/migrations/20260805100300_fix_phase5_map_ambiguity.sql
 ```
 
-The first file safely defers legacy map backfill. The second installs weighted FTS and retrieval modes. The third installs guarded map generation and performs an independently fault-tolerant backfill. The fourth replaces the ready-state row trigger with a PostgreSQL-safe statement trigger so map metadata is persisted only after the original status update completes. Until all four are applied, the existing lexical RPC remains active or Phase 5 is only partially installed.
+The first file safely defers legacy map backfill. The second installs weighted FTS and retrieval modes. The third installs guarded map generation and performs an independently fault-tolerant backfill. The fourth replaces the ready-state row trigger with a PostgreSQL-safe statement trigger so map metadata is persisted only after the original status update completes. The fifth fully qualifies every map-builder CTE reference, removes SQLSTATE `42702` ambiguity, and safely retries failed ready-document maps. Until all five are applied, Phase 5 is only partially installed.
 
 ## Weighted field-aware FTS
 
@@ -83,7 +84,7 @@ The map contains:
 - table and appendix page indicators;
 - representative first and last sentences for each mapped section.
 
-Legacy metadata numbers are guarded before integer conversion. Existing ready documents are backfilled one at a time; a malformed document is marked failed without rolling back maps already created for other documents.
+Legacy metadata numbers are guarded before integer conversion. Existing ready documents are backfilled one at a time; a malformed document is marked failed without rolling back maps already created for other documents. All CTE and aggregate references in the final builder are explicitly qualified to avoid PL/pgSQL or SQL namespace ambiguity.
 
 For non-pinpoint modes, the first retrieved parent includes the compact map before query-relevant excerpts. The complete document is never placed directly into the model prompt.
 
@@ -99,7 +100,7 @@ For non-pinpoint modes, the first retrieved parent includes the compact map befo
 
 `backend/testStrongSourceRetrieval.ts` verifies the static migration and wiring contracts.
 
-`backend/testStrongSourceRetrievalV2.sql` installs the source schema and every Phase 5 migration on PostgreSQL 16, then verifies:
+`backend/testStrongSourceRetrievalV3.sql` installs the source schema and every Phase 5 migration on PostgreSQL 16 in production order, then verifies:
 
 - ready-state document-map generation for multiple documents;
 - guarded malformed metadata;
