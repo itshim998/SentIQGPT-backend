@@ -9,7 +9,11 @@ const MIGRATIONS = [
   "supabase/migrations/20260805100200_fix_phase5_ready_trigger.sql",
   "supabase/migrations/20260805100300_fix_phase5_map_ambiguity.sql",
   "supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql",
+  "supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql",
 ] as const;
+
+const FINAL_TRIGGER_MIGRATION =
+  "supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql";
 
 function mustMatch(source: string, pattern: RegExp, message: string): void {
   assert.match(source, pattern, message);
@@ -19,6 +23,10 @@ async function main(): Promise<void> {
   const migration = (await Promise.all(
     MIGRATIONS.map((file) => readFile(path.resolve(file), "utf8")),
   )).join("\n\n");
+  const finalTriggerMigration = await readFile(
+    path.resolve(FINAL_TRIGGER_MIGRATION),
+    "utf8",
+  );
   const service = await readFile(path.resolve("backend/services/sourceRetrievalService.ts"), "utf8");
 
   mustMatch(migration, /Database 2, 3, 4 only/i, "migration must stay data-shard-only");
@@ -76,6 +84,17 @@ async function main(): Promise<void> {
     "table-page aggregate references must be fully qualified");
   mustMatch(migration, /appendix_page_rows\.page_number/i,
     "appendix-page aggregate references must be fully qualified");
+
+  mustMatch(finalTriggerMigration,
+    /new_row\.status = 'ready'[\s\S]+old_row\.status is distinct from new_row\.status/i,
+    "automatic map generation must run only on the transition into ready");
+  mustMatch(finalTriggerMigration,
+    /v_failure_sqlstate = returned_sqlstate/i,
+    "trigger diagnostics must capture SQLSTATE into an explicit variable");
+  assert(!/document_map_status[^\n]+<>\s*'ready'/i.test(finalTriggerMigration),
+    "failure metadata updates must not recursively retrigger map generation");
+  assert(!/jsonb_typeof\([^;]+document_map/i.test(finalTriggerMigration),
+    "the final ready trigger must not retry based on map metadata changes");
 
   for (const field of [
     "table_of_contents",
