@@ -17,6 +17,7 @@ declare
   v_page_count integer := 0;
   v_parent_count integer := 0;
   v_metadata jsonb := '{}'::jsonb;
+  v_clean_metadata jsonb := '{}'::jsonb;
   v_sections jsonb := '[]'::jsonb;
   v_terms jsonb := '[]'::jsonb;
   v_acronyms jsonb := '[]'::jsonb;
@@ -66,11 +67,11 @@ begin
 
   with parent_rows as (
     select
-      source_chunk.chunk_index as chunk_index,
-      source_chunk.page_number as page_number,
-      source_chunk.heading as heading,
-      source_chunk.path as path,
-      source_chunk.content as content,
+      source_chunk.chunk_index,
+      source_chunk.page_number,
+      source_chunk.heading,
+      source_chunk.path,
+      source_chunk.content,
       coalesce(
         nullif(btrim(source_chunk.heading), ''),
         nullif(btrim(source_chunk.path), ''),
@@ -87,22 +88,17 @@ begin
   ),
   section_groups as (
     select
-      parent_rows.section_label as section_label,
+      parent_rows.section_label,
       min(parent_rows.chunk_index) as first_index,
       min(parent_rows.page_number) as page_start,
       max(parent_rows.page_number) as page_end,
       count(*) as parent_chunk_count,
-      (array_agg(
-        parent_rows.content
-        order by parent_rows.chunk_index
-      ))[1] as first_content,
-      (array_agg(
-        parent_rows.content
-        order by parent_rows.chunk_index desc
-      ))[1] as last_content,
-      bool_or(
-        parent_rows.content ~* '\m(table|tabular|columns?)\M'
-      ) as has_table_indicator,
+      (array_agg(parent_rows.content order by parent_rows.chunk_index))[1]
+        as first_content,
+      (array_agg(parent_rows.content order by parent_rows.chunk_index desc))[1]
+        as last_content,
+      bool_or(parent_rows.content ~* '\m(table|tabular|columns?)\M')
+        as has_table_indicator,
       bool_or(
         coalesce(parent_rows.heading, '') ~* '\mappendix\M'
         or parent_rows.content ~* '^\s*appendix\M'
@@ -178,7 +174,7 @@ begin
   ),
   ranked_terms as (
     select
-      word_rows.term_value as term_value,
+      word_rows.term_value,
       count(*) as occurrence_count
     from word_rows
     group by word_rows.term_value
@@ -215,7 +211,7 @@ begin
   ),
   ranked_acronyms as (
     select
-      acronym_matches.acronym_value as acronym_value,
+      acronym_matches.acronym_value,
       min(acronym_matches.expansion_value) as expansion_value,
       count(*) as occurrence_count
     from acronym_matches
@@ -255,7 +251,7 @@ begin
   ),
   ranked_entities as (
     select
-      entity_matches.entity_value as entity_value,
+      entity_matches.entity_value,
       count(*) as occurrence_count
     from entity_matches
     where length(entity_matches.entity_value) between 5 and 120
@@ -288,7 +284,7 @@ begin
   )
   into v_table_pages
   from (
-    select distinct source_chunk.page_number as page_number
+    select distinct source_chunk.page_number
     from public.source_chunks as source_chunk
     where source_chunk.document_id = p_document_id
       and source_chunk.owner_user_id = p_owner_user_id
@@ -312,7 +308,7 @@ begin
   )
   into v_appendix_pages
   from (
-    select distinct source_chunk.page_number as page_number
+    select distinct source_chunk.page_number
     from public.source_chunks as source_chunk
     where source_chunk.document_id = p_document_id
       and source_chunk.owner_user_id = p_owner_user_id
@@ -345,18 +341,20 @@ begin
     'appendix_pages', v_appendix_pages
   );
 
+  v_clean_metadata := coalesce(v_metadata, '{}'::jsonb)
+    || jsonb_build_object(
+      'document_map_version', 1,
+      'document_map_status', 'ready'
+    );
+  v_clean_metadata := v_clean_metadata - 'document_map_failure_type';
+  v_clean_metadata := v_clean_metadata - 'document_map_failure_message';
+  v_clean_metadata := v_clean_metadata - 'document_map_failure_detail';
+  v_clean_metadata := v_clean_metadata - 'document_map_failure_hint';
+  v_clean_metadata := v_clean_metadata - 'document_map_failure_context';
+
   update public.source_documents as source_document
   set metadata = jsonb_set(
-    (((((((coalesce(source_document.metadata, '{}'::jsonb)
-      || jsonb_build_object(
-        'document_map_version', 1,
-        'document_map_status', 'ready'
-      ))
-      - 'document_map_failure_type')
-      - 'document_map_failure_message')
-      - 'document_map_failure_detail')
-      - 'document_map_failure_hint')
-      - 'document_map_failure_context',
+    v_clean_metadata,
     '{document_map}',
     v_map,
     true
