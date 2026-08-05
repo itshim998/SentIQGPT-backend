@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import PDFDocument from "pdfkit";
+import { extractTextFromFile } from "./ai/FileIngestionHandler";
 import {
   clearPendingPdfCanonicalSourcesForTests,
   getPendingPdfCanonicalSourceCountForTests,
@@ -79,6 +81,36 @@ function processingDocument(input: {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
+}
+
+async function createRealLongPdf(): Promise<Buffer> {
+  const document = new PDFDocument({
+    autoFirstPage: false,
+    compress: false,
+    margin: 30,
+  });
+  const chunks: Buffer[] = [];
+  const completed = new Promise<Buffer>((resolve, reject) => {
+    document.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+    document.on("end", () => resolve(Buffer.concat(chunks)));
+    document.on("error", reject);
+  });
+
+  for (let pageNumber = 1; pageNumber <= 14; pageNumber += 1) {
+    document.addPage({ size: [1_200, 1_600], margins: { top: 30, left: 30, right: 30, bottom: 30 } });
+    const marker = pageNumber === 14 ? " PHASE4_AFTER_50000_MARKER" : "";
+    const lines = Array.from({ length: 72 }, (_, lineIndex) =>
+      `Page ${pageNumber} line ${lineIndex} canonical-pdf-content-${pageNumber}-${lineIndex} ` +
+      `abcdefghijklmnopqrstuvwxyz0123456789${marker}`,
+    ).join("\n");
+    document.fontSize(7).text(lines, 30, 30, {
+      width: 1_140,
+      lineGap: 0,
+      paragraphGap: 0,
+    });
+  }
+  document.end();
+  return completed;
 }
 
 async function testIncrementalPagePersistence(): Promise<void> {
@@ -160,6 +192,73 @@ async function testIncrementalPagePersistence(): Promise<void> {
   assert.deepEqual(statusUpdates.at(-1)?.metadata.failed_pages, [3]);
   assert.equal(destroyCount, 1, "parser is destroyed after persistence");
   assert.equal(getPendingPdfCanonicalSourceCountForTests(), 0, "canonical parser handle is consumed exactly once");
+}
+
+async function testRealPdfBeyondLegacyBoundary(): Promise<void> {
+  await clearPendingPdfCanonicalSourcesForTests();
+  const pdfBuffer = await createRealLongPdf();
+  const extraction = await extractTextFromFile({
+    buffer: pdfBuffer,
+    filename: "real-long.pdf",
+    mimetype: "application/pdf",
+    userId: USER_ID,
+  });
+  assert.equal(extraction.type, "pdf");
+  assert((extraction.page_count ?? 0) >= 14, "real PDF page count is discovered");
+  assert.equal(extraction.preview_truncated, true);
+  assert(extraction.extracted_text.length < 25_000, "browser preview remains bounded");
+  assert.equal(getPendingPdfCanonicalSourceCountForTests(), 1, "authenticated PDF registers one canonical parser handoff");
+
+  const insertedRows: SourceChunkInsert[] = [];
+  const statusUpdates: Array<{ status: string; metadata: Record<string, unknown> }> = [];
+  let identityCounter = 0;
+  const service = new SourceRetrievalService({
+    findExistingDocuments: async () => [],
+    deleteDocument: async () => undefined,
+    insertDocument: async (_db, input) => ({
+      ...processingDocument({ content_hash: input.content_hash, metadata: input.metadata }),
+      title: input.title,
+      original_filename: input.original_filename,
+      conversation_id: input.conversation_id,
+    }),
+    insertChunks: async (_db, rows) => {
+      insertedRows.push(...rows);
+      return rows.map((row): SourceChunkIdentity => ({
+        id: `real-chunk-${identityCounter++}`,
+        chunk_index: row.chunk_index,
+        chunk_role: row.chunk_role,
+      }));
+    },
+    updateDocumentProgress: async () => undefined,
+    updateDocumentStatus: async (_db, _documentId, _ownerUserId, status, metadata) => {
+      statusUpdates.push({ status, metadata });
+    },
+  });
+
+  const persisted = await service.persistUploadedSource({
+    userDb,
+    ownerUserId: USER_ID,
+    conversationId: CONVERSATION_ID,
+    filename: extraction.filename,
+    mimeType: "application/pdf",
+    extractionType: "pdf",
+    extractedText: extraction.extracted_text,
+    sizeBytes: extraction.size_bytes,
+    analysisId: ANALYSIS_ID,
+  });
+
+  assert.equal(persisted.document?.status, "ready");
+  assert.equal(persisted.document?.metadata.ingestion_status, "ready");
+  assert(
+    Number(persisted.document?.metadata.canonical_character_count) > 50_000,
+    "canonical persistence exceeds the removed 50,000-character boundary",
+  );
+  const lateMarkerRow = insertedRows.find((row) => row.content.includes("PHASE4_AFTER_50000_MARKER"));
+  assert(lateMarkerRow, "content beyond the old truncation boundary is persisted");
+  assert((lateMarkerRow?.page_number ?? 0) >= 14, "late content preserves its page number");
+  assert(insertedRows.every((row) => Number.isInteger(row.page_number) && (row.page_number ?? 0) > 0));
+  assert.equal(statusUpdates.at(-1)?.status, "ready");
+  assert.equal(getPendingPdfCanonicalSourceCountForTests(), 0);
 }
 
 async function testScannedPdfClassification(): Promise<void> {
@@ -270,6 +369,7 @@ async function testStaticContracts(): Promise<void> {
 
 async function main(): Promise<void> {
   await testIncrementalPagePersistence();
+  await testRealPdfBeyondLegacyBoundary();
   await testScannedPdfClassification();
   await testContentHashReuseDestroysParser();
   await testStaticContracts();
