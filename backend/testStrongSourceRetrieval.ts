@@ -7,6 +7,7 @@ const MIGRATIONS = [
   "supabase/migrations/20260805100000_strengthen_source_fts_retrieval.sql",
   "supabase/migrations/20260805100100_harden_phase5_document_maps.sql",
   "supabase/migrations/20260805100200_fix_phase5_ready_trigger.sql",
+  "supabase/migrations/20260805100300_fix_phase5_map_ambiguity.sql",
 ] as const;
 
 function mustMatch(source: string, pattern: RegExp, message: string): void {
@@ -62,6 +63,18 @@ async function main(): Promise<void> {
   mustMatch(migration, /source_last_sentence/i, "section maps must use deterministic last sentences");
   mustMatch(migration, /revoke all on function public\.refresh_source_document_maps_after_statement\(\)[\s\S]+from public, anon/i,
     "the final statement trigger helper must not be callable by public or anon roles");
+  mustMatch(migration, /limited_sections\.section_label/i,
+    "section-map aggregate references must be fully qualified");
+  mustMatch(migration, /ranked_terms\.term_value/i,
+    "term-map aggregate references must be fully qualified");
+  mustMatch(migration, /ranked_acronyms\.acronym_value/i,
+    "acronym-map aggregate references must be fully qualified");
+  mustMatch(migration, /ranked_entities\.entity_value/i,
+    "entity-map aggregate references must be fully qualified");
+  mustMatch(migration, /table_page_rows\.page_number/i,
+    "table-page aggregate references must be fully qualified");
+  mustMatch(migration, /appendix_page_rows\.page_number/i,
+    "appendix-page aggregate references must be fully qualified");
 
   for (const field of [
     "table_of_contents",
