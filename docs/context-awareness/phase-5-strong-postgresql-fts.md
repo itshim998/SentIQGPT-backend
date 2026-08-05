@@ -18,9 +18,10 @@ supabase/migrations/20260805100000_strengthen_source_fts_retrieval.sql
 supabase/migrations/20260805100100_harden_phase5_document_maps.sql
 supabase/migrations/20260805100200_fix_phase5_ready_trigger.sql
 supabase/migrations/20260805100300_fix_phase5_map_ambiguity.sql
+supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql
 ```
 
-The first file safely defers legacy map backfill. The second installs weighted FTS and retrieval modes. The third installs guarded map generation and performs an independently fault-tolerant backfill. The fourth replaces the ready-state row trigger with a PostgreSQL-safe statement trigger so map metadata is persisted only after the original status update completes. The fifth fully qualifies every map-builder CTE reference, removes SQLSTATE `42702` ambiguity, and safely retries failed ready-document maps. Until all five are applied, Phase 5 is only partially installed.
+The first file safely defers legacy map backfill. The second installs weighted FTS and retrieval modes. The third installs guarded map generation and performs an independently fault-tolerant backfill. The fourth replaces the ready-state row trigger with a PostgreSQL-safe statement trigger so map metadata is persisted only after the original status update completes. The fifth fully qualifies every map-builder CTE reference, removes SQLSTATE `42702` ambiguity in document-map generation, and safely retries failed ready-document maps. The sixth fully qualifies every CTE reference inside the `RETURNS TABLE` search RPC and replaces `USING` joins with explicit qualified `ON` clauses, removing the remaining SQLSTATE `42702` execution blocker. Until all six are applied, Phase 5 is only partially installed.
 
 ## Weighted field-aware FTS
 
@@ -88,6 +89,19 @@ Legacy metadata numbers are guarded before integer conversion. Existing ready do
 
 For non-pinpoint modes, the first retrieved parent includes the compact map before query-relevant excerpts. The complete document is never placed directly into the model prompt.
 
+## Search-RPC namespace safety
+
+Because `search_source_chunks` is a PL/pgSQL `RETURNS TABLE` function, names such as `document_id`, `parent_chunk_id`, `chunk_index`, `heading`, and `content` also exist as output variables. PostgreSQL can treat an unqualified CTE reference to any of those names as ambiguous.
+
+The final replacement RPC therefore:
+
+- assigns explicit aliases to base-table fields;
+- qualifies every CTE field used in filters, windows, grouping, ordering and projections;
+- uses explicit `ON` predicates instead of `USING (document_id)`;
+- qualifies final output and ordering fields.
+
+This correction changes no ranking weights, retrieval quotas, RPC parameters, result columns or application wiring.
+
 ## Safety and cost constraints
 
 - No embeddings are generated.
@@ -98,9 +112,9 @@ For non-pinpoint modes, the first retrieved parent includes the compact map befo
 
 ## Validation
 
-`backend/testStrongSourceRetrieval.ts` verifies the static migration and wiring contracts.
+`backend/testStrongSourceRetrieval.ts` verifies the static migration, namespace-safety and production-wiring contracts.
 
-`backend/testStrongSourceRetrievalV3.sql` installs the source schema and every Phase 5 migration on PostgreSQL 16 in production order, then verifies:
+The Context Awareness workflow constructs the final PostgreSQL fixture from `backend/testStrongSourceRetrievalV3.sql`, inserts the sixth corrective migration immediately after the fifth, and installs the complete sequence on PostgreSQL 16 before any source data is seeded. It then verifies:
 
 - ready-state document-map generation for multiple documents;
 - guarded malformed metadata;
