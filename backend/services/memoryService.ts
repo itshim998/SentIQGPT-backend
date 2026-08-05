@@ -1,5 +1,14 @@
 export type MemoryScope = "global" | "chat";
 
+export type MemoryFactType =
+  | "stable_identity"
+  | "stable_preference"
+  | "active_project_state"
+  | "unresolved_commitment"
+  | "temporary_condition";
+
+export type MemoryStatus = "active" | "superseded";
+
 export type MemoryRow = {
   id: string;
   user_id: string;
@@ -16,6 +25,26 @@ export type MemoryRow = {
   scope?: MemoryScope | null;
   chat_id?: string | null;
   created_at: string;
+  subject_key?: string | null;
+  fact_type?: MemoryFactType | null;
+  source_conversation_id?: string | null;
+  source_message_id?: string | null;
+  last_confirmed_at?: string | null;
+  supersedes_memory_id?: string | null;
+  status?: MemoryStatus | null;
+  confidence?: number | null;
+  temporal_scope?: string | null;
+  project_scope?: string | null;
+};
+
+export type MemorySearchRow = MemoryRow & {
+  exact_phrase_match: boolean;
+  entity_or_project_match: boolean;
+  lexical_rank: number;
+  scope_rank: number;
+  recency_rank: number;
+  anchor_rank: number;
+  retrieval_rank: number;
 };
 
 export type MemoryLookupRow = {
@@ -34,6 +63,13 @@ export type InsertMemoryInput = {
   embedding_created_at?: string | null;
   scope?: MemoryScope;
   chat_id?: string | null;
+  subject_key?: string | null;
+  fact_type?: MemoryFactType | null;
+  source_conversation_id?: string | null;
+  source_message_id?: string | null;
+  confidence?: number | null;
+  temporal_scope?: string | null;
+  project_scope?: string | null;
 };
 
 export type InsertAutomaticMemoryInput = InsertMemoryInput & {
@@ -43,6 +79,34 @@ export type InsertAutomaticMemoryInput = InsertMemoryInput & {
 export type AutomaticMemoryInsertResult = MemoryRow & {
   deduplicated: boolean;
 };
+
+const MEMORY_SELECT_COLUMNS = [
+  "id",
+  "user_id",
+  "type",
+  "summary",
+  "importance",
+  "embedding",
+  "embedding_model",
+  "embedding_created_at",
+  "embedding_backfill_requested_at",
+  "embedding_backfill_attempts",
+  "embedding_backfill_last_attempt_at",
+  "embedding_backfill_error",
+  "scope",
+  "chat_id",
+  "created_at",
+  "subject_key",
+  "fact_type",
+  "source_conversation_id",
+  "source_message_id",
+  "last_confirmed_at",
+  "supersedes_memory_id",
+  "status",
+  "confidence",
+  "temporal_scope",
+  "project_scope",
+].join(", ");
 
 function normalizeEmbedding(value: unknown): number[] | null {
   if (!Array.isArray(value) || value.length === 0) return null;
@@ -67,26 +131,46 @@ function normalizeByteCount(value: unknown): number {
   return 0;
 }
 
+function normalizeMemoryRow(value: unknown): MemoryRow | null {
+  let candidate = value;
+  if (typeof candidate === "string") {
+    try {
+      candidate = JSON.parse(candidate);
+    } catch {
+      return null;
+    }
+  }
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  return candidate as MemoryRow;
+}
+
 export async function insertMemory(userDb: any, data: InsertMemoryInput) {
   const normalizedScope: MemoryScope = data.scope === "chat" ? "chat" : "global";
-  const result = await userDb
-    .from("memories")
-    .insert({
-      user_id: data.userId,
-      type: data.type,
-      summary: data.summary,
-      importance: data.importance,
-      embedding: normalizeEmbedding(data.embedding),
-      embedding_model: data.embedding_model || null,
-      embedding_created_at: data.embedding_created_at || null,
-      scope: normalizedScope,
-      chat_id: normalizedScope === "chat" ? data.chat_id ?? null : null,
-    })
-    .select("id, user_id, type, summary, importance, embedding, embedding_model, embedding_created_at, embedding_backfill_requested_at, embedding_backfill_attempts, embedding_backfill_last_attempt_at, embedding_backfill_error, scope, chat_id, created_at")
-    .single();
+  const result = await userDb.rpc("persist_memory_with_lifecycle", {
+    p_user_id: data.userId,
+    p_type: data.type,
+    p_summary: data.summary,
+    p_importance: data.importance,
+    p_embedding: normalizeEmbedding(data.embedding),
+    p_embedding_model: data.embedding_model || null,
+    p_embedding_created_at: data.embedding_created_at || null,
+    p_scope: normalizedScope,
+    p_chat_id: normalizedScope === "chat" ? data.chat_id ?? null : null,
+    p_source_conversation_id: data.source_conversation_id ?? (
+      normalizedScope === "chat" ? data.chat_id ?? null : null
+    ),
+    p_source_message_id: data.source_message_id ?? null,
+    p_subject_key: data.subject_key ?? null,
+    p_fact_type: data.fact_type ?? null,
+    p_confidence: data.confidence ?? 0.75,
+    p_temporal_scope: data.temporal_scope ?? null,
+    p_project_scope: data.project_scope ?? null,
+    p_automatic_idempotency_key: null,
+  });
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
 
   return {
-    data: result.data as MemoryRow | null,
+    data: normalizeMemoryRow(row?.memory ?? row),
     error: result.error,
   };
 }
@@ -112,12 +196,33 @@ export async function insertAutomaticMemoryOnce(userDb: any, data: InsertAutomat
   };
 }
 
+export async function searchUserMemoriesLexically(args: {
+  userDb: any;
+  userId: string;
+  query: string;
+  conversationId?: string;
+  limit?: number;
+}) {
+  const result = await args.userDb.rpc("search_memories_lexical", {
+    p_user_id: args.userId,
+    p_query: args.query,
+    p_conversation_id: args.conversationId ?? null,
+    p_limit: Math.max(1, Math.min(args.limit ?? 24, 60)),
+  });
+
+  return {
+    data: (result.data ?? []) as MemorySearchRow[],
+    error: result.error,
+  };
+}
+
 export async function getUserMemories(userDb: any, userId: string) {
   const result = await userDb
     .from("memories")
-    .select("id, user_id, type, summary, importance, embedding, embedding_model, embedding_created_at, embedding_backfill_requested_at, embedding_backfill_attempts, embedding_backfill_last_attempt_at, embedding_backfill_error, scope, chat_id, created_at")
+    .select(MEMORY_SELECT_COLUMNS)
     .eq("user_id", userId)
-    .order("created_at", { ascending: false });
+    .eq("status", "active")
+    .order("last_confirmed_at", { ascending: false });
 
   return {
     data: (result.data ?? []) as MemoryRow[],
@@ -151,6 +256,7 @@ export async function updateMemoryEmbedding(
     })
     .eq("id", memoryId)
     .eq("user_id", userId)
+    .eq("status", "active")
     .select("id")
     .maybeSingle();
 
