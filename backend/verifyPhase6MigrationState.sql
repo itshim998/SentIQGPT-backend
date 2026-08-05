@@ -12,6 +12,7 @@ declare
   v_fast_version text;
   v_external_definition text;
   v_internal_definition text;
+  v_trigger_definition text;
   v_probe_title text := 'SentIQ latency work';
   v_probe_content text := 'The next step is speculative provider generation while preserving answer quality.';
   v_project_key text;
@@ -22,8 +23,7 @@ begin
   end if;
 
   if not exists (
-    select 1
-    from information_schema.columns
+    select 1 from information_schema.columns
     where table_schema = 'public'
       and table_name = 'context_capsules'
       and column_name = 'project_key'
@@ -32,8 +32,7 @@ begin
   end if;
 
   if not exists (
-    select 1
-    from information_schema.columns
+    select 1 from information_schema.columns
     where table_schema = 'public'
       and table_name = 'context_capsules'
       and column_name = 'entity_keys'
@@ -43,14 +42,13 @@ begin
   end if;
 
   if not exists (
-    select 1
-    from information_schema.columns
+    select 1 from information_schema.columns
     where table_schema = 'public'
       and table_name = 'context_capsules'
       and column_name = 'continuity_search_vector'
-      and is_generated = 'ALWAYS'
+      and udt_name = 'tsvector'
   ) then
-    v_missing := array_append(v_missing, 'column:context_capsules.continuity_search_vector:generated');
+    v_missing := array_append(v_missing, 'column:context_capsules.continuity_search_vector');
   end if;
 
   if to_regclass('public.context_capsules_continuity_search_gin_idx') is null then
@@ -77,6 +75,14 @@ begin
   end if;
   if to_regprocedure('public.prepare_context_capsule_continuity_row()') is null then
     v_missing := array_append(v_missing, 'function:prepare_context_capsule_continuity_row');
+  else
+    select pg_get_functiondef(
+      'public.prepare_context_capsule_continuity_row()'::regprocedure
+    ) into v_trigger_definition;
+    if position('continuity_search_vector' in coalesce(v_trigger_definition, '')) = 0
+       or position('array_to_string' in coalesce(v_trigger_definition, '')) = 0 then
+      v_missing := array_append(v_missing, 'function:prepare_context_capsule_continuity_row:vector_maintenance');
+    end if;
   end if;
   if to_regprocedure('public.search_cross_conversation_context(uuid,text,uuid,integer,integer,integer)') is null then
     v_missing := array_append(v_missing, 'function:search_cross_conversation_context');
@@ -89,8 +95,7 @@ begin
   end if;
 
   if not exists (
-    select 1
-    from pg_trigger
+    select 1 from pg_trigger
     where tgrelid = 'public.context_capsules'::regclass
       and tgname = 'prepare_context_capsule_continuity_row_trigger'
       and not tgisinternal
@@ -118,8 +123,7 @@ begin
   end;
 
   if exists (
-    select 1
-    from public.context_capsules as capsule
+    select 1 from public.context_capsules as capsule
     where capsule.scope = 'conversation'
       and (
         capsule.entity_keys is null
