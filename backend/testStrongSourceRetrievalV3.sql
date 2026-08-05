@@ -344,12 +344,14 @@ begin
   select result_row.content
   into v_first
   from phase5_timeline_results as result_row
+  where public.source_extract_sort_date(result_row.content) is not null
   order by result_row.lexical_rank desc
   limit 1;
 
   select result_row.content
   into v_last
   from phase5_timeline_results as result_row
+  where public.source_extract_sort_date(result_row.content) is not null
   order by result_row.lexical_rank asc
   limit 1;
 
