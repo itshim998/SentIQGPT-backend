@@ -107,12 +107,15 @@ jobs:
             /20260805100300_fix_phase5_map_ambiguity.sql/ {
               print "\\i supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql"
               print "\\i supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql"
+              print "\\i supabase/migrations/20260805100600_fix_phase5_sentence_regex.sql"
             }
           ' backend/testStrongSourceRetrievalV3.sql \
             > /tmp/testStrongSourceRetrievalV4.sql
           grep -F '\i supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql' \
             /tmp/testStrongSourceRetrievalV4.sql
           grep -F '\i supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql' \
+            /tmp/testStrongSourceRetrievalV4.sql
+          grep -F '\i supabase/migrations/20260805100600_fix_phase5_sentence_regex.sql' \
             /tmp/testStrongSourceRetrievalV4.sql
 
           set +e
