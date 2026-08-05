@@ -54,21 +54,29 @@ Fast remains a single read-only snapshot RPC.
 
 The internal Phase 6 snapshot obtains structured continuity inside the existing database call. A compatibility adapter preserves the current application-facing snapshot schema version and projects the selected continuity through the workspace-capsule slot with explicit provenance labels. This prevents a database-first rollout from making the current runtime reject the snapshot.
 
+## Continuity vector
+
+PostgreSQL does not permit `array_to_string(text[], text)` inside a generated-column expression because the function is not marked immutable. Phase 6 therefore uses an ordinary `tsvector` column maintained by the same deterministic metadata trigger that derives project and entity keys. The post-migration backfills all existing capsules and updates the GIN index without any provider call.
+
 ## Data-shard migrations
 
 Apply in order to Database 2, Database 3, and Database 4 only:
 
-1. `20260805220000_add_cross_conversation_continuity.sql`
-2. `20260805220100_upgrade_fast_cross_conversation_snapshot.sql`
-3. `20260805220150_preserve_fast_snapshot_contract.sql`
+1. `20260805215950_prepare_continuity_search_vector.sql`
+2. `20260805220000_add_cross_conversation_continuity.sql`
+3. `20260805220050_maintain_continuity_search_vector.sql`
+4. `20260805220100_upgrade_fast_cross_conversation_snapshot.sql`
+5. `20260805220150_preserve_fast_snapshot_contract.sql`
 
 Never apply these migrations to the control database.
+
+The pre- and post-migrations are idempotent. If the main continuity migration previously stopped at `generation expression is not immutable`, apply the pre-migration and rerun the sequence from step 2; the already-created columns and functions are retained safely.
 
 ## Verification
 
 `backend/verifyPhase3MigrationState.sql` is a read-only Phase 3 verifier. It checks functional SHA-256 subject generation, memory FTS, lifecycle metadata, trigger installation, and schema markers.
 
-`backend/verifyPhase6MigrationState.sql` is a read-only Phase 6 verifier. It checks continuity columns, generated FTS state, indexes, metadata trigger, RPCs, deterministic project/entity extraction, Fast internal continuity, compatibility adaptation, and schema markers.
+`backend/verifyPhase6MigrationState.sql` is a read-only Phase 6 verifier. It checks continuity columns, the trigger-maintained FTS vector, indexes, metadata trigger, RPCs, deterministic project/entity extraction, Fast internal continuity, compatibility adaptation, and schema markers.
 
 The PostgreSQL integration suite additionally verifies:
 
