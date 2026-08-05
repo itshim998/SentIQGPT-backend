@@ -8,6 +8,7 @@ const MIGRATIONS = [
   "supabase/migrations/20260805100100_harden_phase5_document_maps.sql",
   "supabase/migrations/20260805100200_fix_phase5_ready_trigger.sql",
   "supabase/migrations/20260805100300_fix_phase5_map_ambiguity.sql",
+  "supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql",
 ] as const;
 
 function mustMatch(source: string, pattern: RegExp, message: string): void {
@@ -95,6 +96,14 @@ async function main(): Promise<void> {
 
   mustMatch(migration, /create or replace function public\.search_source_chunks\(\s*p_owner_user_id uuid,\s*p_document_ids uuid\[\],\s*p_query text,\s*p_limit integer default 12/is,
     "the production RPC signature must remain backward compatible");
+  mustMatch(migration, /from base_rows as base_row[\s\S]+group by base_row\.document_id/i,
+    "retrieval counts must qualify document_id inside the RETURNS TABLE function");
+  mustMatch(migration, /partition by\s+eligible_row\.document_id,\s*eligible_row\.parent_chunk_id/i,
+    "retrieval window partitions must qualify output-column names");
+  mustMatch(migration, /join selected_counts as selected_count\s+on selected_count\.document_id = deduped_row\.document_id/i,
+    "retrieval joins must use explicit qualified ON clauses rather than USING");
+  mustMatch(migration, /from final_rows as final_row\s+order by\s+final_row\.output_score desc,\s*final_row\.document_id,\s*final_row\.chunk_index/i,
+    "final retrieval output must stay fully qualified");
   mustMatch(service, /userDb\.rpc\("search_source_chunks"/i,
     "the existing production singleton must continue calling the replaced RPC transparently");
   mustMatch(service, /export const sourceRetrievalService = new SourceRetrievalService\(\);/i,
