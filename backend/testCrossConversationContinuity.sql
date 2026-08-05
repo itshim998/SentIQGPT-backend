@@ -3,7 +3,9 @@
 -- Reuse the complete Phase 3 schema and lifecycle regression as the baseline.
 \i backend/testMemoryHybridRetrieval.sql
 
+\i supabase/migrations/20260805215950_prepare_continuity_search_vector.sql
 \i supabase/migrations/20260805220000_add_cross_conversation_continuity.sql
+\i supabase/migrations/20260805220050_maintain_continuity_search_vector.sql
 \i supabase/migrations/20260805220100_upgrade_fast_cross_conversation_snapshot.sql
 \i supabase/migrations/20260805220150_preserve_fast_snapshot_contract.sql
 
