@@ -11,7 +11,9 @@ on:
   pull_request:
     paths:
       - "backend/context/**"
+      - "backend/memory/**"
       - "backend/orchestrator/contextComposer.ts"
+      - "backend/services/memoryService.ts"
       - "backend/services/sourceRetrievalService.ts"
       - "backend/services/fastContextSnapshotService.ts"
       - "backend/services/longPdfPersistenceService.ts"
@@ -20,6 +22,9 @@ on:
       - "backend/testContextAwarenessPhase0.ts"
       - "backend/testContextAwarenessPhase1.ts"
       - "backend/testFastContextSnapshot.ts"
+      - "backend/testMemoryHybridRetrieval.ts"
+      - "backend/testMemoryHybridRetrieval.sql"
+      - "backend/verifyPhase5MigrationState.sql"
       - "backend/testLongPdfIngestion.ts"
       - "backend/testStrongSourceRetrieval.ts"
       - "backend/testStrongSourceRetrieval.sql"
@@ -32,6 +37,10 @@ on:
       - "supabase/migrations/*long_pdf_ingestion*.sql"
       - "supabase/migrations/*source_fts_retrieval*.sql"
       - "supabase/migrations/*phase5*.sql"
+      - "supabase/migrations/*memory_hybrid_retrieval*.sql"
+      - "supabase/migrations/*memory_project_scope*.sql"
+      - "supabase/migrations/*memory_snapshot*.sql"
+      - "supabase/migrations/*memory_writes*.sql"
       - "docs/context-awareness/**"
       - ".github/workflows/context-awareness-phase0.yml"
 
@@ -92,6 +101,40 @@ jobs:
 
       - name: Run Phase 2 Fast snapshot regressions
         run: npx ts-node --project tsconfig.backend.json backend/testFastContextSnapshot.ts
+
+      - name: Run Phase 3 hybrid memory regressions
+        run: npx ts-node --project tsconfig.backend.json backend/testMemoryHybridRetrieval.ts
+
+      - name: Run Phase 3 live PostgreSQL integration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          dropdb -h 127.0.0.1 -U postgres --if-exists sentiq_phase3_memory
+          createdb -h 127.0.0.1 -U postgres sentiq_phase3_memory
+
+          set +e
+          psql -h 127.0.0.1 -U postgres -d sentiq_phase3_memory \
+            -v ON_ERROR_STOP=1 \
+            -f backend/testMemoryHybridRetrieval.sql \
+            > /tmp/phase3-postgres.log 2>&1
+          phase3_status=$?
+          set -e
+          cat /tmp/phase3-postgres.log
+
+          if [ "$phase3_status" -ne 0 ]; then
+            phase3_error=$(grep -E '^(psql:|ERROR:|DETAIL:|HINT:|CONTEXT:)' \
+              /tmp/phase3-postgres.log \
+              | tail -n 30 \
+              | tr '\n' ' ' \
+              | sed 's/%/%25/g; s/\r/%0D/g')
+            if [ -z "$phase3_error" ]; then
+              phase3_error=$(tail -n 24 /tmp/phase3-postgres.log \
+                | tr '\n' ' ' \
+                | sed 's/%/%25/g; s/\r/%0D/g')
+            fi
+            echo "::error file=backend/testMemoryHybridRetrieval.sql,title=Phase 3 PostgreSQL failure::$phase3_error"
+            exit "$phase3_status"
+          fi
 
       - name: Run Phase 4 long PDF ingestion regressions
         run: npx ts-node --project tsconfig.backend.json backend/testLongPdfIngestion.ts
@@ -157,6 +200,14 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d sentiq_phase5_existing \
             -v ON_ERROR_STOP=1 \
             -f backend/testPhase5ExistingReadyBackfill.sql
+
+      - name: Verify Phase 5 applied migration state
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d sentiq_phase5_existing \
+            -v ON_ERROR_STOP=1 \
+            -f backend/verifyPhase5MigrationState.sql
 
       - name: Upload evaluation report
         if: always()

@@ -1,4 +1,4 @@
-// SentIQ Chat v2 — Context Builder (with Compression + Semantic Retrieval)
+// SentIQ Chat v2 — Context Builder (with Compression + Hybrid Memory Retrieval)
 //
 // Assembles recent messages, durable memory, capsules, and source evidence.
 // Fast mode uses a bounded, read-only database snapshot and never performs an
@@ -6,15 +6,15 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatMemoriesForPrompt } from "../memory/memoryStore";
-import { selectMemoriesForQuery } from "./memorySelector";
 import { compressConversation, CONVERSATION_WINDOW } from "./contextCompressor";
 import { semanticMemorySearch } from "../memory/semanticSearch";
 import {
-  enqueueMemoryEmbeddingBackfill,
-  processQueuedMemoryEmbeddingBackfill,
-} from "../memory/memoryMaintenance";
+  fuseMemoryRetrieval,
+  type HybridMemoryCandidate,
+} from "../memory/hybridRetrieval";
 import type { WebSearchMode } from "../tools/webSearch/webSearchMode";
 import { getPriorConversationUserMessages } from "../services/conversationService";
+import { searchUserMemoriesLexically } from "../services/memoryService";
 import { collapseAdjacentDuplicateMessages } from "./messageDeduper";
 import { FAST_PROFILE, INTUITIVE_PROFILE, type ExecutionProfile } from "../orchestrator/executionProfile";
 import type { BillingIdentity } from "../billing/entitlementTypes";
@@ -34,12 +34,20 @@ import {
 export interface RawMessageContext {
   readonly recent_messages?: readonly { role: string; content: string }[];
   readonly memories?: readonly {
+    id?: string;
     type: string;
     summary: string;
     importance?: number;
     embedding?: readonly number[];
     scope?: "global" | "chat";
     chat_id?: string | null;
+    subject_key?: string;
+    fact_type?: string;
+    status?: string;
+    last_confirmed_at?: string;
+    confidence?: number;
+    project_scope?: string | null;
+    temporal_scope?: string | null;
   }[];
   readonly file_references?: readonly {
     filename: string;
@@ -126,36 +134,11 @@ export interface BuildContextOptions {
   readonly fastSnapshotTimeoutMs?: number;
 }
 
-type ContextMemory = {
-  type: string;
-  summary: string;
-  importance?: number;
-  relevance?: number;
-  embedding?: readonly number[];
-  scope?: "global" | "chat";
-  chat_id?: string | null;
-};
+type ContextMemory = HybridMemoryCandidate;
 type ContextRecallEvidence = {
   conversationId: string;
   content: string;
   createdAt: string;
-};
-
-type CloudMemoryRow = {
-  id?: string;
-  summary: string;
-  type: string;
-  importance?: number;
-  embedding?: unknown;
-  embedding_model?: string | null;
-  embedding_created_at?: string | null;
-  embedding_backfill_requested_at?: string | null;
-  embedding_backfill_attempts?: number | null;
-  embedding_backfill_last_attempt_at?: string | null;
-  embedding_backfill_error?: string | null;
-  scope?: "global" | "chat";
-  chat_id?: string | null;
-  created_at?: string;
 };
 
 function normalizeEmbedding(value: unknown): readonly number[] | undefined {
@@ -166,68 +149,45 @@ function normalizeEmbedding(value: unknown): readonly number[] | undefined {
   return vector.length === value.length ? vector : undefined;
 }
 
-async function maintainCloudMemoryEmbeddings(
-  userDb: SupabaseClient,
-  userId: string,
-  memories: readonly CloudMemoryRow[],
-): Promise<void> {
-  try {
-    await enqueueMemoryEmbeddingBackfill(userDb, userId, memories);
-    await processQueuedMemoryEmbeddingBackfill(userDb, userId, 2);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[CONTEXT] memory embedding maintenance failed userId=${userId} error=${message}`);
-  }
-}
-
 async function fetchCloudMemories(
   userDb: SupabaseClient,
   userId: string,
+  query: string,
   conversationId?: string,
 ): Promise<readonly ContextMemory[]> {
-  const selectColumns =
-    "id, summary, type, importance, embedding, embedding_model, embedding_created_at, embedding_backfill_requested_at, embedding_backfill_attempts, embedding_backfill_last_attempt_at, embedding_backfill_error, scope, chat_id, created_at";
-  const globalQuery = userDb
-    .from("memories")
-    .select(selectColumns)
-    .eq("user_id", userId)
-    .eq("scope", "global")
-    .order("created_at", { ascending: false })
-    .limit(20);
-  const chatQuery = conversationId
-    ? userDb
-        .from("memories")
-        .select(selectColumns)
-        .eq("user_id", userId)
-        .eq("scope", "chat")
-        .eq("chat_id", conversationId)
-        .order("created_at", { ascending: false })
-        .limit(20)
-    : Promise.resolve({ data: [] as CloudMemoryRow[], error: null });
+  const { data: rows, error } = await searchUserMemoriesLexically({
+    userDb,
+    userId,
+    query,
+    conversationId,
+    limit: 24,
+  });
+  if (error) throw error;
 
-  const [globalResult, chatResult] = await Promise.all([globalQuery, chatQuery]);
-  if (globalResult.error) throw globalResult.error;
-  if (chatResult.error) throw chatResult.error;
-
-  const rows = [
-    ...((globalResult.data ?? []) as CloudMemoryRow[]),
-    ...((chatResult.data ?? []) as CloudMemoryRow[]),
-  ]
-    .sort((left, right) => {
-      const leftTime = Date.parse(left.created_at ?? "") || 0;
-      const rightTime = Date.parse(right.created_at ?? "") || 0;
-      return rightTime - leftTime;
-    })
-    .slice(0, 20);
-  await maintainCloudMemoryEmbeddings(userDb, userId, rows);
-
+  // Retrieval remains read-only with respect to embedding state. Intuitive mode
+  // may generate its existing single query embedding after this compact set is
+  // returned, but no memory embedding backfill is performed in the request path.
   return rows.map((memory) => ({
+    id: memory.id,
     type: memory.type,
     summary: memory.summary,
     importance: memory.importance,
     embedding: normalizeEmbedding(memory.embedding),
     scope: memory.scope === "chat" ? "chat" : "global",
     chat_id: memory.chat_id ?? null,
+    created_at: memory.created_at,
+    subject_key: memory.subject_key ?? undefined,
+    fact_type: memory.fact_type ?? undefined,
+    last_confirmed_at: memory.last_confirmed_at ?? undefined,
+    status: memory.status ?? undefined,
+    confidence: memory.confidence ?? undefined,
+    project_scope: memory.project_scope ?? undefined,
+    temporal_scope: memory.temporal_scope ?? undefined,
+    exact_phrase_match: memory.exact_phrase_match,
+    entity_or_project_match: memory.entity_or_project_match,
+    lexical_rank: memory.lexical_rank,
+    retrieval_rank: memory.retrieval_rank,
+    anchor_rank: memory.anchor_rank,
   }));
 }
 
@@ -236,36 +196,19 @@ function mergeMemoryCandidates(
   cloudMemories: readonly ContextMemory[],
 ): readonly ContextMemory[] {
   const merged: ContextMemory[] = [];
-  const seenSummaries = new Set<string>();
+  const seen = new Set<string>();
 
   for (const memory of [...localMemories, ...cloudMemories]) {
-    const summary = memory.summary;
-    if (!summary || seenSummaries.has(summary)) continue;
-    seenSummaries.add(summary);
+    if (!memory.summary || memory.status === "superseded") continue;
+    const identity = memory.id
+      ? `id:${memory.id}`
+      : `summary:${memory.summary.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase()}`;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
     merged.push(memory);
   }
 
   return merged;
-}
-
-function selectMemoriesForPrompt(
-  candidates: readonly ContextMemory[],
-  query: string,
-  limit: number,
-  isExplicitRecallQuery: boolean,
-): readonly ContextMemory[] {
-  const selected = selectMemoriesForQuery(candidates, query, limit) as ContextMemory[];
-  if (!isExplicitRecallQuery) return selected;
-
-  const recallAnchors = candidates
-    .filter((memory) => {
-      if (!["identity", "preference", "project"].includes(memory.type)) return false;
-      return (memory.importance ?? 5) >= 7;
-    })
-    .sort((a, b) => (b.importance ?? 5) - (a.importance ?? 5))
-    .slice(0, limit);
-
-  return mergeMemoryCandidates(selected, recallAnchors).slice(0, limit);
 }
 
 const RECALL_QUERY_PATTERNS: readonly RegExp[] = [
@@ -386,18 +329,26 @@ export async function buildContext(
   const isExplicitRecallQuery = isExplicitPriorConversationRecallQuery(query);
 
   const rawMemories: ContextMemory[] = (raw.memories ?? []).map((memory) => ({
+    id: memory.id,
     type: memory.type,
     summary: memory.summary,
     importance: memory.importance,
     embedding: memory.embedding,
     scope: memory.scope === "chat" ? "chat" : "global",
     chat_id: memory.chat_id ?? null,
+    subject_key: memory.subject_key,
+    fact_type: memory.fact_type,
+    status: memory.status,
+    last_confirmed_at: memory.last_confirmed_at,
+    confidence: memory.confidence,
+    project_scope: memory.project_scope,
+    temporal_scope: memory.temporal_scope,
   }));
   const normalizedUserId = userId?.trim();
   const effectiveUserDb = userDb ?? raw.userDb;
 
   const cloudMemoryPromise = (profile.context.cloudMemories && effectiveUserDb && normalizedUserId)
-    ? fetchCloudMemories(effectiveUserDb, normalizedUserId, raw.conversationId)
+    ? fetchCloudMemories(effectiveUserDb, normalizedUserId, query, raw.conversationId)
     : Promise.resolve([] as readonly ContextMemory[]);
   const recallEvidencePromise = (
     profile.context.priorConversationRecall && effectiveUserDb && normalizedUserId && isExplicitRecallQuery
@@ -440,23 +391,23 @@ export async function buildContext(
   ]);
   const { recentMessages, summary } = compressionResult;
   const memoryCandidates = mergeMemoryCandidates(rawMemories, cloudMemories);
+
+  // Intuitive mode keeps the existing single query-embedding call, but it now
+  // compares only against the compact PostgreSQL lexical/anchor candidate set.
   const semanticResults = profile.context.semanticMemorySearch
-    ? await semanticMemorySearch(memoryCandidates, query, 3)
+    ? await semanticMemorySearch(memoryCandidates, query, Math.min(memoryCandidates.length, 12))
     : null;
-  let memories: readonly ContextMemory[];
-  if (semanticResults && semanticResults.length > 0) {
-    const semanticMemories = semanticResults.map((result) => ({
-      ...result.memory,
-      relevance: result.similarity,
-    }));
-    memories = isExplicitRecallQuery
-      ? selectMemoriesForPrompt(mergeMemoryCandidates(semanticMemories, memoryCandidates), query, 6, true)
-      : semanticMemories;
-    console.log(`[CONTEXT] memory retrieval: semantic (${memories.length} selected)`);
-  } else {
-    memories = selectMemoriesForPrompt(memoryCandidates, query, 3, isExplicitRecallQuery);
-    console.log(`[CONTEXT] memory retrieval: keyword fallback (${memories.length} selected)`);
-  }
+  const memories = fuseMemoryRetrieval({
+    candidates: memoryCandidates,
+    semanticResults,
+    query,
+    conversationId: raw.conversationId,
+    limit: isExplicitRecallQuery ? 6 : 5,
+  }) as readonly ContextMemory[];
+  console.log(
+    `[CONTEXT] memory retrieval: hybrid candidates=${memoryCandidates.length} ` +
+    `semantic=${semanticResults?.length ?? 0} selected=${memories.length}`,
+  );
 
   const fileReferences = sourceRetrieval.fileReferences;
   if (fileReferences.length > 0) {
@@ -526,12 +477,20 @@ export async function buildContextFast(
   const effectiveUserDb = userDb ?? raw.userDb;
 
   const rawMemories: ContextMemory[] = (raw.memories ?? []).map((memory) => ({
+    id: memory.id,
     type: memory.type,
     summary: memory.summary,
     importance: memory.importance,
     embedding: memory.embedding,
     scope: memory.scope === "chat" ? "chat" : "global",
     chat_id: memory.chat_id ?? null,
+    subject_key: memory.subject_key,
+    fact_type: memory.fact_type,
+    status: memory.status,
+    last_confirmed_at: memory.last_confirmed_at,
+    confidence: memory.confidence,
+    project_scope: memory.project_scope,
+    temporal_scope: memory.temporal_scope,
   }));
   const cachedCapsules = normalizedUserId
     ? contextCapsuleService.peekCachedCapsules(normalizedUserId, raw.conversationId)
@@ -581,20 +540,34 @@ export async function buildContextFast(
     : clientMessages.slice(-CONVERSATION_WINDOW);
 
   const snapshotMemories: ContextMemory[] = (snapshot?.memories ?? []).map((memory) => ({
+    id: memory.id,
     type: memory.type,
     summary: memory.summary,
     importance: memory.importance,
     relevance: memory.lexicalRank,
     scope: memory.scope,
     chat_id: memory.chatId ?? null,
+    created_at: memory.createdAt,
+    subject_key: memory.subjectKey,
+    fact_type: memory.factType,
+    last_confirmed_at: memory.lastConfirmedAt,
+    status: memory.status,
+    confidence: memory.confidence,
+    project_scope: memory.projectScope,
+    temporal_scope: memory.temporalScope,
+    exact_phrase_match: memory.exactPhraseMatch,
+    entity_or_project_match: memory.entityOrProjectMatch,
+    lexical_rank: memory.lexicalRank,
+    retrieval_rank: memory.retrievalRank,
+    anchor_rank: memory.anchorRank,
   }));
   const memoryCandidates = mergeMemoryCandidates(rawMemories, snapshotMemories);
-  const memories = selectMemoriesForPrompt(
-    memoryCandidates,
+  const memories = fuseMemoryRetrieval({
+    candidates: memoryCandidates,
     query,
-    snapshotMemories.length > 0 ? 6 : 3,
-    isExplicitRecallQuery,
-  );
+    conversationId: raw.conversationId,
+    limit: snapshotMemories.length > 0 ? 6 : 3,
+  }) as readonly ContextMemory[];
   const conversationCapsule = snapshot?.conversationCapsule?.content ?? cachedCapsules.conversation?.content;
   const workspaceCapsule = snapshot?.workspaceCapsule?.content ?? cachedCapsules.workspace?.content;
   const fileReferences = sourceRetrieval.fileReferences;
@@ -607,7 +580,7 @@ export async function buildContextFast(
   const memoryPromptBlock = formatMemoriesForPrompt(memories);
 
   console.log(`[CONTEXT-FAST] snapshot status=${snapshotResult.status} elapsed=${snapshotResult.elapsedMs}ms timeout=${snapshotResult.timeoutMs}ms`);
-  console.log(`[CONTEXT-FAST] memory selected: ${memories.length} (lexical snapshot + local)`);
+  console.log(`[CONTEXT-FAST] memory selected: ${memories.length} (lexical RRF snapshot + local)`);
   console.log(`[CONTEXT-FAST] messages included: ${recentMessages.length} canonical=${snapshot?.messages.length ?? 0}`);
   console.log(`[CONTEXT-FAST] recall evidence selected: ${priorConversationEvidence.length}`);
   console.log(`[CONTEXT-FAST] capsules selected: conversation=${conversationCapsule ? 1 : 0} workspace=${workspaceCapsule ? 1 : 0}`);
