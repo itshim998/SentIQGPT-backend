@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { collapseAdjacentDuplicateMessages } from "../context/messageDeduper";
 
-export const FAST_CONTEXT_SNAPSHOT_SCHEMA_VERSION = 1;
+export const FAST_CONTEXT_SNAPSHOT_SCHEMA_VERSION = 2;
 export const FAST_CONTEXT_SNAPSHOT_MESSAGE_LIMIT = 20;
 export const FAST_CONTEXT_SNAPSHOT_MEMORY_LIMIT = 8;
 export const FAST_CONTEXT_SNAPSHOT_SOURCE_LIMIT = 12;
@@ -39,7 +39,18 @@ export interface FastSnapshotMemory {
   readonly scope: "global" | "chat";
   readonly chatId?: string;
   readonly createdAt?: string;
+  readonly subjectKey?: string;
+  readonly factType?: string;
+  readonly lastConfirmedAt?: string;
+  readonly status?: "active" | "superseded";
+  readonly confidence?: number;
+  readonly projectScope?: string;
+  readonly temporalScope?: string;
+  readonly exactPhraseMatch: boolean;
+  readonly entityOrProjectMatch: boolean;
   readonly lexicalRank: number;
+  readonly retrievalRank: number;
+  readonly anchorRank: number;
 }
 
 export interface FastSnapshotSourceDocument {
@@ -126,6 +137,12 @@ function asArray(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+function asBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.toLowerCase() === "true";
+  return value === 1;
+}
+
 function normalizeMessage(value: unknown): FastSnapshotMessage | undefined {
   const row = asObject(value);
   const role = row?.role === "user" || row?.role === "assistant" ? row.role : undefined;
@@ -172,6 +189,10 @@ function normalizeMemory(value: unknown): FastSnapshotMemory | undefined {
   if (!id || !type || !summary) return undefined;
   const importance = Number(row?.importance);
   const lexicalRank = Number(row?.lexical_rank ?? row?.lexicalRank);
+  const retrievalRank = Number(row?.retrieval_rank ?? row?.retrievalRank);
+  const anchorRank = Number(row?.anchor_rank ?? row?.anchorRank);
+  const confidence = Number(row?.confidence);
+  const statusValue = row?.status;
   return {
     id,
     type,
@@ -180,7 +201,18 @@ function normalizeMemory(value: unknown): FastSnapshotMemory | undefined {
     scope: row?.scope === "chat" ? "chat" : "global",
     chatId: asString(row?.chat_id ?? row?.chatId),
     createdAt: asString(row?.created_at ?? row?.createdAt),
+    subjectKey: asString(row?.subject_key ?? row?.subjectKey),
+    factType: asString(row?.fact_type ?? row?.factType),
+    lastConfirmedAt: asString(row?.last_confirmed_at ?? row?.lastConfirmedAt),
+    status: statusValue === "active" || statusValue === "superseded" ? statusValue : undefined,
+    confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : undefined,
+    projectScope: asString(row?.project_scope ?? row?.projectScope),
+    temporalScope: asString(row?.temporal_scope ?? row?.temporalScope),
+    exactPhraseMatch: asBoolean(row?.exact_phrase_match ?? row?.exactPhraseMatch),
+    entityOrProjectMatch: asBoolean(row?.entity_or_project_match ?? row?.entityOrProjectMatch),
     lexicalRank: Number.isFinite(lexicalRank) ? Math.max(0, lexicalRank) : 0,
+    retrievalRank: Number.isFinite(retrievalRank) ? Math.max(0, retrievalRank) : 0,
+    anchorRank: Number.isFinite(anchorRank) ? Math.max(0, anchorRank) : 0,
   };
 }
 
