@@ -105,15 +105,29 @@ select public.search_cross_conversation_context(
   240
 ) as payload;
 
+create temporary table phase6_decision_result as
+select public.search_cross_conversation_context(
+  '10000000-0000-4000-8000-000000000001',
+  'what decision did we make about minReplicas?',
+  '20000000-0000-4000-8000-000000000001',
+  3,
+  8,
+  240
+) as payload;
+
 do $$
 declare
   v_payload jsonb;
   v_capsules jsonb;
   v_evidence jsonb;
+  v_decision_evidence jsonb;
 begin
   select payload into v_payload from phase6_result;
   v_capsules := v_payload -> 'project_capsules';
   v_evidence := v_payload -> 'source_evidence';
+  select payload -> 'source_evidence'
+  into v_decision_evidence
+  from phase6_decision_result;
 
   if (v_payload ->> 'schema_version')::integer <> 1 then
     raise exception 'Phase 6 schema version mismatch: %', v_payload;
@@ -145,20 +159,21 @@ begin
 
   if not exists (
     select 1
-    from jsonb_array_elements(v_evidence) as item(value)
+    from jsonb_array_elements(v_decision_evidence) as item(value)
     where item.value ->> 'message_id' = '71000000-0000-4000-8000-000000000002'
       and item.value ->> 'role' = 'assistant'
       and length(item.value ->> 'content') <= 240
+      and (item.value ->> 'supports_exact_claim')::boolean
   ) then
-    raise exception 'Bounded assistant decision/outcome excerpt was not returned: %', v_evidence;
+    raise exception 'Bounded assistant decision/outcome excerpt was not returned: %', v_decision_evidence;
   end if;
 
   if exists (
     select 1
-    from jsonb_array_elements(v_evidence) as item(value)
+    from jsonb_array_elements(v_decision_evidence) as item(value)
     where item.value ->> 'message_id' = '71000000-0000-4000-8000-000000000003'
   ) then
-    raise exception 'Ordinary assistant chatter leaked into decision/outcome evidence: %', v_evidence;
+    raise exception 'Ordinary assistant chatter leaked into decision/outcome evidence: %', v_decision_evidence;
   end if;
 
   if jsonb_array_length(v_payload -> 'stable_user_capsule' -> 'facts') < 1 then
