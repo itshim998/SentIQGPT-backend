@@ -22,6 +22,7 @@ on:
       - "backend/testFastContextSnapshot.ts"
       - "backend/testLongPdfIngestion.ts"
       - "backend/testStrongSourceRetrieval.ts"
+      - "backend/testStrongSourceRetrieval.sql"
       - "backend/testContextComposition.ts"
       - "backend/testProtectedContextSafety.ts"
       - "supabase/migrations/*fast_context_snapshot*.sql"
@@ -38,6 +39,18 @@ jobs:
   contextual-awareness:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       SENTIQ_CONTEXT_EVAL_REPORT: artifacts/context-awareness-phase-0.json
       SENTIQ_CONTEXT_EVAL_ENFORCE_TARGETS: ${{ inputs.enforce_targets == true && '1' || '0' }}
@@ -82,6 +95,11 @@ jobs:
 
       - name: Run Phase 5 strong PostgreSQL FTS regressions
         run: npx ts-node --project tsconfig.backend.json backend/testStrongSourceRetrieval.ts
+
+      - name: Run Phase 5 live PostgreSQL integration
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -f backend/testStrongSourceRetrieval.sql
 
       - name: Upload evaluation report
         if: always()
