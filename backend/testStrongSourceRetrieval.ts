@@ -10,10 +10,13 @@ const MIGRATIONS = [
   "supabase/migrations/20260805100300_fix_phase5_map_ambiguity.sql",
   "supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql",
   "supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql",
+  "supabase/migrations/20260805100600_fix_phase5_sentence_regex.sql",
 ] as const;
 
 const FINAL_TRIGGER_MIGRATION =
   "supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql";
+const FINAL_SENTENCE_MIGRATION =
+  "supabase/migrations/20260805100600_fix_phase5_sentence_regex.sql";
 
 function mustMatch(source: string, pattern: RegExp, message: string): void {
   assert.match(source, pattern, message);
@@ -25,6 +28,10 @@ async function main(): Promise<void> {
   )).join("\n\n");
   const finalTriggerMigration = await readFile(
     path.resolve(FINAL_TRIGGER_MIGRATION),
+    "utf8",
+  );
+  const finalSentenceMigration = await readFile(
+    path.resolve(FINAL_SENTENCE_MIGRATION),
     "utf8",
   );
   const service = await readFile(path.resolve("backend/services/sourceRetrievalService.ts"), "utf8");
@@ -95,6 +102,15 @@ async function main(): Promise<void> {
     "failure metadata updates must not recursively retrigger map generation");
   assert(!/jsonb_typeof\([^;]+document_map/i.test(finalTriggerMigration),
     "the final ready trigger must not retry based on map metadata changes");
+
+  mustMatch(finalSentenceMigration,
+    /regexp_match\(v_text, '\^\(\[\^\.!\?\]\*\[\.!\?\]\)'\)/i,
+    "first-sentence extraction must use a PostgreSQL-compatible expression");
+  mustMatch(finalSentenceMigration,
+    /regexp_matches\([\s\S]+\(\[\^\.!\?\]\+\[\.!\?\]\|\[\^\.!\?\]\+\$\)/i,
+    "last-sentence extraction must use a PostgreSQL-compatible expression");
+  assert(!/\{1,500\}\?/.test(finalSentenceMigration),
+    "PostgreSQL-incompatible lazy bounded repetition must not return");
 
   for (const field of [
     "table_of_contents",
