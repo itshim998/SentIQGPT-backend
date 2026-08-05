@@ -21,10 +21,16 @@ on:
       - "backend/testContextAwarenessPhase1.ts"
       - "backend/testFastContextSnapshot.ts"
       - "backend/testLongPdfIngestion.ts"
+      - "backend/testStrongSourceRetrieval.ts"
+      - "backend/testStrongSourceRetrieval.sql"
+      - "backend/testStrongSourceRetrievalV2.sql"
+      - "backend/testStrongSourceRetrievalV3.sql"
       - "backend/testContextComposition.ts"
       - "backend/testProtectedContextSafety.ts"
       - "supabase/migrations/*fast_context_snapshot*.sql"
       - "supabase/migrations/*long_pdf_ingestion*.sql"
+      - "supabase/migrations/*source_fts_retrieval*.sql"
+      - "supabase/migrations/*phase5*.sql"
       - "docs/context-awareness/**"
       - ".github/workflows/context-awareness-phase0.yml"
 
@@ -35,6 +41,18 @@ jobs:
   contextual-awareness:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       SENTIQ_CONTEXT_EVAL_REPORT: artifacts/context-awareness-phase-0.json
       SENTIQ_CONTEXT_EVAL_ENFORCE_TARGETS: ${{ inputs.enforce_targets == true && '1' || '0' }}
@@ -76,6 +94,53 @@ jobs:
 
       - name: Run Phase 4 long PDF ingestion regressions
         run: npx ts-node --project tsconfig.backend.json backend/testLongPdfIngestion.ts
+
+      - name: Run Phase 5 strong PostgreSQL FTS regressions
+        run: npx ts-node --project tsconfig.backend.json backend/testStrongSourceRetrieval.ts
+
+      - name: Run Phase 5 live PostgreSQL integration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          awk '
+            { print }
+            /20260805100300_fix_phase5_map_ambiguity.sql/ {
+              print "\\i supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql"
+              print "\\i supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql"
+              print "\\i supabase/migrations/20260805100600_fix_phase5_sentence_regex.sql"
+            }
+          ' backend/testStrongSourceRetrievalV3.sql \
+            > /tmp/testStrongSourceRetrievalV4.sql
+          grep -F '\i supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql' \
+            /tmp/testStrongSourceRetrievalV4.sql
+          grep -F '\i supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql' \
+            /tmp/testStrongSourceRetrievalV4.sql
+          grep -F '\i supabase/migrations/20260805100600_fix_phase5_sentence_regex.sql' \
+            /tmp/testStrongSourceRetrievalV4.sql
+
+          set +e
+          psql -h 127.0.0.1 -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 \
+            -f /tmp/testStrongSourceRetrievalV4.sql \
+            > /tmp/phase5-postgres.log 2>&1
+          phase5_status=$?
+          set -e
+          cat /tmp/phase5-postgres.log
+
+          if [ "$phase5_status" -ne 0 ]; then
+            phase5_error=$(grep -E '^(psql:|ERROR:|DETAIL:|HINT:|CONTEXT:)' \
+              /tmp/phase5-postgres.log \
+              | tail -n 30 \
+              | tr '\n' ' ' \
+              | sed 's/%/%25/g; s/\r/%0D/g')
+            if [ -z "$phase5_error" ]; then
+              phase5_error=$(tail -n 24 /tmp/phase5-postgres.log \
+                | tr '\n' ' ' \
+                | sed 's/%/%25/g; s/\r/%0D/g')
+            fi
+            echo "::error file=backend/testStrongSourceRetrievalV3.sql,title=Phase 5 PostgreSQL failure::$phase5_error"
+            exit "$phase5_status"
+          fi
 
       - name: Upload evaluation report
         if: always()
