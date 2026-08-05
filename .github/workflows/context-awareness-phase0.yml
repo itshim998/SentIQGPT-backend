@@ -14,6 +14,7 @@ on:
       - "backend/memory/**"
       - "backend/orchestrator/contextComposer.ts"
       - "backend/services/memoryService.ts"
+      - "backend/services/contextContinuityService.ts"
       - "backend/services/sourceRetrievalService.ts"
       - "backend/services/fastContextSnapshotService.ts"
       - "backend/services/longPdfPersistenceService.ts"
@@ -25,6 +26,10 @@ on:
       - "backend/testMemoryHybridRetrieval.ts"
       - "backend/testMemoryHybridRetrieval.sql"
       - "backend/testMemoryPgcryptoResolution.sql"
+      - "backend/verifyPhase3MigrationState.sql"
+      - "backend/testCrossConversationContinuity.ts"
+      - "backend/testCrossConversationContinuity.sql"
+      - "backend/verifyPhase6MigrationState.sql"
       - "backend/verifyPhase5MigrationState.sql"
       - "backend/testLongPdfIngestion.ts"
       - "backend/testStrongSourceRetrieval.ts"
@@ -35,6 +40,8 @@ on:
       - "backend/testContextComposition.ts"
       - "backend/testProtectedContextSafety.ts"
       - "supabase/migrations/*fast_context_snapshot*.sql"
+      - "supabase/migrations/*cross_conversation*.sql"
+      - "supabase/migrations/*continuity*.sql"
       - "supabase/migrations/*long_pdf_ingestion*.sql"
       - "supabase/migrations/*source_fts_retrieval*.sql"
       - "supabase/migrations/*phase5*.sql"
@@ -52,7 +59,7 @@ permissions:
 jobs:
   contextual-awareness:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16
@@ -139,14 +146,54 @@ jobs:
               | tail -n 30 \
               | tr '\n' ' ' \
               | sed 's/%/%25/g; s/\r/%0D/g')
-            if [ -z "$phase3_error" ]; then
-              phase3_error=$(tail -n 24 /tmp/phase3-postgres.log \
-                | tr '\n' ' ' \
-                | sed 's/%/%25/g; s/\r/%0D/g')
-            fi
             echo "::error file=backend/testMemoryHybridRetrieval.sql,title=Phase 3 PostgreSQL failure::$phase3_error"
             exit "$phase3_status"
           fi
+
+      - name: Verify Phase 3 applied migration state
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d sentiq_phase3_memory \
+            -v ON_ERROR_STOP=1 \
+            -f backend/verifyPhase3MigrationState.sql
+
+      - name: Run Phase 6 continuity unit regressions
+        run: npx ts-node --project tsconfig.backend.json backend/testCrossConversationContinuity.ts
+
+      - name: Run Phase 6 live PostgreSQL integration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          dropdb -h 127.0.0.1 -U postgres --if-exists sentiq_phase6_continuity
+          createdb -h 127.0.0.1 -U postgres sentiq_phase6_continuity
+
+          set +e
+          psql -h 127.0.0.1 -U postgres -d sentiq_phase6_continuity \
+            -v ON_ERROR_STOP=1 \
+            -f backend/testCrossConversationContinuity.sql \
+            > /tmp/phase6-postgres.log 2>&1
+          phase6_status=$?
+          set -e
+          cat /tmp/phase6-postgres.log
+
+          if [ "$phase6_status" -ne 0 ]; then
+            phase6_error=$(grep -E '^(psql:|ERROR:|DETAIL:|HINT:|CONTEXT:)' \
+              /tmp/phase6-postgres.log \
+              | tail -n 35 \
+              | tr '\n' ' ' \
+              | sed 's/%/%25/g; s/\r/%0D/g')
+            echo "::error file=backend/testCrossConversationContinuity.sql,title=Phase 6 PostgreSQL failure::$phase6_error"
+            exit "$phase6_status"
+          fi
+
+      - name: Verify Phase 6 applied migration state
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d sentiq_phase6_continuity \
+            -v ON_ERROR_STOP=1 \
+            -f backend/verifyPhase6MigrationState.sql
 
       - name: Run Phase 4 long PDF ingestion regressions
         run: npx ts-node --project tsconfig.backend.json backend/testLongPdfIngestion.ts
@@ -194,11 +241,6 @@ jobs:
               | tail -n 30 \
               | tr '\n' ' ' \
               | sed 's/%/%25/g; s/\r/%0D/g')
-            if [ -z "$phase5_error" ]; then
-              phase5_error=$(tail -n 24 /tmp/phase5-postgres.log \
-                | tr '\n' ' ' \
-                | sed 's/%/%25/g; s/\r/%0D/g')
-            fi
             echo "::error file=backend/testStrongSourceRetrievalV3.sql,title=Phase 5 PostgreSQL failure::$phase5_error"
             exit "$phase5_status"
           fi
