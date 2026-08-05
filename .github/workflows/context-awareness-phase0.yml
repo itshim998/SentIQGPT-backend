@@ -27,6 +27,7 @@ on:
       - "supabase/migrations/*fast_context_snapshot*.sql"
       - "supabase/migrations/*long_pdf_ingestion*.sql"
       - "supabase/migrations/*source_fts_retrieval*.sql"
+      - "supabase/migrations/*phase5*.sql"
       - "docs/context-awareness/**"
       - ".github/workflows/context-awareness-phase0.yml"
 
