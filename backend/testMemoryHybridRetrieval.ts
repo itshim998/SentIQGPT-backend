@@ -117,6 +117,7 @@ const fastMigration = readFileSync(
   "utf8",
 );
 const contextBuilder = readFileSync(resolve(root, "backend/context/contextBuilder.ts"), "utf8");
+const fastSnapshotService = readFileSync(resolve(root, "backend/services/fastContextSnapshotService.ts"), "utf8");
 const memoryService = readFileSync(resolve(root, "backend/services/memoryService.ts"), "utf8");
 const memoryProcessor = readFileSync(resolve(root, "backend/ai/MemoryProcessor.ts"), "utf8");
 const hybridRetrieval = readFileSync(resolve(root, "backend/memory/hybridRetrieval.ts"), "utf8");
@@ -144,6 +145,14 @@ assert.match(contextBuilder, /searchUserMemoriesLexically\(/);
 assert.match(contextBuilder, /semanticMemorySearch\(memoryCandidates/);
 assert.match(contextBuilder, /fuseMemoryRetrieval\(/);
 assert.doesNotMatch(contextBuilder, /memory retrieval: keyword fallback/);
+assert.doesNotMatch(contextBuilder, /enqueueMemoryEmbeddingBackfill/);
+assert.doesNotMatch(contextBuilder, /processQueuedMemoryEmbeddingBackfill/);
+assert.doesNotMatch(contextBuilder, /memoryMaintenance/);
+assert.match(contextBuilder, /subject_key: memory\.subjectKey/);
+assert.match(contextBuilder, /exact_phrase_match: memory\.exactPhraseMatch/);
+assert.match(fastSnapshotService, /FAST_CONTEXT_SNAPSHOT_SCHEMA_VERSION = 2/);
+assert.match(fastSnapshotService, /exactPhraseMatch/);
+assert.match(fastSnapshotService, /subjectKey/);
 assert.match(memoryService, /persist_memory_with_lifecycle/);
 assert.match(memoryService, /\.eq\("status", "active"\)/);
 assert.match(memoryProcessor, /classification\.type === "knowledge"/);
@@ -152,5 +161,6 @@ assert.doesNotMatch(hybridRetrieval, /generateEmbedding/);
 assert.doesNotMatch(memoryService, /generateEmbedding/);
 assert.match(phase5Verifier, /phase5-migrations-verified/);
 assert.match(phase5Verifier, /old_row\.status is distinct from new_row\.status/i);
+assert.match(phase5Verifier, /from public\.search_source_chunks/i);
 
 console.log("phase3-memory-hybrid-ok");
