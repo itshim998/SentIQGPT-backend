@@ -108,6 +108,10 @@ const migration = readFileSync(
   resolve(root, "supabase/migrations/20260805150000_improve_memory_hybrid_retrieval.sql"),
   "utf8",
 );
+const projectScopeMigration = readFileSync(
+  resolve(root, "supabase/migrations/20260805150025_infer_memory_project_scope.sql"),
+  "utf8",
+);
 const guardMigration = readFileSync(
   resolve(root, "supabase/migrations/20260805150050_guard_direct_memory_writes.sql"),
   "utf8",
@@ -137,6 +141,11 @@ assert.match(migration, /unresolved_commitment/i);
 assert.match(migration, /temporary_condition/i);
 assert.match(migration, /pg_advisory_xact_lock/i);
 assert.match(migration, /set status = 'superseded'/i);
+assert.match(projectScopeMigration, /infer_memory_project_scope/i);
+assert.match(projectScopeMigration, /public\.normalize_memory_subject_key/i);
+assert.match(projectScopeMigration, /where memory\.type = 'project'/i);
+assert.doesNotMatch(projectScopeMigration, /generateEmbedding|callLLM|provider/i);
+assert.match(guardMigration, /infer_memory_project_scope\(new\.summary\)/i);
 assert.match(guardMigration, /before insert or update/i);
 assert.match(fastMigration, /search_memories_lexical/i);
 assert.match(fastMigration, /'schema_version', 2/i);
