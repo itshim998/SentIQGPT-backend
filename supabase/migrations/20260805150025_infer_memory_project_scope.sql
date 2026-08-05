@@ -51,6 +51,16 @@ begin
 
   v_scope := btrim(v_match[1]);
   v_scope := regexp_replace(v_scope, '^(?:The[[:space:]]+|Project[[:space:]]+)+', '', 'i');
+  -- Greedy project-name captures may absorb a transition adverb immediately
+  -- before the state verb (for example, "Project Aster now uses..."). Those
+  -- words describe time, not project identity, and must not split one project
+  -- into project:aster and project:aster-now.
+  v_scope := regexp_replace(
+    v_scope,
+    '[[:space:]]+(?:now|currently|today|temporarily|recently)$',
+    '',
+    'i'
+  );
   v_scope := regexp_replace(
     v_scope,
     '[[:space:]]+(?:project|app|application|platform|system)$',
@@ -60,7 +70,8 @@ begin
   v_scope := btrim(v_scope, ' "“”''');
 
   if length(v_scope) < 2 or lower(v_scope) in (
-    'the user', 'user', 'project', 'app', 'application', 'platform', 'system'
+    'the user', 'user', 'project', 'app', 'application', 'platform', 'system',
+    'now', 'currently', 'today', 'temporarily', 'recently'
   ) then
     return null;
   end if;
