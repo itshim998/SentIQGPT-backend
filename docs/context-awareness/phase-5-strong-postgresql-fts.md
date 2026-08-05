@@ -17,13 +17,20 @@ supabase/migrations/20260805095900_defer_phase5_document_map_backfill.sql
 supabase/migrations/20260805100000_strengthen_source_fts_retrieval.sql
 supabase/migrations/20260805100100_harden_phase5_document_maps.sql
 supabase/migrations/20260805100200_fix_phase5_ready_trigger.sql
+supabase/migrations/20260805100250_prepare_phase5_safe_backfill.sql
 supabase/migrations/20260805100300_fix_phase5_map_ambiguity.sql
 supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql
 supabase/migrations/20260805100500_fix_phase5_ready_trigger_recursion.sql
 supabase/migrations/20260805100600_fix_phase5_sentence_regex.sql
 ```
 
-The first file safely defers legacy map backfill. The second installs weighted FTS and retrieval modes. The third installs guarded map generation and performs an independently fault-tolerant backfill. The fourth replaces the ready-state row trigger with a PostgreSQL-safe statement trigger so map metadata is persisted only after the original status update completes. The fifth fully qualifies every map-builder CTE reference, removes SQLSTATE `42702` ambiguity in document-map generation, and safely retries failed ready-document maps. The sixth fully qualifies every CTE reference inside the `RETURNS TABLE` search RPC and replaces `USING` joins with explicit qualified `ON` clauses. The seventh restricts automatic map generation to the actual transition into `ready`, preventing failure-metadata updates from recursively invoking the trigger. The eighth replaces PostgreSQL-incompatible lazy sentence-boundary expressions that could raise SQLSTATE `2201B`. Until all eight are applied, Phase 5 is only partially installed.
+The first file safely defers legacy map backfill. The second installs weighted FTS and retrieval modes. The third installs guarded map generation and performs an independently fault-tolerant backfill. The fourth replaces the ready-state row trigger with a PostgreSQL-safe statement trigger so map metadata is persisted only after the original status update completes. The fifth is a production-rollout hotfix that narrows that statement trigger to actual status transitions and installs PostgreSQL-compatible sentence helpers before existing ready documents are retried. The sixth fully qualifies every map-builder CTE reference, removes SQLSTATE `42702` ambiguity in document-map generation, and safely retries failed ready-document maps. The seventh fully qualifies every CTE reference inside the `RETURNS TABLE` search RPC and replaces `USING` joins with explicit qualified `ON` clauses. The eighth reasserts the transition-only trigger contract and bounded diagnostics. The ninth reasserts the PostgreSQL-compatible sentence-boundary helpers. Until all nine are applied, Phase 5 is only partially installed.
+
+### Recovery after the pre-hotfix SQL 5 stack-depth failure
+
+A shard that already applied migrations through `20260805100200_fix_phase5_ready_trigger.sql` and then failed while applying `20260805100300_fix_phase5_map_ambiguity.sql` must not increase `max_stack_depth`.
+
+Apply `20260805100250_prepare_phase5_safe_backfill.sql`, then retry `20260805100300_fix_phase5_map_ambiguity.sql` and continue with the remaining migrations. The failed SQL statement is transactional, so no manual rollback is required before retrying.
 
 ## Weighted field-aware FTS
 
@@ -118,7 +125,7 @@ This correction changes no ranking weights, retrieval quotas, RPC parameters, re
 
 `backend/testStrongSourceRetrieval.ts` verifies the static migration, namespace-safety, trigger-recursion, PostgreSQL-regex and production-wiring contracts.
 
-The Context Awareness workflow constructs the final PostgreSQL fixture from `backend/testStrongSourceRetrievalV3.sql`, inserts the sixth, seventh and eighth corrective migrations immediately after the fifth, and installs the complete sequence on PostgreSQL 16 before any source data is seeded. It then verifies:
+The Context Awareness workflow constructs the final PostgreSQL fixture from `backend/testStrongSourceRetrievalV3.sql`, inserts the pre-backfill production hotfix after the statement-trigger migration, and installs the remaining corrective migrations after the map-builder replacement. It then verifies:
 
 - ready-state document-map generation for multiple documents;
 - guarded malformed metadata;
@@ -129,3 +136,5 @@ The Context Awareness workflow constructs the final PostgreSQL fixture from `bac
 - independent comparison coverage per document;
 - chronological ordering of date-bearing timeline anchors while preserving neighbour context;
 - exhaustive-extraction coverage disclosure.
+
+A separate PostgreSQL 16 fixture, `backend/testPhase5ExistingReadyBackfill.sql`, seeds a ready document before Phase 5 is installed and validates the exact production rollout order. It proves that the deterministic map is backfilled and that subsequent metadata-only updates do not re-enter the trigger or exhaust PostgreSQL stack depth.
