@@ -191,7 +191,7 @@ begin
   from public.source_documents as source_document
   where source_document.id = '00000000-0000-4000-8000-000000000511';
 
-  if jsonb_typeof(v_map) <> 'object' then
+  if jsonb_typeof(v_map) is distinct from 'object' then
     raise exception 'document map was not generated; metadata=%', v_metadata;
   end if;
   if coalesce(v_map ->> 'page_count', '') <> '5' then
@@ -374,12 +374,11 @@ begin
   if not exists (
     select 1
     from phase5_exhaustive_results as result_row
-    where result_row.parent_content like
-      '%did not inspect every page simultaneously%'
+    where result_row.parent_content like '%COVERAGE LIMIT:%'
   ) then
-    raise exception 'exhaustive extraction coverage limit is missing';
+    raise exception 'exhaustive extraction did not disclose coverage limits';
   end if;
 end;
 $$;
 
-select 'Strong PostgreSQL FTS integration tests passed.' as result;
+select 'Phase 5 PostgreSQL integration passed' as result;
