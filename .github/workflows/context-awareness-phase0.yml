@@ -23,6 +23,7 @@ on:
       - "backend/testLongPdfIngestion.ts"
       - "backend/testStrongSourceRetrieval.ts"
       - "backend/testStrongSourceRetrieval.sql"
+      - "backend/testStrongSourceRetrievalV2.sql"
       - "backend/testContextComposition.ts"
       - "backend/testProtectedContextSafety.ts"
       - "supabase/migrations/*fast_context_snapshot*.sql"
@@ -99,7 +100,7 @@ jobs:
       - name: Run Phase 5 live PostgreSQL integration
         env:
           PGPASSWORD: postgres
-        run: psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -f backend/testStrongSourceRetrieval.sql
+        run: psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -f backend/testStrongSourceRetrievalV2.sql
 
       - name: Upload evaluation report
         if: always()
