@@ -111,9 +111,23 @@ jobs:
             > /tmp/testStrongSourceRetrievalV4.sql
           grep -F '\i supabase/migrations/20260805100400_fix_phase5_search_rpc_ambiguity.sql' \
             /tmp/testStrongSourceRetrievalV4.sql
+
+          set +e
           psql -h 127.0.0.1 -U postgres -d postgres \
             -v ON_ERROR_STOP=1 \
-            -f /tmp/testStrongSourceRetrievalV4.sql
+            -f /tmp/testStrongSourceRetrievalV4.sql \
+            > /tmp/phase5-postgres.log 2>&1
+          phase5_status=$?
+          set -e
+          cat /tmp/phase5-postgres.log
+
+          if [ "$phase5_status" -ne 0 ]; then
+            phase5_error=$(tail -n 24 /tmp/phase5-postgres.log \
+              | tr '\n' ' ' \
+              | sed 's/%/%25/g; s/\r/%0D/g')
+            echo "::error file=backend/testStrongSourceRetrievalV3.sql,title=Phase 5 PostgreSQL failure::$phase5_error"
+            exit "$phase5_status"
+          fi
 
       - name: Upload evaluation report
         if: always()
