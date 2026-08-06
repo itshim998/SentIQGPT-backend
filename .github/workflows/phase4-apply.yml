@@ -81,6 +81,10 @@ jobs:
         working-directory: mobile/sentiq_chat
         run: dart format lib test
 
+      - name: Show remaining analyzer source
+        working-directory: mobile/sentiq_chat
+        run: nl -ba lib/features/multimodal/presentation/multimodal_message_extras.dart | sed -n '858,872p'
+
       - name: Static analysis
         working-directory: mobile/sentiq_chat
         run: flutter analyze
