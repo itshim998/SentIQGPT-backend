@@ -51,13 +51,15 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Apply asserted Phase 4 bundle
+      - name: Apply asserted Phase 4 bundle and analyzer corrections
         run: |
           cat tool/phase4-bundle/part-*.b64 > /tmp/phase4.b64
           base64 --decode /tmp/phase4.b64 > /tmp/phase4.tar.gz
           echo "1c346bd1bb957b4043f92f79c7b83d7d1c79934a457812d05e5736952775e3b7  /tmp/phase4.tar.gz" | sha256sum --check
           tar -xzf /tmp/phase4.tar.gz -C .
+          python tool/phase4-analyzer-fix.py
           rm -rf tool/phase4-bundle
+          rm -f tool/phase4-analyzer-fix.py
           rm -f .github/workflows/phase4-source-snapshot.yml
           rm -f .github/workflows/phase4-apply.yml
 
@@ -114,6 +116,7 @@ jobs:
       - name: Ensure temporary machinery is absent
         run: |
           test ! -e tool/phase4-bundle
+          test ! -e tool/phase4-analyzer-fix.py
           test ! -e .github/workflows/phase4-source-snapshot.yml
           test ! -e .github/workflows/phase4-apply.yml
 
