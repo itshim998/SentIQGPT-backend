@@ -1,0 +1,32 @@
+{
+  "version": "2.0.0",
+  "features": {
+    "chat": true,
+    "streaming": true,
+    "file_upload": true,
+    "image_generation": true,
+    "web_search": true
+  },
+  "limits": {
+    "max_message_length": 10000,
+    "max_file_size_mb": 10
+  },
+  "mobile_contract": {
+    "contract_version": 1,
+    "minimum_client_contract_version": 1,
+    "compatibility": {
+      "unknown_fields": "ignore",
+      "unknown_sse_events": "ignore"
+    },
+    "sse": {
+      "version": 1,
+      "event_types": ["token", "thinking", "structured_response", "error"]
+    },
+    "endpoints": {
+      "chat_stream": "/api/chat/stream",
+      "file_updates": "/api/files/updates",
+      "deep_research_start": "/api/deep-research/start",
+      "live_session_token": "/api/live/session-token"
+    }
+  }
+}

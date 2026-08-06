@@ -1,0 +1,10 @@
+data: {"type":"route","version":1,"route":"chat"}
+
+data: {"type":"token","version":1,"text":"Hello"}
+
+data: {"type":"tool_started","version":1,"tool":"web_surf"}
+
+data: {"type":"future_event","version":1,"value":"preserve safely"}
+
+data: [DONE]
+

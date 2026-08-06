@@ -1,0 +1,6 @@
+data: {"type":"deep_research_progress","version":1,"report_id":"report-1","stage":"searching","progress":20}
+
+data: {"type":"deep_research_source","version":1,"report_id":"report-1","source":{"title":"Primary source"}}
+
+data: {"type":"deep_research_complete","version":1,"report_id":"report-1","status":"completed"}
+

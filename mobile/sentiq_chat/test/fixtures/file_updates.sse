@@ -1,0 +1,4 @@
+data: {"type":"file_analysis","version":1,"analysis_id":"analysis-1","status":"processing","progress":45}
+
+data: {"type":"file_analysis","version":1,"analysis_id":"analysis-1","status":"ready","progress":100}
+

@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "image": {
+    "id": "image-1",
+    "url": "https://example.invalid/image.webp",
+    "width": 1024,
+    "height": 1024
+  },
+  "quota": {
+    "remaining": 7
+  }
+}
