@@ -1,4 +1,5 @@
 name: Phase 5 shell verification
+# Final rerun after the sixth asserted analyzer correction.
 
 on:
   push:
