@@ -3,6 +3,7 @@ import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_markdown_plus_latex/flutter_markdown_plus_latex.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
@@ -33,14 +34,21 @@ class NativeRichText extends StatelessWidget {
           for (final _RichSegment segment in segments)
             if (segment.code != null)
               _CodeBlock(language: segment.language, code: segment.code!)
+            else if (segment.math != null)
+              _MathBlock(expression: segment.math!)
             else if (segment.markdown.trim().isNotEmpty)
               MarkdownBody(
                 data: segment.markdown,
                 selectable: false,
                 softLineBreak: true,
                 extensionSet: md.ExtensionSet(
-                  <md.BlockSyntax>[LatexBlockSyntax()],
-                  <md.InlineSyntax>[LatexInlineSyntax()],
+                  <md.BlockSyntax>[
+                    ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
+                  ],
+                  <md.InlineSyntax>[
+                    LatexInlineSyntax(),
+                    ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
+                  ],
                 ),
                 builders: <String, MarkdownElementBuilder>{
                   'latex': LatexElementBuilder(
@@ -99,6 +107,44 @@ class _CitationChip extends StatelessWidget {
                 launchUrl(uri, mode: LaunchMode.externalApplication);
               }
             },
+    );
+  }
+}
+
+class _MathBlock extends StatelessWidget {
+  const _MathBlock({required this.expression});
+
+  final String expression;
+
+  @override
+  Widget build(BuildContext context) {
+    final SentIQPalette palette = context.sentiqPalette;
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: SentIQSpacing.xs),
+      padding: const EdgeInsets.symmetric(
+        horizontal: SentIQSpacing.sm,
+        vertical: SentIQSpacing.md,
+      ),
+      decoration: BoxDecoration(
+        color: palette.surfaceElevated.withValues(alpha: 0.6),
+        border: Border.all(color: palette.glassBorder),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Math.tex(
+          expression.trim(),
+          mathStyle: MathStyle.display,
+          textStyle: Theme.of(context).textTheme.bodyLarge,
+          onErrorFallback: (FlutterMathException error) => Text(
+            expression.trim(),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              fontFamily: 'monospace',
+              color: palette.textSecondary,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -202,29 +248,44 @@ MarkdownStyleSheet _styleSheet(BuildContext context) {
 }
 
 class _RichSegment {
-  const _RichSegment.markdown(this.markdown) : code = null, language = null;
+  const _RichSegment.markdown(this.markdown)
+      : code = null,
+        language = null,
+        math = null;
 
-  const _RichSegment.code({required this.code, this.language}) : markdown = '';
+  const _RichSegment.code({required this.code, this.language})
+      : markdown = '',
+        math = null;
+
+  const _RichSegment.math(this.math)
+      : markdown = '',
+        code = null,
+        language = null;
 
   final String markdown;
   final String? code;
   final String? language;
+  final String? math;
 }
 
 List<_RichSegment> _splitSegments(String value) {
-  final RegExp fence = RegExp(r'```([^\n`]*)\n([\s\S]*?)```');
+  final RegExp richBlock = RegExp(
+    r'```([^\n`]*)\n([\s\S]*?)```|\$\$([\s\S]*?)\$\$',
+  );
   final List<_RichSegment> output = <_RichSegment>[];
   int cursor = 0;
-  for (final RegExpMatch match in fence.allMatches(value)) {
+  for (final RegExpMatch match in richBlock.allMatches(value)) {
     if (match.start > cursor) {
       output.add(_RichSegment.markdown(value.substring(cursor, match.start)));
     }
-    output.add(
-      _RichSegment.code(
-        language: match.group(1)?.trim(),
-        code: match.group(2) ?? '',
-      ),
-    );
+    final String? code = match.group(2);
+    if (code != null) {
+      output.add(
+        _RichSegment.code(language: match.group(1)?.trim(), code: code),
+      );
+    } else {
+      output.add(_RichSegment.math(match.group(3) ?? ''));
+    }
     cursor = match.end;
   }
   if (cursor < value.length) {
