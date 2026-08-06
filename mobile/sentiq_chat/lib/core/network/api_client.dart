@@ -9,22 +9,20 @@ import 'package:sentiq_chat/core/network/sse_parser.dart';
 class SentIQApiClient {
   SentIQApiClient({
     required this.baseUri,
-    required SentIQRequestHeaders headers,
+    required this.requestHeaders,
     http.Client? httpClient,
-    SentIQSseParser sseParser = const SentIQSseParser(),
-  })  : _headers = headers,
-        _httpClient = httpClient ?? http.Client(),
-        _sseParser = sseParser;
+    this.sseParser = const SentIQSseParser(),
+  }) : _httpClient = httpClient ?? http.Client();
 
   final Uri baseUri;
-  final SentIQRequestHeaders _headers;
+  final SentIQRequestHeaders requestHeaders;
+  final SentIQSseParser sseParser;
   final http.Client _httpClient;
-  final SentIQSseParser _sseParser;
 
   Future<Map<String, Object?>> getJson(String path) async {
     final http.Response response = await _httpClient.get(
       _resolve(path),
-      headers: await _headers.build(),
+      headers: await requestHeaders.build(),
     );
     return _decodeJsonResponse(response);
   }
@@ -35,7 +33,7 @@ class SentIQApiClient {
   }) async {
     final http.Response response = await _httpClient.post(
       _resolve(path),
-      headers: await _headers.build(),
+      headers: await requestHeaders.build(),
       body: jsonEncode(body),
     );
     return _decodeJsonResponse(response);
@@ -46,16 +44,18 @@ class SentIQApiClient {
     required Map<String, Object?> body,
   }) async* {
     final http.Request request = http.Request('POST', _resolve(path))
-      ..headers.addAll(await _headers.build(
-        base: const <String, String>{'Accept': 'text/event-stream'},
-      ))
+      ..headers.addAll(
+        await requestHeaders.build(
+          base: const <String, String>{'Accept': 'text/event-stream'},
+        ),
+      )
       ..body = jsonEncode(body);
     final http.StreamedResponse response = await _httpClient.send(request);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final String raw = await response.stream.bytesToString();
       throw _exception(response.statusCode, raw);
     }
-    yield* _sseParser.parse(response.stream);
+    yield* sseParser.parse(response.stream);
   }
 
   Uri _resolve(String path) {
@@ -93,7 +93,8 @@ class SentIQApiClient {
       details = null;
     }
     return SentIQApiException(
-      message: details?['error']?.toString() ??
+      message:
+          details?['error']?.toString() ??
           'SentIQ Chat could not finish that action. Please try again.',
       statusCode: statusCode,
       code: details?['code']?.toString(),

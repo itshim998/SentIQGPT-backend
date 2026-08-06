@@ -2,8 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:sentiq_chat/core/network/anonymous_identity.dart';
-import 'package:sentiq_chat/core/network/auth_token_provider.dart';
 import 'package:sentiq_chat/core/network/api_client.dart';
+import 'package:sentiq_chat/core/network/auth_token_provider.dart';
 import 'package:sentiq_chat/core/network/request_headers.dart';
 
 void main() {
@@ -15,7 +15,7 @@ void main() {
     });
     final SentIQApiClient client = SentIQApiClient(
       baseUri: Uri.parse('https://api.example.test'),
-      headers: SentIQRequestHeaders(
+      requestHeaders: SentIQRequestHeaders(
         authTokenProvider: const EmptyAuthTokenProvider(),
         anonymousIdentityStore:
             MemoryAnonymousIdentityStore(seed: 'quota-session'),

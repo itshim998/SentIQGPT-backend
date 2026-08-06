@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sentiq_chat/core/network/anonymous_identity.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   test('persists one anonymous quota identity', () async {
