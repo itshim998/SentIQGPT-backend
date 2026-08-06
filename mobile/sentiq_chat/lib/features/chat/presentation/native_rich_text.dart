@@ -50,7 +50,7 @@ class NativeRichText extends StatelessWidget {
                   ],
                 ),
                 builders: <String, MarkdownElementBuilder>{
-                  _InlineMathSyntax.tag: const _InlineMathBuilder(),
+                  _InlineMathSyntax.tag: _InlineMathBuilder(),
                 },
                 styleSheet: _styleSheet(context),
                 onTapLink: (String text, String? href, String title) {
@@ -95,7 +95,7 @@ class _InlineMathSyntax extends md.InlineSyntax {
 }
 
 class _InlineMathBuilder extends MarkdownElementBuilder {
-  const _InlineMathBuilder();
+  _InlineMathBuilder();
 
   @override
   Widget? visitElementAfterWithContext(
