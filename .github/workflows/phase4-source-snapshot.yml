@@ -1,0 +1,36 @@
+name: Phase 4 source snapshot
+
+on:
+  push:
+    branches:
+      - feature/flutter-android-app
+    paths:
+      - ".github/workflows/phase4-source-snapshot.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Package implementation context
+        run: |
+          tar -czf phase4-context.tar.gz \
+            mobile/sentiq_chat \
+            backend/ai/FileIngestionHandler.ts \
+            backend/ai/ImageGenerationHandler.ts \
+            backend/tools \
+            backend/routes \
+            backend/server.ts \
+            package.json \
+            tsconfig.json \
+            docs/mobile
+      - uses: actions/upload-artifact@v7
+        with:
+          name: phase4-source-context-${{ github.sha }}
+          path: phase4-context.tar.gz
+          retention-days: 1
