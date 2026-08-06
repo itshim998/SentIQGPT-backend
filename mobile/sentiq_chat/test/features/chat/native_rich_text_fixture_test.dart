@@ -31,7 +31,7 @@ void main() {
     expect(find.text('Heading'), findsOneWidget);
     expect(find.text('First item'), findsOneWidget);
     expect(find.text('A blockquote.'), findsOneWidget);
-    expect(find.text('Code'), findsOneWidget);
+    expect(find.text('dart'), findsOneWidget);
     expect(find.byIcon(Icons.copy_rounded), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
