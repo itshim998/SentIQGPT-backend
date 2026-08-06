@@ -42,6 +42,10 @@ Assistant output uses native Flutter rendering for Markdown headings, lists, blo
 
 The thread uses `ListView.builder`, stable message keys, repaint boundaries, disabled automatic keep-alives and bounded cache extent. Streaming only follows the bottom while the reader remains near the latest message.
 
+## Android dependency compatibility
+
+The app pins `file_picker` to `10.3.10` and uses `FilePicker.platform.pickFiles`. The 11.x Android package currently generates a plugin registrant for `FilePickerPlugin` without compiling the package's Kotlin implementation under Flutter 3.44.8. The compatible version and regenerated lockfile keep attachment picking reproducible and allow the debug APK to compile.
+
 ## Mobile contract version 2
 
 The additive contract update declares `done`, chat sync, selection, title and conversation-message endpoints. Minimum compatible client contract remains version 1; unknown fields and unknown events remain ignorable.
