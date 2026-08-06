@@ -1,0 +1,127 @@
+name: Apply and verify Phase 4
+
+on:
+  push:
+    branches:
+      - feature/flutter-android-app
+    paths:
+      - ".github/workflows/phase4-apply.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase4-apply-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.44.8"
+  JAVA_VERSION: "17"
+
+jobs:
+  apply-verify-commit:
+    name: Apply, verify, and commit Phase 4
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v6
+        with:
+          ref: feature/flutter-android-app
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up pinned Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Apply asserted Phase 4 bundle
+        run: |
+          cat tool/phase4-bundle/part-*.b64 > /tmp/phase4.b64
+          base64 --decode /tmp/phase4.b64 > /tmp/phase4.tar.gz
+          echo "1c346bd1bb957b4043f92f79c7b83d7d1c79934a457812d05e5736952775e3b7  /tmp/phase4.tar.gz" | sha256sum --check
+          tar -xzf /tmp/phase4.tar.gz -C .
+          rm -rf tool/phase4-bundle
+          rm -f .github/workflows/phase4-source-snapshot.yml
+          rm -f .github/workflows/phase4-apply.yml
+
+      - name: Install SQLite test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-0
+
+      - name: Generate Android scaffold
+        working-directory: mobile/sentiq_chat
+        run: ./tool/bootstrap_android.sh
+
+      - name: Resolve Flutter dependencies
+        working-directory: mobile/sentiq_chat
+        run: flutter pub get
+
+      - name: Format Dart sources
+        working-directory: mobile/sentiq_chat
+        run: dart format lib test
+
+      - name: Static analysis
+        working-directory: mobile/sentiq_chat
+        run: flutter analyze
+
+      - name: Unit and widget tests
+        working-directory: mobile/sentiq_chat
+        run: flutter test --coverage test/core test/features test/widgets
+
+      - name: Navigation and adaptive integration tests
+        working-directory: mobile/sentiq_chat
+        run: flutter test test/integration
+
+      - name: Contract fixture replay
+        working-directory: mobile/sentiq_chat
+        run: flutter test test/contracts/contract_fixture_replay_test.dart
+
+      - name: Golden tests
+        working-directory: mobile/sentiq_chat
+        run: flutter test test/goldens
+
+      - name: Build Android debug APK
+        working-directory: mobile/sentiq_chat
+        run: flutter build apk --debug --dart-define=SENTIQ_ENV=development
+
+      - name: Install backend dependencies
+        run: npm ci
+
+      - name: Compile backend
+        run: npm run build
+
+      - name: Verify mobile contract
+        run: npx ts-node --project tsconfig.backend.json backend/testMobileContract.ts
+
+      - name: Ensure temporary machinery is absent
+        run: |
+          test ! -e tool/phase4-bundle
+          test ! -e .github/workflows/phase4-source-snapshot.yml
+          test ! -e .github/workflows/phase4-apply.yml
+
+      - name: Commit verified Phase 4 implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Add Phase 4 multimodal, WebSurf, and artifacts"
+          git push origin HEAD:feature/flutter-android-app
