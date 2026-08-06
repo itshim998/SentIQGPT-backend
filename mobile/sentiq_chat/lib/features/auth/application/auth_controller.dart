@@ -31,7 +31,8 @@ class AuthController extends StateNotifier<AppAuthState> {
     } catch (_) {
       state = const AppAuthState(
         status: AppAuthStatus.signedOut,
-        message: 'We could not restore your session. You can still continue as a guest.',
+        message:
+            'We could not restore your session. You can still continue as a guest.',
       );
     }
   }

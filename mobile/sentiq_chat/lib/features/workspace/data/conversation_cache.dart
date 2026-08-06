@@ -30,9 +30,8 @@ abstract final class CacheMigrations {
 }
 
 class ConversationCache {
-  ConversationCache({DatabaseFactory? databaseFactory, String? databasePath})
-      : _databaseFactory = databaseFactory ?? databaseFactorySqflite,
-        _databasePath = databasePath;
+  ConversationCache({DatabaseFactory? factory, this._databasePath})
+      : _databaseFactory = factory ?? databaseFactory;
 
   final DatabaseFactory _databaseFactory;
   final String? _databasePath;
@@ -123,7 +122,11 @@ class ConversationCache {
 
   Future<void> deleteHard(String id) async {
     final Database database = await open();
-    await database.delete('conversations', where: 'id = ?', whereArgs: <Object>[id]);
+    await database.delete(
+      'conversations',
+      where: 'id = ?',
+      whereArgs: <Object>[id],
+    );
   }
 
   Future<void> close() async {

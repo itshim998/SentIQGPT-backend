@@ -31,12 +31,11 @@ class CloudConversationSource {
     String title, {
     String? preferredId,
   }) async {
+    final Map<String, Object?> body = <String, Object?>{'title': title};
+    if (preferredId != null) body['conversationId'] = preferredId;
     final Map<String, Object?> payload = await _client.postJson(
       ApiEndpoints.conversations,
-      body: <String, Object?>{
-        'title': title,
-        if (preferredId != null) 'conversationId': preferredId,
-      },
+      body: body,
     );
     final Map<String, Object?> raw = _map(
       payload['conversation'] ?? payload['data'] ?? payload,

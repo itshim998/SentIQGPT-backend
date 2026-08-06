@@ -121,7 +121,8 @@ class ConversationRepository {
     required bool cloudEnabled,
     required bool networkAvailable,
   }) async {
-    if (!cloudEnabled || conversation.syncState == ConversationSyncState.localOnly) {
+    if (!cloudEnabled ||
+        conversation.syncState == ConversationSyncState.localOnly) {
       await _cache.deleteHard(conversation.id);
       return;
     }

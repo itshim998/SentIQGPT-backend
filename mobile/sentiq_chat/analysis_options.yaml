@@ -12,6 +12,10 @@ linter:
     always_declare_return_types: true
     avoid_dynamic_calls: true
     avoid_print: true
+    # Named dependency-injection constructors deliberately keep dependencies
+    # private; converting them to initializing formals would expose private
+    # parameter names across feature boundaries.
+    prefer_initializing_formals: false
     prefer_final_locals: true
     prefer_single_quotes: true
     sort_constructors_first: true
