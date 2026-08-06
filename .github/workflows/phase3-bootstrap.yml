@@ -5,7 +5,7 @@ on:
     branches:
       - feature/flutter-android-app
     paths:
-      - "tool/phase3-bundle.part-*"
+      - "tool/phase3-analyzer-fix.py"
       - ".github/workflows/phase3-bootstrap.yml"
   workflow_dispatch:
 
@@ -32,10 +32,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Reconstruct Phase 3 source bundle
-        run: |
-          cat tool/phase3-bundle.part-* | base64 --decode | tar -xzf - -C .
-          rm tool/phase3-bundle.part-*
+      - name: Apply asserted analyzer corrections
+        run: python tool/phase3-analyzer-fix.py
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -64,13 +62,15 @@ jobs:
           flutter pub get
           dart format lib test
 
-      - name: Commit reconstructed Phase 3 sources
+      - name: Commit corrected Phase 3 sources
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Implement native core chat and continuity"
-          git push origin HEAD:${GITHUB_REF_NAME}
+          if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add mobile/sentiq_chat docs/mobile/flutter-phase3-chat.md
+            git commit -m "Fix Phase 3 Flutter analyzer issues"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          fi
 
       - name: Static analysis
         working-directory: mobile/sentiq_chat
