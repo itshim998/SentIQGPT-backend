@@ -99,7 +99,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
             SentIQSpacing.md,
             SentIQSpacing.xl,
           ),
-          scrollCacheExtent: 900,
+          scrollCacheExtent: const ScrollCacheExtent.pixels(900),
           addAutomaticKeepAlives: false,
           addRepaintBoundaries: true,
           itemCount: messages.length + (widget.thread.progress.isEmpty ? 0 : 1),
