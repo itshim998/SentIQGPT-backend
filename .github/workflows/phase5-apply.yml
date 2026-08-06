@@ -56,7 +56,11 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/phase5-parts.sha256 <<'EOF'
-          3f8f6416615b40a74f153752d31c663fb5aac19d81d250f23a22d0533edaff6b  tool/phase5-bundle.b64.part-00
+          4be7d8696b37137fecdb56de41e531a36e29ba4204780a3aeeb7fabe279bc231  tool/phase5-bundle.b64.part-00-00
+          5c804933d6a1e5f7a5a915274a4f8ce6e22127f2ef762778bed9fcdc18cdfcd6  tool/phase5-bundle.b64.part-00-01
+          b572527b6d2edec806c733c9dfbfed44e436fbd593269cdcb2f7ab10de228816  tool/phase5-bundle.b64.part-00-02
+          f5f28d67a04758a9d4db18d705a7a1328495538cf30bd277bfcc97e6c598bd14  tool/phase5-bundle.b64.part-00-03
+          728dc98553a587cbe14f61f05e680e140f7710eb4b9da980dfdc8f79fcddcdc8  tool/phase5-bundle.b64.part-00-04
           9b0c2cbcfc7616b6ba904f350f8c97ac2fbc600c1c71d7fb7bb16645a4ada1bd  tool/phase5-bundle.b64.part-01
           bd8aa8622110b0dd5e0082a51f5754d06a7de0b20349c8ff770cdf8d6df8b28f  tool/phase5-bundle.b64.part-02
           a7a721c022a038d0fd2cd924fa4d4e16be2697c4e63f73794c4c06d57a0f96d6  tool/phase5-bundle.b64.part-03
