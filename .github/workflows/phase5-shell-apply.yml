@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: phase5-shell-feature-flutter-android-app
+  cancel-in-progress: true
+
 env:
   FLUTTER_VERSION: "3.44.8"
   JAVA_VERSION: "17"
@@ -93,8 +97,9 @@ jobs:
           base64 --decode "${RUNNER_TEMP}/phase5-bundle.b64" > "${RUNNER_TEMP}/phase5-bundle.tar.gz"
           echo "${PHASE5_BUNDLE_SHA256}  ${RUNNER_TEMP}/phase5-bundle.tar.gz" | sha256sum --check --strict
           tar -xzf "${RUNNER_TEMP}/phase5-bundle.tar.gz" -C .
-          rm -f tool/phase5-bundle.b64.part-* tool/phase5-analyzer-fix.py
+          rm -f tool/phase5-bundle.b64.part-*
           rm -f .github/workflows/phase5-apply.yml .github/workflows/phase5-shell-apply.yml
+          test -f tool/phase5-analyzer-fix.py
           test "$(cat mobile/sentiq_chat/.flutter-version)" = "${FLUTTER_VERSION}"
           grep -q 'mobileContractVersion: 4' mobile/sentiq_chat/lib/core/config/app_config.dart
           grep -q 'MOBILE_CONTRACT_VERSION = 4' backend/mobile/mobileContract.ts
@@ -113,8 +118,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git show "${GITHUB_SHA}:tool/phase5-analyzer-fix.py" > "${RUNNER_TEMP}/phase5-analyzer-fix.py"
-          python3 "${RUNNER_TEMP}/phase5-analyzer-fix.py"
+          python3 tool/phase5-analyzer-fix.py
+          rm -f tool/phase5-analyzer-fix.py
           cd mobile/sentiq_chat
           dart fix --apply
           dart format lib test
