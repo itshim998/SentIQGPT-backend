@@ -21,11 +21,7 @@ jobs:
         run: |
           tar -czf phase4-context.tar.gz \
             mobile/sentiq_chat \
-            backend/ai/FileIngestionHandler.ts \
-            backend/ai/ImageGenerationHandler.ts \
-            backend/tools \
-            backend/routes \
-            backend/server.ts \
+            backend \
             package.json \
             tsconfig.json \
             docs/mobile
