@@ -206,14 +206,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.12"
-  flutter_markdown_plus_latex:
-    dependency: "direct main"
-    description:
-      name: flutter_markdown_plus_latex
-      sha256: "2e7698b291f0657ca445efab730bb25a8c5851037e882cb7bf47d16a5c218de7"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.5"
   flutter_math_fork:
     dependency: "direct main"
     description:
