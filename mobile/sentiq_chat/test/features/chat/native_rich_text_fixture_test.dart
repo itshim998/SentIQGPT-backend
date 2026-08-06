@@ -9,9 +9,9 @@ void main() {
   testWidgets('renders markdown, code, table, link and math fixtures', (
     WidgetTester tester,
   ) async {
-    final String fixture = await File(
+    final String fixture = File(
       'test/fixtures/rich_text/complete.md',
-    ).readAsString();
+    ).readAsStringSync();
     await tester.pumpWidget(
       MaterialApp(
         theme: SentIQTheme.light(),
