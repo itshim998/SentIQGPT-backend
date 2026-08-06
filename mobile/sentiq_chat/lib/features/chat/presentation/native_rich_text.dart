@@ -36,7 +36,7 @@ class NativeRichText extends StatelessWidget {
             else if (segment.markdown.trim().isNotEmpty)
               MarkdownBody(
                 data: segment.markdown,
-                selectable: true,
+                selectable: false,
                 softLineBreak: true,
                 extensionSet: md.ExtensionSet(
                   <md.BlockSyntax>[
