@@ -39,14 +39,8 @@ class NativeRichText extends StatelessWidget {
                 selectable: false,
                 softLineBreak: true,
                 extensionSet: md.ExtensionSet(
-                  <md.BlockSyntax>[
-                    ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
-                    LatexBlockSyntax(),
-                  ],
-                  <md.InlineSyntax>[
-                    ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
-                    LatexInlineSyntax(),
-                  ],
+                  <md.BlockSyntax>[LatexBlockSyntax()],
+                  <md.InlineSyntax>[LatexInlineSyntax()],
                 ),
                 builders: <String, MarkdownElementBuilder>{
                   'latex': LatexElementBuilder(
