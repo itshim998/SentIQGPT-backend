@@ -2,10 +2,8 @@ name: Apply and verify Phase 5
 
 on:
   push:
-    branches:
-      - feature/flutter-android-app
-    paths:
-      - .github/workflows/phase5-apply.yml
+    branches: [feature/flutter-android-app]
+    paths: [.github/workflows/phase5-apply.yml]
 
 permissions:
   contents: write
@@ -17,14 +15,13 @@ concurrency:
 env:
   FLUTTER_VERSION: "3.44.8"
   JAVA_VERSION: "17"
-  PHASE5_BUNDLE_SHA256: "ffed905ef49b605d3759a8368aaf214cc7e4ee2d16c65996976699cb55b9e825"
+  PHASE5_BUNDLE_SHA256: ffed905ef49b605d3759a8368aaf214cc7e4ee2d16c65996976699cb55b9e825
 
 jobs:
   apply-verify-commit:
     name: Apply, verify, and commit Phase 5
     runs-on: ubuntu-latest
     timeout-minutes: 55
-
     steps:
       - name: Checkout feature branch
         uses: actions/checkout@v6
@@ -72,20 +69,17 @@ jobs:
           EOF
           sha256sum --check --strict /tmp/phase5-parts.sha256
           cat tool/phase5-bundle.b64.part-* > /tmp/phase5-bundle.b64
-          python -c 'import sys; sys.stdout.buffer.write(bytes.fromhex("622b2b6f79646476397735652f6b784e436d703863694a346e654f62744f337032572f535341504e5736545a685a584d54546f3141664875724e6437346e515a54382b536c694b43565438394f79754734504570485678317735707161476f6c32546b385344622b2f4365496b44613977487652684f35465a5477474d4a6e347253324576333366766d2f66742b2f62392b3337396e3337766e3366766d2f66742b2f62392b3337396e3337766e3366766d2f66742b2f62392b3337396e3337766e3366766d2f66742b2f62392b3337396e3337766e322f352b2f2f44314a6f4f49304141415541"))' >> /tmp/phase5-bundle.b64
+          python -c 'import sys;sys.stdout.buffer.write(bytes.fromhex("622b2b6f79646476397735652f6b784e436d703863694a346e654f62744f337032572f535341504e5736545a685a584d54546f3141664875724e6437346e515a54382b536c694b43565438394f79754734504570485678317735707161476f6c32546b385344622b2f4365496b44613977487652684f35465a5477474d4a6e347253324576333366766d2f66742b2f62392b3337396e3337766e3366766d2f66742b2f62392b3337396e3337766e3366766d2f66742b2f62392b3337396e3337766e3366766d2f66742b2f62392b3337396e3337766e322f352b2f2f44314a6f4f49304141415541"))' >> /tmp/phase5-bundle.b64
           base64 --decode /tmp/phase5-bundle.b64 > /tmp/phase5-bundle.tar.gz
           echo "${PHASE5_BUNDLE_SHA256}  /tmp/phase5-bundle.tar.gz" | sha256sum --check --strict
           tar -xzf /tmp/phase5-bundle.tar.gz -C .
-          rm -f tool/phase5-bundle.b64.part-*
-          rm -f .github/workflows/phase5-apply.yml
+          rm -f tool/phase5-bundle.b64.part-* .github/workflows/phase5-apply.yml
           test "$(cat mobile/sentiq_chat/.flutter-version)" = "${FLUTTER_VERSION}"
           grep -q 'mobileContractVersion: 4' mobile/sentiq_chat/lib/core/config/app_config.dart
           grep -q 'MOBILE_CONTRACT_VERSION = 4' backend/mobile/mobileContract.ts
 
       - name: Install SQLite test runtime
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsqlite3-0
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-0
 
       - name: Generate Android scaffold without replacing native bridges
         working-directory: mobile/sentiq_chat
@@ -95,9 +89,15 @@ jobs:
         working-directory: mobile/sentiq_chat
         run: flutter pub get
 
-      - name: Format Dart sources
-        working-directory: mobile/sentiq_chat
-        run: dart format lib test
+      - name: Apply asserted and analyzer-provided corrections
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tool/phase5-analyzer-fix.py
+          rm -f tool/phase5-analyzer-fix.py
+          cd mobile/sentiq_chat
+          dart fix --apply
+          dart format lib test
 
       - name: Static analysis
         working-directory: mobile/sentiq_chat
@@ -123,11 +123,8 @@ jobs:
         working-directory: mobile/sentiq_chat
         run: flutter build apk --debug --dart-define=SENTIQ_ENV=development
 
-      - name: Install backend dependencies
-        run: npm ci
-
-      - name: Compile backend
-        run: npm run build
+      - name: Install and compile backend
+        run: npm ci && npm run build
 
       - name: Verify mobile contract v4
         run: npx ts-node --project tsconfig.backend.json backend/testMobileContract.ts
@@ -146,6 +143,7 @@ jobs:
         run: |
           set -euo pipefail
           test ! -e .github/workflows/phase5-apply.yml
+          test ! -e tool/phase5-analyzer-fix.py
           ! compgen -G 'tool/phase5-bundle.b64.part-*' >/dev/null
           test ! -e .github/workflows/phase5-source-snapshot.yml
           grep -q 'android.permission.RECORD_AUDIO' mobile/sentiq_chat/android/app/src/main/AndroidManifest.xml
@@ -171,9 +169,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git diff --cached --quiet && { echo 'No Phase 5 changes to commit'; exit 1; }
-          git commit -m "Add Phase 5 research, Live, billing, and account completeness"
+          git commit -m 'Add Phase 5 research, Live, billing, and account completeness'
           git push origin HEAD:feature/flutter-android-app
