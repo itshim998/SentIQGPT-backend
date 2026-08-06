@@ -1,3 +1,5 @@
+// ignore_for_file: sort_constructors_first
+
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -230,7 +232,7 @@ class ChatMessage {
       id:
           (json['id'] ??
                   json['message_id'] ??
-                  '${roleValue}-${json['client_request_id'] ?? json['created_at'] ?? ''}')
+                  '$roleValue-${json['client_request_id'] ?? json['created_at'] ?? ''}')
               .toString(),
       conversationId:
           (json['conversation_id'] ?? json['conversationId'] ?? conversationId)

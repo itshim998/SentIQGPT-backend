@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter/services.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 import 'package:sentiq_chat/features/chat/application/chat_controller.dart';
@@ -98,7 +99,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
             SentIQSpacing.md,
             SentIQSpacing.xl,
           ),
-          cacheExtent: 900,
+          scrollCacheExtent: 900,
           addAutomaticKeepAlives: false,
           addRepaintBoundaries: true,
           itemCount: messages.length + (widget.thread.progress.isEmpty ? 0 : 1),

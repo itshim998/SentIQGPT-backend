@@ -511,7 +511,7 @@ class _HeaderActivityIndicatorState extends State<_HeaderActivityIndicator>
   Widget build(BuildContext context) {
     return RotationTransition(
       turns: _controller,
-      child: const Icon(Icons.progress_activity_rounded, size: 18),
+      child: const Icon(Icons.sync_rounded, size: 18),
     );
   }
 

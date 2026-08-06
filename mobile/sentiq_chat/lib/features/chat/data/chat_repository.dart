@@ -60,6 +60,7 @@ class ChatRepository implements ChatRepositoryContract {
   final ChatCache _cache;
   final ChatRemoteSource _remote;
 
+  @override
   Future<ChatLoadResult> load({
     required String ownerScope,
     required String conversationId,
@@ -93,14 +94,17 @@ class ChatRepository implements ChatRepositoryContract {
     }
   }
 
+  @override
   Future<void> save(String ownerScope, ChatMessage message) {
     return _cache.upsertMessage(ownerScope: ownerScope, message: message);
   }
 
+  @override
   Future<void> saveAll(String ownerScope, List<ChatMessage> messages) {
     return _cache.upsertMessages(ownerScope: ownerScope, messages: messages);
   }
 
+  @override
   Future<void> recordTurn({
     required String ownerScope,
     required String conversationId,
@@ -121,22 +125,27 @@ class ChatRepository implements ChatRepositoryContract {
     );
   }
 
+  @override
   Future<void> updateTurnState(String clientRequestId, String state) {
     return _cache.updateTurnState(clientRequestId, state);
   }
 
+  @override
   Future<Set<String>> knownRequestIds(String ownerScope) {
     return _cache.knownRequestIds(ownerScope);
   }
 
+  @override
   Future<SentIQSseConnection> stream(ChatTurnRequest request) {
     return _remote.stream(request);
   }
 
+  @override
   Future<ChatAttachment> upload(ChatAttachment attachment) {
     return _remote.upload(attachment);
   }
 
+  @override
   Future<Map<String, Object?>> askAboutSelection({
     required String conversationId,
     required String selectedText,
@@ -149,8 +158,10 @@ class ChatRepository implements ChatRepositoryContract {
     );
   }
 
+  @override
   Future<ChatQuotaState> quota() => _remote.quota();
 
+  @override
   Future<void> syncPending({
     required String ownerScope,
     required bool cloudEnabled,

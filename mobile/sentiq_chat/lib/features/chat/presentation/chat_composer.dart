@@ -100,7 +100,7 @@ class _ChatComposerState extends State<ChatComposer> {
 
   Future<void> _pickFiles({required bool imagesOnly}) async {
     Navigator.of(context).pop();
-    final FilePickerResult? result = await FilePicker.platform.pickFiles(
+    final FilePickerResult? result = await FilePicker.pickFiles(
       allowMultiple: !imagesOnly,
       type: imagesOnly ? FileType.image : FileType.custom,
       allowedExtensions: imagesOnly
@@ -208,7 +208,7 @@ class _ChatComposerState extends State<ChatComposer> {
                   0,
                 ),
                 itemCount: widget.attachments.length,
-                separatorBuilder: (_, __) =>
+                separatorBuilder: (_, _) =>
                     const SizedBox(width: SentIQSpacing.xs),
                 itemBuilder: (BuildContext context, int index) {
                   final ChatAttachment attachment = widget.attachments[index];
