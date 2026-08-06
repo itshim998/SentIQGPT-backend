@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "mobile" / "sentiq_chat"
@@ -113,6 +114,29 @@ def main() -> None:
         "  if (value is! Map) {\n"
         "    return <String, Object?>{};\n"
         "  }",
+    )
+    extras_content = extras.read_text(encoding="utf-8")
+    single_line_if = re.compile(
+        r"^(?P<indent>[ \t]*)if \((?P<condition>[^\n]+)\) "
+        r"(?P<statement>(?:return|continue|break|throw)\b[^\n]*;)$",
+        re.MULTILINE,
+    )
+    matches = list(single_line_if.finditer(extras_content))
+    if len(matches) != 1:
+        raise RuntimeError(
+            "Expected exactly one remaining unbraced flow-control statement "
+            f"in {extras}; found {len(matches)}"
+        )
+    match = matches[0]
+    indent = match.group("indent")
+    replacement = (
+        f"{indent}if ({match.group('condition')}) {{\n"
+        f"{indent}  {match.group('statement')}\n"
+        f"{indent}}}"
+    )
+    extras.write_text(
+        extras_content[: match.start()] + replacement + extras_content[match.end() :],
+        encoding="utf-8",
     )
 
     remove_once(
