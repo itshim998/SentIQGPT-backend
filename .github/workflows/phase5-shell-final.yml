@@ -1,4 +1,5 @@
 name: Phase 5 final verification
+# Internal feature-branch merge trigger for the authoritative run.
 
 on:
   push:
