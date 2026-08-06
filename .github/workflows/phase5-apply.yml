@@ -55,6 +55,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cat > /tmp/phase5-parts.sha256 <<'EOF'
+          3f8f6416615b40a74f153752d31c663fb5aac19d81d250f23a22d0533edaff6b  tool/phase5-bundle.b64.part-00
+          9b0c2cbcfc7616b6ba904f350f8c97ac2fbc600c1c71d7fb7bb16645a4ada1bd  tool/phase5-bundle.b64.part-01
+          bd8aa8622110b0dd5e0082a51f5754d06a7de0b20349c8ff770cdf8d6df8b28f  tool/phase5-bundle.b64.part-02
+          a7a721c022a038d0fd2cd924fa4d4e16be2697c4e63f73794c4c06d57a0f96d6  tool/phase5-bundle.b64.part-03
+          f81b7a866eea8a036ad2d2e9bdb330b4240a5bcbdb7834b84ebbeef951ad5604  tool/phase5-bundle.b64.part-04
+          c4f1a8e5413e2f48e850d7fd8491ccde2dcabace044e1c67c126abe9a8f5d661  tool/phase5-bundle.b64.part-05
+          EOF
+          sha256sum --check --strict /tmp/phase5-parts.sha256
           cat tool/phase5-bundle.b64.part-* > /tmp/phase5-bundle.b64
           base64 --decode /tmp/phase5-bundle.b64 > /tmp/phase5-bundle.tar.gz
           echo "${PHASE5_BUNDLE_SHA256}  /tmp/phase5-bundle.tar.gz" | sha256sum --check --strict
