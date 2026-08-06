@@ -100,7 +100,7 @@ class _ChatComposerState extends State<ChatComposer> {
 
   Future<void> _pickFiles({required bool imagesOnly}) async {
     Navigator.of(context).pop();
-    final FilePickerResult? result = await FilePicker.pickFiles(
+    final FilePickerResult? result = await FilePicker.platform.pickFiles(
       allowMultiple: !imagesOnly,
       type: imagesOnly ? FileType.image : FileType.custom,
       allowedExtensions: imagesOnly
