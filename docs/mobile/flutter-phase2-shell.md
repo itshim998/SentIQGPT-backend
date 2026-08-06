@@ -67,3 +67,19 @@ The mobile redirect patterns must be added to the Supabase project's redirect al
 - `com.sentiqlabs.sentiqchat://reset-callback/**`
 
 These are public routing settings, not application secrets. The app contains no service-role credentials.
+
+## Phase 2 verification
+
+GitHub Actions run `31086591851` passed against commit `1f1180ca1fa01fd975ecbcc73674113988e2563f`:
+
+- pinned Flutter and Dart verification;
+- generated Android manifest and deep-link checks;
+- `flutter analyze`;
+- auth state-machine, restored-session, guest-transition, adaptive-layout, and SQLite migration tests;
+- keyboard, rotation, and Android back-navigation integration tests;
+- mobile contract fixture replay;
+- dark/light and compact/expanded golden tests;
+- Android debug APK build;
+- backend TypeScript compilation and mobile contract regression.
+
+The workflow uploaded the debug APK and coverage artifacts with seven-day retention.
