@@ -49,9 +49,9 @@ class SentIQEmptyState extends StatelessWidget {
               Text(
                 message,
                 textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: palette.textSecondary,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: palette.textSecondary),
               ),
               if (actionLabel != null) ...<Widget>[
                 const SizedBox(height: SentIQSpacing.lg),

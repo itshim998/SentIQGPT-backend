@@ -34,8 +34,7 @@ class FakeAuthGateway implements AuthGateway {
   Future<AuthActionResult> signInWithPassword(
     String email,
     String password,
-  ) async =>
-      signInResult;
+  ) async => signInResult;
 
   @override
   Future<AuthActionResult> signUp(String email, String password) async =>

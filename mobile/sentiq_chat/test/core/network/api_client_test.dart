@@ -17,8 +17,9 @@ void main() {
       baseUri: Uri.parse('https://api.example.test'),
       requestHeaders: SentIQRequestHeaders(
         authTokenProvider: const EmptyAuthTokenProvider(),
-        anonymousIdentityStore:
-            MemoryAnonymousIdentityStore(seed: 'quota-session'),
+        anonymousIdentityStore: MemoryAnonymousIdentityStore(
+          seed: 'quota-session',
+        ),
         mobileContractVersion: 1,
       ),
       httpClient: mockClient,

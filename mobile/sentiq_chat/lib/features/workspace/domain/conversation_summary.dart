@@ -70,14 +70,14 @@ class ConversationSummary {
   }
 
   Map<String, Object?> toDatabase() => <String, Object?>{
-        'id': id,
-        'owner_scope': ownerScope,
-        'title': title,
-        'created_at': createdAt.toIso8601String(),
-        'updated_at': updatedAt.toIso8601String(),
-        'sync_state': syncState.name,
-        'last_message_preview': lastMessagePreview,
-      };
+    'id': id,
+    'owner_scope': ownerScope,
+    'title': title,
+    'created_at': createdAt.toIso8601String(),
+    'updated_at': updatedAt.toIso8601String(),
+    'sync_state': syncState.name,
+    'last_message_preview': lastMessagePreview,
+  };
 
   static ConversationSummary fromDatabase(Map<String, Object?> row) {
     return ConversationSummary(

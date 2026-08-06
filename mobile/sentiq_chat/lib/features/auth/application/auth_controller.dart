@@ -9,9 +9,9 @@ class AuthController extends StateNotifier<AppAuthState> {
   AuthController({
     required AuthGateway gateway,
     required ProfileRepository profileRepository,
-  })  : _gateway = gateway,
-        _profileRepository = profileRepository,
-        super(const AppAuthState.initializing()) {
+  }) : _gateway = gateway,
+       _profileRepository = profileRepository,
+       super(const AppAuthState.initializing()) {
     _subscription = _gateway.events.listen(_handleGatewayEvent);
   }
 
@@ -50,8 +50,10 @@ class AuthController extends StateNotifier<AppAuthState> {
 
   Future<void> signIn(String email, String password) async {
     await _runAuthAction(() async {
-      final AuthActionResult result =
-          await _gateway.signInWithPassword(email, password);
+      final AuthActionResult result = await _gateway.signInWithPassword(
+        email,
+        password,
+      );
       final AuthSessionSnapshot? session = result.session;
       if (session == null) throw StateError('No session was returned.');
       await _completeSignedInSession(session);
@@ -94,8 +96,9 @@ class AuthController extends StateNotifier<AppAuthState> {
 
   Future<void> updatePassword(String password) async {
     await _runAuthAction(() async {
-      final AuthSessionSnapshot session =
-          await _gateway.updatePassword(password);
+      final AuthSessionSnapshot session = await _gateway.updatePassword(
+        password,
+      );
       await _completeSignedInSession(session);
     });
   }
@@ -109,10 +112,12 @@ class AuthController extends StateNotifier<AppAuthState> {
       return;
     }
     await _runAuthAction(() async {
-      final String saved =
-          await _profileRepository.updateDisplayName(normalized);
-      final AuthSessionSnapshot session =
-          await _gateway.updateDisplayName(saved);
+      final String saved = await _profileRepository.updateDisplayName(
+        normalized,
+      );
+      final AuthSessionSnapshot session = await _gateway.updateDisplayName(
+        saved,
+      );
       state = AppAuthState(
         status: AppAuthStatus.authenticated,
         identity: AppIdentity(
@@ -160,10 +165,7 @@ class AuthController extends StateNotifier<AppAuthState> {
     try {
       await action();
     } catch (error) {
-      state = state.copyWith(
-        busy: false,
-        message: _friendlyMessage(error),
-      );
+      state = state.copyWith(busy: false, message: _friendlyMessage(error));
       return;
     }
     if (state.busy) state = state.copyWith(busy: false);

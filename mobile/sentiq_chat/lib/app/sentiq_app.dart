@@ -35,18 +35,18 @@ class SentIQApp extends ConsumerWidget {
   Widget _rootFor(AppAuthState state) {
     return switch (state.status) {
       AppAuthStatus.initializing => const LaunchScreen(
-          key: ValueKey<String>('launch'),
-        ),
+        key: ValueKey<String>('launch'),
+      ),
       AppAuthStatus.requiresDisplayName => const DisplayNameScreen(
-          key: ValueKey<String>('display-name'),
-        ),
+        key: ValueKey<String>('display-name'),
+      ),
       AppAuthStatus.passwordRecovery => const PasswordUpdateScreen(
-          key: ValueKey<String>('password-recovery'),
-        ),
+        key: ValueKey<String>('password-recovery'),
+      ),
       AppAuthStatus.guest || AppAuthStatus.authenticated => WorkspaceScreen(
-          key: ValueKey<String>('workspace-${state.identity?.id ?? 'guest'}'),
-          identity: state.identity ?? const AppIdentity.guest(),
-        ),
+        key: ValueKey<String>('workspace-${state.identity?.id ?? 'guest'}'),
+        identity: state.identity ?? const AppIdentity.guest(),
+      ),
       _ => const AuthFlowScreen(key: ValueKey<String>('auth-flow')),
     };
   }

@@ -21,12 +21,7 @@ void main() {
   ) async {
     bool pressed = false;
     await tester.pumpWidget(
-      host(
-        SentIQButton(
-          label: 'Continue',
-          onPressed: () => pressed = true,
-        ),
-      ),
+      host(SentIQButton(label: 'Continue', onPressed: () => pressed = true)),
     );
 
     expect(tester.getSize(find.byType(FilledButton)).height, 48);
@@ -63,9 +58,7 @@ void main() {
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
-      host(
-        const RefractiveGlassSurface(child: Text('Private workspace')),
-      ),
+      host(const RefractiveGlassSurface(child: Text('Private workspace'))),
     );
 
     expect(find.text('Private workspace'), findsOneWidget);

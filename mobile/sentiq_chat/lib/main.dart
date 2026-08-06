@@ -17,9 +17,7 @@ Future<void> main() async {
   );
   runApp(
     ProviderScope(
-      overrides: <Override>[
-        appConfigProvider.overrideWithValue(config),
-      ],
+      overrides: <Override>[appConfigProvider.overrideWithValue(config)],
       child: const SentIQApp(),
     ),
   );

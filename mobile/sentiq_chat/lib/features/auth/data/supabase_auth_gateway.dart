@@ -8,30 +8,30 @@ class SupabaseAuthGateway implements AuthGateway {
   const SupabaseAuthGateway({
     required SupabaseClient client,
     required AppConfig config,
-  })  : _client = client,
-        _config = config;
+  }) : _client = client,
+       _config = config;
 
   final SupabaseClient _client;
   final AppConfig _config;
 
   @override
-  Stream<AuthGatewayEvent> get events =>
-      _client.auth.onAuthStateChange.map((AuthState state) {
-        final AuthGatewayEventType? type = switch (state.event) {
-          AuthChangeEvent.signedIn || AuthChangeEvent.initialSession =>
-            AuthGatewayEventType.signedIn,
-          AuthChangeEvent.signedOut => AuthGatewayEventType.signedOut,
-          AuthChangeEvent.passwordRecovery =>
-            AuthGatewayEventType.passwordRecovery,
-          AuthChangeEvent.tokenRefreshed => AuthGatewayEventType.tokenRefreshed,
-          AuthChangeEvent.userUpdated => AuthGatewayEventType.userUpdated,
-          _ => null,
-        };
-        return AuthGatewayEvent(
-          type: type ?? AuthGatewayEventType.tokenRefreshed,
-          session: _snapshot(state.session),
-        );
-      });
+  Stream<AuthGatewayEvent> get events => _client.auth.onAuthStateChange.map((
+    AuthState state,
+  ) {
+    final AuthGatewayEventType? type = switch (state.event) {
+      AuthChangeEvent.signedIn ||
+      AuthChangeEvent.initialSession => AuthGatewayEventType.signedIn,
+      AuthChangeEvent.signedOut => AuthGatewayEventType.signedOut,
+      AuthChangeEvent.passwordRecovery => AuthGatewayEventType.passwordRecovery,
+      AuthChangeEvent.tokenRefreshed => AuthGatewayEventType.tokenRefreshed,
+      AuthChangeEvent.userUpdated => AuthGatewayEventType.userUpdated,
+      _ => null,
+    };
+    return AuthGatewayEvent(
+      type: type ?? AuthGatewayEventType.tokenRefreshed,
+      session: _snapshot(state.session),
+    );
+  });
 
   @override
   Future<AuthSessionSnapshot?> restoreSession() async {
@@ -91,9 +91,9 @@ class SupabaseAuthGateway implements AuthGateway {
   @override
   Future<AuthSessionSnapshot> updateDisplayName(String displayName) async {
     final UserResponse response = await _client.auth.updateUser(
-      UserAttributes(data: <String, Object?>{
-        'display_name': displayName.trim(),
-      }),
+      UserAttributes(
+        data: <String, Object?>{'display_name': displayName.trim()},
+      ),
     );
     return _requiredSnapshot(response.user);
   }
@@ -118,7 +118,8 @@ class SupabaseAuthGateway implements AuthGateway {
     return AuthSessionSnapshot(
       userId: user.id,
       email: user.email,
-      metadata: user.userMetadata?.map(
+      metadata:
+          user.userMetadata?.map(
             (String key, Object? value) => MapEntry(key, value),
           ) ??
           const <String, Object?>{},

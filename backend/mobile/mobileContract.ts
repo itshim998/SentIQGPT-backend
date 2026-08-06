@@ -1,6 +1,6 @@
 import express, { type Response } from "express";
 
-export const MOBILE_CONTRACT_VERSION = 1;
+export const MOBILE_CONTRACT_VERSION = 2;
 export const MOBILE_MINIMUM_CLIENT_CONTRACT_VERSION = 1;
 
 export const MOBILE_CONTRACT = Object.freeze({
@@ -38,13 +38,19 @@ export const MOBILE_CONTRACT = Object.freeze({
       "deep_research_complete",
       "deep_research_error",
       "error",
+      "done",
     ]),
   }),
   endpoints: Object.freeze({
     config: "/api/config",
     chat: "/api/chat",
     chat_stream: "/api/chat/stream",
+    chat_sync: "/api/chat/sync",
+    chat_selection: "/api/chat/selection",
+    chat_title: "/api/chat/title",
     conversations: "/api/conversations",
+    conversation_messages: "/api/conversations/:id/messages",
+    conversation_title: "/api/conversations/:id/title",
     file_upload: "/api/files/upload",
     file_updates: "/api/files/updates",
     image_generation: "/api/images/generate",

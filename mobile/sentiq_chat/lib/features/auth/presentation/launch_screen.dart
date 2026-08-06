@@ -59,8 +59,8 @@ class _LaunchScreenState extends State<LaunchScreen>
                 Text(
                   'Bringing your workspace back…',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: palette.textSecondary,
-                      ),
+                    color: palette.textSecondary,
+                  ),
                 ),
               ],
             ),

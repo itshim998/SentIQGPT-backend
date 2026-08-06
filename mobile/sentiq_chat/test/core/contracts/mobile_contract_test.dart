@@ -7,8 +7,8 @@ import 'package:sentiq_chat/core/contracts/mobile_contract.dart';
 void main() {
   test('reads the non-destructive mobile contract from config', () async {
     final String raw = await File('test/fixtures/config.json').readAsString();
-    final Map<String, Object?> config =
-        (jsonDecode(raw) as Map).cast<String, Object?>();
+    final Map<String, Object?> config = (jsonDecode(raw) as Map)
+        .cast<String, Object?>();
     final MobileContract contract = MobileContract.fromConfig(config);
 
     expect(contract.contractVersion, 1);

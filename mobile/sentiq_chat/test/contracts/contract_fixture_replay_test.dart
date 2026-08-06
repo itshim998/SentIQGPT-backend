@@ -19,9 +19,24 @@ void main() {
         .parseText(await File('test/fixtures/deep_research.sse').readAsString())
         .toList();
 
-    expect(chat.any((SentIQSseEvent event) => event.kind == SentIQSseEventKind.token), isTrue);
-    expect(files.every((SentIQSseEvent event) => event.kind == SentIQSseEventKind.fileAnalysis), isTrue);
-    expect(research.every((SentIQSseEvent event) => event.kind == SentIQSseEventKind.deepResearch), isTrue);
+    expect(
+      chat.any(
+        (SentIQSseEvent event) => event.kind == SentIQSseEventKind.token,
+      ),
+      isTrue,
+    );
+    expect(
+      files.every(
+        (SentIQSseEvent event) => event.kind == SentIQSseEventKind.fileAnalysis,
+      ),
+      isTrue,
+    );
+    expect(
+      research.every(
+        (SentIQSseEvent event) => event.kind == SentIQSseEventKind.deepResearch,
+      ),
+      isTrue,
+    );
   });
 
   test('replays image, billing, and Live response shapes', () async {

@@ -64,9 +64,9 @@ class _SentIQLoadingStateState extends State<SentIQLoadingState>
           Flexible(
             child: Text(
               widget.label,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: palette.textSecondary,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: palette.textSecondary),
             ),
           ),
         ],

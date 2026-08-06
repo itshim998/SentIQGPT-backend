@@ -50,10 +50,7 @@ class SentIQDialog extends StatelessWidget {
                       ),
                     if (primaryLabel != null) ...<Widget>[
                       const SizedBox(width: SentIQSpacing.xs),
-                      SentIQButton(
-                        label: primaryLabel!,
-                        onPressed: onPrimary,
-                      ),
+                      SentIQButton(label: primaryLabel!, onPressed: onPrimary),
                     ],
                   ],
                 ),

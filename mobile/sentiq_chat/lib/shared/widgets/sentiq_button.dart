@@ -26,8 +26,8 @@ class SentIQButton extends StatelessWidget {
     final SentIQPalette palette = context.sentiqPalette;
     final Color foreground = switch (style) {
       SentIQButtonStyle.primary => Colors.white,
-      SentIQButtonStyle.secondary || SentIQButtonStyle.quiet =>
-        palette.textPrimary,
+      SentIQButtonStyle.secondary ||
+      SentIQButtonStyle.quiet => palette.textPrimary,
       SentIQButtonStyle.danger => palette.danger,
     };
     final Color background = switch (style) {

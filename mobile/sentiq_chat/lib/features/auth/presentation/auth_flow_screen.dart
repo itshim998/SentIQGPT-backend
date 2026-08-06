@@ -81,7 +81,8 @@ class _AuthFlowScreenState extends ConsumerState<AuthFlowScreen> {
                       horizontal.clamp(SentIQSpacing.lg, 180),
                       SentIQSpacing.xxl,
                       horizontal.clamp(SentIQSpacing.lg, 180),
-                      SentIQSpacing.xxl + MediaQuery.viewInsetsOf(context).bottom,
+                      SentIQSpacing.xxl +
+                          MediaQuery.viewInsetsOf(context).bottom,
                     ),
                     child: AnimatedSwitcher(
                       duration: SentIQMotion.standard,
@@ -117,9 +118,9 @@ class _AuthFlowScreenState extends ConsumerState<AuthFlowScreen> {
         const SizedBox(height: SentIQSpacing.sm),
         Text(
           'Start privately as a guest, or sign in to keep conversations available across sessions.',
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: palette.textSecondary,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyLarge?.copyWith(color: palette.textSecondary),
         ),
         const SizedBox(height: SentIQSpacing.xl),
         RefractiveGlassSurface(
@@ -172,9 +173,9 @@ class _AuthFlowScreenState extends ConsumerState<AuthFlowScreen> {
           const SizedBox(height: SentIQSpacing.md),
           Text(
             state.message!,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: palette.textSecondary,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: palette.textSecondary),
           ),
         ],
       ],
@@ -206,8 +207,8 @@ class _AuthFlowScreenState extends ConsumerState<AuthFlowScreen> {
             recovering
                 ? 'Reset your password'
                 : signingUp
-                    ? 'Create your account'
-                    : 'Welcome back',
+                ? 'Create your account'
+                : 'Welcome back',
             style: Theme.of(context).textTheme.headlineMedium,
           ),
           const SizedBox(height: SentIQSpacing.xs),
@@ -215,19 +216,20 @@ class _AuthFlowScreenState extends ConsumerState<AuthFlowScreen> {
             recovering
                 ? 'We will email you a secure link to choose a new password.'
                 : signingUp
-                    ? 'Your conversations and preferences will stay with your account.'
-                    : 'Sign in to continue where you left off.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: palette.textSecondary,
-                ),
+                ? 'Your conversations and preferences will stay with your account.'
+                : 'Sign in to continue where you left off.',
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: palette.textSecondary),
           ),
           const SizedBox(height: SentIQSpacing.lg),
           SentIQTextField(
             label: 'Email',
             controller: _email,
             keyboardType: TextInputType.emailAddress,
-            textInputAction:
-                recovering ? TextInputAction.done : TextInputAction.next,
+            textInputAction: recovering
+                ? TextInputAction.done
+                : TextInputAction.next,
             autofillHints: const <String>[AutofillHints.email],
             enabled: !state.busy,
             onSubmitted: recovering ? (_) => _submit() : null,
@@ -238,12 +240,11 @@ class _AuthFlowScreenState extends ConsumerState<AuthFlowScreen> {
               label: 'Password',
               controller: _password,
               obscureText: true,
-              textInputAction:
-                  signingUp ? TextInputAction.next : TextInputAction.done,
+              textInputAction: signingUp
+                  ? TextInputAction.next
+                  : TextInputAction.done,
               autofillHints: <String>[
-                signingUp
-                    ? AutofillHints.newPassword
-                    : AutofillHints.password,
+                signingUp ? AutofillHints.newPassword : AutofillHints.password,
               ],
               enabled: !state.busy,
               onSubmitted: signingUp ? null : (_) => _submit(),
@@ -266,10 +267,10 @@ class _AuthFlowScreenState extends ConsumerState<AuthFlowScreen> {
             Text(
               _localError ?? state.message!,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _localError == null
-                        ? palette.textSecondary
-                        : palette.danger,
-                  ),
+                color: _localError == null
+                    ? palette.textSecondary
+                    : palette.danger,
+              ),
             ),
           ],
           const SizedBox(height: SentIQSpacing.lg),
@@ -277,8 +278,8 @@ class _AuthFlowScreenState extends ConsumerState<AuthFlowScreen> {
             label: recovering
                 ? 'Send reset link'
                 : signingUp
-                    ? 'Create account'
-                    : 'Sign in',
+                ? 'Create account'
+                : 'Sign in',
             expand: true,
             loading: state.busy,
             onPressed: _submit,
@@ -313,7 +314,9 @@ class _AuthFlowScreenState extends ConsumerState<AuthFlowScreen> {
       return;
     }
     if (password.length < 8) {
-      setState(() => _localError = 'Use at least 8 characters for your password.');
+      setState(
+        () => _localError = 'Use at least 8 characters for your password.',
+      );
       return;
     }
     if (_page == _AuthPage.signUp && password != _confirmation.text) {

@@ -10,8 +10,8 @@ class SharedPreferencesAnonymousIdentityStore
   SharedPreferencesAnonymousIdentityStore({
     Future<SharedPreferences> Function()? preferences,
     Uuid? uuid,
-  })  : _preferences = preferences ?? SharedPreferences.getInstance,
-        _uuid = uuid ?? const Uuid();
+  }) : _preferences = preferences ?? SharedPreferences.getInstance,
+       _uuid = uuid ?? const Uuid();
 
   static const String storageKey = 'sentiq:mobile:anonymous-quota-id';
 
@@ -33,7 +33,7 @@ class SharedPreferencesAnonymousIdentityStore
 
 class MemoryAnonymousIdentityStore implements AnonymousIdentityStore {
   MemoryAnonymousIdentityStore({String seed = 'anonymous-test-id'})
-      : _identity = seed;
+    : _identity = seed;
 
   final String _identity;
 

@@ -20,7 +20,7 @@ void main() {
     await directory.delete(recursive: true);
   });
 
-  test('migrates a version 1 conversation cache to version 2', () async {
+  test('migrates a version 1 cache through Phase 3 schema version 4', () async {
     final Database versionOne = await databaseFactoryFfi.openDatabase(
       databasePath,
       options: OpenDatabaseOptions(
@@ -48,12 +48,17 @@ void main() {
     );
     final items = await cache.list('user-1');
     final Database migrated = await cache.open();
-    final List<Map<String, Object?>> metadata = await migrated.rawQuery(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='app_meta'",
+    final List<Map<String, Object?>> tables = await migrated.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+      "('app_meta', 'messages', 'chat_turns') ORDER BY name",
     );
 
     expect(items.single.title, 'Cached chat');
-    expect(metadata, isNotEmpty);
+    expect(tables.map((Map<String, Object?> row) => row['name']), <Object?>[
+      'app_meta',
+      'chat_turns',
+      'messages',
+    ]);
     expect(await migrated.getVersion(), CacheMigrations.currentVersion);
     await cache.close();
   });

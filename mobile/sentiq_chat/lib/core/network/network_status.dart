@@ -10,7 +10,7 @@ abstract interface class NetworkMonitor {
 
 class ConnectivityNetworkMonitor implements NetworkMonitor {
   ConnectivityNetworkMonitor({Connectivity? connectivity})
-      : _connectivity = connectivity ?? Connectivity();
+    : _connectivity = connectivity ?? Connectivity();
 
   final Connectivity _connectivity;
 
@@ -20,9 +20,8 @@ class ConnectivityNetworkMonitor implements NetworkMonitor {
   }
 
   @override
-  Stream<NetworkAvailability> get changes => _connectivity.onConnectivityChanged
-      .map(_map)
-      .distinct();
+  Stream<NetworkAvailability> get changes =>
+      _connectivity.onConnectivityChanged.map(_map).distinct();
 
   NetworkAvailability _map(List<ConnectivityResult> values) {
     return values.contains(ConnectivityResult.none)

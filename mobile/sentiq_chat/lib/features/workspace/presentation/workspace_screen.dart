@@ -6,67 +6,110 @@ import 'package:sentiq_chat/app/app_providers.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 import 'package:sentiq_chat/core/layout/adaptive_window.dart';
 import 'package:sentiq_chat/features/auth/domain/auth_models.dart';
+import 'package:sentiq_chat/features/chat/application/chat_controller.dart';
+import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
+import 'package:sentiq_chat/features/chat/presentation/chat_composer.dart';
+import 'package:sentiq_chat/features/chat/presentation/chat_message_list.dart';
 import 'package:sentiq_chat/features/workspace/application/workspace_controller.dart';
 import 'package:sentiq_chat/features/workspace/domain/conversation_summary.dart';
 import 'package:sentiq_chat/features/workspace/presentation/conversation_sidebar.dart';
-import 'package:sentiq_chat/shared/widgets/refractive_glass_surface.dart';
 import 'package:sentiq_chat/shared/widgets/sentiq_button.dart';
 import 'package:sentiq_chat/shared/widgets/sentiq_dialog.dart';
 import 'package:sentiq_chat/shared/widgets/sentiq_empty_state.dart';
 import 'package:sentiq_chat/shared/widgets/sentiq_sheet.dart';
 import 'package:sentiq_chat/shared/widgets/sentiq_text_field.dart';
 
-class WorkspaceScreen extends ConsumerWidget {
+class WorkspaceScreen extends ConsumerStatefulWidget {
   const WorkspaceScreen({required this.identity, super.key});
 
   final AppIdentity identity;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final WorkspaceSession session = WorkspaceSession(
-      ownerScope: identity.isGuest ? 'guest' : identity.id,
-      cloudEnabled: !identity.isGuest,
+  ConsumerState<WorkspaceScreen> createState() => _WorkspaceScreenState();
+}
+
+class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen>
+    with WidgetsBindingObserver {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  WorkspaceSession get _session => WorkspaceSession(
+    ownerScope: widget.identity.isGuest ? 'guest' : widget.identity.id,
+    cloudEnabled: !widget.identity.isGuest,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    unawaited(
+      ref
+          .read(chatControllerProvider(_session).notifier)
+          .handleLifecycle(state),
     );
-    final WorkspaceState state = ref.watch(
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final WorkspaceSession session = _session;
+    final WorkspaceState workspace = ref.watch(
       workspaceControllerProvider(session),
     );
-    final WorkspaceController controller = ref.read(
+    final WorkspaceController workspaceController = ref.read(
       workspaceControllerProvider(session).notifier,
     );
+    final ChatState chat = ref.watch(chatControllerProvider(session));
+    final ChatController chatController = ref.read(
+      chatControllerProvider(session).notifier,
+    );
+    final String? selectedId = workspace.selectedConversationId;
+    if (selectedId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(chatController.loadConversation(selectedId));
+      });
+    }
+
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final AdaptiveWindowClass windowClass =
-            classifyWindow(constraints.maxWidth);
-        final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey<ScaffoldState>();
+        final AdaptiveWindowClass windowClass = classifyWindow(
+          constraints.maxWidth,
+        );
         final Widget sidebar = ConversationSidebar(
-          identity: identity,
-          state: state,
-          controller: controller,
+          identity: widget.identity,
+          state: workspace,
+          controller: workspaceController,
           onRename: (ConversationSummary item) =>
-              _showRename(context, controller, item),
+              _showRename(context, workspaceController, item),
           onDelete: (ConversationSummary item) =>
-              _showDelete(context, controller, item),
-          onAccount: () => _showAccount(context, ref),
-          onSettings: () => _showSettings(context, ref),
+              _showDelete(context, workspaceController, item),
+          onAccount: () => _showAccount(context),
+          onSettings: () => _showSettings(context),
           onConversationSelected: windowClass == AdaptiveWindowClass.expanded
               ? null
               : () => Navigator.of(context).maybePop(),
         );
         final Widget canvas = _WorkspaceCanvas(
-          state: state,
-          controller: controller,
+          identity: widget.identity,
+          workspace: workspace,
+          workspaceController: workspaceController,
+          chat: chat,
+          chatController: chatController,
           compact: windowClass == AdaptiveWindowClass.compact,
         );
         return PopScope(
-          canPop: windowClass == AdaptiveWindowClass.expanded ||
-              state.selectedConversationId == null,
+          canPop:
+              windowClass == AdaptiveWindowClass.expanded ||
+              workspace.selectedConversationId == null,
           onPopInvokedWithResult: (bool didPop, Object? result) {
-            if (!didPop && state.selectedConversationId != null) {
-              controller.clearSelection();
+            if (!didPop && workspace.selectedConversationId != null) {
+              workspaceController.clearSelection();
             }
           },
           child: Scaffold(
-            key: scaffoldKey,
+            key: _scaffoldKey,
             resizeToAvoidBottomInset: true,
             drawer: windowClass == AdaptiveWindowClass.expanded
                 ? null
@@ -77,18 +120,24 @@ class WorkspaceScreen extends ConsumerWidget {
             appBar: windowClass == AdaptiveWindowClass.expanded
                 ? null
                 : AppBar(
-                    title: Text(state.selected?.title ?? 'SentIQ Chat'),
+                    title: Text(workspace.selected?.title ?? 'SentIQ Chat'),
                     centerTitle: false,
                     leading: IconButton(
                       tooltip: 'Open conversations',
                       icon: const Icon(Icons.menu_rounded),
-                      onPressed: () => scaffoldKey.currentState?.openDrawer(),
+                      onPressed: () => _scaffoldKey.currentState?.openDrawer(),
                     ),
                     actions: <Widget>[
+                      if (selectedId != null &&
+                          chat.thread(selectedId).generating)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 4),
+                          child: _HeaderActivityIndicator(),
+                        ),
                       IconButton(
                         tooltip: 'New chat',
                         icon: const Icon(Icons.add_rounded),
-                        onPressed: controller.newConversation,
+                        onPressed: workspaceController.newConversation,
                       ),
                     ],
                   ),
@@ -115,8 +164,9 @@ class WorkspaceScreen extends ConsumerWidget {
     WorkspaceController controller,
     ConversationSummary conversation,
   ) async {
-    final TextEditingController title =
-        TextEditingController(text: conversation.title);
+    final TextEditingController title = TextEditingController(
+      text: conversation.title,
+    );
     await showDialog<void>(
       context: context,
       builder: (BuildContext dialogContext) => SentIQDialog(
@@ -165,7 +215,7 @@ class WorkspaceScreen extends ConsumerWidget {
     );
   }
 
-  Future<void> _showAccount(BuildContext context, WidgetRef ref) {
+  Future<void> _showAccount(BuildContext context) {
     return showSentIQSheet<void>(
       context: context,
       builder: (BuildContext sheetContext) => Column(
@@ -173,25 +223,29 @@ class WorkspaceScreen extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           Text(
-            identity.isGuest ? 'Guest session' : identity.displayName ?? 'Account',
+            widget.identity.isGuest
+                ? 'Guest session'
+                : widget.identity.displayName ?? 'Account',
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: SentIQSpacing.xs),
           Text(
-            identity.isGuest
+            widget.identity.isGuest
                 ? 'This session stays on this device. Sign in to keep conversations across sessions.'
-                : identity.email ?? 'Signed in to SentIQ Chat',
+                : widget.identity.email ?? 'Signed in to SentIQ Chat',
           ),
           const SizedBox(height: SentIQSpacing.lg),
           SentIQButton(
-            label: identity.isGuest ? 'Sign in or create account' : 'Sign out',
-            style: identity.isGuest
+            label: widget.identity.isGuest
+                ? 'Sign in or create account'
+                : 'Sign out',
+            style: widget.identity.isGuest
                 ? SentIQButtonStyle.primary
                 : SentIQButtonStyle.secondary,
             expand: true,
             onPressed: () {
               Navigator.of(sheetContext).pop();
-              if (identity.isGuest) {
+              if (widget.identity.isGuest) {
                 ref.read(authControllerProvider.notifier).returnToSignIn();
               } else {
                 unawaited(ref.read(authControllerProvider.notifier).signOut());
@@ -204,7 +258,7 @@ class WorkspaceScreen extends ConsumerWidget {
     );
   }
 
-  Future<void> _showSettings(BuildContext context, WidgetRef ref) {
+  Future<void> _showSettings(BuildContext context) {
     return showSentIQSheet<void>(
       context: context,
       builder: (BuildContext sheetContext) => Consumer(
@@ -258,27 +312,46 @@ class WorkspaceScreen extends ConsumerWidget {
       ),
     );
   }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
 }
 
 class _WorkspaceCanvas extends StatelessWidget {
   const _WorkspaceCanvas({
-    required this.state,
-    required this.controller,
+    required this.identity,
+    required this.workspace,
+    required this.workspaceController,
+    required this.chat,
+    required this.chatController,
     required this.compact,
   });
 
-  final WorkspaceState state;
-  final WorkspaceController controller;
+  final AppIdentity identity;
+  final WorkspaceState workspace;
+  final WorkspaceController workspaceController;
+  final ChatState chat;
+  final ChatController chatController;
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final SentIQPalette palette = context.sentiqPalette;
+    final String? conversationId = workspace.selectedConversationId;
+    final ChatThreadState thread = conversationId == null
+        ? const ChatThreadState()
+        : chat.thread(conversationId);
     return Column(
       children: <Widget>[
-        if (state.networkState != WorkspaceNetworkState.online)
+        if (workspace.networkState != WorkspaceNetworkState.online ||
+            !chat.networkAvailable)
           Material(
-            color: state.networkState == WorkspaceNetworkState.offline
+            color:
+                (!chat.networkAvailable ||
+                    workspace.networkState == WorkspaceNetworkState.offline)
                 ? palette.warning.withValues(alpha: 0.14)
                 : palette.info.withValues(alpha: 0.14),
             child: Padding(
@@ -289,7 +362,7 @@ class _WorkspaceCanvas extends StatelessWidget {
               child: Row(
                 children: <Widget>[
                   Icon(
-                    state.networkState == WorkspaceNetworkState.offline
+                    !chat.networkAvailable
                         ? Icons.cloud_off_outlined
                         : Icons.sync_problem_outlined,
                     size: 18,
@@ -297,94 +370,154 @@ class _WorkspaceCanvas extends StatelessWidget {
                   const SizedBox(width: SentIQSpacing.xs),
                   Expanded(
                     child: Text(
-                      state.networkState == WorkspaceNetworkState.offline
-                          ? 'You are offline. Changes will stay on this device until you reconnect.'
-                          : 'Cloud sync is taking longer than usual. Your cached conversations are still available.',
+                      !chat.networkAvailable
+                          ? 'You are offline. Saved messages remain available and pending changes will retry after reconnecting.'
+                          : 'Cloud sync is taking longer than usual. Cached conversations remain available.',
                     ),
                   ),
                   TextButton(
-                    onPressed: controller.refresh,
+                    onPressed: workspaceController.refresh,
                     child: const Text('Retry'),
                   ),
                 ],
               ),
             ),
           ),
-        if (state.message != null)
+        if (workspace.message != null)
           Padding(
             padding: const EdgeInsets.all(SentIQSpacing.sm),
             child: Text(
-              state.message!,
+              workspace.message!,
               style: TextStyle(color: palette.textSecondary),
             ),
           ),
         Expanded(
-          child: state.selected == null
+          child: conversationId == null
               ? SentIQEmptyState(
                   icon: Icons.auto_awesome_outlined,
                   title: 'Start a new conversation',
                   message:
                       'Create a chat and it will appear here, ready for your messages.',
                   actionLabel: 'New chat',
-                  onAction: controller.newConversation,
+                  onAction: workspaceController.newConversation,
                 )
               : Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 760),
-                    child: Padding(
-                      padding: EdgeInsets.all(
-                        compact ? SentIQSpacing.md : SentIQSpacing.xl,
-                      ),
-                      child: Column(
-                        children: <Widget>[
-                          const Spacer(),
-                          Icon(
-                            Icons.chat_bubble_outline_rounded,
-                            size: 44,
-                            color: palette.accent,
+                    constraints: const BoxConstraints(maxWidth: 900),
+                    child: ChatMessageList(
+                      thread: thread,
+                      onRetry: (ChatMessage message) {
+                        unawaited(
+                          chatController.retry(
+                            conversationId: conversationId,
+                            userMessage: message,
+                            trustedDisplayName: identity.displayName,
                           ),
-                          const SizedBox(height: SentIQSpacing.md),
-                          Text(
-                            state.selected!.title,
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.headlineMedium,
+                        );
+                      },
+                      onContinue: (ChatMessage message) {
+                        unawaited(
+                          chatController.continueGenerating(
+                            conversationId: conversationId,
+                            partialAssistantMessage: message,
+                            trustedDisplayName: identity.displayName,
                           ),
-                          const SizedBox(height: SentIQSpacing.xs),
-                          Text(
-                            'This conversation is ready for your messages.',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                  color: palette.textSecondary,
-                                ),
+                        );
+                      },
+                      onAskSelected: (String selectedText) {
+                        unawaited(
+                          chatController.askAboutSelectedText(
+                            conversationId: conversationId,
+                            selectedText: selectedText,
                           ),
-                          const Spacer(),
-                          RefractiveGlassSurface(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: SentIQSpacing.md,
-                              vertical: SentIQSpacing.sm,
-                            ),
-                            child: Row(
-                              children: <Widget>[
-                                Expanded(
-                                  child: Text(
-                                    'Message SentIQ Chat',
-                                    style: TextStyle(color: palette.textMuted),
-                                  ),
-                                ),
-                                Icon(
-                                  Icons.lock_clock_outlined,
-                                  color: palette.textMuted,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
+                        );
+                      },
                     ),
                   ),
                 ),
         ),
+        if (conversationId != null)
+          SafeArea(
+            top: false,
+            minimum: EdgeInsets.fromLTRB(
+              compact ? SentIQSpacing.sm : SentIQSpacing.lg,
+              SentIQSpacing.xs,
+              compact ? SentIQSpacing.sm : SentIQSpacing.lg,
+              SentIQSpacing.sm,
+            ),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 820),
+                child: ChatComposer(
+                  executionMode: chat.executionMode,
+                  quota: chat.quota,
+                  generating: thread.generating,
+                  attachments: chat.attachments,
+                  webSearchEnabled: chat.webSearchEnabled,
+                  enabled: chat.networkAvailable,
+                  onExecutionModeChanged: chatController.setExecutionMode,
+                  onWebSearchChanged: chatController.setWebSearchEnabled,
+                  onAttachmentAdded: (ChatAttachment attachment) {
+                    unawaited(chatController.addAttachment(attachment));
+                  },
+                  onAttachmentRemoved: chatController.removeAttachment,
+                  onAttachmentRetry: (String id) {
+                    unawaited(chatController.retryAttachment(id));
+                  },
+                  onSend: (String text) async {
+                    final bool accepted = await chatController.send(
+                      conversationId: conversationId,
+                      text: text,
+                      trustedDisplayName: identity.displayName,
+                    );
+                    if (accepted) {
+                      unawaited(_refreshConversationTitle(workspaceController));
+                    }
+                    return accepted;
+                  },
+                  onStop: () => unawaited(chatController.stop(conversationId)),
+                ),
+              ),
+            ),
+          ),
       ],
     );
+  }
+}
+
+Future<void> _refreshConversationTitle(WorkspaceController controller) async {
+  await Future<void>.delayed(const Duration(seconds: 2));
+  await controller.refresh();
+  await Future<void>.delayed(const Duration(seconds: 6));
+  await controller.refresh();
+}
+
+class _HeaderActivityIndicator extends StatefulWidget {
+  const _HeaderActivityIndicator();
+
+  @override
+  State<_HeaderActivityIndicator> createState() =>
+      _HeaderActivityIndicatorState();
+}
+
+class _HeaderActivityIndicatorState extends State<_HeaderActivityIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat();
+
+  @override
+  Widget build(BuildContext context) {
+    return RotationTransition(
+      turns: _controller,
+      child: const Icon(Icons.progress_activity_rounded, size: 18),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 }

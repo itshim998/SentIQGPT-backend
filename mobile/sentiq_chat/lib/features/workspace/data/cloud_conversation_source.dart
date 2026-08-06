@@ -8,8 +8,9 @@ class CloudConversationSource {
   final SentIQApiClient _client;
 
   Future<List<ConversationSummary>> list(String ownerScope) async {
-    final Map<String, Object?> payload =
-        await _client.getJson(ApiEndpoints.conversations);
+    final Map<String, Object?> payload = await _client.getJson(
+      ApiEndpoints.conversations,
+    );
     final Object? raw = payload['conversations'] ?? payload['data'];
     if (raw is! List) return const <ConversationSummary>[];
     return raw

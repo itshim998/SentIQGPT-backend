@@ -9,8 +9,9 @@ void main() {
       ..setToken('access-token');
     final SentIQRequestHeaders headers = SentIQRequestHeaders(
       authTokenProvider: tokenProvider,
-      anonymousIdentityStore:
-          MemoryAnonymousIdentityStore(seed: 'anonymous-id'),
+      anonymousIdentityStore: MemoryAnonymousIdentityStore(
+        seed: 'anonymous-id',
+      ),
       mobileContractVersion: 1,
     );
 

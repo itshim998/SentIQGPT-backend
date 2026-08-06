@@ -6,8 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class ThemeController extends StateNotifier<ThemeMode> {
   ThemeController({SharedPreferencesAsync? preferences})
-      : _preferences = preferences ?? SharedPreferencesAsync(),
-        super(ThemeMode.system) {
+    : _preferences = preferences ?? SharedPreferencesAsync(),
+      super(ThemeMode.system) {
     unawaited(restore());
   }
 

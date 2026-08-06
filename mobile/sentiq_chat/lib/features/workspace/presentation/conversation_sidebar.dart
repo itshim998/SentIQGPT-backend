@@ -87,65 +87,66 @@ class ConversationSidebar extends StatelessWidget {
             child: state.loading && state.conversations.isEmpty
                 ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
                 : state.visibleConversations.isEmpty
-                    ? const SentIQEmptyState(
-                        icon: Icons.chat_bubble_outline_rounded,
-                        title: 'No conversations yet',
-                        message: 'Start a new chat when you are ready.',
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: SentIQSpacing.xs,
-                        ),
-                        itemCount: state.visibleConversations.length,
-                        itemBuilder: (BuildContext context, int index) {
-                          final ConversationSummary conversation =
-                              state.visibleConversations[index];
-                          final bool selected =
-                              conversation.id == state.selectedConversationId;
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 2),
-                            child: ListTile(
-                              selected: selected,
-                              selectedTileColor: palette.accentSoft,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(
-                                  SentIQRadii.medium,
-                                ),
-                              ),
-                              leading: Icon(
-                                Icons.chat_bubble_outline_rounded,
-                                size: 20,
-                                color: selected
-                                    ? palette.accent
-                                    : palette.textMuted,
-                              ),
-                              title: Text(
-                                conversation.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: conversation.syncState ==
-                                      ConversationSyncState.synced
-                                  ? null
-                                  : const Text('Waiting to sync'),
-                              onTap: () {
-                                controller.selectConversation(conversation.id);
-                                onConversationSelected?.call();
-                              },
-                              trailing: PopupMenuButton<ConversationAction>(
-                                tooltip: 'Conversation options',
-                                onSelected: (ConversationAction action) {
-                                  switch (action) {
-                                    case ConversationAction.rename:
-                                      onRename(conversation);
-                                      break;
-                                    case ConversationAction.delete:
-                                      onDelete(conversation);
-                                      break;
-                                  }
-                                },
-                                itemBuilder: (BuildContext context) =>
-                                    const <PopupMenuEntry<ConversationAction>>[
+                ? const SentIQEmptyState(
+                    icon: Icons.chat_bubble_outline_rounded,
+                    title: 'No conversations yet',
+                    message: 'Start a new chat when you are ready.',
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: SentIQSpacing.xs,
+                    ),
+                    itemCount: state.visibleConversations.length,
+                    itemBuilder: (BuildContext context, int index) {
+                      final ConversationSummary conversation =
+                          state.visibleConversations[index];
+                      final bool selected =
+                          conversation.id == state.selectedConversationId;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: ListTile(
+                          selected: selected,
+                          selectedTileColor: palette.accentSoft,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(
+                              SentIQRadii.medium,
+                            ),
+                          ),
+                          leading: Icon(
+                            Icons.chat_bubble_outline_rounded,
+                            size: 20,
+                            color: selected
+                                ? palette.accent
+                                : palette.textMuted,
+                          ),
+                          title: Text(
+                            conversation.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle:
+                              conversation.syncState ==
+                                  ConversationSyncState.synced
+                              ? null
+                              : const Text('Waiting to sync'),
+                          onTap: () {
+                            controller.selectConversation(conversation.id);
+                            onConversationSelected?.call();
+                          },
+                          trailing: PopupMenuButton<ConversationAction>(
+                            tooltip: 'Conversation options',
+                            onSelected: (ConversationAction action) {
+                              switch (action) {
+                                case ConversationAction.rename:
+                                  onRename(conversation);
+                                  break;
+                                case ConversationAction.delete:
+                                  onDelete(conversation);
+                                  break;
+                              }
+                            },
+                            itemBuilder: (BuildContext context) =>
+                                const <PopupMenuEntry<ConversationAction>>[
                                   PopupMenuItem<ConversationAction>(
                                     value: ConversationAction.rename,
                                     child: Text('Rename'),
@@ -155,11 +156,11 @@ class ConversationSidebar extends StatelessWidget {
                                     child: Text('Delete'),
                                   ),
                                 ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
           ),
           const Divider(height: 1),
           ListTile(
@@ -174,7 +175,9 @@ class ConversationSidebar extends StatelessWidget {
             ),
             title: Text(identity.displayName ?? 'Your account'),
             subtitle: Text(
-              identity.isGuest ? 'Guest session' : identity.email ?? 'Signed in',
+              identity.isGuest
+                  ? 'Guest session'
+                  : identity.email ?? 'Signed in',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),

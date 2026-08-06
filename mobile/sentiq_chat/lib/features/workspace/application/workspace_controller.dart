@@ -90,10 +90,10 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
     required WorkspaceSession session,
     required ConversationRepository repository,
     required NetworkMonitor networkMonitor,
-  })  : _session = session,
-        _repository = repository,
-        _networkMonitor = networkMonitor,
-        super(const WorkspaceState()) {
+  }) : _session = session,
+       _repository = repository,
+       _networkMonitor = networkMonitor,
+       super(const WorkspaceState()) {
     _networkSubscription = _networkMonitor.changes.listen(_handleNetworkChange);
   }
 
@@ -116,7 +116,8 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       cloudEnabled: _session.cloudEnabled,
       networkAvailable: _networkAvailable,
     );
-    final String? selected = state.selectedConversationId ??
+    final String? selected =
+        state.selectedConversationId ??
         (result.items.isEmpty ? null : result.items.first.id);
     state = state.copyWith(
       conversations: result.items,
@@ -124,8 +125,8 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       networkState: !_networkAvailable
           ? WorkspaceNetworkState.offline
           : result.degraded
-              ? WorkspaceNetworkState.degraded
-              : WorkspaceNetworkState.online,
+          ? WorkspaceNetworkState.degraded
+          : WorkspaceNetworkState.online,
       loading: false,
     );
   }

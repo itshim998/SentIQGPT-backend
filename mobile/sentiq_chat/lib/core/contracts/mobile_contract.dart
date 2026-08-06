@@ -20,10 +20,8 @@ class MobileContract {
         fallback: 1,
       ),
       sseVersion: _integer(sse['version'], fallback: 1),
-      unknownFieldsAreSafe:
-          compatibility['unknown_fields'] == 'ignore',
-      unknownSseEventsAreSafe:
-          compatibility['unknown_sse_events'] == 'ignore',
+      unknownFieldsAreSafe: compatibility['unknown_fields'] == 'ignore',
+      unknownSseEventsAreSafe: compatibility['unknown_sse_events'] == 'ignore',
       endpoints: endpoints.map(
         (String key, Object? value) => MapEntry(key, value.toString()),
       ),

@@ -11,9 +11,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetPhysicalSize);
 
-    await tester.pumpWidget(
-      const CustomPaint(painter: _PalettePainter()),
-    );
+    await tester.pumpWidget(const CustomPaint(painter: _PalettePainter()));
 
     await expectLater(
       find.byType(CustomPaint),

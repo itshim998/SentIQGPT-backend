@@ -18,10 +18,10 @@ class AppIdentity {
   });
 
   const AppIdentity.guest()
-      : id = 'guest',
-        email = null,
-        displayName = 'Guest',
-        isGuest = true;
+    : id = 'guest',
+      email = null,
+      displayName = 'Guest',
+      isGuest = true;
 
   final String id;
   final String? email;
@@ -47,10 +47,10 @@ class AppAuthState {
   });
 
   const AppAuthState.initializing()
-      : status = AppAuthStatus.initializing,
-        identity = null,
-        message = null,
-        busy = true;
+    : status = AppAuthStatus.initializing,
+      identity = null,
+      message = null,
+      busy = true;
 
   final AppAuthStatus status;
   final AppIdentity? identity;
@@ -58,8 +58,7 @@ class AppAuthState {
   final bool busy;
 
   bool get hasWorkspace =>
-      status == AppAuthStatus.guest ||
-      status == AppAuthStatus.authenticated;
+      status == AppAuthStatus.guest || status == AppAuthStatus.authenticated;
 
   AppAuthState copyWith({
     AppAuthStatus? status,

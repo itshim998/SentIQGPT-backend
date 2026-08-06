@@ -2,15 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 
 abstract final class SentIQTheme {
-  static ThemeData dark() => _build(
-        brightness: Brightness.dark,
-        palette: SentIQPalette.dark,
-      );
+  static ThemeData dark() =>
+      _build(brightness: Brightness.dark, palette: SentIQPalette.dark);
 
-  static ThemeData light() => _build(
-        brightness: Brightness.light,
-        palette: SentIQPalette.light,
-      );
+  static ThemeData light() =>
+      _build(brightness: Brightness.light, palette: SentIQPalette.light);
 
   static ThemeData _build({
     required Brightness brightness,
@@ -22,9 +18,8 @@ abstract final class SentIQTheme {
       surface: palette.surface,
       error: palette.danger,
     );
-    final TextTheme textTheme = Typography.material2021(
-      platform: TargetPlatform.android,
-    ).black.apply(
+    final TextTheme textTheme =
+        Typography.material2021(platform: TargetPlatform.android).black.apply(
           bodyColor: palette.textPrimary,
           displayColor: palette.textPrimary,
         );

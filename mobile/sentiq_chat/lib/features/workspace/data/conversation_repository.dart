@@ -20,9 +20,9 @@ class ConversationRepository {
     required ConversationCache cache,
     required CloudConversationSource cloud,
     Uuid? uuid,
-  })  : _cache = cache,
-        _cloud = cloud,
-        _uuid = uuid ?? const Uuid();
+  }) : _cache = cache,
+       _cloud = cloud,
+       _uuid = uuid ?? const Uuid();
 
   final ConversationCache _cache;
   final CloudConversationSource _cloud;
@@ -77,11 +77,7 @@ class ConversationRepository {
     await _cache.upsert(local);
     if (cloudEnabled && networkAvailable) {
       try {
-        local = await _cloud.create(
-          ownerScope,
-          title,
-          preferredId: local.id,
-        );
+        local = await _cloud.create(ownerScope, title, preferredId: local.id);
         await _cache.upsert(local);
       } catch (_) {
         // Keep the local-only record for the next reconciliation pass.
@@ -155,8 +151,10 @@ class ConversationRepository {
           await _cache.upsert(created);
           break;
         case ConversationSyncState.pendingRename:
-          final ConversationSummary renamed =
-              await _cloud.rename(conversation, conversation.title);
+          final ConversationSummary renamed = await _cloud.rename(
+            conversation,
+            conversation.title,
+          );
           await _cache.upsert(renamed);
           break;
         case ConversationSyncState.pendingDelete:

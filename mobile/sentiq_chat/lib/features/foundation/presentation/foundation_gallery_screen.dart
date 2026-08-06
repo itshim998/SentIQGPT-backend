@@ -51,8 +51,8 @@ class FoundationGalleryScreen extends StatelessWidget {
                 Text(
                   'Android foundation · ${config.environment.name}',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: palette.textSecondary,
-                      ),
+                    color: palette.textSecondary,
+                  ),
                 ),
                 const SizedBox(height: SentIQSpacing.lg),
                 RefractiveGlassSurface(
@@ -101,7 +101,8 @@ class FoundationGalleryScreen extends StatelessWidget {
                           child: SentIQEmptyState(
                             icon: Icons.chat_bubble_outline_rounded,
                             title: 'A clear place to begin',
-                            message: 'Conversations will appear here in Phase 2.',
+                            message:
+                                'Conversations will appear here in Phase 2.',
                           ),
                         ),
                       ),

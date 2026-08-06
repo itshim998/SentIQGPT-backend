@@ -16,8 +16,7 @@ class PasswordUpdateScreen extends ConsumerStatefulWidget {
       _PasswordUpdateScreenState();
 }
 
-class _PasswordUpdateScreenState
-    extends ConsumerState<PasswordUpdateScreen> {
+class _PasswordUpdateScreenState extends ConsumerState<PasswordUpdateScreen> {
   final TextEditingController _password = TextEditingController();
   final TextEditingController _confirmation = TextEditingController();
   String? _localError;
@@ -62,8 +61,8 @@ class _PasswordUpdateScreenState
                   Text(
                     'Use at least 8 characters. Your other signed-in sessions may need to reconnect.',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: palette.textSecondary,
-                        ),
+                      color: palette.textSecondary,
+                    ),
                   ),
                   const SizedBox(height: SentIQSpacing.xl),
                   RefractiveGlassSurface(
@@ -93,7 +92,8 @@ class _PasswordUpdateScreenState
                             enabled: !state.busy,
                             onSubmitted: (_) => _save(),
                           ),
-                          if (_localError != null || state.message != null) ...<Widget>[
+                          if (_localError != null ||
+                              state.message != null) ...<Widget>[
                             const SizedBox(height: SentIQSpacing.sm),
                             Text(
                               _localError ?? state.message!,

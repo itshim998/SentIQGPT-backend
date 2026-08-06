@@ -13,8 +13,9 @@ class ApiProfileRepository implements ProfileRepository {
 
   @override
   Future<String?> getDisplayName() async {
-    final Map<String, Object?> payload =
-        await _client.getJson(ApiEndpoints.profile);
+    final Map<String, Object?> payload = await _client.getJson(
+      ApiEndpoints.profile,
+    );
     final Map<String, Object?> profile = _map(payload['profile']);
     return _firstName(<Object?>[
       profile['display_name'],

@@ -3,7 +3,7 @@ import 'package:sentiq_chat/features/workspace/domain/conversation_summary.dart'
 import 'package:sqflite/sqflite.dart';
 
 abstract final class CacheMigrations {
-  static const int currentVersion = 2;
+  static const int currentVersion = 4;
 
   static const Map<int, List<String>> steps = <int, List<String>>{
     1: <String>[
@@ -25,12 +25,48 @@ abstract final class CacheMigrations {
           'value TEXT NOT NULL'
           ')',
     ],
+    3: <String>[
+      'CREATE TABLE messages ('
+          'id TEXT PRIMARY KEY, '
+          'conversation_id TEXT NOT NULL, '
+          'owner_scope TEXT NOT NULL, '
+          'role TEXT NOT NULL, '
+          'content TEXT NOT NULL DEFAULT "", '
+          'created_at TEXT NOT NULL, '
+          'status TEXT NOT NULL DEFAULT "complete", '
+          'client_request_id TEXT, '
+          'execution_mode TEXT, '
+          'citations_json TEXT NOT NULL DEFAULT "[]", '
+          'metadata_json TEXT NOT NULL DEFAULT "{}", '
+          'error_message TEXT, '
+          'locally_created INTEGER NOT NULL DEFAULT 0, '
+          'local_order INTEGER NOT NULL DEFAULT 0'
+          ')',
+      'CREATE INDEX messages_conversation_order '
+          'ON messages(owner_scope, conversation_id, created_at, local_order)',
+      'CREATE INDEX messages_request_id '
+          'ON messages(owner_scope, client_request_id)',
+    ],
+    4: <String>[
+      'CREATE TABLE chat_turns ('
+          'client_request_id TEXT PRIMARY KEY, '
+          'owner_scope TEXT NOT NULL, '
+          'conversation_id TEXT NOT NULL, '
+          'user_message_id TEXT NOT NULL, '
+          'assistant_message_id TEXT NOT NULL, '
+          'execution_mode TEXT NOT NULL, '
+          'state TEXT NOT NULL, '
+          'updated_at TEXT NOT NULL'
+          ')',
+      'CREATE INDEX chat_turns_owner_state '
+          'ON chat_turns(owner_scope, state, updated_at)',
+    ],
   };
 }
 
 class ConversationCache {
   ConversationCache({DatabaseFactory? factory, this._databasePath})
-      : _databaseFactory = factory ?? databaseFactory;
+    : _databaseFactory = factory ?? databaseFactory;
 
   final DatabaseFactory _databaseFactory;
   final String? _databasePath;
@@ -39,7 +75,8 @@ class ConversationCache {
   Future<Database> open() async {
     final Database? existing = _database;
     if (existing != null) return existing;
-    final String resolvedPath = _databasePath ??
+    final String resolvedPath =
+        _databasePath ??
         path.join(await getDatabasesPath(), 'sentiq_chat_workspace.db');
     final Database opened = await _databaseFactory.openDatabase(
       resolvedPath,
@@ -86,10 +123,7 @@ class ConversationCache {
     final List<Map<String, Object?>> rows = await database.query(
       'conversations',
       where: 'owner_scope = ? AND sync_state != ?',
-      whereArgs: <Object?>[
-        ownerScope,
-        ConversationSyncState.synced.name,
-      ],
+      whereArgs: <Object?>[ownerScope, ConversationSyncState.synced.name],
     );
     return rows.map(ConversationSummary.fromDatabase).toList();
   }
@@ -121,11 +155,23 @@ class ConversationCache {
 
   Future<void> deleteHard(String id) async {
     final Database database = await open();
-    await database.delete(
-      'conversations',
-      where: 'id = ?',
-      whereArgs: <Object>[id],
-    );
+    await database.transaction((Transaction transaction) async {
+      await transaction.delete(
+        'messages',
+        where: 'conversation_id = ?',
+        whereArgs: <Object>[id],
+      );
+      await transaction.delete(
+        'chat_turns',
+        where: 'conversation_id = ?',
+        whereArgs: <Object>[id],
+      );
+      await transaction.delete(
+        'conversations',
+        where: 'id = ?',
+        whereArgs: <Object>[id],
+      );
+    });
   }
 
   Future<void> close() async {

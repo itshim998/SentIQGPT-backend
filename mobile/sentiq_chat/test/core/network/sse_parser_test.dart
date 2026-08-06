@@ -8,20 +8,27 @@ void main() {
   const SentIQSseParser parser = SentIQSseParser();
 
   test('parses known events, unknown events, and completion', () async {
-    final String fixture =
-        await File('test/fixtures/chat_stream.sse').readAsString();
-    final List<SentIQSseEvent> events =
-        await parser.parseText(fixture).toList();
+    final String fixture = await File(
+      'test/fixtures/chat_stream.sse',
+    ).readAsString();
+    final List<SentIQSseEvent> events = await parser
+        .parseText(fixture)
+        .toList();
 
-    expect(events.map((SentIQSseEvent event) => event.kind), containsAll(<SentIQSseEventKind>[
-      SentIQSseEventKind.route,
-      SentIQSseEventKind.token,
-      SentIQSseEventKind.toolStarted,
-      SentIQSseEventKind.unknown,
-      SentIQSseEventKind.done,
-    ]));
     expect(
-      events.firstWhere((SentIQSseEvent event) => event.type == 'future_event').payload['value'],
+      events.map((SentIQSseEvent event) => event.kind),
+      containsAll(<SentIQSseEventKind>[
+        SentIQSseEventKind.route,
+        SentIQSseEventKind.token,
+        SentIQSseEventKind.toolStarted,
+        SentIQSseEventKind.unknown,
+        SentIQSseEventKind.done,
+      ]),
+    );
+    expect(
+      events
+          .firstWhere((SentIQSseEvent event) => event.type == 'future_event')
+          .payload['value'],
       'preserve safely',
     );
   });

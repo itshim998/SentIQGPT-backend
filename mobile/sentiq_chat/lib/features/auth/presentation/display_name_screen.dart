@@ -12,8 +12,7 @@ class DisplayNameScreen extends ConsumerStatefulWidget {
   const DisplayNameScreen({super.key});
 
   @override
-  ConsumerState<DisplayNameScreen> createState() =>
-      _DisplayNameScreenState();
+  ConsumerState<DisplayNameScreen> createState() => _DisplayNameScreenState();
 }
 
 class _DisplayNameScreenState extends ConsumerState<DisplayNameScreen> {
@@ -59,8 +58,8 @@ class _DisplayNameScreenState extends ConsumerState<DisplayNameScreen> {
                   Text(
                     'This name appears only in your SentIQ Chat workspace and can be changed later.',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: palette.textSecondary,
-                        ),
+                      color: palette.textSecondary,
+                    ),
                   ),
                   const SizedBox(height: SentIQSpacing.xl),
                   RefractiveGlassSurface(

@@ -35,7 +35,10 @@ class RefractiveGlassSurface extends StatelessWidget {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: <Color>[
-                Color.alphaBlend(Colors.white.withValues(alpha: 0.10), palette.glass),
+                Color.alphaBlend(
+                  Colors.white.withValues(alpha: 0.10),
+                  palette.glass,
+                ),
                 palette.glass,
                 Color.alphaBlend(palette.accentSoft, palette.glass),
               ],
@@ -61,11 +64,7 @@ class RefractiveGlassSurface extends StatelessWidget {
     if (onTap == null) return surface;
     return Semantics(
       button: true,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: radius,
-        child: surface,
-      ),
+      child: InkWell(onTap: onTap, borderRadius: radius, child: surface),
     );
   }
 }
