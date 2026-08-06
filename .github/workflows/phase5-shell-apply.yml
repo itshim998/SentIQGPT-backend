@@ -22,7 +22,7 @@ env:
 jobs:
   verify-commit:
     name: Verify and commit Phase 5 without marketplace actions
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 80
     steps:
       - name: Manual authenticated checkout
