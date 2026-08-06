@@ -70,7 +70,7 @@ These are public routing settings, not application secrets. The app contains no 
 
 ## Phase 2 verification
 
-GitHub Actions run `31086591851` passed against commit `1f1180ca1fa01fd975ecbcc73674113988e2563f`:
+GitHub Actions run `31086591851` passed against code commit `1f1180ca1fa01fd975ecbcc73674113988e2563f`. Commit `46bd595812a32895a341dfe3758fde1fd2aa2162` only records these verification results in this document.
 
 - pinned Flutter and Dart verification;
 - generated Android manifest and deep-link checks;
