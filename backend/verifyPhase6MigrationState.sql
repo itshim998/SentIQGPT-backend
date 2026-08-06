@@ -77,7 +77,7 @@ begin
     v_missing := array_append(v_missing, 'function:prepare_context_capsule_continuity_row');
   else
     select pg_get_functiondef(
-      'public.prepare_context_capsule_continuity_row()'::regprocedure
+      to_regprocedure('public.prepare_context_capsule_continuity_row()')
     ) into v_trigger_definition;
     if position('continuity_search_vector' in coalesce(v_trigger_definition, '')) = 0
        or position('array_to_string' in coalesce(v_trigger_definition, '')) = 0 then
@@ -87,11 +87,21 @@ begin
   if to_regprocedure('public.search_cross_conversation_context(uuid,text,uuid,integer,integer,integer)') is null then
     v_missing := array_append(v_missing, 'function:search_cross_conversation_context');
   end if;
-  if to_regprocedure('public.get_fast_context_snapshot_phase6_internal(uuid,uuid,text,text,uuid[],integer,integer,integer)') is null then
-    v_missing := array_append(v_missing, 'function:get_fast_context_snapshot_phase6_internal');
-  end if;
+
   if to_regprocedure('public.get_fast_context_snapshot(uuid,uuid,text,text,uuid[],integer,integer,integer)') is null then
     v_missing := array_append(v_missing, 'function:get_fast_context_snapshot');
+  else
+    select pg_get_functiondef(
+      to_regprocedure('public.get_fast_context_snapshot(uuid,uuid,text,text,uuid[],integer,integer,integer)')
+    ) into v_external_definition;
+  end if;
+
+  if to_regprocedure('public.get_fast_context_snapshot_phase6_internal(uuid,uuid,text,text,uuid[],integer,integer,integer)') is null then
+    v_missing := array_append(v_missing, 'function:get_fast_context_snapshot_phase6_internal');
+  else
+    select pg_get_functiondef(
+      to_regprocedure('public.get_fast_context_snapshot_phase6_internal(uuid,uuid,text,text,uuid[],integer,integer,integer)')
+    ) into v_internal_definition;
   end if;
 
   if not exists (
@@ -133,21 +143,18 @@ begin
     v_missing := array_append(v_missing, 'data:invalid_conversation_capsule_continuity_metadata');
   end if;
 
-  select pg_get_functiondef(
-    'public.get_fast_context_snapshot(uuid,uuid,text,text,uuid[],integer,integer,integer)'::regprocedure
-  ) into v_external_definition;
-  select pg_get_functiondef(
-    'public.get_fast_context_snapshot_phase6_internal(uuid,uuid,text,text,uuid[],integer,integer,integer)'::regprocedure
-  ) into v_internal_definition;
-
-  if position('get_fast_context_snapshot_phase6_internal' in coalesce(v_external_definition, '')) = 0
-     or position('schema_version' in coalesce(v_external_definition, '')) = 0
-     or position('SELECTED CROSS-CONVERSATION CONTINUITY' in coalesce(v_external_definition, '')) = 0 then
+  if v_external_definition is not null and (
+    position('get_fast_context_snapshot_phase6_internal' in v_external_definition) = 0
+    or position('schema_version' in v_external_definition) = 0
+    or position('SELECTED CROSS-CONVERSATION CONTINUITY' in v_external_definition) = 0
+  ) then
     v_missing := array_append(v_missing, 'function:fast_snapshot_compatibility_adapter');
   end if;
 
-  if position('search_cross_conversation_context' in coalesce(v_internal_definition, '')) = 0
-     or position('continuity' in coalesce(v_internal_definition, '')) = 0 then
+  if v_internal_definition is not null and (
+    position('search_cross_conversation_context' in v_internal_definition) = 0
+    or position('continuity' in v_internal_definition) = 0
+  ) then
     v_missing := array_append(v_missing, 'function:fast_snapshot_internal_continuity');
   end if;
 
