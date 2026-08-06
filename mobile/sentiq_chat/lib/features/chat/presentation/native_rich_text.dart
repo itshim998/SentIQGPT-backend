@@ -249,18 +249,18 @@ MarkdownStyleSheet _styleSheet(BuildContext context) {
 
 class _RichSegment {
   const _RichSegment.markdown(this.markdown)
-      : code = null,
-        language = null,
-        math = null;
+    : code = null,
+      language = null,
+      math = null;
 
   const _RichSegment.code({required this.code, this.language})
-      : markdown = '',
-        math = null;
+    : markdown = '',
+      math = null;
 
   const _RichSegment.math(this.math)
-      : markdown = '',
-        code = null,
-        language = null;
+    : markdown = '',
+      code = null,
+      language = null;
 
   final String markdown;
   final String? code;
