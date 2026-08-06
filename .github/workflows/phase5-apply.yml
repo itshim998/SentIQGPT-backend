@@ -79,8 +79,8 @@ jobs:
           rm -f tool/phase5-bundle.b64.part-*
           rm -f .github/workflows/phase5-apply.yml
           test "$(cat mobile/sentiq_chat/.flutter-version)" = "${FLUTTER_VERSION}"
-          grep -q 'mobileContractVersion = 4' mobile/sentiq_chat/lib/core/config/app_config.dart
-          grep -q 'CURRENT_MOBILE_CONTRACT_VERSION = 4' backend/mobile/mobileContract.ts
+          grep -q 'mobileContractVersion: 4' mobile/sentiq_chat/lib/core/config/app_config.dart
+          grep -q 'MOBILE_CONTRACT_VERSION = 4' backend/mobile/mobileContract.ts
 
       - name: Install SQLite test runtime
         run: |
