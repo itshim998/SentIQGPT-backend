@@ -1,0 +1,193 @@
+name: Phase 5 final verification
+
+on:
+  push:
+    branches: [feature/flutter-android-app]
+    paths:
+      - .github/workflows/phase5-shell-final.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase5-final-feature-flutter-android-app
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.44.8"
+  PHASE5_BUNDLE_SHA256: ffed905ef49b605d3759a8368aaf214cc7e4ee2d16c65996976699cb55b9e825
+
+jobs:
+  verify-commit:
+    name: Verify, publish, and package Phase 5
+    runs-on: ubuntu-22.04
+    timeout-minutes: 80
+    steps:
+      - name: Manual authenticated checkout
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+          git switch -C feature/flutter-android-app
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Install pinned Flutter
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${JAVA_HOME_17_X64:-}" ]; then
+            echo "JAVA_HOME=${JAVA_HOME_17_X64}" >> "${GITHUB_ENV}"
+            echo "${JAVA_HOME_17_X64}/bin" >> "${GITHUB_PATH}"
+          fi
+          curl -fsSL --retry 8 --retry-all-errors \
+            https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json \
+            -o "${RUNNER_TEMP}/flutter-releases.json"
+          archive="$(python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          data = json.loads(Path(os.environ['RUNNER_TEMP'], 'flutter-releases.json').read_text())
+          for release in data['releases']:
+              if release.get('version') == os.environ['FLUTTER_VERSION'] and release.get('channel') == 'stable':
+                  print(release['archive'])
+                  break
+          else:
+              raise SystemExit('Pinned Flutter release not found')
+          PY
+          )"
+          curl -fL --retry 8 --retry-all-errors \
+            "https://storage.googleapis.com/flutter_infra_release/releases/${archive}" \
+            -o "${RUNNER_TEMP}/flutter-sdk.tar.xz"
+          mkdir -p "${RUNNER_TEMP}/flutter-sdk"
+          tar -xJf "${RUNNER_TEMP}/flutter-sdk.tar.xz" -C "${RUNNER_TEMP}/flutter-sdk"
+          echo "${RUNNER_TEMP}/flutter-sdk/flutter/bin" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/flutter-sdk/flutter/bin/flutter" --version
+          node --version
+          npm --version
+          java -version
+
+      - name: Reconstruct checksum-pinned Phase 5 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "${RUNNER_TEMP}/phase5-parts.sha256" <<'EOF'
+          4be7d8696b37137fecdb56de41e531a36e29ba4204780a3aeeb7fabe279bc231  tool/phase5-bundle.b64.part-00-00
+          5c804933d6a1e5f7a5a915274a4f8ce6e22127f2ef762778bed9fcdc18cdfcd6  tool/phase5-bundle.b64.part-00-01
+          b572527b6d2edec806c733c9dfbfed44e436fbd593269cdcb2f7ab10de228816  tool/phase5-bundle.b64.part-00-02
+          f5f28d67a04758a9d4db18d705a7a1328495538cf30bd277bfcc97e6c598bd14  tool/phase5-bundle.b64.part-00-03
+          93ab71aadc8b5d8bac211374e0d7e1384d5a3ddf723370bd832bd73d5f8ab90d  tool/phase5-bundle.b64.part-00-04-00
+          f39130a44cf1b84c92fc5886c84f09c61ee3ee29faf45738fb000ac73388e267  tool/phase5-bundle.b64.part-00-04-01
+          5342b8f82ffd7ba67e732594636733edf100f4af60a93fa65f447c9ce0db4386  tool/phase5-bundle.b64.part-00-04-02
+          200b44bdd6a7a2e902ed5ac9427ff0f985088f76fabe1c9e18e290512f008c09  tool/phase5-bundle.b64.part-00-04-03
+          d16ecb0c44ae0357e154ca0036bfc3f3004b383b66fb07d2d0289d4252b3f124  tool/phase5-bundle.b64.part-00-04-04
+          9b0c2cbcfc7616b6ba904f350f8c97ac2fbc600c1c71d7fb7bb16645a4ada1bd  tool/phase5-bundle.b64.part-01
+          bd8aa8622110b0dd5e0082a51f5754d06a7de0b20349c8ff770cdf8d6df8b28f  tool/phase5-bundle.b64.part-02
+          a7a721c022a038d0fd2cd924fa4d4e16be2697c4e63f73794c4c06d57a0f96d6  tool/phase5-bundle.b64.part-03
+          f81b7a866eea8a036ad2d2e9bdb330b4240a5bcbdb7834b84ebbeef951ad5604  tool/phase5-bundle.b64.part-04
+          EOF
+          sha256sum --check --strict "${RUNNER_TEMP}/phase5-parts.sha256"
+          cat tool/phase5-bundle.b64.part-* > "${RUNNER_TEMP}/phase5-bundle.b64"
+          python3 -c 'import sys;sys.stdout.buffer.write(bytes.fromhex("622b2b6f79646476397735652f6b784e436d703863694a346e654f62744f337032572f535341504e5736545a685a584d54546f3141664875724e6437346e515a54382b536c694b43565438394f79754734504570485678317735707161476f6c32546b385344622b2f4365496b44613977487652684f35465a5477474d4a6e347253324576333366766d2f66742b2f62392b3337396e3337766e3366766d2f66742b2f62392b3337396e3337766e3366766d2f66742b2f62392b3337396e3337766e3366766d2f66742b2f62392b3337396e3337766e322f352b2f2f44314a6f4f49304141415541"))' >> "${RUNNER_TEMP}/phase5-bundle.b64"
+          base64 --decode "${RUNNER_TEMP}/phase5-bundle.b64" > "${RUNNER_TEMP}/phase5-bundle.tar.gz"
+          echo "${PHASE5_BUNDLE_SHA256}  ${RUNNER_TEMP}/phase5-bundle.tar.gz" | sha256sum --check --strict
+          tar -xzf "${RUNNER_TEMP}/phase5-bundle.tar.gz" -C .
+          rm -f tool/phase5-bundle.b64.part-*
+          rm -f .github/workflows/phase5-apply.yml
+          rm -f .github/workflows/phase5-shell-apply.yml
+          rm -f .github/workflows/phase5-shell-final.yml
+          test -f tool/phase5-analyzer-fix.py
+          test "$(cat mobile/sentiq_chat/.flutter-version)" = "${FLUTTER_VERSION}"
+          grep -q 'mobileContractVersion: 4' mobile/sentiq_chat/lib/core/config/app_config.dart
+          grep -q 'MOBILE_CONTRACT_VERSION = 4' backend/mobile/mobileContract.ts
+
+      - name: Bootstrap and analyze Flutter application
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-0
+          cd mobile/sentiq_chat
+          ./tool/bootstrap_android.sh
+          flutter pub get
+          cd ../..
+          python3 tool/phase5-analyzer-fix.py
+          rm -f tool/phase5-analyzer-fix.py
+          cd mobile/sentiq_chat
+          dart fix --apply
+          dart format lib test
+          flutter analyze
+
+      - name: Run complete Flutter tests and Android build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd mobile/sentiq_chat
+          flutter test --coverage test/core test/features test/widgets
+          flutter test test/integration
+          flutter test test/contracts/contract_fixture_replay_test.dart
+          flutter test test/goldens
+          flutter build apk --debug --dart-define=SENTIQ_ENV=development
+
+      - name: Run backend and Phase 5 regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          npx ts-node --project tsconfig.backend.json backend/testMobileContract.ts
+          npm run test:deep-research
+          npm run test:live
+          npm run billing:test-quota
+
+      - name: Assert and commit permanent Phase 5 tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e .github/workflows/phase5-apply.yml
+          test ! -e .github/workflows/phase5-shell-apply.yml
+          test ! -e .github/workflows/phase5-shell-final.yml
+          test ! -e tool/phase5-analyzer-fix.py
+          ! compgen -G 'tool/phase5-bundle.b64.part-*' >/dev/null
+          test ! -e .github/workflows/phase5-source-snapshot.yml
+          grep -q 'android.permission.RECORD_AUDIO' mobile/sentiq_chat/android/app/src/main/AndroidManifest.xml
+          grep -q 'com.sentiqlabs.sentiqchat/live_audio' mobile/sentiq_chat/android/app/src/main/kotlin/com/sentiqlabs/sentiq_chat/MainActivity.kt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet && { echo 'No Phase 5 changes to commit'; exit 1; }
+          git commit -m 'Add Phase 5 research, Live, billing, and account completeness'
+          git push origin HEAD:feature/flutter-android-app
+
+      - name: Upload verified APK and coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          uploader="${RUNNER_TEMP}/phase5-artifact-uploader"
+          mkdir -p "${uploader}"
+          cd "${uploader}"
+          npm init -y >/dev/null
+          npm install --no-package-lock --no-save @actions/artifact@2
+          cat > upload.cjs <<'NODE'
+          const path = require('path');
+          const { DefaultArtifactClient } = require('@actions/artifact');
+          const client = new DefaultArtifactClient();
+          const workspace = process.env.GITHUB_WORKSPACE;
+          async function upload(name, relativePath) {
+            const file = path.join(workspace, relativePath);
+            const result = await client.uploadArtifact(name, [file], path.dirname(file), { retentionDays: 7 });
+            console.log(`${name}: artifact ${result.id}`);
+          }
+          (async () => {
+            await upload(`sentiq-chat-phase5-debug-${process.env.GITHUB_SHA}`, 'mobile/sentiq_chat/build/app/outputs/flutter-apk/app-debug.apk');
+            await upload(`sentiq-chat-phase5-coverage-${process.env.GITHUB_RUN_ID}`, 'mobile/sentiq_chat/coverage/lcov.info');
+          })().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
+          node upload.cjs
