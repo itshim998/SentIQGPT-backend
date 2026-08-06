@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "mobile" / "sentiq_chat"
@@ -115,37 +114,19 @@ def main() -> None:
         "    return <String, Object?>{};\n"
         "  }",
     )
-    extras_content = extras.read_text(encoding="utf-8")
-    single_line_if = re.compile(
-        r"^(?P<indent>[ \t]*)if \((?P<condition>[^\n]+)\) "
-        r"(?P<statement>(?:return|continue|break|throw)\b[^\n]*;)$",
-        re.MULTILINE,
-    )
-    candidates = []
-    for match in single_line_if.finditer(extras_content):
-        line_number = extras_content.count("\n", 0, match.start()) + 1
-        candidates.append((abs(line_number - 866), line_number, match))
-    if not candidates:
-        raise RuntimeError(f"No remaining unbraced flow-control statement in {extras}")
-    candidates.sort(key=lambda item: item[0])
-    distance, line_number, match = candidates[0]
-    if distance > 25 or (
-        len(candidates) > 1 and candidates[1][0] == distance
-    ):
-        details = [(item[1], item[2].group(0)) for item in candidates]
-        raise RuntimeError(
-            "Could not uniquely resolve the analyzer line 866 guard; "
-            f"nearest line={line_number}, distance={distance}, candidates={details}"
-        )
-    indent = match.group("indent")
-    replacement = (
-        f"{indent}if ({match.group('condition')}) {{\n"
-        f"{indent}  {match.group('statement')}\n"
-        f"{indent}}}"
-    )
-    extras.write_text(
-        extras_content[: match.start()] + replacement + extras_content[match.end() :],
-        encoding="utf-8",
+    replace_once(
+        extras,
+        "  if (source['image_url'] == null &&\n"
+        "      source['url'] == null &&\n"
+        "      source['image_base64'] == null &&\n"
+        "      source['type'] != 'image')\n"
+        "    return null;",
+        "  if (source['image_url'] == null &&\n"
+        "      source['url'] == null &&\n"
+        "      source['image_base64'] == null &&\n"
+        "      source['type'] != 'image') {\n"
+        "    return null;\n"
+        "  }",
     )
 
     remove_once(
