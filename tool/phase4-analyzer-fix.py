@@ -27,9 +27,17 @@ def main() -> None:
     )
     replace_once(
         controller,
+        "  Future<void> _markMetadataDeleted(\n"
+        "    String conversationId,\n"
+        "    String messageId,\n"
+        "    String key,\n"
         "  ) {\n"
         "    final ChatMessage? message = _message(conversationId, messageId);\n"
         "    if (message == null) return;",
+        "  Future<void> _markMetadataDeleted(\n"
+        "    String conversationId,\n"
+        "    String messageId,\n"
+        "    String key,\n"
         "  ) async {\n"
         "    final ChatMessage? message = _message(conversationId, messageId);\n"
         "    if (message == null) {\n"
