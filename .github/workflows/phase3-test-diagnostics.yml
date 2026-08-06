@@ -6,6 +6,7 @@ on:
       - feature/flutter-android-app
     paths:
       - ".github/workflows/phase3-test-diagnostics.yml"
+      - "mobile/sentiq_chat/lib/features/chat/presentation/native_rich_text.dart"
   workflow_dispatch:
 
 permissions:
