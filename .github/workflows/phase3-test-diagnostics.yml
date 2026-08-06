@@ -1,0 +1,97 @@
+name: Phase 3 test diagnostics
+
+on:
+  push:
+    branches:
+      - feature/flutter-android-app
+    paths:
+      - ".github/workflows/phase3-test-diagnostics.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase3-test-diagnostics-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.44.8"
+  JAVA_VERSION: "17"
+
+jobs:
+  chat-tests:
+    name: Chat controller and rendering tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Prepare Flutter
+        working-directory: mobile/sentiq_chat
+        run: |
+          ./tool/bootstrap_android.sh
+          flutter pub get
+      - name: Run chat tests with expanded output
+        working-directory: mobile/sentiq_chat
+        run: flutter test --reporter expanded --timeout 2m test/features/chat
+
+  persistence-tests:
+    name: Persistence and network tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Install SQLite runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-0 libsqlite3-dev
+      - name: Prepare Flutter
+        working-directory: mobile/sentiq_chat
+        run: |
+          ./tool/bootstrap_android.sh
+          flutter pub get
+      - name: Run persistence and network tests
+        working-directory: mobile/sentiq_chat
+        run: flutter test --reporter expanded --timeout 2m test/core test/features/workspace
+
+  shell-tests:
+    name: Auth and shell widget tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Prepare Flutter
+        working-directory: mobile/sentiq_chat
+        run: |
+          ./tool/bootstrap_android.sh
+          flutter pub get
+      - name: Run auth and shell tests
+        working-directory: mobile/sentiq_chat
+        run: flutter test --reporter expanded --timeout 2m test/features/auth test/widgets
