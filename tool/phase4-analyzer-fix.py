@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "mobile" / "sentiq_chat"
@@ -114,19 +115,34 @@ def main() -> None:
         "    return <String, Object?>{};\n"
         "  }",
     )
-    replace_once(
-        extras,
-        "  if (source['image_url'] == null &&\n"
-        "      source['url'] == null &&\n"
-        "      source['image_base64'] == null &&\n"
-        "      source['type'] != 'image')\n"
-        "    return null;",
-        "  if (source['image_url'] == null &&\n"
-        "      source['url'] == null &&\n"
-        "      source['image_base64'] == null &&\n"
-        "      source['type'] != 'image') {\n"
-        "    return null;\n"
-        "  }",
+    extras_content = extras.read_text(encoding="utf-8")
+    image_guard = re.compile(
+        r"(?P<indent>^[ \t]*)if\s*\(\s*"
+        r"source\['image_url'\]\s*==\s*null\s*&&\s*"
+        r"source\['url'\]\s*==\s*null\s*&&\s*"
+        r"source\['image_base64'\]\s*==\s*null\s*&&\s*"
+        r"source\['type'\]\s*!=\s*'image'\s*\)\s*"
+        r"return\s+null;",
+        re.MULTILINE,
+    )
+    matches = list(image_guard.finditer(extras_content))
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Expected one image-source guard in {extras}; found {len(matches)}"
+        )
+    match = matches[0]
+    indent = match.group("indent")
+    replacement = (
+        f"{indent}if (source['image_url'] == null &&\n"
+        f"{indent}    source['url'] == null &&\n"
+        f"{indent}    source['image_base64'] == null &&\n"
+        f"{indent}    source['type'] != 'image') {{\n"
+        f"{indent}  return null;\n"
+        f"{indent}}}"
+    )
+    extras.write_text(
+        extras_content[: match.start()] + replacement + extras_content[match.end() :],
+        encoding="utf-8",
     )
 
     remove_once(
