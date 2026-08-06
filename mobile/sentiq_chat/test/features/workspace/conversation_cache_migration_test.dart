@@ -43,7 +43,7 @@ void main() {
     await versionOne.close();
 
     final ConversationCache cache = ConversationCache(
-      databaseFactory: databaseFactoryFfi,
+      factory: databaseFactoryFfi,
       databasePath: databasePath,
     );
     final items = await cache.list('user-1');

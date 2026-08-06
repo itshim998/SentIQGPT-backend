@@ -1,7 +1,6 @@
 import 'package:path/path.dart' as path;
 import 'package:sentiq_chat/features/workspace/domain/conversation_summary.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:sqflite/sqlite_api.dart';
 
 abstract final class CacheMigrations {
   static const int currentVersion = 2;
