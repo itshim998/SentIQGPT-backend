@@ -7,6 +7,8 @@ import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 import 'package:sentiq_chat/features/chat/application/chat_controller.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
 import 'package:sentiq_chat/features/chat/presentation/native_rich_text.dart';
+import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
+import 'package:sentiq_chat/features/multimodal/presentation/multimodal_message_extras.dart';
 
 class ChatMessageList extends StatefulWidget {
   const ChatMessageList({
@@ -14,6 +16,11 @@ class ChatMessageList extends StatefulWidget {
     required this.onRetry,
     required this.onContinue,
     required this.onAskSelected,
+    this.onImageAction,
+    this.onArtifactAction,
+    this.onDeleteImage,
+    this.onDeleteArtifact,
+    this.onSaveArtifactHtml,
     super.key,
   });
 
@@ -21,6 +28,19 @@ class ChatMessageList extends StatefulWidget {
   final ValueChanged<ChatMessage> onRetry;
   final ValueChanged<ChatMessage> onContinue;
   final ValueChanged<String> onAskSelected;
+  final Future<void> Function(GeneratedImagePayload, ArtifactAction)?
+  onImageAction;
+  final Future<void> Function(GeneratedArtifactPayload, ArtifactAction)?
+  onArtifactAction;
+  final Future<void> Function(ChatMessage, GeneratedImagePayload)?
+  onDeleteImage;
+  final Future<void> Function(ChatMessage, GeneratedArtifactPayload)?
+  onDeleteArtifact;
+  final Future<GeneratedArtifactPayload> Function(
+    GeneratedArtifactPayload,
+    String,
+  )?
+  onSaveArtifactHtml;
 
   @override
   State<ChatMessageList> createState() => _ChatMessageListState();
@@ -121,6 +141,11 @@ class _ChatMessageListState extends State<ChatMessageList> {
                       ? () => widget.onContinue(message)
                       : null,
                   onAskSelected: widget.onAskSelected,
+                  onImageAction: widget.onImageAction,
+                  onArtifactAction: widget.onArtifactAction,
+                  onDeleteImage: widget.onDeleteImage,
+                  onDeleteArtifact: widget.onDeleteArtifact,
+                  onSaveArtifactHtml: widget.onSaveArtifactHtml,
                 ),
               ),
             );
@@ -155,11 +180,29 @@ class ChatMessageView extends StatefulWidget {
     required this.onAskSelected,
     this.onRetry,
     this.onContinue,
+    this.onImageAction,
+    this.onArtifactAction,
+    this.onDeleteImage,
+    this.onDeleteArtifact,
+    this.onSaveArtifactHtml,
     super.key,
   });
 
   final ChatMessage message;
   final ValueChanged<String> onAskSelected;
+  final Future<void> Function(GeneratedImagePayload, ArtifactAction)?
+  onImageAction;
+  final Future<void> Function(GeneratedArtifactPayload, ArtifactAction)?
+  onArtifactAction;
+  final Future<void> Function(ChatMessage, GeneratedImagePayload)?
+  onDeleteImage;
+  final Future<void> Function(ChatMessage, GeneratedArtifactPayload)?
+  onDeleteArtifact;
+  final Future<GeneratedArtifactPayload> Function(
+    GeneratedArtifactPayload,
+    String,
+  )?
+  onSaveArtifactHtml;
   final VoidCallback? onRetry;
   final VoidCallback? onContinue;
 
@@ -260,6 +303,28 @@ class _ChatMessageViewState extends State<ChatMessageView> {
               )
             else
               content,
+            if (!_isUser)
+              MultimodalMessageExtras(
+                message: widget.message,
+                onImageAction:
+                    widget.onImageAction ??
+                    (GeneratedImagePayload _, ArtifactAction _) async {},
+                onArtifactAction:
+                    widget.onArtifactAction ??
+                    (GeneratedArtifactPayload _, ArtifactAction _) async {},
+                onDeleteImage: (GeneratedImagePayload image) async {
+                  await widget.onDeleteImage?.call(widget.message, image);
+                },
+                onDeleteArtifact: (GeneratedArtifactPayload artifact) async {
+                  await widget.onDeleteArtifact?.call(widget.message, artifact);
+                },
+                onSaveArtifactHtml:
+                    (GeneratedArtifactPayload artifact, String html) async {
+                      final callback = widget.onSaveArtifactHtml;
+                      if (callback == null) return artifact;
+                      return callback(artifact, html);
+                    },
+              ),
             if (!_isUser &&
                 widget.message.status == ChatMessageStatus.streaming)
               const Padding(

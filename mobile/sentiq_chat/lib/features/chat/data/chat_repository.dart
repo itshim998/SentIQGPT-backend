@@ -2,6 +2,7 @@ import 'package:sentiq_chat/core/network/api_client.dart';
 import 'package:sentiq_chat/features/chat/data/chat_cache.dart';
 import 'package:sentiq_chat/features/chat/data/chat_remote_source.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
+import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
 
 class ChatLoadResult {
   const ChatLoadResult({
@@ -37,6 +38,33 @@ abstract interface class ChatRepositoryContract {
   Future<Set<String>> knownRequestIds(String ownerScope);
   Future<SentIQSseConnection> stream(ChatTurnRequest request);
   Future<ChatAttachment> upload(ChatAttachment attachment);
+  Future<SentIQMultipartUpload> startUpload(
+    ChatAttachment attachment, {
+    String? conversationId,
+  });
+  ChatAttachment attachmentFromUpload(
+    ChatAttachment attachment,
+    Map<String, Object?> payload,
+  );
+  Future<SentIQSseConnection> fileUpdates();
+  Future<void> clearFileSession(String? analysisId);
+  Future<ImageQuotaState> imageQuota();
+  Future<Map<String, Object?>> generateImage({
+    required String prompt,
+    required String conversationId,
+    required String clientRequestId,
+    required ChatExecutionMode executionMode,
+  });
+  Future<void> deleteImage(String id);
+  Future<Map<String, Object?>> artifactDownload(String id);
+  Future<Map<String, Object?>> artifactPreview(String id);
+  Future<Map<String, Object?>> updateArtifactHtml({
+    required String id,
+    required String html,
+    int? version,
+  });
+  Future<void> deleteArtifact(String id);
+  Future<SentIQBinaryResponse> downloadRemote(String url, {int maximumBytes});
   Future<Map<String, Object?>> askAboutSelection({
     required String conversationId,
     required String selectedText,
@@ -144,6 +172,70 @@ class ChatRepository implements ChatRepositoryContract {
   Future<ChatAttachment> upload(ChatAttachment attachment) {
     return _remote.upload(attachment);
   }
+
+  @override
+  Future<SentIQMultipartUpload> startUpload(
+    ChatAttachment attachment, {
+    String? conversationId,
+  }) {
+    return _remote.startUpload(attachment, conversationId: conversationId);
+  }
+
+  @override
+  ChatAttachment attachmentFromUpload(
+    ChatAttachment attachment,
+    Map<String, Object?> payload,
+  ) => _remote.attachmentFromUpload(attachment, payload);
+
+  @override
+  Future<SentIQSseConnection> fileUpdates() => _remote.fileUpdates();
+
+  @override
+  Future<void> clearFileSession(String? analysisId) =>
+      _remote.clearFileSession(analysisId);
+
+  @override
+  Future<ImageQuotaState> imageQuota() => _remote.imageQuota();
+
+  @override
+  Future<Map<String, Object?>> generateImage({
+    required String prompt,
+    required String conversationId,
+    required String clientRequestId,
+    required ChatExecutionMode executionMode,
+  }) => _remote.generateImage(
+    prompt: prompt,
+    conversationId: conversationId,
+    clientRequestId: clientRequestId,
+    executionMode: executionMode,
+  );
+
+  @override
+  Future<void> deleteImage(String id) => _remote.deleteImage(id);
+
+  @override
+  Future<Map<String, Object?>> artifactDownload(String id) =>
+      _remote.artifactDownload(id);
+
+  @override
+  Future<Map<String, Object?>> artifactPreview(String id) =>
+      _remote.artifactPreview(id);
+
+  @override
+  Future<Map<String, Object?>> updateArtifactHtml({
+    required String id,
+    required String html,
+    int? version,
+  }) => _remote.updateArtifactHtml(id: id, html: html, version: version);
+
+  @override
+  Future<void> deleteArtifact(String id) => _remote.deleteArtifact(id);
+
+  @override
+  Future<SentIQBinaryResponse> downloadRemote(
+    String url, {
+    int maximumBytes = 64 * 1024 * 1024,
+  }) => _remote.downloadRemote(url, maximumBytes: maximumBytes);
 
   @override
   Future<Map<String, Object?>> askAboutSelection({

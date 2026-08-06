@@ -20,7 +20,7 @@ assert.equal(
     .mobile_contract.contract_version,
   MOBILE_CONTRACT_VERSION,
 );
-assert.equal(MOBILE_CONTRACT_VERSION, 2);
+assert.equal(MOBILE_CONTRACT_VERSION, 3);
 assert.equal(MOBILE_CONTRACT.compatibility.unknown_fields, "ignore");
 assert.equal(MOBILE_CONTRACT.compatibility.unknown_sse_events, "ignore");
 assert.equal(MOBILE_CONTRACT.sse.version, 1);
@@ -29,6 +29,10 @@ assert.ok(MOBILE_CONTRACT.endpoints.chat_stream.startsWith("/api/"));
 assert.ok(MOBILE_CONTRACT.endpoints.chat_sync.startsWith("/api/"));
 assert.ok(MOBILE_CONTRACT.endpoints.chat_selection.startsWith("/api/"));
 assert.ok(MOBILE_CONTRACT.endpoints.conversation_messages.includes(":id"));
+assert.ok(MOBILE_CONTRACT.endpoints.image_quota.endsWith("/quota"));
+assert.ok(MOBILE_CONTRACT.endpoints.image_delete.includes(":id"));
+assert.ok(MOBILE_CONTRACT.endpoints.generated_file_download.includes(":id"));
+assert.ok(MOBILE_CONTRACT.endpoints.generated_file_update.includes(":id"));
 assert.strictEqual(withMobileContract("unchanged"), "unchanged");
 
 console.log("Mobile API contract regression checks passed.");

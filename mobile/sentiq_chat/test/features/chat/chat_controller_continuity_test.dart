@@ -1,6 +1,5 @@
 import 'dart:async';
-import 'dart:typed_data';
-
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sentiq_chat/core/network/api_client.dart';
@@ -9,6 +8,8 @@ import 'package:sentiq_chat/core/network/sse_event.dart';
 import 'package:sentiq_chat/features/chat/application/chat_controller.dart';
 import 'package:sentiq_chat/features/chat/data/chat_repository.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
+import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
+import 'package:sentiq_chat/features/multimodal/platform/artifact_platform_service.dart';
 import 'package:sentiq_chat/features/workspace/application/workspace_controller.dart';
 
 class FakeNetworkMonitor implements NetworkMonitor {
@@ -41,6 +42,14 @@ class FakeChatRepository implements ChatRepositoryContract {
   int syncCalls = 0;
   int cancelCalls = 0;
   final Set<String> requestIds = <String>{};
+  final List<StreamController<SentIQSseEvent>> fileUpdateStreams =
+      <StreamController<SentIQSseEvent>>[];
+  SentIQMultipartUpload? activeUpload;
+  bool holdUploads = false;
+  Completer<Map<String, Object?>>? pendingUploadResponse;
+
+  StreamController<SentIQSseEvent> get fileUpdateStream =>
+      fileUpdateStreams.last;
 
   StreamController<SentIQSseEvent> newStream() {
     final StreamController<SentIQSseEvent> controller =
@@ -137,6 +146,123 @@ class FakeChatRepository implements ChatRepositoryContract {
   Future<void> updateTurnState(String clientRequestId, String state) async {}
 
   @override
+  Future<SentIQMultipartUpload> startUpload(
+    ChatAttachment attachment, {
+    String? conversationId,
+  }) async {
+    final Completer<Map<String, Object?>> response =
+        Completer<Map<String, Object?>>();
+    final StreamController<double> progress =
+        StreamController<double>.broadcast();
+    final SentIQMultipartUpload upload = SentIQMultipartUpload(
+      response: response.future,
+      progress: progress.stream,
+      onCancel: () async {
+        if (!response.isCompleted) {
+          response.completeError(Exception('cancelled'));
+        }
+        if (!progress.isClosed) await progress.close();
+      },
+    );
+    activeUpload = upload;
+    progress.add(.5);
+    if (holdUploads) {
+      pendingUploadResponse = response;
+    } else {
+      response.complete(<String, Object?>{
+        'filename': attachment.name,
+        'extracted_text': 'Ready',
+        'analysis_id': 'analysis-${attachment.id}',
+      });
+      await progress.close();
+    }
+    return upload;
+  }
+
+  @override
+  ChatAttachment attachmentFromUpload(
+    ChatAttachment attachment,
+    Map<String, Object?> payload,
+  ) => attachment.copyWith(
+    uploading: false,
+    progress: 1,
+    extractedText: payload['extracted_text']?.toString(),
+    analysisId: payload['analysis_id']?.toString(),
+  );
+
+  @override
+  Future<SentIQSseConnection> fileUpdates() async {
+    final StreamController<SentIQSseEvent> controller =
+        StreamController<SentIQSseEvent>.broadcast();
+    fileUpdateStreams.add(controller);
+    return SentIQSseConnection(
+      events: controller.stream,
+      onCancel: () async {
+        if (!controller.isClosed) await controller.close();
+      },
+    );
+  }
+
+  @override
+  Future<void> clearFileSession(String? analysisId) async {}
+
+  @override
+  Future<ImageQuotaState> imageQuota() async =>
+      const ImageQuotaState(remaining: 2, limit: 2);
+
+  @override
+  Future<Map<String, Object?>> generateImage({
+    required String prompt,
+    required String conversationId,
+    required String clientRequestId,
+    required ChatExecutionMode executionMode,
+  }) async => <String, Object?>{
+    'type': 'image',
+    'image_id': 'image-1',
+    'image_url': 'https://cdn.example/image.png',
+    'prompt': prompt,
+    'remaining': 1,
+    'limit': 2,
+  };
+
+  @override
+  Future<void> deleteImage(String id) async {}
+
+  @override
+  Future<Map<String, Object?>> artifactDownload(String id) async =>
+      <String, Object?>{'url': 'https://cdn.example/file'};
+
+  @override
+  Future<Map<String, Object?>> artifactPreview(String id) async =>
+      <String, Object?>{};
+
+  @override
+  Future<Map<String, Object?>> updateArtifactHtml({
+    required String id,
+    required String html,
+    int? version,
+  }) async => <String, Object?>{
+    'file_id': id,
+    'file_name': 'file.html',
+    'format': 'html',
+    'mime_type': 'text/html',
+    'html': html,
+  };
+
+  @override
+  Future<void> deleteArtifact(String id) async {}
+
+  @override
+  Future<SentIQBinaryResponse> downloadRemote(
+    String url, {
+    int maximumBytes = 64 * 1024 * 1024,
+  }) async => SentIQBinaryResponse(
+    bytes: Uint8List.fromList(<int>[1, 2, 3]),
+    contentType: 'application/octet-stream',
+    filename: 'file.bin',
+  );
+
+  @override
   Future<ChatAttachment> upload(ChatAttachment attachment) async =>
       attachment.copyWith(uploading: false, failed: false);
 }
@@ -156,12 +282,14 @@ SentIQSseEvent event(
 
 Future<ChatController> createController(
   FakeChatRepository repository,
-  FakeNetworkMonitor network,
-) async {
+  FakeNetworkMonitor network, {
+  ArtifactPlatformService artifactPlatform = const ArtifactPlatformService(),
+}) async {
   final ChatController controller = ChatController(
     session: const WorkspaceSession(ownerScope: 'user-1', cloudEnabled: true),
     repository: repository,
     networkMonitor: network,
+    artifactPlatform: artifactPlatform,
   );
   await controller.initialize();
   return controller;
@@ -351,6 +479,253 @@ void main() {
     );
 
     expect(controller.state.attachments.single.isImage, isTrue);
+    controller.dispose();
+    await network.close();
+  });
+
+  test(
+    'file analysis updates reconnect to uploaded attachment state',
+    () async {
+      final FakeChatRepository repository = FakeChatRepository();
+      final FakeNetworkMonitor network = FakeNetworkMonitor(
+        NetworkAvailability.online,
+      );
+      final ChatController controller = await createController(
+        repository,
+        network,
+      );
+      await controller.addAttachment(
+        ChatAttachment(
+          id: 'pdf-1',
+          name: 'report.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 128,
+          bytes: Uint8List.fromList(<int>[1, 2, 3]),
+        ),
+        conversationId: 'a',
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.state.attachments.single.analysisId, 'analysis-pdf-1');
+      repository.fileUpdateStream.add(
+        event('file_analysis', <String, Object?>{
+          'analysis_id': 'analysis-pdf-1',
+          'status': 'error',
+          'error': 'Analysis disconnected.',
+        }),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.state.attachments.single.failed, isTrue);
+      expect(
+        controller.state.attachments.single.statusMessage,
+        contains('disconnected'),
+      );
+      controller.dispose();
+      await network.close();
+    },
+  );
+
+  test(
+    'image mode creates a persisted image response and updates quota',
+    () async {
+      final FakeChatRepository repository = FakeChatRepository();
+      final FakeNetworkMonitor network = FakeNetworkMonitor(
+        NetworkAvailability.online,
+      );
+      final ChatController controller = await createController(
+        repository,
+        network,
+      );
+      controller.setImageGenerationMode(true);
+      expect(
+        await controller.send(conversationId: 'a', text: 'A quiet lake'),
+        isTrue,
+      );
+      final ChatMessage? assistant = controller.state.thread('a').lastAssistant;
+      expect(assistant?.metadata['image'], isA<Map<String, Object?>>());
+      expect(controller.state.imageQuota.remaining, 1);
+      controller.dispose();
+      await network.close();
+    },
+  );
+
+  test(
+    'cancels an active attachment upload without leaving a failed item',
+    () async {
+      final FakeChatRepository repository = FakeChatRepository()
+        ..holdUploads = true;
+      final FakeNetworkMonitor network = FakeNetworkMonitor(
+        NetworkAvailability.online,
+      );
+      final ChatController controller = await createController(
+        repository,
+        network,
+      );
+      unawaited(
+        controller.addAttachment(
+          ChatAttachment(
+            id: 'pending-pdf',
+            name: 'pending.pdf',
+            mimeType: 'application/pdf',
+            sizeBytes: 128,
+            bytes: Uint8List.fromList(<int>[1, 2, 3]),
+          ),
+          conversationId: 'a',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.state.attachments.single.uploading, isTrue);
+      await controller.cancelAttachmentUpload('pending-pdf');
+      await Future<void>.delayed(Duration.zero);
+      final ChatAttachment cancelled = controller.state.attachments.single;
+      expect(cancelled.cancelled, isTrue);
+      expect(cancelled.failed, isFalse);
+      expect(cancelled.statusMessage, 'Upload cancelled');
+      controller.dispose();
+      await network.close();
+    },
+  );
+
+  test('reconnects file analysis updates after network loss', () async {
+    final FakeChatRepository repository = FakeChatRepository();
+    final FakeNetworkMonitor network = FakeNetworkMonitor(
+      NetworkAvailability.online,
+    );
+    final ChatController controller = await createController(
+      repository,
+      network,
+    );
+    await controller.addAttachment(
+      ChatAttachment(
+        id: 'reconnect-pdf',
+        name: 'reconnect.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 128,
+        bytes: Uint8List.fromList(<int>[1, 2, 3]),
+      ),
+      conversationId: 'a',
+    );
+    await Future<void>.delayed(Duration.zero);
+    final int beforeReconnect = repository.fileUpdateStreams.length;
+    network.emit(NetworkAvailability.offline);
+    await Future<void>.delayed(Duration.zero);
+    network.emit(NetworkAvailability.online);
+    await Future<void>.delayed(Duration.zero);
+    expect(repository.fileUpdateStreams.length, greaterThan(beforeReconnect));
+    repository.fileUpdateStream.add(
+      event('file_analysis', <String, Object?>{
+        'analysis_id': 'analysis-reconnect-pdf',
+        'status': 'complete',
+      }),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.state.attachments.single.failed, isFalse);
+    expect(controller.state.attachments.single.statusMessage, 'Ready');
+    controller.dispose();
+    await network.close();
+  });
+
+  test(
+    'downloads generated images and artifacts through the native boundary',
+    () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      const MethodChannel channel = MethodChannel(
+        'phase4-controller-artifacts',
+      );
+      final List<MethodCall> calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall call) async {
+            calls.add(call);
+            return call.method == 'saveFile' ? 'content://saved/item' : null;
+          });
+      final FakeChatRepository repository = FakeChatRepository();
+      final FakeNetworkMonitor network = FakeNetworkMonitor(
+        NetworkAvailability.online,
+      );
+      final ChatController controller = await createController(
+        repository,
+        network,
+        artifactPlatform: const ArtifactPlatformService(channel: channel),
+      );
+      await controller.performImageAction(
+        const GeneratedImagePayload(
+          id: 'image-download',
+          url: 'https://cdn.example/image.png',
+        ),
+        ArtifactAction.download,
+      );
+      await controller.performArtifactAction(
+        const GeneratedArtifactPayload(
+          id: 'artifact-download',
+          fileName: 'report.pdf',
+          format: 'pdf',
+          mimeType: 'application/pdf',
+        ),
+        ArtifactAction.download,
+      );
+      expect(
+        calls.where((MethodCall call) => call.method == 'saveFile'),
+        hasLength(2),
+      );
+      controller.dispose();
+      await network.close();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    },
+  );
+
+  test('merges WebSurf streaming sources, images and completion', () async {
+    final FakeChatRepository repository = FakeChatRepository();
+    final FakeNetworkMonitor network = FakeNetworkMonitor(
+      NetworkAvailability.online,
+    );
+    final ChatController controller = await createController(
+      repository,
+      network,
+    );
+    expect(
+      await controller.send(conversationId: 'web', text: 'Current result'),
+      isTrue,
+    );
+    await Future<void>.delayed(Duration.zero);
+    final StreamController<SentIQSseEvent> stream = repository.streams.single;
+    final Map<String, Object?> web = <String, Object?>{
+      'version': 2,
+      'query': 'Current result',
+      'sources': <Object?>[
+        <String, Object?>{
+          'id': 'S1',
+          'title': 'Source one',
+          'url': 'https://example.com/one',
+          'domain': 'example.com',
+          'snippet': 'Evidence',
+        },
+      ],
+    };
+    stream.add(
+      event('websurf_sources', <String, Object?>{
+        'web_search': web,
+        'images': <String>['https://images.example/result.jpg'],
+      }),
+    );
+    stream.add(
+      event('websurf_complete', <String, Object?>{
+        'answer': 'Grounded completion.',
+        'web_search': web,
+        'images': <String>['https://images.example/result.jpg'],
+      }),
+    );
+    stream.add(event('done'));
+    await stream.close();
+    await Future<void>.delayed(Duration.zero);
+    final ChatMessage? assistant = controller.state.thread('web').lastAssistant;
+    final WebSurfPayload payload = WebSurfPayload.fromJson(
+      (assistant?.metadata['websurf_v2'] as Map).map(
+        (Object? key, Object? value) => MapEntry(key.toString(), value),
+      ),
+    );
+    expect(payload.sources, hasLength(1));
+    expect(payload.imageUrls, hasLength(1));
+    expect(assistant?.content, contains('Grounded completion.'));
     controller.dispose();
     await network.close();
   });

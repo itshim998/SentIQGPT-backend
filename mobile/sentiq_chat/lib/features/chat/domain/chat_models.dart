@@ -45,6 +45,9 @@ class ChatAttachment {
     this.sourceDocumentId,
     this.uploading = false,
     this.failed = false,
+    this.cancelled = false,
+    this.progress = 0,
+    this.statusMessage,
   });
 
   final String id;
@@ -57,6 +60,9 @@ class ChatAttachment {
   final String? sourceDocumentId;
   final bool uploading;
   final bool failed;
+  final bool cancelled;
+  final double progress;
+  final String? statusMessage;
 
   bool get isImage =>
       mimeType == 'image/png' ||
@@ -69,6 +75,10 @@ class ChatAttachment {
     String? sourceDocumentId,
     bool? uploading,
     bool? failed,
+    bool? cancelled,
+    double? progress,
+    String? statusMessage,
+    bool clearStatusMessage = false,
   }) {
     return ChatAttachment(
       id: id,
@@ -81,6 +91,11 @@ class ChatAttachment {
       sourceDocumentId: sourceDocumentId ?? this.sourceDocumentId,
       uploading: uploading ?? this.uploading,
       failed: failed ?? this.failed,
+      cancelled: cancelled ?? this.cancelled,
+      progress: progress ?? this.progress,
+      statusMessage: clearStatusMessage
+          ? null
+          : statusMessage ?? this.statusMessage,
     );
   }
 
@@ -201,7 +216,23 @@ class ChatMessage {
     Map<String, Object?> json, {
     required String conversationId,
   }) {
-    final Map<String, Object?> metadata = _stringMap(json['metadata']);
+    final Map<String, Object?> metadata = <String, Object?>{
+      ..._stringMap(json['meta'] ?? json['metadata']),
+      if (json['message_type'] != null) 'type': json['message_type'],
+      if (json['image_url'] != null) 'image_url': json['image_url'],
+      if (json['storage_path'] != null) 'storage_path': json['storage_path'],
+      if (json['prompt'] != null) 'prompt': json['prompt'],
+      if (json['provider'] != null) 'provider_used': json['provider'],
+      if (json['file_size_bytes'] != null)
+        'file_size_bytes': json['file_size_bytes'],
+      if (json['file_url'] != null) 'file_url': json['file_url'],
+      if (json['file_name'] != null) 'file_name': json['file_name'],
+      if (json['file_format'] != null) 'format': json['file_format'],
+      if (json['mime_type'] != null) 'mime_type': json['mime_type'],
+      if (json['generated_file_id'] != null)
+        'file_id': json['generated_file_id'],
+      if (json['preview_json'] != null) 'preview': json['preview_json'],
+    };
     final String roleValue =
         (json['role'] ?? json['message_role'] ?? 'assistant')
             .toString()
@@ -333,7 +364,7 @@ class ChatMessage {
     'created_at': createdAt.toUtc().toIso8601String(),
     if (clientRequestId != null) 'client_request_id': clientRequestId,
     if (executionMode != null) 'execution_mode': executionMode!.name,
-    if (metadata.isNotEmpty) 'metadata': metadata,
+    if (metadata.isNotEmpty) 'meta': metadata,
   };
 }
 

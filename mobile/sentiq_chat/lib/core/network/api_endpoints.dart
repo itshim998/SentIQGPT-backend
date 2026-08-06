@@ -16,7 +16,16 @@ abstract final class ApiEndpoints {
   static const String memories = '/api/memories';
   static const String filesUpload = '/api/files/upload';
   static const String filesUpdates = '/api/files/updates';
+  static const String filesSession = '/api/files/session';
   static const String imagesGenerate = '/api/images/generate';
+  static const String imagesQuota = '/api/images/quota';
+  static String image(String id) => '/api/images/${Uri.encodeComponent(id)}';
+  static String generatedFile(String id) =>
+      '/api/generated-files/${Uri.encodeComponent(id)}';
+  static String generatedFileDownload(String id) =>
+      '${generatedFile(id)}/download';
+  static String generatedFilePreview(String id) =>
+      '${generatedFile(id)}/preview-url';
   static const String deepResearchStart = '/api/deep-research/start';
   static const String billingMe = '/api/billing/me';
   static const String liveStatus = '/api/live/status';

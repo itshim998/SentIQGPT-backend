@@ -1,5 +1,5 @@
 import 'dart:async';
-
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sentiq_chat/core/network/api_client.dart';
@@ -8,6 +8,9 @@ import 'package:sentiq_chat/core/network/sse_event.dart';
 import 'package:sentiq_chat/features/chat/application/token_batcher.dart';
 import 'package:sentiq_chat/features/chat/data/chat_repository.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
+import 'package:sentiq_chat/features/multimodal/data/content_policy.dart';
+import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
+import 'package:sentiq_chat/features/multimodal/platform/artifact_platform_service.dart';
 import 'package:sentiq_chat/features/workspace/application/workspace_controller.dart';
 import 'package:uuid/uuid.dart';
 
@@ -91,7 +94,9 @@ class ChatState {
     this.executionMode = ChatExecutionMode.fast,
     this.attachments = const <ChatAttachment>[],
     this.webSearchEnabled = false,
+    this.imageGenerationMode = false,
     this.quota = const ChatQuotaState(),
+    this.imageQuota = const ImageQuotaState(),
     this.networkAvailable = true,
   });
 
@@ -99,7 +104,9 @@ class ChatState {
   final ChatExecutionMode executionMode;
   final List<ChatAttachment> attachments;
   final bool webSearchEnabled;
+  final bool imageGenerationMode;
   final ChatQuotaState quota;
+  final ImageQuotaState imageQuota;
   final bool networkAvailable;
 
   ChatThreadState thread(String conversationId) =>
@@ -114,7 +121,9 @@ class ChatState {
     ChatExecutionMode? executionMode,
     List<ChatAttachment>? attachments,
     bool? webSearchEnabled,
+    bool? imageGenerationMode,
     ChatQuotaState? quota,
+    ImageQuotaState? imageQuota,
     bool? networkAvailable,
   }) {
     return ChatState(
@@ -122,7 +131,9 @@ class ChatState {
       executionMode: executionMode ?? this.executionMode,
       attachments: attachments ?? this.attachments,
       webSearchEnabled: webSearchEnabled ?? this.webSearchEnabled,
+      imageGenerationMode: imageGenerationMode ?? this.imageGenerationMode,
       quota: quota ?? this.quota,
+      imageQuota: imageQuota ?? this.imageQuota,
       networkAvailable: networkAvailable ?? this.networkAvailable,
     );
   }
@@ -133,10 +144,12 @@ class ChatController extends StateNotifier<ChatState> {
     required WorkspaceSession session,
     required ChatRepositoryContract repository,
     required NetworkMonitor networkMonitor,
+    ArtifactPlatformService artifactPlatform = const ArtifactPlatformService(),
     Uuid uuid = const Uuid(),
   }) : _session = session,
        _repository = repository,
        _networkMonitor = networkMonitor,
+       _artifactPlatform = artifactPlatform,
        _uuid = uuid,
        super(const ChatState()) {
     _networkSubscription = _networkMonitor.changes.listen(_onNetworkChange);
@@ -145,11 +158,18 @@ class ChatController extends StateNotifier<ChatState> {
   final WorkspaceSession _session;
   final ChatRepositoryContract _repository;
   final NetworkMonitor _networkMonitor;
+  final ArtifactPlatformService _artifactPlatform;
   final Uuid _uuid;
   late final StreamSubscription<NetworkAvailability> _networkSubscription;
   final Map<String, SentIQSseConnection> _connections =
       <String, SentIQSseConnection>{};
   final Set<String> _cancelledRequestIds = <String>{};
+  final Map<String, SentIQMultipartUpload> _uploads =
+      <String, SentIQMultipartUpload>{};
+  final Map<String, StreamSubscription<double>> _uploadSubscriptions =
+      <String, StreamSubscription<double>>{};
+  SentIQSseConnection? _fileUpdateConnection;
+  Timer? _fileUpdateReconnectTimer;
   Set<String> _knownRequestIds = <String>{};
   bool _initialized = false;
 
@@ -163,17 +183,35 @@ class ChatController extends StateNotifier<ChatState> {
     _knownRequestIds = await _repository.knownRequestIds(_session.ownerScope);
     await Future.wait(<Future<void>>[
       refreshQuota(),
+      refreshImageQuota(),
       _repository.syncPending(
         ownerScope: _session.ownerScope,
         cloudEnabled: _session.cloudEnabled,
         networkAvailable: state.networkAvailable,
       ),
     ]);
+    if (_session.cloudEnabled && state.networkAvailable) {
+      unawaited(_startFileUpdates());
+    }
   }
 
   Future<void> refreshQuota() async {
     final ChatQuotaState quota = await _repository.quota();
     if (mounted) state = state.copyWith(quota: quota);
+  }
+
+  Future<void> refreshImageQuota() async {
+    final ImageQuotaState quota = await _repository.imageQuota();
+    if (mounted) state = state.copyWith(imageQuota: quota);
+  }
+
+  void setImageGenerationMode(bool enabled) {
+    if (enabled && !state.imageQuota.available) return;
+    state = state.copyWith(
+      imageGenerationMode: enabled,
+      webSearchEnabled: enabled ? false : state.webSearchEnabled,
+      attachments: enabled ? const <ChatAttachment>[] : state.attachments,
+    );
   }
 
   Future<void> loadConversation(
@@ -218,29 +256,135 @@ class ChatController extends StateNotifier<ChatState> {
     state = state.copyWith(webSearchEnabled: enabled);
   }
 
-  Future<void> addAttachment(ChatAttachment attachment) async {
-    if (state.attachments.length >= 10) return;
-    ChatAttachment next = attachment;
-    if (!attachment.isImage) next = attachment.copyWith(uploading: true);
-    state = state.copyWith(
-      attachments: <ChatAttachment>[...state.attachments, next],
-    );
-    if (attachment.isImage) return;
-    if (!state.networkAvailable) {
-      _replaceAttachment(next.copyWith(uploading: false, failed: true));
+  Future<void> addAttachment(
+    ChatAttachment attachment, {
+    String? conversationId,
+  }) async {
+    if (state.imageGenerationMode ||
+        state.attachments.length >= AttachmentPolicy.maximumAttachments) {
       return;
     }
+    final String? validation = AttachmentPolicy.validate(
+      filename: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+    );
+    if (validation != null) {
+      state = state.copyWith(
+        attachments: <ChatAttachment>[
+          ...state.attachments,
+          attachment.copyWith(
+            failed: true,
+            uploading: false,
+            statusMessage: validation,
+          ),
+        ],
+      );
+      return;
+    }
+    if (attachment.isImage) {
+      state = state.copyWith(
+        attachments: <ChatAttachment>[
+          ...state.attachments,
+          attachment.copyWith(progress: 1, statusMessage: 'Ready'),
+        ],
+      );
+      return;
+    }
+    final ChatAttachment pending = attachment.copyWith(
+      uploading: true,
+      failed: false,
+      cancelled: false,
+      progress: 0,
+      statusMessage: 'Uploading…',
+    );
+    state = state.copyWith(
+      attachments: <ChatAttachment>[...state.attachments, pending],
+    );
+    if (!state.networkAvailable) {
+      _replaceAttachment(
+        pending.copyWith(
+          uploading: false,
+          failed: true,
+          statusMessage: 'Connect to upload this file.',
+        ),
+      );
+      return;
+    }
+    await _uploadAttachment(pending, conversationId: conversationId);
+  }
+
+  Future<void> _uploadAttachment(
+    ChatAttachment attachment, {
+    String? conversationId,
+  }) async {
     try {
-      final ChatAttachment uploaded = await _repository.upload(attachment);
-      if (mounted) _replaceAttachment(uploaded);
-    } catch (_) {
-      if (mounted) {
-        _replaceAttachment(next.copyWith(uploading: false, failed: true));
-      }
+      final SentIQMultipartUpload upload = await _repository.startUpload(
+        attachment,
+        conversationId: conversationId,
+      );
+      _uploads[attachment.id] = upload;
+      _uploadSubscriptions[attachment.id] = upload.progress.listen((
+        double value,
+      ) {
+        final ChatAttachment? latest = _attachment(attachment.id);
+        if (latest == null || !mounted) return;
+        _replaceAttachment(
+          latest.copyWith(
+            progress: value,
+            statusMessage: value >= 1 ? 'Analyzing…' : 'Uploading…',
+          ),
+        );
+      });
+      final Map<String, Object?> payload = await upload.response;
+      if (!mounted || upload.isCancelled) return;
+      final ChatAttachment completed = _repository.attachmentFromUpload(
+        attachment,
+        payload,
+      );
+      _replaceAttachment(completed);
+    } catch (error) {
+      if (!mounted) return;
+      final ChatAttachment? latest = _attachment(attachment.id);
+      if (latest == null || latest.cancelled) return;
+      _replaceAttachment(
+        latest.copyWith(
+          uploading: false,
+          failed: true,
+          statusMessage: _friendlyError(error),
+        ),
+      );
+    } finally {
+      _uploads.remove(attachment.id);
+      await _uploadSubscriptions.remove(attachment.id)?.cancel();
+    }
+  }
+
+  Future<void> cancelAttachmentUpload(String id) async {
+    await _uploads[id]?.cancel();
+    await _uploadSubscriptions.remove(id)?.cancel();
+    _uploads.remove(id);
+    final ChatAttachment? attachment = _attachment(id);
+    if (attachment != null) {
+      _replaceAttachment(
+        attachment.copyWith(
+          uploading: false,
+          failed: false,
+          cancelled: true,
+          statusMessage: 'Upload cancelled',
+        ),
+      );
     }
   }
 
   void removeAttachment(String id) {
+    unawaited(_uploads[id]?.cancel());
+    unawaited(_uploadSubscriptions.remove(id)?.cancel());
+    _uploads.remove(id);
+    final ChatAttachment? attachment = _attachment(id);
+    if (attachment?.analysisId != null) {
+      unawaited(_repository.clearFileSession(attachment?.analysisId));
+    }
     state = state.copyWith(
       attachments: state.attachments
           .where((ChatAttachment item) => item.id != id)
@@ -248,18 +392,18 @@ class ChatController extends StateNotifier<ChatState> {
     );
   }
 
-  Future<void> retryAttachment(String id) async {
+  Future<void> retryAttachment(String id, {String? conversationId}) async {
     final ChatAttachment? attachment = _attachment(id);
     if (attachment == null || attachment.isImage) return;
-    _replaceAttachment(attachment.copyWith(uploading: true, failed: false));
-    try {
-      final ChatAttachment uploaded = await _repository.upload(attachment);
-      if (mounted) _replaceAttachment(uploaded);
-    } catch (_) {
-      if (mounted) {
-        _replaceAttachment(attachment.copyWith(uploading: false, failed: true));
-      }
-    }
+    final ChatAttachment next = attachment.copyWith(
+      uploading: true,
+      failed: false,
+      cancelled: false,
+      progress: 0,
+      statusMessage: 'Uploading…',
+    );
+    _replaceAttachment(next);
+    await _uploadAttachment(next, conversationId: conversationId);
   }
 
   Future<bool> send({
@@ -271,6 +415,13 @@ class ChatController extends StateNotifier<ChatState> {
   }) async {
     final String trimmed = text.trim();
     if (trimmed.isEmpty || !state.attachmentsReady) return false;
+    if (state.imageGenerationMode) {
+      return _sendImage(
+        conversationId: conversationId,
+        prompt: trimmed,
+        executionMode: executionMode ?? state.executionMode,
+      );
+    }
     final ChatExecutionMode mode = executionMode ?? state.executionMode;
     if (!state.quota.allows(mode)) return false;
     final ChatThreadState current = state.thread(conversationId);
@@ -361,6 +512,132 @@ class ChatController extends StateNotifier<ChatState> {
       ),
     );
     return true;
+  }
+
+  Future<bool> _sendImage({
+    required String conversationId,
+    required String prompt,
+    required ChatExecutionMode executionMode,
+  }) async {
+    if (!state.imageQuota.available || !state.networkAvailable) return false;
+    final ChatThreadState current = state.thread(conversationId);
+    if (current.generating) return false;
+    String requestId;
+    do {
+      requestId = _uuid.v4();
+    } while (_knownRequestIds.contains(requestId));
+    _knownRequestIds.add(requestId);
+    final DateTime now = DateTime.now().toUtc();
+    final ChatMessage user = ChatMessage(
+      id: 'local-image-user-$requestId',
+      conversationId: conversationId,
+      role: ChatMessageRole.user,
+      content: prompt,
+      createdAt: now,
+      status: ChatMessageStatus.pending,
+      clientRequestId: requestId,
+      executionMode: executionMode,
+      metadata: const <String, Object?>{'intent': 'image_generation'},
+      locallyCreated: true,
+    );
+    final ChatMessage assistant = ChatMessage(
+      id: 'local-image-assistant-$requestId',
+      conversationId: conversationId,
+      role: ChatMessageRole.assistant,
+      content: '',
+      createdAt: now.add(const Duration(microseconds: 1)),
+      status: ChatMessageStatus.streaming,
+      clientRequestId: requestId,
+      executionMode: executionMode,
+      locallyCreated: true,
+    );
+    _setThread(
+      conversationId,
+      current.copyWith(
+        messages: <ChatMessage>[...current.messages, user, assistant],
+        generating: true,
+        activeRequestId: requestId,
+        progress: <ChatProgressEvent>[
+          ChatProgressEvent(
+            kind: ChatProgressKind.toolStarted,
+            label: 'Creating image',
+            timestamp: now,
+          ),
+        ],
+        clearError: true,
+      ),
+    );
+    await _repository.saveAll(_session.ownerScope, <ChatMessage>[
+      user,
+      assistant,
+    ]);
+    await _repository.recordTurn(
+      ownerScope: _session.ownerScope,
+      conversationId: conversationId,
+      clientRequestId: requestId,
+      userMessageId: user.id,
+      assistantMessageId: assistant.id,
+      executionMode: executionMode,
+      state: 'streaming',
+    );
+    try {
+      final Map<String, Object?> response = await _repository.generateImage(
+        prompt: prompt,
+        conversationId: conversationId,
+        clientRequestId: requestId,
+        executionMode: executionMode,
+      );
+      final GeneratedImagePayload image = GeneratedImagePayload.fromJson(
+        response,
+      );
+      if (!image.valid) {
+        throw Exception('The image provider returned no usable image.');
+      }
+      final ChatMessage complete = assistant.copyWith(
+        content: _answerFrom(response),
+        status: ChatMessageStatus.complete,
+        metadata: <String, Object?>{...image.toJson(), 'image': image.toJson()},
+        locallyCreated:
+            !_session.cloudEnabled || response['persisted'] == false,
+      );
+      _replaceMessage(conversationId, assistant.id, complete);
+      await _finalizeTurn(
+        conversationId: conversationId,
+        requestId: requestId,
+        assistantStatus: ChatMessageStatus.complete,
+        userStatus: ChatMessageStatus.complete,
+        errorMessage: null,
+      );
+      _setThread(
+        conversationId,
+        state
+            .thread(conversationId)
+            .copyWith(
+              generating: false,
+              clearActiveRequest: true,
+              progress: <ChatProgressEvent>[
+                ChatProgressEvent(
+                  kind: ChatProgressKind.toolResult,
+                  label: 'Image ready',
+                  timestamp: DateTime.now().toUtc(),
+                  terminal: true,
+                ),
+              ],
+            ),
+      );
+      state = state.copyWith(imageQuota: ImageQuotaState.fromJson(response));
+      unawaited(refreshImageQuota());
+      return true;
+    } catch (error) {
+      await _finalizeTurn(
+        conversationId: conversationId,
+        requestId: requestId,
+        assistantStatus: ChatMessageStatus.failed,
+        userStatus: ChatMessageStatus.failed,
+        errorMessage: _friendlyError(error),
+      );
+      return false;
+    }
   }
 
   Future<void> stop(String conversationId) async {
@@ -555,6 +832,11 @@ class ChatController extends StateNotifier<ChatState> {
             batcher.add((event.payload['text'] ?? '').toString());
             break;
           case SentIQSseEventKind.fileArtifact:
+            _mergeAssistantMetadata(
+              request.conversationId,
+              assistantMessageId,
+              <String, Object?>{'artifact': event.payload},
+            );
             _addProgress(
               request.conversationId,
               _progressFrom(
@@ -648,6 +930,29 @@ class ChatController extends StateNotifier<ChatState> {
             break;
           case SentIQSseEventKind.webSurfSources:
           case SentIQSseEventKind.webSurfComplete:
+            final Map<String, Object?> web = _map(
+              event.payload['web_search'] ?? event.payload,
+            );
+            _mergeAssistantMetadata(
+              request.conversationId,
+              assistantMessageId,
+              <String, Object?>{
+                'websurf_v2': <String, Object?>{
+                  ...web,
+                  if (event.payload['answer'] != null)
+                    'answer': event.payload['answer'],
+                  if (event.payload['images'] != null)
+                    'images': event.payload['images'],
+                  if (event.kind == SentIQSseEventKind.webSurfSources)
+                    'partial': true,
+                },
+              },
+            );
+            if (event.kind == SentIQSseEventKind.webSurfComplete) {
+              final String webAnswer = (event.payload['answer'] ?? '')
+                  .toString();
+              if (webAnswer.isNotEmpty) batcher.add(webAnswer);
+            }
             _addProgress(
               request.conversationId,
               _progressFrom(
@@ -825,6 +1130,200 @@ class ChatController extends StateNotifier<ChatState> {
     await _repository.updateTurnState(requestId, assistantStatus.name);
   }
 
+  Future<void> performImageAction(
+    GeneratedImagePayload image,
+    ArtifactAction action,
+  ) async {
+    final Uint8List bytes = image.base64?.isNotEmpty == true
+        ? RemoteContentPolicy.decodeImageData(image.base64!)
+        : (await _repository.downloadRemote(
+            image.url,
+            maximumBytes: RemoteContentPolicy.maximumImageBytes,
+          )).bytes;
+    final String filename =
+        'sentiq-image-${image.id ?? DateTime.now().millisecondsSinceEpoch}.png';
+    switch (action) {
+      case ArtifactAction.copy:
+        await _artifactPlatform.copyImage(
+          bytes: bytes,
+          filename: filename,
+          mimeType: 'image/png',
+        );
+        break;
+      case ArtifactAction.share:
+        await _artifactPlatform.shareFile(
+          bytes: bytes,
+          filename: filename,
+          mimeType: 'image/png',
+        );
+        break;
+      case ArtifactAction.download:
+        await _artifactPlatform.saveFile(
+          bytes: bytes,
+          filename: filename,
+          mimeType: 'image/png',
+        );
+        break;
+      case ArtifactAction.open:
+        await _artifactPlatform.openFile(
+          bytes: bytes,
+          filename: filename,
+          mimeType: 'image/png',
+        );
+        break;
+    }
+  }
+
+  Future<void> performArtifactAction(
+    GeneratedArtifactPayload artifact,
+    ArtifactAction action,
+  ) async {
+    String? url = artifact.fileUrl;
+    if (artifact.id.isNotEmpty) {
+      final Map<String, Object?> response = await _repository.artifactDownload(
+        artifact.id,
+      );
+      url =
+          (response['download_url'] ??
+                  response['file_url'] ??
+                  response['url'] ??
+                  url)
+              ?.toString();
+    }
+    if (url == null || url.isEmpty) {
+      throw Exception('A secure download link is not available for this file.');
+    }
+    final SentIQBinaryResponse response = await _repository.downloadRemote(url);
+    final String filename = response.filename ?? artifact.fileName;
+    final String mimeType = artifact.mimeType.isEmpty
+        ? response.contentType
+        : artifact.mimeType;
+    switch (action) {
+      case ArtifactAction.copy:
+        await Clipboard.setData(ClipboardData(text: url));
+        break;
+      case ArtifactAction.share:
+        await _artifactPlatform.shareFile(
+          bytes: response.bytes,
+          filename: filename,
+          mimeType: mimeType,
+        );
+        break;
+      case ArtifactAction.download:
+        await _artifactPlatform.saveFile(
+          bytes: response.bytes,
+          filename: filename,
+          mimeType: mimeType,
+        );
+        break;
+      case ArtifactAction.open:
+        await _artifactPlatform.openFile(
+          bytes: response.bytes,
+          filename: filename,
+          mimeType: mimeType,
+        );
+        break;
+    }
+  }
+
+  Future<GeneratedArtifactPayload> saveArtifactHtml(
+    GeneratedArtifactPayload artifact,
+    String html,
+  ) async {
+    final String sanitized = RemoteContentPolicy.sanitizeHtml(html);
+    final Map<String, Object?> response = await _repository.updateArtifactHtml(
+      id: artifact.id,
+      html: sanitized,
+      version: artifact.version,
+    );
+    return GeneratedArtifactPayload.fromJson(response);
+  }
+
+  Future<void> deleteGeneratedImage(
+    String conversationId,
+    String messageId,
+    GeneratedImagePayload image,
+  ) async {
+    if (image.id != null) await _repository.deleteImage(image.id!);
+    await _markMetadataDeleted(conversationId, messageId, 'image');
+  }
+
+  Future<void> deleteGeneratedArtifact(
+    String conversationId,
+    String messageId,
+    GeneratedArtifactPayload artifact,
+  ) async {
+    if (artifact.id.isNotEmpty) await _repository.deleteArtifact(artifact.id);
+    await _markMetadataDeleted(conversationId, messageId, 'artifact');
+  }
+
+  Future<void> _markMetadataDeleted(
+    String conversationId,
+    String messageId,
+    String key,
+  ) async {
+    final ChatMessage? message = _message(conversationId, messageId);
+    if (message == null) {
+      return;
+    }
+    final Map<String, Object?> metadata = <String, Object?>{
+      ...message.metadata,
+    };
+    metadata['${key}_deleted'] = true;
+    final ChatMessage updated = message.copyWith(metadata: metadata);
+    _replaceMessage(conversationId, messageId, updated);
+    await _repository.save(_session.ownerScope, updated);
+  }
+
+  Future<void> _startFileUpdates() async {
+    if (!_session.cloudEnabled ||
+        !state.networkAvailable ||
+        _fileUpdateConnection != null) {
+      return;
+    }
+    try {
+      final SentIQSseConnection connection = await _repository.fileUpdates();
+      _fileUpdateConnection = connection;
+      await for (final SentIQSseEvent event in connection.events) {
+        if (event.kind != SentIQSseEventKind.fileAnalysis) continue;
+        _applyFileAnalysisUpdate(event.payload);
+      }
+    } catch (_) {
+      // The upload response remains authoritative. Reconnect while signed in.
+    } finally {
+      _fileUpdateConnection = null;
+      if (mounted && state.networkAvailable && _session.cloudEnabled) {
+        _fileUpdateReconnectTimer?.cancel();
+        _fileUpdateReconnectTimer = Timer(
+          const Duration(seconds: 2),
+          () => unawaited(_startFileUpdates()),
+        );
+      }
+    }
+  }
+
+  void _applyFileAnalysisUpdate(Map<String, Object?> payload) {
+    final String analysisId = (payload['analysis_id'] ?? '').toString();
+    if (analysisId.isEmpty) return;
+    for (final ChatAttachment attachment in state.attachments) {
+      if (attachment.analysisId != analysisId) continue;
+      final String status = (payload['status'] ?? payload['event'] ?? '')
+          .toString();
+      _replaceAttachment(
+        attachment.copyWith(
+          uploading: status == 'processing',
+          failed: status == 'error',
+          progress: status == 'complete' ? 1 : attachment.progress,
+          statusMessage: status == 'error'
+              ? (payload['error'] ?? 'Analysis could not finish.').toString()
+              : status == 'complete'
+              ? _completedFileNotice(attachment.statusMessage)
+              : 'Analyzing…',
+        ),
+      );
+    }
+  }
+
   void _appendAssistantText(
     String conversationId,
     String messageId,
@@ -864,7 +1363,9 @@ class ChatController extends StateNotifier<ChatState> {
   ) {
     final ChatMessage? message = _message(conversationId, messageId);
     if (message == null) return;
-    final Object? raw = payload['sources'] ?? payload['citations'];
+    final Map<String, Object?> web = _map(payload['web_search']);
+    final Object? raw =
+        payload['sources'] ?? payload['citations'] ?? web['sources'];
     if (raw is! List) return;
     final List<ChatCitation> citations = raw
         .whereType<Map>()
@@ -969,6 +1470,11 @@ class ChatController extends StateNotifier<ChatState> {
         ),
       );
       unawaited(refreshQuota());
+      unawaited(refreshImageQuota());
+      unawaited(_startFileUpdates());
+    } else {
+      unawaited(_fileUpdateConnection?.cancel());
+      _fileUpdateConnection = null;
     }
   }
 
@@ -977,6 +1483,15 @@ class ChatController extends StateNotifier<ChatState> {
     for (final SentIQSseConnection connection in _connections.values) {
       unawaited(connection.cancel());
     }
+    for (final SentIQMultipartUpload upload in _uploads.values) {
+      unawaited(upload.cancel());
+    }
+    for (final StreamSubscription<double> subscription
+        in _uploadSubscriptions.values) {
+      unawaited(subscription.cancel());
+    }
+    _fileUpdateReconnectTimer?.cancel();
+    unawaited(_fileUpdateConnection?.cancel());
     unawaited(_networkSubscription.cancel());
     super.dispose();
   }
@@ -1021,6 +1536,15 @@ String _routeLabel(String route) {
     'memory' => 'Updating memory',
     _ => 'Preparing a response',
   };
+}
+
+String _completedFileNotice(String? current) {
+  final String value = current?.trim() ?? '';
+  if (value.startsWith('This PDF appears to be scanned') ||
+      value.startsWith('This is a long PDF')) {
+    return value;
+  }
+  return 'Ready';
 }
 
 String _answerFrom(Map<String, Object?> payload) {

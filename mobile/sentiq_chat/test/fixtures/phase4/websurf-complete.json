@@ -1,0 +1,29 @@
+{
+  "answer": "Grounded answer from the returned sources.",
+  "web_search": {
+    "version": 2,
+    "presentationVersion": 1,
+    "query": "phase four fixture",
+    "trigger": "manual",
+    "sources": [
+      {
+        "id": "S1",
+        "title": "First source",
+        "url": "https://example.com/one",
+        "domain": "example.com",
+        "snippet": "First source summary.",
+        "thumbnail_url": "https://images.example.com/one.jpg"
+      },
+      {
+        "id": "S2",
+        "title": "Second source",
+        "url": "https://example.org/two",
+        "domain": "example.org",
+        "snippet": "Second source summary."
+      }
+    ],
+    "images": [
+      "https://images.example.com/result.jpg"
+    ]
+  }
+}

@@ -3,8 +3,11 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
+import 'package:sentiq_chat/features/multimodal/data/content_policy.dart';
+import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
 import 'package:sentiq_chat/shared/widgets/refractive_glass_surface.dart';
 import 'package:uuid/uuid.dart';
 
@@ -16,9 +19,13 @@ class ChatComposer extends StatefulWidget {
     required this.attachments,
     required this.webSearchEnabled,
     required this.enabled,
+    this.imageGenerationMode = false,
+    this.imageQuota = const ImageQuotaState(),
     required this.onExecutionModeChanged,
     required this.onWebSearchChanged,
     required this.onAttachmentAdded,
+    this.onImageGenerationModeChanged,
+    this.onAttachmentCancel,
     required this.onAttachmentRemoved,
     required this.onAttachmentRetry,
     required this.onSend,
@@ -33,9 +40,13 @@ class ChatComposer extends StatefulWidget {
   final List<ChatAttachment> attachments;
   final bool webSearchEnabled;
   final bool enabled;
+  final bool imageGenerationMode;
+  final ImageQuotaState imageQuota;
   final ValueChanged<ChatExecutionMode> onExecutionModeChanged;
   final ValueChanged<bool> onWebSearchChanged;
   final ValueChanged<ChatAttachment> onAttachmentAdded;
+  final ValueChanged<bool>? onImageGenerationModeChanged;
+  final ValueChanged<String>? onAttachmentCancel;
   final ValueChanged<String> onAttachmentRemoved;
   final ValueChanged<String> onAttachmentRetry;
   final Future<bool> Function(String text) onSend;
@@ -52,6 +63,7 @@ class _ChatComposerState extends State<ChatComposer> {
   );
   final FocusNode _focusNode = FocusNode();
   static const Uuid _uuid = Uuid();
+  final ImagePicker _imagePicker = ImagePicker();
   bool _sending = false;
 
   bool get _canSend =>
@@ -59,10 +71,13 @@ class _ChatComposerState extends State<ChatComposer> {
       !_sending &&
       !widget.generating &&
       _controller.text.trim().isNotEmpty &&
-      widget.attachments.every(
-        (ChatAttachment item) => !item.uploading && !item.failed,
-      ) &&
-      widget.quota.allows(widget.executionMode);
+      (widget.imageGenerationMode ||
+          widget.attachments.every(
+            (ChatAttachment item) => !item.uploading && !item.failed,
+          )) &&
+      (widget.imageGenerationMode ||
+          widget.quota.allows(widget.executionMode)) &&
+      (!widget.imageGenerationMode || widget.imageQuota.available);
 
   @override
   void initState() {
@@ -98,46 +113,108 @@ class _ChatComposerState extends State<ChatComposer> {
     if (!accepted) _focusNode.requestFocus();
   }
 
-  Future<void> _pickFiles({required bool imagesOnly}) async {
+  Future<void> _pickFiles() async {
     Navigator.of(context).pop();
     final FilePickerResult? result = await FilePicker.platform.pickFiles(
-      allowMultiple: !imagesOnly,
-      type: imagesOnly ? FileType.image : FileType.custom,
-      allowedExtensions: imagesOnly
-          ? null
-          : const <String>[
-              'pdf',
-              'txt',
-              'md',
-              'csv',
-              'json',
-              'doc',
-              'docx',
-              'ppt',
-              'pptx',
-              'xls',
-              'xlsx',
-              'png',
-              'jpg',
-              'jpeg',
-              'webp',
-            ],
+      allowMultiple: true,
+      type: FileType.custom,
+      allowedExtensions: const <String>[
+        'pdf',
+        'txt',
+        'md',
+        'csv',
+        'json',
+        'html',
+        'htm',
+        'xml',
+        'yaml',
+        'yml',
+        'dart',
+        'js',
+        'ts',
+        'py',
+        'java',
+        'kt',
+        'c',
+        'cpp',
+        'h',
+        'css',
+        'sql',
+        'png',
+        'jpg',
+        'jpeg',
+        'webp',
+      ],
       withData: true,
     );
     if (result == null) return;
     for (final PlatformFile file in result.files) {
       final Uint8List? bytes = file.bytes;
       if (bytes == null || bytes.isEmpty) continue;
-      widget.onAttachmentAdded(
-        ChatAttachment(
-          id: _uuid.v4(),
-          name: file.name,
-          mimeType: _mimeType(file.extension),
-          sizeBytes: file.size,
-          bytes: bytes,
-        ),
+      _addPickedAttachment(
+        name: file.name,
+        extension: file.extension,
+        size: file.size,
+        bytes: bytes,
       );
     }
+  }
+
+  Future<void> _pickImage({required ImageSource source}) async {
+    Navigator.of(context).pop();
+    if (source == ImageSource.gallery) {
+      final List<XFile> images = await _imagePicker.pickMultiImage(
+        imageQuality: 94,
+      );
+      for (final XFile image in images) {
+        await _addXFile(image);
+      }
+      return;
+    }
+    final XFile? image = await _imagePicker.pickImage(
+      source: source,
+      imageQuality: 94,
+    );
+    if (image != null) await _addXFile(image);
+  }
+
+  Future<void> _addXFile(XFile file) async {
+    final Uint8List bytes = await file.readAsBytes();
+    _addPickedAttachment(
+      name: file.name,
+      extension: file.name.contains('.') ? file.name.split('.').last : 'jpg',
+      size: bytes.length,
+      bytes: bytes,
+    );
+  }
+
+  void _addPickedAttachment({
+    required String name,
+    required String? extension,
+    required int size,
+    required Uint8List bytes,
+  }) {
+    final String mimeType = _mimeType(extension);
+    final String? validation = AttachmentPolicy.validate(
+      filename: name,
+      mimeType: mimeType,
+      sizeBytes: size,
+    );
+    if (validation != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$name: $validation')));
+      return;
+    }
+    widget.onAttachmentAdded(
+      ChatAttachment(
+        id: _uuid.v4(),
+        name: name,
+        mimeType: mimeType,
+        sizeBytes: size,
+        bytes: bytes,
+      ),
+    );
   }
 
   Future<void> _showTools() {
@@ -159,14 +236,20 @@ class _ChatComposerState extends State<ChatComposer> {
               ListTile(
                 leading: const Icon(Icons.attach_file_rounded),
                 title: const Text('Attach files'),
-                subtitle: const Text('PDF, documents, spreadsheets and text'),
-                onTap: () => unawaited(_pickFiles(imagesOnly: false)),
+                subtitle: const Text('PDF, text, code and supported images'),
+                onTap: () => unawaited(_pickFiles()),
               ),
               ListTile(
-                leading: const Icon(Icons.image_outlined),
-                title: const Text('Attach an image'),
-                subtitle: const Text('PNG, JPEG or WebP'),
-                onTap: () => unawaited(_pickFiles(imagesOnly: true)),
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Choose images'),
+                subtitle: const Text('Select one or more from your gallery'),
+                onTap: () => unawaited(_pickImage(source: ImageSource.gallery)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('Take a photo'),
+                subtitle: const Text('Use your Android camera'),
+                onTap: () => unawaited(_pickImage(source: ImageSource.camera)),
               ),
               SwitchListTile.adaptive(
                 secondary: Icon(
@@ -216,6 +299,9 @@ class _ChatComposerState extends State<ChatComposer> {
                     attachment: attachment,
                     onRemove: () => widget.onAttachmentRemoved(attachment.id),
                     onRetry: () => widget.onAttachmentRetry(attachment.id),
+                    onCancel: widget.onAttachmentCancel == null
+                        ? null
+                        : () => widget.onAttachmentCancel!(attachment.id),
                   );
                 },
               ),
@@ -225,7 +311,10 @@ class _ChatComposerState extends State<ChatComposer> {
             children: <Widget>[
               IconButton(
                 tooltip: 'Tools and attachments',
-                onPressed: widget.enabled && !widget.generating
+                onPressed:
+                    widget.enabled &&
+                        !widget.generating &&
+                        !widget.imageGenerationMode
                     ? () => unawaited(_showTools())
                     : null,
                 icon: Badge(
@@ -245,8 +334,10 @@ class _ChatComposerState extends State<ChatComposer> {
                   keyboardType: TextInputType.multiline,
                   textCapitalization: TextCapitalization.sentences,
                   textInputAction: TextInputAction.newline,
-                  decoration: const InputDecoration(
-                    hintText: 'Message SentIQ Chat',
+                  decoration: InputDecoration(
+                    hintText: widget.imageGenerationMode
+                        ? 'Describe the image you want'
+                        : 'Message SentIQ Chat',
                     border: InputBorder.none,
                     filled: false,
                     contentPadding: EdgeInsets.symmetric(
@@ -285,6 +376,12 @@ class _ChatComposerState extends State<ChatComposer> {
             ),
             child: Row(
               children: <Widget>[
+                _ImageModeToggle(
+                  enabled: widget.imageGenerationMode,
+                  available: widget.imageQuota.available,
+                  onChanged: widget.onImageGenerationModeChanged,
+                ),
+                const SizedBox(width: 4),
                 _ModeSelector(
                   mode: widget.executionMode,
                   quota: widget.quota,
@@ -302,6 +399,17 @@ class _ChatComposerState extends State<ChatComposer> {
                   ),
                 ],
                 const Spacer(),
+                if (widget.imageGenerationMode &&
+                    widget.imageQuota.remaining != null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: SentIQSpacing.xs),
+                    child: Text(
+                      '${widget.imageQuota.remaining} images left',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: palette.textMuted,
+                      ),
+                    ),
+                  ),
                 Text(
                   '${_controller.text.characters.length}/10000',
                   style: Theme.of(
@@ -323,6 +431,32 @@ class _ChatComposerState extends State<ChatComposer> {
       ..dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+}
+
+class _ImageModeToggle extends StatelessWidget {
+  const _ImageModeToggle({
+    required this.enabled,
+    required this.available,
+    required this.onChanged,
+  });
+
+  final bool enabled;
+  final bool available;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: available ? 'Create images' : 'Image allowance unavailable',
+      child: FilterChip(
+        avatar: const Icon(Icons.image_outlined, size: 16),
+        label: const Text('Image'),
+        selected: enabled,
+        onSelected: available && onChanged != null ? onChanged : null,
+        visualDensity: VisualDensity.compact,
+      ),
+    );
   }
 }
 
@@ -399,11 +533,13 @@ class _AttachmentPreview extends StatelessWidget {
     required this.attachment,
     required this.onRemove,
     required this.onRetry,
+    this.onCancel,
   });
 
   final ChatAttachment attachment;
   final VoidCallback onRemove;
   final VoidCallback onRetry;
+  final VoidCallback? onCancel;
 
   @override
   Widget build(BuildContext context) {
@@ -443,25 +579,46 @@ class _AttachmentPreview extends StatelessWidget {
                   style: Theme.of(context).textTheme.labelMedium,
                 ),
                 Text(
-                  attachment.failed
-                      ? 'Upload failed'
-                      : attachment.uploading
-                      ? 'Preparing…'
-                      : _fileSize(attachment.sizeBytes),
+                  attachment.statusMessage ??
+                      (attachment.failed
+                          ? 'Upload failed'
+                          : attachment.uploading
+                          ? 'Preparing…'
+                          : _fileSize(attachment.sizeBytes)),
                   maxLines: 1,
                   style: Theme.of(context).textTheme.labelSmall,
                 ),
+                if (attachment.uploading)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: LinearProgressIndicator(
+                      value: attachment.progress > 0
+                          ? attachment.progress
+                          : null,
+                      minHeight: 2,
+                    ),
+                  ),
               ],
             ),
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
-            tooltip: attachment.failed
+            tooltip: attachment.uploading
+                ? 'Cancel upload'
+                : attachment.failed
                 ? 'Retry attachment'
                 : 'Remove attachment',
-            onPressed: attachment.failed ? onRetry : onRemove,
+            onPressed: attachment.uploading
+                ? onCancel
+                : attachment.failed
+                ? onRetry
+                : onRemove,
             icon: Icon(
-              attachment.failed ? Icons.refresh_rounded : Icons.close_rounded,
+              attachment.uploading
+                  ? Icons.stop_circle_outlined
+                  : attachment.failed
+                  ? Icons.refresh_rounded
+                  : Icons.close_rounded,
               size: 18,
             ),
           ),

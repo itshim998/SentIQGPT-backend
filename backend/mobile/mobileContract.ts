@@ -1,6 +1,6 @@
 import express, { type Response } from "express";
 
-export const MOBILE_CONTRACT_VERSION = 2;
+export const MOBILE_CONTRACT_VERSION = 3;
 export const MOBILE_MINIMUM_CLIENT_CONTRACT_VERSION = 1;
 
 export const MOBILE_CONTRACT = Object.freeze({
@@ -54,6 +54,13 @@ export const MOBILE_CONTRACT = Object.freeze({
     file_upload: "/api/files/upload",
     file_updates: "/api/files/updates",
     image_generation: "/api/images/generate",
+    image_quota: "/api/images/quota",
+    image_delete: "/api/images/:id",
+    file_session: "/api/files/session",
+    generated_file_download: "/api/generated-files/:id/download",
+    generated_file_preview: "/api/generated-files/:id/preview-url",
+    generated_file_update: "/api/generated-files/:id",
+    generated_file_delete: "/api/generated-files/:id",
     deep_research_start: "/api/deep-research/start",
     billing_me: "/api/billing/me",
     live_status: "/api/live/status",

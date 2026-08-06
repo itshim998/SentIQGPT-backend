@@ -10,6 +10,7 @@ import 'package:sentiq_chat/features/chat/application/chat_controller.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
 import 'package:sentiq_chat/features/chat/presentation/chat_composer.dart';
 import 'package:sentiq_chat/features/chat/presentation/chat_message_list.dart';
+import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
 import 'package:sentiq_chat/features/workspace/application/workspace_controller.dart';
 import 'package:sentiq_chat/features/workspace/domain/conversation_summary.dart';
 import 'package:sentiq_chat/features/workspace/presentation/conversation_sidebar.dart';
@@ -432,6 +433,25 @@ class _WorkspaceCanvas extends StatelessWidget {
                           ),
                         );
                       },
+                      onImageAction: chatController.performImageAction,
+                      onArtifactAction: chatController.performArtifactAction,
+                      onDeleteImage:
+                          (ChatMessage message, GeneratedImagePayload image) =>
+                              chatController.deleteGeneratedImage(
+                                conversationId,
+                                message.id,
+                                image,
+                              ),
+                      onDeleteArtifact:
+                          (
+                            ChatMessage message,
+                            GeneratedArtifactPayload artifact,
+                          ) => chatController.deleteGeneratedArtifact(
+                            conversationId,
+                            message.id,
+                            artifact,
+                          ),
+                      onSaveArtifactHtml: chatController.saveArtifactHtml,
                     ),
                   ),
                 ),
@@ -454,15 +474,32 @@ class _WorkspaceCanvas extends StatelessWidget {
                   generating: thread.generating,
                   attachments: chat.attachments,
                   webSearchEnabled: chat.webSearchEnabled,
+                  imageGenerationMode: chat.imageGenerationMode,
+                  imageQuota: chat.imageQuota,
                   enabled: chat.networkAvailable,
                   onExecutionModeChanged: chatController.setExecutionMode,
                   onWebSearchChanged: chatController.setWebSearchEnabled,
+                  onImageGenerationModeChanged:
+                      chatController.setImageGenerationMode,
                   onAttachmentAdded: (ChatAttachment attachment) {
-                    unawaited(chatController.addAttachment(attachment));
+                    unawaited(
+                      chatController.addAttachment(
+                        attachment,
+                        conversationId: conversationId,
+                      ),
+                    );
                   },
                   onAttachmentRemoved: chatController.removeAttachment,
                   onAttachmentRetry: (String id) {
-                    unawaited(chatController.retryAttachment(id));
+                    unawaited(
+                      chatController.retryAttachment(
+                        id,
+                        conversationId: conversationId,
+                      ),
+                    );
+                  },
+                  onAttachmentCancel: (String id) {
+                    unawaited(chatController.cancelAttachmentUpload(id));
                   },
                   onSend: (String text) async {
                     final bool accepted = await chatController.send(
