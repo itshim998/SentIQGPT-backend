@@ -3,7 +3,9 @@ name: Apply and verify Phase 5
 on:
   push:
     branches: [feature/flutter-android-app]
-    paths: [.github/workflows/phase5-apply.yml]
+    paths:
+      - .github/workflows/phase5-apply.yml
+      - tool/phase5-analyzer-fix.py
 
 permissions:
   contents: write
