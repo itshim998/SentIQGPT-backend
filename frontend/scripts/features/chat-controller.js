@@ -11057,9 +11057,60 @@ import {
     },
   };
 
+  function readPromptHandoff() {
+    const rawHash = window.location.hash.startsWith("#")
+      ? window.location.hash.slice(1)
+      : "";
+    if (!rawHash) return null;
+
+    const params = new URLSearchParams(rawHash);
+    const prompt = String(params.get("prompt") || "").trim();
+    if (!prompt) return null;
+
+    return {
+      prompt: prompt.slice(0, 12000),
+      shouldSubmit: params.get("submit") !== "0",
+    };
+  }
+
+  async function consumePromptHandoff() {
+    const handoff = readPromptHandoff();
+    if (!handoff || !chatInput) return;
+
+    // Remove the prompt from browser history before it is rendered or sent.
+    const cleanUrl = `${window.location.pathname}${window.location.search}`;
+    window.history.replaceState(window.history.state, "", cleanUrl);
+
+    chatInput.value = handoff.prompt;
+    chatInput.dispatchEvent(new Event("input", { bubbles: true }));
+    autoResizeInput();
+    syncComposerInteractivity();
+
+    if (!handoff.shouldSubmit) {
+      chatInput.focus();
+      return;
+    }
+
+    // Let guest/auth state and the composer settle before using the normal
+    // send path. This preserves all existing validation, quotas and streaming.
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+
+    try {
+      await handleSend();
+    } catch (error) {
+      debugWarn("[UI] Labs prompt handoff could not be submitted:", getSafeErrorMessage(error));
+      chatInput.focus();
+    }
+  }
+
   function startChatUi() {
     init()
-      .then(() => window.SentIQBootstrap?.markReady?.())
+      .then(async () => {
+        await consumePromptHandoff();
+        window.SentIQBootstrap?.markReady?.();
+      })
       .catch((error) => {
         window.SentIQBootstrap?.fail?.();
         debugWarn(`[UI] ${PRODUCT_NAME} UI failed to start: ${getSafeErrorMessage(error)}`, error);
