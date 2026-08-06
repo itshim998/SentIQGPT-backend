@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show SelectedContent;
+import 'package:flutter/rendering.dart' show ScrollCacheExtent, SelectedContent;
 import 'package:flutter/services.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 import 'package:sentiq_chat/features/chat/application/chat_controller.dart';
