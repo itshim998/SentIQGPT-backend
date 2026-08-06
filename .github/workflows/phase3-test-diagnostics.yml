@@ -22,26 +22,10 @@ env:
   JAVA_VERSION: "17"
 
 jobs:
-  chat-file:
-    name: ${{ matrix.label }}
+  rich-text:
+    name: Native rich-text fixture
     runs-on: ubuntu-latest
     timeout-minutes: 8
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: Composer
-            test_file: test/features/chat/chat_composer_test.dart
-          - label: Controller continuity
-            test_file: test/features/chat/chat_controller_continuity_test.dart
-          - label: Long-thread virtualization
-            test_file: test/features/chat/chat_message_virtualization_test.dart
-          - label: Reconciliation
-            test_file: test/features/chat/chat_reconciliation_test.dart
-          - label: Native rich text
-            test_file: test/features/chat/native_rich_text_fixture_test.dart
-          - label: Token batching
-            test_file: test/features/chat/token_batcher_test.dart
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
@@ -58,6 +42,6 @@ jobs:
         run: |
           ./tool/bootstrap_android.sh
           flutter pub get
-      - name: Run isolated chat test
+      - name: Run bounded rich-text fixture
         working-directory: mobile/sentiq_chat
-        run: timeout 3m flutter test --reporter expanded --timeout 90s "${{ matrix.test_file }}"
+        run: timeout 3m flutter test --reporter expanded --timeout 90s test/features/chat/native_rich_text_fixture_test.dart
