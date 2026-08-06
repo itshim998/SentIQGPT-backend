@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
-import 'package:flutter_markdown_plus_latex/flutter_markdown_plus_latex.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
@@ -46,14 +45,12 @@ class NativeRichText extends StatelessWidget {
                     ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
                   ],
                   <md.InlineSyntax>[
-                    LatexInlineSyntax(),
+                    _InlineMathSyntax(),
                     ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
                   ],
                 ),
                 builders: <String, MarkdownElementBuilder>{
-                  'latex': LatexElementBuilder(
-                    textStyle: Theme.of(context).textTheme.bodyLarge,
-                  ),
+                  _InlineMathSyntax.tag: const _InlineMathBuilder(),
                 },
                 styleSheet: _styleSheet(context),
                 onTapLink: (String text, String? href, String title) {
@@ -80,6 +77,45 @@ class NativeRichText extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _InlineMathSyntax extends md.InlineSyntax {
+  _InlineMathSyntax() : super(r'\$([^\n$]+?)\$');
+
+  static const String tag = 'sentiq-inline-math';
+
+  @override
+  bool onMatch(md.InlineParser parser, Match match) {
+    parser.addNode(md.Element.text(tag, match.group(1) ?? ''));
+    return true;
+  }
+}
+
+class _InlineMathBuilder extends MarkdownElementBuilder {
+  const _InlineMathBuilder();
+
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final SentIQPalette palette = context.sentiqPalette;
+    final String expression = element.textContent.trim();
+    return Math.tex(
+      expression,
+      mathStyle: MathStyle.text,
+      textStyle: preferredStyle ?? parentStyle,
+      onErrorFallback: (FlutterMathException error) => Text(
+        expression,
+        style: (preferredStyle ?? parentStyle)?.copyWith(
+          fontFamily: 'monospace',
+          color: palette.textSecondary,
+        ),
       ),
     );
   }
