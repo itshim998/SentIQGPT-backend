@@ -42,6 +42,13 @@ replace_once(
       }""",
 )
 replace_once(
+    "mobile/sentiq_chat/lib/features/billing/application/billing_controller.dart",
+    "if (!checkout.valid) throw Exception('Checkout is unavailable right now.');",
+    """if (!checkout.valid) {
+        throw Exception('Checkout is unavailable right now.');
+      }""",
+)
+replace_once(
     "mobile/sentiq_chat/lib/features/live/application/live_controller.dart",
     "if (!_disposed) state = state.copyWith(status: status, clearMessage: true);",
     """if (!_disposed) {
@@ -49,4 +56,4 @@ replace_once(
       }""",
 )
 
-print("Applied five asserted Phase 5 analyzer corrections.")
+print("Applied six asserted Phase 5 analyzer corrections.")
