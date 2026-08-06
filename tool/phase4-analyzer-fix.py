@@ -121,13 +121,22 @@ def main() -> None:
         r"(?P<statement>(?:return|continue|break|throw)\b[^\n]*;)$",
         re.MULTILINE,
     )
-    matches = list(single_line_if.finditer(extras_content))
-    if len(matches) != 1:
+    candidates = []
+    for match in single_line_if.finditer(extras_content):
+        line_number = extras_content.count("\n", 0, match.start()) + 1
+        candidates.append((abs(line_number - 866), line_number, match))
+    if not candidates:
+        raise RuntimeError(f"No remaining unbraced flow-control statement in {extras}")
+    candidates.sort(key=lambda item: item[0])
+    distance, line_number, match = candidates[0]
+    if distance > 25 or (
+        len(candidates) > 1 and candidates[1][0] == distance
+    ):
+        details = [(item[1], item[2].group(0)) for item in candidates]
         raise RuntimeError(
-            "Expected exactly one remaining unbraced flow-control statement "
-            f"in {extras}; found {len(matches)}"
+            "Could not uniquely resolve the analyzer line 866 guard; "
+            f"nearest line={line_number}, distance={distance}, candidates={details}"
         )
-    match = matches[0]
     indent = match.group("indent")
     replacement = (
         f"{indent}if ({match.group('condition')}) {{\n"
