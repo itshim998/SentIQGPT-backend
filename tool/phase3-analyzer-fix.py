@@ -8,12 +8,15 @@ def main() -> None:
         "mobile/sentiq_chat/lib/features/chat/presentation/chat_message_list.dart"
     )
     content = path.read_text(encoding="utf-8")
-    old = "scrollCacheExtent: 900,"
-    new = "scrollCacheExtent: const ScrollCacheExtent.pixels(900),"
+    old = "import 'package:flutter/rendering.dart' show SelectedContent;"
+    new = (
+        "import 'package:flutter/rendering.dart' "
+        "show ScrollCacheExtent, SelectedContent;"
+    )
     count = content.count(old)
     if count != 1:
         raise RuntimeError(
-            f"Expected exactly one typed cache-extent migration target; found {count}"
+            f"Expected exactly one selective rendering import target; found {count}"
         )
     path.write_text(content.replace(old, new, 1), encoding="utf-8")
 
