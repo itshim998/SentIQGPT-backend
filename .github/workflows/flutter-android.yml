@@ -32,9 +32,9 @@ env:
 
 jobs:
   flutter-foundation:
-    name: Analyze, test, contract replay, and debug APK
+    name: Analyze, test, reconcile, and build Android
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: mobile/sentiq_chat
@@ -56,6 +56,11 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Install SQLite test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-0
+
       - name: Verify pinned toolchain
         run: |
           flutter --version
@@ -74,14 +79,17 @@ jobs:
         run: flutter analyze
 
       - name: Unit and widget tests
-        run: flutter test --coverage --exclude-tags contract
+        run: flutter test --coverage test/core test/features test/widgets
+
+      - name: Navigation and adaptive integration tests
+        run: flutter test test/integration
 
       - name: Contract fixture replay
         run: flutter test test/contracts/contract_fixture_replay_test.dart
 
       - name: Golden tests
         id: golden_tests
-        run: flutter test test/goldens/foundation_palette_golden_test.dart
+        run: flutter test test/goldens
 
       - name: Upload golden failure evidence
         if: failure() && steps.golden_tests.outcome == 'failure'

@@ -12,7 +12,12 @@ class SentIQTextField extends StatelessWidget {
     this.suffixIcon,
     this.obscureText = false,
     this.maxLines = 1,
+    this.keyboardType,
+    this.textInputAction,
+    this.autofillHints,
     this.onChanged,
+    this.onSubmitted,
+    this.enabled = true,
     super.key,
   });
 
@@ -25,7 +30,12 @@ class SentIQTextField extends StatelessWidget {
   final Widget? suffixIcon;
   final bool obscureText;
   final int maxLines;
+  final TextInputType? keyboardType;
+  final TextInputAction? textInputAction;
+  final Iterable<String>? autofillHints;
   final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onSubmitted;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +48,12 @@ class SentIQTextField extends StatelessWidget {
       controller: controller,
       obscureText: obscureText,
       maxLines: obscureText ? 1 : maxLines,
+      keyboardType: keyboardType,
+      textInputAction: textInputAction,
+      autofillHints: autofillHints,
       onChanged: onChanged,
+      onSubmitted: onSubmitted,
+      enabled: enabled,
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,

@@ -19,24 +19,42 @@ class SentIQApiClient {
   final SentIQSseParser sseParser;
   final http.Client _httpClient;
 
-  Future<Map<String, Object?>> getJson(String path) async {
-    final http.Response response = await _httpClient.get(
-      _resolve(path),
-      headers: await requestHeaders.build(),
-    );
-    return _decodeJsonResponse(response);
+  Future<Map<String, Object?>> getJson(String path) {
+    return _sendJson('GET', path);
   }
 
   Future<Map<String, Object?>> postJson(
     String path, {
     required Map<String, Object?> body,
+  }) {
+    return _sendJson('POST', path, body: body);
+  }
+
+  Future<Map<String, Object?>> patchJson(
+    String path, {
+    required Map<String, Object?> body,
+  }) {
+    return _sendJson('PATCH', path, body: body);
+  }
+
+  Future<Map<String, Object?>> deleteJson(
+    String path, {
+    Map<String, Object?>? body,
+  }) {
+    return _sendJson('DELETE', path, body: body);
+  }
+
+  Future<Map<String, Object?>> _sendJson(
+    String method,
+    String path, {
+    Map<String, Object?>? body,
   }) async {
-    final http.Response response = await _httpClient.post(
-      _resolve(path),
-      headers: await requestHeaders.build(),
-      body: jsonEncode(body),
-    );
-    return _decodeJsonResponse(response);
+    final http.Request request = http.Request(method, _resolve(path))
+      ..headers.addAll(await requestHeaders.build());
+    if (body != null) request.body = jsonEncode(body);
+    final http.StreamedResponse streamed = await _httpClient.send(request);
+    final String raw = await streamed.stream.bytesToString();
+    return _decodeJson(streamed.statusCode, raw);
   }
 
   Stream<SentIQSseEvent> postSse(
@@ -63,11 +81,12 @@ class SentIQApiClient {
     return baseUri.resolve(normalizedPath);
   }
 
-  Map<String, Object?> _decodeJsonResponse(http.Response response) {
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw _exception(response.statusCode, response.body);
+  Map<String, Object?> _decodeJson(int statusCode, String rawBody) {
+    if (statusCode < 200 || statusCode >= 300) {
+      throw _exception(statusCode, rawBody);
     }
-    final Object? decoded = jsonDecode(response.body);
+    if (rawBody.trim().isEmpty) return const <String, Object?>{};
+    final Object? decoded = jsonDecode(rawBody);
     if (decoded is! Map) {
       throw const SentIQApiException(
         message: 'SentIQ Chat returned an unexpected response.',
