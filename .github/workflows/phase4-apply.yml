@@ -6,6 +6,7 @@ on:
       - feature/flutter-android-app
     paths:
       - ".github/workflows/phase4-apply.yml"
+      - "tool/phase4-analyzer-fix.py"
   workflow_dispatch:
 
 permissions:
