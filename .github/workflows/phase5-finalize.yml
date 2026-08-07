@@ -3,7 +3,9 @@ name: Finalize Phase 5
 on:
   push:
     branches: [feature/flutter-android-app]
-    paths: [.github/workflows/phase5-finalize.yml]
+    paths:
+      - .github/workflows/phase5-finalize.yml
+      - tool/phase5-analyzer-fix.py
 
 permissions:
   contents: write
