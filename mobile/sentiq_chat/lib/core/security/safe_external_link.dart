@@ -13,17 +13,19 @@ abstract final class SafeExternalLink {
   }
 
   static Future<bool> openHttps(Object? value) async {
-    final Uri? uri = switch (value) {
-      Uri candidate => candidate,
-      String candidate => Uri.tryParse(candidate.trim()),
-      _ => null,
-    };
+    final Uri? uri = _parse(value);
     if (uri == null || !isSafeHttps(uri)) return false;
     try {
       return await launchUrl(uri, mode: LaunchMode.externalApplication);
     } on Object {
       return false;
     }
+  }
+
+  static Uri? _parse(Object? value) {
+    if (value is Uri) return value;
+    if (value is String) return Uri.tryParse(value.trim());
+    return null;
   }
 
   static Future<bool> emailSupport() async {
