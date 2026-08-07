@@ -7,6 +7,7 @@ Use the versions pinned by the repository:
 - Flutter 3.44.8 stable;
 - Dart 3.12.x;
 - Java 17;
+- Node.js 20.x for backend parity;
 - Android Studio with an SDK that satisfies Flutter's current compile/target SDK;
 - Android API 28 device/emulator for minimum-version coverage;
 - current API 35 device/emulator for modern behavior.
@@ -23,6 +24,21 @@ flutter test test/integration
 flutter test test/contracts/contract_fixture_replay_test.dart
 flutter test test/goldens
 ```
+
+## Zero-GitHub-Actions full verification
+
+When GitHub-hosted Actions are unavailable, use the repository-owned Windows verifier instead of weakening or bypassing the Phase 6 gate. From the repository root on the exact release-candidate branch:
+
+```powershell
+git status --short
+git pull --ff-only
+$head = git rev-parse HEAD
+powershell -NoProfile -ExecutionPolicy Bypass -File .\mobile\sentiq_chat\tool\phase6_local_release.ps1 -RunEmulators -ExpectedHeadSha $head
+```
+
+The full run performs Flutter quality/accessibility/security/performance tests, complete backend mobile compatibility, minified verification-signed APK/AAB packaging, signature checks, SHA-256 hashing, and API 28/API 35 emulator lifecycle smoke. It writes an ignored evidence bundle under `phase6-evidence/` and is merge-eligible only when `phase6-manifest.json` reports `result: "PASS"` for the exact PR head.
+
+See `docs/mobile/phase6-local-release-verification.md` for prerequisites, evidence layout and failure handling.
 
 ## Development run
 
@@ -102,4 +118,4 @@ Run a profile build with `SENTIQ_PERFORMANCE_TRACE=true`, record a cold launch, 
 
 ## Play preflight
 
-Before uploading the AAB, verify versionCode/versionName, application ID, upload-key certificate, privacy-policy URL, Data Safety answers, content rating, screenshots/icon/feature graphic, declared microphone/Bluetooth use, Supabase redirect allowlist, production backend health, and a closed/internal Play track install. Promote only the exact AAB whose CI and physical-device evidence passed.
+Before uploading the AAB, verify versionCode/versionName, application ID, upload-key certificate, privacy-policy URL, Data Safety answers, content rating, screenshots/icon/feature graphic, declared microphone/Bluetooth use, Supabase redirect allowlist, production backend health, and a closed/internal Play track install. Promote only the exact AAB whose automated release gate and physical-device evidence passed.
