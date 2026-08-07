@@ -12,7 +12,7 @@
     "max_file_size_mb": 10
   },
   "mobile_contract": {
-    "contract_version": 3,
+    "contract_version": 4,
     "minimum_client_contract_version": 1,
     "compatibility": {
       "unknown_fields": "ignore",
@@ -37,7 +37,17 @@
         "sync",
         "file_analysis",
         "error",
-        "done"
+        "done",
+        "init",
+        "progress",
+        "sources",
+        "content",
+        "snapshot",
+        "cancelled",
+        "deep_research_progress",
+        "deep_research_source",
+        "deep_research_complete",
+        "deep_research_error"
       ]
     },
     "endpoints": {
@@ -52,7 +62,23 @@
       "generated_file_download": "/api/generated-files/:id/download",
       "generated_file_preview": "/api/generated-files/:id/preview-url",
       "generated_file_update": "/api/generated-files/:id",
-      "generated_file_delete": "/api/generated-files/:id"
+      "generated_file_delete": "/api/generated-files/:id",
+      "deep_research_quota": "/api/deep-research/quota",
+      "deep_research_status": "/api/deep-research/:id/status",
+      "deep_research_events": "/api/deep-research/:id/events",
+      "deep_research_cancel": "/api/deep-research/:id/cancel",
+      "deep_research_report": "/api/deep-research/:id",
+      "deep_research_export": "/api/deep-research/:id/export",
+      "billing_plans": "/api/billing/plans",
+      "billing_me": "/api/billing/me",
+      "billing_usage": "/api/billing/usage",
+      "billing_checkout": "/api/billing/checkout",
+      "billing_verify": "/api/billing/verify",
+      "billing_cancel": "/api/billing/cancel",
+      "live_status": "/api/live/status",
+      "live_session_started": "/api/live/session/:id/started",
+      "live_session_commit": "/api/live/session/:id/commit",
+      "live_session_end": "/api/live/session/:id/end"
     }
   }
 }

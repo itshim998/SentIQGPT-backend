@@ -13,10 +13,25 @@ import 'package:sentiq_chat/features/auth/data/auth_gateway.dart';
 import 'package:sentiq_chat/features/auth/data/profile_repository.dart';
 import 'package:sentiq_chat/features/auth/data/supabase_auth_gateway.dart';
 import 'package:sentiq_chat/features/auth/domain/auth_models.dart';
+import 'package:sentiq_chat/features/account/application/account_controller.dart';
+import 'package:sentiq_chat/features/account/data/account_repository.dart';
+import 'package:sentiq_chat/features/account/domain/account_models.dart';
+import 'package:sentiq_chat/features/billing/application/billing_controller.dart';
+import 'package:sentiq_chat/features/billing/data/billing_repository.dart';
+import 'package:sentiq_chat/features/billing/data/razorpay_checkout_gateway.dart';
+import 'package:sentiq_chat/features/billing/domain/billing_models.dart';
 import 'package:sentiq_chat/features/chat/application/chat_controller.dart';
 import 'package:sentiq_chat/features/chat/data/chat_cache.dart';
 import 'package:sentiq_chat/features/chat/data/chat_remote_source.dart';
 import 'package:sentiq_chat/features/chat/data/chat_repository.dart';
+import 'package:sentiq_chat/features/live/application/live_controller.dart';
+import 'package:sentiq_chat/features/live/data/gemini_live_transport.dart';
+import 'package:sentiq_chat/features/live/data/live_repository.dart';
+import 'package:sentiq_chat/features/live/domain/live_models.dart';
+import 'package:sentiq_chat/features/live/platform/live_audio_platform.dart';
+import 'package:sentiq_chat/features/research/application/deep_research_controller.dart';
+import 'package:sentiq_chat/features/research/data/deep_research_repository.dart';
+import 'package:sentiq_chat/features/research/domain/deep_research_models.dart';
 import 'package:sentiq_chat/features/workspace/application/workspace_controller.dart';
 import 'package:sentiq_chat/features/workspace/data/cloud_conversation_source.dart';
 import 'package:sentiq_chat/features/workspace/data/conversation_cache.dart';
@@ -133,6 +148,87 @@ final chatControllerProvider = StateNotifierProvider.autoDispose
         session: session,
         repository: ref.watch(chatRepositoryProvider),
         networkMonitor: ref.watch(networkMonitorProvider),
+      );
+      unawaited(controller.initialize());
+      return controller;
+    });
+
+final Provider<DeepResearchRepository> deepResearchRepositoryProvider =
+    Provider<DeepResearchRepository>(
+      (Ref ref) => DeepResearchRepository(ref.watch(apiClientProvider)),
+    );
+
+final deepResearchControllerProvider = StateNotifierProvider.autoDispose
+    .family<DeepResearchController, DeepResearchState, String>((
+      Ref ref,
+      String conversationId,
+    ) {
+      final DeepResearchController controller = DeepResearchController(
+        repository: ref.watch(deepResearchRepositoryProvider),
+        conversationId: conversationId,
+      );
+      unawaited(controller.initialize());
+      return controller;
+    });
+
+final Provider<LiveRepository> liveRepositoryProvider =
+    Provider<LiveRepository>(
+      (Ref ref) => LiveRepository(ref.watch(apiClientProvider)),
+    );
+
+final Provider<LiveAudioGateway> liveAudioGatewayProvider =
+    Provider<LiveAudioGateway>((Ref ref) => const LiveAudioPlatform());
+
+final Provider<LiveTransportGateway> liveTransportGatewayProvider =
+    Provider<LiveTransportGateway>((Ref ref) => GeminiLiveTransport());
+
+final StateNotifierProvider<LiveController, LiveState> liveControllerProvider =
+    StateNotifierProvider<LiveController, LiveState>((Ref ref) {
+      final LiveController controller = LiveController(
+        repository: ref.watch(liveRepositoryProvider),
+        audio: ref.watch(liveAudioGatewayProvider),
+        transport: ref.watch(liveTransportGatewayProvider),
+      );
+      unawaited(controller.initialize());
+      return controller;
+    });
+
+final Provider<BillingRepository> billingRepositoryProvider =
+    Provider<BillingRepository>(
+      (Ref ref) => BillingRepository(ref.watch(apiClientProvider)),
+    );
+
+final billingControllerProvider = StateNotifierProvider.autoDispose
+    .family<BillingController, BillingState, AppIdentity>((
+      Ref ref,
+      AppIdentity identity,
+    ) {
+      final BillingController controller = BillingController(
+        repository: ref.watch(billingRepositoryProvider),
+        checkoutGateway: RazorpayCheckoutGateway(),
+        email: identity.email,
+      );
+      unawaited(controller.initialize());
+      return controller;
+    });
+
+final Provider<AccountRepository> accountRepositoryProvider =
+    Provider<AccountRepository>((Ref ref) {
+      return AccountRepository(
+        client: ref.watch(apiClientProvider),
+        cache: ref.watch(conversationCacheProvider),
+      );
+    });
+
+final accountControllerProvider = StateNotifierProvider.autoDispose
+    .family<AccountController, AccountState, WorkspaceSession>((
+      Ref ref,
+      WorkspaceSession session,
+    ) {
+      final AccountController controller = AccountController(
+        repository: ref.watch(accountRepositoryProvider),
+        ownerScope: session.ownerScope,
+        cloudEnabled: session.cloudEnabled,
       );
       unawaited(controller.initialize());
       return controller;

@@ -4,6 +4,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+PRESERVE_DIR="$(mktemp -d)"
+trap 'rm -rf "$PRESERVE_DIR"' EXIT
+PRESERVED_MANIFEST="android/app/src/main/AndroidManifest.xml"
+PRESERVED_ACTIVITY="android/app/src/main/kotlin/com/sentiqlabs/sentiq_chat/MainActivity.kt"
+if [[ -f "$PRESERVED_MANIFEST" ]]; then
+  cp "$PRESERVED_MANIFEST" "$PRESERVE_DIR/AndroidManifest.xml"
+fi
+if [[ -f "$PRESERVED_ACTIVITY" ]]; then
+  cp "$PRESERVED_ACTIVITY" "$PRESERVE_DIR/MainActivity.kt"
+fi
+
 flutter create \
   --platforms=android \
   --org com.sentiqlabs \
@@ -122,12 +133,23 @@ activity.parent.mkdir(parents=True, exist_ok=True)
 activity.write_text('package com.sentiqlabs.sentiq_chat\n\nimport android.content.ClipData\nimport android.content.ContentValues\nimport android.content.Intent\nimport android.os.Build\nimport android.os.Environment\nimport android.provider.MediaStore\nimport androidx.core.content.FileProvider\nimport io.flutter.embedding.android.FlutterActivity\nimport io.flutter.embedding.engine.FlutterEngine\nimport io.flutter.plugin.common.MethodCall\nimport io.flutter.plugin.common.MethodChannel\nimport java.io.File\n\nclass MainActivity : FlutterActivity() {\n    private val channelName = "com.sentiqlabs.sentiqchat/artifacts"\n\n    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {\n        super.configureFlutterEngine(flutterEngine)\n        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)\n            .setMethodCallHandler { call, result -> handleArtifactCall(call, result) }\n    }\n\n    private fun handleArtifactCall(call: MethodCall, result: MethodChannel.Result) {\n        try {\n            val bytes = call.argument<ByteArray>("bytes") ?: throw IllegalArgumentException("Missing file bytes")\n            val filename = safeFilename(call.argument<String>("filename") ?: "sentiq-file")\n            val mimeType = call.argument<String>("mimeType") ?: "application/octet-stream"\n            when (call.method) {\n                "saveFile" -> result.success(saveFile(bytes, filename, mimeType))\n                "shareFile" -> { shareFile(bytes, filename, mimeType); result.success(null) }\n                "copyImage" -> { copyImage(bytes, filename); result.success(null) }\n                "openFile" -> { openFile(bytes, filename, mimeType); result.success(null) }\n                else -> result.notImplemented()\n            }\n        } catch (error: Throwable) {\n            result.error("artifact_action_failed", error.message ?: "File action failed", null)\n        }\n    }\n\n    private fun safeFilename(value: String) = value.replace(Regex("[^A-Za-z0-9._ -]"), "_").take(180).ifBlank { "sentiq-file" }\n    private fun writeShared(bytes: ByteArray, filename: String): File = File(File(cacheDir, "sentiq-shared").apply { mkdirs() }, filename).apply { writeBytes(bytes) }\n    private fun uriFor(file: File) = FileProvider.getUriForFile(this, "$packageName.files", file)\n\n    private fun saveFile(bytes: ByteArray, filename: String, mimeType: String): String {\n        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {\n            val values = ContentValues().apply {\n                put(MediaStore.Downloads.DISPLAY_NAME, filename)\n                put(MediaStore.Downloads.MIME_TYPE, mimeType)\n                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/SentIQ Chat")\n                put(MediaStore.Downloads.IS_PENDING, 1)\n            }\n            val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("Could not create download")\n            contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("Could not write download")\n            values.clear(); values.put(MediaStore.Downloads.IS_PENDING, 0); contentResolver.update(uri, values, null, null)\n            return uri.toString()\n        }\n        val directory = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: error("Downloads directory unavailable")\n        return File(directory, filename).apply { writeBytes(bytes) }.absolutePath\n    }\n\n    private fun shareFile(bytes: ByteArray, filename: String, mimeType: String) {\n        val uri = uriFor(writeShared(bytes, filename))\n        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {\n            type = mimeType; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)\n        }, "Share with"))\n    }\n\n    private fun copyImage(bytes: ByteArray, filename: String) {\n        val uri = uriFor(writeShared(bytes, filename))\n        val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager\n        clipboard.setPrimaryClip(ClipData.newUri(contentResolver, "SentIQ image", uri))\n    }\n\n    private fun openFile(bytes: ByteArray, filename: String, mimeType: String) {\n        val uri = uriFor(writeShared(bytes, filename))\n        val intent = Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, mimeType); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }\n        if (intent.resolveActivity(packageManager) == null) error("No compatible Android application is installed")\n        startActivity(intent)\n    }\n}\n', encoding="utf-8")
 PY
 
+if [[ -f "$PRESERVE_DIR/AndroidManifest.xml" ]]; then
+  cp "$PRESERVE_DIR/AndroidManifest.xml" "$PRESERVED_MANIFEST"
+fi
+if [[ -f "$PRESERVE_DIR/MainActivity.kt" ]]; then
+  mkdir -p "$(dirname "$PRESERVED_ACTIVITY")"
+  cp "$PRESERVE_DIR/MainActivity.kt" "$PRESERVED_ACTIVITY"
+fi
+
 grep -q 'applicationId = "com.sentiqlabs.sentiqchat"' android/app/build.gradle.kts
 grep -q 'android:host="login-callback"' android/app/src/main/AndroidManifest.xml
 grep -q 'android:host="reset-callback"' android/app/src/main/AndroidManifest.xml
 grep -q 'android:windowSoftInputMode="adjustResize"' android/app/src/main/AndroidManifest.xml
 grep -q 'android.permission.CAMERA' android/app/src/main/AndroidManifest.xml
+grep -q 'android.permission.RECORD_AUDIO' android/app/src/main/AndroidManifest.xml
+grep -q 'android.permission.MODIFY_AUDIO_SETTINGS' android/app/src/main/AndroidManifest.xml
 grep -q 'sentiq_file_paths' android/app/src/main/AndroidManifest.xml
 grep -q 'com.sentiqlabs.sentiqchat/artifacts' android/app/src/main/kotlin/com/sentiqlabs/sentiq_chat/MainActivity.kt
+grep -q 'com.sentiqlabs.sentiqchat/live_audio' android/app/src/main/kotlin/com/sentiqlabs/sentiq_chat/MainActivity.kt
 
 printf 'Android scaffold ready: com.sentiqlabs.sentiqchat, API 28+, auth deep links enabled\n'

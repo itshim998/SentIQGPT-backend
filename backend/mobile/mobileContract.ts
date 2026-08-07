@@ -1,6 +1,6 @@
 import express, { type Response } from "express";
 
-export const MOBILE_CONTRACT_VERSION = 3;
+export const MOBILE_CONTRACT_VERSION = 4;
 export const MOBILE_MINIMUM_CLIENT_CONTRACT_VERSION = 1;
 
 export const MOBILE_CONTRACT = Object.freeze({
@@ -33,6 +33,12 @@ export const MOBILE_CONTRACT = Object.freeze({
       "memory",
       "sync",
       "file_analysis",
+      "init",
+      "progress",
+      "sources",
+      "content",
+      "snapshot",
+      "cancelled",
       "deep_research_progress",
       "deep_research_source",
       "deep_research_complete",
@@ -62,9 +68,23 @@ export const MOBILE_CONTRACT = Object.freeze({
     generated_file_update: "/api/generated-files/:id",
     generated_file_delete: "/api/generated-files/:id",
     deep_research_start: "/api/deep-research/start",
+    deep_research_quota: "/api/deep-research/quota",
+    deep_research_status: "/api/deep-research/:id/status",
+    deep_research_events: "/api/deep-research/:id/events",
+    deep_research_cancel: "/api/deep-research/:id/cancel",
+    deep_research_report: "/api/deep-research/:id",
+    deep_research_export: "/api/deep-research/:id/export",
+    billing_plans: "/api/billing/plans",
     billing_me: "/api/billing/me",
+    billing_usage: "/api/billing/usage",
+    billing_checkout: "/api/billing/checkout",
+    billing_verify: "/api/billing/verify",
+    billing_cancel: "/api/billing/cancel",
     live_status: "/api/live/status",
     live_session_token: "/api/live/session-token",
+    live_session_started: "/api/live/session/:id/started",
+    live_session_commit: "/api/live/session/:id/commit",
+    live_session_end: "/api/live/session/:id/end",
   }),
 });
 

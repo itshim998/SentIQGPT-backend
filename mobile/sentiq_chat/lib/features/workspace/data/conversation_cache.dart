@@ -174,6 +174,37 @@ class ConversationCache {
     });
   }
 
+  Future<void> clearScope(String ownerScope) async {
+    final Database database = await open();
+    await database.transaction((Transaction transaction) async {
+      await transaction.delete(
+        'chat_turns',
+        where: 'owner_scope = ?',
+        whereArgs: <Object>[ownerScope],
+      );
+      await transaction.delete(
+        'messages',
+        where: 'owner_scope = ?',
+        whereArgs: <Object>[ownerScope],
+      );
+      await transaction.delete(
+        'conversations',
+        where: 'owner_scope = ?',
+        whereArgs: <Object>[ownerScope],
+      );
+    });
+  }
+
+  Future<void> clearAll() async {
+    final Database database = await open();
+    await database.transaction((Transaction transaction) async {
+      await transaction.delete('chat_turns');
+      await transaction.delete('messages');
+      await transaction.delete('conversations');
+      await transaction.delete('app_meta');
+    });
+  }
+
   Future<void> close() async {
     await _database?.close();
     _database = null;

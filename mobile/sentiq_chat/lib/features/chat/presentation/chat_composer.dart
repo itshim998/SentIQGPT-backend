@@ -25,6 +25,8 @@ class ChatComposer extends StatefulWidget {
     required this.onWebSearchChanged,
     required this.onAttachmentAdded,
     this.onImageGenerationModeChanged,
+    this.onDeepResearch,
+    this.onLive,
     this.onAttachmentCancel,
     required this.onAttachmentRemoved,
     required this.onAttachmentRetry,
@@ -46,6 +48,8 @@ class ChatComposer extends StatefulWidget {
   final ValueChanged<bool> onWebSearchChanged;
   final ValueChanged<ChatAttachment> onAttachmentAdded;
   final ValueChanged<bool>? onImageGenerationModeChanged;
+  final VoidCallback? onDeepResearch;
+  final VoidCallback? onLive;
   final ValueChanged<String>? onAttachmentCancel;
   final ValueChanged<String> onAttachmentRemoved;
   final ValueChanged<String> onAttachmentRetry;
@@ -251,6 +255,26 @@ class _ChatComposerState extends State<ChatComposer> {
                 subtitle: const Text('Use your Android camera'),
                 onTap: () => unawaited(_pickImage(source: ImageSource.camera)),
               ),
+              if (widget.onDeepResearch != null)
+                ListTile(
+                  leading: const Icon(Icons.manage_search_rounded),
+                  title: const Text('Deep Research'),
+                  subtitle: const Text('Build a sourced, detailed report'),
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    widget.onDeepResearch!();
+                  },
+                ),
+              if (widget.onLive != null)
+                ListTile(
+                  leading: const Icon(Icons.graphic_eq_rounded),
+                  title: const Text('SentIQ Live'),
+                  subtitle: const Text('Have a real-time voice conversation'),
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    widget.onLive!();
+                  },
+                ),
               SwitchListTile.adaptive(
                 secondary: Icon(
                   Icons.public_rounded,

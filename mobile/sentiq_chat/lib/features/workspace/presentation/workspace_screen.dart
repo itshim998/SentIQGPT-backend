@@ -6,11 +6,14 @@ import 'package:sentiq_chat/app/app_providers.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 import 'package:sentiq_chat/core/layout/adaptive_window.dart';
 import 'package:sentiq_chat/features/auth/domain/auth_models.dart';
+import 'package:sentiq_chat/features/account/presentation/account_screen.dart';
 import 'package:sentiq_chat/features/chat/application/chat_controller.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
 import 'package:sentiq_chat/features/chat/presentation/chat_composer.dart';
 import 'package:sentiq_chat/features/chat/presentation/chat_message_list.dart';
 import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
+import 'package:sentiq_chat/features/live/presentation/live_screen.dart';
+import 'package:sentiq_chat/features/research/presentation/deep_research_screen.dart';
 import 'package:sentiq_chat/features/workspace/application/workspace_controller.dart';
 import 'package:sentiq_chat/features/workspace/domain/conversation_summary.dart';
 import 'package:sentiq_chat/features/workspace/presentation/conversation_sidebar.dart';
@@ -216,45 +219,11 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen>
     );
   }
 
-  Future<void> _showAccount(BuildContext context) {
-    return showSentIQSheet<void>(
-      context: context,
-      builder: (BuildContext sheetContext) => Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Text(
-            widget.identity.isGuest
-                ? 'Guest session'
-                : widget.identity.displayName ?? 'Account',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: SentIQSpacing.xs),
-          Text(
-            widget.identity.isGuest
-                ? 'This session stays on this device. Sign in to keep conversations across sessions.'
-                : widget.identity.email ?? 'Signed in to SentIQ Chat',
-          ),
-          const SizedBox(height: SentIQSpacing.lg),
-          SentIQButton(
-            label: widget.identity.isGuest
-                ? 'Sign in or create account'
-                : 'Sign out',
-            style: widget.identity.isGuest
-                ? SentIQButtonStyle.primary
-                : SentIQButtonStyle.secondary,
-            expand: true,
-            onPressed: () {
-              Navigator.of(sheetContext).pop();
-              if (widget.identity.isGuest) {
-                ref.read(authControllerProvider.notifier).returnToSignIn();
-              } else {
-                unawaited(ref.read(authControllerProvider.notifier).signOut());
-              }
-            },
-          ),
-          const SizedBox(height: SentIQSpacing.sm),
-        ],
+  Future<void> _showAccount(BuildContext context) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            AccountScreen(identity: widget.identity, session: _session),
       ),
     );
   }
@@ -301,6 +270,16 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen>
                 },
               ),
               const SizedBox(height: SentIQSpacing.lg),
+              SentIQButton(
+                label: 'Account, privacy and data',
+                style: SentIQButtonStyle.secondary,
+                expand: true,
+                onPressed: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(_showAccount(context));
+                },
+              ),
+              const SizedBox(height: SentIQSpacing.sm),
               SentIQButton(
                 label: 'Done',
                 expand: true,
@@ -501,6 +480,32 @@ class _WorkspaceCanvas extends StatelessWidget {
                   onAttachmentCancel: (String id) {
                     unawaited(chatController.cancelAttachmentUpload(id));
                   },
+                  onDeepResearch: identity.isGuest
+                      ? null
+                      : () => unawaited(
+                          Navigator.of(context)
+                              .push<void>(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => DeepResearchScreen(
+                                    conversationId: conversationId,
+                                  ),
+                                ),
+                              )
+                              .then((_) => workspaceController.refresh()),
+                        ),
+                  onLive: identity.isGuest
+                      ? null
+                      : () => unawaited(
+                          Navigator.of(context)
+                              .push<void>(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => LiveScreen(
+                                    conversationId: conversationId,
+                                  ),
+                                ),
+                              )
+                              .then((_) => workspaceController.refresh()),
+                        ),
                   onSend: (String text) async {
                     final bool accepted = await chatController.send(
                       conversationId: conversationId,

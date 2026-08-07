@@ -59,6 +59,12 @@ class SentIQSseEvent {
       'memory' => SentIQSseEventKind.memory,
       'sync' => SentIQSseEventKind.sync,
       'file_analysis' => SentIQSseEventKind.fileAnalysis,
+      'init' ||
+      'progress' ||
+      'sources' ||
+      'content' ||
+      'snapshot' ||
+      'cancelled' ||
       'deep_research_progress' ||
       'deep_research_source' ||
       'deep_research_complete' ||

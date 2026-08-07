@@ -14,6 +14,7 @@ abstract final class ApiEndpoints {
   static String conversationMessages(String id) =>
       '${conversation(id)}/messages';
   static const String memories = '/api/memories';
+  static String memory(String id) => '/api/memories/${Uri.encodeComponent(id)}';
   static const String filesUpload = '/api/files/upload';
   static const String filesUpdates = '/api/files/updates';
   static const String filesSession = '/api/files/session';
@@ -26,8 +27,33 @@ abstract final class ApiEndpoints {
       '${generatedFile(id)}/download';
   static String generatedFilePreview(String id) =>
       '${generatedFile(id)}/preview-url';
+
   static const String deepResearchStart = '/api/deep-research/start';
+  static const String deepResearchQuota = '/api/deep-research/quota';
+  static String deepResearchStatus(String id) =>
+      '/api/deep-research/${Uri.encodeComponent(id)}/status';
+  static String deepResearchEvents(String id) =>
+      '/api/deep-research/${Uri.encodeComponent(id)}/events';
+  static String deepResearchCancel(String id) =>
+      '/api/deep-research/${Uri.encodeComponent(id)}/cancel';
+  static String deepResearchReport(String id) =>
+      '/api/deep-research/${Uri.encodeComponent(id)}';
+  static String deepResearchExport(String id, String format) =>
+      '/api/deep-research/${Uri.encodeComponent(id)}/export?format=${Uri.encodeQueryComponent(format)}';
+
+  static const String billingPlans = '/api/billing/plans';
   static const String billingMe = '/api/billing/me';
+  static const String billingUsage = '/api/billing/usage';
+  static const String billingCheckout = '/api/billing/checkout';
+  static const String billingVerify = '/api/billing/verify';
+  static const String billingCancel = '/api/billing/cancel';
+
   static const String liveStatus = '/api/live/status';
   static const String liveSessionToken = '/api/live/session-token';
+  static String liveSessionStarted(String id) =>
+      '/api/live/session/${Uri.encodeComponent(id)}/started';
+  static String liveSessionCommit(String id) =>
+      '/api/live/session/${Uri.encodeComponent(id)}/commit';
+  static String liveSessionEnd(String id) =>
+      '/api/live/session/${Uri.encodeComponent(id)}/end';
 }

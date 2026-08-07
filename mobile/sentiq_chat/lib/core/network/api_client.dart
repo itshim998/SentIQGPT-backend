@@ -232,6 +232,40 @@ class SentIQApiClient {
     );
   }
 
+  Future<SentIQBinaryResponse> getBinary(
+    String path, {
+    int maximumBytes = 64 * 1024 * 1024,
+  }) async {
+    final http.Request request = http.Request('GET', _resolve(path))
+      ..headers.addAll(await requestHeaders.build(json: false));
+    final http.StreamedResponse response = await _httpClient.send(request);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final String raw = await response.stream.bytesToString();
+      throw _exception(response.statusCode, raw);
+    }
+    final BytesBuilder builder = BytesBuilder(copy: false);
+    int received = 0;
+    await for (final List<int> chunk in response.stream) {
+      received += chunk.length;
+      if (received > maximumBytes) {
+        throw const SentIQApiException(
+          message: 'This download is too large to open safely.',
+          statusCode: 413,
+          code: 'remote_content_too_large',
+        );
+      }
+      builder.add(chunk);
+    }
+    return SentIQBinaryResponse(
+      bytes: builder.takeBytes(),
+      contentType:
+          response.headers['content-type'] ?? 'application/octet-stream',
+      filename: _filenameFromDisposition(
+        response.headers['content-disposition'],
+      ),
+    );
+  }
+
   Future<Map<String, Object?>> _sendJson(
     String method,
     String path, {

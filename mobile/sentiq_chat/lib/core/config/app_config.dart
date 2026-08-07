@@ -43,7 +43,7 @@ class AppConfig {
       apiBaseUri: Uri.parse(overrideBase.isEmpty ? defaultBase : overrideBase),
       supabaseUrl: supabaseUrl,
       supabasePublishableKey: supabaseKey,
-      mobileContractVersion: 1,
+      mobileContractVersion: 4,
       loginRedirectUri: Uri.parse(
         'com.sentiqlabs.sentiqchat://login-callback/',
       ),
