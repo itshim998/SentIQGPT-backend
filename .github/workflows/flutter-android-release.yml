@@ -1,0 +1,328 @@
+name: Flutter Android Release Readiness
+
+on:
+  pull_request:
+    paths:
+      - "mobile/sentiq_chat/**"
+      - "backend/**"
+      - "docs/mobile/**"
+      - ".github/workflows/flutter-android-release.yml"
+  push:
+    branches:
+      - master
+      - feature/flutter-android-app
+    paths:
+      - "mobile/sentiq_chat/**"
+      - "backend/**"
+      - "docs/mobile/**"
+      - ".github/workflows/flutter-android-release.yml"
+  workflow_dispatch:
+    inputs:
+      store_signed:
+        description: "Build with the protected Play upload-key secrets"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: "3.44.8"
+  JAVA_VERSION: "17"
+  NODE_VERSION: "20"
+
+concurrency:
+  group: flutter-android-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Flutter quality, accessibility, performance, and security
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: mobile/sentiq_chat
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Install SQLite test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-0
+      - name: Bootstrap deterministic Android scaffold
+        run: ./tool/bootstrap_android.sh
+      - name: Resolve locked Flutter dependencies
+        run: flutter pub get
+      - name: Format check
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Static analysis
+        run: flutter analyze
+      - name: Forced low-performance regression
+        run: flutter test --dart-define=SENTIQ_LOW_PERFORMANCE=true test/core/performance/low_performance_smoke_test.dart
+      - name: Unit, widget, accessibility, security, and feature tests
+        run: flutter test --coverage test/core test/features test/widgets
+      - name: Navigation and adaptive integration tests
+        run: flutter test test/integration
+      - name: Contract fixture replay
+        run: flutter test test/contracts/contract_fixture_replay_test.dart
+      - name: Golden tests
+        run: flutter test test/goldens
+      - name: Source and release-boundary checks
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git ls-files 'mobile/sentiq_chat/android/key.properties' 'mobile/sentiq_chat/android/**/*.jks' 'mobile/sentiq_chat/android/**/*.keystore')"
+          ! git grep -nEI '(service[_-]?role[^[:space:]]*[=:][[:space:]]*[A-Za-z0-9._-]{20,}|sk_live_[A-Za-z0-9]+|rzp_live_[A-Za-z0-9]+|BEGIN (RSA |EC )?PRIVATE KEY)' -- mobile/sentiq_chat .github/workflows/flutter-android-release.yml
+          test "$(grep -RIl 'package:url_launcher/url_launcher.dart' mobile/sentiq_chat/lib | wc -l)" -eq 1
+          grep -q 'flutter_secure_storage:' mobile/sentiq_chat/pubspec.yaml
+          grep -q 'android:usesCleartextTraffic="false"' mobile/sentiq_chat/android/app/src/main/AndroidManifest.xml
+          grep -q 'cleartextTrafficPermitted="false"' mobile/sentiq_chat/android/app/src/main/res/xml/network_security_config.xml
+          ! grep -q 'android.permission.CAMERA' mobile/sentiq_chat/android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.RECORD_AUDIO' mobile/sentiq_chat/android/app/src/main/AndroidManifest.xml
+          grep -q 'isMinifyEnabled = true' mobile/sentiq_chat/android/app/build.gradle.kts
+          grep -q 'isShrinkResources = true' mobile/sentiq_chat/android/app/build.gradle.kts
+          ! grep -RInE '\b(print|debugPrint)\s*\(' mobile/sentiq_chat/lib
+          ! git grep -nEI '(TODO|FIXME|HACK|XXX|coming soon|lorem ipsum)' -- mobile/sentiq_chat/lib mobile/sentiq_chat/android docs/mobile
+      - name: Build emulator APK
+        run: flutter build apk --debug --dart-define=SENTIQ_ENV=development
+      - name: Upload emulator APK and coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: sentiq-android-emulator-input-${{ github.sha }}
+          path: |
+            mobile/sentiq_chat/build/app/outputs/flutter-apk/app-debug.apk
+            mobile/sentiq_chat/coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 14
+
+  backend-compatibility:
+    name: Full backend mobile compatibility
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Dependency security gate
+        run: npm audit --audit-level=high
+      - name: Compile backend
+        run: npm run build
+      - name: Mobile contract
+        run: npx ts-node --project tsconfig.backend.json backend/testMobileContract.ts
+      - name: Deep Research compatibility
+        run: npm run test:deep-research
+      - name: SentIQ Live compatibility
+        run: npm run test:live
+      - name: Billing quota compatibility
+        run: npm run billing:test-quota
+      - name: Stream lifecycle compatibility
+        run: npm run test:stream-lifecycle
+      - name: Protected context safety
+        run: npm run test:protected-context-safety
+
+  release-packaging:
+    name: Verification-signed release APK and AAB
+    needs: [quality, backend-compatibility]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: mobile/sentiq_chat
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Bootstrap and resolve dependencies
+        run: |
+          ./tool/bootstrap_android.sh
+          flutter pub get
+      - name: Create disposable CI signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          password="$(openssl rand -hex 24)"
+          echo "::add-mask::${password}"
+          keytool -genkeypair -v \
+            -keystore "${RUNNER_TEMP}/sentiq-ci-release.jks" \
+            -storepass "${password}" \
+            -keypass "${password}" \
+            -alias sentiq_ci_release \
+            -keyalg RSA \
+            -keysize 3072 \
+            -validity 30 \
+            -dname "CN=SentIQ Android CI,O=SentIQ AI Labs,C=IN" >/dev/null 2>&1
+          cat > android/key.properties <<KEYS
+          storePassword=${password}
+          keyPassword=${password}
+          keyAlias=sentiq_ci_release
+          storeFile=${RUNNER_TEMP}/sentiq-ci-release.jks
+          KEYS
+      - name: Build minified production APK and AAB
+        run: |
+          flutter build apk --release --dart-define=SENTIQ_ENV=production
+          flutter build appbundle --release --dart-define=SENTIQ_ENV=production
+          test -f build/app/outputs/flutter-apk/app-release.apk
+          test -f build/app/outputs/bundle/release/app-release.aab
+          test -f build/app/outputs/mapping/release/mapping.txt
+      - name: Verify signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "${apksigner}" verify --verbose --print-certs build/app/outputs/flutter-apk/app-release.apk | tee "${RUNNER_TEMP}/apk-signature.txt"
+          grep -q 'SentIQ Android CI' "${RUNNER_TEMP}/apk-signature.txt"
+          jarsigner -verify -strict build/app/outputs/bundle/release/app-release.aab
+          rm -f android/key.properties "${RUNNER_TEMP}/sentiq-ci-release.jks"
+      - name: Upload release evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: sentiq-chat-android-release-${{ github.sha }}
+          path: |
+            mobile/sentiq_chat/build/app/outputs/flutter-apk/app-release.apk
+            mobile/sentiq_chat/build/app/outputs/bundle/release/app-release.aab
+            mobile/sentiq_chat/build/app/outputs/mapping/release/mapping.txt
+            ${{ runner.temp }}/apk-signature.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  emulator-matrix:
+    name: Emulator API ${{ matrix.api-level }} startup and lifecycle smoke
+    needs: quality
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [28, 35]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: sentiq-android-emulator-input-${{ github.sha }}
+          path: /tmp/sentiq-emulator
+      - name: Start application on emulator
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            apk=/tmp/sentiq-emulator/build/app/outputs/flutter-apk/app-debug.apk
+            test -f "$apk"
+            adb install -r "$apk"
+            adb shell pm clear com.sentiqlabs.sentiqchat || true
+            adb shell am start -W -n com.sentiqlabs.sentiqchat/com.sentiqlabs.sentiq_chat.MainActivity | tee "/tmp/android-start-${{ matrix.api-level }}.txt"
+            sleep 4
+            test -n "$(adb shell pidof com.sentiqlabs.sentiqchat)"
+            adb shell am force-stop com.sentiqlabs.sentiqchat
+            adb shell am start -W -n com.sentiqlabs.sentiqchat/com.sentiqlabs.sentiq_chat.MainActivity | tee "/tmp/android-restart-${{ matrix.api-level }}.txt"
+            sleep 2
+            test -n "$(adb shell pidof com.sentiqlabs.sentiqchat)"
+            if adb logcat -d -t 500 | grep -A20 'FATAL EXCEPTION' | grep -q 'com.sentiqlabs.sentiqchat'; then
+              echo 'SentIQ Chat fatal exception detected' >&2
+              exit 1
+            fi
+      - name: Upload emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: emulator-api-${{ matrix.api-level }}-${{ github.sha }}
+          path: |
+            /tmp/android-start-${{ matrix.api-level }}.txt
+            /tmp/android-restart-${{ matrix.api-level }}.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  store-signed-release:
+    name: Store-signed manual release
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.store_signed == true }}
+    needs: [quality, backend-compatibility, emulator-matrix]
+    environment: production
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    defaults:
+      run:
+        working-directory: mobile/sentiq_chat
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Validate protected signing inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_KEYSTORE_BASE64}"
+          test -n "${ANDROID_KEYSTORE_PASSWORD}"
+          test -n "${ANDROID_KEY_ALIAS}"
+          test -n "${ANDROID_KEY_PASSWORD}"
+      - name: Configure protected upload key
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/sentiq-upload.jks"
+          cat > android/key.properties <<KEYS
+          storePassword=${ANDROID_KEYSTORE_PASSWORD}
+          keyPassword=${ANDROID_KEY_PASSWORD}
+          keyAlias=${ANDROID_KEY_ALIAS}
+          storeFile=${RUNNER_TEMP}/sentiq-upload.jks
+          KEYS
+          ./tool/bootstrap_android.sh
+          flutter pub get
+      - name: Build store candidate
+        run: |
+          flutter build apk --release --dart-define=SENTIQ_ENV=production
+          flutter build appbundle --release --dart-define=SENTIQ_ENV=production
+      - name: Verify and upload store candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "${apksigner}" verify --verbose --print-certs build/app/outputs/flutter-apk/app-release.apk | tee "${RUNNER_TEMP}/store-apk-signature.txt"
+          jarsigner -verify -strict build/app/outputs/bundle/release/app-release.aab
+          rm -f android/key.properties "${RUNNER_TEMP}/sentiq-upload.jks"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sentiq-chat-play-candidate-${{ github.sha }}
+          path: |
+            mobile/sentiq_chat/build/app/outputs/flutter-apk/app-release.apk
+            mobile/sentiq_chat/build/app/outputs/bundle/release/app-release.aab
+            mobile/sentiq_chat/build/app/outputs/mapping/release/mapping.txt
+            ${{ runner.temp }}/store-apk-signature.txt
+          if-no-files-found: error
+          retention-days: 30
