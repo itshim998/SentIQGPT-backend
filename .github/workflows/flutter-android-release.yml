@@ -197,7 +197,12 @@ jobs:
           apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -1)"
           "${apksigner}" verify --verbose --print-certs build/app/outputs/flutter-apk/app-release.apk | tee "${RUNNER_TEMP}/apk-signature.txt"
           grep -q 'SentIQ Android CI' "${RUNNER_TEMP}/apk-signature.txt"
-          jarsigner -verify -strict build/app/outputs/bundle/release/app-release.aab
+          ci_password="$(sed -n 's/^storePassword=//p' android/key.properties)"
+          test -n "${ci_password}"
+          jarsigner -verify -strict \
+            -keystore "${RUNNER_TEMP}/sentiq-ci-release.jks" \
+            -storepass "${ci_password}" \
+            build/app/outputs/bundle/release/app-release.aab
           rm -f android/key.properties "${RUNNER_TEMP}/sentiq-ci-release.jks"
       - name: Upload release evidence
         uses: actions/upload-artifact@v7
@@ -305,7 +310,10 @@ jobs:
           set -euo pipefail
           apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -1)"
           "${apksigner}" verify --verbose --print-certs build/app/outputs/flutter-apk/app-release.apk | tee "${RUNNER_TEMP}/store-apk-signature.txt"
-          jarsigner -verify -strict build/app/outputs/bundle/release/app-release.aab
+          jarsigner -verify -strict \
+            -keystore "${RUNNER_TEMP}/sentiq-upload.jks" \
+            -storepass "${ANDROID_KEYSTORE_PASSWORD}" \
+            build/app/outputs/bundle/release/app-release.aab
           rm -f android/key.properties "${RUNNER_TEMP}/sentiq-upload.jks"
       - uses: actions/upload-artifact@v7
         with:
