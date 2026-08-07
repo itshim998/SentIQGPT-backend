@@ -55,5 +55,44 @@ replace_once(
         state = state.copyWith(status: status, clearMessage: true);
       }""",
 )
+replace_once(
+    "mobile/sentiq_chat/lib/features/account/application/account_controller.dart",
+    "final List<AccountMemory> memories = await _repository.memories();",
+    """final List<AccountMemory> memories = List<AccountMemory>.of(
+        await _repository.memories(),
+      );""",
+)
+replace_once(
+    "mobile/sentiq_chat/lib/features/research/application/deep_research_controller.dart",
+    """    if (reportJson != null) {
+      final DeepResearchReport report = DeepResearchReport.fromJson(reportJson);
+      state = state.copyWith(
+        report: report,
+        streamConnected: !report.isTerminal,
+        clearMessage: true,
+      );""",
+    """    if (reportJson != null) {
+      final DeepResearchReport incoming = DeepResearchReport.fromJson(reportJson);
+      final DeepResearchReport? existing = state.report;
+      final DeepResearchReport report = incoming.copyWith(
+        sources: incoming.sources.isEmpty ? existing?.sources : incoming.sources,
+        partialContent: incoming.partialContent.isEmpty
+            ? existing?.partialContent
+            : incoming.partialContent,
+      );
+      state = state.copyWith(
+        report: report,
+        streamConnected: !report.isTerminal,
+        clearMessage: true,
+      );""",
+)
+replace_once(
+    "mobile/sentiq_chat/test/features/live/live_controller_test.dart",
+    """    audio.emit(const LiveAudioEvent(type: 'interruptionBegan'));
+    expect(controller.state.connection, LiveConnectionState.suspended);""",
+    """    audio.emit(const LiveAudioEvent(type: 'interruptionBegan'));
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.state.connection, LiveConnectionState.suspended);""",
+)
 
-print("Applied six asserted Phase 5 analyzer corrections.")
+print("Applied nine asserted Phase 5 corrections.")
