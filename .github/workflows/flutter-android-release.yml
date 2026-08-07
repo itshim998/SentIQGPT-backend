@@ -6,6 +6,8 @@ on:
       - "mobile/sentiq_chat/**"
       - "backend/**"
       - "docs/mobile/**"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/flutter-android-release.yml"
   push:
     branches:
@@ -15,6 +17,8 @@ on:
       - "mobile/sentiq_chat/**"
       - "backend/**"
       - "docs/mobile/**"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/flutter-android-release.yml"
   workflow_dispatch:
     inputs:
