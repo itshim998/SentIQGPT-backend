@@ -55,19 +55,56 @@ jobs:
           cat "${parts[@]}" > "${RUNNER_TEMP}/phase6-payload.b64"
           test -s "${RUNNER_TEMP}/phase6-payload.b64"
 
-      - name: Decode Phase 6 payload
+      - name: Reconstruct Phase 6 payload archive
         shell: bash
         run: |
           set -euo pipefail
-          base64 --decode "${RUNNER_TEMP}/phase6-payload.b64" > "${RUNNER_TEMP}/phase6-payload.tar.gz"
-          test -s "${RUNNER_TEMP}/phase6-payload.tar.gz"
+          shopt -s nullglob
+          parts=(tool/phase6-bundle.b64.part-*)
+          out="${RUNNER_TEMP}/phase6-payload.tar.gz"
 
-      - name: Verify Phase 6 archive integrity
-        shell: bash
-        run: |
-          set -euo pipefail
-          gzip -t "${RUNNER_TEMP}/phase6-payload.tar.gz"
-          tar -tzf "${RUNNER_TEMP}/phase6-payload.tar.gz" >/dev/null
+          # Format A: one Base64 stream split across repository files.
+          if tr -d '\r\n\t ' < "${RUNNER_TEMP}/phase6-payload.b64" | base64 --decode > "${out}" 2>/dev/null \
+             && gzip -t "${out}" 2>/dev/null \
+             && tar -tzf "${out}" >/dev/null 2>&1; then
+            echo 'PAYLOAD_FORMAT=split-stream' >> "${GITHUB_ENV}"
+            exit 0
+          fi
+
+          # Format B: each repository file is an independently encoded binary chunk.
+          : > "${out}"
+          independent_ok=1
+          for part in "${parts[@]}"; do
+            if ! tr -d '\r\n\t ' < "${part}" | base64 --decode >> "${out}" 2>/dev/null; then
+              independent_ok=0
+              break
+            fi
+          done
+          if [[ "${independent_ok}" -eq 1 ]] \
+             && gzip -t "${out}" 2>/dev/null \
+             && tar -tzf "${out}" >/dev/null 2>&1; then
+            echo 'PAYLOAD_FORMAT=independent-chunks' >> "${GITHUB_ENV}"
+            exit 0
+          fi
+
+          # Format C: a split stream with accidental interior padding. Padding is
+          # normalized and restored only at the true end of the stream.
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          import os
+
+          root = Path('.')
+          parts = sorted(root.glob('tool/phase6-bundle.b64.part-*'))
+          encoded = ''.join(p.read_text(encoding='utf-8') for p in parts)
+          encoded = ''.join(encoded.split()).replace('=', '')
+          encoded += '=' * ((4 - len(encoded) % 4) % 4)
+          data = base64.b64decode(encoded, validate=True)
+          Path(os.environ['RUNNER_TEMP'], 'phase6-payload.tar.gz').write_bytes(data)
+          PY
+          gzip -t "${out}"
+          tar -tzf "${out}" >/dev/null
+          echo 'PAYLOAD_FORMAT=normalized-padding' >> "${GITHUB_ENV}"
 
       - name: Extract committed Phase 6 payload
         shell: bash
@@ -85,6 +122,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "Reconstructed payload format: ${PAYLOAD_FORMAT}"
           test -f .github/workflows/flutter-android-release.yml
           test -f docs/mobile/flutter-phase6-release-readiness.md
           test -f docs/mobile/phase6-performance-report.md
