@@ -10,26 +10,18 @@ permissions:
   contents: write
 
 env:
-  FLUTTER_VERSION: "3.44.8"
-  JAVA_VERSION: "17"
   NODE_VERSION: "20"
 
 jobs:
-  finalize:
-    name: Apply, commit, verify, and package Phase 6
+  dependency-security:
+    name: Repair and verify backend dependency security
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 35
     steps:
-      - name: Checkout exact staging head
+      - name: Checkout exact branch head
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - name: Set up Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -37,99 +29,27 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Set up pinned Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-
-      - name: Reconstruct and validate readable Phase 6 patch
+      - name: Apply safe dependency repairs
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          parts=(tool/phase6-readable.part-*.patch)
-          if [[ ${#parts[@]} -ne 9 ]]; then
-            echo "Expected 9 readable Phase 6 patch sections, found ${#parts[@]}" >&2
-            exit 1
-          fi
-          : > "${RUNNER_TEMP}/phase6-readable.patch"
-          for part in "${parts[@]}"; do
-            test -s "${part}"
-            grep -q '^diff --git ' "${part}"
-            cat "${part}" >> "${RUNNER_TEMP}/phase6-readable.patch"
-          done
-          git apply --check "${RUNNER_TEMP}/phase6-readable.patch"
-          git apply "${RUNNER_TEMP}/phase6-readable.patch"
-          test -f .github/workflows/flutter-android-release.yml
-          test -f docs/mobile/flutter-phase6-release-readiness.md
-          test -f docs/mobile/phase6-performance-report.md
-          test -f docs/mobile/phase6-feature-parity-checklist.md
-          test -f docs/mobile/phase6-known-limitations.md
-          test -f docs/mobile/android-studio-final-testing.md
-          test ! -e mobile/sentiq_chat/lib/features/foundation/presentation/foundation_gallery_screen.dart
+          npm pkg set 'dependencies.sharp=^0.34.5'
+          npm pkg set 'overrides.uuid=8.3.2'
+          npm install --package-lock-only --ignore-scripts
+          npm audit fix --ignore-scripts
+          npm install --package-lock-only --ignore-scripts
 
-      - name: Prepare deterministic mobile source
+      - name: Prove dependency security
         shell: bash
         run: |
           set -euo pipefail
-          cd mobile/sentiq_chat
-          ./tool/bootstrap_android.sh
-          flutter pub get
-          dart format lib test
-
-      - name: Commit production-ready Phase 6 source
-        shell: bash
-        run: |
-          set -euo pipefail
-          # GitHub's workflow token intentionally cannot create/delete workflow
-          # definitions. The connected GitHub app performs those workflow-only
-          # mutations after this source commit. Keep the release workflow only
-          # in the current runner workspace for the remaining verification.
-          cp .github/workflows/flutter-android-release.yml "${RUNNER_TEMP}/flutter-android-release.yml"
-          rm -f .github/workflows/flutter-android-release.yml
-          rm -f tool/phase6-bundle.b64.part-*
-          rm -f tool/phase6-direct.patch.gz.part-*
-          rm -f tool/phase6-readable.part-*.patch
-          rm -f .phase6-deletions.txt
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git diff --cached --check
-          git diff --cached --quiet && { echo 'No Phase 6 source changes to commit'; exit 1; }
-          git commit -m 'Complete Phase 6 Android production readiness'
-          git push origin HEAD:feature/flutter-android-app
-          echo "PHASE6_COMMIT=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
-          mkdir -p .github/workflows
-          cp "${RUNNER_TEMP}/flutter-android-release.yml" .github/workflows/flutter-android-release.yml
-
-      - name: Install verification runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y libsqlite3-0
           npm ci
-
-      - name: Analyze and run complete Flutter verification
-        shell: bash
-        working-directory: mobile/sentiq_chat
-        run: |
-          set -euo pipefail
-          dart format --output=none --set-exit-if-changed lib test
-          flutter analyze
-          flutter test --dart-define=SENTIQ_LOW_PERFORMANCE=true test/core/performance/low_performance_smoke_test.dart
-          flutter test --coverage test/core test/features test/widgets
-          flutter test test/integration
-          flutter test test/contracts/contract_fixture_replay_test.dart
-          flutter test test/goldens
-
-      - name: Run backend compatibility and dependency security gates
-        shell: bash
-        run: |
-          set -euo pipefail
           npm audit --audit-level=high
+
+      - name: Run backend compatibility suite
+        shell: bash
+        run: |
+          set -euo pipefail
           npm run build
           npx ts-node --project tsconfig.backend.json backend/testMobileContract.ts
           npm run test:deep-research
@@ -138,66 +58,17 @@ jobs:
           npm run test:stream-lifecycle
           npm run test:protected-context-safety
 
-      - name: Verify source security and release boundaries
+      - name: Commit verified dependency lock
         shell: bash
         run: |
           set -euo pipefail
-          test -z "$(git ls-files 'mobile/sentiq_chat/android/key.properties' 'mobile/sentiq_chat/android/**/*.jks' 'mobile/sentiq_chat/android/**/*.keystore')"
-          ! git grep -nEI '(service[_-]?role[^[:space:]]*[=:][[:space:]]*[A-Za-z0-9._-]{20,}|sk_live_[A-Za-z0-9]+|rzp_live_[A-Za-z0-9]+|BEGIN (RSA |EC )?PRIVATE KEY)' -- mobile/sentiq_chat
-          test "$(grep -RIl 'package:url_launcher/url_launcher.dart' mobile/sentiq_chat/lib | wc -l)" -eq 1
-          grep -q 'flutter_secure_storage:' mobile/sentiq_chat/pubspec.yaml
-          grep -q 'android:usesCleartextTraffic="false"' mobile/sentiq_chat/android/app/src/main/AndroidManifest.xml
-          grep -q 'cleartextTrafficPermitted="false"' mobile/sentiq_chat/android/app/src/main/res/xml/network_security_config.xml
-          ! grep -q 'android.permission.CAMERA' mobile/sentiq_chat/android/app/src/main/AndroidManifest.xml
-          grep -q 'android.permission.RECORD_AUDIO' mobile/sentiq_chat/android/app/src/main/AndroidManifest.xml
-          grep -q 'isMinifyEnabled = true' mobile/sentiq_chat/android/app/build.gradle.kts
-          grep -q 'isShrinkResources = true' mobile/sentiq_chat/android/app/build.gradle.kts
-          ! grep -RInE '\b(print|debugPrint)\s*\(' mobile/sentiq_chat/lib
-          ! git grep -nEI '(TODO|FIXME|HACK|XXX|coming soon|lorem ipsum)' -- mobile/sentiq_chat/lib mobile/sentiq_chat/android docs/mobile
-
-      - name: Build and verify signed minified release APK and AAB
-        shell: bash
-        working-directory: mobile/sentiq_chat
-        run: |
-          set -euo pipefail
-          ci_password="$(openssl rand -hex 20)"
-          echo "::add-mask::${ci_password}"
-          keytool -genkeypair -v \
-            -keystore "${RUNNER_TEMP}/sentiq-phase6-ci.jks" \
-            -storepass "${ci_password}" \
-            -keypass "${ci_password}" \
-            -alias sentiq_phase6_ci \
-            -keyalg RSA \
-            -keysize 3072 \
-            -validity 30 \
-            -dname "CN=SentIQ Phase 6 CI,O=SentIQ AI Labs,C=IN" >/dev/null 2>&1
-          cat > android/key.properties <<KEYS
-          storePassword=${ci_password}
-          keyPassword=${ci_password}
-          keyAlias=sentiq_phase6_ci
-          storeFile=${RUNNER_TEMP}/sentiq-phase6-ci.jks
-          KEYS
-          flutter build apk --release --dart-define=SENTIQ_ENV=production
-          flutter build appbundle --release --dart-define=SENTIQ_ENV=production
-          test -f build/app/outputs/flutter-apk/app-release.apk
-          test -f build/app/outputs/bundle/release/app-release.aab
-          test -f build/app/outputs/mapping/release/mapping.txt
-          apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -1)"
-          "${apksigner}" verify --verbose --print-certs build/app/outputs/flutter-apk/app-release.apk | tee "${RUNNER_TEMP}/phase6-finalizer-apk-signature.txt"
-          grep -q 'SentIQ Phase 6 CI' "${RUNNER_TEMP}/phase6-finalizer-apk-signature.txt"
-          jarsigner -verify -strict build/app/outputs/bundle/release/app-release.aab >/dev/null
-          rm -f android/key.properties "${RUNNER_TEMP}/sentiq-phase6-ci.jks"
-          test ! -e android/key.properties
-
-      - name: Upload final Phase 6 release evidence
-        uses: actions/upload-artifact@v7
-        with:
-          name: sentiq-chat-phase6-finalizer-${{ env.PHASE6_COMMIT }}
-          path: |
-            mobile/sentiq_chat/build/app/outputs/flutter-apk/app-release.apk
-            mobile/sentiq_chat/build/app/outputs/bundle/release/app-release.aab
-            mobile/sentiq_chat/build/app/outputs/mapping/release/mapping.txt
-            mobile/sentiq_chat/coverage/lcov.info
-            ${{ runner.temp }}/phase6-finalizer-apk-signature.txt
-          if-no-files-found: error
-          retention-days: 30
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'Dependency tree already secure; nothing to commit.'
+            exit 0
+          fi
+          git commit -m 'Harden backend dependencies for Android release'
+          git push origin HEAD:feature/flutter-android-app
