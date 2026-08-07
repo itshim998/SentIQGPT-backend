@@ -359,6 +359,7 @@ try {
     $Java = Assert-Command 'java'
     $Node = Assert-Command 'node'
     $Npm = Assert-Command 'npm'
+    $Npx = Assert-Command 'npx'
     $Keytool = Assert-Command 'keytool'
     $Jarsigner = Assert-Command 'jarsigner'
     $Bash = Resolve-Bash
@@ -426,7 +427,7 @@ try {
         Invoke-Checked -Name 'Install backend dependencies from lockfile' -FilePath $Npm -Arguments @('ci') -WorkingDirectory $RepoRoot
         Invoke-Checked -Name 'Backend dependency security gate' -FilePath $Npm -Arguments @('audit', '--audit-level=high') -WorkingDirectory $RepoRoot
         Invoke-Checked -Name 'Compile backend' -FilePath $Npm -Arguments @('run', 'build') -WorkingDirectory $RepoRoot
-        Invoke-Checked -Name 'Mobile contract compatibility' -FilePath 'npx' -Arguments @('ts-node', '--project', 'tsconfig.backend.json', 'backend/testMobileContract.ts') -WorkingDirectory $RepoRoot
+        Invoke-Checked -Name 'Mobile contract compatibility' -FilePath $Npx -Arguments @('ts-node', '--project', 'tsconfig.backend.json', 'backend/testMobileContract.ts') -WorkingDirectory $RepoRoot
         Invoke-Checked -Name 'Deep Research compatibility' -FilePath $Npm -Arguments @('run', 'test:deep-research') -WorkingDirectory $RepoRoot
         Invoke-Checked -Name 'SentIQ Live compatibility' -FilePath $Npm -Arguments @('run', 'test:live') -WorkingDirectory $RepoRoot
         Invoke-Checked -Name 'Billing quota compatibility' -FilePath $Npm -Arguments @('run', 'billing:test-quota') -WorkingDirectory $RepoRoot
@@ -470,7 +471,7 @@ storeFile=$keyStorePropertyPath
     $signatureEvidence = Join-Path $EvidenceDir 'apk-signature.txt'
     $apkSignature = Invoke-CapturedChecked -Name 'Verify APK signature' -FilePath $ApkSigner -Arguments @('verify', '--verbose', '--print-certs', $ReleaseApk) -OutputPath $signatureEvidence
     if ($apkSignature -notmatch 'SentIQ Android Local Verification') { throw 'APK certificate did not match the disposable local verification identity.' }
-    Invoke-Checked -Name 'Verify AAB signature' -FilePath $Jarsigner -Arguments @('-verify', '-strict', $ReleaseAab)
+    Invoke-Checked -Name 'Verify AAB signature against local verification keystore' -FilePath $Jarsigner -Arguments @('-verify', '-strict', '-keystore', $TemporaryKeyStore, '-storepass', $password, $ReleaseAab)
     $Manifest.checks.releasePackaging = 'PASS'
     $Manifest.checks.signatures = 'PASS'
 
