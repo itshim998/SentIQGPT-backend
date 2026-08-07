@@ -19,7 +19,7 @@ set "VERIFIER_PS1=%~dp0phase6_local_release.ps1"
 
 rem Parse the wrapper from a separate PowerShell process before executing it.
 rem This catches wrapper-level syntax errors that the wrapper cannot catch itself.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$tokens=$null; $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile($env:VERIFIER_PS1,[ref]$tokens,[ref]$errors) ^| Out-Null; if ($errors.Count -gt 0) { $errors ^| ForEach-Object { Write-Error ('Phase 6 wrapper parser preflight: ' + $_.Message) }; exit 3 }"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$tokens=$null; $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile($env:VERIFIER_PS1,[ref]$tokens,[ref]$errors) > $null; if ($errors.Count -gt 0) { foreach ($parseError in $errors) { [Console]::Error.WriteLine('Phase 6 wrapper parser preflight: ' + $parseError.Message) }; exit 3 }"
 if errorlevel 1 goto parser_failed
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%VERIFIER_PS1%" -RunEmulators -ExpectedHeadSha "%~1"
