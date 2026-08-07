@@ -203,6 +203,29 @@ function Find-SdkManager([string]$SdkRoot) {
     return $match.FullName
 }
 
+function Find-GitBash {
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $git = Get-Command "git.exe" -ErrorAction SilentlyContinue
+    if ($null -ne $git) {
+        $gitRoot = Split-Path (Split-Path $git.Source -Parent) -Parent
+        [void]$candidates.Add((Join-Path $gitRoot "bin\bash.exe"))
+        [void]$candidates.Add((Join-Path $gitRoot "usr\bin\bash.exe"))
+    }
+    $pathBash = Get-Command "bash.exe" -ErrorAction SilentlyContinue
+    if ($null -eq $pathBash) { $pathBash = Get-Command "bash" -ErrorAction SilentlyContinue }
+    if ($null -ne $pathBash) { [void]$candidates.Add($pathBash.Source) }
+
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if (!(Test-Path -LiteralPath $candidate)) { continue }
+        try {
+            $probe = Invoke-NativeProcessCapture -FilePath $candidate -Arguments @('--version')
+            if (($probe.ExitCode -eq 0) -and ($probe.Combined -match 'GNU bash')) { return $candidate }
+        }
+        catch {}
+    }
+    return $null
+}
+
 function Show-HostPreflight {
     $issues = New-Object System.Collections.Generic.List[string]
 
@@ -210,17 +233,7 @@ function Show-HostPreflight {
         [void]$issues.Add("Git for Windows is required")
     }
 
-    $bash = Get-Command "bash.exe" -ErrorAction SilentlyContinue
-    if ($null -eq $bash) { $bash = Get-Command "bash" -ErrorAction SilentlyContinue }
-    if ($null -eq $bash) {
-        $git = Get-Command "git.exe" -ErrorAction SilentlyContinue
-        $gitBashFound = $false
-        if ($null -ne $git) {
-            $gitRoot = Split-Path (Split-Path $git.Source -Parent) -Parent
-            $gitBashFound = Test-Path (Join-Path $gitRoot "bin\bash.exe")
-        }
-        if (!$gitBashFound) { [void]$issues.Add("Git Bash is required") }
-    }
+    if ($null -eq (Find-GitBash)) { [void]$issues.Add("A working Git Bash installation is required") }
 
     if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
         [void]$issues.Add("LOCALAPPDATA is unavailable, so private release toolchains cannot be installed")

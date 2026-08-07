@@ -183,17 +183,26 @@ function Assert-Command([string]$Name) {
 }
 
 function Resolve-Bash {
-    $bash = Get-Command "bash.exe" -ErrorAction SilentlyContinue
-    if ($null -eq $bash) { $bash = Get-Command "bash" -ErrorAction SilentlyContinue }
-    if ($null -ne $bash) { return $bash.Source }
-
+    $candidates = New-Object System.Collections.Generic.List[string]
     $git = Get-Command "git.exe" -ErrorAction SilentlyContinue
     if ($null -ne $git) {
         $gitRoot = Split-Path (Split-Path $git.Source -Parent) -Parent
-        $candidate = Join-Path $gitRoot "bin\bash.exe"
-        if (Test-Path $candidate) { return $candidate }
+        [void]$candidates.Add((Join-Path $gitRoot "bin\bash.exe"))
+        [void]$candidates.Add((Join-Path $gitRoot "usr\bin\bash.exe"))
     }
-    throw "Git Bash is required to replay tool/bootstrap_android.sh. Install Git for Windows or add bash to PATH."
+    $pathBash = Get-Command "bash.exe" -ErrorAction SilentlyContinue
+    if ($null -eq $pathBash) { $pathBash = Get-Command "bash" -ErrorAction SilentlyContinue }
+    if ($null -ne $pathBash) { [void]$candidates.Add($pathBash.Source) }
+
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if (!(Test-Path -LiteralPath $candidate)) { continue }
+        try {
+            $probe = Invoke-NativeProcessCapture -FilePath $candidate -Arguments @('--version')
+            if (($probe.ExitCode -eq 0) -and ($probe.Combined -match 'GNU bash')) { return $candidate }
+        }
+        catch {}
+    }
+    throw "A working Git Bash installation is required to replay tool/bootstrap_android.sh."
 }
 
 function Assert-FileContains([string]$Path, [string]$Literal) {
