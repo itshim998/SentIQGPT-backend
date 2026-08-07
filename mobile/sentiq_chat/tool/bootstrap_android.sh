@@ -49,20 +49,32 @@ if [[ -d "$PRESERVE_DIR/res" ]]; then
   cp -R "$PRESERVE_DIR/res" android/app/src/main/res
 fi
 
-python3 - <<'PY'
-from pathlib import Path
+# Development may reach a local emulator-host API over HTTP. Keep that exception
+# in the debug source set only; the main/production manifest and network policy
+# remain HTTPS-only. tools:replace is required because the main manifest sets
+# usesCleartextTraffic=false intentionally.
+cat > android/app/src/debug/AndroidManifest.xml <<'XML'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
+        tools:replace="android:usesCleartextTraffic" />
+</manifest>
+XML
 
-# Local development can reach the emulator host over HTTP. Production uses the
-# main manifest, whose cleartext policy is explicitly disabled.
-debug_manifest_path = Path("android/app/src/debug/AndroidManifest.xml")
-debug_manifest = debug_manifest_path.read_text(encoding="utf-8")
-if "usesCleartextTraffic" not in debug_manifest:
-    debug_manifest = debug_manifest.replace(
-        "</manifest>",
-        '    <application android:usesCleartextTraffic="true" />\n</manifest>',
-    )
-debug_manifest_path.write_text(debug_manifest, encoding="utf-8")
-PY
+mkdir -p android/app/src/debug/res/xml
+cat > android/app/src/debug/res/xml/network_security_config.xml <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
+XML
 
 grep -q 'applicationId = "com.sentiqlabs.sentiqchat"' android/app/build.gradle.kts
 grep -q 'minSdk = 28' android/app/build.gradle.kts
@@ -76,9 +88,12 @@ grep -q 'android:usesCleartextTraffic="false"' android/app/src/main/AndroidManif
 grep -q 'android.permission.RECORD_AUDIO' android/app/src/main/AndroidManifest.xml
 grep -q 'android.permission.MODIFY_AUDIO_SETTINGS' android/app/src/main/AndroidManifest.xml
 grep -q 'sentiq_file_paths' android/app/src/main/AndroidManifest.xml
+grep -q 'tools:replace="android:usesCleartextTraffic"' android/app/src/debug/AndroidManifest.xml
+grep -q 'cleartextTrafficPermitted="true"' android/app/src/debug/res/xml/network_security_config.xml
+grep -q 'cleartextTrafficPermitted="false"' android/app/src/main/res/xml/network_security_config.xml
 grep -q 'com.sentiqlabs.sentiqchat/artifacts' android/app/src/main/kotlin/com/sentiqlabs/sentiq_chat/MainActivity.kt
 grep -q 'com.sentiqlabs.sentiqchat/live_audio' android/app/src/main/kotlin/com/sentiqlabs/sentiq_chat/MainActivity.kt
 test -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 test -f android/app/src/main/res/values-v31/styles.xml
 
-printf 'Android scaffold ready: release-safe transport, R8, adaptive icon, splash, and API 28+\n'
+printf 'Android scaffold ready: release-safe transport, debug-local transport override, R8, adaptive icon, splash, and API 28+\n'
