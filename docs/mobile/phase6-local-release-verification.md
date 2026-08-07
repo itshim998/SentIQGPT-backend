@@ -43,9 +43,19 @@ Use Windows with:
 
 The script locates the SDK from `ANDROID_SDK_ROOT`, `ANDROID_HOME`, or the normal `%LOCALAPPDATA%\Android\Sdk` location. It can install the API 28/API 35 Google APIs x86_64 system images through `sdkmanager`. If Android SDK licenses have not yet been accepted, run `flutter doctor --android-licenses` once and then rerun the verifier.
 
-## Full zero-Actions gate
+## Preferred one-command gate
 
-From the repository root on the intended release-candidate branch:
+After checking out and pulling the intended PR branch, use the exact PR head SHA supplied for the release candidate:
+
+```powershell
+.\mobile\sentiq_chat\tool\phase6_local_release.cmd <expected-pr-head-sha>
+```
+
+The `.cmd` wrapper always enables the complete backend gate and API 28/API 35 emulator matrix. It forwards the supplied SHA to the PowerShell verifier, which refuses to run if local `HEAD` differs.
+
+## Direct PowerShell gate
+
+The equivalent direct invocation from the repository root is:
 
 ```powershell
 git status --short
@@ -56,7 +66,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\mobile\sentiq_chat\tool\ph
 
 For PowerShell 7, `pwsh` can be used instead of `powershell`.
 
-Do not edit tracked files between capturing `$head` and running the verifier. If the branch changes after a successful run, the evidence is stale and the full verifier must be rerun on the new head.
+Do not edit tracked files between capturing the approved release-candidate SHA and running the verifier. If the branch changes after a successful run, the evidence is stale and the full verifier must be rerun on the new head.
 
 ## Evidence bundle
 
