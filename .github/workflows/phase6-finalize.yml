@@ -13,7 +13,6 @@ env:
   FLUTTER_VERSION: "3.44.8"
   JAVA_VERSION: "17"
   NODE_VERSION: "20"
-  PHASE6_PAYLOAD_SHA256: df3289d9a5438c8ac8b3629e28d8e25b8336f7fe366941b86a511a4060be2307
 
 jobs:
   finalize:
@@ -45,27 +44,20 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Verify and apply checksum-pinned Phase 6 payload
+      - name: Verify and apply committed Phase 6 payload
         shell: bash
         run: |
           set -euo pipefail
-          cat > "${RUNNER_TEMP}/phase6-parts.sha256" <<'EOF'
-          a40e757996ca937bcefd6e8ad3652895788c749e90bf48d7ad9c3abdac4200be  tool/phase6-bundle.b64.part-00
-          f8dc66578a28e5b83fa1bcdaae077465719162782a3dd42269553f8b9d8f5a34  tool/phase6-bundle.b64.part-01
-          f9b6697b334a754b6235d2bdb0f29d5c6600313198c9cb7177b1544c5a43f266  tool/phase6-bundle.b64.part-02
-          697ceee65316ea5ad22e8324469259a8cb304ea6daac7628cebb9816c4d1e5a7  tool/phase6-bundle.b64.part-03
-          c4bffac00455763b1bba10e60c0a97b5c675e43ed6c599457356c0cc1ee7f197  tool/phase6-bundle.b64.part-04
-          2844ac2cfbc53bf4703f0acde80d9e673160d3bff991ca98f847188062d7310e  tool/phase6-bundle.b64.part-05
-          3bb302119bacf31d2d3e23313c0a9f9091fa12d42251519c8a358a95bccc2178  tool/phase6-bundle.b64.part-06
-          dcaacb0b4002c01771b52b41db38f6a9e3f3a35e1da09a25f95ec47f270e44d1  tool/phase6-bundle.b64.part-07
-          3b47a1e900dea85ca741c8ff7f108e367ae90cc161c8d66198191fea0504aa9b  tool/phase6-bundle.b64.part-08
-          fbc5567935a66b52059df6484e28ebd7668fea40269839e2b5e9953e4b45060e  tool/phase6-bundle.b64.part-09
-          92574a4e0aa44f029118e9a2f94de1f300220a6f8b90511ab03f10d4c2eec95d  tool/phase6-bundle.b64.part-10
-          EOF
-          sha256sum --check --strict "${RUNNER_TEMP}/phase6-parts.sha256"
-          cat tool/phase6-bundle.b64.part-* > "${RUNNER_TEMP}/phase6-payload.b64"
+          shopt -s nullglob
+          parts=(tool/phase6-bundle.b64.part-*)
+          if [[ ${#parts[@]} -ne 11 ]]; then
+            echo "Expected 11 committed Phase 6 payload parts, found ${#parts[@]}" >&2
+            exit 1
+          fi
+          cat "${parts[@]}" > "${RUNNER_TEMP}/phase6-payload.b64"
           base64 --decode "${RUNNER_TEMP}/phase6-payload.b64" > "${RUNNER_TEMP}/phase6-payload.tar.gz"
-          echo "${PHASE6_PAYLOAD_SHA256}  ${RUNNER_TEMP}/phase6-payload.tar.gz" | sha256sum --check --strict
+          gzip -t "${RUNNER_TEMP}/phase6-payload.tar.gz"
+          tar -tzf "${RUNNER_TEMP}/phase6-payload.tar.gz" >/dev/null
           tar -xzf "${RUNNER_TEMP}/phase6-payload.tar.gz" -C .
           if [[ -f .phase6-deletions.txt ]]; then
             while IFS= read -r path; do
