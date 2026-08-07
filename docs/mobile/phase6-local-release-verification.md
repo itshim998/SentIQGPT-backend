@@ -8,7 +8,7 @@ This is the zero-GitHub-Actions release gate for the native Android client. It e
 
 It verifies:
 
-- Flutter 3.44.8, Java 17, Node 20.x and Android SDK/build-tools availability;
+- exact Flutter 3.44.8, Java 17 and Node 20.20.2 executables plus Android SDK/build-tools availability;
 - clean tracked working tree and exact HEAD capture;
 - deterministic Android scaffold bootstrap and locked Flutter dependency resolution;
 - Dart formatting and Flutter static analysis;
@@ -34,17 +34,15 @@ A full merge-eligible run ends with `result: "PASS"` in `phase6-manifest.json`. 
 Use Windows with:
 
 - Git for Windows, including Git Bash;
-- Java/JDK 17 on `PATH` (the launcher also discovers common installed JDK 17 locations);
-- Node.js 20.x with npm/npx on `PATH`;
 - Android Studio / Android SDK;
-- Android SDK Platform Tools, Build Tools, Emulator and **Android SDK Command-line Tools (latest)**;
+- **Android SDK Command-line Tools (latest)**;
 - Android virtualization enabled so x86_64 emulators can boot.
 
-Flutter does **not** need to be installed globally. If Flutter 3.44.8 is not already available, the launcher downloads the official Windows stable archive into `%LOCALAPPDATA%\SentIQ\toolchains`, verifies the archive against Flutter's published SHA-256, extracts it, and prepends that private SDK to the verifier process only. A different global Flutter version is left untouched.
+Flutter, Node and JDK 17 do **not** need to be installed globally. The launcher selects the exact required versions or bootstraps private toolchains under `%LOCALAPPDATA%\SentIQ\toolchains`: Flutter 3.44.8 from the official Windows stable archive, Node 20.20.2 from nodejs.org and Eclipse Temurin JDK 17 from Adoptium metadata. Every download is checked against its official SHA-256 source before extraction. Toolchain archives and valid extracted installations are cached, and only the verifier process receives the private `PATH`, `JAVA_HOME`, Git ownership exception and analytics-suppression environment.
 
-Before downloading Flutter, the launcher performs a lightweight workstation preflight and reports missing/wrong Java, Node, Git Bash, Android SDK, or SDK Command-line Tools together. This avoids discovering a workstation prerequisite only after lengthy Flutter/backend tests.
+Before downloading a toolchain, the launcher performs a lightweight workstation preflight and reports missing Git/Git Bash, Android SDK or SDK Command-line Tools together. It then verifies the exact selected `node`, `npm`, `npx`, `java`, `keytool`, `jarsigner`, `flutter` and Flutter-bundled `dart` executables before starting the release gate.
 
-The script locates the Android SDK from `ANDROID_SDK_ROOT`, `ANDROID_HOME`, or the normal `%LOCALAPPDATA%\Android\Sdk` location. It can install the API 28/API 35 Google APIs x86_64 system images through `sdkmanager`. If Android SDK licenses have not yet been accepted, run `flutter doctor --android-licenses` once after the pinned Flutter SDK has been bootstrapped, then rerun the verifier.
+The script locates the Android SDK from `ANDROID_SDK_ROOT`, `ANDROID_HOME`, or the normal `%LOCALAPPDATA%\Android\Sdk` location. It accepts SDK licenses non-interactively, then uses `sdkmanager` to ensure the Flutter 3.44.8 platform/build-tools/NDK requirements plus the API 28/API 35 Google APIs x86_64 system images. A manual license step is only necessary if the installed SDK rejects safe non-interactive acceptance.
 
 ## Preferred one-command gate
 
@@ -56,7 +54,7 @@ After checking out and pulling the intended PR branch, use the exact PR head SHA
 
 The `.cmd` wrapper always enables the complete backend gate and API 28/API 35 emulator matrix. It forwards the supplied SHA to the PowerShell verifier, which refuses to run if local `HEAD` differs.
 
-On the first successful workstation setup, the command can spend several minutes downloading/extracting the pinned Flutter SDK and Android emulator images. Subsequent runs reuse the verified Flutter SDK and installed Android images.
+On the first successful workstation setup, the command can spend several minutes downloading/extracting private toolchains and Android emulator images. Subsequent runs reuse verified toolchains, archives and installed Android packages.
 
 ## Direct PowerShell gate
 
@@ -87,6 +85,9 @@ A successful full run contains at least:
 phase6-manifest.json
 phase6-local-verification.log
 apk-signature.txt
+aab-signature.txt
+android-licenses.txt
+android-sdk-packages.txt
 lcov.info
 release-artifacts/app-release.apk
 release-artifacts/app-release.aab

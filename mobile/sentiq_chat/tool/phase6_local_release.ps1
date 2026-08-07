@@ -7,6 +7,9 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
+$env:CI = "true"
+$env:FLUTTER_SUPPRESS_ANALYTICS = "true"
+$env:DART_SUPPRESS_ANALYTICS = "true"
 
 $templatePath = Join-Path $PSScriptRoot "phase6_local_release.impl.ps1.txt"
 $runtimePath = Join-Path $PSScriptRoot ".phase6_local_release.runtime.ps1"
@@ -21,6 +24,11 @@ $nodeArchiveUrl = "https://nodejs.org/dist/v20.20.2/node-v20.20.2-win-x64.zip"
 $nodeShasumsUrl = "https://nodejs.org/dist/v20.20.2/SHASUMS256.txt"
 
 $jdkAssetsUrl = "https://api.adoptium.net/v3/assets/latest/17/hotspot?architecture=x64&image_type=jdk&os=windows&vendor=eclipse"
+
+$script:SelectedNodeRoot = $null
+$script:SelectedJavaHome = $null
+$script:SelectedFlutterRoot = $null
+$script:LastFlutterProbe = $null
 
 function Get-CommandSource([string]$Name) {
     $command = Get-Command $Name -ErrorAction SilentlyContinue
@@ -42,37 +50,102 @@ function Invoke-Download([string]$Url, [string]$Destination) {
     Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Destination
 }
 
-function Get-NativeProcessText([string]$FilePath, [string]$ArgumentString) {
+function ConvertTo-NativeArgument([AllowEmptyString()][string]$Value) {
+    if ($Value.IndexOf('"') -ge 0) {
+        throw "Native command arguments containing quotes are not supported by the Phase 6 runner."
+    }
+    return '"' + $Value + '"'
+}
+
+function Invoke-NativeProcessCapture {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [string]$WorkingDirectory = "",
+        [string]$StandardInput = ""
+    )
+
     $process = $null
     try {
         $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $startInfo.FileName = $FilePath
-        $startInfo.Arguments = $ArgumentString
+        $extension = [System.IO.Path]::GetExtension($FilePath)
+        if (($extension -eq ".bat") -or ($extension -eq ".cmd")) {
+            if ([string]::IsNullOrWhiteSpace($env:ComSpec)) {
+                throw "COMSPEC is unavailable, so Windows batch tools cannot be executed."
+            }
+            $commandTokens = @((ConvertTo-NativeArgument $FilePath))
+            $commandTokens += $Arguments | ForEach-Object { ConvertTo-NativeArgument $_ }
+            $startInfo.FileName = $env:ComSpec
+            $startInfo.Arguments = '/d /s /c "' + ($commandTokens -join ' ') + '"'
+        }
+        else {
+            $startInfo.FileName = $FilePath
+            $startInfo.Arguments = (($Arguments | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' ')
+        }
+        if (![string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+            $startInfo.WorkingDirectory = $WorkingDirectory
+        }
         $startInfo.UseShellExecute = $false
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
+        $startInfo.RedirectStandardInput = ![string]::IsNullOrEmpty($StandardInput)
         $startInfo.CreateNoWindow = $true
 
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $startInfo
-        if (!$process.Start()) { return $null }
+        if (!$process.Start()) { throw "Native process could not be started: $FilePath" }
 
-        $stdout = $process.StandardOutput.ReadToEnd()
-        $stderr = $process.StandardError.ReadToEnd()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if ($startInfo.RedirectStandardInput) {
+            $process.StandardInput.Write($StandardInput)
+            $process.StandardInput.Close()
+        }
         $process.WaitForExit()
-        if ($process.ExitCode -ne 0) { return $null }
-        return ((($stdout + "`n" + $stderr).Trim()))
-    }
-    catch {
-        return $null
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            Stdout = $stdout.TrimEnd()
+            Stderr = $stderr.TrimEnd()
+            Combined = (($stdout + "`n" + $stderr).Trim())
+        }
     }
     finally {
         if ($null -ne $process) { $process.Dispose() }
     }
 }
 
+function Get-NativeProcessText([string]$FilePath, [string[]]$Arguments) {
+    try {
+        $result = Invoke-NativeProcessCapture -FilePath $FilePath -Arguments $Arguments
+        if ($result.ExitCode -ne 0) { return $null }
+        return $result.Combined
+    }
+    catch { return $null }
+}
+
+function Add-ProcessGitSafeDirectory([string]$Directory) {
+    $count = 0
+    if (![string]::IsNullOrWhiteSpace($env:GIT_CONFIG_COUNT)) {
+        if (!([int]::TryParse($env:GIT_CONFIG_COUNT, [ref]$count)) -or ($count -lt 0)) {
+            throw "GIT_CONFIG_COUNT is invalid; refusing to overwrite the caller's Git configuration environment."
+        }
+    }
+
+    for ($index = 0; $index -lt $count; $index++) {
+        $key = [Environment]::GetEnvironmentVariable(("GIT_CONFIG_KEY_{0}" -f $index), "Process")
+        $value = [Environment]::GetEnvironmentVariable(("GIT_CONFIG_VALUE_{0}" -f $index), "Process")
+        if (($key -eq "safe.directory") -and ($value -eq $Directory)) { return }
+    }
+
+    [Environment]::SetEnvironmentVariable(("GIT_CONFIG_KEY_{0}" -f $count), "safe.directory", "Process")
+    [Environment]::SetEnvironmentVariable(("GIT_CONFIG_VALUE_{0}" -f $count), $Directory, "Process")
+    [Environment]::SetEnvironmentVariable("GIT_CONFIG_COUNT", ($count + 1).ToString(), "Process")
+}
+
 function Get-JavaMajor([string]$JavaCommand) {
-    $text = Get-NativeProcessText -FilePath $JavaCommand -ArgumentString "-version"
+    $text = Get-NativeProcessText -FilePath $JavaCommand -Arguments @("-version")
     if ([string]::IsNullOrWhiteSpace($text)) { return $null }
 
     $match = [regex]::Match($text, '(?:openjdk|java)\s+version\s+"?([0-9]+)')
@@ -87,20 +160,18 @@ function Get-JavaMajor([string]$JavaCommand) {
 }
 
 function Get-NodeVersion([string]$NodeCommand) {
-    try {
-        $text = ((& $NodeCommand --version 2>&1) -join "").Trim()
-        $match = [regex]::Match($text, '^v([0-9]+\.[0-9]+\.[0-9]+)$')
-        if (!$match.Success) { return $null }
-        return $match.Groups[1].Value
-    }
-    catch { return $null }
+    $text = Get-NativeProcessText -FilePath $NodeCommand -Arguments @("--version")
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    $match = [regex]::Match($text.Trim(), '^v([0-9]+\.[0-9]+\.[0-9]+)$')
+    if (!$match.Success) { return $null }
+    return $match.Groups[1].Value
 }
 
 function Get-FlutterVersion([string]$FlutterCommand) {
     try {
-        $output = & $FlutterCommand --version 2>&1
-        if ($LASTEXITCODE -ne 0) { return $null }
-        $match = [regex]::Match(($output -join "`n"), 'Flutter\s+([0-9]+\.[0-9]+\.[0-9]+)\b')
+        $script:LastFlutterProbe = Invoke-NativeProcessCapture -FilePath $FlutterCommand -Arguments @("--version")
+        if ($script:LastFlutterProbe.ExitCode -ne 0) { return $null }
+        $match = [regex]::Match($script:LastFlutterProbe.Combined, 'Flutter\s+([0-9]+\.[0-9]+\.[0-9]+)\b')
         if (!$match.Success) { return $null }
         return $match.Groups[1].Value
     }
@@ -180,6 +251,8 @@ function Ensure-PinnedNode {
     if ($null -ne $existing) {
         $existingVersion = Get-NodeVersion $existing
         if ($existingVersion -eq $requiredNodeVersion) {
+            $script:SelectedNodeRoot = Split-Path $existing -Parent
+            $env:PATH = "{0};{1}" -f $script:SelectedNodeRoot, $env:PATH
             Write-Host ("Using Node {0} from PATH: {1}" -f $requiredNodeVersion, $existing) -ForegroundColor Green
             return
         }
@@ -193,6 +266,7 @@ function Ensure-PinnedNode {
     $nodeExe = Join-Path $nodeRoot "node.exe"
 
     if ((Test-Path $nodeExe) -and ((Get-NodeVersion $nodeExe) -eq $requiredNodeVersion)) {
+        $script:SelectedNodeRoot = $nodeRoot
         $env:PATH = "{0};{1}" -f $nodeRoot, $env:PATH
         Write-Host ("Using cached private Node {0}: {1}" -f $requiredNodeVersion, $nodeRoot) -ForegroundColor Green
         return
@@ -206,15 +280,22 @@ function Ensure-PinnedNode {
     $extractRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sentiq-node-{0}-{1}" -f $requiredNodeVersion, [Guid]::NewGuid().ToString("N"))
 
     try {
-        Write-Host ("Downloading private Node {0} for CI parity..." -f $requiredNodeVersion) -ForegroundColor Cyan
-        Invoke-Download -Url $nodeArchiveUrl -Destination $archivePath
-        Invoke-Download -Url $nodeShasumsUrl -Destination $shasumsPath
+        if (!(Test-Path $shasumsPath)) {
+            Invoke-Download -Url $nodeShasumsUrl -Destination $shasumsPath
+        }
 
         $line = Get-Content $shasumsPath | Where-Object { $_ -match ([regex]::Escape($nodeArchiveName) + '$') } | Select-Object -First 1
         if ([string]::IsNullOrWhiteSpace($line)) {
             throw ("Official Node SHASUMS256.txt did not contain {0}." -f $nodeArchiveName)
         }
         $expectedHash = (($line -split '\s+')[0]).ToLowerInvariant()
+        if ((Test-Path $archivePath) -and ((Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant() -ne $expectedHash)) {
+            Remove-Item -Force $archivePath
+        }
+        if (!(Test-Path $archivePath)) {
+            Write-Host ("Downloading private Node {0} for CI parity..." -f $requiredNodeVersion) -ForegroundColor Cyan
+            Invoke-Download -Url $nodeArchiveUrl -Destination $archivePath
+        }
         $actualHash = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
         if ($actualHash -ne $expectedHash) {
             throw ("Node archive SHA-256 mismatch. Expected {0}, found {1}." -f $expectedHash, $actualHash)
@@ -232,13 +313,12 @@ function Ensure-PinnedNode {
         if ((Get-NodeVersion $nodeExe) -ne $requiredNodeVersion) {
             throw ("Bootstrapped Node did not report the expected version {0}." -f $requiredNodeVersion)
         }
+        $script:SelectedNodeRoot = $nodeRoot
         $env:PATH = "{0};{1}" -f $nodeRoot, $env:PATH
         Write-Host ("Private Node {0} is ready at {1}" -f $requiredNodeVersion, $nodeRoot) -ForegroundColor Green
     }
     finally {
         Remove-Item -Recurse -Force $extractRoot -ErrorAction SilentlyContinue
-        Remove-Item -Force $archivePath -ErrorAction SilentlyContinue
-        Remove-Item -Force $shasumsPath -ErrorAction SilentlyContinue
     }
 }
 
@@ -246,12 +326,13 @@ function Ensure-PinnedJava17 {
     $existing = Get-CommandSource "java"
     if (($null -ne $existing) -and ((Get-JavaMajor $existing) -eq 17)) {
         $javaHome = Split-Path (Split-Path $existing -Parent) -Parent
-        if (Test-Path (Join-Path $javaHome "bin\keytool.exe")) {
+        if ((Test-Path (Join-Path $javaHome "bin\keytool.exe")) -and (Test-Path (Join-Path $javaHome "bin\jarsigner.exe"))) {
+            $script:SelectedJavaHome = $javaHome
             $env:JAVA_HOME = $javaHome
             $env:PATH = "{0};{1}" -f (Join-Path $javaHome "bin"), $env:PATH
+            Write-Host ("Using JDK 17 from PATH: {0}" -f $existing) -ForegroundColor Green
+            return
         }
-        Write-Host ("Using JDK 17 from PATH: {0}" -f $existing) -ForegroundColor Green
-        return
     }
 
     $toolchainRoot = Join-Path $env:LOCALAPPDATA "SentIQ\toolchains"
@@ -259,6 +340,7 @@ function Ensure-PinnedJava17 {
     $javaExe = Join-Path $jdkRoot "bin\java.exe"
 
     if ((Test-Path $javaExe) -and ((Get-JavaMajor $javaExe) -eq 17)) {
+        $script:SelectedJavaHome = $jdkRoot
         $env:JAVA_HOME = $jdkRoot
         $env:PATH = "{0};{1}" -f (Join-Path $jdkRoot "bin"), $env:PATH
         Write-Host ("Using cached private Temurin JDK 17: {0}" -f $jdkRoot) -ForegroundColor Green
@@ -290,8 +372,13 @@ function Ensure-PinnedJava17 {
             throw "Adoptium metadata did not contain a valid SHA-256 checksum."
         }
 
-        Write-Host "Downloading private Eclipse Temurin JDK 17..." -ForegroundColor Cyan
-        Invoke-Download -Url $downloadUrl -Destination $archivePath
+        if ((Test-Path $archivePath) -and ((Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant() -ne $expectedHash)) {
+            Remove-Item -Force $archivePath
+        }
+        if (!(Test-Path $archivePath)) {
+            Write-Host "Downloading private Eclipse Temurin JDK 17..." -ForegroundColor Cyan
+            Invoke-Download -Url $downloadUrl -Destination $archivePath
+        }
         $actualHash = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
         if ($actualHash -ne $expectedHash) {
             throw ("Temurin JDK archive SHA-256 mismatch. Expected {0}, found {1}." -f $expectedHash, $actualHash)
@@ -312,22 +399,25 @@ function Ensure-PinnedJava17 {
         if ((Get-JavaMajor $javaExe) -ne 17) {
             throw "Bootstrapped Temurin JDK did not report Java 17."
         }
+        $script:SelectedJavaHome = $jdkRoot
         $env:JAVA_HOME = $jdkRoot
         $env:PATH = "{0};{1}" -f (Join-Path $jdkRoot "bin"), $env:PATH
         Write-Host ("Private Temurin JDK 17 is ready at {0}" -f $jdkRoot) -ForegroundColor Green
     }
     finally {
         Remove-Item -Recurse -Force $extractRoot -ErrorAction SilentlyContinue
-        Remove-Item -Force $archivePath -ErrorAction SilentlyContinue
-        Remove-Item -Force $metadataPath -ErrorAction SilentlyContinue
     }
 }
 
 function Ensure-PinnedFlutter {
     $globalFlutter = Get-CommandSource "flutter"
     if ($null -ne $globalFlutter) {
+        $globalFlutterRoot = Split-Path (Split-Path $globalFlutter -Parent) -Parent
+        Add-ProcessGitSafeDirectory $globalFlutterRoot
         $globalVersion = Get-FlutterVersion $globalFlutter
         if ($globalVersion -eq $requiredFlutterVersion) {
+            $script:SelectedFlutterRoot = $globalFlutterRoot
+            $env:PATH = "{0};{1}" -f (Join-Path $globalFlutterRoot "bin"), $env:PATH
             Write-Host ("Using Flutter {0} from PATH: {1}" -f $requiredFlutterVersion, $globalFlutter) -ForegroundColor Green
             return
         }
@@ -339,11 +429,17 @@ function Ensure-PinnedFlutter {
     $toolchainRoot = Join-Path $env:LOCALAPPDATA "SentIQ\toolchains"
     $flutterRoot = Join-Path $toolchainRoot ("flutter-{0}" -f $requiredFlutterVersion)
     $flutterBat = Join-Path $flutterRoot "bin\flutter.bat"
+    Add-ProcessGitSafeDirectory $flutterRoot
 
     if ((Test-Path $flutterBat) -and ((Get-FlutterVersion $flutterBat) -eq $requiredFlutterVersion)) {
+        $script:SelectedFlutterRoot = $flutterRoot
         $env:PATH = "{0};{1}" -f (Join-Path $flutterRoot "bin"), $env:PATH
         Write-Host ("Using cached SentIQ Flutter {0}: {1}" -f $requiredFlutterVersion, $flutterRoot) -ForegroundColor Green
         return
+    }
+
+    if ((Test-Path $flutterBat) -and ($null -ne $script:LastFlutterProbe) -and ($script:LastFlutterProbe.ExitCode -ne 0)) {
+        throw ("Cached Flutter version probe failed with exit code {0}.`nstdout:`n{1}`nstderr:`n{2}" -f $script:LastFlutterProbe.ExitCode, $script:LastFlutterProbe.Stdout, $script:LastFlutterProbe.Stderr)
     }
 
     if (Test-Path $flutterRoot) { Remove-Item -Recurse -Force $flutterRoot }
@@ -352,8 +448,13 @@ function Ensure-PinnedFlutter {
     $extractRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sentiq-flutter-{0}-{1}" -f $requiredFlutterVersion, [Guid]::NewGuid().ToString("N"))
 
     try {
-        Write-Host ("Flutter {0} was not found. Downloading the official pinned Windows SDK..." -f $requiredFlutterVersion) -ForegroundColor Cyan
-        Invoke-Download -Url $flutterArchiveUrl -Destination $archivePath
+        if ((Test-Path $archivePath) -and ((Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant() -ne $flutterArchiveSha256)) {
+            Remove-Item -Force $archivePath
+        }
+        if (!(Test-Path $archivePath)) {
+            Write-Host ("Flutter {0} was not found. Downloading the official pinned Windows SDK..." -f $requiredFlutterVersion) -ForegroundColor Cyan
+            Invoke-Download -Url $flutterArchiveUrl -Destination $archivePath
+        }
         $actualHash = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
         if ($actualHash -ne $flutterArchiveSha256) {
             throw ("Downloaded Flutter SDK failed SHA-256 verification. Expected {0}, found {1}." -f $flutterArchiveSha256, $actualHash)
@@ -370,45 +471,78 @@ function Ensure-PinnedFlutter {
         Move-Item -Path $extractedFlutter -Destination $flutterRoot
 
         if ((Get-FlutterVersion $flutterBat) -ne $requiredFlutterVersion) {
-            throw ("Bootstrapped Flutter did not report the expected version {0}." -f $requiredFlutterVersion)
+            $exitCode = if ($null -eq $script:LastFlutterProbe) { "not started" } else { $script:LastFlutterProbe.ExitCode }
+            $stdout = if ($null -eq $script:LastFlutterProbe) { "" } else { $script:LastFlutterProbe.Stdout }
+            $stderr = if ($null -eq $script:LastFlutterProbe) { "" } else { $script:LastFlutterProbe.Stderr }
+            throw ("Bootstrapped Flutter did not report {0} (exit {1}).`nstdout:`n{2}`nstderr:`n{3}" -f $requiredFlutterVersion, $exitCode, $stdout, $stderr)
         }
+        $script:SelectedFlutterRoot = $flutterRoot
         $env:PATH = "{0};{1}" -f (Join-Path $flutterRoot "bin"), $env:PATH
         Write-Host ("Pinned Flutter {0} is ready at {1}" -f $requiredFlutterVersion, $flutterRoot) -ForegroundColor Green
     }
     finally {
         Remove-Item -Recurse -Force $extractRoot -ErrorAction SilentlyContinue
-        Remove-Item -Force $archivePath -ErrorAction SilentlyContinue
     }
 }
 
 function Confirm-PrivateToolchains {
-    $node = Get-CommandSource "node"
-    $java = Get-CommandSource "java"
-    $flutter = Get-CommandSource "flutter"
-    $dart = Get-CommandSource "dart"
-    $npm = Get-CommandSource "npm"
-    $npx = Get-CommandSource "npx"
-    $keytool = Get-CommandSource "keytool"
-    $jarsigner = Get-CommandSource "jarsigner"
+    if ([string]::IsNullOrWhiteSpace($script:SelectedNodeRoot)) { throw "Pinned Node root was not selected." }
+    if ([string]::IsNullOrWhiteSpace($script:SelectedJavaHome)) { throw "Pinned JDK home was not selected." }
+    if ([string]::IsNullOrWhiteSpace($script:SelectedFlutterRoot)) { throw "Pinned Flutter root was not selected." }
 
-    if (($null -eq $node) -or ((Get-NodeVersion $node) -ne $requiredNodeVersion)) {
-        throw ("Node {0} bootstrap did not become active on PATH." -f $requiredNodeVersion)
+    $commands = [ordered]@{
+        node = Join-Path $script:SelectedNodeRoot "node.exe"
+        npm = Join-Path $script:SelectedNodeRoot "npm.cmd"
+        npx = Join-Path $script:SelectedNodeRoot "npx.cmd"
+        java = Join-Path $script:SelectedJavaHome "bin\java.exe"
+        keytool = Join-Path $script:SelectedJavaHome "bin\keytool.exe"
+        jarsigner = Join-Path $script:SelectedJavaHome "bin\jarsigner.exe"
+        flutter = Join-Path $script:SelectedFlutterRoot "bin\flutter.bat"
+        dart = Join-Path $script:SelectedFlutterRoot "bin\dart.bat"
     }
-    if (($null -eq $java) -or ((Get-JavaMajor $java) -ne 17)) {
-        throw "JDK 17 bootstrap did not become active on PATH."
-    }
-    foreach ($pair in @(
-        @{ Name = "npm"; Value = $npm },
-        @{ Name = "npx"; Value = $npx },
-        @{ Name = "keytool"; Value = $keytool },
-        @{ Name = "jarsigner"; Value = $jarsigner },
-        @{ Name = "flutter"; Value = $flutter },
-        @{ Name = "dart"; Value = $dart }
-    )) {
-        if ($null -eq $pair.Value) {
-            throw ("Required command '{0}' is unavailable after private toolchain bootstrap." -f $pair.Name)
+    foreach ($entry in $commands.GetEnumerator()) {
+        if (!(Test-Path -LiteralPath $entry.Value)) {
+            throw ("Selected {0} executable is missing: {1}" -f $entry.Key, $entry.Value)
         }
     }
+
+    if ((Get-NodeVersion $commands.node) -ne $requiredNodeVersion) {
+        throw ("Selected Node executable is not version {0}: {1}" -f $requiredNodeVersion, $commands.node)
+    }
+    if ((Get-JavaMajor $commands.java) -ne 17) {
+        throw ("Selected Java executable is not JDK 17: {0}" -f $commands.java)
+    }
+    if ((Get-FlutterVersion $commands.flutter) -ne $requiredFlutterVersion) {
+        throw ("Selected Flutter executable is not version {0}: {1}" -f $requiredFlutterVersion, $commands.flutter)
+    }
+
+    $probes = @(
+        @{ Name = "dart"; Path = $commands.dart; Arguments = @("--version") },
+        @{ Name = "npm"; Path = $commands.npm; Arguments = @("--version") },
+        @{ Name = "npx"; Path = $commands.npx; Arguments = @("--version") },
+        @{ Name = "keytool"; Path = $commands.keytool; Arguments = @("-help") },
+        @{ Name = "jarsigner"; Path = $commands.jarsigner; Arguments = @("-help") }
+    )
+    $probeResults = @{}
+    foreach ($probe in $probes) {
+        $result = Invoke-NativeProcessCapture -FilePath $probe.Path -Arguments $probe.Arguments
+        if ($result.ExitCode -ne 0) {
+            throw ("Selected {0} probe failed with exit code {1}: {2}" -f $probe.Name, $result.ExitCode, $result.Combined)
+        }
+        $probeResults[$probe.Name] = $result.Combined
+    }
+    if ($probeResults.dart -notmatch 'Dart SDK version:\s+([0-9]+\.[0-9]+\.[0-9]+)') {
+        throw ("Selected Dart executable did not report an SDK version: {0}" -f $probeResults.dart)
+    }
+
+    $env:SENTIQ_PINNED_NODE_ROOT = $script:SelectedNodeRoot
+    $env:SENTIQ_PINNED_JAVA_HOME = $script:SelectedJavaHome
+    $env:SENTIQ_PINNED_FLUTTER_ROOT = $script:SelectedFlutterRoot
+
+    Write-Host ("Validated Node {0}: {1}" -f $requiredNodeVersion, $commands.node) -ForegroundColor Green
+    Write-Host ("Validated npm {0} and npx {1} from the selected Node root." -f $probeResults.npm, $probeResults.npx) -ForegroundColor Green
+    Write-Host ("Validated JDK 17, keytool, and jarsigner: {0}" -f $script:SelectedJavaHome) -ForegroundColor Green
+    Write-Host ("Validated Flutter {0} with {1}: {2}" -f $requiredFlutterVersion, ($probeResults.dart -split "`r?`n")[0], $commands.flutter) -ForegroundColor Green
 }
 
 try {
@@ -417,58 +551,6 @@ try {
     }
 
     $source = [System.IO.File]::ReadAllText($templatePath)
-
-    $legacy = 'failed for $Serial: $($output -join '' '')'
-    $safe = 'failed for ${Serial}: $($output -join '' '')'
-    $legacyCount = [regex]::Matches($source, [regex]::Escape($legacy)).Count
-    if ($legacyCount -ne 1) {
-        throw ("Phase 6 verifier compatibility patch expected exactly one target, found {0}. Refusing to execute an unverified runtime script." -f $legacyCount)
-    }
-    $source = $source.Replace($legacy, $safe)
-
-    $javaProbeMarker = 'function Assert-Command([string]$Name) {'
-    $javaProbeCount = [regex]::Matches($source, [regex]::Escape($javaProbeMarker)).Count
-    if ($javaProbeCount -ne 1) {
-        throw ("Phase 6 verifier Java probe injection expected exactly one marker, found {0}." -f $javaProbeCount)
-    }
-    $javaProbeFunction = @'
-function Get-JavaVersionText([string]$JavaCommand) {
-    $process = $null
-    try {
-        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $startInfo.FileName = $JavaCommand
-        $startInfo.Arguments = "-version"
-        $startInfo.UseShellExecute = $false
-        $startInfo.RedirectStandardOutput = $true
-        $startInfo.RedirectStandardError = $true
-        $startInfo.CreateNoWindow = $true
-
-        $process = New-Object System.Diagnostics.Process
-        $process.StartInfo = $startInfo
-        if (!$process.Start()) { throw "Java version probe could not start." }
-        $stdout = $process.StandardOutput.ReadToEnd()
-        $stderr = $process.StandardError.ReadToEnd()
-        $process.WaitForExit()
-        if ($process.ExitCode -ne 0) {
-            throw "Java version probe exited with code $($process.ExitCode)."
-        }
-        return ((($stdout + "`n" + $stderr).Trim()))
-    }
-    finally {
-        if ($null -ne $process) { $process.Dispose() }
-    }
-}
-
-'@
-    $source = $source.Replace($javaProbeMarker, ($javaProbeFunction + $javaProbeMarker))
-
-    $javaVersionLegacy = '$javaVersion = Get-ExternalText -FilePath $Java -Arguments @(''-version'')'
-    $javaVersionSafe = '$javaVersion = Get-JavaVersionText -JavaCommand $Java'
-    $javaVersionCount = [regex]::Matches($source, [regex]::Escape($javaVersionLegacy)).Count
-    if ($javaVersionCount -ne 1) {
-        throw ("Phase 6 verifier Java version-call patch expected exactly one target, found {0}." -f $javaVersionCount)
-    }
-    $source = $source.Replace($javaVersionLegacy, $javaVersionSafe)
 
     $ambiguous = [regex]::Matches($source, '\$(?!env:|global:|script:|local:|private:|using:)[A-Za-z_][A-Za-z0-9_]*:')
     if ($ambiguous.Count -gt 0) {
