@@ -20,8 +20,7 @@ $nodeArchiveName = "node-v20.20.2-win-x64.zip"
 $nodeArchiveUrl = "https://nodejs.org/dist/v20.20.2/node-v20.20.2-win-x64.zip"
 $nodeShasumsUrl = "https://nodejs.org/dist/v20.20.2/SHASUMS256.txt"
 
-$jdkBinaryUrl = "https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jdk/hotspot/normal/eclipse"
-$jdkChecksumUrl = "https://api.adoptium.net/v3/checksum/latest/17/ga/windows/x64/jdk/hotspot/normal/eclipse"
+$jdkAssetsUrl = "https://api.adoptium.net/v3/assets/latest/17/hotspot?architecture=x64&image_type=jdk&os=windows&vendor=eclipse"
 
 function Get-CommandSource([string]$Name) {
     $command = Get-Command $Name -ErrorAction SilentlyContinue
@@ -234,26 +233,35 @@ function Ensure-PinnedJava17 {
     if (Test-Path $jdkRoot) { Remove-Item -Recurse -Force $jdkRoot }
     New-Item -ItemType Directory -Force -Path $toolchainRoot | Out-Null
 
+    $metadataPath = Join-Path $toolchainRoot "temurin-jdk-17-metadata.json"
     $archivePath = Join-Path $toolchainRoot "temurin-jdk-17-windows-x64.zip"
-    $checksumPath = Join-Path $toolchainRoot "temurin-jdk-17.sha256"
     $extractRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sentiq-jdk17-{0}" -f [Guid]::NewGuid().ToString("N"))
 
     try {
-        Write-Host "Downloading private Eclipse Temurin JDK 17 from Adoptium..." -ForegroundColor Cyan
-        Invoke-Download -Url $jdkBinaryUrl -Destination $archivePath
-        Invoke-Download -Url $jdkChecksumUrl -Destination $checksumPath
-
-        $checksumText = (Get-Content -Raw $checksumPath).Trim()
-        $match = [regex]::Match($checksumText, '([A-Fa-f0-9]{64})')
-        if (!$match.Success) {
-            throw "Adoptium checksum endpoint did not return a SHA-256 value."
+        Write-Host "Resolving the current Eclipse Temurin JDK 17 package from Adoptium metadata..." -ForegroundColor Cyan
+        Invoke-Download -Url $jdkAssetsUrl -Destination $metadataPath
+        $assets = Get-Content -Raw $metadataPath | ConvertFrom-Json
+        if (($null -eq $assets) -or ($assets.Count -lt 1)) {
+            throw "Adoptium returned no Windows x64 JDK 17 asset."
         }
-        $expectedHash = $match.Groups[1].Value.ToLowerInvariant()
+
+        $package = $assets[0].binary.package
+        $downloadUrl = [string]$package.link
+        $expectedHash = ([string]$package.checksum).ToLowerInvariant()
+        if ([string]::IsNullOrWhiteSpace($downloadUrl)) {
+            throw "Adoptium metadata did not contain the JDK package download URL."
+        }
+        if ($expectedHash -notmatch '^[a-f0-9]{64}$') {
+            throw "Adoptium metadata did not contain a valid SHA-256 checksum."
+        }
+
+        Write-Host "Downloading private Eclipse Temurin JDK 17..." -ForegroundColor Cyan
+        Invoke-Download -Url $downloadUrl -Destination $archivePath
         $actualHash = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
         if ($actualHash -ne $expectedHash) {
             throw ("Temurin JDK archive SHA-256 mismatch. Expected {0}, found {1}." -f $expectedHash, $actualHash)
         }
-        Write-Host "Temurin JDK archive SHA-256 verified against Adoptium." -ForegroundColor Green
+        Write-Host "Temurin JDK archive SHA-256 verified against Adoptium release metadata." -ForegroundColor Green
 
         New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
         Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot -Force
@@ -276,7 +284,7 @@ function Ensure-PinnedJava17 {
     finally {
         Remove-Item -Recurse -Force $extractRoot -ErrorAction SilentlyContinue
         Remove-Item -Force $archivePath -ErrorAction SilentlyContinue
-        Remove-Item -Force $checksumPath -ErrorAction SilentlyContinue
+        Remove-Item -Force $metadataPath -ErrorAction SilentlyContinue
     }
 }
 
