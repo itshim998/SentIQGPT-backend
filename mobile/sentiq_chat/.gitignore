@@ -14,6 +14,10 @@ android/.gradle/
 android/local.properties
 android/key.properties
 
+# Local Phase 6 verifier runtime materialization
+.tooling/
+tool/.phase6_local_release.runtime.ps1
+
 # IDE
 .idea/
 *.iml
