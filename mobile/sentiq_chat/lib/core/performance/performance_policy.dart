@@ -3,7 +3,6 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/painting.dart';
 
 /// Centralized Android performance policy for animation, blur and image memory.
 abstract final class SentIQPerformancePolicy {
