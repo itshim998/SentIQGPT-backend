@@ -1,0 +1,111 @@
+# SentIQ Chat Android — local Phase 6 release verification
+
+This is the zero-GitHub-Actions release gate for the native Android client. It exists so Phase 6 can be verified on a developer workstation without weakening the acceptance criteria when GitHub-hosted jobs are unavailable.
+
+## What the verifier proves
+
+`mobile/sentiq_chat/tool/phase6_local_release.ps1` replays the release-readiness workflow against one exact Git commit and fails closed on any error.
+
+It verifies:
+
+- Flutter 3.44.8, Java 17, Node 20.x and Android SDK/build-tools availability;
+- clean tracked working tree and exact HEAD capture;
+- deterministic Android scaffold bootstrap and locked Flutter dependency resolution;
+- Dart formatting and Flutter static analysis;
+- forced low-performance regression;
+- unit, widget, accessibility, security and feature tests with coverage;
+- navigation/adaptive integration tests;
+- contract fixture replay and golden tests;
+- source, secret, logging, transport, permission, secure-storage and R8 release boundaries;
+- debug APK generation for emulator verification;
+- `npm ci`, high-severity dependency audit, backend compilation and the full mobile backend compatibility set used by CI;
+- minified production APK and AAB generation;
+- production R8 `mapping.txt` generation;
+- APK certificate verification with Android `apksigner`;
+- strict AAB signature verification against the exact disposable verification keystore;
+- SHA-256 checksums for APK, AAB and mapping output;
+- API 28 and API 35 clean-boot emulator install, cold start, process-survival, force-stop/restart and fatal-logcat checks when `-RunEmulators` is supplied;
+- a clean tracked working tree again after verification.
+
+A full merge-eligible run ends with `result: "PASS"` in `phase6-manifest.json`. Runs that intentionally skip backend verification or omit the emulator matrix are marked `PARTIAL`, never `PASS`.
+
+## Workstation prerequisites
+
+Use Windows with:
+
+- Git for Windows, including Git Bash;
+- Flutter 3.44.8 stable on `PATH`;
+- Java/JDK 17 on `PATH`;
+- Node.js 20.x with npm/npx on `PATH`;
+- Android Studio / Android SDK;
+- Android SDK Platform Tools, Build Tools, Emulator and Command-line Tools;
+- Android virtualization enabled so x86_64 emulators can boot.
+
+The script locates the SDK from `ANDROID_SDK_ROOT`, `ANDROID_HOME`, or the normal `%LOCALAPPDATA%\Android\Sdk` location. It can install the API 28/API 35 Google APIs x86_64 system images through `sdkmanager`. If Android SDK licenses have not yet been accepted, run `flutter doctor --android-licenses` once and then rerun the verifier.
+
+## Full zero-Actions gate
+
+From the repository root on the intended release-candidate branch:
+
+```powershell
+git status --short
+git pull --ff-only
+$head = git rev-parse HEAD
+powershell -NoProfile -ExecutionPolicy Bypass -File .\mobile\sentiq_chat\tool\phase6_local_release.ps1 -RunEmulators -ExpectedHeadSha $head
+```
+
+For PowerShell 7, `pwsh` can be used instead of `powershell`.
+
+Do not edit tracked files between capturing `$head` and running the verifier. If the branch changes after a successful run, the evidence is stale and the full verifier must be rerun on the new head.
+
+## Evidence bundle
+
+Each run writes an ignored local directory:
+
+```text
+phase6-evidence/<UTC timestamp>-<12-char commit>/
+```
+
+A successful full run contains at least:
+
+```text
+phase6-manifest.json
+phase6-local-verification.log
+apk-signature.txt
+lcov.info
+release-artifacts/app-release.apk
+release-artifacts/app-release.aab
+release-artifacts/mapping.txt
+emulator-api-28/install.txt
+emulator-api-28/start.txt
+emulator-api-28/restart.txt
+emulator-api-28/logcat.txt
+emulator-api-35/install.txt
+emulator-api-35/start.txt
+emulator-api-35/restart.txt
+emulator-api-35/logcat.txt
+```
+
+`phase6-manifest.json` is the authoritative summary. Confirm all of the following before treating the branch as merge-eligible:
+
+- `result` is `PASS`;
+- `git.headSha` is the exact PR head intended for merge;
+- `checks.flutterQuality` is `PASS`;
+- `checks.sourceReleaseBoundaries` is `PASS`;
+- `checks.backendCompatibility` is `PASS`;
+- `checks.releasePackaging` is `PASS`;
+- `checks.signatures` is `PASS`;
+- `checks.emulatorMatrix` is `PASS`;
+- `emulatorMatrix.api28.result` is `PASS`;
+- `emulatorMatrix.api35.result` is `PASS`;
+- APK, AAB and mapping SHA-256 values are present.
+
+The disposable verification keystore and `android/key.properties` are deleted in `finally` even when the gate fails. The organization Play upload key is not required for this verification run and is never written into the repository.
+
+## What remains manual after a PASS
+
+The local automated gate replaces the blocked GitHub-hosted execution only. It does not replace operator-owned store and physical-device checks.
+
+Before Play production rollout, manually complete the existing physical-device checklist for real microphone/Bluetooth/wired audio, Google OAuth handoff, Razorpay UI, camera intent, Android file picker, downloads/share flow, OEM background/foreground behavior, and the Play Console listing/Data Safety/content-rating/upload-key steps.
+
+Those publishing checks remain outside the Phase 6 code gate and should be performed against the exact store-signed AAB that will be uploaded.
