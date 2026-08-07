@@ -29,8 +29,125 @@ function Get-FlutterVersion([string]$FlutterCommand) {
         if (!$match.Success) { return $null }
         return $match.Groups[1].Value
     }
-    catch {
-        return $null
+    catch { return $null }
+}
+
+function Get-JavaMajor([string]$JavaCommand) {
+    try {
+        $output = & $JavaCommand -version 2>&1
+        $text = ($output -join "`n")
+        $match = [regex]::Match($text, 'version\s+"?([0-9]+)')
+        if (!$match.Success) { return $null }
+        return [int]$match.Groups[1].Value
+    }
+    catch { return $null }
+}
+
+function Ensure-CommonJava17 {
+    $java = Get-CommandSource "java"
+    if (($null -ne $java) -and ((Get-JavaMajor $java) -eq 17)) { return }
+
+    $candidateBins = New-Object System.Collections.Generic.List[string]
+    if (![string]::IsNullOrWhiteSpace($env:JAVA_HOME)) {
+        [void]$candidateBins.Add((Join-Path $env:JAVA_HOME 'bin'))
+    }
+
+    foreach ($pattern in @(
+        'C:\Program Files\Eclipse Adoptium\jdk-17*\bin',
+        'C:\Program Files\Microsoft\jdk-17*\bin',
+        'C:\Program Files\Java\jdk-17*\bin'
+    )) {
+        Get-Item $pattern -ErrorAction SilentlyContinue | ForEach-Object { [void]$candidateBins.Add($_.FullName) }
+    }
+
+    foreach ($bin in $candidateBins) {
+        $candidate = Join-Path $bin 'java.exe'
+        if ((Test-Path $candidate) -and ((Get-JavaMajor $candidate) -eq 17)) {
+            $env:JAVA_HOME = (Split-Path $bin -Parent)
+            $env:PATH = "$bin;$env:PATH"
+            Write-Host "Using JDK 17 from $($env:JAVA_HOME)" -ForegroundColor Green
+            return
+        }
+    }
+}
+
+function Resolve-AndroidSdkCandidate {
+    foreach ($candidate in @($env:ANDROID_SDK_ROOT, $env:ANDROID_HOME, (Join-Path $env:LOCALAPPDATA 'Android\Sdk'))) {
+        if (![string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate)) {
+            return (Resolve-Path $candidate).Path
+        }
+    }
+    return $null
+}
+
+function Find-SdkManager([string]$SdkRoot) {
+    if ([string]::IsNullOrWhiteSpace($SdkRoot)) { return $null }
+    $cmdline = Join-Path $SdkRoot 'cmdline-tools'
+    if (!(Test-Path $cmdline)) { return $null }
+    $match = Get-ChildItem -Path $cmdline -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -eq 'sdkmanager.bat' -or $_.Name -eq 'sdkmanager' } |
+        Select-Object -First 1
+    if ($null -eq $match) { return $null }
+    return $match.FullName
+}
+
+function Show-WorkstationPreflight {
+    Ensure-CommonJava17
+    $issues = New-Object System.Collections.Generic.List[string]
+
+    foreach ($name in @('git', 'node', 'npm', 'npx', 'java', 'keytool', 'jarsigner')) {
+        if ($null -eq (Get-Command $name -ErrorAction SilentlyContinue)) {
+            [void]$issues.Add("$name is not installed or not on PATH")
+        }
+    }
+
+    $node = Get-CommandSource 'node'
+    if ($null -ne $node) {
+        try {
+            $nodeVersion = ((& $node --version 2>&1) -join '').Trim()
+            if ($nodeVersion -notmatch '^v20\.') {
+                [void]$issues.Add("Node 20.x is required for CI parity; found $nodeVersion")
+            }
+        }
+        catch { [void]$issues.Add('Node version could not be read') }
+    }
+
+    $java = Get-CommandSource 'java'
+    if ($null -ne $java) {
+        $major = Get-JavaMajor $java
+        if ($major -ne 17) {
+            [void]$issues.Add("JDK 17 is required for CI parity; found Java $major")
+        }
+    }
+
+    $bash = Get-Command "bash.exe" -ErrorAction SilentlyContinue
+    if ($null -eq $bash) { $bash = Get-Command "bash" -ErrorAction SilentlyContinue }
+    if ($null -eq $bash) {
+        $git = Get-Command "git.exe" -ErrorAction SilentlyContinue
+        $gitBashFound = $false
+        if ($null -ne $git) {
+            $gitRoot = Split-Path (Split-Path $git.Source -Parent) -Parent
+            $candidate = Join-Path $gitRoot "bin\bash.exe"
+            $gitBashFound = Test-Path $candidate
+        }
+        if (!$gitBashFound) { [void]$issues.Add('Git Bash is required') }
+    }
+
+    $sdkRoot = Resolve-AndroidSdkCandidate
+    if ($null -eq $sdkRoot) {
+        [void]$issues.Add('Android SDK is required (install Android Studio or the Android command-line SDK)')
+    }
+    else {
+        $env:ANDROID_SDK_ROOT = $sdkRoot
+        $env:ANDROID_HOME = $sdkRoot
+        if ($null -eq (Find-SdkManager $sdkRoot)) {
+            [void]$issues.Add("Android SDK Command-line Tools are missing under $sdkRoot (install 'Android SDK Command-line Tools (latest)' in Android Studio SDK Manager)")
+        }
+    }
+
+    if ($issues.Count -gt 0) {
+        $message = "Phase 6 workstation preflight found the following prerequisite issue(s):`n - " + ($issues -join "`n - ") + "`nFix these workstation prerequisites once, then rerun the same one-command gate. Flutter itself will be installed automatically."
+        throw $message
     }
 }
 
@@ -89,9 +206,7 @@ function Ensure-PinnedFlutter {
             $curl = Get-CommandSource "curl.exe"
             if ($null -ne $curl) {
                 & $curl -L --fail --retry 3 --retry-delay 2 --output $archivePath $flutterArchiveUrl
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Flutter SDK download failed with curl exit code $LASTEXITCODE."
-                }
+                if ($LASTEXITCODE -ne 0) { throw "Flutter SDK download failed with curl exit code $LASTEXITCODE." }
             }
             else {
                 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -129,43 +244,20 @@ function Ensure-PinnedFlutter {
     }
 }
 
-function Show-LightweightPreflight {
-    $missing = New-Object System.Collections.Generic.List[string]
-    foreach ($name in @('git', 'flutter', 'dart', 'java', 'node', 'npm', 'npx', 'keytool', 'jarsigner')) {
-        if ($null -eq (Get-Command $name -ErrorAction SilentlyContinue)) {
-            [void]$missing.Add($name)
-        }
+function Confirm-FlutterCommands {
+    $missing = @()
+    foreach ($name in @('flutter', 'dart')) {
+        if ($null -eq (Get-Command $name -ErrorAction SilentlyContinue)) { $missing += $name }
     }
-
-    $bash = Get-Command "bash.exe" -ErrorAction SilentlyContinue
-    if ($null -eq $bash) { $bash = Get-Command "bash" -ErrorAction SilentlyContinue }
-    if ($null -eq $bash) {
-        $git = Get-Command "git.exe" -ErrorAction SilentlyContinue
-        if ($null -ne $git) {
-            $gitRoot = Split-Path (Split-Path $git.Source -Parent) -Parent
-            $candidate = Join-Path $gitRoot "bin\bash.exe"
-            if (!(Test-Path $candidate)) { [void]$missing.Add('Git Bash') }
-        }
-        else {
-            [void]$missing.Add('Git Bash')
-        }
-    }
-
     if ($missing.Count -gt 0) {
-        throw "Release-verification prerequisites still missing after automatic Flutter bootstrap: $($missing -join ', '). Install the missing workstation tool(s), then rerun the same command."
+        throw "Automatic Flutter bootstrap completed but command(s) are still unavailable: $($missing -join ', ')."
     }
 }
 
 try {
-    if (!(Test-Path $templatePath)) {
-        throw "Phase 6 verifier template is missing: $templatePath"
-    }
+    if (!(Test-Path $templatePath)) { throw "Phase 6 verifier template is missing: $templatePath" }
 
     $source = [System.IO.File]::ReadAllText($templatePath)
-
-    # Windows PowerShell parses an interpolated variable followed immediately by
-    # ':' as a scoped/drive-qualified variable. Materialize the implementation
-    # with an explicitly delimited variable before parsing or executing it.
     $broken = 'failed for $Serial: $($output -join '' '')'
     $fixed = 'failed for ${Serial}: $($output -join '' '')'
     $matches = [regex]::Matches($source, [regex]::Escape($broken)).Count
@@ -174,31 +266,21 @@ try {
     }
     $source = $source.Replace($broken, $fixed)
 
-    [System.IO.File]::WriteAllText(
-        $runtimePath,
-        $source,
-        (New-Object System.Text.UTF8Encoding($false))
-    )
+    [System.IO.File]::WriteAllText($runtimePath, $source, (New-Object System.Text.UTF8Encoding($false)))
 
-    # Fail before any download or Flutter/Android work if another PowerShell
-    # parser issue is present.
     $tokens = $null
     $parseErrors = $null
-    [System.Management.Automation.Language.Parser]::ParseFile(
-        $runtimePath,
-        [ref]$tokens,
-        [ref]$parseErrors
-    ) | Out-Null
-
+    [System.Management.Automation.Language.Parser]::ParseFile($runtimePath, [ref]$tokens, [ref]$parseErrors) | Out-Null
     if (($parseErrors | Measure-Object).Count -gt 0) {
-        $messages = $parseErrors | ForEach-Object {
-            "line $($_.Extent.StartLineNumber), column $($_.Extent.StartColumnNumber): $($_.Message)"
-        }
+        $messages = $parseErrors | ForEach-Object { "line $($_.Extent.StartLineNumber), column $($_.Extent.StartColumnNumber): $($_.Message)" }
         throw "Phase 6 verifier PowerShell parser preflight failed:`n$($messages -join "`n")"
     }
 
+    # Check every non-Flutter workstation prerequisite before downloading the
+    # relatively large Flutter SDK, so failures are reported together and early.
+    Show-WorkstationPreflight
     Ensure-PinnedFlutter
-    Show-LightweightPreflight
+    Confirm-FlutterCommands
 
     $forward = @()
     if ($RunEmulators) { $forward += "-RunEmulators" }
@@ -214,9 +296,7 @@ try {
 
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runtimePath @forward
     $verifierExitCode = $LASTEXITCODE
-    if ($verifierExitCode -ne 0) {
-        throw "Phase 6 verifier failed with exit code $verifierExitCode."
-    }
+    if ($verifierExitCode -ne 0) { throw "Phase 6 verifier failed with exit code $verifierExitCode." }
 }
 finally {
     Remove-Item -Force $runtimePath -ErrorAction SilentlyContinue
