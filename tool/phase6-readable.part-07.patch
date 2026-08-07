@@ -1,0 +1,373 @@
+diff --git a/mobile/sentiq_chat/lib/shared/widgets/refractive_glass_surface.dart b/mobile/sentiq_chat/lib/shared/widgets/refractive_glass_surface.dart
+index 0f12555..1b2b015 100644
+--- a/mobile/sentiq_chat/lib/shared/widgets/refractive_glass_surface.dart
++++ b/mobile/sentiq_chat/lib/shared/widgets/refractive_glass_surface.dart
+@@ -2,6 +2,7 @@ import 'dart:ui';
+ 
+ import 'package:flutter/material.dart';
+ import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
++import 'package:sentiq_chat/core/performance/performance_policy.dart';
+ 
+ class RefractiveGlassSurface extends StatelessWidget {
+   const RefractiveGlassSurface({
+@@ -23,43 +24,49 @@ class RefractiveGlassSurface extends StatelessWidget {
+   Widget build(BuildContext context) {
+     final SentIQPalette palette = context.sentiqPalette;
+     final BorderRadius radius = BorderRadius.circular(borderRadius);
+-    final Widget surface = ClipRRect(
+-      borderRadius: radius,
+-      child: BackdropFilter(
+-        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+-        child: DecoratedBox(
+-          decoration: BoxDecoration(
+-            borderRadius: radius,
+-            border: Border.all(color: palette.glassBorder),
+-            gradient: LinearGradient(
+-              begin: Alignment.topLeft,
+-              end: Alignment.bottomRight,
+-              colors: <Color>[
+-                Color.alphaBlend(
+-                  Colors.white.withValues(alpha: 0.10),
+-                  palette.glass,
+-                ),
+-                palette.glass,
+-                Color.alphaBlend(palette.accentSoft, palette.glass),
+-              ],
+-              stops: const <double>[0, 0.52, 1],
++    final ImageFilter? filter = SentIQPerformancePolicy.glassFilter(
++      context,
++      blurSigma,
++    );
++    final Widget decorated = DecoratedBox(
++      decoration: BoxDecoration(
++        borderRadius: radius,
++        border: Border.all(color: palette.glassBorder),
++        gradient: LinearGradient(
++          begin: Alignment.topLeft,
++          end: Alignment.bottomRight,
++          colors: <Color>[
++            Color.alphaBlend(
++              Colors.white.withValues(alpha: 0.10),
++              palette.glass,
+             ),
+-            boxShadow: <BoxShadow>[
+-              BoxShadow(
+-                color: Colors.black.withValues(alpha: 0.12),
+-                blurRadius: 28,
+-                offset: const Offset(0, 12),
+-              ),
+-              BoxShadow(
+-                color: Colors.white.withValues(alpha: 0.05),
+-                blurRadius: 1,
+-                offset: const Offset(0, 1),
+-              ),
+-            ],
+-          ),
+-          child: Padding(padding: padding, child: child),
++            palette.glass,
++            Color.alphaBlend(palette.accentSoft, palette.glass),
++          ],
++          stops: const <double>[0, 0.52, 1],
+         ),
++        boxShadow: SentIQPerformancePolicy.useLowCostEffects(context)
++            ? const <BoxShadow>[]
++            : <BoxShadow>[
++                BoxShadow(
++                  color: Colors.black.withValues(alpha: 0.12),
++                  blurRadius: 28,
++                  offset: const Offset(0, 12),
++                ),
++                BoxShadow(
++                  color: Colors.white.withValues(alpha: 0.05),
++                  blurRadius: 1,
++                  offset: const Offset(0, 1),
++                ),
++              ],
+       ),
++      child: Padding(padding: padding, child: child),
++    );
++    final Widget surface = ClipRRect(
++      borderRadius: radius,
++      child: filter == null
++          ? decorated
++          : BackdropFilter(filter: filter, child: decorated),
+     );
+     if (onTap == null) return surface;
+     return Semantics(
+diff --git a/mobile/sentiq_chat/lib/shared/widgets/sentiq_loading_state.dart b/mobile/sentiq_chat/lib/shared/widgets/sentiq_loading_state.dart
+index f5156ea..3f99db6 100644
+--- a/mobile/sentiq_chat/lib/shared/widgets/sentiq_loading_state.dart
++++ b/mobile/sentiq_chat/lib/shared/widgets/sentiq_loading_state.dart
+@@ -1,5 +1,6 @@
+ import 'package:flutter/material.dart';
+ import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
++import 'package:sentiq_chat/core/performance/performance_policy.dart';
+ 
+ class SentIQLoadingState extends StatefulWidget {
+   const SentIQLoadingState({
+@@ -18,6 +19,7 @@ class SentIQLoadingState extends StatefulWidget {
+ class _SentIQLoadingStateState extends State<SentIQLoadingState>
+     with SingleTickerProviderStateMixin {
+   late final AnimationController _controller;
++  bool _reduceMotion = false;
+ 
+   @override
+   void initState() {
+@@ -25,7 +27,22 @@ class _SentIQLoadingStateState extends State<SentIQLoadingState>
+     _controller = AnimationController(
+       vsync: this,
+       duration: const Duration(milliseconds: 1300),
+-    )..repeat();
++    );
++  }
++
++  @override
++  void didChangeDependencies() {
++    super.didChangeDependencies();
++    final bool reduce = SentIQPerformancePolicy.reduceMotion(context);
++    if (reduce == _reduceMotion && (_controller.isAnimating || reduce)) return;
++    _reduceMotion = reduce;
++    if (reduce) {
++      _controller
++        ..stop()
++        ..value = 0;
++    } else {
++      _controller.repeat();
++    }
+   }
+ 
+   @override
+@@ -37,29 +54,29 @@ class _SentIQLoadingStateState extends State<SentIQLoadingState>
+   @override
+   Widget build(BuildContext context) {
+     final SentIQPalette palette = context.sentiqPalette;
++    final Widget indicator = DecoratedBox(
++      decoration: BoxDecoration(
++        shape: BoxShape.circle,
++        border: Border.all(color: palette.accentSoft, width: 3),
++        gradient: SweepGradient(
++          colors: <Color>[
++            palette.accent,
++            palette.info,
++            palette.accent.withValues(alpha: 0.08),
++          ],
++        ),
++      ),
++      child: SizedBox.square(dimension: widget.compact ? 20 : 28),
++    );
+     return Semantics(
+       label: widget.label,
+       liveRegion: true,
+       child: Row(
+         mainAxisSize: MainAxisSize.min,
+         children: <Widget>[
+-          RotationTransition(
+-            turns: _controller,
+-            child: DecoratedBox(
+-              decoration: BoxDecoration(
+-                shape: BoxShape.circle,
+-                border: Border.all(color: palette.accentSoft, width: 3),
+-                gradient: SweepGradient(
+-                  colors: <Color>[
+-                    palette.accent,
+-                    palette.info,
+-                    palette.accent.withValues(alpha: 0.08),
+-                  ],
+-                ),
+-              ),
+-              child: SizedBox.square(dimension: widget.compact ? 20 : 28),
+-            ),
+-          ),
++          _reduceMotion
++              ? indicator
++              : RotationTransition(turns: _controller, child: indicator),
+           const SizedBox(width: SentIQSpacing.sm),
+           Flexible(
+             child: Text(
+diff --git a/mobile/sentiq_chat/pubspec.yaml b/mobile/sentiq_chat/pubspec.yaml
+index 4a97c99..9885679 100644
+--- a/mobile/sentiq_chat/pubspec.yaml
++++ b/mobile/sentiq_chat/pubspec.yaml
+@@ -1,7 +1,7 @@
+ name: sentiq_chat
+ description: Native Android client for SentIQ Chat.
+ publish_to: none
+-version: 0.5.0+5
++version: 1.0.0+6
+ 
+ environment:
+   sdk: '>=3.12.0 <4.0.0'
+@@ -15,6 +15,7 @@ dependencies:
+   flutter_markdown_plus: 1.0.12
+   flutter_math_fork: 0.7.4
+   flutter_riverpod: 2.6.1
++  flutter_secure_storage: 10.3.1
+   http: 1.5.0
+   http_parser: 4.1.2
+   image_picker: 1.2.0
+diff --git a/mobile/sentiq_chat/test/core/accessibility/accessibility_smoke_test.dart b/mobile/sentiq_chat/test/core/accessibility/accessibility_smoke_test.dart
+new file mode 100644
+index 0000000..ffffa87
+--- /dev/null
++++ b/mobile/sentiq_chat/test/core/accessibility/accessibility_smoke_test.dart
+@@ -0,0 +1,79 @@
++import 'package:flutter/material.dart';
++import 'package:flutter_test/flutter_test.dart';
++import 'package:sentiq_chat/core/design_system/sentiq_theme.dart';
++import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
++import 'package:sentiq_chat/shared/widgets/sentiq_button.dart';
++import 'package:sentiq_chat/shared/widgets/sentiq_loading_state.dart';
++
++void main() {
++  test('primary and supporting text meet WCAG AA contrast', () {
++    for (final SentIQPalette palette in <SentIQPalette>[
++      SentIQPalette.light,
++      SentIQPalette.dark,
++    ]) {
++      expect(_contrast(palette.textPrimary, palette.canvas), greaterThanOrEqualTo(4.5));
++      expect(_contrast(palette.textSecondary, palette.canvas), greaterThanOrEqualTo(4.5));
++      expect(_contrast(palette.textMuted, palette.canvas), greaterThanOrEqualTo(4.5));
++    }
++  });
++
++  testWidgets('interactive targets remain at least 48dp', (
++    WidgetTester tester,
++  ) async {
++    await tester.pumpWidget(
++      MaterialApp(
++        theme: SentIQTheme.light(),
++        home: Scaffold(
++          body: SentIQIconButton(
++            icon: Icons.send_rounded,
++            tooltip: 'Send',
++            onPressed: () {},
++          ),
++        ),
++      ),
++    );
++    final Size size = tester.getSize(find.byType(IconButton));
++    expect(size.width, greaterThanOrEqualTo(48));
++    expect(size.height, greaterThanOrEqualTo(48));
++  });
++
++  testWidgets('large text and reduced motion remain usable', (
++    WidgetTester tester,
++  ) async {
++    await tester.pumpWidget(
++      MaterialApp(
++        theme: SentIQTheme.dark(),
++        home: MediaQuery(
++          data: const MediaQueryData(
++            textScaler: TextScaler.linear(2),
++            disableAnimations: true,
++          ),
++          child: Scaffold(
++            body: ListView(
++              children: <Widget>[
++                SentIQButton(label: 'Continue', onPressed: () {}),
++                const SentIQLoadingState(label: 'Preparing conversation'),
++              ],
++            ),
++          ),
++        ),
++      ),
++    );
++    await tester.pump();
++    expect(find.text('Continue'), findsOneWidget);
++    expect(find.text('Preparing conversation'), findsOneWidget);
++    expect(find.byType(RotationTransition), findsNothing);
++    expect(tester.takeException(), isNull);
++  });
++}
++
++// WCAG relative-luminance contrast ratio.
++double _contrast(Color foreground, Color background) {
++  final double lighter = foreground.computeLuminance() > background.computeLuminance()
++      ? foreground.computeLuminance()
++      : background.computeLuminance();
++  final double darker = foreground.computeLuminance() > background.computeLuminance()
++      ? background.computeLuminance()
++      : foreground.computeLuminance();
++  return (lighter + 0.05) / (darker + 0.05);
++}
+diff --git a/mobile/sentiq_chat/test/core/performance/low_performance_smoke_test.dart b/mobile/sentiq_chat/test/core/performance/low_performance_smoke_test.dart
+new file mode 100644
+index 0000000..b03e14c
+--- /dev/null
++++ b/mobile/sentiq_chat/test/core/performance/low_performance_smoke_test.dart
+@@ -0,0 +1,50 @@
++import 'dart:ui' show ImageFilter;
++
++import 'package:flutter/material.dart';
++import 'package:flutter_test/flutter_test.dart';
++import 'package:sentiq_chat/core/design_system/sentiq_theme.dart';
++import 'package:sentiq_chat/core/performance/performance_policy.dart';
++import 'package:sentiq_chat/shared/widgets/refractive_glass_surface.dart';
++
++void main() {
++  testWidgets('reduced motion removes backdrop blur', (
++    WidgetTester tester,
++  ) async {
++    await tester.pumpWidget(
++      MaterialApp(
++        theme: SentIQTheme.light(),
++        home: const MediaQuery(
++          data: MediaQueryData(disableAnimations: true),
++          child: Scaffold(
++            body: RefractiveGlassSurface(child: Text('Low-cost surface')),
++          ),
++        ),
++      ),
++    );
++
++    expect(find.byType(BackdropFilter), findsNothing);
++    expect(SentIQPerformancePolicy.reduceMotion(tester.element(find.text('Low-cost surface'))), isTrue);
++  });
++
++  testWidgets('forced low-performance mode removes backdrop blur', (
++    WidgetTester tester,
++  ) async {
++    await tester.pumpWidget(
++      MaterialApp(
++        theme: SentIQTheme.dark(),
++        home: const Scaffold(
++          body: RefractiveGlassSurface(child: Text('Surface')),
++        ),
++      ),
++    );
++
++    if (SentIQPerformancePolicy.forceLowPerformance) {
++      expect(find.byType(BackdropFilter), findsNothing);
++    }
++  });
++
++  test('blur sigma is centrally capped', () {
++    expect(SentIQPerformancePolicy.maximumBlurSigma, lessThanOrEqualTo(18));
++    expect(ImageFilter.blur(sigmaX: 18, sigmaY: 18), isNotNull);
++  });
++}
+diff --git a/mobile/sentiq_chat/test/core/security/safe_external_link_test.dart b/mobile/sentiq_chat/test/core/security/safe_external_link_test.dart
+new file mode 100644
+index 0000000..de44ee1
+--- /dev/null
++++ b/mobile/sentiq_chat/test/core/security/safe_external_link_test.dart
+@@ -0,0 +1,19 @@
++import 'package:flutter_test/flutter_test.dart';
++import 'package:sentiq_chat/core/security/safe_external_link.dart';
++
++void main() {
++  test('external content accepts only credential-free HTTPS links', () {
++    expect(SafeExternalLink.isSafeHttps(Uri.parse('https://openai.com/')), isTrue);
++    expect(
++      SafeExternalLink.isSafeHttps(Uri.parse('https://example.com/a?b=c')),
++      isTrue,
++    );
++    expect(SafeExternalLink.isSafeHttps(Uri.parse('http://example.com')), isFalse);
++    expect(SafeExternalLink.isSafeHttps(Uri.parse('javascript:alert(1)')), isFalse);
++    expect(SafeExternalLink.isSafeHttps(Uri.parse('intent://example.com')), isFalse);
++    expect(
++      SafeExternalLink.isSafeHttps(Uri.parse('https://user:pass@example.com/')),
++      isFalse,
++    );
++  });
++}
