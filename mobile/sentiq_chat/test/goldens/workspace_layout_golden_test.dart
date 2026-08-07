@@ -90,8 +90,9 @@ Future<void> _expectExpandedSignature(_GoldenCase golden) async {
     golden.size.width.toInt(),
     golden.size.height.toInt(),
   );
-  final ByteData data =
-      (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+  final ByteData data = (await image.toByteData(
+    format: ui.ImageByteFormat.rawRgba,
+  ))!;
 
   expect(_pixelAt(data, golden.size.width.toInt(), 0, 0), expected.accent);
   expect(_pixelAt(data, golden.size.width.toInt(), 2, 2), expected.surface);
