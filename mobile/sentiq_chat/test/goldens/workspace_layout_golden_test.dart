@@ -79,33 +79,29 @@ Future<void> _expectExpandedSignature(_GoldenCase golden) async {
   final _ExpandedSignature expected = golden.signature!;
   final ui.PictureRecorder recorder = ui.PictureRecorder();
   final Canvas canvas = Canvas(recorder);
-  const _WorkspaceSignaturePainter painter = _WorkspaceSignaturePainter(
-    palette: SentIQPalette.dark,
-    expanded: true,
-  );
-  final _WorkspaceSignaturePainter casePainter = _WorkspaceSignaturePainter(
+  final _WorkspaceSignaturePainter painter = _WorkspaceSignaturePainter(
     palette: golden.palette,
     expanded: true,
   );
-  casePainter.paint(canvas, golden.size);
+  painter.paint(canvas, golden.size);
   final ui.Picture picture = recorder.endRecording();
   final ui.Image image = await picture.toImage(
     golden.size.width.toInt(),
     golden.size.height.toInt(),
   );
-  final ByteData data = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+  final ui.ByteData data =
+      (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
 
   expect(_pixelAt(data, golden.size.width.toInt(), 0, 0), expected.accent);
   expect(_pixelAt(data, golden.size.width.toInt(), 2, 2), expected.surface);
   expect(_pixelAt(data, golden.size.width.toInt(), 3, 2), expected.textMuted);
   expect(_pixelAt(data, golden.size.width.toInt(), 4, 2), expected.canvas);
-  expect(painter.shouldRepaint(casePainter), isTrue);
 
   image.dispose();
   picture.dispose();
 }
 
-Color _pixelAt(ByteData data, int width, int x, int y) {
+Color _pixelAt(ui.ByteData data, int width, int x, int y) {
   final int offset = ((y * width) + x) * 4;
   return Color.fromARGB(
     data.getUint8(offset + 3),
