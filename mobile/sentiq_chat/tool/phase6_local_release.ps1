@@ -42,18 +42,48 @@ function Invoke-Download([string]$Url, [string]$Destination) {
     Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Destination
 }
 
-function Get-JavaMajor([string]$JavaCommand) {
+function Get-NativeProcessText([string]$FilePath, [string]$ArgumentString) {
+    $process = $null
     try {
-        $output = & $JavaCommand -version 2>&1
-        $text = $output -join "`n"
-        $match = [regex]::Match($text, '(?:version|openjdk)\s+"?([0-9]+)')
-        if (!$match.Success) {
-            $match = [regex]::Match($text, '\b([0-9]+)(?:\.[0-9]+){1,3}\b')
-        }
-        if (!$match.Success) { return $null }
-        return [int]$match.Groups[1].Value
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $FilePath
+        $startInfo.Arguments = $ArgumentString
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.CreateNoWindow = $true
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $startInfo
+        if (!$process.Start()) { return $null }
+
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { return $null }
+        return ((($stdout + "`n" + $stderr).Trim()))
     }
-    catch { return $null }
+    catch {
+        return $null
+    }
+    finally {
+        if ($null -ne $process) { $process.Dispose() }
+    }
+}
+
+function Get-JavaMajor([string]$JavaCommand) {
+    $text = Get-NativeProcessText -FilePath $JavaCommand -ArgumentString "-version"
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+
+    $match = [regex]::Match($text, '(?:openjdk|java)\s+version\s+"?([0-9]+)')
+    if (!$match.Success) {
+        $match = [regex]::Match($text, 'version\s+"?([0-9]+)')
+    }
+    if (!$match.Success) {
+        $match = [regex]::Match($text, '\b([0-9]+)(?:\.[0-9]+){1,3}\b')
+    }
+    if (!$match.Success) { return $null }
+    return [int]$match.Groups[1].Value
 }
 
 function Get-NodeVersion([string]$NodeCommand) {
@@ -215,6 +245,11 @@ function Ensure-PinnedNode {
 function Ensure-PinnedJava17 {
     $existing = Get-CommandSource "java"
     if (($null -ne $existing) -and ((Get-JavaMajor $existing) -eq 17)) {
+        $javaHome = Split-Path (Split-Path $existing -Parent) -Parent
+        if (Test-Path (Join-Path $javaHome "bin\keytool.exe")) {
+            $env:JAVA_HOME = $javaHome
+            $env:PATH = "{0};{1}" -f (Join-Path $javaHome "bin"), $env:PATH
+        }
         Write-Host ("Using JDK 17 from PATH: {0}" -f $existing) -ForegroundColor Green
         return
     }
@@ -390,6 +425,50 @@ try {
         throw ("Phase 6 verifier compatibility patch expected exactly one target, found {0}. Refusing to execute an unverified runtime script." -f $legacyCount)
     }
     $source = $source.Replace($legacy, $safe)
+
+    $javaProbeMarker = 'function Assert-Command([string]$Name) {'
+    $javaProbeCount = [regex]::Matches($source, [regex]::Escape($javaProbeMarker)).Count
+    if ($javaProbeCount -ne 1) {
+        throw ("Phase 6 verifier Java probe injection expected exactly one marker, found {0}." -f $javaProbeCount)
+    }
+    $javaProbeFunction = @'
+function Get-JavaVersionText([string]$JavaCommand) {
+    $process = $null
+    try {
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $JavaCommand
+        $startInfo.Arguments = "-version"
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.CreateNoWindow = $true
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $startInfo
+        if (!$process.Start()) { throw "Java version probe could not start." }
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) {
+            throw "Java version probe exited with code $($process.ExitCode)."
+        }
+        return ((($stdout + "`n" + $stderr).Trim()))
+    }
+    finally {
+        if ($null -ne $process) { $process.Dispose() }
+    }
+}
+
+'@
+    $source = $source.Replace($javaProbeMarker, ($javaProbeFunction + $javaProbeMarker))
+
+    $javaVersionLegacy = '$javaVersion = Get-ExternalText -FilePath $Java -Arguments @(''-version'')'
+    $javaVersionSafe = '$javaVersion = Get-JavaVersionText -JavaCommand $Java'
+    $javaVersionCount = [regex]::Matches($source, [regex]::Escape($javaVersionLegacy)).Count
+    if ($javaVersionCount -ne 1) {
+        throw ("Phase 6 verifier Java version-call patch expected exactly one target, found {0}." -f $javaVersionCount)
+    }
+    $source = $source.Replace($javaVersionLegacy, $javaVersionSafe)
 
     $ambiguous = [regex]::Matches($source, '\$(?!env:|global:|script:|local:|private:|using:)[A-Za-z_][A-Za-z0-9_]*:')
     if ($ambiguous.Count -gt 0) {
