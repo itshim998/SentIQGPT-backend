@@ -1,0 +1,247 @@
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/drawable-v21/launch_background.xml b/mobile/sentiq_chat/android/app/src/main/res/drawable-v21/launch_background.xml
+index f74085f..4186144 100644
+--- a/mobile/sentiq_chat/android/app/src/main/res/drawable-v21/launch_background.xml
++++ b/mobile/sentiq_chat/android/app/src/main/res/drawable-v21/launch_background.xml
+@@ -1,12 +1,9 @@
+ <?xml version="1.0" encoding="utf-8"?>
+-<!-- Modify this file to customize your launch splash screen -->
+ <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+-    <item android:drawable="?android:colorBackground" />
+-
+-    <!-- You can insert your own image assets here -->
+-    <!-- <item>
+-        <bitmap
+-            android:gravity="center"
+-            android:src="@mipmap/launch_image" />
+-    </item> -->
++    <item android:drawable="@color/sentiq_splash_background" />
++    <item
++        android:width="88dp"
++        android:height="88dp"
++        android:gravity="center"
++        android:drawable="@drawable/sentiq_splash_mark" />
+ </layer-list>
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/drawable/launch_background.xml b/mobile/sentiq_chat/android/app/src/main/res/drawable/launch_background.xml
+index 304732f..4186144 100644
+--- a/mobile/sentiq_chat/android/app/src/main/res/drawable/launch_background.xml
++++ b/mobile/sentiq_chat/android/app/src/main/res/drawable/launch_background.xml
+@@ -1,12 +1,9 @@
+ <?xml version="1.0" encoding="utf-8"?>
+-<!-- Modify this file to customize your launch splash screen -->
+ <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+-    <item android:drawable="@android:color/white" />
+-
+-    <!-- You can insert your own image assets here -->
+-    <!-- <item>
+-        <bitmap
+-            android:gravity="center"
+-            android:src="@mipmap/launch_image" />
+-    </item> -->
++    <item android:drawable="@color/sentiq_splash_background" />
++    <item
++        android:width="88dp"
++        android:height="88dp"
++        android:gravity="center"
++        android:drawable="@drawable/sentiq_splash_mark" />
+ </layer-list>
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/drawable/sentiq_icon_foreground.xml b/mobile/sentiq_chat/android/app/src/main/res/drawable/sentiq_icon_foreground.xml
+new file mode 100644
+index 0000000..1acfdf3
+--- /dev/null
++++ b/mobile/sentiq_chat/android/app/src/main/res/drawable/sentiq_icon_foreground.xml
+@@ -0,0 +1,20 @@
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="108dp"
++    android:height="108dp"
++    android:viewportWidth="108"
++    android:viewportHeight="108">
++    <path
++        android:fillColor="@android:color/transparent"
++        android:pathData="M65.8,41.6 C62.7,38.6 58.8,37 54.1,37 C46.7,37 41.4,40.7 41.4,45.9 C41.4,50.7 45.6,53.2 53.8,54.8 C61.3,56.3 64.9,58 64.9,61.8 C64.9,66.6 60,70 53.2,70 C47.5,70 43,68.1 39.8,64.4"
++        android:strokeColor="#A993F0"
++        android:strokeWidth="5.2"
++        android:strokeLineCap="round"
++        android:strokeLineJoin="round" />
++    <path
++        android:fillColor="@android:color/transparent"
++        android:pathData="M40.3,67.7 L37.7,76 L46.4,72.2"
++        android:strokeColor="#8BCFF1"
++        android:strokeWidth="3.8"
++        android:strokeLineCap="round"
++        android:strokeLineJoin="round" />
++</vector>
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/drawable/sentiq_splash_mark.xml b/mobile/sentiq_chat/android/app/src/main/res/drawable/sentiq_splash_mark.xml
+new file mode 100644
+index 0000000..3e5b38e
+--- /dev/null
++++ b/mobile/sentiq_chat/android/app/src/main/res/drawable/sentiq_splash_mark.xml
+@@ -0,0 +1,23 @@
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="88dp"
++    android:height="88dp"
++    android:viewportWidth="64"
++    android:viewportHeight="64">
++    <path
++        android:fillColor="#080B11"
++        android:pathData="M18,0 L46,0 A18,18 0,0 1,64 18 L64,46 A18,18 0,0 1,46 64 L18,64 A18,18 0,0 1,0 46 L0,18 A18,18 0,0 1,18 0 Z" />
++    <path
++        android:fillColor="@android:color/transparent"
++        android:pathData="M43.8,19.6 C40.7,16.6 36.8,15 32.1,15 C24.7,15 19.4,18.7 19.4,23.9 C19.4,28.7 23.6,31.2 31.8,32.8 C39.3,34.3 42.9,36 42.9,39.8 C42.9,44.6 38,48 31.2,48 C25.5,48 21,46.1 17.8,42.4"
++        android:strokeColor="#A993F0"
++        android:strokeWidth="5.2"
++        android:strokeLineCap="round"
++        android:strokeLineJoin="round" />
++    <path
++        android:fillColor="@android:color/transparent"
++        android:pathData="M18.3,45.7 L15.7,54 L24.4,50.2"
++        android:strokeColor="#8BCFF1"
++        android:strokeWidth="3.8"
++        android:strokeLineCap="round"
++        android:strokeLineJoin="round" />
++</vector>
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml b/mobile/sentiq_chat/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+new file mode 100644
+index 0000000..50ba85f
+--- /dev/null
++++ b/mobile/sentiq_chat/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
++    <background android:drawable="@color/sentiq_icon_background" />
++    <foreground android:drawable="@drawable/sentiq_icon_foreground" />
++</adaptive-icon>
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml b/mobile/sentiq_chat/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+new file mode 100644
+index 0000000..50ba85f
+--- /dev/null
++++ b/mobile/sentiq_chat/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
++    <background android:drawable="@color/sentiq_icon_background" />
++    <foreground android:drawable="@drawable/sentiq_icon_foreground" />
++</adaptive-icon>
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/values-night-v31/styles.xml b/mobile/sentiq_chat/android/app/src/main/res/values-night-v31/styles.xml
+new file mode 100644
+index 0000000..d376bd6
+--- /dev/null
++++ b/mobile/sentiq_chat/android/app/src/main/res/values-night-v31/styles.xml
+@@ -0,0 +1,12 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
++        <item name="android:windowSplashScreenBackground">@color/sentiq_splash_background</item>
++        <item name="android:windowSplashScreenAnimatedIcon">@drawable/sentiq_splash_mark</item>
++        <item name="android:windowLightStatusBar">false</item>
++    </style>
++    <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
++        <item name="android:windowBackground">@color/sentiq_splash_background</item>
++        <item name="android:windowLightStatusBar">false</item>
++    </style>
++</resources>
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/values-night/colors.xml b/mobile/sentiq_chat/android/app/src/main/res/values-night/colors.xml
+new file mode 100644
+index 0000000..dde97d6
+--- /dev/null
++++ b/mobile/sentiq_chat/android/app/src/main/res/values-night/colors.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <color name="sentiq_icon_background">#080B11</color>
++    <color name="sentiq_splash_background">#080B11</color>
++</resources>
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/values-night/styles.xml b/mobile/sentiq_chat/android/app/src/main/res/values-night/styles.xml
+index 06952be..bdafbe4 100644
+--- a/mobile/sentiq_chat/android/app/src/main/res/values-night/styles.xml
++++ b/mobile/sentiq_chat/android/app/src/main/res/values-night/styles.xml
+@@ -1,18 +1,11 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <!-- Theme applied to the Android Window while the process is starting when the OS's Dark Mode setting is on -->
+     <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
+-        <!-- Show a splash screen on the activity. Automatically removed when
+-             the Flutter engine draws its first frame -->
+         <item name="android:windowBackground">@drawable/launch_background</item>
++        <item name="android:windowLightStatusBar">false</item>
+     </style>
+-    <!-- Theme applied to the Android Window as soon as the process has started.
+-         This theme determines the color of the Android Window while your
+-         Flutter UI initializes, as well as behind your Flutter UI while its
+-         running.
+-
+-         This Theme is only used starting with V2 of Flutter's Android embedding. -->
+     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
+-        <item name="android:windowBackground">?android:colorBackground</item>
++        <item name="android:windowBackground">@color/sentiq_splash_background</item>
++        <item name="android:windowLightStatusBar">false</item>
+     </style>
+ </resources>
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/values-v31/styles.xml b/mobile/sentiq_chat/android/app/src/main/res/values-v31/styles.xml
+new file mode 100644
+index 0000000..900451a
+--- /dev/null
++++ b/mobile/sentiq_chat/android/app/src/main/res/values-v31/styles.xml
+@@ -0,0 +1,12 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
++        <item name="android:windowSplashScreenBackground">@color/sentiq_splash_background</item>
++        <item name="android:windowSplashScreenAnimatedIcon">@drawable/sentiq_splash_mark</item>
++        <item name="android:windowLightStatusBar">true</item>
++    </style>
++    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
++        <item name="android:windowBackground">@color/sentiq_splash_background</item>
++        <item name="android:windowLightStatusBar">true</item>
++    </style>
++</resources>
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/values/colors.xml b/mobile/sentiq_chat/android/app/src/main/res/values/colors.xml
+new file mode 100644
+index 0000000..ef68205
+--- /dev/null
++++ b/mobile/sentiq_chat/android/app/src/main/res/values/colors.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <color name="sentiq_icon_background">#080B11</color>
++    <color name="sentiq_splash_background">#F7F8FB</color>
++</resources>
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/values/styles.xml b/mobile/sentiq_chat/android/app/src/main/res/values/styles.xml
+index cb1ef88..9520146 100644
+--- a/mobile/sentiq_chat/android/app/src/main/res/values/styles.xml
++++ b/mobile/sentiq_chat/android/app/src/main/res/values/styles.xml
+@@ -1,18 +1,11 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <!-- Theme applied to the Android Window while the process is starting when the OS's Dark Mode setting is off -->
+     <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+-        <!-- Show a splash screen on the activity. Automatically removed when
+-             the Flutter engine draws its first frame -->
+         <item name="android:windowBackground">@drawable/launch_background</item>
++        <item name="android:windowLightStatusBar">true</item>
+     </style>
+-    <!-- Theme applied to the Android Window as soon as the process has started.
+-         This theme determines the color of the Android Window while your
+-         Flutter UI initializes, as well as behind your Flutter UI while its
+-         running.
+-
+-         This Theme is only used starting with V2 of Flutter's Android embedding. -->
+     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+-        <item name="android:windowBackground">?android:colorBackground</item>
++        <item name="android:windowBackground">@color/sentiq_splash_background</item>
++        <item name="android:windowLightStatusBar">true</item>
+     </style>
+ </resources>
+diff --git a/mobile/sentiq_chat/android/app/src/main/res/xml/network_security_config.xml b/mobile/sentiq_chat/android/app/src/main/res/xml/network_security_config.xml
+new file mode 100644
+index 0000000..683208f
+--- /dev/null
++++ b/mobile/sentiq_chat/android/app/src/main/res/xml/network_security_config.xml
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="utf-8"?>
++<network-security-config>
++    <base-config cleartextTrafficPermitted="false">
++        <trust-anchors>
++            <certificates src="system" />
++        </trust-anchors>
++    </base-config>
++</network-security-config>
