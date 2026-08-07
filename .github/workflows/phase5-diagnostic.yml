@@ -1,0 +1,52 @@
+name: Phase 5 targeted diagnostics
+
+on:
+  push:
+    branches: [feature/flutter-android-app]
+    paths: [.github/workflows/phase5-diagnostic.yml]
+
+permissions:
+  contents: read
+
+env:
+  PHASE5_BUNDLE_SHA256: ffed905ef49b605d3759a8368aaf214cc7e4ee2d16c65996976699cb55b9e825
+
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Manual checkout and inspect failing Phase 5 paths
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+
+          cat tool/phase5-bundle.b64.part-* > /tmp/phase5-bundle.b64
+          python3 -c 'import sys;sys.stdout.buffer.write(bytes.fromhex("622b2b6f79646476397735652f6b784e436d703863694a346e654f62744f337032572f535341504e5736545a685a584d54546f3141664875724e6437346e515a54382b536c694b43565438394f79754734504570485678317735707161476f6c32546b385344622b2f4365496b44613977487652684f35465a5477474d4a6e347253324576333366766d2f66742b2f62392b3337396e3337766e3366766d2f66742b2f62392b3337396e3337766e3366766d2f66742b2f62392b3337396e3337766e3366766d2f66742b2f62392b3337396e3337766e322f352b2f2f44314a6f4f49304141415541"))' >> /tmp/phase5-bundle.b64
+          base64 --decode /tmp/phase5-bundle.b64 > /tmp/phase5-bundle.tar.gz
+          echo "${PHASE5_BUNDLE_SHA256}  /tmp/phase5-bundle.tar.gz" | sha256sum --check --strict
+          tar -xzf /tmp/phase5-bundle.tar.gz -C .
+          python3 tool/phase5-analyzer-fix.py
+
+          for f in \
+            mobile/sentiq_chat/test/features/account/account_controller_test.dart \
+            mobile/sentiq_chat/lib/features/account/application/account_controller.dart \
+            mobile/sentiq_chat/lib/features/account/data/account_repository.dart \
+            mobile/sentiq_chat/lib/features/account/domain/account_models.dart \
+            mobile/sentiq_chat/test/features/research/deep_research_controller_test.dart \
+            mobile/sentiq_chat/lib/features/research/application/deep_research_controller.dart \
+            mobile/sentiq_chat/lib/features/research/data/deep_research_repository.dart \
+            mobile/sentiq_chat/lib/features/research/domain/deep_research_models.dart \
+            mobile/sentiq_chat/test/features/live/live_controller_test.dart \
+            mobile/sentiq_chat/lib/features/live/application/live_controller.dart \
+            mobile/sentiq_chat/lib/features/live/data/live_repository.dart \
+            mobile/sentiq_chat/lib/features/live/domain/live_models.dart; do
+            echo "===== ${f} ====="
+            sed -n '1,320p' "${f}"
+          done
