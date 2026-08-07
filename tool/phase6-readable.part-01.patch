@@ -1,0 +1,240 @@
+diff --git a/docs/mobile/android-studio-final-testing.md b/docs/mobile/android-studio-final-testing.md
+new file mode 100644
+index 0000000..4a4aef1
+--- /dev/null
++++ b/docs/mobile/android-studio-final-testing.md
+@@ -0,0 +1,105 @@
++# SentIQ Chat Android — Android Studio setup and final testing
++
++## Toolchain
++
++Use the versions pinned by the repository:
++
++- Flutter 3.44.8 stable;
++- Dart 3.12.x;
++- Java 17;
++- Android Studio with an SDK that satisfies Flutter's current compile/target SDK;
++- Android API 28 device/emulator for minimum-version coverage;
++- current API 35 device/emulator for modern behavior.
++
++Open `mobile/sentiq_chat/` as the Flutter project. From that directory run:
++
++```bash
++./tool/bootstrap_android.sh
++flutter pub get
++flutter doctor -v
++flutter analyze
++flutter test test/core test/features test/widgets
++flutter test test/integration
++flutter test test/contracts/contract_fixture_replay_test.dart
++flutter test test/goldens
++```
++
++## Development run
++
++The emulator development endpoint is intentionally the only cleartext exception and exists only in the debug manifest:
++
++```bash
++flutter run --dart-define=SENTIQ_ENV=development
++```
++
++For production-shaped testing:
++
++```bash
++flutter run --release --dart-define=SENTIQ_ENV=production
++```
++
++A release run requires `android/key.properties` and a local keystore. Never commit either.
++
++## Local release signing
++
++Create or obtain the organization upload keystore outside the repository. Create `android/key.properties` locally:
++
++```properties
++storePassword=<secret>
++keyPassword=<secret>
++keyAlias=<upload-key-alias>
++storeFile=/absolute/path/to/sentiq-upload.jks
++```
++
++Then build:
++
++```bash
++flutter build apk --release --dart-define=SENTIQ_ENV=production
++flutter build appbundle --release --dart-define=SENTIQ_ENV=production
++```
++
++Confirm the outputs:
++
++- `build/app/outputs/flutter-apk/app-release.apk`;
++- `build/app/outputs/bundle/release/app-release.aab`;
++- `build/app/outputs/mapping/release/mapping.txt`.
++
++Verify APK/AAB signatures with the Android build-tools `apksigner` and JDK `jarsigner`. Keep the mapping file with the exact release build.
++
++## Device matrix
++
++At minimum test:
++
++| Device class | Required checks |
++| --- | --- |
++| API 28 phone | launch, auth, keyboard, chat streaming, files, camera intent, downloads, no cleartext dependency |
++| API 35 phone | predictive back, runtime microphone/Bluetooth permissions, adaptive icon/splash, all product flows |
++| small/low-performance Android device | forced/automatic low-cost effects, long thread, image-heavy conversation, streaming smoothness |
++| tablet/foldable or resizable emulator | rail/drawer adaptation, rotation, multi-width composer, focus/keyboard flow |
++| physical device with Bluetooth audio | Live input/output route switching and interruption recovery |
++
++## Functional final pass
++
++1. Fresh install and cold launch in light and dark system themes.
++2. Guest conversation, quota presentation, and session-ending behavior.
++3. Email sign-in/up, Google OAuth callback, password recovery callback, session restore, and sign-out.
++4. Existing conversation recovery; new/rename/delete/search; background/foreground during streaming.
++5. Fast and Intuitive messages; stop/retry/continue; Markdown/code/math/table/citation rendering; safe external HTTPS opening.
++6. Multiple file/image attachment; cancellation/retry; long/scanned document state; camera-intent capture.
++7. Image generation plus zoom, copy, share, save/open and delete.
++8. Charts, generated document preview/save/share/open/delete, sanitized HTML edit/save.
++9. WebSurf sources/images and partial/error handling.
++10. Deep Research start, background recovery, cancel, completion, source open and export.
++11. SentIQ Live permission denial/acceptance, speaker/earpiece/Bluetooth routes, interruption, reconnect, transcript commit and quota.
++12. Billing catalog, Razorpay cancel/failure/success, backend verification, usage refresh and subscription cancellation.
++13. Memory deletion, temporary/local data clearing, privacy/terms/support, sign-out cleanup.
++14. Airplane/offline/degraded recovery and server error/quota states.
++15. TalkBack traversal and labels, 200%+ text, reduced motion, keyboard focus order, 48 dp targets.
++
++## Performance pass
++
++Run a profile build with `SENTIQ_PERFORMANCE_TRACE=true`, record a cold launch, a 1,000-message thread, an ordinary streamed response, a code-heavy response, and an image-heavy conversation in DevTools. Repeat once with `SENTIQ_LOW_PERFORMANCE=true` and confirm blur/continuous motion are removed without disabling features.
++
++## Play preflight
++
++Before uploading the AAB, verify versionCode/versionName, application ID, upload-key certificate, privacy-policy URL, Data Safety answers, content rating, screenshots/icon/feature graphic, declared microphone/Bluetooth use, Supabase redirect allowlist, production backend health, and a closed/internal Play track install. Promote only the exact AAB whose CI and physical-device evidence passed.
+diff --git a/docs/mobile/flutter-phase6-release-readiness.md b/docs/mobile/flutter-phase6-release-readiness.md
+new file mode 100644
+index 0000000..dcf2a61
+--- /dev/null
++++ b/docs/mobile/flutter-phase6-release-readiness.md
+@@ -0,0 +1,85 @@
++# SentIQ Chat Android — Phase 6 release readiness
++
++## Status
++
++Phase 6 closes the Flutter Android implementation for production packaging and release verification. The native client now has explicit accessibility, performance, security, packaging, CI, and Play-readiness boundaries instead of relying on development defaults.
++
++## Product polish
++
++- Dark and light themes use the same restrained SentIQ design system, with WCAG-AA contrast checks for primary, secondary, and muted text.
++- The temporary foundation gallery has been removed from production source.
++- Android startup now uses the SentIQ Chat mark and theme-aware splash instead of the Flutter placeholder.
++- Adaptive launcher resources are committed for every supported API 28+ device.
++- Empty, loading, error, permission, quota, research, Live, billing, file, image, chart, and account states remain product-language states rather than protocol/debug output.
++
++## Accessibility
++
++The release gate verifies the following policies:
++
++- icon and button targets are at least 48 dp;
++- screen-reader-visible loading/error state uses semantic labels and live regions;
++- application focus traversal follows reading order;
++- primary/supporting text meets a 4.5:1 contrast floor against the principal canvas in both themes;
++- 200% text scaling remains usable in the shared interaction surfaces;
++- Android/Flutter reduced-motion preference disables continuous loading/caret/launch animation and animated auto-scroll;
++- predictive back, keyboard resize, safe areas, foldable/tablet layouts, and adaptive navigation remain covered by the existing integration suite.
++
++## Security boundary
++
++- Supabase session material is persisted through `flutter_secure_storage`; plaintext SharedPreferences is not used for the auth session.
++- Production and staging API/Supabase overrides must use credential-free HTTPS addresses.
++- Android cleartext traffic is disabled in the production manifest and network-security configuration. Development retains a debug-only cleartext exception for the Android emulator host.
++- Model- or user-provided external navigation is centralized in `SafeExternalLink` and accepts credential-free HTTPS only. The support email handoff is an explicit separate path.
++- Generated HTML remains sanitized and non-executing; unsafe navigation schemes remain rejected.
++- Android backup is disabled so encrypted session material is not restored independently of its device-bound key material.
++- No release key, `key.properties`, service-role secret, provider private key, or payment secret is tracked in source control.
++- Production release builds enable R8 code shrinking and resource shrinking, with mapping output retained as a release artifact.
++- Release logging is intentionally quiet: application source contains no `print` or `debugPrint` calls, and performance markers are opt-in profile-mode timeline events rather than production logs.
++
++## Android permissions
++
++The main manifest declares only permissions required by shipped functionality:
++
++| Permission | Purpose |
++| --- | --- |
++| `INTERNET` | SentIQ Chat API, Supabase auth, streamed responses, remote content |
++| `RECORD_AUDIO` | SentIQ Live microphone input; requested at runtime only when Live is started |
++| `MODIFY_AUDIO_SETTINGS` | Live speaker/earpiece/audio-route control |
++| `BLUETOOTH_CONNECT` | Live Bluetooth communication-route selection on supported Android versions |
++
++`CAMERA` is deliberately not declared. Image capture is delegated to the Android camera intent through the image picker, avoiding a standing camera permission. No broad storage permission is declared; files use scoped pickers, MediaStore, and the app-scoped/FileProvider boundary.
++
++## Signing and release packaging
++
++`android/app/build.gradle.kts` never falls back to the debug key for a release build. When `android/key.properties` is present it loads an external keystore and builds a signed, minified release. CI creates an ephemeral verification keystore so every change proves that both APK and AAB release packaging and signature verification succeed without putting a distribution key in the repository.
++
++For Play distribution, use the organization-owned upload key and keep these values outside source control:
++
++- keystore file;
++- store password;
++- key alias;
++- key password.
++
++The reusable release workflow supports repository/environment secrets for a store-signed manual build. Google Play App Signing should retain the app-signing key; SentIQ AI Labs should retain the upload-key backup and recovery documentation separately.
++
++## Play Store readiness checklist
++
++- [x] stable application ID `com.sentiqlabs.sentiqchat`;
++- [x] version advanced to the 1.0 release line;
++- [x] API 28 minimum and current Flutter target SDK;
++- [x] adaptive launcher icon resources for supported API 28+ devices;
++- [x] theme-aware pre-Android-12 and Android-12+ splash;
++- [x] no debug signing fallback in release;
++- [x] R8/minification and resource shrinking enabled;
++- [x] cleartext production networking disabled;
++- [x] dangerous permissions minimized and documented;
++- [x] privacy/data/account controls available in product;
++- [x] release mapping, APK, AAB, signature evidence, coverage, and emulator evidence retained by CI;
++- [x] source/secret/logging hygiene enforced by CI;
++- [ ] final Play Console listing, screenshots, content rating, Data Safety declarations, privacy-policy URL, and organization upload key are operator-owned publishing steps.
++
++The final unchecked item is not an application-code gap: it requires SentIQ AI Labs' Play Console account and publishing credentials.
++
++## Release acceptance rule
++
++A Phase 6 build is accepted only when the release workflow is green for Flutter analysis/tests, backend compatibility, source-security checks, low-performance coverage, API 28/API 35 emulator startup, and verification-signed APK/AAB generation. Store submission additionally requires the manual store-signed job with the organization upload key.
+diff --git a/docs/mobile/phase6-feature-parity-checklist.md b/docs/mobile/phase6-feature-parity-checklist.md
+new file mode 100644
+index 0000000..e3cf600
+--- /dev/null
++++ b/docs/mobile/phase6-feature-parity-checklist.md
+@@ -0,0 +1,32 @@
++# SentIQ Chat Android — Phase 6 feature-parity checklist
++
++This checklist compares the production Android client with the SentIQ Chat product contracts implemented through Phases 1–5. It intentionally checks product capability, not pixel-for-pixel web duplication.
++
++| Capability | Android status | Evidence |
++| --- | --- | --- |
++| Guest entry and authenticated session restoration | Complete | native auth state machine, secure session storage |
++| Email auth, Google OAuth, password recovery, display name | Complete | PKCE/deep-link flows and auth tests |
++| Conversation list/search/new/rename/delete | Complete | workspace shell, SQLite/cloud reconciliation tests |
++| Offline/degraded cache and pending replay | Complete | workspace persistence/reconciliation suite |
++| Fast and Intuitive chat | Complete | shared backend contract and mode-aware composer |
++| Streaming, stop, retry, continue, lifecycle recovery | Complete | SSE/request-ID lifecycle tests and 32 ms token batching |
++| Markdown, code, math, tables, citations, selection | Complete | native rich-text renderer and golden/widget coverage |
++| Files and multiple attachments | Complete | native picker, validation, multipart progress/cancel/retry |
++| Long/scanned document states | Complete | file-analysis status and reconnect handling |
++| Image generation and image allowance | Complete | generated-image payload/actions/quota flows |
++| Image zoom/copy/share/save/open/delete | Complete | native Android artifact boundary |
++| Charts | Complete | native bar/line/pie/doughnut rendering and malformed-data containment |
++| Generated files and sanitized HTML editing | Complete | preview/download/share/open/edit/delete with non-executing HTML |
++| WebSurf V2 | Complete | streamed answer, sources, citations, images, partial/error states |
++| Deep Research | Complete | durable report events, recovery, cancellation, export |
++| SentIQ Live | Complete | ephemeral token, PCM audio, routes, transcripts, lifecycle recovery |
++| Billing/plans/Razorpay verification | Complete | backend-owned catalog/checkout/verification/cancel flows |
++| Memory and account data controls | Complete | memory CRUD, temporary/local clearing, sign-out cleanup |
++| Privacy, terms and support | Complete | native account surfaces and explicit support handoff |
++| Dark and light themes | Complete | golden coverage plus Phase 6 contrast checks |
++| Accessibility/reduced motion/dynamic text | Complete | Phase 6 accessibility regression and platform preference handling |
++| Release security/packaging | Complete | encrypted auth storage, HTTPS boundary, R8, external signing, APK/AAB gate |
++
++## Parity conclusion
++
++No known application feature implemented by the current SentIQ Chat mobile contract is intentionally omitted from Android. Web-only browser mechanics are replaced with native Android equivalents where appropriate (system picker, FileProvider/MediaStore, external HTTPS handoff, native audio routing, and Android payment UI).
