@@ -51,7 +51,10 @@ class _LaunchScreenState extends State<LaunchScreen>
     final Widget content = Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        const Semantics(label: 'SentIQ Chat', child: SentIQBrandMark(size: 72)),
+        Semantics(
+          label: 'SentIQ Chat',
+          child: const SentIQBrandMark(size: 72),
+        ),
         const SizedBox(height: SentIQSpacing.md),
         Text('SentIQ Chat', style: Theme.of(context).textTheme.headlineMedium),
         const SizedBox(height: SentIQSpacing.xs),
