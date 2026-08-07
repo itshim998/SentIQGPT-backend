@@ -1,0 +1,300 @@
+diff --git a/mobile/sentiq_chat/lib/features/foundation/presentation/foundation_gallery_screen.dart b/mobile/sentiq_chat/lib/features/foundation/presentation/foundation_gallery_screen.dart
+deleted file mode 100644
+index 40eca81..0000000
+--- a/mobile/sentiq_chat/lib/features/foundation/presentation/foundation_gallery_screen.dart
++++ /dev/null
+@@ -1,141 +0,0 @@
+-import 'package:flutter/material.dart';
+-import 'package:sentiq_chat/core/config/app_config.dart';
+-import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
+-import 'package:sentiq_chat/shared/widgets/refractive_glass_surface.dart';
+-import 'package:sentiq_chat/shared/widgets/sentiq_button.dart';
+-import 'package:sentiq_chat/shared/widgets/sentiq_dialog.dart';
+-import 'package:sentiq_chat/shared/widgets/sentiq_empty_state.dart';
+-import 'package:sentiq_chat/shared/widgets/sentiq_feedback.dart';
+-import 'package:sentiq_chat/shared/widgets/sentiq_loading_state.dart';
+-import 'package:sentiq_chat/shared/widgets/sentiq_sheet.dart';
+-import 'package:sentiq_chat/shared/widgets/sentiq_text_field.dart';
+-
+-class FoundationGalleryScreen extends StatelessWidget {
+-  const FoundationGalleryScreen({required this.config, super.key});
+-
+-  final AppConfig config;
+-
+-  @override
+-  Widget build(BuildContext context) {
+-    final SentIQPalette palette = context.sentiqPalette;
+-    return Scaffold(
+-      body: Stack(
+-        children: <Widget>[
+-          Positioned(
+-            top: -130,
+-            right: -90,
+-            child: IgnorePointer(
+-              child: DecoratedBox(
+-                decoration: BoxDecoration(
+-                  shape: BoxShape.circle,
+-                  gradient: RadialGradient(
+-                    colors: <Color>[
+-                      palette.accent.withValues(alpha: 0.22),
+-                      palette.accent.withValues(alpha: 0),
+-                    ],
+-                  ),
+-                ),
+-                child: const SizedBox.square(dimension: 360),
+-              ),
+-            ),
+-          ),
+-          SafeArea(
+-            child: ListView(
+-              padding: const EdgeInsets.all(SentIQSpacing.lg),
+-              children: <Widget>[
+-                Text(
+-                  'SentIQ Chat',
+-                  style: Theme.of(context).textTheme.headlineMedium,
+-                ),
+-                const SizedBox(height: SentIQSpacing.xs),
+-                Text(
+-                  'Android foundation · ${config.environment.name}',
+-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+-                    color: palette.textSecondary,
+-                  ),
+-                ),
+-                const SizedBox(height: SentIQSpacing.lg),
+-                RefractiveGlassSurface(
+-                  child: Column(
+-                    crossAxisAlignment: CrossAxisAlignment.start,
+-                    children: <Widget>[
+-                      Text(
+-                        'Calm, responsive foundations',
+-                        style: Theme.of(context).textTheme.titleLarge,
+-                      ),
+-                      const SizedBox(height: SentIQSpacing.xs),
+-                      Text(
+-                        'Refractive depth is reserved for controls and transient surfaces, keeping reading areas clear.',
+-                        style: TextStyle(color: palette.textSecondary),
+-                      ),
+-                    ],
+-                  ),
+-                ),
+-                const SizedBox(height: SentIQSpacing.md),
+-                const SentIQTextField(
+-                  label: 'Message SentIQ Chat',
+-                  hint: 'Ask anything',
+-                  prefixIcon: Icons.auto_awesome_outlined,
+-                  maxLines: 3,
+-                ),
+-                const SizedBox(height: SentIQSpacing.md),
+-                Wrap(
+-                  spacing: SentIQSpacing.xs,
+-                  runSpacing: SentIQSpacing.xs,
+-                  children: <Widget>[
+-                    SentIQButton(
+-                      label: 'Continue',
+-                      icon: Icons.arrow_forward_rounded,
+-                      onPressed: () => SentIQToast.show(
+-                        context,
+-                        'Foundation components are ready.',
+-                      ),
+-                    ),
+-                    SentIQButton(
+-                      label: 'Open sheet',
+-                      style: SentIQButtonStyle.secondary,
+-                      onPressed: () => showSentIQSheet<void>(
+-                        context: context,
+-                        builder: (BuildContext context) => const Padding(
+-                          padding: EdgeInsets.only(bottom: SentIQSpacing.lg),
+-                          child: SentIQEmptyState(
+-                            icon: Icons.chat_bubble_outline_rounded,
+-                            title: 'A clear place to begin',
+-                            message:
+-                                'Conversations will appear here in Phase 2.',
+-                          ),
+-                        ),
+-                      ),
+-                    ),
+-                    SentIQIconButton(
+-                      icon: Icons.tune_rounded,
+-                      tooltip: 'Show dialog',
+-                      onPressed: () => showDialog<void>(
+-                        context: context,
+-                        builder: (BuildContext context) => SentIQDialog(
+-                          title: 'Foundation ready',
+-                          body: const Text(
+-                            'The native design system is now connected to both themes.',
+-                          ),
+-                          primaryLabel: 'Done',
+-                          onPrimary: () => Navigator.of(context).pop(),
+-                        ),
+-                      ),
+-                    ),
+-                  ],
+-                ),
+-                const SizedBox(height: SentIQSpacing.lg),
+-                const SentIQLoadingState(label: 'Preparing your workspace…'),
+-                const SizedBox(height: SentIQSpacing.md),
+-                const SentIQInlineError(
+-                  message: 'This is how a recoverable problem will appear.',
+-                  actionLabel: 'Try again',
+-                ),
+-              ],
+-            ),
+-          ),
+-        ],
+-      ),
+-    );
+-  }
+-}
+diff --git a/mobile/sentiq_chat/lib/features/multimodal/presentation/multimodal_message_extras.dart b/mobile/sentiq_chat/lib/features/multimodal/presentation/multimodal_message_extras.dart
+index e558781..55d2656 100644
+--- a/mobile/sentiq_chat/lib/features/multimodal/presentation/multimodal_message_extras.dart
++++ b/mobile/sentiq_chat/lib/features/multimodal/presentation/multimodal_message_extras.dart
+@@ -4,10 +4,11 @@ import 'dart:math' as math;
+ 
+ import 'package:flutter/material.dart';
+ import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
++import 'package:sentiq_chat/core/performance/performance_policy.dart';
++import 'package:sentiq_chat/core/security/safe_external_link.dart';
+ import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
+ import 'package:sentiq_chat/features/multimodal/data/content_policy.dart';
+ import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
+-import 'package:url_launcher/url_launcher.dart';
+ 
+ class MultimodalMessageExtras extends StatelessWidget {
+   const MultimodalMessageExtras({
+@@ -86,13 +87,15 @@ class _ImageCard extends StatelessWidget {
+   final Future<void> Function(GeneratedImagePayload, ArtifactAction) onAction;
+   final Future<void> Function() onDelete;
+ 
+-  ImageProvider<Object>? _provider() {
++  ImageProvider<Object>? _provider(BuildContext context) {
+     try {
+-      if (image.base64?.isNotEmpty == true) {
+-        return MemoryImage(RemoteContentPolicy.decodeImageData(image.base64!));
+-      }
+-      return NetworkImage(
+-        RemoteContentPolicy.requireHttps(image.url).toString(),
++      final ImageProvider<Object> provider = image.base64?.isNotEmpty == true
++          ? MemoryImage(RemoteContentPolicy.decodeImageData(image.base64!))
++          : NetworkImage(RemoteContentPolicy.requireHttps(image.url).toString());
++      return ResizeImage.resizeIfNeeded(
++        SentIQPerformancePolicy.decodedImageWidth(context),
++        null,
++        provider,
+       );
+     } on Object {
+       return null;
+@@ -101,7 +104,7 @@ class _ImageCard extends StatelessWidget {
+ 
+   @override
+   Widget build(BuildContext context) {
+-    final ImageProvider<Object>? provider = _provider();
++    final ImageProvider<Object>? provider = _provider(context);
+     if (provider == null) {
+       return const _Failure('The generated image could not be opened safely.');
+     }
+@@ -709,6 +712,10 @@ class _WebImageResults extends StatelessWidget {
+                       child: Image.network(
+                         url,
+                         fit: BoxFit.contain,
++                        cacheWidth: SentIQPerformancePolicy.decodedImageWidth(
++                          dialogContext,
++                        ),
++                        semanticLabel: 'Web image result',
+                         errorBuilder: (_, _, _) => const _Failure(
+                           'This web image could not be loaded.',
+                         ),
+@@ -723,6 +730,7 @@ class _WebImageResults extends StatelessWidget {
+               child: Image.network(
+                 url,
+                 width: 148,
++                semanticLabel: 'Web image result thumbnail',
+                 height: 104,
+                 fit: BoxFit.cover,
+                 cacheWidth: 520,
+@@ -750,12 +758,7 @@ class _SourceCard extends StatelessWidget {
+         ? source.thumbnailUrl
+         : null;
+     return InkWell(
+-      onTap: () => unawaited(
+-        launchUrl(
+-          RemoteContentPolicy.requireHttps(source.url),
+-          mode: LaunchMode.externalApplication,
+-        ),
+-      ),
++      onTap: () => unawaited(SafeExternalLink.openHttps(source.url)),
+       child: Container(
+         width: 250,
+         decoration: _cardDecoration(context, 14),
+@@ -767,6 +770,7 @@ class _SourceCard extends StatelessWidget {
+               Image.network(
+                 thumbnail,
+                 height: 72,
++                semanticLabel: 'Source preview',
+                 width: double.infinity,
+                 fit: BoxFit.cover,
+                 cacheWidth: 700,
+diff --git a/mobile/sentiq_chat/lib/features/research/presentation/deep_research_screen.dart b/mobile/sentiq_chat/lib/features/research/presentation/deep_research_screen.dart
+index 4269c73..cbffbec 100644
+--- a/mobile/sentiq_chat/lib/features/research/presentation/deep_research_screen.dart
++++ b/mobile/sentiq_chat/lib/features/research/presentation/deep_research_screen.dart
+@@ -5,13 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
+ import 'package:sentiq_chat/app/app_providers.dart';
+ import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
+ import 'package:sentiq_chat/core/network/api_client.dart';
++import 'package:sentiq_chat/core/security/safe_external_link.dart';
+ import 'package:sentiq_chat/features/chat/presentation/native_rich_text.dart';
+ import 'package:sentiq_chat/features/multimodal/platform/artifact_platform_service.dart';
+ import 'package:sentiq_chat/features/research/application/deep_research_controller.dart';
+ import 'package:sentiq_chat/features/research/domain/deep_research_models.dart';
+ import 'package:sentiq_chat/shared/widgets/refractive_glass_surface.dart';
+ import 'package:sentiq_chat/shared/widgets/sentiq_button.dart';
+-import 'package:url_launcher/url_launcher.dart';
+ 
+ class DeepResearchScreen extends ConsumerStatefulWidget {
+   const DeepResearchScreen({
+@@ -337,10 +337,7 @@ class _ResearchWorkspace extends StatelessWidget {
+                     : null,
+                 onTap: !source.hasSafeUrl
+                     ? null
+-                    : () => launchUrl(
+-                        Uri.parse(source.url),
+-                        mode: LaunchMode.externalApplication,
+-                      ),
++                    : () => unawaited(SafeExternalLink.openHttps(source.url)),
+               ),
+           ],
+           if (report.status == DeepResearchStatus.completed) ...<Widget>[
+diff --git a/mobile/sentiq_chat/lib/main.dart b/mobile/sentiq_chat/lib/main.dart
+index 0af320e..1884f29 100644
+--- a/mobile/sentiq_chat/lib/main.dart
++++ b/mobile/sentiq_chat/lib/main.dart
+@@ -2,19 +2,27 @@ import 'package:flutter/widgets.dart';
+ import 'package:flutter_riverpod/flutter_riverpod.dart';
+ import 'package:sentiq_chat/app/sentiq_app.dart';
+ import 'package:sentiq_chat/core/config/app_config.dart';
++import 'package:sentiq_chat/core/performance/performance_policy.dart';
++import 'package:sentiq_chat/core/performance/performance_trace.dart';
++import 'package:sentiq_chat/core/security/secure_auth_storage.dart';
+ import 'package:supabase_flutter/supabase_flutter.dart';
+ 
+ Future<void> main() async {
+   WidgetsFlutterBinding.ensureInitialized();
++  SentIQPerformanceTrace.beginStartup();
++  SentIQPerformancePolicy.configureImageCache();
+   final AppConfig config = AppConfig.fromEnvironment();
+   await Supabase.initialize(
+     url: config.supabaseUrl,
+     publishableKey: config.supabasePublishableKey,
+-    authOptions: const FlutterAuthClientOptions(
++    authOptions: FlutterAuthClientOptions(
+       authFlowType: AuthFlowType.pkce,
+       detectSessionInUri: true,
++      localStorage: SecureAuthStorage(),
+     ),
+   );
++  SentIQPerformanceTrace.installFrameTimingTrace();
++  SentIQPerformanceTrace.markFirstFlutterFrame();
+   runApp(
+     ProviderScope(
+       overrides: <Override>[appConfigProvider.overrideWithValue(config)],
