@@ -94,5 +94,19 @@ replace_once(
     await Future<void>.delayed(Duration.zero);
     expect(controller.state.connection, LiveConnectionState.suspended);""",
 )
+replace_once(
+    "backend/testSentIQLive.ts",
+    '  const audioModuleUrl = `data:text/javascript;base64,${Buffer.from(audioProtocol).toString("base64")}`;',
+    '''  const isolatedAudioProtocol = audioProtocol.replace(
+    'import { emitLivePcmLevel } from "./live-audio-visual-state.mjs";',
+    "const emitLivePcmLevel = () => {};",
+  );
+  assert.notEqual(
+    isolatedAudioProtocol,
+    audioProtocol,
+    "the audio protocol fixture should isolate the visual-level hook",
+  );
+  const audioModuleUrl = `data:text/javascript;base64,${Buffer.from(isolatedAudioProtocol).toString("base64")}`;''',
+)
 
-print("Applied nine asserted Phase 5 corrections.")
+print("Applied ten asserted Phase 5 corrections.")
