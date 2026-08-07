@@ -1,0 +1,25 @@
+name: Phase 6 source snapshot
+
+on:
+  push:
+    branches: [feature/flutter-android-app]
+    paths: [.github/workflows/phase6-source-snapshot.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Pack source
+        shell: bash
+        run: tar --exclude=.git --exclude='mobile/sentiq_chat/build' -czf /tmp/phase6-source.tar.gz .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: phase6-source-${{ github.sha }}
+          path: /tmp/phase6-source.tar.gz
+          retention-days: 1
+          if-no-files-found: error
