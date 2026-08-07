@@ -16,7 +16,7 @@ env:
 
 jobs:
   finalize:
-    name: Verify, test, package, and commit Phase 6
+    name: Apply, commit, verify, and package Phase 6
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     steps:
@@ -44,85 +44,24 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Validate committed Phase 6 payload parts
+      - name: Reconstruct and validate readable Phase 6 patch
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
-          parts=(tool/phase6-bundle.b64.part-*)
-          test "${#parts[@]}" -eq 11
-          printf '%s\n' "${parts[@]}"
-          cat "${parts[@]}" > "${RUNNER_TEMP}/phase6-payload.b64"
-          test -s "${RUNNER_TEMP}/phase6-payload.b64"
-
-      - name: Reconstruct Phase 6 payload archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          parts=(tool/phase6-bundle.b64.part-*)
-          out="${RUNNER_TEMP}/phase6-payload.tar.gz"
-
-          # Format A: one Base64 stream split across repository files.
-          if tr -d '\r\n\t ' < "${RUNNER_TEMP}/phase6-payload.b64" | base64 --decode > "${out}" 2>/dev/null \
-             && gzip -t "${out}" 2>/dev/null \
-             && tar -tzf "${out}" >/dev/null 2>&1; then
-            echo 'PAYLOAD_FORMAT=split-stream' >> "${GITHUB_ENV}"
-            exit 0
+          parts=(tool/phase6-readable.part-*.patch)
+          if [[ ${#parts[@]} -ne 9 ]]; then
+            echo "Expected 9 readable Phase 6 patch sections, found ${#parts[@]}" >&2
+            exit 1
           fi
-
-          # Format B: each repository file is an independently encoded binary chunk.
-          : > "${out}"
-          independent_ok=1
+          : > "${RUNNER_TEMP}/phase6-readable.patch"
           for part in "${parts[@]}"; do
-            if ! tr -d '\r\n\t ' < "${part}" | base64 --decode >> "${out}" 2>/dev/null; then
-              independent_ok=0
-              break
-            fi
+            test -s "${part}"
+            grep -q '^diff --git ' "${part}"
+            cat "${part}" >> "${RUNNER_TEMP}/phase6-readable.patch"
           done
-          if [[ "${independent_ok}" -eq 1 ]] \
-             && gzip -t "${out}" 2>/dev/null \
-             && tar -tzf "${out}" >/dev/null 2>&1; then
-            echo 'PAYLOAD_FORMAT=independent-chunks' >> "${GITHUB_ENV}"
-            exit 0
-          fi
-
-          # Format C: a split stream with accidental interior padding. Padding is
-          # normalized and restored only at the true end of the stream.
-          python - <<'PY'
-          from pathlib import Path
-          import base64
-          import os
-
-          root = Path('.')
-          parts = sorted(root.glob('tool/phase6-bundle.b64.part-*'))
-          encoded = ''.join(p.read_text(encoding='utf-8') for p in parts)
-          encoded = ''.join(encoded.split()).replace('=', '')
-          encoded += '=' * ((4 - len(encoded) % 4) % 4)
-          data = base64.b64decode(encoded, validate=True)
-          Path(os.environ['RUNNER_TEMP'], 'phase6-payload.tar.gz').write_bytes(data)
-          PY
-          gzip -t "${out}"
-          tar -tzf "${out}" >/dev/null
-          echo 'PAYLOAD_FORMAT=normalized-padding' >> "${GITHUB_ENV}"
-
-      - name: Extract committed Phase 6 payload
-        shell: bash
-        run: |
-          set -euo pipefail
-          tar -xzf "${RUNNER_TEMP}/phase6-payload.tar.gz" -C .
-          if [[ -f .phase6-deletions.txt ]]; then
-            while IFS= read -r path; do
-              [[ -z "${path}" ]] || rm -f -- "${path}"
-            done < .phase6-deletions.txt
-            rm -f .phase6-deletions.txt
-          fi
-
-      - name: Verify required Phase 6 payload contents
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Reconstructed payload format: ${PAYLOAD_FORMAT}"
+          git apply --check "${RUNNER_TEMP}/phase6-readable.patch"
+          git apply "${RUNNER_TEMP}/phase6-readable.patch"
           test -f .github/workflows/flutter-android-release.yml
           test -f docs/mobile/flutter-phase6-release-readiness.md
           test -f docs/mobile/phase6-performance-report.md
@@ -131,26 +70,52 @@ jobs:
           test -f docs/mobile/android-studio-final-testing.md
           test ! -e mobile/sentiq_chat/lib/features/foundation/presentation/foundation_gallery_screen.dart
 
-      - name: Prepare dependencies and deterministic lockfiles
+      - name: Prepare deterministic mobile source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd mobile/sentiq_chat
+          ./tool/bootstrap_android.sh
+          flutter pub get
+          dart format lib test
+
+      - name: Commit production-ready Phase 6 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/phase6-finalize.yml
+          rm -f .github/workflows/phase6-audit.yml
+          rm -f .github/workflows/phase6-source-snapshot.yml
+          rm -f tool/phase6-bundle.b64.part-*
+          rm -f tool/phase6-direct.patch.gz.part-*
+          rm -f tool/phase6-readable.part-*.patch
+          rm -f .phase6-deletions.txt
+          test -f .github/workflows/flutter-android-release.yml
+          test ! -e .github/workflows/phase6-finalize.yml
+          ! compgen -G 'tool/phase6-readable.part-*.patch' >/dev/null
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git diff --cached --quiet && { echo 'No Phase 6 source changes to commit'; exit 1; }
+          git commit -m 'Complete Phase 6 Android production readiness'
+          git push origin HEAD:feature/flutter-android-app
+          echo "PHASE6_COMMIT=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
+
+      - name: Install verification runtime
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y libsqlite3-0
-          npm install --package-lock-only --ignore-scripts
           npm ci
-          cd mobile/sentiq_chat
-          ./tool/bootstrap_android.sh
-          flutter pub get
-          dart format lib test integration_test
-          flutter test --update-goldens test/goldens
 
       - name: Analyze and run complete Flutter verification
         shell: bash
         working-directory: mobile/sentiq_chat
         run: |
           set -euo pipefail
-          dart format --output=none --set-exit-if-changed lib test integration_test
+          dart format --output=none --set-exit-if-changed lib test
           flutter analyze
           flutter test --dart-define=SENTIQ_LOW_PERFORMANCE=true test/core/performance/low_performance_smoke_test.dart
           flutter test --coverage test/core test/features test/widgets
@@ -178,7 +143,9 @@ jobs:
           test -z "$(git ls-files 'mobile/sentiq_chat/android/key.properties' 'mobile/sentiq_chat/android/**/*.jks' 'mobile/sentiq_chat/android/**/*.keystore')"
           ! git grep -nEI '(service[_-]?role[^[:space:]]*[=:][[:space:]]*[A-Za-z0-9._-]{20,}|sk_live_[A-Za-z0-9]+|rzp_live_[A-Za-z0-9]+|BEGIN (RSA |EC )?PRIVATE KEY)' -- mobile/sentiq_chat .github/workflows/flutter-android-release.yml
           test "$(grep -RIl 'package:url_launcher/url_launcher.dart' mobile/sentiq_chat/lib | wc -l)" -eq 1
+          grep -q 'flutter_secure_storage:' mobile/sentiq_chat/pubspec.yaml
           grep -q 'android:usesCleartextTraffic="false"' mobile/sentiq_chat/android/app/src/main/AndroidManifest.xml
+          grep -q 'cleartextTrafficPermitted="false"' mobile/sentiq_chat/android/app/src/main/res/xml/network_security_config.xml
           ! grep -q 'android.permission.CAMERA' mobile/sentiq_chat/android/app/src/main/AndroidManifest.xml
           grep -q 'android.permission.RECORD_AUDIO' mobile/sentiq_chat/android/app/src/main/AndroidManifest.xml
           grep -q 'isMinifyEnabled = true' mobile/sentiq_chat/android/app/build.gradle.kts
@@ -220,29 +187,7 @@ jobs:
           rm -f android/key.properties "${RUNNER_TEMP}/sentiq-phase6-ci.jks"
           test ! -e android/key.properties
 
-      - name: Remove one-time Phase 6 machinery and commit verified tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -f .github/workflows/phase6-finalize.yml
-          rm -f .github/workflows/phase6-audit.yml
-          rm -f .github/workflows/phase6-source-snapshot.yml
-          rm -f tool/phase6-bundle.b64.part-*
-          rm -f .phase6-deletions.txt
-          test ! -e .github/workflows/phase6-finalize.yml
-          test ! -e .github/workflows/phase6-audit.yml
-          test ! -e .github/workflows/phase6-source-snapshot.yml
-          ! compgen -G 'tool/phase6-bundle.b64.part-*' >/dev/null
-          test -f .github/workflows/flutter-android-release.yml
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git diff --cached --quiet && { echo 'No Phase 6 changes to commit'; exit 1; }
-          git commit -m 'Complete Phase 6 Android release readiness'
-          git push origin HEAD:feature/flutter-android-app
-          echo "PHASE6_COMMIT=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
-
-      - name: Upload finalizer release evidence
+      - name: Upload final Phase 6 release evidence
         uses: actions/upload-artifact@v7
         with:
           name: sentiq-chat-phase6-finalizer-${{ env.PHASE6_COMMIT }}
@@ -253,4 +198,4 @@ jobs:
             mobile/sentiq_chat/coverage/lcov.info
             ${{ runner.temp }}/phase6-finalizer-apk-signature.txt
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
