@@ -5,13 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sentiq_chat/app/app_providers.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 import 'package:sentiq_chat/core/network/api_client.dart';
+import 'package:sentiq_chat/core/security/safe_external_link.dart';
 import 'package:sentiq_chat/features/chat/presentation/native_rich_text.dart';
 import 'package:sentiq_chat/features/multimodal/platform/artifact_platform_service.dart';
 import 'package:sentiq_chat/features/research/application/deep_research_controller.dart';
 import 'package:sentiq_chat/features/research/domain/deep_research_models.dart';
 import 'package:sentiq_chat/shared/widgets/refractive_glass_surface.dart';
 import 'package:sentiq_chat/shared/widgets/sentiq_button.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class DeepResearchScreen extends ConsumerStatefulWidget {
   const DeepResearchScreen({
@@ -337,10 +337,7 @@ class _ResearchWorkspace extends StatelessWidget {
                     : null,
                 onTap: !source.hasSafeUrl
                     ? null
-                    : () => launchUrl(
-                        Uri.parse(source.url),
-                        mode: LaunchMode.externalApplication,
-                      ),
+                    : () => unawaited(SafeExternalLink.openHttps(source.url)),
               ),
           ],
           if (report.status == DeepResearchStatus.completed) ...<Widget>[

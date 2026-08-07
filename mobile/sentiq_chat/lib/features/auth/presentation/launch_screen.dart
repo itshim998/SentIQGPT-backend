@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
+import 'package:sentiq_chat/core/performance/performance_policy.dart';
 import 'package:sentiq_chat/shared/widgets/sentiq_brand_mark.dart';
 
 class LaunchScreen extends StatefulWidget {
@@ -12,6 +13,7 @@ class LaunchScreen extends StatefulWidget {
 class _LaunchScreenState extends State<LaunchScreen>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
+  bool _reduceMotion = false;
 
   @override
   void initState() {
@@ -19,7 +21,22 @@ class _LaunchScreenState extends State<LaunchScreen>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1400),
-    )..repeat(reverse: true);
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bool reduce = SentIQPerformancePolicy.reduceMotion(context);
+    if (reduce == _reduceMotion && (_controller.isAnimating || reduce)) return;
+    _reduceMotion = reduce;
+    if (reduce) {
+      _controller
+        ..stop()
+        ..value = 1;
+    } else {
+      _controller.repeat(reverse: true);
+    }
   }
 
   @override
@@ -31,40 +48,40 @@ class _LaunchScreenState extends State<LaunchScreen>
   @override
   Widget build(BuildContext context) {
     final SentIQPalette palette = context.sentiqPalette;
+    final Widget content = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        const Semantics(label: 'SentIQ Chat', child: SentIQBrandMark(size: 72)),
+        const SizedBox(height: SentIQSpacing.md),
+        Text('SentIQ Chat', style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: SentIQSpacing.xs),
+        Text(
+          'Bringing your workspace back…',
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: palette.textSecondary),
+        ),
+      ],
+    );
     return Scaffold(
       body: SafeArea(
         child: Center(
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (BuildContext context, Widget? child) {
-              final double scale = 0.97 + (_controller.value * 0.03);
-              return Transform.scale(
-                scale: scale,
-                child: Opacity(
-                  opacity: 0.82 + (_controller.value * 0.18),
-                  child: child,
+          child: _reduceMotion
+              ? content
+              : AnimatedBuilder(
+                  animation: _controller,
+                  builder: (BuildContext context, Widget? child) {
+                    final double scale = 0.97 + (_controller.value * 0.03);
+                    return Transform.scale(
+                      scale: scale,
+                      child: Opacity(
+                        opacity: 0.82 + (_controller.value * 0.18),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: content,
                 ),
-              );
-            },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                const SentIQBrandMark(size: 72),
-                const SizedBox(height: SentIQSpacing.md),
-                Text(
-                  'SentIQ Chat',
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-                const SizedBox(height: SentIQSpacing.xs),
-                Text(
-                  'Bringing your workspace back…',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: palette.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ),
       ),
     );

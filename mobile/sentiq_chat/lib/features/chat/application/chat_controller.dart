@@ -591,7 +591,7 @@ class ChatController extends StateNotifier<ChatState> {
         response,
       );
       if (!image.valid) {
-        throw Exception('The image provider returned no usable image.');
+        throw Exception('The image could not be created. Please try again.');
       }
       final ChatMessage complete = assistant.copyWith(
         content: _answerFrom(response),

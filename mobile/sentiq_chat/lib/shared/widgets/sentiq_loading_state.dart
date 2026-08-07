@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
+import 'package:sentiq_chat/core/performance/performance_policy.dart';
 
 class SentIQLoadingState extends StatefulWidget {
   const SentIQLoadingState({
@@ -18,6 +19,7 @@ class SentIQLoadingState extends StatefulWidget {
 class _SentIQLoadingStateState extends State<SentIQLoadingState>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
+  bool _reduceMotion = false;
 
   @override
   void initState() {
@@ -25,7 +27,22 @@ class _SentIQLoadingStateState extends State<SentIQLoadingState>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1300),
-    )..repeat();
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bool reduce = SentIQPerformancePolicy.reduceMotion(context);
+    if (reduce == _reduceMotion && (_controller.isAnimating || reduce)) return;
+    _reduceMotion = reduce;
+    if (reduce) {
+      _controller
+        ..stop()
+        ..value = 0;
+    } else {
+      _controller.repeat();
+    }
   }
 
   @override
@@ -37,29 +54,29 @@ class _SentIQLoadingStateState extends State<SentIQLoadingState>
   @override
   Widget build(BuildContext context) {
     final SentIQPalette palette = context.sentiqPalette;
+    final Widget indicator = DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: palette.accentSoft, width: 3),
+        gradient: SweepGradient(
+          colors: <Color>[
+            palette.accent,
+            palette.info,
+            palette.accent.withValues(alpha: 0.08),
+          ],
+        ),
+      ),
+      child: SizedBox.square(dimension: widget.compact ? 20 : 28),
+    );
     return Semantics(
       label: widget.label,
       liveRegion: true,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          RotationTransition(
-            turns: _controller,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: palette.accentSoft, width: 3),
-                gradient: SweepGradient(
-                  colors: <Color>[
-                    palette.accent,
-                    palette.info,
-                    palette.accent.withValues(alpha: 0.08),
-                  ],
-                ),
-              ),
-              child: SizedBox.square(dimension: widget.compact ? 20 : 28),
-            ),
-          ),
+          _reduceMotion
+              ? indicator
+              : RotationTransition(turns: _controller, child: indicator),
           const SizedBox(width: SentIQSpacing.sm),
           Flexible(
             child: Text(

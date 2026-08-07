@@ -4,10 +4,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
+import 'package:sentiq_chat/core/performance/performance_policy.dart';
+import 'package:sentiq_chat/core/security/safe_external_link.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
 import 'package:sentiq_chat/features/multimodal/data/content_policy.dart';
 import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class MultimodalMessageExtras extends StatelessWidget {
   const MultimodalMessageExtras({
@@ -86,13 +87,17 @@ class _ImageCard extends StatelessWidget {
   final Future<void> Function(GeneratedImagePayload, ArtifactAction) onAction;
   final Future<void> Function() onDelete;
 
-  ImageProvider<Object>? _provider() {
+  ImageProvider<Object>? _provider(BuildContext context) {
     try {
-      if (image.base64?.isNotEmpty == true) {
-        return MemoryImage(RemoteContentPolicy.decodeImageData(image.base64!));
-      }
-      return NetworkImage(
-        RemoteContentPolicy.requireHttps(image.url).toString(),
+      final ImageProvider<Object> provider = image.base64?.isNotEmpty == true
+          ? MemoryImage(RemoteContentPolicy.decodeImageData(image.base64!))
+          : NetworkImage(
+              RemoteContentPolicy.requireHttps(image.url).toString(),
+            );
+      return ResizeImage.resizeIfNeeded(
+        SentIQPerformancePolicy.decodedImageWidth(context),
+        null,
+        provider,
       );
     } on Object {
       return null;
@@ -101,7 +106,7 @@ class _ImageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ImageProvider<Object>? provider = _provider();
+    final ImageProvider<Object>? provider = _provider(context);
     if (provider == null) {
       return const _Failure('The generated image could not be opened safely.');
     }
@@ -709,6 +714,10 @@ class _WebImageResults extends StatelessWidget {
                       child: Image.network(
                         url,
                         fit: BoxFit.contain,
+                        cacheWidth: SentIQPerformancePolicy.decodedImageWidth(
+                          dialogContext,
+                        ),
+                        semanticLabel: 'Web image result',
                         errorBuilder: (_, _, _) => const _Failure(
                           'This web image could not be loaded.',
                         ),
@@ -723,6 +732,7 @@ class _WebImageResults extends StatelessWidget {
               child: Image.network(
                 url,
                 width: 148,
+                semanticLabel: 'Web image result thumbnail',
                 height: 104,
                 fit: BoxFit.cover,
                 cacheWidth: 520,
@@ -750,12 +760,7 @@ class _SourceCard extends StatelessWidget {
         ? source.thumbnailUrl
         : null;
     return InkWell(
-      onTap: () => unawaited(
-        launchUrl(
-          RemoteContentPolicy.requireHttps(source.url),
-          mode: LaunchMode.externalApplication,
-        ),
-      ),
+      onTap: () => unawaited(SafeExternalLink.openHttps(source.url)),
       child: Container(
         width: 250,
         decoration: _cardDecoration(context, 14),
@@ -767,6 +772,7 @@ class _SourceCard extends StatelessWidget {
               Image.network(
                 thumbnail,
                 height: 72,
+                semanticLabel: 'Source preview',
                 width: double.infinity,
                 fit: BoxFit.cover,
                 cacheWidth: 700,

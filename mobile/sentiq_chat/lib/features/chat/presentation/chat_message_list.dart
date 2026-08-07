@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent, SelectedContent;
 import 'package:flutter/services.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
+import 'package:sentiq_chat/core/performance/performance_policy.dart';
 import 'package:sentiq_chat/features/chat/application/chat_controller.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
 import 'package:sentiq_chat/features/chat/presentation/native_rich_text.dart';
@@ -90,11 +91,16 @@ class _ChatMessageListState extends State<ChatMessageList> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
       if (!force && !_nearBottom) return;
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      );
+      final double target = _scrollController.position.maxScrollExtent;
+      if (SentIQPerformancePolicy.reduceMotion(context)) {
+        _scrollController.jumpTo(target);
+      } else {
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+      }
     });
   }
 
@@ -415,20 +421,42 @@ class _StreamingCaretState extends State<_StreamingCaret>
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 900),
-  )..repeat(reverse: true);
+  );
+  bool _reduceMotion = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bool reduce = SentIQPerformancePolicy.reduceMotion(context);
+    if (reduce == _reduceMotion && (_controller.isAnimating || reduce)) return;
+    _reduceMotion = reduce;
+    if (reduce) {
+      _controller
+        ..stop()
+        ..value = 1;
+    } else {
+      _controller.repeat(reverse: true);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: Tween<double>(begin: 0.28, end: 1).animate(_controller),
-      child: Container(
-        width: 7,
-        height: 17,
-        decoration: BoxDecoration(
-          color: context.sentiqPalette.accent,
-          borderRadius: BorderRadius.circular(4),
-        ),
+    final Widget caret = Container(
+      width: 7,
+      height: 17,
+      decoration: BoxDecoration(
+        color: context.sentiqPalette.accent,
+        borderRadius: BorderRadius.circular(4),
       ),
+    );
+    return Semantics(
+      label: 'Response is still being written',
+      child: _reduceMotion
+          ? caret
+          : FadeTransition(
+              opacity: Tween<double>(begin: 0.28, end: 1).animate(_controller),
+              child: caret,
+            ),
     );
   }
 

@@ -21,3 +21,7 @@ android/key.properties
 
 # Test output
 test/failures/
+android/*.jks
+android/*.keystore
+android/app/*.jks
+android/app/*.keystore

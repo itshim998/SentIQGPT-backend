@@ -38,10 +38,18 @@ class AppConfig {
       AppEnvironment.staging => _productionApiBase,
       AppEnvironment.production => _productionApiBase,
     };
+    final Uri apiBaseUri = Uri.parse(
+      overrideBase.isEmpty ? defaultBase : overrideBase,
+    );
+    final Uri supabaseUri = Uri.parse(supabaseUrl);
+    if (environment != AppEnvironment.development) {
+      _requireSecureRemoteUri(apiBaseUri, label: 'SentIQ API');
+      _requireSecureRemoteUri(supabaseUri, label: 'Supabase');
+    }
     return AppConfig(
       environment: environment,
-      apiBaseUri: Uri.parse(overrideBase.isEmpty ? defaultBase : overrideBase),
-      supabaseUrl: supabaseUrl,
+      apiBaseUri: apiBaseUri,
+      supabaseUrl: supabaseUri.toString(),
       supabasePublishableKey: supabaseKey,
       mobileContractVersion: 4,
       loginRedirectUri: Uri.parse(
@@ -60,6 +68,14 @@ class AppConfig {
   final int mobileContractVersion;
   final Uri loginRedirectUri;
   final Uri recoveryRedirectUri;
+}
+
+void _requireSecureRemoteUri(Uri uri, {required String label}) {
+  if (uri.scheme.toLowerCase() != 'https' ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty) {
+    throw StateError('$label must use a credential-free HTTPS address.');
+  }
 }
 
 final Provider<AppConfig> appConfigProvider = Provider<AppConfig>(

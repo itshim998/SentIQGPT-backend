@@ -25,6 +25,7 @@ abstract final class SentIQTheme {
         );
     return ThemeData(
       useMaterial3: true,
+      materialTapTargetSize: MaterialTapTargetSize.padded,
       brightness: brightness,
       colorScheme: scheme,
       scaffoldBackgroundColor: palette.canvas,
@@ -42,6 +43,18 @@ abstract final class SentIQTheme {
         bodyMedium: textTheme.bodyMedium?.copyWith(height: 1.5),
       ),
       splashFactory: InkSparkle.splashFactory,
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+      ),
       extensions: <ThemeExtension<dynamic>>[palette],
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: <TargetPlatform, PageTransitionsBuilder>{

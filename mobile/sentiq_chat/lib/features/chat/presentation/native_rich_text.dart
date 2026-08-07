@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter/services.dart';
@@ -5,8 +7,8 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
+import 'package:sentiq_chat/core/security/safe_external_link.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class NativeRichText extends StatelessWidget {
   const NativeRichText({
@@ -55,10 +57,7 @@ class NativeRichText extends StatelessWidget {
                 styleSheet: _styleSheet(context),
                 onTapLink: (String text, String? href, String title) {
                   if (href == null) return;
-                  final Uri? uri = Uri.tryParse(href);
-                  if (uri != null) {
-                    launchUrl(uri, mode: LaunchMode.externalApplication);
-                  }
+                  unawaited(SafeExternalLink.openHttps(href));
                 },
               ),
           if (citations.isNotEmpty) ...<Widget>[
@@ -138,10 +137,7 @@ class _CitationChip extends StatelessWidget {
       onPressed: citation.url == null
           ? null
           : () {
-              final Uri? uri = Uri.tryParse(citation.url!);
-              if (uri != null) {
-                launchUrl(uri, mode: LaunchMode.externalApplication);
-              }
+              unawaited(SafeExternalLink.openHttps(citation.url));
             },
     );
   }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sentiq_chat/app/app_providers.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
+import 'package:sentiq_chat/core/security/safe_external_link.dart';
 import 'package:sentiq_chat/features/account/application/account_controller.dart';
 import 'package:sentiq_chat/features/account/domain/account_models.dart';
 import 'package:sentiq_chat/features/auth/domain/auth_models.dart';
@@ -11,7 +12,6 @@ import 'package:sentiq_chat/features/billing/presentation/billing_screen.dart';
 import 'package:sentiq_chat/features/workspace/application/workspace_controller.dart';
 import 'package:sentiq_chat/shared/widgets/sentiq_button.dart';
 import 'package:sentiq_chat/shared/widgets/sentiq_text_field.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class AccountScreen extends ConsumerWidget {
   const AccountScreen({
@@ -366,9 +366,7 @@ class _DataSupportTab extends ConsumerWidget {
         SentIQButton(
           label: 'Email support',
           expand: true,
-          onPressed: () => unawaited(
-            launchUrl(Uri(scheme: 'mailto', path: 'support@sentiqlabs.com')),
-          ),
+          onPressed: () => unawaited(SafeExternalLink.emailSupport()),
         ),
         if (!identity.isGuest) ...<Widget>[
           const SizedBox(height: SentIQSpacing.xl),
