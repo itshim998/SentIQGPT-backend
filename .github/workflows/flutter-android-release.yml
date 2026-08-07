@@ -234,27 +234,67 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            test -f /tmp/sentiq-emulator/build/app/outputs/flutter-apk/app-debug.apk
-            adb install -r /tmp/sentiq-emulator/build/app/outputs/flutter-apk/app-debug.apk
-            adb shell pm clear com.sentiqlabs.sentiqchat || true
-            adb shell am start -W -n com.sentiqlabs.sentiqchat/com.sentiqlabs.sentiq_chat.MainActivity > "/tmp/android-start-${{ matrix.api-level }}.txt"
-            cat "/tmp/android-start-${{ matrix.api-level }}.txt"
+            apk=/tmp/sentiq-emulator/build/app/outputs/flutter-apk/app-debug.apk
+            install_log="/tmp/android-install-${{ matrix.api-level }}.txt"
+            start_log="/tmp/android-start-${{ matrix.api-level }}.txt"
+            restart_log="/tmp/android-restart-${{ matrix.api-level }}.txt"
+            logcat_log="/tmp/android-logcat-${{ matrix.api-level }}.txt"
+
+            if [ ! -f "$apk" ]; then
+              echo "Missing emulator APK: $apk" | tee "$install_log"
+              exit 1
+            fi
+
+            adb wait-for-device
+            if ! adb install -r -t "$apk" >"$install_log" 2>&1; then
+              cat "$install_log"
+              exit 1
+            fi
+            cat "$install_log"
+
+            adb shell pm clear com.sentiqlabs.sentiqchat >/dev/null 2>&1 || true
+            if ! adb shell am start -W -n com.sentiqlabs.sentiqchat/com.sentiqlabs.sentiq_chat.MainActivity >"$start_log" 2>&1; then
+              cat "$start_log"
+              exit 1
+            fi
+            cat "$start_log"
             sleep 4
-            test -n "$(adb shell pidof com.sentiqlabs.sentiqchat)"
+            pid="$(adb shell pidof com.sentiqlabs.sentiqchat | tr -d '\r')" || true
+            if [ -z "$pid" ]; then
+              adb logcat -d -t 800 >"$logcat_log" 2>&1 || true
+              tail -n 200 "$logcat_log" || true
+              exit 1
+            fi
+
             adb shell am force-stop com.sentiqlabs.sentiqchat
-            adb shell am start -W -n com.sentiqlabs.sentiqchat/com.sentiqlabs.sentiq_chat.MainActivity > "/tmp/android-restart-${{ matrix.api-level }}.txt"
-            cat "/tmp/android-restart-${{ matrix.api-level }}.txt"
+            if ! adb shell am start -W -n com.sentiqlabs.sentiqchat/com.sentiqlabs.sentiq_chat.MainActivity >"$restart_log" 2>&1; then
+              cat "$restart_log"
+              exit 1
+            fi
+            cat "$restart_log"
             sleep 2
-            test -n "$(adb shell pidof com.sentiqlabs.sentiqchat)"
-            ! adb logcat -d -t 500 | grep -A20 'FATAL EXCEPTION' | grep -q 'com.sentiqlabs.sentiqchat'
+            pid="$(adb shell pidof com.sentiqlabs.sentiqchat | tr -d '\r')" || true
+            if [ -z "$pid" ]; then
+              adb logcat -d -t 800 >"$logcat_log" 2>&1 || true
+              tail -n 200 "$logcat_log" || true
+              exit 1
+            fi
+
+            adb logcat -d -t 800 >"$logcat_log" 2>&1 || true
+            if grep -A20 'FATAL EXCEPTION' "$logcat_log" | grep -q 'com.sentiqlabs.sentiqchat'; then
+              echo 'SentIQ Chat fatal exception detected' >&2
+              exit 1
+            fi
       - name: Upload emulator evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: emulator-api-${{ matrix.api-level }}-${{ github.sha }}
           path: |
+            /tmp/android-install-${{ matrix.api-level }}.txt
             /tmp/android-start-${{ matrix.api-level }}.txt
             /tmp/android-restart-${{ matrix.api-level }}.txt
+            /tmp/android-logcat-${{ matrix.api-level }}.txt
           if-no-files-found: warn
           retention-days: 14
 
