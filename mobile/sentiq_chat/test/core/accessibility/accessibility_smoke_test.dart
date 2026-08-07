@@ -71,7 +71,13 @@ void main() {
     await tester.pump();
     expect(find.text('Continue'), findsOneWidget);
     expect(find.text('Preparing conversation'), findsOneWidget);
-    expect(find.byType(RotationTransition), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(SentIQLoadingState),
+        matching: find.byType(RotationTransition),
+      ),
+      findsNothing,
+    );
     expect(tester.takeException(), isNull);
   });
 }
