@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 6 closes the Flutter Android implementation for production packaging and release verification. The native client now has explicit accessibility, performance, security, packaging, CI, and Play-readiness boundaries instead of relying on development defaults.
+Phase 6 closes the Flutter Android implementation for production packaging and release verification. The native client now has explicit accessibility, performance, security, packaging, automated verification, and Play-readiness boundaries instead of relying on development defaults.
 
 ## Product polish
 
@@ -51,7 +51,9 @@ The main manifest declares only permissions required by shipped functionality:
 
 ## Signing and release packaging
 
-`android/app/build.gradle.kts` never falls back to the debug key for a release build. When `android/key.properties` is present it loads an external keystore and builds a signed, minified release. CI creates an ephemeral verification keystore so every change proves that both APK and AAB release packaging and signature verification succeed without putting a distribution key in the repository.
+`android/app/build.gradle.kts` never falls back to the debug key for a release build. When `android/key.properties` is present it loads an external keystore and builds a signed, minified release. Automated verification creates an ephemeral verification keystore so every candidate proves that both APK and AAB release packaging and signature verification succeed without putting a distribution key in the repository.
+
+The AAB verifier uses the exact ephemeral keystore as the trust source for `jarsigner -verify -strict`; this avoids treating the expected self-signed verification certificate as an untrusted-chain failure while still failing on an unexpected signer.
 
 For Play distribution, use the organization-owned upload key and keep these values outside source control:
 
@@ -60,7 +62,7 @@ For Play distribution, use the organization-owned upload key and keep these valu
 - key alias;
 - key password.
 
-The reusable release workflow supports repository/environment secrets for a store-signed manual build. Google Play App Signing should retain the app-signing key; SentIQ AI Labs should retain the upload-key backup and recovery documentation separately.
+The reusable GitHub workflow supports repository/environment secrets for a store-signed manual build when hosted Actions are available. Google Play App Signing should retain the app-signing key; SentIQ AI Labs should retain the upload-key backup and recovery documentation separately.
 
 ## Play Store readiness checklist
 
@@ -74,12 +76,21 @@ The reusable release workflow supports repository/environment secrets for a stor
 - [x] cleartext production networking disabled;
 - [x] dangerous permissions minimized and documented;
 - [x] privacy/data/account controls available in product;
-- [x] release mapping, APK, AAB, signature evidence, coverage, and emulator evidence retained by CI;
-- [x] source/secret/logging hygiene enforced by CI;
+- [x] release mapping, APK, AAB, signature evidence, coverage, and emulator evidence are defined by the automated release gate;
+- [x] source/secret/logging hygiene is enforced by the automated release gate;
 - [ ] final Play Console listing, screenshots, content rating, Data Safety declarations, privacy-policy URL, and organization upload key are operator-owned publishing steps.
 
 The final unchecked item is not an application-code gap: it requires SentIQ AI Labs' Play Console account and publishing credentials.
 
 ## Release acceptance rule
 
-A Phase 6 build is accepted only when the release workflow is green for Flutter analysis/tests, backend compatibility, source-security checks, low-performance coverage, API 28/API 35 emulator startup, and verification-signed APK/AAB generation. Store submission additionally requires the manual store-signed job with the organization upload key.
+A Phase 6 build is accepted only when one of the two equivalent automated gates completes successfully against the exact PR head intended for merge:
+
+1. the GitHub-hosted `Flutter Android Release Readiness` workflow is green; or
+2. `mobile/sentiq_chat/tool/phase6_local_release.ps1 -RunEmulators` produces a `phase6-manifest.json` with `result: "PASS"` and `git.headSha` equal to that PR head.
+
+Both routes require Flutter analysis/tests, backend compatibility, source/security checks, low-performance coverage, verification-signed minified APK/AAB generation, strict signature verification, API 28 emulator startup/lifecycle smoke, and API 35 emulator startup/lifecycle smoke. A `PARTIAL` local result is never merge-eligible.
+
+The zero-Actions local procedure and evidence format are documented in `docs/mobile/phase6-local-release-verification.md`.
+
+Store submission additionally requires an organization-upload-key-signed candidate plus the operator-owned physical-device and Play Console checks documented in `docs/mobile/android-studio-final-testing.md`.
