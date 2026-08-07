@@ -44,20 +44,35 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Verify and apply committed Phase 6 payload
+      - name: Validate committed Phase 6 payload parts
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
           parts=(tool/phase6-bundle.b64.part-*)
-          if [[ ${#parts[@]} -ne 11 ]]; then
-            echo "Expected 11 committed Phase 6 payload parts, found ${#parts[@]}" >&2
-            exit 1
-          fi
+          test "${#parts[@]}" -eq 11
+          printf '%s\n' "${parts[@]}"
           cat "${parts[@]}" > "${RUNNER_TEMP}/phase6-payload.b64"
+          test -s "${RUNNER_TEMP}/phase6-payload.b64"
+
+      - name: Decode Phase 6 payload
+        shell: bash
+        run: |
+          set -euo pipefail
           base64 --decode "${RUNNER_TEMP}/phase6-payload.b64" > "${RUNNER_TEMP}/phase6-payload.tar.gz"
+          test -s "${RUNNER_TEMP}/phase6-payload.tar.gz"
+
+      - name: Verify Phase 6 archive integrity
+        shell: bash
+        run: |
+          set -euo pipefail
           gzip -t "${RUNNER_TEMP}/phase6-payload.tar.gz"
           tar -tzf "${RUNNER_TEMP}/phase6-payload.tar.gz" >/dev/null
+
+      - name: Extract committed Phase 6 payload
+        shell: bash
+        run: |
+          set -euo pipefail
           tar -xzf "${RUNNER_TEMP}/phase6-payload.tar.gz" -C .
           if [[ -f .phase6-deletions.txt ]]; then
             while IFS= read -r path; do
@@ -65,6 +80,11 @@ jobs:
             done < .phase6-deletions.txt
             rm -f .phase6-deletions.txt
           fi
+
+      - name: Verify required Phase 6 payload contents
+        shell: bash
+        run: |
+          set -euo pipefail
           test -f .github/workflows/flutter-android-release.yml
           test -f docs/mobile/flutter-phase6-release-readiness.md
           test -f docs/mobile/phase6-performance-report.md
