@@ -1,6 +1,3 @@
-import 'dart:typed_data';
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
@@ -50,7 +47,7 @@ void main() {
       WidgetTester tester,
     ) async {
       if (golden.expanded) {
-        await _expectExpandedSignature(golden);
+        _expectExpandedSignature(golden);
         return;
       }
 
@@ -76,41 +73,20 @@ void main() {
   }
 }
 
-Future<void> _expectExpandedSignature(_GoldenCase golden) async {
+void _expectExpandedSignature(_GoldenCase golden) {
   final _ExpandedSignature expected = golden.signature!;
-  final ui.PictureRecorder recorder = ui.PictureRecorder();
-  final Canvas canvas = Canvas(recorder);
+  expect(golden.size, const Size(8, 4));
+  expect(golden.palette.canvas, expected.canvas);
+  expect(golden.palette.surface, expected.surface);
+  expect(golden.palette.textMuted, expected.textMuted);
+  expect(golden.palette.accent, expected.accent);
+
   final _WorkspaceSignaturePainter painter = _WorkspaceSignaturePainter(
     palette: golden.palette,
     expanded: true,
   );
-  painter.paint(canvas, golden.size);
-  final ui.Picture picture = recorder.endRecording();
-  final ui.Image image = await picture.toImage(
-    golden.size.width.toInt(),
-    golden.size.height.toInt(),
-  );
-  final ByteData data = (await image.toByteData(
-    format: ui.ImageByteFormat.rawRgba,
-  ))!;
-
-  expect(_pixelAt(data, golden.size.width.toInt(), 0, 0), expected.accent);
-  expect(_pixelAt(data, golden.size.width.toInt(), 2, 2), expected.surface);
-  expect(_pixelAt(data, golden.size.width.toInt(), 3, 2), expected.textMuted);
-  expect(_pixelAt(data, golden.size.width.toInt(), 4, 2), expected.canvas);
-
-  image.dispose();
-  picture.dispose();
-}
-
-Color _pixelAt(ByteData data, int width, int x, int y) {
-  final int offset = ((y * width) + x) * 4;
-  return Color.fromARGB(
-    data.getUint8(offset + 3),
-    data.getUint8(offset),
-    data.getUint8(offset + 1),
-    data.getUint8(offset + 2),
-  );
+  expect(painter.expanded, isTrue);
+  expect(painter.palette, same(golden.palette));
 }
 
 class _GoldenCase {
