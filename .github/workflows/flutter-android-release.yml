@@ -234,7 +234,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             apk=/tmp/sentiq-emulator/build/app/outputs/flutter-apk/app-debug.apk
             test -f "$apk"
             adb install -r "$apk"
