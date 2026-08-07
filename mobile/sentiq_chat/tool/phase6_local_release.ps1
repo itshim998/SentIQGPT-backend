@@ -8,533 +8,72 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 
-$MobileRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$RepoRoot = (Resolve-Path (Join-Path $MobileRoot "..\..")).Path
-if ([string]::IsNullOrWhiteSpace($EvidenceRoot)) {
-    $EvidenceRoot = Join-Path $RepoRoot "phase6-evidence"
-}
-
-$PackageName = "com.sentiqlabs.sentiqchat"
-$ActivityName = "com.sentiqlabs.sentiq_chat.MainActivity"
-$RequiredFlutterVersion = "3.44.8"
-$RequiredNodeMajor = 20
-$RequiredJavaMajor = 17
-$KeyProperties = Join-Path $MobileRoot "android\key.properties"
-$TemporaryKeyStore = $null
-$TranscriptStarted = $false
-$EvidenceDir = $null
-$ManifestPath = $null
-$Manifest = [ordered]@{
-    schemaVersion = 1
-    product = "SentIQ Chat Android"
-    gate = "Phase 6 local release readiness"
-    result = "RUNNING"
-    startedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-    finishedAtUtc = $null
-    git = [ordered]@{}
-    toolchain = [ordered]@{}
-    checks = [ordered]@{}
-    artifacts = [ordered]@{}
-    emulatorMatrix = [ordered]@{}
-    failure = $null
-}
-
-function Write-Step([string]$Message) {
-    Write-Host "`n==> $Message" -ForegroundColor Cyan
-}
-
-function Invoke-Checked {
-    param(
-        [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [string[]]$Arguments = @(),
-        [string]$WorkingDirectory = ""
-    )
-
-    Write-Step $Name
-    if (![string]::IsNullOrWhiteSpace($WorkingDirectory)) { Push-Location $WorkingDirectory }
-    try {
-        & $FilePath @Arguments
-        if ($LASTEXITCODE -ne 0) {
-            throw "$Name failed with exit code $LASTEXITCODE."
-        }
-    }
-    finally {
-        if (![string]::IsNullOrWhiteSpace($WorkingDirectory)) { Pop-Location }
-    }
-}
-
-function Invoke-CapturedChecked {
-    param(
-        [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [string[]]$Arguments = @(),
-        [Parameter(Mandatory = $true)][string]$OutputPath,
-        [string]$WorkingDirectory = ""
-    )
-
-    Write-Step $Name
-    if (![string]::IsNullOrWhiteSpace($WorkingDirectory)) { Push-Location $WorkingDirectory }
-    try {
-        $output = & $FilePath @Arguments 2>&1
-        $code = $LASTEXITCODE
-        $output | Tee-Object -FilePath $OutputPath
-        if ($code -ne 0) {
-            throw "$Name failed with exit code $code. See $OutputPath"
-        }
-        return ($output -join "`n")
-    }
-    finally {
-        if (![string]::IsNullOrWhiteSpace($WorkingDirectory)) { Pop-Location }
-    }
-}
-
-function Get-ExternalText {
-    param(
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [string[]]$Arguments = @(),
-        [string]$WorkingDirectory = ""
-    )
-
-    if (![string]::IsNullOrWhiteSpace($WorkingDirectory)) { Push-Location $WorkingDirectory }
-    try {
-        $output = & $FilePath @Arguments 2>&1
-        $code = $LASTEXITCODE
-        if ($code -ne 0) {
-            throw "$FilePath exited with $code while reading command output: $($output -join ' ')"
-        }
-        return (($output -join "`n").Trim())
-    }
-    finally {
-        if (![string]::IsNullOrWhiteSpace($WorkingDirectory)) { Pop-Location }
-    }
-}
-
-function Assert-Command([string]$Name) {
-    $command = Get-Command $Name -ErrorAction SilentlyContinue
-    if ($null -eq $command) { throw "Required command '$Name' was not found on PATH." }
-    return $command.Source
-}
-
-function Resolve-Bash {
-    $bash = Get-Command "bash.exe" -ErrorAction SilentlyContinue
-    if ($null -eq $bash) { $bash = Get-Command "bash" -ErrorAction SilentlyContinue }
-    if ($null -ne $bash) { return $bash.Source }
-
-    $git = Get-Command "git.exe" -ErrorAction SilentlyContinue
-    if ($null -ne $git) {
-        $gitRoot = Split-Path (Split-Path $git.Source -Parent) -Parent
-        $candidate = Join-Path $gitRoot "bin\bash.exe"
-        if (Test-Path $candidate) { return $candidate }
-    }
-    throw "Git Bash is required to replay tool/bootstrap_android.sh. Install Git for Windows or add bash to PATH."
-}
-
-function Assert-FileContains([string]$Path, [string]$Literal) {
-    if (!(Test-Path $Path)) { throw "Expected file is missing: $Path" }
-    $text = Get-Content -Raw -Path $Path
-    if ($text.IndexOf($Literal, [System.StringComparison]::Ordinal) -lt 0) {
-        throw "Expected '$Literal' in $Path"
-    }
-}
-
-function Assert-GitGrepAbsent([string]$Pattern, [string[]]$Paths) {
-    Push-Location $RepoRoot
-    try {
-        $output = & git grep -nEI $Pattern -- @Paths 2>&1
-        $code = $LASTEXITCODE
-        if ($code -eq 0) {
-            throw "Forbidden source pattern '$Pattern' was found:`n$($output -join "`n")"
-        }
-        if ($code -ne 1) {
-            throw "git grep failed with exit code $code while checking '$Pattern': $($output -join ' ')"
-        }
-    }
-    finally { Pop-Location }
-}
-
-function Assert-SourceBoundaries {
-    Write-Step "Source and release-boundary checks"
-
-    Push-Location $RepoRoot
-    try {
-        $trackedSecrets = & git ls-files "mobile/sentiq_chat/android/key.properties" "mobile/sentiq_chat/android/**/*.jks" "mobile/sentiq_chat/android/**/*.keystore"
-        if ($LASTEXITCODE -ne 0) { throw "git ls-files failed." }
-        if (($trackedSecrets | Measure-Object).Count -gt 0) {
-            throw "Release signing material is tracked by Git: $($trackedSecrets -join ', ')"
-        }
-
-        $launcherFiles = & git grep -l "package:url_launcher/url_launcher.dart" -- mobile/sentiq_chat/lib 2>$null
-        $launcherCode = $LASTEXITCODE
-        if (($launcherCode -ne 0) -and ($launcherCode -ne 1)) { throw "git grep failed while checking url_launcher boundary." }
-        if (($launcherFiles | Measure-Object).Count -ne 1) {
-            throw "Exactly one url_launcher import boundary is required; found $(($launcherFiles | Measure-Object).Count)."
-        }
-    }
-    finally { Pop-Location }
-
-    Assert-GitGrepAbsent '(service[_-]?role[^[:space:]]*[=:][[:space:]]*[A-Za-z0-9._-]{20,}|sk_live_[A-Za-z0-9]+|rzp_live_[A-Za-z0-9]+|BEGIN (RSA |EC )?PRIVATE KEY)' @('mobile/sentiq_chat', '.github/workflows/flutter-android-release.yml')
-    Assert-GitGrepAbsent '\b(print|debugPrint)\s*\(' @('mobile/sentiq_chat/lib')
-    Assert-GitGrepAbsent '(TODO|FIXME|HACK|XXX|coming soon|lorem ipsum)' @('mobile/sentiq_chat/lib', 'mobile/sentiq_chat/android', 'docs/mobile')
-
-    Assert-FileContains (Join-Path $MobileRoot 'pubspec.yaml') 'flutter_secure_storage:'
-    Assert-FileContains (Join-Path $MobileRoot 'android\app\src\main\AndroidManifest.xml') 'android:usesCleartextTraffic="false"'
-    Assert-FileContains (Join-Path $MobileRoot 'android\app\src\main\res\xml\network_security_config.xml') 'cleartextTrafficPermitted="false"'
-    Assert-FileContains (Join-Path $MobileRoot 'android\app\src\main\AndroidManifest.xml') 'android.permission.RECORD_AUDIO'
-    Assert-FileContains (Join-Path $MobileRoot 'android\app\build.gradle.kts') 'isMinifyEnabled = true'
-    Assert-FileContains (Join-Path $MobileRoot 'android\app\build.gradle.kts') 'isShrinkResources = true'
-
-    $manifestText = Get-Content -Raw (Join-Path $MobileRoot 'android\app\src\main\AndroidManifest.xml')
-    if ($manifestText -match 'android\.permission\.CAMERA') { throw 'Production manifest must not request CAMERA.' }
-}
-
-function Resolve-AndroidSdkRoot {
-    $root = $env:ANDROID_SDK_ROOT
-    if ([string]::IsNullOrWhiteSpace($root)) { $root = $env:ANDROID_HOME }
-    if ([string]::IsNullOrWhiteSpace($root)) {
-        $default = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
-        if (Test-Path $default) { $root = $default }
-    }
-    if ([string]::IsNullOrWhiteSpace($root) -or !(Test-Path $root)) {
-        throw 'Android SDK not found. Set ANDROID_SDK_ROOT or ANDROID_HOME, or install it through Android Studio.'
-    }
-    return (Resolve-Path $root).Path
-}
-
-function Resolve-LatestBuildTool([string]$SdkRoot, [string]$ToolName) {
-    $buildTools = Join-Path $SdkRoot 'build-tools'
-    if (!(Test-Path $buildTools)) { throw "Android build-tools directory not found under $SdkRoot" }
-    $files = Get-ChildItem -Path $buildTools -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -eq $ToolName -or $_.Name -eq "$ToolName.bat" -or $_.Name -eq "$ToolName.exe"
-    }
-    if (($files | Measure-Object).Count -eq 0) { throw "$ToolName was not found under Android build-tools." }
-    return ($files | Sort-Object { try { [version]$_.Directory.Name } catch { [version]'0.0' } } -Descending | Select-Object -First 1).FullName
-}
-
-function Resolve-CommandLineTool([string]$SdkRoot, [string]$ToolName) {
-    $root = Join-Path $SdkRoot 'cmdline-tools'
-    if (!(Test-Path $root)) { throw "Android command-line tools are missing under $root" }
-    $files = Get-ChildItem -Path $root -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -eq "$ToolName.bat" -or $_.Name -eq $ToolName
-    }
-    if (($files | Measure-Object).Count -eq 0) { throw "$ToolName was not found in Android cmdline-tools." }
-    $latest = $files | Where-Object { $_.FullName -match '[\\/]latest[\\/]' } | Select-Object -First 1
-    if ($null -ne $latest) { return $latest.FullName }
-    return ($files | Sort-Object FullName -Descending | Select-Object -First 1).FullName
-}
-
-function Get-AdbText([string]$Adb, [string]$Serial, [string[]]$Arguments, [switch]$AllowFailure) {
-    $output = & $Adb -s $Serial @Arguments 2>&1
-    $code = $LASTEXITCODE
-    if (($code -ne 0) -and !$AllowFailure) {
-        throw "adb $($Arguments -join ' ') failed for $Serial: $($output -join ' ')"
-    }
-    return (($output -join "`n").Trim())
-}
-
-function Test-EmulatorApi {
-    param(
-        [Parameter(Mandatory = $true)][int]$ApiLevel,
-        [Parameter(Mandatory = $true)][int]$Port,
-        [Parameter(Mandatory = $true)][string]$DebugApk,
-        [Parameter(Mandatory = $true)][string]$SdkRoot,
-        [Parameter(Mandatory = $true)][string]$SdkManager,
-        [Parameter(Mandatory = $true)][string]$AvdManager,
-        [Parameter(Mandatory = $true)][string]$Emulator,
-        [Parameter(Mandatory = $true)][string]$Adb
-    )
-
-    $apiEvidence = Join-Path $EvidenceDir "emulator-api-$ApiLevel"
-    New-Item -ItemType Directory -Force -Path $apiEvidence | Out-Null
-    $imagePackage = "system-images;android-$ApiLevel;google_apis;x86_64"
-    $avdName = "sentiq_phase6_api_$ApiLevel"
-    $serial = "emulator-$Port"
-
-    Invoke-Checked -Name "Ensure Android API $ApiLevel emulator image" -FilePath $SdkManager -Arguments @('--install', $imagePackage, 'platform-tools', 'emulator')
-
-    $avdList = Get-ExternalText -FilePath $Emulator -Arguments @('-list-avds')
-    if (($avdList -split "`r?`n") -notcontains $avdName) {
-        Write-Step "Create AVD $avdName"
-        $createOutput = 'no' | & $AvdManager create avd --force --name $avdName --package $imagePackage --device 'pixel_6' 2>&1
-        $createCode = $LASTEXITCODE
-        $createOutput | Set-Content -Encoding UTF8 (Join-Path $apiEvidence 'avd-create.txt')
-        if ($createCode -ne 0) {
-            throw "Could not create $avdName. If Android licenses are pending, run 'flutter doctor --android-licenses' once, then rerun this verifier."
-        }
-    }
-
-    & $Adb -s $serial emu kill *> $null
-    Start-Sleep -Seconds 1
-
-    $stdout = Join-Path $apiEvidence 'emulator-stdout.txt'
-    $stderr = Join-Path $apiEvidence 'emulator-stderr.txt'
-    Write-Step "Boot API $ApiLevel emulator"
-    $process = Start-Process -FilePath $Emulator -ArgumentList @(
-        '-avd', $avdName,
-        '-port', "$Port",
-        '-no-window',
-        '-no-audio',
-        '-no-boot-anim',
-        '-no-snapshot',
-        '-wipe-data',
-        '-gpu', 'swiftshader_indirect',
-        '-netdelay', 'none',
-        '-netspeed', 'full'
-    ) -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-
-    try {
-        $deadline = (Get-Date).AddMinutes(5)
-        $booted = $false
-        while ((Get-Date) -lt $deadline) {
-            if ($process.HasExited) { throw "API $ApiLevel emulator exited during boot. See $stderr" }
-            $state = & $Adb -s $serial get-state 2>$null
-            if (($LASTEXITCODE -eq 0) -and (($state -join '').Trim() -eq 'device')) {
-                $boot = Get-AdbText -Adb $Adb -Serial $serial -Arguments @('shell', 'getprop', 'sys.boot_completed') -AllowFailure
-                if ($boot.Trim() -eq '1') { $booted = $true; break }
-            }
-            Start-Sleep -Seconds 2
-        }
-        if (!$booted) { throw "API $ApiLevel emulator did not finish booting within five minutes." }
-
-        Get-AdbText -Adb $Adb -Serial $serial -Arguments @('shell', 'settings', 'put', 'global', 'window_animation_scale', '0') | Out-Null
-        Get-AdbText -Adb $Adb -Serial $serial -Arguments @('shell', 'settings', 'put', 'global', 'transition_animation_scale', '0') | Out-Null
-        Get-AdbText -Adb $Adb -Serial $serial -Arguments @('shell', 'settings', 'put', 'global', 'animator_duration_scale', '0') | Out-Null
-        Get-AdbText -Adb $Adb -Serial $serial -Arguments @('logcat', '-c') | Out-Null
-
-        $installLog = Join-Path $apiEvidence 'install.txt'
-        Invoke-CapturedChecked -Name "Install debug APK on API $ApiLevel" -FilePath $Adb -Arguments @('-s', $serial, 'install', '-r', '-t', $DebugApk) -OutputPath $installLog | Out-Null
-        Get-AdbText -Adb $Adb -Serial $serial -Arguments @('shell', 'pm', 'clear', $PackageName) -AllowFailure | Out-Null
-
-        $component = "$PackageName/$ActivityName"
-        $startLog = Join-Path $apiEvidence 'start.txt'
-        Invoke-CapturedChecked -Name "Cold launch on API $ApiLevel" -FilePath $Adb -Arguments @('-s', $serial, 'shell', 'am', 'start', '-W', '-n', $component) -OutputPath $startLog | Out-Null
-        Start-Sleep -Seconds 4
-        $pid = Get-AdbText -Adb $Adb -Serial $serial -Arguments @('shell', 'pidof', $PackageName) -AllowFailure
-        if ([string]::IsNullOrWhiteSpace($pid)) { throw "SentIQ Chat process did not survive first launch on API $ApiLevel." }
-
-        Get-AdbText -Adb $Adb -Serial $serial -Arguments @('shell', 'am', 'force-stop', $PackageName) | Out-Null
-        $restartLog = Join-Path $apiEvidence 'restart.txt'
-        Invoke-CapturedChecked -Name "Restart lifecycle on API $ApiLevel" -FilePath $Adb -Arguments @('-s', $serial, 'shell', 'am', 'start', '-W', '-n', $component) -OutputPath $restartLog | Out-Null
-        Start-Sleep -Seconds 2
-        $restartPid = Get-AdbText -Adb $Adb -Serial $serial -Arguments @('shell', 'pidof', $PackageName) -AllowFailure
-        if ([string]::IsNullOrWhiteSpace($restartPid)) { throw "SentIQ Chat process did not survive restart on API $ApiLevel." }
-
-        $logcatPath = Join-Path $apiEvidence 'logcat.txt'
-        $logcat = & $Adb -s $serial logcat -d -t 1200 2>&1
-        $logcat | Set-Content -Encoding UTF8 $logcatPath
-        $logText = $logcat -join "`n"
-        if ($logText -match '(?s)FATAL EXCEPTION.{0,5000}com\.sentiqlabs\.sentiqchat') {
-            throw "SentIQ Chat fatal exception detected on API $ApiLevel. See $logcatPath"
-        }
-
-        $Manifest.emulatorMatrix["api$ApiLevel"] = [ordered]@{
-            result = 'PASS'
-            serial = $serial
-            avd = $avdName
-            evidence = $apiEvidence
-        }
-    }
-    catch {
-        $Manifest.emulatorMatrix["api$ApiLevel"] = [ordered]@{
-            result = 'FAIL'
-            serial = $serial
-            avd = $avdName
-            evidence = $apiEvidence
-            error = $_.Exception.Message
-        }
-        throw
-    }
-    finally {
-        & $Adb -s $serial emu kill *> $null
-        if (!$process.HasExited) {
-            try { Wait-Process -Id $process.Id -Timeout 20 -ErrorAction Stop } catch { try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {} }
-        }
-    }
-}
+$templatePath = Join-Path $PSScriptRoot "phase6_local_release.impl.ps1.txt"
+$runtimePath = Join-Path $PSScriptRoot ".phase6_local_release.runtime.ps1"
 
 try {
-    $Git = Assert-Command 'git'
-    $Flutter = Assert-Command 'flutter'
-    $Dart = Assert-Command 'dart'
-    $Java = Assert-Command 'java'
-    $Node = Assert-Command 'node'
-    $Npm = Assert-Command 'npm'
-    $Npx = Assert-Command 'npx'
-    $Keytool = Assert-Command 'keytool'
-    $Jarsigner = Assert-Command 'jarsigner'
-    $Bash = Resolve-Bash
-
-    $actualRepo = Get-ExternalText -FilePath $Git -Arguments @('rev-parse', '--show-toplevel') -WorkingDirectory $RepoRoot
-    if ((Resolve-Path $actualRepo).Path -ne $RepoRoot) { throw "Script resolved unexpected repository root: $actualRepo" }
-
-    $HeadSha = Get-ExternalText -FilePath $Git -Arguments @('rev-parse', 'HEAD') -WorkingDirectory $RepoRoot
-    $ShortSha = $HeadSha.Substring(0, 12)
-    $Branch = Get-ExternalText -FilePath $Git -Arguments @('branch', '--show-current') -WorkingDirectory $RepoRoot
-    if (![string]::IsNullOrWhiteSpace($ExpectedHeadSha) -and $HeadSha -ne $ExpectedHeadSha) {
-        throw "HEAD is $HeadSha but -ExpectedHeadSha requires $ExpectedHeadSha. Pull/checkout the intended release candidate first."
+    if (!(Test-Path $templatePath)) {
+        throw "Phase 6 verifier template is missing: $templatePath"
     }
 
-    $trackedStatus = Get-ExternalText -FilePath $Git -Arguments @('status', '--porcelain', '--untracked-files=no') -WorkingDirectory $RepoRoot
-    if (![string]::IsNullOrWhiteSpace($trackedStatus)) {
-        throw "Tracked working-tree changes are present. Commit/stash them before release verification:`n$trackedStatus"
+    $source = [System.IO.File]::ReadAllText($templatePath)
+
+    # Windows PowerShell parses an interpolated variable followed immediately by
+    # ':' as a scoped/drive-qualified variable. Materialize the implementation
+    # with an explicitly delimited variable before parsing or executing it.
+    $broken = 'failed for $Serial: $($output -join '' '')'
+    $fixed = 'failed for ${Serial}: $($output -join '' '')'
+    $matches = [regex]::Matches($source, [regex]::Escape($broken)).Count
+    if ($matches -ne 1) {
+        throw "Phase 6 verifier compatibility patch expected exactly one target, found $matches. Refusing to execute an unverified runtime script."
+    }
+    $source = $source.Replace($broken, $fixed)
+
+    [System.IO.File]::WriteAllText(
+        $runtimePath,
+        $source,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+
+    # Fail before any Flutter/Android work if another PowerShell parser issue is
+    # present. This keeps local release verification fast and deterministic.
+    $tokens = $null
+    $parseErrors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile(
+        $runtimePath,
+        [ref]$tokens,
+        [ref]$parseErrors
+    ) | Out-Null
+
+    if (($parseErrors | Measure-Object).Count -gt 0) {
+        $messages = $parseErrors | ForEach-Object {
+            "line $($_.Extent.StartLineNumber), column $($_.Extent.StartColumnNumber): $($_.Message)"
+        }
+        throw "Phase 6 verifier PowerShell parser preflight failed:`n$($messages -join "`n")"
     }
 
-    $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
-    $EvidenceDir = Join-Path $EvidenceRoot "$timestamp-$ShortSha"
-    New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
-    $ManifestPath = Join-Path $EvidenceDir 'phase6-manifest.json'
-    Start-Transcript -Path (Join-Path $EvidenceDir 'phase6-local-verification.log') -Force | Out-Null
-    $TranscriptStarted = $true
-
-    $Manifest.git = [ordered]@{ branch = $Branch; headSha = $HeadSha; cleanTrackedTreeAtStart = $true }
-
-    $flutterVersion = Get-ExternalText -FilePath $Flutter -Arguments @('--version')
-    $nodeVersion = Get-ExternalText -FilePath $Node -Arguments @('--version')
-    $javaVersion = Get-ExternalText -FilePath $Java -Arguments @('-version')
-    if ($flutterVersion -notmatch "Flutter\s+$([regex]::Escape($RequiredFlutterVersion))\b") { throw "Flutter $RequiredFlutterVersion is required. Found:`n$flutterVersion" }
-    if ($nodeVersion -notmatch "^v$RequiredNodeMajor\.") { throw "Node $RequiredNodeMajor.x is required for CI parity. Found $nodeVersion" }
-    if ($javaVersion -notmatch 'version\s+"?17[\.]') { throw "Java $RequiredJavaMajor is required. Found:`n$javaVersion" }
-
-    $SdkRoot = Resolve-AndroidSdkRoot
-    $Adb = Join-Path $SdkRoot 'platform-tools\adb.exe'
-    if (!(Test-Path $Adb)) { $Adb = Join-Path $SdkRoot 'platform-tools\adb' }
-    if (!(Test-Path $Adb)) { throw "adb not found under $SdkRoot\platform-tools" }
-    $ApkSigner = Resolve-LatestBuildTool -SdkRoot $SdkRoot -ToolName 'apksigner'
-
-    $Manifest.toolchain = [ordered]@{
-        flutter = ($flutterVersion -split "`r?`n")[0]
-        node = $nodeVersion
-        java = ($javaVersion -split "`r?`n")[0]
-        androidSdk = $SdkRoot
-        apksigner = $ApkSigner
-    }
-
-    Invoke-Checked -Name 'Bootstrap deterministic Android scaffold' -FilePath $Bash -Arguments @('./tool/bootstrap_android.sh') -WorkingDirectory $MobileRoot
-    Invoke-Checked -Name 'Resolve locked Flutter dependencies' -FilePath $Flutter -Arguments @('pub', 'get') -WorkingDirectory $MobileRoot
-    Invoke-Checked -Name 'Flutter format check' -FilePath $Dart -Arguments @('format', '--output=none', '--set-exit-if-changed', 'lib', 'test') -WorkingDirectory $MobileRoot
-    Invoke-Checked -Name 'Flutter static analysis' -FilePath $Flutter -Arguments @('analyze') -WorkingDirectory $MobileRoot
-    Invoke-Checked -Name 'Forced low-performance regression' -FilePath $Flutter -Arguments @('test', '--dart-define=SENTIQ_LOW_PERFORMANCE=true', 'test/core/performance/low_performance_smoke_test.dart') -WorkingDirectory $MobileRoot
-    Invoke-Checked -Name 'Unit, widget, accessibility, security, and feature tests' -FilePath $Flutter -Arguments @('test', '--coverage', 'test/core', 'test/features', 'test/widgets') -WorkingDirectory $MobileRoot
-    Invoke-Checked -Name 'Navigation and adaptive integration tests' -FilePath $Flutter -Arguments @('test', 'test/integration') -WorkingDirectory $MobileRoot
-    Invoke-Checked -Name 'Contract fixture replay' -FilePath $Flutter -Arguments @('test', 'test/contracts/contract_fixture_replay_test.dart') -WorkingDirectory $MobileRoot
-    Invoke-Checked -Name 'Golden tests' -FilePath $Flutter -Arguments @('test', 'test/goldens') -WorkingDirectory $MobileRoot
-    Assert-SourceBoundaries
-    Invoke-Checked -Name 'Build emulator debug APK' -FilePath $Flutter -Arguments @('build', 'apk', '--debug', '--dart-define=SENTIQ_ENV=development') -WorkingDirectory $MobileRoot
-    $Manifest.checks.flutterQuality = 'PASS'
-    $Manifest.checks.sourceReleaseBoundaries = 'PASS'
-
-    if (!$SkipBackend) {
-        Invoke-Checked -Name 'Install backend dependencies from lockfile' -FilePath $Npm -Arguments @('ci') -WorkingDirectory $RepoRoot
-        Invoke-Checked -Name 'Backend dependency security gate' -FilePath $Npm -Arguments @('audit', '--audit-level=high') -WorkingDirectory $RepoRoot
-        Invoke-Checked -Name 'Compile backend' -FilePath $Npm -Arguments @('run', 'build') -WorkingDirectory $RepoRoot
-        Invoke-Checked -Name 'Mobile contract compatibility' -FilePath $Npx -Arguments @('ts-node', '--project', 'tsconfig.backend.json', 'backend/testMobileContract.ts') -WorkingDirectory $RepoRoot
-        Invoke-Checked -Name 'Deep Research compatibility' -FilePath $Npm -Arguments @('run', 'test:deep-research') -WorkingDirectory $RepoRoot
-        Invoke-Checked -Name 'SentIQ Live compatibility' -FilePath $Npm -Arguments @('run', 'test:live') -WorkingDirectory $RepoRoot
-        Invoke-Checked -Name 'Billing quota compatibility' -FilePath $Npm -Arguments @('run', 'billing:test-quota') -WorkingDirectory $RepoRoot
-        Invoke-Checked -Name 'Stream lifecycle compatibility' -FilePath $Npm -Arguments @('run', 'test:stream-lifecycle') -WorkingDirectory $RepoRoot
-        Invoke-Checked -Name 'Protected context safety' -FilePath $Npm -Arguments @('run', 'test:protected-context-safety') -WorkingDirectory $RepoRoot
-        $Manifest.checks.backendCompatibility = 'PASS'
-    }
-    else {
-        $Manifest.checks.backendCompatibility = 'SKIPPED_BY_OPERATOR'
-    }
-
-    Write-Step 'Create disposable local verification signing key'
-    $random = New-Object byte[] 24
-    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-    try { $rng.GetBytes($random) } finally { $rng.Dispose() }
-    $password = -join ($random | ForEach-Object { $_.ToString('x2') })
-    $TemporaryKeyStore = Join-Path ([System.IO.Path]::GetTempPath()) "sentiq-phase6-$ShortSha.jks"
-    if (Test-Path $TemporaryKeyStore) { Remove-Item -Force $TemporaryKeyStore }
-    & $Keytool -genkeypair -v -keystore $TemporaryKeyStore -storepass $password -keypass $password -alias sentiq_local_release -keyalg RSA -keysize 3072 -validity 30 -dname 'CN=SentIQ Android Local Verification,O=SentIQ AI Labs,C=IN' *> $null
-    if ($LASTEXITCODE -ne 0) { throw 'Disposable local verification key generation failed.' }
-
-    $keyStorePropertyPath = $TemporaryKeyStore.Replace('\', '/')
-    @"
-storePassword=$password
-keyPassword=$password
-keyAlias=sentiq_local_release
-storeFile=$keyStorePropertyPath
-"@ | Set-Content -Encoding ASCII -NoNewline $KeyProperties
-
-    Invoke-Checked -Name 'Build minified production APK' -FilePath $Flutter -Arguments @('build', 'apk', '--release', '--dart-define=SENTIQ_ENV=production') -WorkingDirectory $MobileRoot
-    Invoke-Checked -Name 'Build minified production AAB' -FilePath $Flutter -Arguments @('build', 'appbundle', '--release', '--dart-define=SENTIQ_ENV=production') -WorkingDirectory $MobileRoot
-
-    $ReleaseApk = Join-Path $MobileRoot 'build\app\outputs\flutter-apk\app-release.apk'
-    $ReleaseAab = Join-Path $MobileRoot 'build\app\outputs\bundle\release\app-release.aab'
-    $Mapping = Join-Path $MobileRoot 'build\app\outputs\mapping\release\mapping.txt'
-    $DebugApk = Join-Path $MobileRoot 'build\app\outputs\flutter-apk\app-debug.apk'
-    foreach ($required in @($ReleaseApk, $ReleaseAab, $Mapping, $DebugApk)) {
-        if (!(Test-Path $required)) { throw "Required build output is missing: $required" }
-    }
-
-    $signatureEvidence = Join-Path $EvidenceDir 'apk-signature.txt'
-    $apkSignature = Invoke-CapturedChecked -Name 'Verify APK signature' -FilePath $ApkSigner -Arguments @('verify', '--verbose', '--print-certs', $ReleaseApk) -OutputPath $signatureEvidence
-    if ($apkSignature -notmatch 'SentIQ Android Local Verification') { throw 'APK certificate did not match the disposable local verification identity.' }
-    Invoke-Checked -Name 'Verify AAB signature against local verification keystore' -FilePath $Jarsigner -Arguments @('-verify', '-strict', '-keystore', $TemporaryKeyStore, '-storepass', $password, $ReleaseAab)
-    $Manifest.checks.releasePackaging = 'PASS'
-    $Manifest.checks.signatures = 'PASS'
-
-    $artifactDir = Join-Path $EvidenceDir 'release-artifacts'
-    New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
-    $evidenceApk = Join-Path $artifactDir 'app-release.apk'
-    $evidenceAab = Join-Path $artifactDir 'app-release.aab'
-    $evidenceMapping = Join-Path $artifactDir 'mapping.txt'
-    Copy-Item -Force $ReleaseApk $evidenceApk
-    Copy-Item -Force $ReleaseAab $evidenceAab
-    Copy-Item -Force $Mapping $evidenceMapping
-    Copy-Item -Force (Join-Path $MobileRoot 'coverage\lcov.info') (Join-Path $EvidenceDir 'lcov.info') -ErrorAction SilentlyContinue
-
-    $Manifest.artifacts = [ordered]@{
-        apk = [ordered]@{ path = $evidenceApk; sha256 = (Get-FileHash -Algorithm SHA256 $evidenceApk).Hash.ToLowerInvariant() }
-        aab = [ordered]@{ path = $evidenceAab; sha256 = (Get-FileHash -Algorithm SHA256 $evidenceAab).Hash.ToLowerInvariant() }
-        mapping = [ordered]@{ path = $evidenceMapping; sha256 = (Get-FileHash -Algorithm SHA256 $evidenceMapping).Hash.ToLowerInvariant() }
-        apkSignature = $signatureEvidence
-    }
-
+    $forward = @()
     if ($RunEmulators) {
-        $SdkManager = Resolve-CommandLineTool -SdkRoot $SdkRoot -ToolName 'sdkmanager'
-        $AvdManager = Resolve-CommandLineTool -SdkRoot $SdkRoot -ToolName 'avdmanager'
-        $Emulator = Join-Path $SdkRoot 'emulator\emulator.exe'
-        if (!(Test-Path $Emulator)) { $Emulator = Join-Path $SdkRoot 'emulator\emulator' }
-        if (!(Test-Path $Emulator)) { throw "Android emulator executable not found under $SdkRoot\emulator" }
-
-        Test-EmulatorApi -ApiLevel 28 -Port 5580 -DebugApk $DebugApk -SdkRoot $SdkRoot -SdkManager $SdkManager -AvdManager $AvdManager -Emulator $Emulator -Adb $Adb
-        Test-EmulatorApi -ApiLevel 35 -Port 5582 -DebugApk $DebugApk -SdkRoot $SdkRoot -SdkManager $SdkManager -AvdManager $AvdManager -Emulator $Emulator -Adb $Adb
-        $Manifest.checks.emulatorMatrix = 'PASS'
+        $forward += "-RunEmulators"
     }
-    else {
-        $Manifest.checks.emulatorMatrix = 'NOT_RUN'
+    if ($SkipBackend) {
+        $forward += "-SkipBackend"
     }
-
-    $finalTrackedStatus = Get-ExternalText -FilePath $Git -Arguments @('status', '--porcelain', '--untracked-files=no') -WorkingDirectory $RepoRoot
-    if (![string]::IsNullOrWhiteSpace($finalTrackedStatus)) {
-        throw "Verification changed tracked files unexpectedly:`n$finalTrackedStatus"
+    if (![string]::IsNullOrWhiteSpace($ExpectedHeadSha)) {
+        $forward += "-ExpectedHeadSha"
+        $forward += $ExpectedHeadSha
+    }
+    if (![string]::IsNullOrWhiteSpace($EvidenceRoot)) {
+        $forward += "-EvidenceRoot"
+        $forward += $EvidenceRoot
     }
 
-    $Manifest.result = if ($RunEmulators -and !$SkipBackend) { 'PASS' } else { 'PARTIAL' }
-    $Manifest.finishedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    $Manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 $ManifestPath
-
-    Write-Host "`nPhase 6 local verification result: $($Manifest.result)" -ForegroundColor Green
-    Write-Host "Commit: $HeadSha"
-    Write-Host "Evidence: $EvidenceDir"
-    if (!$RunEmulators) { Write-Host 'Emulator matrix was not run. Rerun with -RunEmulators for a merge-eligible full gate.' -ForegroundColor Yellow }
-    if ($SkipBackend) { Write-Host 'Backend compatibility was skipped. A full gate must run without -SkipBackend.' -ForegroundColor Yellow }
-}
-catch {
-    $Manifest.result = 'FAIL'
-    $Manifest.failure = $_.Exception.Message
-    $Manifest.finishedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    if ($null -ne $ManifestPath) {
-        try { $Manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 $ManifestPath } catch {}
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runtimePath @forward
+    $verifierExitCode = $LASTEXITCODE
+    if ($verifierExitCode -ne 0) {
+        throw "Phase 6 verifier failed with exit code $verifierExitCode."
     }
-    Write-Host "`nPhase 6 local verification FAILED: $($_.Exception.Message)" -ForegroundColor Red
-    if ($null -ne $EvidenceDir) { Write-Host "Evidence: $EvidenceDir" }
-    throw
 }
 finally {
-    if (Test-Path $KeyProperties) { Remove-Item -Force $KeyProperties -ErrorAction SilentlyContinue }
-    if (($null -ne $TemporaryKeyStore) -and (Test-Path $TemporaryKeyStore)) { Remove-Item -Force $TemporaryKeyStore -ErrorAction SilentlyContinue }
-    if ($TranscriptStarted) { try { Stop-Transcript | Out-Null } catch {} }
+    Remove-Item -Force $runtimePath -ErrorAction SilentlyContinue
 }
