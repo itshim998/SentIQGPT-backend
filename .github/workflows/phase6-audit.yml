@@ -1,0 +1,108 @@
+name: Phase 6 release-readiness audit
+
+on:
+  push:
+    branches: [feature/flutter-android-app]
+    paths: [.github/workflows/phase6-audit.yml]
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: "3.44.8"
+  JAVA_VERSION: "17"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Bootstrap Android and dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y libsqlite3-0 >/dev/null
+          cd mobile/sentiq_chat
+          ./tool/bootstrap_android.sh
+          flutter pub get
+
+      - name: Dependency health
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '===== FLUTTER PUB OUTDATED ====='
+          cd mobile/sentiq_chat
+          flutter pub outdated || true
+          cd ../..
+          echo '===== NPM AUDIT SUMMARY ====='
+          npm ci >/dev/null
+          npm audit --json > /tmp/npm-audit.json || true
+          node - <<'NODE'
+          const report = require('/tmp/npm-audit.json');
+          console.log(JSON.stringify(report.metadata?.vulnerabilities || {}, null, 2));
+          const vulnerabilities = report.vulnerabilities || {};
+          for (const [name, value] of Object.entries(vulnerabilities)) {
+            if (['high','critical'].includes(value.severity)) {
+              console.log(`HIGH_OR_CRITICAL ${name} direct=${value.isDirect} severity=${value.severity} range=${value.range}`);
+              for (const via of value.via || []) {
+                if (typeof via === 'object') console.log(`  via ${via.name}: ${via.title} ${via.range}`);
+              }
+              console.log(`  fix=${JSON.stringify(value.fixAvailable)}`);
+            }
+          }
+          NODE
+
+      - name: Source hygiene and security scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '===== TODO/FIXME/PLACEHOLDER ====='
+          git grep -nEI 'TODO|FIXME|HACK|XXX|placeholder|lorem|coming soon|not implemented|unimplemented' -- mobile/sentiq_chat ':!mobile/sentiq_chat/build' || true
+          echo '===== TECHNICAL USER-FACING PHRASES ====='
+          git grep -nEI 'SSE|RPC|HTTP [0-9]|exception|stack trace|backend|provider|endpoint|payload|schema|token budget|API key|debug' -- mobile/sentiq_chat/lib || true
+          echo '===== LOGGING ====='
+          git grep -nE 'print\(|debugPrint\(|log\(|developer\.log|console\.' -- mobile/sentiq_chat/lib || true
+          echo '===== CLEARTEXT / EXTERNAL LINKS ====='
+          git grep -nE 'http://|launchUrl|canLaunchUrl|WebView|javascript:' -- mobile/sentiq_chat || true
+          echo '===== SUSPICIOUS SECRET SHAPES IN MOBILE ====='
+          git grep -nEI '(service[_-]?role|private[_-]?key|client[_-]?secret|password\s*=|secret\s*=|sk-[A-Za-z0-9_-]{20,}|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY)' -- mobile/sentiq_chat || true
+
+      - name: Static and test baseline
+        shell: bash
+        working-directory: mobile/sentiq_chat
+        run: |
+          set -euo pipefail
+          flutter analyze
+          flutter test test/core test/features test/widgets
+          flutter test test/integration
+          flutter test test/contracts/contract_fixture_replay_test.dart
+          flutter test test/goldens
+
+      - name: Release packaging probe
+        shell: bash
+        working-directory: mobile/sentiq_chat
+        run: |
+          set -euo pipefail
+          flutter build apk --release --dart-define=SENTIQ_ENV=production
+          flutter build appbundle --release --dart-define=SENTIQ_ENV=production
+          ls -lh build/app/outputs/flutter-apk/app-release.apk build/app/outputs/bundle/release/app-release.aab
+          echo '===== RELEASE SIGNING CONFIG ====='
+          sed -n '1,220p' android/app/build.gradle.kts
+          echo '===== MANIFEST ====='
+          sed -n '1,260p' android/app/src/main/AndroidManifest.xml
