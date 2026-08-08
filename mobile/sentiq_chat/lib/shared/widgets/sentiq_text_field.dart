@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 
-class SentIQTextField extends StatelessWidget {
+class SentIQTextField extends StatefulWidget {
   const SentIQTextField({
     required this.label,
     this.controller,
@@ -38,29 +38,59 @@ class SentIQTextField extends StatelessWidget {
   final bool enabled;
 
   @override
+  State<SentIQTextField> createState() => _SentIQTextFieldState();
+}
+
+class _SentIQTextFieldState extends State<SentIQTextField> {
+  bool _passwordVisible = false;
+
+  @override
+  void didUpdateWidget(covariant SentIQTextField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.obscureText && _passwordVisible) {
+      _passwordVisible = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final SentIQPalette palette = context.sentiqPalette;
     final OutlineInputBorder border = OutlineInputBorder(
       borderRadius: BorderRadius.circular(SentIQRadii.medium),
       borderSide: BorderSide(color: palette.glassBorder),
     );
+    final bool obscured = widget.obscureText && !_passwordVisible;
+    final Widget? suffix = widget.suffixIcon ??
+        (widget.obscureText
+            ? IconButton(
+                tooltip: obscured ? 'Show password' : 'Hide password',
+                onPressed: widget.enabled
+                    ? () => setState(() => _passwordVisible = !_passwordVisible)
+                    : null,
+                icon: Icon(
+                  obscured
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                ),
+              )
+            : null);
     return TextField(
-      controller: controller,
-      obscureText: obscureText,
-      maxLines: obscureText ? 1 : maxLines,
-      keyboardType: keyboardType,
-      textInputAction: textInputAction,
-      autofillHints: autofillHints,
-      onChanged: onChanged,
-      onSubmitted: onSubmitted,
-      enabled: enabled,
+      controller: widget.controller,
+      obscureText: obscured,
+      maxLines: widget.obscureText ? 1 : widget.maxLines,
+      keyboardType: widget.keyboardType,
+      textInputAction: widget.textInputAction,
+      autofillHints: widget.autofillHints,
+      onChanged: widget.onChanged,
+      onSubmitted: widget.onSubmitted,
+      enabled: widget.enabled,
       decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        helperText: helper,
-        errorText: errorText,
-        prefixIcon: prefixIcon == null ? null : Icon(prefixIcon),
-        suffixIcon: suffixIcon,
+        labelText: widget.label,
+        hintText: widget.hint,
+        helperText: widget.helper,
+        errorText: widget.errorText,
+        prefixIcon: widget.prefixIcon == null ? null : Icon(widget.prefixIcon),
+        suffixIcon: suffix,
         filled: true,
         fillColor: palette.glass,
         border: border,
