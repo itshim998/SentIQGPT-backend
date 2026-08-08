@@ -38,9 +38,9 @@ Use Windows with:
 - **Android SDK Command-line Tools (latest)**;
 - Android virtualization enabled so x86_64 emulators can boot.
 
-Flutter, Node and JDK 17 do **not** need to be installed globally. The launcher selects the exact required versions or bootstraps private toolchains under `%LOCALAPPDATA%\SentIQ\toolchains`: Flutter 3.44.8 from the official Windows stable archive, Node 20.20.2 from nodejs.org and Eclipse Temurin JDK 17 from Adoptium metadata. Every download is checked against its official SHA-256 source before extraction. Toolchain archives and valid extracted installations are cached, and only the verifier process receives the private `PATH`, `JAVA_HOME`, Git ownership exception and analytics-suppression environment.
+Flutter, Node and JDK 17 do **not** need to be installed globally. The launcher selects the exact required versions or bootstraps private toolchains under `%LOCALAPPDATA%\SentIQ\toolchains`: Flutter 3.44.8 from the official Windows stable archive, Node 20.20.2 from nodejs.org and Eclipse Temurin JDK 17 from Adoptium metadata. It also caches the official Gradle 9.1.0 distribution and seeds the standard wrapper cache so Java does not need to follow an external download redirect. Every download is checked against its official SHA-256 source before extraction or execution. Toolchain archives and valid extracted installations are cached, and only the verifier process receives the private `PATH`, `JAVA_HOME`, Git ownership exception, Flutter JDK configuration and analytics-suppression environment.
 
-Before downloading a toolchain, the launcher performs a lightweight workstation preflight and reports missing Git/Git Bash, Android SDK or SDK Command-line Tools together. It then verifies the exact selected `node`, `npm`, `npx`, `java`, `keytool`, `jarsigner`, `flutter` and Flutter-bundled `dart` executables before starting the release gate.
+Before downloading a toolchain, the launcher performs a lightweight workstation preflight and reports missing Git/Git Bash, Android SDK or SDK Command-line Tools together. It then verifies the exact selected `node`, `npm`, `npx`, `java`, `keytool`, `jarsigner`, `flutter` and Flutter-bundled `dart` executables before starting the release gate. `flutter doctor --verbose` and `gradlew --version` evidence must show the selected Temurin JDK 17; Android Studio's bundled JBR is not accepted as a silent fallback.
 
 The script locates the Android SDK from `ANDROID_SDK_ROOT`, `ANDROID_HOME`, or the normal `%LOCALAPPDATA%\Android\Sdk` location. It accepts SDK licenses non-interactively, then uses `sdkmanager` to ensure the Flutter 3.44.8 platform/build-tools/NDK requirements plus the API 28/API 35 Google APIs x86_64 system images. A manual license step is only necessary if the installed SDK rejects safe non-interactive acceptance.
 
@@ -88,6 +88,8 @@ apk-signature.txt
 aab-signature.txt
 android-licenses.txt
 android-sdk-packages.txt
+flutter-doctor.txt
+gradle-wrapper.txt
 lcov.info
 release-artifacts/app-release.apk
 release-artifacts/app-release.aab

@@ -31,6 +31,16 @@ flutter create \
   --empty \
   .
 
+GRADLE_PROPERTIES="android/gradle/wrapper/gradle-wrapper.properties"
+GRADLE_SHA256="b84e04fa845fecba48551f425957641074fcc00a88a84d2aae5808743b35fc85"
+grep -q '^distributionUrl=https\\://services.gradle.org/distributions/gradle-9.1.0-all.zip$' "$GRADLE_PROPERTIES"
+if grep -q '^distributionSha256Sum=' "$GRADLE_PROPERTIES"; then
+  sed -i "s/^distributionSha256Sum=.*/distributionSha256Sum=${GRADLE_SHA256}/" "$GRADLE_PROPERTIES"
+else
+  printf '\ndistributionSha256Sum=%s\n' "$GRADLE_SHA256" >> "$GRADLE_PROPERTIES"
+fi
+grep -q "^distributionSha256Sum=${GRADLE_SHA256}$" "$GRADLE_PROPERTIES"
+
 restore_file() {
   local source="$1"
   local target="$2"

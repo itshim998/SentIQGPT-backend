@@ -23,6 +23,11 @@ $nodeArchiveName = "node-v20.20.2-win-x64.zip"
 $nodeArchiveUrl = "https://nodejs.org/dist/v20.20.2/node-v20.20.2-win-x64.zip"
 $nodeShasumsUrl = "https://nodejs.org/dist/v20.20.2/SHASUMS256.txt"
 
+$requiredGradleVersion = "9.1.0"
+$gradleArchiveName = "gradle-9.1.0-all.zip"
+$gradleArchiveUrl = "https://services.gradle.org/distributions/gradle-9.1.0-all.zip"
+$gradleArchiveSha256 = "b84e04fa845fecba48551f425957641074fcc00a88a84d2aae5808743b35fc85"
+
 $jdkAssetsUrl = "https://api.adoptium.net/v3/assets/latest/17/hotspot?architecture=x64&image_type=jdk&os=windows&vendor=eclipse"
 
 $script:SelectedNodeRoot = $null
@@ -558,6 +563,50 @@ function Confirm-PrivateToolchains {
     Write-Host ("Validated Flutter {0} with {1}: {2}" -f $requiredFlutterVersion, ($probeResults.dart -split "`r?`n")[0], $commands.flutter) -ForegroundColor Green
 }
 
+function Ensure-PinnedGradleArchive {
+    $toolchainRoot = Join-Path $env:LOCALAPPDATA "SentIQ\toolchains"
+    New-Item -ItemType Directory -Force -Path $toolchainRoot | Out-Null
+    $archivePath = Join-Path $toolchainRoot $gradleArchiveName
+
+    if ((Test-Path $archivePath) -and ((Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant() -ne $gradleArchiveSha256)) {
+        Remove-Item -Force $archivePath
+    }
+    if (!(Test-Path $archivePath)) {
+        Write-Host ("Downloading the official Gradle {0} distribution for the local wrapper cache..." -f $requiredGradleVersion) -ForegroundColor Cyan
+        Invoke-Download -Url $gradleArchiveUrl -Destination $archivePath
+    }
+
+    $actualHash = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
+    if ($actualHash -ne $gradleArchiveSha256) {
+        throw ("Gradle archive SHA-256 mismatch. Expected {0}, found {1}." -f $gradleArchiveSha256, $actualHash)
+    }
+    $env:SENTIQ_PINNED_GRADLE_ARCHIVE = $archivePath
+    $env:SENTIQ_PINNED_GRADLE_URL = $gradleArchiveUrl
+    $env:SENTIQ_PINNED_GRADLE_SHA256 = $gradleArchiveSha256
+    Write-Host ("Gradle {0} archive SHA-256 verified and cached: {1}" -f $requiredGradleVersion, $archivePath) -ForegroundColor Green
+}
+
+function Configure-PrivateFlutterState {
+    $stateRoot = Join-Path $env:LOCALAPPDATA "SentIQ\flutter-state"
+    New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
+    $env:APPDATA = $stateRoot
+
+    $flutter = Join-Path $script:SelectedFlutterRoot "bin\flutter.bat"
+    $result = Invoke-NativeProcessCapture -FilePath $flutter -Arguments @("config", "--jdk-dir", $script:SelectedJavaHome)
+    if ($result.ExitCode -ne 0) {
+        throw ("Could not bind the private Flutter configuration to the selected JDK (exit {0}): {1}" -f $result.ExitCode, $result.Combined)
+    }
+
+    $configPath = Join-Path $stateRoot ".flutter_settings"
+    if (!(Test-Path $configPath)) { throw "Flutter did not create its private configuration file: $configPath" }
+    $config = Get-Content -Raw $configPath | ConvertFrom-Json
+    if ([string]$config.'jdk-dir' -ne $script:SelectedJavaHome) {
+        throw ("Private Flutter configuration did not retain the selected JDK. Expected {0}, found {1}." -f $script:SelectedJavaHome, $config.'jdk-dir')
+    }
+    $env:SENTIQ_FLUTTER_APPDATA = $stateRoot
+    Write-Host ("Flutter Android builds are bound to the selected Temurin JDK through private process state: {0}" -f $stateRoot) -ForegroundColor Green
+}
+
 try {
     if (!(Test-Path $templatePath)) {
         throw ("Phase 6 verifier template is missing: {0}" -f $templatePath)
@@ -596,6 +645,8 @@ try {
     Ensure-PinnedJava17
     Ensure-PinnedFlutter
     Confirm-PrivateToolchains
+    Ensure-PinnedGradleArchive
+    Configure-PrivateFlutterState
 
     $forward = @()
     if ($RunEmulators) { $forward += "-RunEmulators" }

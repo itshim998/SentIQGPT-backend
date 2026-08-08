@@ -7,6 +7,7 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Numerics
 
 $MobileRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $RepoRoot = (Resolve-Path (Join-Path $MobileRoot "..\..")).Path
@@ -327,6 +328,77 @@ function Initialize-AndroidSdk {
     return $packages
 }
 
+function ConvertTo-Base36([System.Numerics.BigInteger]$Value) {
+    if ($Value -eq 0) { return '0' }
+    $alphabet = '0123456789abcdefghijklmnopqrstuvwxyz'
+    $characters = New-Object System.Collections.Generic.List[char]
+    while ($Value -gt 0) {
+        $remainder = [System.Numerics.BigInteger]::Remainder($Value, 36)
+        $characters.Add($alphabet[[int]$remainder])
+        $Value = [System.Numerics.BigInteger]::Divide($Value, 36)
+    }
+    $array = $characters.ToArray()
+    [array]::Reverse($array)
+    return (-join $array)
+}
+
+function Get-GradleDistributionUrlHash([string]$Url) {
+    Add-Type -AssemblyName System.Numerics
+    $md5 = [System.Security.Cryptography.MD5]::Create()
+    try {
+        $bytes = $md5.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Url))
+    }
+    finally { $md5.Dispose() }
+    [array]::Reverse($bytes)
+    $unsigned = New-Object byte[] ($bytes.Length + 1)
+    [array]::Copy($bytes, $unsigned, $bytes.Length)
+    $number = New-Object System.Numerics.BigInteger (,$unsigned)
+    return (ConvertTo-Base36 $number)
+}
+
+function Seed-GradleWrapperCache([string]$PropertiesPath) {
+    if ([string]::IsNullOrWhiteSpace($env:SENTIQ_PINNED_GRADLE_ARCHIVE)) { throw 'SENTIQ_PINNED_GRADLE_ARCHIVE was not provided by the bootstrap wrapper.' }
+    if ([string]::IsNullOrWhiteSpace($env:SENTIQ_PINNED_GRADLE_URL)) { throw 'SENTIQ_PINNED_GRADLE_URL was not provided by the bootstrap wrapper.' }
+    if ([string]::IsNullOrWhiteSpace($env:SENTIQ_PINNED_GRADLE_SHA256)) { throw 'SENTIQ_PINNED_GRADLE_SHA256 was not provided by the bootstrap wrapper.' }
+    if (!(Test-Path -LiteralPath $env:SENTIQ_PINNED_GRADLE_ARCHIVE)) { throw "Verified Gradle archive is missing: $($env:SENTIQ_PINNED_GRADLE_ARCHIVE)" }
+    if (!(Test-Path -LiteralPath $PropertiesPath)) { throw "Gradle wrapper properties are missing: $PropertiesPath" }
+
+    $archiveHash = (Get-FileHash -Algorithm SHA256 $env:SENTIQ_PINNED_GRADLE_ARCHIVE).Hash.ToLowerInvariant()
+    if ($archiveHash -ne $env:SENTIQ_PINNED_GRADLE_SHA256) {
+        throw "Cached Gradle archive no longer matches its pinned SHA-256."
+    }
+    $properties = Get-Content -Raw -LiteralPath $PropertiesPath
+    $escapedUrl = $env:SENTIQ_PINNED_GRADLE_URL.Replace(':', '\:')
+    if ($properties.IndexOf("distributionUrl=$escapedUrl", [System.StringComparison]::Ordinal) -lt 0) {
+        throw "Gradle wrapper URL does not match the verified local distribution: $($env:SENTIQ_PINNED_GRADLE_URL)"
+    }
+    if ($properties.IndexOf("distributionSha256Sum=$($env:SENTIQ_PINNED_GRADLE_SHA256)", [System.StringComparison]::Ordinal) -lt 0) {
+        throw "Gradle wrapper properties do not pin the verified distribution SHA-256."
+    }
+
+    $gradleUserHome = $env:GRADLE_USER_HOME
+    if ([string]::IsNullOrWhiteSpace($gradleUserHome)) {
+        if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { throw 'USERPROFILE is unavailable, so the Gradle wrapper cache cannot be resolved.' }
+        $gradleUserHome = Join-Path $env:USERPROFILE '.gradle'
+    }
+    $archiveName = [System.IO.Path]::GetFileName($env:SENTIQ_PINNED_GRADLE_ARCHIVE)
+    $distributionName = [System.IO.Path]::GetFileNameWithoutExtension($archiveName)
+    $urlHash = Get-GradleDistributionUrlHash $env:SENTIQ_PINNED_GRADLE_URL
+    $cacheDirectory = Join-Path $gradleUserHome ("wrapper\dists\{0}\{1}" -f $distributionName, $urlHash)
+    New-Item -ItemType Directory -Force -Path $cacheDirectory | Out-Null
+    $cacheArchive = Join-Path $cacheDirectory $archiveName
+    $partialArchive = "$cacheArchive.part"
+    if (Test-Path -LiteralPath $partialArchive) { Remove-Item -Force -LiteralPath $partialArchive }
+    if (!(Test-Path -LiteralPath $cacheArchive) -or ((Get-FileHash -Algorithm SHA256 $cacheArchive).Hash.ToLowerInvariant() -ne $env:SENTIQ_PINNED_GRADLE_SHA256)) {
+        Copy-Item -Force -LiteralPath $env:SENTIQ_PINNED_GRADLE_ARCHIVE -Destination $cacheArchive
+    }
+    if ((Get-FileHash -Algorithm SHA256 $cacheArchive).Hash.ToLowerInvariant() -ne $env:SENTIQ_PINNED_GRADLE_SHA256) {
+        throw "Seeded Gradle wrapper cache archive failed SHA-256 verification: $cacheArchive"
+    }
+    Write-Host ("Seeded the Gradle wrapper cache from the verified official archive: {0}" -f $cacheArchive) -ForegroundColor Green
+    return $cacheArchive
+}
+
 function Get-AdbText([string]$Adb, [string]$Serial, [string[]]$Arguments, [switch]$AllowFailure) {
     $result = Invoke-NativeProcessCapture -FilePath $Adb -Arguments (@('-s', $Serial) + $Arguments)
     if (($result.ExitCode -ne 0) -and !$AllowFailure) {
@@ -517,6 +589,17 @@ try {
     if (!(Test-Path $Adb)) { throw "adb not found under $SdkRoot\platform-tools" }
     $ApkSigner = Resolve-LatestBuildTool -SdkRoot $SdkRoot -ToolName 'apksigner'
 
+    if ([string]::IsNullOrWhiteSpace($env:SENTIQ_FLUTTER_APPDATA) -or ($env:APPDATA -ne $env:SENTIQ_FLUTTER_APPDATA)) {
+        throw 'The private Flutter configuration root was not activated by the bootstrap wrapper.'
+    }
+    $flutterDoctorEvidence = Join-Path $EvidenceDir 'flutter-doctor.txt'
+    $flutterDoctor = Invoke-CapturedChecked -Name 'Verify Flutter Android JDK selection' -FilePath $Flutter -Arguments @('doctor', '--verbose') -OutputPath $flutterDoctorEvidence
+    $doctorJava = if ($Java.EndsWith('.exe', [System.StringComparison]::OrdinalIgnoreCase)) { $Java.Substring(0, $Java.Length - 4) } else { $Java }
+    if (($flutterDoctor.IndexOf("Java binary at: $doctorJava", [System.StringComparison]::OrdinalIgnoreCase) -lt 0) -or
+        ($flutterDoctor.IndexOf('This JDK is specified in your Flutter configuration.', [System.StringComparison]::Ordinal) -lt 0)) {
+        throw "Flutter doctor did not select the verified JDK executable: $Java"
+    }
+
     $Manifest.toolchain = [ordered]@{
         flutter = ($flutterVersion -split "`r?`n")[0]
         flutterExecutable = $Flutter
@@ -528,6 +611,10 @@ try {
         npx = $npxVersion
         java = ($javaVersion -split "`r?`n")[0]
         javaExecutable = $Java
+        flutterPrivateState = $env:SENTIQ_FLUTTER_APPDATA
+        flutterDoctorEvidence = $flutterDoctorEvidence
+        gradleArchive = $env:SENTIQ_PINNED_GRADLE_ARCHIVE
+        gradleArchiveSha256 = $env:SENTIQ_PINNED_GRADLE_SHA256
         androidSdk = $SdkRoot
         sdkmanager = $SdkManager
         ensuredAndroidPackages = $installedAndroidPackages
@@ -535,6 +622,16 @@ try {
     }
 
     Invoke-Checked -Name 'Bootstrap deterministic Android scaffold' -FilePath $Bash -Arguments @('./tool/bootstrap_android.sh') -WorkingDirectory $MobileRoot
+    $gradleProperties = Join-Path $MobileRoot 'android\gradle\wrapper\gradle-wrapper.properties'
+    $seededGradleArchive = Seed-GradleWrapperCache -PropertiesPath $gradleProperties
+    $gradleWrapper = Join-Path $MobileRoot 'android\gradlew.bat'
+    if (!(Test-Path -LiteralPath $gradleWrapper)) { throw "Gradle wrapper is missing after Android bootstrap: $gradleWrapper" }
+    $gradleEvidence = Join-Path $EvidenceDir 'gradle-wrapper.txt'
+    $gradleVersion = Invoke-CapturedChecked -Name 'Verify SHA-256-pinned Gradle wrapper with JDK 17' -FilePath $gradleWrapper -Arguments @('--version') -OutputPath $gradleEvidence -WorkingDirectory (Join-Path $MobileRoot 'android')
+    if ($gradleVersion -notmatch '(?m)^Gradle\s+9\.1\.0\s*$') { throw "Gradle wrapper did not report version 9.1.0.`n$gradleVersion" }
+    if ($gradleVersion -notmatch '(?m)^(?:Launcher\s+)?JVM:\s+17(?:\.|\s)') { throw "Gradle wrapper did not launch with JDK 17.`n$gradleVersion" }
+    $Manifest.toolchain['gradleWrapperCacheArchive'] = $seededGradleArchive
+    $Manifest.toolchain['gradleWrapperEvidence'] = $gradleEvidence
     Invoke-Checked -Name 'Resolve locked Flutter dependencies' -FilePath $Flutter -Arguments @('pub', 'get') -WorkingDirectory $MobileRoot
     Invoke-Checked -Name 'Flutter format check' -FilePath $Dart -Arguments @('format', '--output=none', '--set-exit-if-changed', 'lib', 'test') -WorkingDirectory $MobileRoot
     Invoke-Checked -Name 'Flutter static analysis' -FilePath $Flutter -Arguments @('analyze') -WorkingDirectory $MobileRoot
