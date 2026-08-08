@@ -150,6 +150,17 @@ final chatControllerProvider = StateNotifierProvider.autoDispose
         networkMonitor: ref.watch(networkMonitorProvider),
       );
       unawaited(controller.initialize());
+      ref.listen<WorkspaceState>(workspaceControllerProvider(session), (
+        WorkspaceState? previous,
+        WorkspaceState next,
+      ) {
+        final String? conversationId = next.selectedConversationId;
+        if (conversationId == null ||
+            conversationId == previous?.selectedConversationId) {
+          return;
+        }
+        unawaited(controller.loadConversation(conversationId, force: true));
+      }, fireImmediately: true);
       return controller;
     });
 
