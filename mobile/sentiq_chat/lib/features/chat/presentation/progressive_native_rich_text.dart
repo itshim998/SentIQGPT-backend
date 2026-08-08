@@ -157,7 +157,9 @@ class _ProgressiveNativeRichTextState
     // the remaining cadence. During an active stream we wait for its boundary
     // unless it is an intentionally long unbroken token such as a URL/hash.
     if (!sourceStillStreaming) return target.length;
-    if (backlog >= 48) return (start + 48).clamp(start, target.length);
+    if (backlog >= 48) {
+      return (start + 48).clamp(start, target.length).toInt();
+    }
     return start;
   }
 
