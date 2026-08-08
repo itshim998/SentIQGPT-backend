@@ -437,7 +437,7 @@ function Test-EmulatorApi {
         }
     }
 
-    & $Adb -s $serial emu kill *> $null
+    Invoke-NativeProcessCapture -FilePath $Adb -Arguments @('-s', $serial, 'emu', 'kill') | Out-Null
     Start-Sleep -Seconds 1
 
     $stdout = Join-Path $apiEvidence 'emulator-stdout.txt'
@@ -454,15 +454,15 @@ function Test-EmulatorApi {
         '-gpu', 'swiftshader_indirect',
         '-netdelay', 'none',
         '-netspeed', 'full'
-    ) -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    ) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 
     try {
         $deadline = (Get-Date).AddMinutes(5)
         $booted = $false
         while ((Get-Date) -lt $deadline) {
             if ($process.HasExited) { throw "API $ApiLevel emulator exited during boot. See $stderr" }
-            $state = & $Adb -s $serial get-state 2>$null
-            if (($LASTEXITCODE -eq 0) -and (($state -join '').Trim() -eq 'device')) {
+            $stateResult = Invoke-NativeProcessCapture -FilePath $Adb -Arguments @('-s', $serial, 'get-state')
+            if (($stateResult.ExitCode -eq 0) -and ($stateResult.Combined.Trim() -eq 'device')) {
                 $boot = Get-AdbText -Adb $Adb -Serial $serial -Arguments @('shell', 'getprop', 'sys.boot_completed') -AllowFailure
                 if ($boot.Trim() -eq '1') { $booted = $true; break }
             }
@@ -520,7 +520,7 @@ function Test-EmulatorApi {
         throw
     }
     finally {
-        & $Adb -s $serial emu kill *> $null
+        Invoke-NativeProcessCapture -FilePath $Adb -Arguments @('-s', $serial, 'emu', 'kill') | Out-Null
         if (!$process.HasExited) {
             try { Wait-Process -Id $process.Id -Timeout 20 -ErrorAction Stop } catch { try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {} }
         }
