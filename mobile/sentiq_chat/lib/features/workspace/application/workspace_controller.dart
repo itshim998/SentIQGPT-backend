@@ -102,40 +102,78 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
   final NetworkMonitor _networkMonitor;
   late final StreamSubscription<NetworkAvailability> _networkSubscription;
   bool _networkAvailable = true;
+  bool _refreshing = false;
 
   Future<void> initialize() async {
     final NetworkAvailability availability = await _networkMonitor.current();
     _networkAvailable = availability == NetworkAvailability.online;
-    await refresh();
+
+    // Paint durable local state first. A signed-in user should never wait for
+    // the network just to reach the workspace they already have on device.
+    final ConversationLoadResult cached = await _repository.load(
+      ownerScope: _session.ownerScope,
+      cloudEnabled: _session.cloudEnabled,
+      networkAvailable: false,
+    );
+    final String? selected = cached.items.isEmpty ? null : cached.items.first.id;
+    state = state.copyWith(
+      conversations: cached.items,
+      selectedConversationId: selected,
+      clearSelection: selected == null,
+      networkState: _networkAvailable
+          ? WorkspaceNetworkState.online
+          : WorkspaceNetworkState.offline,
+      loading: false,
+      clearMessage: true,
+    );
+
+    // Cloud replay/list reconciliation is deliberately detached from the
+    // first paint. It will update this same state when it completes.
+    if (_session.cloudEnabled && _networkAvailable) {
+      unawaited(refresh());
+    }
   }
 
   Future<void> refresh() async {
-    state = state.copyWith(loading: true, clearMessage: true);
-    final ConversationLoadResult result = await _repository.load(
-      ownerScope: _session.ownerScope,
-      cloudEnabled: _session.cloudEnabled,
-      networkAvailable: _networkAvailable,
-    );
-    final String? selected =
-        state.selectedConversationId ??
-        (result.items.isEmpty ? null : result.items.first.id);
-    state = state.copyWith(
-      conversations: result.items,
-      selectedConversationId: selected,
-      networkState: !_networkAvailable
-          ? WorkspaceNetworkState.offline
-          : result.degraded
-          ? WorkspaceNetworkState.degraded
-          : WorkspaceNetworkState.online,
-      loading: false,
-    );
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+      final ConversationLoadResult result = await _repository.load(
+        ownerScope: _session.ownerScope,
+        cloudEnabled: _session.cloudEnabled,
+        networkAvailable: _networkAvailable,
+      );
+      final bool selectedStillExists = state.selectedConversationId != null &&
+          result.items.any(
+            (ConversationSummary item) => item.id == state.selectedConversationId,
+          );
+      final String? selected = selectedStillExists
+          ? state.selectedConversationId
+          : (result.items.isEmpty ? null : result.items.first.id);
+      state = state.copyWith(
+        conversations: result.items,
+        selectedConversationId: selected,
+        clearSelection: selected == null,
+        networkState: !_networkAvailable
+            ? WorkspaceNetworkState.offline
+            : result.degraded
+            ? WorkspaceNetworkState.degraded
+            : WorkspaceNetworkState.online,
+        loading: false,
+      );
+    } finally {
+      _refreshing = false;
+    }
   }
 
   Future<void> newConversation() async {
+    // Create and select locally first. The repository uses the same UUID when
+    // replaying the create remotely, so cloud reconciliation can happen later
+    // without replacing the visible conversation identity.
     final ConversationSummary created = await _repository.create(
       ownerScope: _session.ownerScope,
       cloudEnabled: _session.cloudEnabled,
-      networkAvailable: _networkAvailable,
+      networkAvailable: false,
     );
     state = state.copyWith(
       conversations: <ConversationSummary>[
@@ -146,15 +184,19 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       ],
       selectedConversationId: created.id,
       clearMessage: true,
+      loading: false,
     );
+    if (_session.cloudEnabled && _networkAvailable) {
+      unawaited(refresh());
+    }
   }
 
   void selectConversation(String id) {
-    state = state.copyWith(selectedConversationId: id);
+    state = state.copyWith(selectedConversationId: id, clearMessage: true);
   }
 
   void clearSelection() {
-    state = state.copyWith(clearSelection: true);
+    state = state.copyWith(clearSelection: true, clearMessage: true);
   }
 
   void search(String query) {
@@ -169,7 +211,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       conversation: conversation,
       title: title,
       cloudEnabled: _session.cloudEnabled,
-      networkAvailable: _networkAvailable,
+      networkAvailable: false,
     );
     state = state.copyWith(
       conversations: state.conversations
@@ -178,18 +220,21 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
                 item.id == updated.id ? updated : item,
           )
           .toList(),
-      message: updated.syncState == ConversationSyncState.pendingRename
-          ? 'The new title will sync when your connection returns.'
+      message: !_networkAvailable && _session.cloudEnabled
+          ? 'The new title will update when you reconnect.'
           : null,
-      clearMessage: updated.syncState != ConversationSyncState.pendingRename,
+      clearMessage: _networkAvailable || !_session.cloudEnabled,
     );
+    if (_session.cloudEnabled && _networkAvailable) {
+      unawaited(refresh());
+    }
   }
 
   Future<void> deleteConversation(ConversationSummary conversation) async {
     await _repository.delete(
       conversation: conversation,
       cloudEnabled: _session.cloudEnabled,
-      networkAvailable: _networkAvailable,
+      networkAvailable: false,
     );
     final List<ConversationSummary> remaining = state.conversations
         .where((ConversationSummary item) => item.id != conversation.id)
@@ -199,10 +244,14 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       selectedConversationId: remaining.isEmpty ? null : remaining.first.id,
       clearSelection: remaining.isEmpty,
       message: !_networkAvailable && _session.cloudEnabled
-          ? 'This conversation will be removed from your account when you reconnect.'
+          ? 'This conversation will be removed when you reconnect.'
           : null,
       clearMessage: _networkAvailable || !_session.cloudEnabled,
+      loading: false,
     );
+    if (_session.cloudEnabled && _networkAvailable) {
+      unawaited(refresh());
+    }
   }
 
   void _handleNetworkChange(NetworkAvailability availability) {
