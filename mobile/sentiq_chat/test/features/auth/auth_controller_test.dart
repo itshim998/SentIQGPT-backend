@@ -106,5 +106,45 @@ void main() {
       controller.dispose();
       await gateway.close();
     });
+
+    test('Google callback cannot be overwritten by launcher completion', () async {
+      final FakeAuthGateway gateway = FakeAuthGateway()
+        ..googleEventBeforeReturn = const AuthGatewayEvent(
+          type: AuthGatewayEventType.signedIn,
+          session: _session,
+        );
+      final AuthController controller = AuthController(
+        gateway: gateway,
+        profileRepository: FakeProfileRepository(displayName: 'Sounak'),
+      );
+      await controller.initialize();
+
+      await controller.signInWithGoogle();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(gateway.googleStarted, isTrue);
+      expect(controller.state.status, AppAuthStatus.authenticated);
+      expect(controller.state.identity?.email, 'person@example.com');
+      controller.dispose();
+      await gateway.close();
+    });
+
+    test('resuming from external auth reconciles an existing session', () async {
+      final FakeAuthGateway gateway = FakeAuthGateway();
+      final AuthController controller = AuthController(
+        gateway: gateway,
+        profileRepository: FakeProfileRepository(displayName: 'Sounak'),
+      );
+      await controller.initialize();
+      expect(controller.state.status, AppAuthStatus.signedOut);
+
+      gateway.restoredSession = _session;
+      await controller.reconcileExternalSession();
+
+      expect(controller.state.status, AppAuthStatus.authenticated);
+      expect(controller.state.identity?.email, 'person@example.com');
+      controller.dispose();
+      await gateway.close();
+    });
   });
 }
