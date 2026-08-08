@@ -110,9 +110,6 @@ class _ChatMessageListState extends State<ChatMessageList> {
     final List<ChatProgressEvent> visibleProgress = widget.thread.progress
         .where((ChatProgressEvent event) => event.kind != ChatProgressKind.sync)
         .toList(growable: false);
-    if (widget.thread.loading && messages.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
     if (messages.isEmpty) {
       return const _ChatWelcome();
     }
@@ -474,18 +471,9 @@ class _ChatWelcome extends StatelessWidget {
               ),
               const SizedBox(height: SentIQSpacing.md),
               Text(
-                'What can I help you with?',
+                'What can I help with?',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: SentIQSpacing.xs),
-              Text(
-                'Messages, files, current information and complex work all stay together in this conversation.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: palette.textSecondary,
-                  height: 1.5,
-                ),
               ),
             ],
           ),
