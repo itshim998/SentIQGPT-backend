@@ -122,15 +122,7 @@ class AuthController extends StateNotifier<AppAuthState> {
       final AuthSessionSnapshot session = await _gateway.updateDisplayName(
         saved,
       );
-      state = AppAuthState(
-        status: AppAuthStatus.authenticated,
-        identity: AppIdentity(
-          id: session.userId,
-          email: session.email,
-          displayName: saved,
-          isGuest: false,
-        ),
-      );
+      _applySignedInSession(session, saved);
     });
   }
 
@@ -144,12 +136,28 @@ class AuthController extends StateNotifier<AppAuthState> {
   }
 
   Future<void> _completeSignedInSession(AuthSessionSnapshot session) async {
+    final String? metadataDisplayName = _metadataDisplayName(session.metadata);
+    if (metadataDisplayName != null) {
+      // Supabase already carries enough trusted identity data to enter the
+      // workspace. Do not wait for an extra backend profile round trip.
+      _applySignedInSession(session, metadataDisplayName);
+      unawaited(_reconcileDisplayName(session));
+      return;
+    }
+
     String? displayName;
     try {
       displayName = await _profileRepository.getDisplayName();
     } catch (_) {
-      displayName = _metadataDisplayName(session.metadata);
+      displayName = null;
     }
+    _applySignedInSession(session, displayName);
+  }
+
+  void _applySignedInSession(
+    AuthSessionSnapshot session,
+    String? displayName,
+  ) {
     final AppIdentity identity = AppIdentity(
       id: session.userId,
       email: session.email,
@@ -162,6 +170,29 @@ class AuthController extends StateNotifier<AppAuthState> {
           : AppAuthStatus.authenticated,
       identity: identity,
     );
+  }
+
+  Future<void> _reconcileDisplayName(AuthSessionSnapshot session) async {
+    try {
+      final String? remoteDisplayName =
+          await _profileRepository.getDisplayName();
+      if (remoteDisplayName == null || remoteDisplayName.trim().isEmpty) return;
+      final AppIdentity? current = state.identity;
+      if (current == null || current.id != session.userId) return;
+      if (current.displayName == remoteDisplayName) return;
+      state = AppAuthState(
+        status: AppAuthStatus.authenticated,
+        identity: AppIdentity(
+          id: session.userId,
+          email: session.email,
+          displayName: remoteDisplayName,
+          isGuest: false,
+        ),
+      );
+    } catch (_) {
+      // Session metadata remains a valid immediate fallback. Profile refresh
+      // can retry on a later auth/session event without blocking navigation.
+    }
   }
 
   Future<void> _runAuthAction(Future<void> Function() action) async {
