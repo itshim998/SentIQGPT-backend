@@ -36,9 +36,12 @@ Future<T?> showSentIQSheet<T>({
               constraints: BoxConstraints(maxWidth: 620, maxHeight: maxHeight),
               child: RefractiveGlassSurface(
                 borderRadius: 30,
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  child: builder(dialogContext),
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: builder(dialogContext),
+                  ),
                 ),
               ),
             ),
