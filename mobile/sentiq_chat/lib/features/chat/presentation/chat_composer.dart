@@ -9,6 +9,7 @@ import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
 import 'package:sentiq_chat/features/multimodal/data/content_policy.dart';
 import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
 import 'package:sentiq_chat/shared/widgets/refractive_glass_surface.dart';
+import 'package:sentiq_chat/shared/widgets/sentiq_sheet.dart';
 import 'package:uuid/uuid.dart';
 
 class ChatComposer extends StatefulWidget {
@@ -79,8 +80,7 @@ class _ChatComposerState extends State<ChatComposer> {
           widget.attachments.every(
             (ChatAttachment item) => !item.uploading && !item.failed,
           )) &&
-      (widget.imageGenerationMode ||
-          widget.quota.allows(widget.executionMode)) &&
+      (widget.imageGenerationMode || widget.quota.allows(widget.executionMode)) &&
       (!widget.imageGenerationMode || widget.imageQuota.available);
 
   @override
@@ -117,8 +117,8 @@ class _ChatComposerState extends State<ChatComposer> {
     if (!accepted) _focusNode.requestFocus();
   }
 
-  Future<void> _pickFiles() async {
-    Navigator.of(context).pop();
+  Future<void> _pickFiles(BuildContext sheetContext) async {
+    Navigator.of(sheetContext).pop();
     final FilePickerResult? result = await FilePicker.platform.pickFiles(
       allowMultiple: true,
       type: FileType.custom,
@@ -164,8 +164,11 @@ class _ChatComposerState extends State<ChatComposer> {
     }
   }
 
-  Future<void> _pickImage({required ImageSource source}) async {
-    Navigator.of(context).pop();
+  Future<void> _pickImage(
+    BuildContext sheetContext, {
+    required ImageSource source,
+  }) async {
+    Navigator.of(sheetContext).pop();
     if (source == ImageSource.gallery) {
       final List<XFile> images = await _imagePicker.pickMultiImage(
         imageQuality: 94,
@@ -222,76 +225,102 @@ class _ChatComposerState extends State<ChatComposer> {
   }
 
   Future<void> _showTools() {
-    final SentIQPalette palette = context.sentiqPalette;
-    return showModalBottomSheet<void>(
+    return showSentIQSheet<void>(
       context: context,
-      showDragHandle: true,
-      builder: (BuildContext sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            SentIQSpacing.md,
-            0,
-            SentIQSpacing.md,
-            SentIQSpacing.lg,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              ListTile(
-                leading: const Icon(Icons.attach_file_rounded),
-                title: const Text('Attach files'),
-                subtitle: const Text('PDF, text, code and supported images'),
-                onTap: () => unawaited(_pickFiles()),
+      builder: (BuildContext sheetContext) {
+        final SentIQPalette palette = sheetContext.sentiqPalette;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Container(
+              width: 38,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: SentIQSpacing.sm),
+              decoration: BoxDecoration(
+                color: palette.textMuted.withValues(alpha: 0.52),
+                borderRadius: BorderRadius.circular(999),
               ),
-              ListTile(
-                leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('Choose images'),
-                subtitle: const Text('Select one or more from your gallery'),
-                onTap: () => unawaited(_pickImage(source: ImageSource.gallery)),
+            ),
+            _ToolTile(
+              icon: Icons.attach_file_rounded,
+              title: 'Attach files',
+              subtitle: 'PDF, text, code and supported images',
+              onTap: () => unawaited(_pickFiles(sheetContext)),
+            ),
+            _ToolTile(
+              icon: Icons.photo_library_outlined,
+              title: 'Choose images',
+              subtitle: 'Select one or more from your gallery',
+              onTap: () => unawaited(
+                _pickImage(sheetContext, source: ImageSource.gallery),
               ),
-              ListTile(
-                leading: const Icon(Icons.photo_camera_outlined),
-                title: const Text('Take a photo'),
-                subtitle: const Text('Use your Android camera'),
-                onTap: () => unawaited(_pickImage(source: ImageSource.camera)),
+            ),
+            _ToolTile(
+              icon: Icons.photo_camera_outlined,
+              title: 'Take a photo',
+              subtitle: 'Use your Android camera',
+              onTap: () => unawaited(
+                _pickImage(sheetContext, source: ImageSource.camera),
               ),
-              if (widget.onDeepResearch != null)
-                ListTile(
-                  leading: const Icon(Icons.manage_search_rounded),
-                  title: const Text('Deep Research'),
-                  subtitle: const Text('Build a sourced, detailed report'),
-                  onTap: () {
-                    Navigator.of(sheetContext).pop();
-                    widget.onDeepResearch!();
-                  },
-                ),
-              if (widget.onLive != null)
-                ListTile(
-                  leading: const Icon(Icons.graphic_eq_rounded),
-                  title: const Text('SentIQ Live'),
-                  subtitle: const Text('Have a real-time voice conversation'),
-                  onTap: () {
-                    Navigator.of(sheetContext).pop();
-                    widget.onLive!();
-                  },
-                ),
-              SwitchListTile.adaptive(
-                secondary: Icon(
-                  Icons.public_rounded,
-                  color: widget.webSearchEnabled ? palette.accent : null,
-                ),
-                title: const Text('Search the web'),
-                subtitle: const Text('Use current sources for this message'),
+            ),
+            if (widget.onImageGenerationModeChanged != null)
+              _ToolTile(
+                icon: Icons.auto_awesome_outlined,
+                title: 'Visualize',
+                subtitle: widget.imageGenerationMode
+                    ? 'Image creation is ready for your next prompt'
+                    : widget.imageQuota.available
+                    ? 'Create an image from your description'
+                    : 'Image creation is unavailable right now',
+                selected: widget.imageGenerationMode,
+                enabled: widget.imageGenerationMode || widget.imageQuota.available,
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  widget.onImageGenerationModeChanged!(
+                    !widget.imageGenerationMode,
+                  );
+                },
+              ),
+            if (widget.onDeepResearch != null)
+              _ToolTile(
+                icon: Icons.manage_search_rounded,
+                title: 'Deep Research',
+                subtitle: 'Build a sourced, detailed report',
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  widget.onDeepResearch!();
+                },
+              ),
+            if (widget.onLive != null)
+              _ToolTile(
+                icon: Icons.graphic_eq_rounded,
+                title: 'SentIQ Live',
+                subtitle: 'Have a real-time voice conversation',
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  widget.onLive!();
+                },
+              ),
+            _ToolTile(
+              icon: Icons.public_rounded,
+              title: 'Search the web',
+              subtitle: 'Use current sources for this message',
+              selected: widget.webSearchEnabled,
+              trailing: Switch.adaptive(
                 value: widget.webSearchEnabled,
                 onChanged: (bool enabled) {
                   widget.onWebSearchChanged(enabled);
                   Navigator.of(sheetContext).pop();
                 },
               ),
-            ],
-          ),
-        ),
-      ),
+              onTap: () {
+                widget.onWebSearchChanged(!widget.webSearchEnabled);
+                Navigator.of(sheetContext).pop();
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -335,15 +364,14 @@ class _ChatComposerState extends State<ChatComposer> {
             children: <Widget>[
               IconButton(
                 tooltip: 'Tools and attachments',
-                onPressed:
-                    widget.enabled &&
-                        !widget.generating &&
-                        !widget.imageGenerationMode
+                onPressed: widget.enabled && !widget.generating
                     ? () => unawaited(_showTools())
                     : null,
                 icon: Badge(
                   isLabelVisible:
-                      widget.webSearchEnabled || widget.attachments.isNotEmpty,
+                      widget.webSearchEnabled ||
+                      widget.imageGenerationMode ||
+                      widget.attachments.isNotEmpty,
                   smallSize: 7,
                   child: const Icon(Icons.add_rounded),
                 ),
@@ -360,11 +388,11 @@ class _ChatComposerState extends State<ChatComposer> {
                   textInputAction: TextInputAction.newline,
                   decoration: InputDecoration(
                     hintText: widget.imageGenerationMode
-                        ? 'Describe the image you want'
+                        ? 'Describe what you want to visualize'
                         : 'Message SentIQ Chat',
                     border: InputBorder.none,
                     filled: false,
-                    contentPadding: EdgeInsets.symmetric(
+                    contentPadding: const EdgeInsets.symmetric(
                       horizontal: SentIQSpacing.xs,
                       vertical: 13,
                     ),
@@ -400,12 +428,21 @@ class _ChatComposerState extends State<ChatComposer> {
             ),
             child: Row(
               children: <Widget>[
-                _ImageModeToggle(
-                  enabled: widget.imageGenerationMode,
-                  available: widget.imageQuota.available,
-                  onChanged: widget.onImageGenerationModeChanged,
-                ),
-                const SizedBox(width: 4),
+                if (widget.imageGenerationMode) ...<Widget>[
+                  Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 15,
+                    color: palette.accent,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Visualize',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: palette.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(width: SentIQSpacing.xs),
+                ],
                 _ModeSelector(
                   mode: widget.executionMode,
                   quota: widget.quota,
@@ -416,7 +453,7 @@ class _ChatComposerState extends State<ChatComposer> {
                   Icon(Icons.public_rounded, size: 15, color: palette.accent),
                   const SizedBox(width: 4),
                   Text(
-                    'Web search',
+                    'Web',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: palette.textSecondary,
                     ),
@@ -428,7 +465,7 @@ class _ChatComposerState extends State<ChatComposer> {
                   Padding(
                     padding: const EdgeInsets.only(right: SentIQSpacing.xs),
                     child: Text(
-                      '${widget.imageQuota.remaining} images left',
+                      '${widget.imageQuota.remaining} left',
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: palette.textMuted,
                       ),
@@ -458,32 +495,6 @@ class _ChatComposerState extends State<ChatComposer> {
   }
 }
 
-class _ImageModeToggle extends StatelessWidget {
-  const _ImageModeToggle({
-    required this.enabled,
-    required this.available,
-    required this.onChanged,
-  });
-
-  final bool enabled;
-  final bool available;
-  final ValueChanged<bool>? onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: available ? 'Create images' : 'Image allowance unavailable',
-      child: FilterChip(
-        avatar: const Icon(Icons.image_outlined, size: 16),
-        label: const Text('Image'),
-        selected: enabled,
-        onSelected: available && onChanged != null ? onChanged : null,
-        visualDensity: VisualDensity.compact,
-      ),
-    );
-  }
-}
-
 class _ModeSelector extends StatelessWidget {
   const _ModeSelector({
     required this.mode,
@@ -495,58 +506,211 @@ class _ModeSelector extends StatelessWidget {
   final ChatQuotaState quota;
   final ValueChanged<ChatExecutionMode> onChanged;
 
-  @override
-  Widget build(BuildContext context) {
-    return PopupMenuButton<ChatExecutionMode>(
-      tooltip: 'Choose response mode',
-      initialValue: mode,
-      onSelected: onChanged,
-      itemBuilder: (BuildContext context) =>
-          <PopupMenuEntry<ChatExecutionMode>>[
-            PopupMenuItem<ChatExecutionMode>(
-              value: ChatExecutionMode.fast,
-              enabled: quota.fastAvailable,
-              child: const ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.bolt_rounded),
-                title: Text('Fast'),
-                subtitle: Text('Quick, direct responses'),
+  Future<void> _showPicker(BuildContext context) {
+    return showSentIQSheet<void>(
+      context: context,
+      builder: (BuildContext sheetContext) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                SentIQSpacing.xs,
+                SentIQSpacing.xs,
+                SentIQSpacing.xs,
+                SentIQSpacing.sm,
+              ),
+              child: Text(
+                'Response style',
+                style: Theme.of(sheetContext).textTheme.titleLarge,
               ),
             ),
-            PopupMenuItem<ChatExecutionMode>(
-              value: ChatExecutionMode.intuitive,
+            _ModeOption(
+              icon: Icons.bolt_rounded,
+              title: 'Fast',
+              subtitle: 'Quick, direct responses',
+              selected: mode == ChatExecutionMode.fast,
+              enabled: quota.fastAvailable,
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                onChanged(ChatExecutionMode.fast);
+              },
+            ),
+            const SizedBox(height: 4),
+            _ModeOption(
+              icon: Icons.auto_awesome_rounded,
+              title: 'Intuitive',
+              subtitle: 'Deeper reasoning for complex work',
+              selected: mode == ChatExecutionMode.intuitive,
               enabled: quota.intuitiveAvailable,
-              child: const ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.auto_awesome_rounded),
-                title: Text('Intuitive'),
-                subtitle: Text('Deeper reasoning for complex work'),
-              ),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                onChanged(ChatExecutionMode.intuitive);
+              },
             ),
           ],
-      child: Semantics(
-        button: true,
-        label: '${mode.name} response mode',
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: '${mode.name} response mode',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(SentIQRadii.pill),
+        onTap: () => unawaited(_showPicker(context)),
         child: Padding(
           padding: const EdgeInsets.symmetric(
             horizontal: SentIQSpacing.xs,
-            vertical: 6,
+            vertical: 7,
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(
-                mode == ChatExecutionMode.fast
-                    ? Icons.bolt_rounded
-                    : Icons.auto_awesome_rounded,
-                size: 16,
-              ),
-              const SizedBox(width: 4),
-              Text(mode == ChatExecutionMode.fast ? 'Fast' : 'Intuitive'),
-              const Icon(Icons.keyboard_arrow_down_rounded, size: 17),
-            ],
+          child: AnimatedSwitcher(
+            duration: SentIQMotion.quick,
+            switchInCurve: SentIQMotion.emphasized,
+            transitionBuilder: (Widget child, Animation<double> animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 0.92, end: 1).animate(animation),
+                  child: child,
+                ),
+              );
+            },
+            child: Row(
+              key: ValueKey<ChatExecutionMode>(mode),
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(
+                  mode == ChatExecutionMode.fast
+                      ? Icons.bolt_rounded
+                      : Icons.auto_awesome_rounded,
+                  size: 16,
+                ),
+                const SizedBox(width: 4),
+                Text(mode == ChatExecutionMode.fast ? 'Fast' : 'Intuitive'),
+                const SizedBox(width: 2),
+                const Icon(Icons.expand_more_rounded, size: 17),
+              ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ModeOption extends StatelessWidget {
+  const _ModeOption({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final SentIQPalette palette = context.sentiqPalette;
+    return AnimatedContainer(
+      duration: SentIQMotion.standard,
+      curve: SentIQMotion.emphasized,
+      decoration: BoxDecoration(
+        color: selected ? palette.accentSoft : Colors.transparent,
+        borderRadius: BorderRadius.circular(21),
+        border: Border.all(
+          color: selected
+              ? palette.accent.withValues(alpha: 0.34)
+              : Colors.transparent,
+        ),
+      ),
+      child: ListTile(
+        enabled: enabled,
+        minVerticalPadding: SentIQSpacing.sm,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(21)),
+        leading: AnimatedContainer(
+          duration: SentIQMotion.standard,
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: selected
+                ? palette.accent.withValues(alpha: 0.18)
+                : palette.surface,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Icon(icon, color: selected ? palette.accent : null),
+        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Text(subtitle),
+        trailing: AnimatedSwitcher(
+          duration: SentIQMotion.quick,
+          child: selected
+              ? Icon(
+                  Icons.check_circle_rounded,
+                  key: const ValueKey<String>('selected'),
+                  color: palette.accent,
+                )
+              : const SizedBox(
+                  key: ValueKey<String>('unselected'),
+                  width: 24,
+                ),
+        ),
+        onTap: enabled ? onTap : null,
+      ),
+    );
+  }
+}
+
+class _ToolTile extends StatelessWidget {
+  const _ToolTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.selected = false,
+    this.enabled = true,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final bool selected;
+  final bool enabled;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final SentIQPalette palette = context.sentiqPalette;
+    return AnimatedContainer(
+      duration: SentIQMotion.quick,
+      margin: const EdgeInsets.only(bottom: 2),
+      decoration: BoxDecoration(
+        color: selected ? palette.accentSoft : Colors.transparent,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: ListTile(
+        enabled: enabled,
+        minVerticalPadding: SentIQSpacing.sm,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        leading: Icon(icon, color: selected ? palette.accent : null),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Text(subtitle),
+        trailing: trailing ??
+            (selected ? Icon(Icons.check_rounded, color: palette.accent) : null),
+        onTap: enabled ? onTap : null,
       ),
     );
   }
