@@ -89,6 +89,26 @@ class _ProgressiveNativeRichTextState
     _timer = Timer.periodic(_revealInterval, (_) => _revealNext());
   }
 
+  bool _nearBottom() {
+    final ScrollableState? scrollable = Scrollable.maybeOf(context);
+    if (scrollable == null) return false;
+    final ScrollPosition position = scrollable.position;
+    if (!position.hasContentDimensions) return true;
+    return position.maxScrollExtent - position.pixels < 180;
+  }
+
+  void _keepPinnedIfNeeded(bool wasNearBottom) {
+    if (!wasNearBottom) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final ScrollableState? scrollable = Scrollable.maybeOf(context);
+      if (scrollable == null) return;
+      final ScrollPosition position = scrollable.position;
+      if (!position.hasContentDimensions) return;
+      position.jumpTo(position.maxScrollExtent);
+    });
+  }
+
   void _revealNext() {
     if (!mounted) {
       _cancelTimer();
@@ -96,7 +116,9 @@ class _ProgressiveNativeRichTextState
     }
     final String target = widget.data;
     if (!target.startsWith(_visibleData)) {
+      final bool wasNearBottom = _nearBottom();
       setState(() => _visibleData = widget.streaming ? '' : target);
+      _keepPinnedIfNeeded(wasNearBottom);
       _cancelTimer();
       _scheduleRevealIfNeeded();
       return;
@@ -118,7 +140,9 @@ class _ProgressiveNativeRichTextState
       return;
     }
 
+    final bool wasNearBottom = _nearBottom();
     setState(() => _visibleData = target.substring(0, end));
+    _keepPinnedIfNeeded(wasNearBottom);
     if (_visibleData.length >= target.length) _cancelTimer();
   }
 
