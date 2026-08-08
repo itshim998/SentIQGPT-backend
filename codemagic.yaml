@@ -1,0 +1,34 @@
+workflows:
+  sentiq-android-ui-apk:
+    name: SentIQ Chat Android UI APK
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      flutter: 3.44.8
+      java: 17
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+    scripts:
+      - name: Record source revision
+        script: |
+          echo "Branch: $CM_BRANCH"
+          echo "Commit: $(git rev-parse HEAD)"
+      - name: Resolve Flutter packages
+        script: |
+          cd "$CM_BUILD_DIR/mobile/sentiq_chat"
+          flutter --version
+          java -version
+          flutter config --no-analytics
+          flutter pub get
+      - name: Build installable Android APK
+        script: |
+          cd "$CM_BUILD_DIR/mobile/sentiq_chat"
+          flutter build apk --debug --no-pub
+          shasum -a 256 build/app/outputs/flutter-apk/app-debug.apk > build/app/outputs/flutter-apk/app-debug.apk.sha256
+          cat build/app/outputs/flutter-apk/app-debug.apk.sha256
+    artifacts:
+      - mobile/sentiq_chat/build/app/outputs/flutter-apk/app-debug.apk
+      - mobile/sentiq_chat/build/app/outputs/flutter-apk/app-debug.apk.sha256
