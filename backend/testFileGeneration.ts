@@ -1,6 +1,7 @@
 import assert from "assert";
 import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
+import JSZip from "jszip";
 import {
   detectGeneratedFileFormat,
   resolveFileGenerationIntent,
@@ -500,6 +501,7 @@ async function testHtmlFragmentRepairAndStreaming(): Promise<void> {
 }
 
 async function testPlainTextSlideOutlineRepair(): Promise<void> {
+  let renderedPptx: Buffer | null = null;
   const result = await routeFileGeneration(
     {
       userMessage: "Create a .pptx presentation about launch planning",
@@ -515,23 +517,26 @@ async function testPlainTextSlideOutlineRepair(): Promise<void> {
           "# Launch Planning",
           "Slide 1: Goals",
           "- Align owners",
-          "- Confirm release scope",
+          '- Confirm <release> & "scope"',
           "Slide 2: Timeline",
           "- Prepare QA window",
           "- Publish launch checklist",
         ].join("\n"),
         "minimax",
       ),
-      uploadFile: async (_client, params) => ({
-        success: true,
-        fileId: "file-4",
-        fileUrl: "/api/generated-files/file-4/download",
-        storagePath: "u/c/file-4/v1/launch-planning.pptx",
-        storageBucket: "sentiq-generated-files-private",
-        fileSizeBytes: params.buffer.length,
-        contentSha256: "pptx-hash",
-        version: 1,
-      }),
+      uploadFile: async (_client, params) => {
+        renderedPptx = params.buffer;
+        return {
+          success: true,
+          fileId: "file-4",
+          fileUrl: "/api/generated-files/file-4/download",
+          storagePath: "u/c/file-4/v1/launch-planning.pptx",
+          storageBucket: "sentiq-generated-files-private",
+          fileSizeBytes: params.buffer.length,
+          contentSha256: "pptx-hash",
+          version: 1,
+        };
+      },
       saveMetadata: async () => {},
       storageDb: {},
     },
@@ -542,6 +547,14 @@ async function testPlainTextSlideOutlineRepair(): Promise<void> {
   assert.equal(result.file_name, "launch-planning.pptx");
   assert.ok((result.preview?.slides || []).length >= 2, "plain-text outline should become multiple slide previews");
   assert.match(result.preview?.slides?.[0]?.title || "", /Goals|Launch/i);
+  assert.ok(renderedPptx, "PPTX upload should receive the rendered Office package");
+  const pptxZip = await JSZip.loadAsync(renderedPptx as Buffer);
+  const slideXml = (await Promise.all(
+    (result.preview?.slides || []).map((_, index) => pptxZip.file(`ppt/slides/slide${index + 1}.xml`)?.async("string")),
+  )).join("\n");
+  assert.match(slideXml, /Goals/);
+  assert.match(slideXml, /&lt;release&gt; &amp; &quot;scope&quot;/, "PPTX text should be XML escaped");
+  assert.ok(pptxZip.file("ppt/notesSlides/notesSlide1.xml"), "each slide should include a speaker-notes part");
 }
 
 async function testMarkdownTableXlsxRepair(): Promise<void> {
