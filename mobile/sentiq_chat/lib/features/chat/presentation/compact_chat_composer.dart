@@ -105,7 +105,7 @@ class ChatExecutionModeButton extends StatelessWidget {
                     mode == ChatExecutionMode.fast ? 'Fast' : 'Intuitive',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       color: palette.textPrimary,
-                      fontWeight: FontWeight.w650,
+                      fontWeight: FontWeight.w600,
                       letterSpacing: -0.35,
                     ),
                   ),
