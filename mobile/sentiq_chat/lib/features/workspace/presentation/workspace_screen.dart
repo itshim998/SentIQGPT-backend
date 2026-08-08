@@ -669,7 +669,7 @@ class _CompactHomePrompt extends StatelessWidget {
             'What can I help with?',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w650,
+              fontWeight: FontWeight.w600,
               letterSpacing: -0.45,
             ),
           ),
