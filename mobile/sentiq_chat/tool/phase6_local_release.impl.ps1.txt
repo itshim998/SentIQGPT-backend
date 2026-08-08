@@ -483,8 +483,8 @@ function Test-EmulatorApi {
         $startLog = Join-Path $apiEvidence 'start.txt'
         Invoke-CapturedChecked -Name "Cold launch on API $ApiLevel" -FilePath $Adb -Arguments @('-s', $serial, 'shell', 'am', 'start', '-W', '-n', $component) -OutputPath $startLog | Out-Null
         Start-Sleep -Seconds 4
-        $pid = Get-AdbText -Adb $Adb -Serial $serial -Arguments @('shell', 'pidof', $PackageName) -AllowFailure
-        if ([string]::IsNullOrWhiteSpace($pid)) { throw "SentIQ Chat process did not survive first launch on API $ApiLevel." }
+        $appProcessId = Get-AdbText -Adb $Adb -Serial $serial -Arguments @('shell', 'pidof', $PackageName) -AllowFailure
+        if ([string]::IsNullOrWhiteSpace($appProcessId)) { throw "SentIQ Chat process did not survive first launch on API $ApiLevel." }
 
         Get-AdbText -Adb $Adb -Serial $serial -Arguments @('shell', 'am', 'force-stop', $PackageName) | Out-Null
         $restartLog = Join-Path $apiEvidence 'restart.txt'
