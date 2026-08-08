@@ -75,13 +75,17 @@ class AuthController extends StateNotifier<AppAuthState> {
   }
 
   Future<void> signInWithGoogle() async {
-    await _runAuthAction(() async {
-      await _gateway.signInWithGoogle();
-      state = const AppAuthState(
-        status: AppAuthStatus.signedOut,
-        message: 'Finish signing in with Google, then return to SentIQ Chat.',
-      );
-    });
+    await _runAuthAction(_gateway.signInWithGoogle);
+  }
+
+  Future<void> reconcileExternalSession() async {
+    if (state.status != AppAuthStatus.signedOut) return;
+    try {
+      final AuthSessionSnapshot? session = await _gateway.restoreSession();
+      if (session != null) await _completeSignedInSession(session);
+    } catch (_) {
+      // The auth-state stream remains authoritative; a later callback can retry.
+    }
   }
 
   Future<void> requestPasswordReset(String email) async {
