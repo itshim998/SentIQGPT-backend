@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sentiq_chat/app/app_providers.dart';
@@ -17,7 +19,8 @@ class AuthFlowScreen extends ConsumerStatefulWidget {
   ConsumerState<AuthFlowScreen> createState() => _AuthFlowScreenState();
 }
 
-class _AuthFlowScreenState extends ConsumerState<AuthFlowScreen> {
+class _AuthFlowScreenState extends ConsumerState<AuthFlowScreen>
+    with WidgetsBindingObserver {
   final TextEditingController _email = TextEditingController();
   final TextEditingController _password = TextEditingController();
   final TextEditingController _confirmation = TextEditingController();
@@ -25,7 +28,23 @@ class _AuthFlowScreenState extends ConsumerState<AuthFlowScreen> {
   String? _localError;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(
+        ref.read(authControllerProvider.notifier).reconcileExternalSession(),
+      );
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _email.dispose();
     _password.dispose();
     _confirmation.dispose();
