@@ -107,6 +107,9 @@ class _ChatMessageListState extends State<ChatMessageList> {
   @override
   Widget build(BuildContext context) {
     final List<ChatMessage> messages = widget.thread.messages;
+    final List<ChatProgressEvent> visibleProgress = widget.thread.progress
+        .where((ChatProgressEvent event) => event.kind != ChatProgressKind.sync)
+        .toList(growable: false);
     if (widget.thread.loading && messages.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -128,10 +131,10 @@ class _ChatMessageListState extends State<ChatMessageList> {
           scrollCacheExtent: const ScrollCacheExtent.pixels(900),
           addAutomaticKeepAlives: false,
           addRepaintBoundaries: true,
-          itemCount: messages.length + (widget.thread.progress.isEmpty ? 0 : 1),
+          itemCount: messages.length + (visibleProgress.isEmpty ? 0 : 1),
           itemBuilder: (BuildContext context, int index) {
             if (index == messages.length) {
-              return _ProgressTimeline(events: widget.thread.progress);
+              return _ProgressTimeline(events: visibleProgress);
             }
             final ChatMessage message = messages[index];
             return RepaintBoundary(
@@ -283,6 +286,7 @@ class _ChatMessageViewState extends State<ChatMessageView> {
                 ? ' '
                 : widget.message.content,
             citations: widget.message.citations,
+            streaming: widget.message.status == ChatMessageStatus.streaming,
             onSelectionChanged: (String value) => _selectedText = value,
           );
     return Align(
@@ -330,12 +334,6 @@ class _ChatMessageViewState extends State<ChatMessageView> {
                       if (callback == null) return artifact;
                       return callback(artifact, html);
                     },
-              ),
-            if (!_isUser &&
-                widget.message.status == ChatMessageStatus.streaming)
-              const Padding(
-                padding: EdgeInsets.only(top: SentIQSpacing.xs),
-                child: _StreamingCaret(),
               ),
             if (widget.message.errorMessage != null)
               Padding(
@@ -406,64 +404,6 @@ class _ChatMessageViewState extends State<ChatMessageView> {
         ),
       ),
     );
-  }
-}
-
-class _StreamingCaret extends StatefulWidget {
-  const _StreamingCaret();
-
-  @override
-  State<_StreamingCaret> createState() => _StreamingCaretState();
-}
-
-class _StreamingCaretState extends State<_StreamingCaret>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 900),
-  );
-  bool _reduceMotion = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final bool reduce = SentIQPerformancePolicy.reduceMotion(context);
-    if (reduce == _reduceMotion && (_controller.isAnimating || reduce)) return;
-    _reduceMotion = reduce;
-    if (reduce) {
-      _controller
-        ..stop()
-        ..value = 1;
-    } else {
-      _controller.repeat(reverse: true);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final Widget caret = Container(
-      width: 7,
-      height: 17,
-      decoration: BoxDecoration(
-        color: context.sentiqPalette.accent,
-        borderRadius: BorderRadius.circular(4),
-      ),
-    );
-    return Semantics(
-      label: 'Response is still being written',
-      child: _reduceMotion
-          ? caret
-          : FadeTransition(
-              opacity: Tween<double>(begin: 0.28, end: 1).animate(_controller),
-              child: caret,
-            ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
   }
 }
 
