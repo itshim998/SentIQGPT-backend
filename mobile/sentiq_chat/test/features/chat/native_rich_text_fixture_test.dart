@@ -35,4 +35,31 @@ void main() {
     expect(find.byIcon(Icons.copy_rounded), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('streams formatted markdown with an inline breathing caret', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SentIQTheme.light(),
+        home: const Scaffold(
+          body: Padding(
+            padding: EdgeInsets.all(16),
+            child: NativeRichText(
+              data: '**Formatted** response ',
+              streaming: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Formatted'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Response is still being written'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
