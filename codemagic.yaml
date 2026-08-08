@@ -23,6 +23,18 @@ workflows:
           java -version
           flutter config --no-analytics
           flutter pub get
+      - name: Analyze mobile source
+        script: |
+          cd "$CM_BUILD_DIR/mobile/sentiq_chat"
+          flutter analyze
+      - name: Run pre-APK regression suite
+        script: |
+          cd "$CM_BUILD_DIR/mobile/sentiq_chat"
+          flutter test \
+            test/features/auth \
+            test/features/chat \
+            test/features/workspace \
+            test/widgets
       - name: Build installable Android APK
         script: |
           cd "$CM_BUILD_DIR/mobile/sentiq_chat"
