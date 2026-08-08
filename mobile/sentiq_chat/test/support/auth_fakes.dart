@@ -16,6 +16,7 @@ class FakeAuthGateway implements AuthGateway {
     email: 'person@example.com',
     metadata: <String, Object?>{},
   );
+  AuthGatewayEvent? googleEventBeforeReturn;
   bool googleStarted = false;
   bool resetRequested = false;
   bool signedOut = false;
@@ -43,6 +44,11 @@ class FakeAuthGateway implements AuthGateway {
   @override
   Future<void> signInWithGoogle() async {
     googleStarted = true;
+    final AuthGatewayEvent? event = googleEventBeforeReturn;
+    if (event != null) {
+      _events.add(event);
+      await Future<void>.delayed(Duration.zero);
+    }
   }
 
   @override
