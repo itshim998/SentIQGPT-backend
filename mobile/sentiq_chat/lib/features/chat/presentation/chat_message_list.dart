@@ -7,7 +7,7 @@ import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 import 'package:sentiq_chat/core/performance/performance_policy.dart';
 import 'package:sentiq_chat/features/chat/application/chat_controller.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
-import 'package:sentiq_chat/features/chat/presentation/native_rich_text.dart';
+import 'package:sentiq_chat/features/chat/presentation/progressive_native_rich_text.dart';
 import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
 import 'package:sentiq_chat/features/multimodal/presentation/multimodal_message_extras.dart';
 
@@ -279,12 +279,8 @@ class _ChatMessageViewState extends State<ChatMessageView> {
               context,
             ).textTheme.bodyLarge?.copyWith(height: 1.45),
           )
-        : NativeRichText(
-            data:
-                widget.message.content.isEmpty &&
-                    widget.message.status == ChatMessageStatus.streaming
-                ? ' '
-                : widget.message.content,
+        : ProgressiveNativeRichText(
+            data: widget.message.content,
             citations: widget.message.citations,
             streaming: widget.message.status == ChatMessageStatus.streaming,
             onSelectionChanged: (String value) => _selectedText = value,
