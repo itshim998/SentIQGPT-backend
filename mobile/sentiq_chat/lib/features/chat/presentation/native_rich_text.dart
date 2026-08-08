@@ -7,24 +7,34 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
+import 'package:sentiq_chat/core/performance/performance_policy.dart';
 import 'package:sentiq_chat/core/security/safe_external_link.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
+
+const String _streamMarker = '\uE000';
 
 class NativeRichText extends StatelessWidget {
   const NativeRichText({
     required this.data,
     this.citations = const <ChatCitation>[],
     this.onSelectionChanged,
+    this.streaming = false,
     super.key,
   });
 
   final String data;
   final List<ChatCitation> citations;
   final ValueChanged<String>? onSelectionChanged;
+  final bool streaming;
 
   @override
   Widget build(BuildContext context) {
     final List<_RichSegment> segments = _splitSegments(data);
+    final int lastMarkdownIndex = segments.lastIndexWhere(
+      (_RichSegment segment) => segment.markdown.trim().isNotEmpty,
+    );
+    final bool trailingMarkdown =
+        lastMarkdownIndex >= 0 && lastMarkdownIndex == segments.length - 1;
     return SelectionArea(
       onSelectionChanged: (SelectedContent? content) {
         onSelectionChanged?.call(content?.plainText ?? '');
@@ -32,14 +42,24 @@ class NativeRichText extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          for (final _RichSegment segment in segments)
-            if (segment.code != null)
-              _CodeBlock(language: segment.language, code: segment.code!)
-            else if (segment.math != null)
-              _MathBlock(expression: segment.math!)
-            else if (segment.markdown.trim().isNotEmpty)
+          for (final MapEntry<int, _RichSegment> entry
+              in segments.asMap().entries)
+            if (entry.value.code != null)
+              _CodeBlock(
+                language: entry.value.language,
+                code: entry.value.code!,
+              )
+            else if (entry.value.math != null)
+              _MathBlock(expression: entry.value.math!)
+            else if (entry.value.markdown.trim().isNotEmpty)
               MarkdownBody(
-                data: segment.markdown,
+                // Markdown is parsed on every streamed update. The marker is
+                // an inline widget, so emphasis/headings/lists remain native
+                // while the response grows word-by-word.
+                data:
+                    streaming && entry.key == lastMarkdownIndex
+                        ? '${entry.value.markdown}$_streamMarker'
+                        : entry.value.markdown,
                 selectable: false,
                 softLineBreak: true,
                 extensionSet: md.ExtensionSet(
@@ -47,12 +67,14 @@ class NativeRichText extends StatelessWidget {
                     ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
                   ],
                   <md.InlineSyntax>[
+                    _StreamingMarkerSyntax(),
                     _InlineMathSyntax(),
                     ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
                   ],
                 ),
                 builders: <String, MarkdownElementBuilder>{
                   _InlineMathSyntax.tag: _InlineMathBuilder(),
+                  _StreamingMarkerSyntax.tag: _StreamingMarkerBuilder(),
                 },
                 styleSheet: _styleSheet(context),
                 onTapLink: (String text, String? href, String title) {
@@ -60,6 +82,14 @@ class NativeRichText extends StatelessWidget {
                   unawaited(SafeExternalLink.openHttps(href));
                 },
               ),
+          if (streaming && !trailingMarkdown)
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: _BreathingStreamCaret(),
+              ),
+            ),
           if (citations.isNotEmpty) ...<Widget>[
             const SizedBox(height: SentIQSpacing.sm),
             Wrap(
@@ -78,6 +108,113 @@ class NativeRichText extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _StreamingMarkerSyntax extends md.InlineSyntax {
+  _StreamingMarkerSyntax() : super(RegExp.escape(_streamMarker));
+
+  static const String tag = 'sentiq-stream-marker';
+
+  @override
+  bool onMatch(md.InlineParser parser, Match match) {
+    parser.addNode(md.Element.empty(tag));
+    return true;
+  }
+}
+
+class _StreamingMarkerBuilder extends MarkdownElementBuilder {
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    return const Padding(
+      padding: EdgeInsets.only(left: 3),
+      child: _BreathingStreamCaret(),
+    );
+  }
+}
+
+class _BreathingStreamCaret extends StatefulWidget {
+  const _BreathingStreamCaret();
+
+  @override
+  State<_BreathingStreamCaret> createState() => _BreathingStreamCaretState();
+}
+
+class _BreathingStreamCaretState extends State<_BreathingStreamCaret>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1050),
+  );
+  bool _reduceMotion = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bool reduce = SentIQPerformancePolicy.reduceMotion(context);
+    if (reduce == _reduceMotion && (_controller.isAnimating || reduce)) return;
+    _reduceMotion = reduce;
+    if (reduce) {
+      _controller
+        ..stop()
+        ..value = 1;
+    } else {
+      _controller.repeat(reverse: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final SentIQPalette palette = context.sentiqPalette;
+    final Widget caret = Container(
+      width: 7,
+      height: 17,
+      decoration: BoxDecoration(
+        color: palette.accent,
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: palette.accent.withValues(alpha: 0.34),
+            blurRadius: 10,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+    );
+    final Widget animated = _reduceMotion
+        ? caret
+        : AnimatedBuilder(
+            animation: _controller,
+            child: caret,
+            builder: (BuildContext context, Widget? child) {
+              final double eased = Curves.easeInOutCubic.transform(
+                _controller.value,
+              );
+              return Opacity(
+                opacity: 0.38 + (0.62 * eased),
+                child: Transform.scale(
+                  scale: 0.86 + (0.14 * eased),
+                  alignment: Alignment.center,
+                  child: child,
+                ),
+              );
+            },
+          );
+    return Semantics(
+      label: 'Response is still being written',
+      child: animated,
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 }
 
