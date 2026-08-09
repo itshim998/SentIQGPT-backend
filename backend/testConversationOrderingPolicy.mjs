@@ -25,6 +25,9 @@ const iso = (day, hour = 0) => `2026-08-${String(day).padStart(2, "0")}T${String
 function makeLegacyStorage(initialChats = []) {
   const chats = new Map(initialChats.map((chat) => [chat.id, clone(chat)]));
   const config = new Map([["chat_limit", 100], ["memory_limit", 500]]);
+  const syncJobs = new Map();
+  const generatedFiles = new Map();
+  let aliases = {};
   let newChatSequence = 0;
 
   function legacyActivity(chat) {
@@ -41,6 +44,9 @@ function makeLegacyStorage(initialChats = []) {
 
   return {
     __chats: chats,
+    __syncJobs: syncJobs,
+    __generatedFiles: generatedFiles,
+    get __aliases() { return aliases; },
     getActiveUserId() { return "test-user"; },
     async createChat(title = "New Chat") {
       newChatSequence += 1;
@@ -165,7 +171,11 @@ function makeLegacyStorage(initialChats = []) {
     },
     async deleteChat(id) { chats.delete(id); },
     async getConfig(key) { return config.get(key); },
-    async setConfig(key, value) { config.set(key, value); return value; },
+    async setConfig(key, value) {
+      config.set(key, clone(value));
+      if (String(key).startsWith("conversation_aliases:")) aliases = clone(value || {});
+      return value;
+    },
     async getAllConfig() { return Object.fromEntries(config); },
     async getStorageStats() {
       return {
@@ -174,6 +184,11 @@ function makeLegacyStorage(initialChats = []) {
         files: { count: 0, limit_mb: 100 },
       };
     },
+    async getAllSyncJobs() { return [...syncJobs.values()].map(clone); },
+    async deleteSyncJob(id) { syncJobs.delete(id); },
+    async getAllGeneratedFiles() { return [...generatedFiles.values()].map(clone); },
+    async deleteGeneratedFile(id) { generatedFiles.delete(id); },
+    async getConversationAliases() { return clone(aliases); },
   };
 }
 
@@ -218,6 +233,7 @@ assert.doesNotMatch(
 );
 assert.match(policySource, /persistUserActivity/);
 assert.match(policySource, /isTransientBlankServerPlaceholder/);
+assert.match(policySource, /purgeLocalConversationResidue/);
 assert.match(policySource, /updateTitleWithoutRecencyBump/);
 assert.match(policySource, /mergeChatMessagesWithoutReadRecency/);
 assert.match(policySource, /API\.deleteConversation\(leastRecent\.id\)/);
@@ -225,6 +241,7 @@ assert.match(policySource, /API\.deleteConversation\(leastRecent\.id\)/);
 assert.match(migrationSource, /m\.role = 'user'/);
 assert.match(migrationSource, /if new\.role = 'user' then/i);
 assert.match(migrationSource, /max_conversations constant integer := 50/i);
+assert.match(migrationSource, /get_conversation_user_activity_schema_version/);
 assert.match(
   migrationSource,
   /order by\s+coalesce\(c\.last_activity_at, c\.created_at\) desc,\s+c\.created_at desc,\s+c\.id desc;/i,
@@ -313,11 +330,29 @@ const fiftyChats = Array.from({ length: 50 }, (_, index) => ({
     : [],
 }));
 const retentionStorage = makeLegacyStorage(fiftyChats);
+retentionStorage.__syncJobs.set("stale-message-job", {
+  id: "stale-message-job",
+  type: "chat_message",
+  payload: { conversationId: "local-1", messages: [{ role: "user", content: "must never recreate" }] },
+});
+retentionStorage.__generatedFiles.set("stale-generated-file", {
+  id: "stale-generated-file",
+  chat_id: "local-1",
+  file_name: "old.txt",
+});
+await retentionStorage.setConfig("conversation_aliases:test-user", {
+  "local-1": "local-2",
+  "keep-from": "local-1",
+  "keep-alias": "local-3",
+});
 installPolicy(retentionStorage);
 const created = await retentionStorage.createChat("51st chat");
 assert.equal(retentionStorage.__chats.size, 50);
 assert.equal(retentionStorage.__chats.has("local-1"), false);
 assert.equal(retentionStorage.__chats.has(created.id), true);
+assert.equal(retentionStorage.__syncJobs.has("stale-message-job"), false, "retention must remove sync jobs that could recreate the evicted chat");
+assert.equal(retentionStorage.__generatedFiles.has("stale-generated-file"), false, "retention must remove local generated-file cache rows for the evicted chat");
+assert.deepEqual(retentionStorage.__aliases, { "keep-alias": "local-3" }, "retention must remove local aliases that reference the evicted chat");
 
 // 5) An authenticated blank New Chat is an existing transient draft by design,
 // not a persisted conversation. It must not evict a real chat until first write.
