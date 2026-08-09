@@ -29,6 +29,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import kotlin.concurrent.thread
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 class MainActivity : FlutterActivity(), EventChannel.StreamHandler {
@@ -68,6 +69,28 @@ class MainActivity : FlutterActivity(), EventChannel.StreamHandler {
             }
             AudioManager.AUDIOFOCUS_GAIN -> emit(mapOf("type" to "interruptionEnded"))
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        preferHighestRefreshRate()
+    }
+
+    private fun preferHighestRefreshRate() {
+        val activeDisplay = window.decorView.display ?: return
+        val currentMode = activeDisplay.mode
+        val highestRefreshRate = activeDisplay.supportedModes
+            .asSequence()
+            .filter {
+                it.physicalWidth == currentMode.physicalWidth &&
+                    it.physicalHeight == currentMode.physicalHeight
+            }
+            .maxOfOrNull { it.refreshRate }
+            ?: currentMode.refreshRate
+        val attributes = window.attributes
+        if (abs(attributes.preferredRefreshRate - highestRefreshRate) < 0.1f) return
+        attributes.preferredRefreshRate = highestRefreshRate
+        window.attributes = attributes
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
