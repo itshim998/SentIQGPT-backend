@@ -1,9 +1,10 @@
 -- SentIQ Chat conversation ordering + retention hardening.
 --
 -- Product rule:
---   * A conversation is recent only when it was created or the USER wrote in it.
---   * Opening/reading, assistant output, title changes, hydration, and cache warming
---     never change sidebar recency.
+--   * A conversation is recent only when it was created or the USER interacted
+--     with it (typed query, Deep Research prompt, image prompt, or spoken Live turn).
+--   * Opening/reading, assistant-only output, title changes, hydration, and cache
+--     warming never change sidebar recency.
 --   * Keep at most 50 conversations. The least-recent conversation by the same
 --     user-activity rule is evicted before the 51st insert.
 --
@@ -12,15 +13,27 @@
 alter table public.conversations
   add column if not exists last_activity_at timestamptz;
 
+-- Live sessions intentionally store a whole transcript as one assistant-side
+-- `live_transcript` message to avoid duplicating every spoken turn in replay.
+-- A transcript containing a non-empty "You:" line still represents real user
+-- activity and therefore participates in conversation recency.
+--
 -- Repair historical rows that may have been promoted by assistant messages or
--- older hydration behaviour. Recompute from USER-authored messages only.
+-- older hydration behaviour. Recompute from actual user activity only.
 update public.conversations c
 set last_activity_at = coalesce(
   (
     select max(m.created_at)
     from public.messages m
     where m.conversation_id = c.id
-      and m.role = 'user'
+      and (
+        m.role = 'user'
+        or (
+          m.role = 'assistant'
+          and m.message_type = 'live_transcript'
+          and coalesce(m.content, '') ~ E'(^|\\n)You:[[:space:]]*[^[:space:]]'
+        )
+      )
   ),
   c.created_at
 );
@@ -29,7 +42,8 @@ create index if not exists conversations_user_last_activity_idx
   on public.conversations (user_id, last_activity_at desc, created_at desc);
 
 -- Keep the existing trigger name for compatibility, but change its semantics:
--- only a user message is allowed to advance conversation activity.
+-- only a real user-authored message or a committed Live transcript containing
+-- user speech is allowed to advance conversation activity.
 create or replace function public.touch_conversation_last_activity()
 returns trigger
 language plpgsql
@@ -37,7 +51,12 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
-  if new.role = 'user' then
+  if new.role = 'user'
+     or (
+       new.role = 'assistant'
+       and new.message_type = 'live_transcript'
+       and coalesce(new.content, '') ~ E'(^|\\n)You:[[:space:]]*[^[:space:]]'
+     ) then
     update public.conversations
     set last_activity_at = greatest(
       coalesce(last_activity_at, created_at),
@@ -56,7 +75,7 @@ after insert on public.messages
 for each row
 execute function public.touch_conversation_last_activity();
 
--- Sidebar list order is now strictly creation/latest-user-write activity.
+-- Sidebar list order is strictly creation/latest-user-activity order.
 -- last_message_at is still returned as metadata/evidence, but is intentionally
 -- excluded from ordering and from last_activity_at fallback semantics.
 create or replace function public.list_user_conversations(p_user_id uuid)
