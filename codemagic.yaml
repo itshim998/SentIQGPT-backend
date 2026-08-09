@@ -35,12 +35,12 @@ workflows:
             test/features/chat \
             test/features/workspace \
             test/widgets
-      - name: Build installable Android APK
+      - name: Build performance Android APK
         script: |
           cd "$CM_BUILD_DIR/mobile/sentiq_chat"
-          flutter build apk --debug --no-pub
-          shasum -a 256 build/app/outputs/flutter-apk/app-debug.apk > build/app/outputs/flutter-apk/app-debug.apk.sha256
-          cat build/app/outputs/flutter-apk/app-debug.apk.sha256
+          flutter build apk --profile --no-pub
+          shasum -a 256 build/app/outputs/flutter-apk/app-profile.apk > build/app/outputs/flutter-apk/app-profile.apk.sha256
+          cat build/app/outputs/flutter-apk/app-profile.apk.sha256
     artifacts:
-      - mobile/sentiq_chat/build/app/outputs/flutter-apk/app-debug.apk
-      - mobile/sentiq_chat/build/app/outputs/flutter-apk/app-debug.apk.sha256
+      - mobile/sentiq_chat/build/app/outputs/flutter-apk/app-profile.apk
+      - mobile/sentiq_chat/build/app/outputs/flutter-apk/app-profile.apk.sha256
