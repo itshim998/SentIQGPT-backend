@@ -331,6 +331,7 @@ export class BillingRepository {
       p_reservation_id: args.reservationId,
       p_request_id: args.requestId,
       p_actual_tokens: args.actualTokens,
+      p_metadata: args.metadata ?? {},
     });
     if (error) {
       throw new BillingRepositoryError(
