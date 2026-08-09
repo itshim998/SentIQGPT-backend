@@ -273,7 +273,8 @@ class _ChatComposerState extends State<ChatComposer> {
                     ? 'Create an image from your description'
                     : 'Image creation is unavailable right now',
                 selected: widget.imageGenerationMode,
-                enabled: widget.imageGenerationMode || widget.imageQuota.available,
+                enabled:
+                    widget.imageGenerationMode || widget.imageQuota.available,
                 onTap: () {
                   Navigator.of(sheetContext).pop();
                   widget.onImageGenerationModeChanged!(
@@ -635,38 +636,46 @@ class _ModeOption extends StatelessWidget {
               : Colors.transparent,
         ),
       ),
-      child: ListTile(
-        enabled: enabled,
-        minVerticalPadding: SentIQSpacing.sm,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(21)),
-        leading: AnimatedContainer(
-          duration: SentIQMotion.standard,
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: selected
-                ? palette.accent.withValues(alpha: 0.18)
-                : palette.surface,
-            borderRadius: BorderRadius.circular(14),
+      child: Material(
+        type: MaterialType.transparency,
+        child: ListTile(
+          enabled: enabled,
+          minVerticalPadding: SentIQSpacing.sm,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(21),
           ),
-          child: Icon(icon, color: selected ? palette.accent : null),
+          leading: AnimatedContainer(
+            duration: SentIQMotion.standard,
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: selected
+                  ? palette.accent.withValues(alpha: 0.18)
+                  : palette.surface,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: selected ? palette.accent : null),
+          ),
+          title: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          subtitle: Text(subtitle),
+          trailing: AnimatedSwitcher(
+            duration: SentIQMotion.quick,
+            child: selected
+                ? Icon(
+                    Icons.check_circle_rounded,
+                    key: const ValueKey<String>('selected'),
+                    color: palette.accent,
+                  )
+                : const SizedBox(
+                    key: ValueKey<String>('unselected'),
+                    width: 24,
+                  ),
+          ),
+          onTap: enabled ? onTap : null,
         ),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(subtitle),
-        trailing: AnimatedSwitcher(
-          duration: SentIQMotion.quick,
-          child: selected
-              ? Icon(
-                  Icons.check_circle_rounded,
-                  key: const ValueKey<String>('selected'),
-                  color: palette.accent,
-                )
-              : const SizedBox(
-                  key: ValueKey<String>('unselected'),
-                  width: 24,
-                ),
-        ),
-        onTap: enabled ? onTap : null,
       ),
     );
   }
@@ -701,16 +710,24 @@ class _ToolTile extends StatelessWidget {
         color: selected ? palette.accentSoft : Colors.transparent,
         borderRadius: BorderRadius.circular(20),
       ),
-      child: ListTile(
-        enabled: enabled,
-        minVerticalPadding: SentIQSpacing.sm,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        leading: Icon(icon, color: selected ? palette.accent : null),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(subtitle),
-        trailing: trailing ??
-            (selected ? Icon(Icons.check_rounded, color: palette.accent) : null),
-        onTap: enabled ? onTap : null,
+      child: Material(
+        type: MaterialType.transparency,
+        child: ListTile(
+          enabled: enabled,
+          minVerticalPadding: SentIQSpacing.sm,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          leading: Icon(icon, color: selected ? palette.accent : null),
+          title: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          subtitle: Text(subtitle),
+          trailing: trailing ??
+              (selected ? Icon(Icons.check_rounded, color: palette.accent) : null),
+          onTap: enabled ? onTap : null,
+        ),
       ),
     );
   }
