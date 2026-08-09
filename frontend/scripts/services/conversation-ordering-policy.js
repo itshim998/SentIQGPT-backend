@@ -36,6 +36,11 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
     setConfig: Storage.setConfig.bind(Storage),
     getAllConfig: Storage.getAllConfig.bind(Storage),
     getStorageStats: Storage.getStorageStats.bind(Storage),
+    getAllSyncJobs: typeof Storage.getAllSyncJobs === "function" ? Storage.getAllSyncJobs.bind(Storage) : null,
+    deleteSyncJob: typeof Storage.deleteSyncJob === "function" ? Storage.deleteSyncJob.bind(Storage) : null,
+    getAllGeneratedFiles: typeof Storage.getAllGeneratedFiles === "function" ? Storage.getAllGeneratedFiles.bind(Storage) : null,
+    deleteGeneratedFile: typeof Storage.deleteGeneratedFile === "function" ? Storage.deleteGeneratedFile.bind(Storage) : null,
+    getConversationAliases: typeof Storage.getConversationAliases === "function" ? Storage.getConversationAliases.bind(Storage) : null,
   };
 
   const persistedUserActivityMemory = new Map();
@@ -217,9 +222,69 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
     return normalizeChatForRead(updated);
   }
 
+  function syncJobReferencesChat(job, chatId) {
+    const payload = job?.payload && typeof job.payload === "object" ? job.payload : {};
+    const candidates = [
+      payload.conversationId,
+      payload.conversation_id,
+      payload.localChatId,
+      payload.local_chat_id,
+      payload.pendingChatId,
+      payload.pending_chat_id,
+      payload.chatId,
+      payload.chat_id,
+    ];
+    return candidates.some((value) => String(value || "").trim() === chatId);
+  }
+
+  async function purgeLocalConversationResidue(chatId) {
+    const normalizedChatId = String(chatId || "").trim();
+    if (!normalizedChatId) return;
+
+    if (original.getAllSyncJobs && original.deleteSyncJob) {
+      const jobs = await original.getAllSyncJobs();
+      for (const job of jobs) {
+        if (job?.id && syncJobReferencesChat(job, normalizedChatId)) {
+          await original.deleteSyncJob(job.id);
+        }
+      }
+    }
+
+    if (original.getAllGeneratedFiles && original.deleteGeneratedFile) {
+      const files = await original.getAllGeneratedFiles();
+      for (const file of files) {
+        const fileChatId = String(file?.chat_id || file?.chatId || "").trim();
+        if (file?.id && fileChatId === normalizedChatId) {
+          await original.deleteGeneratedFile(file.id);
+        }
+      }
+    }
+
+    if (original.getConversationAliases) {
+      const aliases = await original.getConversationAliases();
+      if (aliases && typeof aliases === "object") {
+        const nextAliases = {};
+        let changed = false;
+        for (const [fromChatId, toChatId] of Object.entries(aliases)) {
+          if (fromChatId === normalizedChatId || String(toChatId || "") === normalizedChatId) {
+            changed = true;
+            continue;
+          }
+          nextAliases[fromChatId] = toChatId;
+        }
+        if (changed) {
+          await original.setConfig(`conversation_aliases:${activeOwnerScope()}`, nextAliases);
+        }
+      }
+    }
+  }
+
   async function deleteCachedChat(chatId) {
-    clearPersistedUserActivity(chatId);
-    return original.deleteChat(chatId);
+    const normalizedChatId = String(chatId || "").trim();
+    if (!normalizedChatId) return;
+    await purgeLocalConversationResidue(normalizedChatId);
+    clearPersistedUserActivity(normalizedChatId);
+    return original.deleteChat(normalizedChatId);
   }
 
   async function enforceClientRetention(chats) {
@@ -232,7 +297,9 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
     // no-empty-Supabase-row product contract.
     const overflow = committed.slice(MAX_STORED_CHATS);
     const overflowIds = new Set(overflow.map((chat) => chat.id));
-    await Promise.allSettled(overflow.map((chat) => deleteCachedChat(chat.id)));
+    for (const chat of overflow) {
+      await deleteCachedChat(chat.id);
+    }
     return ordered.filter((chat) => !overflowIds.has(chat.id));
   }
 
@@ -290,7 +357,7 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
           // creation so we never knowingly create a 51st chat with orphaned data.
           if (Number(error?.status) !== 404) throw error;
         }
-        await deleteCachedChat(leastRecent.id).catch(() => null);
+        await deleteCachedChat(leastRecent.id);
       }
 
       retentionPreparedChatIds.add(chatId);
