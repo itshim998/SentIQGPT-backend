@@ -83,7 +83,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0",
     "@types/pdfkit": "^0.17.6",
-    "cors": "^4.21.0",
+    "cors": "^2.8.5",
     "docx": "^9.6.1",
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",
@@ -101,7 +101,7 @@
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "@types/cors": "^8.1.0",
+    "@types/cors": "^2.8.17",
     "@types/node": "^20.11.0",
     "concurrently": "^9.0.0",
     "katex": "^0.16.11",
