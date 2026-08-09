@@ -49,35 +49,33 @@ class ChatMessageList extends StatefulWidget {
 
 class _ChatMessageListState extends State<ChatMessageList> {
   final ScrollController _scrollController = ScrollController();
+  final ValueNotifier<bool> _showJumpToLatest = ValueNotifier<bool>(false);
   int _lastMessageCount = 0;
-  int _lastContentLength = 0;
 
   @override
   void initState() {
     super.initState();
+    _lastMessageCount = widget.thread.messages.length;
     _scrollController.addListener(_handleScroll);
-    _scheduleScroll(force: true);
+    _scheduleScroll(force: true, animate: false);
   }
 
   void _handleScroll() {
-    if (mounted) setState(() {});
+    final bool show = !_nearBottom;
+    if (_showJumpToLatest.value != show) {
+      _showJumpToLatest.value = show;
+    }
   }
 
   @override
   void didUpdateWidget(covariant ChatMessageList oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final int contentLength = widget.thread.messages.fold<int>(
-      0,
-      (int sum, ChatMessage item) => sum + item.content.length,
-    );
     final bool newMessage = widget.thread.messages.length > _lastMessageCount;
-    final bool streamingGrowth =
-        contentLength > _lastContentLength &&
-        widget.thread.generating &&
-        _nearBottom;
     _lastMessageCount = widget.thread.messages.length;
-    _lastContentLength = contentLength;
-    if (newMessage || streamingGrowth) _scheduleScroll(force: newMessage);
+    // ProgressiveNativeRichText owns bottom pinning while a response grows.
+    // Starting another animateTo for every streamed update creates competing
+    // scroll activities and was a major source of visible jitter.
+    if (newMessage) _scheduleScroll(force: true);
   }
 
   bool get _nearBottom {
@@ -87,17 +85,17 @@ class _ChatMessageListState extends State<ChatMessageList> {
         180;
   }
 
-  void _scheduleScroll({required bool force}) {
+  void _scheduleScroll({required bool force, bool animate = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
       if (!force && !_nearBottom) return;
       final double target = _scrollController.position.maxScrollExtent;
-      if (SentIQPerformancePolicy.reduceMotion(context)) {
+      if (!animate || SentIQPerformancePolicy.reduceMotion(context)) {
         _scrollController.jumpTo(target);
       } else {
         _scrollController.animateTo(
           target,
-          duration: const Duration(milliseconds: 220),
+          duration: SentIQMotion.quick,
           curve: Curves.easeOutCubic,
         );
       }
@@ -125,7 +123,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
             SentIQSpacing.md,
             SentIQSpacing.xl,
           ),
-          scrollCacheExtent: const ScrollCacheExtent.pixels(900),
+          scrollCacheExtent: const ScrollCacheExtent.pixels(640),
           addAutomaticKeepAlives: false,
           addRepaintBoundaries: true,
           itemCount: messages.length + (visibleProgress.isEmpty ? 0 : 1),
@@ -157,22 +155,29 @@ class _ChatMessageListState extends State<ChatMessageList> {
             );
           },
         ),
-        if (!_nearBottom)
-          Positioned(
-            right: SentIQSpacing.md,
-            bottom: SentIQSpacing.md,
-            child: FloatingActionButton.small(
-              tooltip: 'Jump to latest message',
-              onPressed: () => _scheduleScroll(force: true),
-              child: const Icon(Icons.arrow_downward_rounded),
-            ),
+        ValueListenableBuilder<bool>(
+          valueListenable: _showJumpToLatest,
+          child: FloatingActionButton.small(
+            tooltip: 'Jump to latest message',
+            onPressed: () => _scheduleScroll(force: true),
+            child: const Icon(Icons.arrow_downward_rounded),
           ),
+          builder: (BuildContext context, bool show, Widget? child) {
+            if (!show) return const SizedBox.shrink();
+            return Positioned(
+              right: SentIQSpacing.md,
+              bottom: SentIQSpacing.md,
+              child: child!,
+            );
+          },
+        ),
       ],
     );
   }
 
   @override
   void dispose() {
+    _showJumpToLatest.dispose();
     _scrollController
       ..removeListener(_handleScroll)
       ..dispose();
