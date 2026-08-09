@@ -26,25 +26,29 @@ class CloudConversationSource {
       throw const FormatException('Conversation history response is malformed');
     }
 
-    final List<ConversationSummary> items = raw
-        .whereType<Map>()
-        .map(
-          (Map value) => ConversationSummary.fromJson(
-            value.map(
-              (Object? key, Object? nested) =>
-                  MapEntry(key.toString(), nested),
-            ),
-            ownerScope: ownerScope,
-          ),
-        )
-        .where((ConversationSummary item) => item.id.isNotEmpty)
-        .take(50)
-        .toList();
-    if (raw.isNotEmpty && items.isEmpty) {
-      throw const FormatException(
-        'Conversation history contains no valid conversation identifiers',
+    final List<ConversationSummary> parsed = <ConversationSummary>[];
+    for (final Object? rawConversation in raw) {
+      if (rawConversation is! Map) {
+        throw const FormatException(
+          'Conversation history contains a malformed row',
+        );
+      }
+      final ConversationSummary conversation = ConversationSummary.fromJson(
+        rawConversation.map(
+          (Object? key, Object? nested) => MapEntry(key.toString(), nested),
+        ),
+        ownerScope: ownerScope,
       );
+      if (conversation.id.isEmpty) {
+        throw const FormatException(
+          'Conversation history contains a row without an identifier',
+        );
+      }
+      parsed.add(conversation);
     }
+    final List<ConversationSummary> items = parsed
+        .take(50)
+        .toList(growable: false);
 
     final Map<String, String> aliases = <String, String>{};
     final Object? rawMerged = payload['merged'];
@@ -79,7 +83,16 @@ class CloudConversationSource {
     final Map<String, Object?> raw = _map(
       payload['conversation'] ?? payload['data'] ?? payload,
     );
-    return ConversationSummary.fromJson(raw, ownerScope: ownerScope);
+    final ConversationSummary created = ConversationSummary.fromJson(
+      raw,
+      ownerScope: ownerScope,
+    );
+    if (created.id.isEmpty) {
+      throw const FormatException(
+        'Created conversation response is missing its identifier',
+      );
+    }
+    return created;
   }
 
   Future<ConversationSummary> rename(
