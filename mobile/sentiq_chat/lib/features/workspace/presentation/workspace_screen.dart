@@ -593,7 +593,8 @@ class _ComposerHost extends ConsumerWidget {
     final ChatController chatController = ref.read(
       chatControllerProvider(session).notifier,
     );
-    final Future<bool> Function(String) onSend = (String text) async {
+
+    Future<bool> onSend(String text) async {
       final bool accepted = await chatController.send(
         conversationId: conversationId,
         text: text,
@@ -603,27 +604,30 @@ class _ComposerHost extends ConsumerWidget {
         unawaited(_refreshConversationTitle(workspaceController));
       }
       return accepted;
-    };
-    final ValueChanged<ChatAttachment> onAttachmentAdded =
-        (ChatAttachment attachment) {
-          unawaited(
-            chatController.addAttachment(
-              attachment,
-              conversationId: conversationId,
-            ),
-          );
-        };
-    final ValueChanged<String> onAttachmentRetry = (String id) {
+    }
+
+    void onAttachmentAdded(ChatAttachment attachment) {
+      unawaited(
+        chatController.addAttachment(
+          attachment,
+          conversationId: conversationId,
+        ),
+      );
+    }
+
+    void onAttachmentRetry(String id) {
       unawaited(
         chatController.retryAttachment(
           id,
           conversationId: conversationId,
         ),
       );
-    };
-    final ValueChanged<String> onAttachmentCancel = (String id) {
+    }
+
+    void onAttachmentCancel(String id) {
       unawaited(chatController.cancelAttachmentUpload(id));
-    };
+    }
+
     final VoidCallback? onDeepResearch = identity.isGuest
         ? null
         : () => unawaited(
