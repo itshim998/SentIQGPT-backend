@@ -2,30 +2,60 @@ import 'package:sentiq_chat/core/network/api_client.dart';
 import 'package:sentiq_chat/core/network/api_endpoints.dart';
 import 'package:sentiq_chat/features/workspace/domain/conversation_summary.dart';
 
+class CloudConversationSnapshot {
+  const CloudConversationSnapshot({
+    required this.items,
+    this.aliases = const <String, String>{},
+  });
+
+  final List<ConversationSummary> items;
+  final Map<String, String> aliases;
+}
+
 class CloudConversationSource {
   const CloudConversationSource(this._client);
 
   final SentIQApiClient _client;
 
-  Future<List<ConversationSummary>> list(String ownerScope) async {
+  Future<CloudConversationSnapshot> snapshot(String ownerScope) async {
     final Map<String, Object?> payload = await _client.getJson(
       ApiEndpoints.conversations,
     );
     final Object? raw = payload['conversations'] ?? payload['data'];
-    if (raw is! List) return const <ConversationSummary>[];
-    return raw
-        .whereType<Map>()
-        .map(
-          (Map value) => ConversationSummary.fromJson(
-            value.map(
-              (Object? key, Object? nested) => MapEntry(key.toString(), nested),
-            ),
-            ownerScope: ownerScope,
-          ),
-        )
-        .where((ConversationSummary item) => item.id.isNotEmpty)
-        .take(50)
-        .toList();
+    final List<ConversationSummary> items = raw is List
+        ? raw
+              .whereType<Map>()
+              .map(
+                (Map value) => ConversationSummary.fromJson(
+                  value.map(
+                    (Object? key, Object? nested) =>
+                        MapEntry(key.toString(), nested),
+                  ),
+                  ownerScope: ownerScope,
+                ),
+              )
+              .where((ConversationSummary item) => item.id.isNotEmpty)
+              .take(50)
+              .toList()
+        : const <ConversationSummary>[];
+
+    final Map<String, String> aliases = <String, String>{};
+    final Object? rawMerged = payload['merged'];
+    if (rawMerged is List) {
+      for (final Object? rawNotice in rawMerged) {
+        if (rawNotice is! Map) continue;
+        final String from = rawNotice['from']?.toString().trim() ?? '';
+        final String to = rawNotice['to']?.toString().trim() ?? '';
+        if (from.isNotEmpty && to.isNotEmpty && from != to) {
+          aliases[from] = to;
+        }
+      }
+    }
+    return CloudConversationSnapshot(items: items, aliases: aliases);
+  }
+
+  Future<List<ConversationSummary>> list(String ownerScope) async {
+    return (await snapshot(ownerScope)).items;
   }
 
   Future<ConversationSummary> create(
