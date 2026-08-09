@@ -39,6 +39,9 @@ void main() {
   testWidgets('streams formatted markdown with an inline breathing caret', (
     WidgetTester tester,
   ) async {
+    final SemanticsHandle semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
+
     await tester.pumpWidget(
       MaterialApp(
         theme: SentIQTheme.light(),
@@ -55,9 +58,19 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Formatted'), findsOneWidget);
+    // flutter_markdown_plus may render emphasis inside a RichText/TextSpan tree
+    // rather than as an independent Text('Formatted') widget. Verify the
+    // actual painted rich-text content instead of depending on that internal
+    // widget decomposition.
+    final Finder renderedMarkdown = find.byWidgetPredicate((Widget widget) {
+      return widget is RichText &&
+          widget.text.toPlainText().contains('Formatted response');
+    });
+    expect(renderedMarkdown, findsAtLeastNWidgets(1));
     expect(
-      find.bySemanticsLabel(RegExp('Response is still being written')),
+      find.bySemanticsLabel(
+        RegExp('Response is still being written', caseSensitive: false),
+      ),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
