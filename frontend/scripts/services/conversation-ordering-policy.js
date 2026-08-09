@@ -6,6 +6,11 @@
 //   2. the latest user-authored message in that conversation.
 // Reading/opening a conversation, assistant output, title changes, cache warming,
 // and remote hydration must never move a conversation upward in history.
+//
+// Authenticated "New Chat" placeholders are intentionally local-only until the
+// first user write (the existing product contract avoids empty Supabase rows).
+// Such blank placeholders are transient drafts and do not consume one of the 50
+// persisted-conversation slots until the user actually writes into them.
 
 const Storage = window.SentIQStorage;
 const MAX_STORED_CHATS = 50;
@@ -81,6 +86,15 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
 
   function hasCachedUserMessages(chat) {
     return Array.isArray(chat?.messages) && chat.messages.some((message) => message?.role === "user");
+  }
+
+  function isTransientBlankServerPlaceholder(chat) {
+    if (!chat || chat.source !== "server" || !chat.pending_server_sync) return false;
+    if (hasCachedUserMessages(chat)) return false;
+    const messageCount = Number(chat.message_count || 0);
+    if (Number.isFinite(messageCount) && messageCount > 0) return false;
+    if (String(chat.first_user_message || "").trim()) return false;
+    return !(Array.isArray(chat.messages) && chat.messages.length > 0);
   }
 
   function activeOwnerScope() {
@@ -210,14 +224,16 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
 
   async function enforceClientRetention(chats) {
     const ordered = [...chats].sort(compareChatsByUserActivity);
-    if (ordered.length <= MAX_STORED_CHATS) return ordered;
+    const committed = ordered.filter((chat) => !isTransientBlankServerPlaceholder(chat));
+    if (committed.length <= MAX_STORED_CHATS) return ordered;
 
-    // This is browser-cache cleanup only. Authenticated remote retention is
-    // prepared through the API guard below so the backend can delete stored
-    // image/file artifacts before the Supabase conversation row disappears.
-    const overflow = ordered.slice(MAX_STORED_CHATS);
+    // This is browser-cache cleanup only. Blank authenticated placeholders are
+    // deliberately excluded until the first user write, matching the existing
+    // no-empty-Supabase-row product contract.
+    const overflow = committed.slice(MAX_STORED_CHATS);
+    const overflowIds = new Set(overflow.map((chat) => chat.id));
     await Promise.allSettled(overflow.map((chat) => deleteCachedChat(chat.id)));
-    return ordered.slice(0, MAX_STORED_CHATS);
+    return ordered.filter((chat) => !overflowIds.has(chat.id));
   }
 
   function normalizeRemoteConversation(chat) {
@@ -362,7 +378,9 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
         latestUserMessageTimestamp(result),
         createdTimestamp(result),
       );
-      return restoreActivity(chatId, userActivity, lastMessageAt);
+      const updated = await restoreActivity(chatId, userActivity, lastMessageAt);
+      await Storage.getAllChats();
+      return updated;
     }
 
     return restoreActivity(chatId, beforeActivity || createdTimestamp(result), lastMessageAt);
@@ -385,7 +403,9 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
         latestUserMessageTimestamp(result),
         createdTimestamp(result),
       );
-      return restoreActivity(chatId, userActivity, lastMessageAt);
+      const updated = await restoreActivity(chatId, userActivity, lastMessageAt);
+      await Storage.getAllChats();
+      return updated;
     }
 
     return restoreActivity(chatId, beforeActivity || createdTimestamp(result), lastMessageAt);
@@ -420,7 +440,11 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
     // This intentionally allows a DOWNGRADE. Historical cache pollution must
     // not win over the repaired server's canonical user-activity timestamp.
     if (canonicalActivity) persistUserActivity(result.id, canonicalActivity);
-    return normalizeChatForRead(result);
+    const normalized = normalizeChatForRead(result);
+    if (!isTransientBlankServerPlaceholder(normalized)) {
+      await Storage.getAllChats();
+    }
+    return normalized;
   };
 
   Storage.mergeChatMessages = async function mergeChatMessagesWithoutReadRecency(chatId, messages, options = {}) {
@@ -465,10 +489,13 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
 
   Storage.getStorageStats = async function getStorageStatsWithFixedChatRetention() {
     const stats = await original.getStorageStats();
+    const chats = await Storage.getAllChats();
+    const committedCount = chats.filter((chat) => !isTransientBlankServerPlaceholder(chat)).length;
     return {
       ...stats,
       chats: {
         ...(stats?.chats || {}),
+        count: Math.min(committedCount, MAX_STORED_CHATS),
         limit: MAX_STORED_CHATS,
       },
     };
