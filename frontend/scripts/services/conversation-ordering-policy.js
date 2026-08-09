@@ -9,9 +9,12 @@
 
 const Storage = window.SentIQStorage;
 const MAX_STORED_CHATS = 50;
+const LEGACY_INTERNAL_CHAT_LIMIT = 1000;
+const USER_ACTIVITY_STORAGE_PREFIX = "sentiq:conversation-user-activity:";
 
 if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
   const original = {
+    createChat: typeof Storage.createChat === "function" ? Storage.createChat.bind(Storage) : null,
     getChat: Storage.getChat.bind(Storage),
     getAllChats: Storage.getAllChats.bind(Storage),
     getLocalChats: Storage.getLocalChats.bind(Storage),
@@ -30,6 +33,7 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
     getStorageStats: Storage.getStorageStats.bind(Storage),
   };
 
+  const persistedUserActivityMemory = new Map();
   const retentionPreparedChatIds = new Set();
   const retentionPreparePromises = new Map();
   let apiRetentionGuardInstalled = false;
@@ -79,18 +83,72 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
     return Array.isArray(chat?.messages) && chat.messages.some((message) => message?.role === "user");
   }
 
+  function activeOwnerScope() {
+    try {
+      const owner = typeof Storage.getActiveUserId === "function" ? Storage.getActiveUserId() : "";
+      return String(owner || "guest").trim() || "guest";
+    } catch {
+      return "guest";
+    }
+  }
+
+  function userActivityStorageKey(chatId) {
+    return `${USER_ACTIVITY_STORAGE_PREFIX}${activeOwnerScope()}:${String(chatId || "")}`;
+  }
+
+  function readPersistedUserActivity(chat) {
+    const chatId = chat?.id;
+    if (!chatId) return "";
+    const key = userActivityStorageKey(chatId);
+    const memoryValue = persistedUserActivityMemory.get(key);
+    if (timestampMs(memoryValue) !== null) return memoryValue;
+    try {
+      const stored = window.localStorage?.getItem?.(key) || "";
+      if (timestampMs(stored) !== null) {
+        persistedUserActivityMemory.set(key, stored);
+        return stored;
+      }
+    } catch { /* private/blocked storage falls back to in-memory activity */ }
+    return "";
+  }
+
+  function persistUserActivity(chatId, activity) {
+    if (!chatId || timestampMs(activity) === null) return;
+    const key = userActivityStorageKey(chatId);
+    persistedUserActivityMemory.set(key, activity);
+    try {
+      window.localStorage?.setItem?.(key, activity);
+    } catch { /* IndexedDB cache remains available; in-memory shadow is enough for this session */ }
+  }
+
+  function clearPersistedUserActivity(chatId) {
+    if (!chatId) return;
+    const key = userActivityStorageKey(chatId);
+    persistedUserActivityMemory.delete(key);
+    try {
+      window.localStorage?.removeItem?.(key);
+    } catch { /* ignore blocked web storage */ }
+  }
+
   function activityTimestamp(chat) {
     const created = createdTimestamp(chat);
     const latestUserMessage = latestUserMessageTimestamp(chat);
 
     if (chat?.source === "server") {
-      // A hydrated chat contains enough evidence to derive exact user activity
-      // without trusting older cached metadata that may have been polluted by an
-      // assistant message. Metadata-only server chats use the canonical
-      // last_activity_at returned by the repaired Supabase RPC.
+      // The shadow timestamp survives legacy cache writes that still mutate
+      // `updated`/`last_activity_at` for assistant messages. It is populated
+      // from the canonical server RPC and from verified local user messages.
+      const persistedActivity = readPersistedUserActivity(chat);
+      if (timestampMs(persistedActivity) !== null) return persistedActivity;
+
+      // Before the first remote refresh, a fully hydrated cache has enough
+      // evidence to recover the exact latest user-authored timestamp itself.
       if (hasCachedUserMessages(chat)) {
         return newestTimestamp(created, latestUserMessage) || created;
       }
+
+      // Metadata-only server chats trust only the canonical field repaired by
+      // the Supabase migration. Never fall back to last_message_at or updated.
       return firstValidTimestamp(
         chat?.last_activity_at,
         chat?.lastActivityAt,
@@ -98,8 +156,8 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
       );
     }
 
-    // Local/temporary chats always retain their messages, so never use `updated`
-    // as recency: legacy assistant writes may have changed it.
+    // Local/temporary chats retain their messages, so never use `updated` as
+    // recency: older assistant writes may have polluted it.
     return newestTimestamp(created, latestUserMessage) || created;
   }
 
@@ -136,11 +194,18 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
     if (!chatId || !activity) return original.getChat(chatId);
     const chat = await original.getChat(chatId);
     if (!chat) return chat;
-    return original.updateChatSyncState(chatId, {
+    if (chat.source === "server") persistUserActivity(chatId, activity);
+    const updated = await original.updateChatSyncState(chatId, {
       updated: activity,
       ...(chat.source === "server" ? { last_activity_at: activity } : {}),
       ...(lastMessageAt ? { last_message_at: lastMessageAt } : {}),
     });
+    return normalizeChatForRead(updated);
+  }
+
+  async function deleteCachedChat(chatId) {
+    clearPersistedUserActivity(chatId);
+    return original.deleteChat(chatId);
   }
 
   async function enforceClientRetention(chats) {
@@ -151,7 +216,7 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
     // prepared through the API guard below so the backend can delete stored
     // image/file artifacts before the Supabase conversation row disappears.
     const overflow = ordered.slice(MAX_STORED_CHATS);
-    await Promise.allSettled(overflow.map((chat) => original.deleteChat(chat.id)));
+    await Promise.allSettled(overflow.map((chat) => deleteCachedChat(chat.id)));
     return ordered.slice(0, MAX_STORED_CHATS);
   }
 
@@ -209,7 +274,7 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
           // creation so we never knowingly create a 51st chat with orphaned data.
           if (Number(error?.status) !== 404) throw error;
         }
-        await original.deleteChat(leastRecent.id).catch(() => null);
+        await deleteCachedChat(leastRecent.id).catch(() => null);
       }
 
       retentionPreparedChatIds.add(chatId);
@@ -252,6 +317,14 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
     setTimeout(() => scheduleApiRetentionGuardInstall(attempt + 1), 0);
   }
 
+  if (original.createChat) {
+    Storage.createChat = async function createChatWithStrictRetention(title) {
+      const chat = await original.createChat(title);
+      await Storage.getAllChats();
+      return chat;
+    };
+  }
+
   Storage.getAllChats = async function getAllChatsWithUserActivityOrdering() {
     const chats = await original.getAllChats();
     const normalized = chats.map(normalizeChatForRead);
@@ -261,6 +334,10 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
   Storage.getLocalChats = async function getLocalChatsWithUserActivityOrdering() {
     const chats = await Storage.getAllChats();
     return chats.filter((chat) => chat?.source !== "server");
+  };
+
+  Storage.deleteChat = async function deleteChatAndActivityShadow(chatId) {
+    return deleteCachedChat(chatId);
   };
 
   Storage.compareChatsByActivity = compareChatsByUserActivity;
@@ -288,11 +365,7 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
       return restoreActivity(chatId, userActivity, lastMessageAt);
     }
 
-    return restoreActivity(
-      chatId,
-      beforeActivity || createdTimestamp(result),
-      lastMessageAt,
-    );
+    return restoreActivity(chatId, beforeActivity || createdTimestamp(result), lastMessageAt);
   };
 
   Storage.upsertMessageInChat = async function upsertMessageWithoutAssistantRecencyBump(chatId, message) {
@@ -315,11 +388,7 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
       return restoreActivity(chatId, userActivity, lastMessageAt);
     }
 
-    return restoreActivity(
-      chatId,
-      beforeActivity || createdTimestamp(result),
-      lastMessageAt,
-    );
+    return restoreActivity(chatId, beforeActivity || createdTimestamp(result), lastMessageAt);
   };
 
   Storage.updateMessageInChat = async function updateMessageWithoutRecencyBump(chatId, messageId, updates = {}) {
@@ -327,11 +396,7 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
     const beforeActivity = activityTimestamp(before) || createdTimestamp(before);
     const result = await original.updateMessageInChat(chatId, messageId, updates);
     const lastMessageAt = result?.last_message_at || result?.messages?.[result.messages.length - 1]?.timestamp || "";
-    return restoreActivity(
-      chatId,
-      beforeActivity || createdTimestamp(result),
-      lastMessageAt,
-    );
+    return restoreActivity(chatId, beforeActivity || createdTimestamp(result), lastMessageAt);
   };
 
   Storage.updateChatTitle = async function updateTitleWithoutRecencyBump(chatId, title, options = {}) {
@@ -343,50 +408,19 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
   };
 
   Storage.upsertServerChat = async function upsertServerChatWithCanonicalUserActivity(chatData) {
-    const existing = await original.getChat(chatData?.id).catch(() => null);
     const canonicalActivity = firstValidTimestamp(
       chatData?.last_activity_at,
       chatData?.lastActivityAt,
       chatData?.created,
       chatData?.created_at,
     );
-
-    // Older versions preserved the newest cached activity forever. If the
-    // repaired server now returns an earlier canonical timestamp, rebuild this
-    // metadata row so historical assistant/read pollution is actually removed
-    // from IndexedDB rather than merely hidden for one render.
-    const existingActivityMs = timestampMs(firstValidTimestamp(existing?.last_activity_at, existing?.updated));
-    const canonicalActivityMs = timestampMs(canonicalActivity);
-    const canRepairPollutedServerCache = Boolean(
-      existing
-      && existing.source === "server"
-      && !existing.pending_server_sync
-      && canonicalActivityMs !== null
-      && existingActivityMs !== null
-      && canonicalActivityMs < existingActivityMs,
-    );
-
-    if (canRepairPollutedServerCache) {
-      await original.deleteChat(existing.id);
-      return original.upsertServerChat({
-        ...chatData,
-        id: existing.id,
-        title: chatData?.title || existing.title,
-        created: firstValidTimestamp(chatData?.created, chatData?.created_at, existing.created),
-        last_activity_at: canonicalActivity,
-        updated: canonicalActivity,
-        message_count: Number.isFinite(Number(chatData?.message_count))
-          ? Number(chatData.message_count)
-          : Number(existing?.message_count || existing?.messages?.length || 0),
-        first_user_message: chatData?.first_user_message || existing?.first_user_message || null,
-        last_message_at: firstValidTimestamp(chatData?.last_message_at, chatData?.lastMessageAt, existing?.last_message_at),
-        message_cache_status: "metadata-only",
-        warmed_at: null,
-      });
-    }
-
     const result = await original.upsertServerChat(chatData);
-    return result ? normalizeChatForRead(result) : result;
+    if (!result) return result;
+
+    // This intentionally allows a DOWNGRADE. Historical cache pollution must
+    // not win over the repaired server's canonical user-activity timestamp.
+    if (canonicalActivity) persistUserActivity(result.id, canonicalActivity);
+    return normalizeChatForRead(result);
   };
 
   Storage.mergeChatMessages = async function mergeChatMessagesWithoutReadRecency(chatId, messages, options = {}) {
@@ -401,14 +435,7 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
     const fallbackActivity = activityTimestamp(before) || createdTimestamp(result);
     const activity = exactUserActivity || fallbackActivity;
     const lastMessageAt = result?.messages?.[result.messages.length - 1]?.timestamp || result?.last_message_at || "";
-
-    // updateChatSyncState is monotonic in the legacy storage implementation.
-    // For hydrated server chats, normalizeChatForRead supplies the strict
-    // user-derived timestamp to every caller even if the compatibility field
-    // inside the underlying row was touched by the final assistant message.
-    await restoreActivity(chatId, activity, lastMessageAt);
-    const stored = await original.getChat(chatId);
-    return normalizeChatForRead(stored);
+    return restoreActivity(chatId, activity, lastMessageAt);
   };
 
   Storage.replaceChatMessages = async function replaceChatMessagesWithoutReadRecency(chatId, messages) {
@@ -421,7 +448,13 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
   };
 
   Storage.setConfig = async function setConfigWithFixedChatRetention(key, value) {
-    if (key === "chat_limit") return original.setConfig(key, MAX_STORED_CHATS);
+    if (key === "chat_limit") {
+      // Keep the legacy internal limiter out of the ordering decision because it
+      // evicts by the old `updated` field. Public/UI retention remains exactly 50
+      // and is enforced immediately by the strict comparator above.
+      await original.setConfig(key, LEGACY_INTERNAL_CHAT_LIMIT);
+      return MAX_STORED_CHATS;
+    }
     return original.setConfig(key, value);
   };
 
@@ -454,5 +487,9 @@ if (Storage && !Storage.__conversationOrderingPolicyInstalled) {
     writable: false,
   });
 
+  // Prevent the legacy IndexedDB limiter from making a wrong ordering decision
+  // before our strict post-create pruning runs. This is intentionally internal;
+  // every public settings/stat surface still reports the product limit of 50.
+  original.setConfig("chat_limit", LEGACY_INTERNAL_CHAT_LIMIT).catch(() => null);
   scheduleApiRetentionGuardInstall();
 }
