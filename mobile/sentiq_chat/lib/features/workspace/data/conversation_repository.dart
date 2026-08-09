@@ -53,10 +53,16 @@ class ConversationRepository {
     // in user from recovering their server history after restart/reinstall.
     final bool replayDegraded = await _replayPending(ownerScope);
     try {
-      final List<ConversationSummary> remote = await _cloud.list(ownerScope);
-      await _cache.reconcileCloudSnapshot(ownerScope, remote);
-      _clearResolvedTitleAttempts(remote);
-      _scheduleTitleRepair(ownerScope, remote);
+      final CloudConversationSnapshot snapshot = await _cloud.snapshot(
+        ownerScope,
+      );
+      await _cache.reconcileCloudSnapshot(
+        ownerScope,
+        snapshot.items,
+        aliases: snapshot.aliases,
+      );
+      _clearResolvedTitleAttempts(snapshot.items);
+      _scheduleTitleRepair(ownerScope, snapshot.items);
       return ConversationLoadResult(
         items: await _cache.list(ownerScope),
         degraded: replayDegraded,
