@@ -15,7 +15,14 @@ activity_mismatches as (
       select max(m.created_at)
       from public.messages m
       where m.conversation_id = c.id
-        and m.role = 'user'
+        and (
+          m.role = 'user'
+          or (
+            m.role = 'assistant'
+            and m.message_type = 'live_transcript'
+            and coalesce(m.content, '') ~ E'(^|\\n)You:[[:space:]]*[^[:space:]]'
+          )
+        )
     ),
     c.created_at
   )
@@ -37,7 +44,9 @@ function_contracts as (
 ),
 contract_checks as (
   select
-    position('new.role = ''user''' in lower(touch_def)) > 0 as user_only_touch,
+    position('new.role = ''user''' in lower(touch_def)) > 0 as direct_user_touch,
+    position('new.message_type = ''live_transcript''' in lower(touch_def)) > 0
+      and position('you:' in lower(touch_def)) > 0 as live_user_touch,
     position('coalesce(c.last_activity_at, c.created_at) desc' in lower(list_def)) > 0 as newest_first_list,
     position('last_message_at' in lower(list_def)) > 0 as last_message_metadata_present,
     position('max_conversations constant integer := 50' in lower(limit_def)) > 0 as exact_limit_50,
@@ -50,7 +59,8 @@ select
     v.schema_version = '20260809123000'
     and a.mismatch_count = 0
     and o.user_count = 0
-    and c.user_only_touch
+    and c.direct_user_touch
+    and c.live_user_touch
     and c.newest_first_list
     and c.last_message_metadata_present
     and c.exact_limit_50
@@ -60,7 +70,8 @@ select
   v.schema_version,
   a.mismatch_count as conversation_activity_mismatches,
   o.user_count as users_over_50_conversations,
-  c.user_only_touch,
+  c.direct_user_touch,
+  c.live_user_touch,
   c.newest_first_list,
   c.last_message_metadata_present,
   c.exact_limit_50,
