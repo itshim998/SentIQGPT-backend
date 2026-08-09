@@ -3,7 +3,7 @@ import 'package:sentiq_chat/features/workspace/domain/conversation_summary.dart'
 import 'package:sqflite/sqflite.dart';
 
 abstract final class CacheMigrations {
-  static const int currentVersion = 4;
+  static const int currentVersion = 5;
 
   static const Map<int, List<String>> steps = <int, List<String>>{
     1: <String>[
@@ -61,12 +61,18 @@ abstract final class CacheMigrations {
       'CREATE INDEX chat_turns_owner_state '
           'ON chat_turns(owner_scope, state, updated_at)',
     ],
+    5: <String>[
+      'ALTER TABLE conversations ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE conversations ADD COLUMN first_user_message TEXT',
+    ],
   };
 }
 
 class ConversationCache {
   ConversationCache({DatabaseFactory? factory, this._databasePath})
     : _databaseFactory = factory ?? databaseFactory;
+
+  static const int maximumConversations = 50;
 
   final DatabaseFactory _databaseFactory;
   final String? _databasePath;
@@ -113,7 +119,8 @@ class ConversationCache {
         ownerScope,
         ConversationSyncState.pendingDelete.name,
       ],
-      orderBy: 'updated_at DESC',
+      orderBy: 'updated_at DESC, created_at DESC',
+      limit: maximumConversations,
     );
     return rows.map(ConversationSummary.fromDatabase).toList();
   }
@@ -124,17 +131,21 @@ class ConversationCache {
       'conversations',
       where: 'owner_scope = ? AND sync_state != ?',
       whereArgs: <Object?>[ownerScope, ConversationSyncState.synced.name],
+      orderBy: 'created_at ASC',
     );
     return rows.map(ConversationSummary.fromDatabase).toList();
   }
 
   Future<void> upsert(ConversationSummary conversation) async {
     final Database database = await open();
-    await database.insert(
-      'conversations',
-      conversation.toDatabase(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await database.transaction((Transaction transaction) async {
+      await transaction.insert(
+        'conversations',
+        conversation.toDatabase(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await _trimScope(transaction, conversation.ownerScope);
+    });
   }
 
   Future<void> upsertAll(List<ConversationSummary> conversations) async {
@@ -150,27 +161,96 @@ class ConversationCache {
         );
       }
       await batch.commit(noResult: true);
+      for (final String scope in conversations
+          .map((ConversationSummary item) => item.ownerScope)
+          .toSet()) {
+        await _trimScope(transaction, scope);
+      }
+    });
+  }
+
+  /// Reconciles a successful server snapshot into SQLite.
+  ///
+  /// For signed-in users the backend is the canonical history. Local-only
+  /// records are preserved until their create is replayed; pending local
+  /// mutations are also preserved. Synced rows that disappeared remotely are
+  /// removed locally so app reinstall, storage clear, web deletes and the
+  /// backend's 50-chat FIFO eviction all converge to exactly the same history.
+  Future<void> reconcileCloudSnapshot(
+    String ownerScope,
+    List<ConversationSummary> remote,
+  ) async {
+    final Database database = await open();
+    await database.transaction((Transaction transaction) async {
+      final List<Map<String, Object?>> localRows = await transaction.query(
+        'conversations',
+        where: 'owner_scope = ?',
+        whereArgs: <Object?>[ownerScope],
+      );
+      final Map<String, ConversationSummary> local = <String, ConversationSummary>{
+        for (final Map<String, Object?> row in localRows)
+          row['id'].toString(): ConversationSummary.fromDatabase(row),
+      };
+      final List<ConversationSummary> canonicalRemote = remote
+          .where((ConversationSummary item) => item.id.isNotEmpty)
+          .take(maximumConversations)
+          .toList(growable: false);
+      final Set<String> remoteIds = canonicalRemote
+          .map((ConversationSummary item) => item.id)
+          .toSet();
+
+      for (final ConversationSummary cloud in canonicalRemote) {
+        final ConversationSummary? cached = local[cloud.id];
+        if (cached?.syncState == ConversationSyncState.pendingDelete) {
+          continue;
+        }
+        if (cached?.syncState == ConversationSyncState.pendingRename &&
+            cached!.title != cloud.title) {
+          // Preserve the local explicit rename until its PATCH succeeds, while
+          // still accepting authoritative cloud activity/message metadata.
+          await transaction.insert(
+            'conversations',
+            cached.copyWith(
+              updatedAt: cloud.updatedAt,
+              lastMessagePreview: cloud.lastMessagePreview,
+              firstUserMessage: cloud.firstUserMessage,
+              messageCount: cloud.messageCount,
+            ).toDatabase(),
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+          continue;
+        }
+        await transaction.insert(
+          'conversations',
+          cloud.toDatabase(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      for (final ConversationSummary cached in local.values) {
+        if (remoteIds.contains(cached.id)) continue;
+        switch (cached.syncState) {
+          case ConversationSyncState.localOnly:
+            // Not uploaded yet; must survive cloud snapshots until replayed.
+            continue;
+          case ConversationSyncState.pendingDelete:
+          case ConversationSyncState.pendingRename:
+          case ConversationSyncState.synced:
+            // A successful authoritative list no longer contains this row.
+            // This covers web-side deletes, FIFO eviction and stale aliases.
+            await _deleteConversationRows(transaction, cached.id);
+            break;
+        }
+      }
+
+      await _trimScope(transaction, ownerScope);
     });
   }
 
   Future<void> deleteHard(String id) async {
     final Database database = await open();
     await database.transaction((Transaction transaction) async {
-      await transaction.delete(
-        'messages',
-        where: 'conversation_id = ?',
-        whereArgs: <Object>[id],
-      );
-      await transaction.delete(
-        'chat_turns',
-        where: 'conversation_id = ?',
-        whereArgs: <Object>[id],
-      );
-      await transaction.delete(
-        'conversations',
-        where: 'id = ?',
-        whereArgs: <Object>[id],
-      );
+      await _deleteConversationRows(transaction, id);
     });
   }
 
@@ -203,6 +283,42 @@ class ConversationCache {
       await transaction.delete('conversations');
       await transaction.delete('app_meta');
     });
+  }
+
+  Future<void> _trimScope(Transaction transaction, String ownerScope) async {
+    final List<Map<String, Object?>> excess = await transaction.query(
+      'conversations',
+      columns: const <String>['id'],
+      where: 'owner_scope = ?',
+      whereArgs: <Object?>[ownerScope],
+      orderBy: 'created_at DESC',
+      offset: maximumConversations,
+    );
+    for (final Map<String, Object?> row in excess) {
+      final String id = row['id']?.toString() ?? '';
+      if (id.isNotEmpty) await _deleteConversationRows(transaction, id);
+    }
+  }
+
+  Future<void> _deleteConversationRows(
+    Transaction transaction,
+    String id,
+  ) async {
+    await transaction.delete(
+      'messages',
+      where: 'conversation_id = ?',
+      whereArgs: <Object>[id],
+    );
+    await transaction.delete(
+      'chat_turns',
+      where: 'conversation_id = ?',
+      whereArgs: <Object>[id],
+    );
+    await transaction.delete(
+      'conversations',
+      where: 'id = ?',
+      whereArgs: <Object>[id],
+    );
   }
 
   Future<void> close() async {
