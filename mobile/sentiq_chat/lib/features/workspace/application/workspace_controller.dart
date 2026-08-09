@@ -105,6 +105,22 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
     Duration(seconds: 60),
   ];
 
+  // These are intervals, not absolute times. They produce reconciliation
+  // points at roughly 2s, 6s, 15s, 30s, 60s, 120s, 180s and 300s after a new
+  // conversation. The loop stops as soon as the chat is cloud-synced and has
+  // its summarized title. This covers long-running Fast/Intuitive turns while
+  // keeping list traffic bounded.
+  static const List<Duration> _conversationConvergenceDelays = <Duration>[
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 9),
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+    Duration(seconds: 60),
+    Duration(seconds: 60),
+    Duration(seconds: 120),
+  ];
+
   final WorkspaceSession _session;
   final ConversationRepository _repository;
   final NetworkMonitor _networkMonitor;
@@ -116,6 +132,8 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
   Timer? _retryTimer;
   int _retryAttempt = 0;
   Timer? _titleRepairRefreshTimer;
+  final Map<String, Timer> _conversationConvergenceTimers = <String, Timer>{};
+  final Map<String, int> _conversationConvergenceAttempts = <String, int>{};
 
   Future<void> initialize() async {
     final NetworkAvailability availability = await _networkMonitor.current();
@@ -214,6 +232,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       _resetRetry();
     }
     _scheduleTitleRepairRefresh(result.items);
+    _stopConvergedConversationTimers(result.items);
   }
 
   Future<void> newConversation() async {
@@ -238,7 +257,10 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       loading: false,
     );
     if (_session.cloudEnabled && _networkAvailable) {
-      await refresh();
+      // Do not hold the button callback open on network I/O. The lossless queue
+      // guarantees this request still runs after any in-flight startup refresh.
+      unawaited(refresh());
+      _scheduleConversationConvergence(created.id);
     }
   }
 
@@ -278,7 +300,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       clearMessage: _networkAvailable || !_session.cloudEnabled,
     );
     if (_session.cloudEnabled && _networkAvailable) {
-      await refresh();
+      unawaited(refresh());
     }
   }
 
@@ -289,6 +311,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       networkAvailable: false,
     );
     if (_disposed) return;
+    _cancelConversationConvergence(conversation.id);
     final List<ConversationSummary> remaining = state.conversations
         .where((ConversationSummary item) => item.id != conversation.id)
         .toList();
@@ -303,7 +326,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       loading: false,
     );
     if (_session.cloudEnabled && _networkAvailable) {
-      await refresh();
+      unawaited(refresh());
     }
   }
 
@@ -355,6 +378,63 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
     });
   }
 
+  void _scheduleConversationConvergence(String conversationId) {
+    if (_disposed || !_session.cloudEnabled || !_networkAvailable) return;
+    if (_conversationConvergenceTimers.containsKey(conversationId)) return;
+    final int attempt = _conversationConvergenceAttempts[conversationId] ?? 0;
+    if (attempt >= _conversationConvergenceDelays.length) {
+      _conversationConvergenceAttempts.remove(conversationId);
+      return;
+    }
+
+    _conversationConvergenceTimers[conversationId] = Timer(
+      _conversationConvergenceDelays[attempt],
+      () async {
+        _conversationConvergenceTimers.remove(conversationId);
+        if (_disposed) return;
+        _conversationConvergenceAttempts[conversationId] = attempt + 1;
+        if (_networkAvailable) await refresh();
+        if (_disposed) return;
+        final ConversationSummary? conversation = _findConversation(
+          conversationId,
+        );
+        if (conversation == null || _isFullyConverged(conversation)) {
+          _cancelConversationConvergence(conversationId);
+          return;
+        }
+        _scheduleConversationConvergence(conversationId);
+      },
+    );
+  }
+
+  void _stopConvergedConversationTimers(
+    List<ConversationSummary> conversations,
+  ) {
+    for (final ConversationSummary conversation in conversations) {
+      if (_isFullyConverged(conversation)) {
+        _cancelConversationConvergence(conversation.id);
+      }
+    }
+  }
+
+  bool _isFullyConverged(ConversationSummary conversation) {
+    return conversation.syncState == ConversationSyncState.synced &&
+        conversation.messageCount >= 2 &&
+        !conversation.needsGeneratedTitle;
+  }
+
+  ConversationSummary? _findConversation(String id) {
+    for (final ConversationSummary conversation in state.conversations) {
+      if (conversation.id == id) return conversation;
+    }
+    return null;
+  }
+
+  void _cancelConversationConvergence(String conversationId) {
+    _conversationConvergenceTimers.remove(conversationId)?.cancel();
+    _conversationConvergenceAttempts.remove(conversationId);
+  }
+
   void _handleNetworkChange(NetworkAvailability availability) {
     final bool wasAvailable = _networkAvailable;
     _networkAvailable = availability == NetworkAvailability.online;
@@ -367,7 +447,16 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
           ? WorkspaceNetworkState.online
           : WorkspaceNetworkState.offline,
     );
-    if (!wasAvailable && _networkAvailable) unawaited(refresh());
+    if (!wasAvailable && _networkAvailable) {
+      unawaited(refresh());
+      for (final ConversationSummary conversation in state.conversations) {
+        if (conversation.syncState != ConversationSyncState.synced ||
+            (conversation.messageCount >= 2 &&
+                conversation.needsGeneratedTitle)) {
+          _scheduleConversationConvergence(conversation.id);
+        }
+      }
+    }
   }
 
   @override
@@ -375,6 +464,11 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
     _disposed = true;
     _retryTimer?.cancel();
     _titleRepairRefreshTimer?.cancel();
+    for (final Timer timer in _conversationConvergenceTimers.values) {
+      timer.cancel();
+    }
+    _conversationConvergenceTimers.clear();
+    _conversationConvergenceAttempts.clear();
     unawaited(_networkSubscription.cancel());
     super.dispose();
   }
