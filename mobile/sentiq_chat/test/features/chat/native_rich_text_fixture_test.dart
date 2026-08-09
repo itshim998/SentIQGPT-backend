@@ -39,9 +39,6 @@ void main() {
   testWidgets('streams formatted markdown with an inline breathing caret', (
     WidgetTester tester,
   ) async {
-    final SemanticsHandle semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
-
     await tester.pumpWidget(
       MaterialApp(
         theme: SentIQTheme.light(),
@@ -66,13 +63,13 @@ void main() {
       return widget is RichText &&
           widget.text.toPlainText().contains('Formatted response');
     });
+    final Finder streamingCaret = find.byWidgetPredicate((Widget widget) {
+      return widget is Semantics &&
+          widget.properties.label == 'Response is still being written';
+    });
+
     expect(renderedMarkdown, findsWidgets);
-    expect(
-      find.bySemanticsLabel(
-        RegExp('Response is still being written', caseSensitive: false),
-      ),
-      findsOneWidget,
-    );
+    expect(streamingCaret, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
