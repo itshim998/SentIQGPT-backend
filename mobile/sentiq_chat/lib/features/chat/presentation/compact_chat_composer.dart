@@ -430,39 +430,11 @@ class _CompactChatComposerState extends State<CompactChatComposer> {
 
   @override
   Widget build(BuildContext context) {
-    final SentIQPalette palette = context.sentiqPalette;
     final bool lowCost = SentIQPerformancePolicy.useLowCostEffects(context);
     return Stack(
       clipBehavior: Clip.none,
       children: <Widget>[
-        if (!lowCost)
-          Positioned(
-            left: 18,
-            right: 18,
-            bottom: -5,
-            height: 58,
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(34),
-                  boxShadow: <BoxShadow>[
-                    BoxShadow(
-                      color: palette.accent.withValues(alpha: 0.34),
-                      blurRadius: 42,
-                      spreadRadius: 6,
-                      offset: const Offset(0, 15),
-                    ),
-                    BoxShadow(
-                      color: palette.accent.withValues(alpha: 0.16),
-                      blurRadius: 24,
-                      spreadRadius: 2,
-                      offset: const Offset(0, 5),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+        if (!lowCost) const _CompactComposerAura(),
         RefractiveGlassSurface(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           borderRadius: 34,
@@ -591,6 +563,44 @@ class _CompactChatComposerState extends State<CompactChatComposer> {
       ..dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+}
+
+class _CompactComposerAura extends StatelessWidget {
+  const _CompactComposerAura();
+
+  @override
+  Widget build(BuildContext context) {
+    final SentIQPalette palette = context.sentiqPalette;
+    return Positioned(
+      left: 18,
+      right: 18,
+      bottom: -5,
+      height: 58,
+      child: IgnorePointer(
+        child: RepaintBoundary(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(34),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: palette.accent.withValues(alpha: 0.28),
+                  blurRadius: 30,
+                  spreadRadius: 4,
+                  offset: const Offset(0, 12),
+                ),
+                BoxShadow(
+                  color: palette.accent.withValues(alpha: 0.12),
+                  blurRadius: 18,
+                  spreadRadius: 1,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
