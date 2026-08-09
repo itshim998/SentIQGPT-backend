@@ -39,6 +39,9 @@ void main() {
   testWidgets('streams formatted markdown with an inline breathing caret', (
     WidgetTester tester,
   ) async {
+    final SemanticsHandle semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
+
     await tester.pumpWidget(
       MaterialApp(
         theme: SentIQTheme.light(),
