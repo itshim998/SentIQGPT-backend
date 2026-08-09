@@ -202,6 +202,23 @@ before insert on public.conversations
 for each row
 execute function public.enforce_conversation_limit();
 
+-- Stable rollout/version probe. This lets operations verify all three data
+-- shards are on the exact ordering contract before the frontend is promoted.
+create or replace function public.get_conversation_user_activity_schema_version()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select '20260809123000'::text;
+$$;
+
+revoke all on function public.get_conversation_user_activity_schema_version() from public;
+revoke all on function public.get_conversation_user_activity_schema_version() from anon;
+revoke all on function public.get_conversation_user_activity_schema_version() from authenticated;
+grant execute on function public.get_conversation_user_activity_schema_version() to service_role;
+
 -- Existing deployments already enforce a 50-row cap. We intentionally do not
 -- run a blind post-migration DELETE here: if legacy data somehow exceeds 50 and
 -- contains Storage-backed artifacts, only the application deletion path can
