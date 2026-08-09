@@ -39,6 +39,42 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('sheet surface is opaque, compact and internally scrollable', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SentIQTheme.dark(),
+        home: Scaffold(
+          body: Builder(
+            builder: (BuildContext context) => TextButton(
+              onPressed: () => showSentIQSheet<void>(
+                context: context,
+                builder: (_) => const SizedBox(
+                  height: 1000,
+                  child: Text('Tall sheet content'),
+                ),
+              ),
+              child: const Text('Open tall sheet'),
+            ),
+          ),
+        ),
+      ),
+    );
+    final double viewportHeight = tester.getSize(find.byType(Scaffold)).height;
+
+    await tester.tap(find.text('Open tall sheet'));
+    await tester.pumpAndSettle();
+
+    final Finder surface = find.byKey(const Key('sentiq-sheet-surface'));
+    final Material material = tester.widget<Material>(surface);
+    expect(surface, findsOneWidget);
+    expect(material.color?.a, 1.0);
+    expect(tester.getSize(surface).height, lessThanOrEqualTo(viewportHeight * 0.48 + 1));
+    expect(find.byKey(const Key('sentiq-sheet-scroll-view')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('actual response-mode picker opens without Material exception', (
     WidgetTester tester,
   ) async {
