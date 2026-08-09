@@ -118,11 +118,12 @@ grant execute on function public.list_user_conversations(uuid) to service_role;
 -- using the exact same user-activity ordering as the sidebar.
 --
 -- External image/generated-file objects live in Supabase Storage, not only in
--- relational rows. The browser prepares a slot through DELETE /api/conversations
--- before creating a 51st chat so the backend can remove those objects first.
--- This trigger is the race-safety fallback. It may directly evict an artifact-
--- free chat, but it refuses to cascade an artifact-bearing chat because doing so
--- would destroy the paths needed to delete the corresponding Storage objects.
+-- relational rows. The application always attempts the new persisted conversation
+-- first; therefore this trigger is the authoritative transaction boundary. It may
+-- atomically evict an artifact-free bottom chat. If the exact bottom chat owns
+-- external objects, the trigger aborts the insert instead of cascading away the
+-- object paths; the browser then uses DELETE /api/conversations/:id for complete
+-- Storage cleanup and retries the idempotent persistence request once.
 create or replace function public.enforce_conversation_limit()
 returns trigger
 language plpgsql
