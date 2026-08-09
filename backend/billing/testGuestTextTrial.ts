@@ -160,7 +160,7 @@ function testMigrationContract(): void {
   assertIncludes(migration, "guest-text-trial-v1", "guest SQL must use a versioned policy marker");
   assertIncludes(migration, "pg_advisory_xact_lock", "guest reservation must serialize concurrent requests per anonymous identity");
   assertIncludes(migration, "feature in ('premium_text', 'lite_text')", "Standard and Lite fallbacks must share one guest pool");
-  assertIncludes(migration, "grant execute on function public.reserve_guest_text_tokens", "guest quota RPCs must remain service-role only");
+  assertIncludes(migration, "grant execute\non function public.reserve_guest_text_tokens", "guest quota RPCs must remain service-role only");
 }
 
 async function main(): Promise<void> {
