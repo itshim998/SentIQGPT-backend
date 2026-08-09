@@ -116,6 +116,13 @@ grant execute on function public.list_user_conversations(uuid) to service_role;
 
 -- Preserve the existing per-user serialization lock, but evict the BOTTOM chat
 -- using the exact same user-activity ordering as the sidebar.
+--
+-- External image/generated-file objects live in Supabase Storage, not only in
+-- relational rows. The browser prepares a slot through DELETE /api/conversations
+-- before creating a 51st chat so the backend can remove those objects first.
+-- This trigger is the race-safety fallback. It may directly evict an artifact-
+-- free chat, but it refuses to cascade an artifact-bearing chat because doing so
+-- would destroy the paths needed to delete the corresponding Storage objects.
 create or replace function public.enforce_conversation_limit()
 returns trigger
 language plpgsql
@@ -126,6 +133,7 @@ declare
   max_conversations constant integer := 50;
   conversation_count integer;
   least_recent_conversation_id uuid;
+  has_external_artifacts boolean;
 begin
   perform public.ensure_user_exists(new.user_id);
 
@@ -154,6 +162,27 @@ begin
       exit;
     end if;
 
+    select
+      exists (
+        select 1
+        from public.generated_files gf
+        where gf.user_id = new.user_id
+          and gf.chat_id = least_recent_conversation_id
+      )
+      or exists (
+        select 1
+        from public.chat_images ci
+        where ci.user_id = new.user_id
+          and ci.chat_id = least_recent_conversation_id
+      )
+    into has_external_artifacts;
+
+    if has_external_artifacts then
+      raise exception 'conversation_retention_artifact_cleanup_required'
+        using errcode = 'P0001',
+              hint = 'Delete the least-recent conversation through the application API before retrying the insert.';
+    end if;
+
     delete from public.conversations
     where id = least_recent_conversation_id
       and user_id = new.user_id;
@@ -173,21 +202,7 @@ before insert on public.conversations
 for each row
 execute function public.enforce_conversation_limit();
 
--- Post-migration invariant: no existing account may retain more than 50 rows.
--- If legacy data exceeds the cap, remove the least-recent rows by user activity.
-with ranked as (
-  select
-    c.id,
-    row_number() over (
-      partition by c.user_id
-      order by
-        coalesce(c.last_activity_at, c.created_at) desc,
-        c.created_at desc,
-        c.id desc
-    ) as recency_rank
-  from public.conversations c
-)
-delete from public.conversations c
-using ranked r
-where c.id = r.id
-  and r.recency_rank > 50;
+-- Existing deployments already enforce a 50-row cap. We intentionally do not
+-- run a blind post-migration DELETE here: if legacy data somehow exceeds 50 and
+-- contains Storage-backed artifacts, only the application deletion path can
+-- remove those objects without leaving orphans.
