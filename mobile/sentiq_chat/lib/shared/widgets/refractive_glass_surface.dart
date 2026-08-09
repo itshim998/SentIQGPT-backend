@@ -50,8 +50,8 @@ class RefractiveGlassSurface extends StatelessWidget {
             : <BoxShadow>[
                 BoxShadow(
                   color: Colors.black.withValues(alpha: 0.12),
-                  blurRadius: 28,
-                  offset: const Offset(0, 12),
+                  blurRadius: 20,
+                  offset: const Offset(0, 9),
                 ),
                 BoxShadow(
                   color: Colors.white.withValues(alpha: 0.05),
@@ -62,11 +62,13 @@ class RefractiveGlassSurface extends StatelessWidget {
       ),
       child: Padding(padding: padding, child: child),
     );
-    final Widget surface = ClipRRect(
-      borderRadius: radius,
-      child: filter == null
-          ? decorated
-          : BackdropFilter(filter: filter, child: decorated),
+    final Widget surface = RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: radius,
+        child: filter == null
+            ? decorated
+            : BackdropFilter(filter: filter, child: decorated),
+      ),
     );
     if (onTap == null) return surface;
     return Semantics(
