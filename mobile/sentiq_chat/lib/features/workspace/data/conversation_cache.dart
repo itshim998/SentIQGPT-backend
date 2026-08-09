@@ -375,17 +375,23 @@ class ConversationCache {
   }
 
   Future<void> _trimScope(Transaction transaction, String ownerScope) async {
-    final List<Map<String, Object?>> excess = await transaction.query(
+    final List<Map<String, Object?>> rows = await transaction.query(
       'conversations',
-      columns: const <String>['id'],
+      columns: const <String>['id', 'sync_state', 'created_at'],
       where: 'owner_scope = ?',
       whereArgs: <Object?>[ownerScope],
-      orderBy: 'created_at DESC',
-      limit: -1,
-      offset: maximumConversations,
+      orderBy:
+          'CASE WHEN sync_state = "${ConversationSyncState.synced.name}" '
+          'THEN 0 ELSE 1 END ASC, created_at ASC',
     );
-    for (final Map<String, Object?> row in excess) {
-      final String id = row['id']?.toString() ?? '';
+    final int excessCount = rows.length - maximumConversations;
+    if (excessCount <= 0) return;
+
+    // Protect unsynced mutations whenever possible. If pending work itself
+    // exceeds 50, the oldest pending rows are FIFO-evicted, matching the final
+    // server state after those creates are replayed in creation order.
+    for (int index = 0; index < excessCount; index += 1) {
+      final String id = rows[index]['id']?.toString() ?? '';
       if (id.isNotEmpty) await _deleteConversationRows(transaction, id);
     }
   }
