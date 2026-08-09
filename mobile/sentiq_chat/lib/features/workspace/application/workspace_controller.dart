@@ -97,6 +97,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
     _networkSubscription = _networkMonitor.changes.listen(_handleNetworkChange);
   }
 
+  static const int _maximumTitleRepairRefreshes = 4;
   static const List<Duration> _retryDelays = <Duration>[
     Duration(seconds: 1),
     Duration(seconds: 3),
@@ -132,6 +133,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
   Timer? _retryTimer;
   int _retryAttempt = 0;
   Timer? _titleRepairRefreshTimer;
+  final Map<String, int> _titleRepairRefreshAttempts = <String, int>{};
   final Map<String, Timer> _conversationConvergenceTimers = <String, Timer>{};
   final Map<String, int> _conversationConvergenceAttempts = <String, int>{};
 
@@ -355,11 +357,21 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
   }
 
   void _scheduleTitleRepairRefresh(List<ConversationSummary> conversations) {
-    final bool hasRepairCandidate = conversations.any(
-      (ConversationSummary item) =>
-          item.messageCount >= 2 && item.needsGeneratedTitle,
-    );
-    if (!hasRepairCandidate ||
+    ConversationSummary? candidate;
+    for (final ConversationSummary conversation in conversations) {
+      if (!conversation.needsGeneratedTitle) {
+        _titleRepairRefreshAttempts.remove(conversation.id);
+        continue;
+      }
+      final int attempts = _titleRepairRefreshAttempts[conversation.id] ?? 0;
+      if (candidate == null &&
+          conversation.messageCount >= 2 &&
+          attempts < _maximumTitleRepairRefreshes) {
+        candidate = conversation;
+      }
+    }
+
+    if (candidate == null ||
         !_networkAvailable ||
         !_session.cloudEnabled ||
         _disposed) {
@@ -369,11 +381,15 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
     }
     if (_titleRepairRefreshTimer != null) return;
 
+    final String conversationId = candidate.id;
     // `/api/chat/title` has a bounded backend generation timeout. Re-read after
     // that window so the asynchronously persisted summarized title becomes
-    // visible without requiring an app restart or manual refresh.
+    // visible without requiring an app restart or manual refresh. Polling is
+    // bounded per conversation so a provider outage never creates a loop.
     _titleRepairRefreshTimer = Timer(const Duration(seconds: 13), () {
       _titleRepairRefreshTimer = null;
+      _titleRepairRefreshAttempts[conversationId] =
+          (_titleRepairRefreshAttempts[conversationId] ?? 0) + 1;
       if (!_disposed && _networkAvailable) unawaited(refresh());
     });
   }
@@ -412,6 +428,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
   ) {
     for (final ConversationSummary conversation in conversations) {
       if (_isFullyConverged(conversation)) {
+        _titleRepairRefreshAttempts.remove(conversation.id);
         _cancelConversationConvergence(conversation.id);
       }
     }
@@ -469,6 +486,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
     }
     _conversationConvergenceTimers.clear();
     _conversationConvergenceAttempts.clear();
+    _titleRepairRefreshAttempts.clear();
     unawaited(_networkSubscription.cancel());
     super.dispose();
   }
