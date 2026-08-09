@@ -21,6 +21,8 @@ class ConversationSummary {
     required this.updatedAt,
     required this.syncState,
     this.lastMessagePreview,
+    this.firstUserMessage,
+    this.messageCount = 0,
   });
 
   factory ConversationSummary.fromJson(
@@ -29,18 +31,37 @@ class ConversationSummary {
   }) {
     final String id =
         (json['id'] ?? json['conversation_id'] ?? json['conversationId'])
-            .toString();
+            ?.toString()
+            .trim() ??
+        '';
     final DateTime now = DateTime.now().toUtc();
+    final DateTime createdAt =
+        _date(json['created_at'] ?? json['createdAt']) ?? now;
+    final String? firstUserMessage = _nullableText(
+      json['first_user_message'] ?? json['firstUserMessage'],
+    );
     return ConversationSummary(
       id: id,
       ownerScope: ownerScope,
       title: _text(json['title'], fallback: 'New chat'),
-      createdAt: _date(json['created_at'] ?? json['createdAt']) ?? now,
-      updatedAt: _date(json['updated_at'] ?? json['updatedAt']) ?? now,
+      createdAt: createdAt,
+      // The backend's canonical chat-history ordering is based on
+      // last_activity_at. Older mobile builds ignored it and substituted the
+      // local clock, which made Android ordering diverge after a cold restore.
+      updatedAt:
+          _date(
+            json['last_activity_at'] ??
+                json['lastActivityAt'] ??
+                json['updated_at'] ??
+                json['updatedAt'],
+          ) ??
+          createdAt,
       syncState: ConversationSyncState.synced,
-      lastMessagePreview: _nullableText(
-        json['last_message_preview'] ?? json['preview'],
-      ),
+      firstUserMessage: firstUserMessage,
+      messageCount: _integer(json['message_count'] ?? json['messageCount']) ?? 0,
+      lastMessagePreview:
+          _nullableText(json['last_message_preview'] ?? json['preview']) ??
+          firstUserMessage,
     );
   }
 
@@ -48,15 +69,48 @@ class ConversationSummary {
   final String ownerScope;
   final String title;
   final DateTime createdAt;
+
+  /// Canonical activity timestamp used for chat-history display ordering.
+  /// For cloud rows this is the backend's `last_activity_at`.
   final DateTime updatedAt;
   final ConversationSyncState syncState;
   final String? lastMessagePreview;
+  final String? firstUserMessage;
+  final int messageCount;
+
+  /// True only for titles that are safe for the automatic first-exchange
+  /// title generator to replace. Explicit user-renamed titles are never
+  /// treated as repair candidates.
+  bool get needsGeneratedTitle {
+    final String normalizedTitle = _comparable(title);
+    if (normalizedTitle.isEmpty ||
+        normalizedTitle == 'new chat' ||
+        normalizedTitle == 'live conversation' ||
+        normalizedTitle == 'untitled chat') {
+      return true;
+    }
+
+    final String normalizedFirst = _comparable(
+      firstUserMessage ?? lastMessagePreview ?? '',
+    );
+    if (normalizedFirst.isEmpty || normalizedTitle.length < 8) return false;
+
+    if (normalizedFirst.startsWith(normalizedTitle)) return true;
+    final int prefixLength = normalizedFirst.length < normalizedTitle.length
+        ? normalizedFirst.length
+        : normalizedTitle.length;
+    return normalizedTitle.startsWith(
+      normalizedFirst.substring(0, prefixLength),
+    );
+  }
 
   ConversationSummary copyWith({
     String? title,
     DateTime? updatedAt,
     ConversationSyncState? syncState,
     String? lastMessagePreview,
+    String? firstUserMessage,
+    int? messageCount,
   }) {
     return ConversationSummary(
       id: id,
@@ -66,6 +120,8 @@ class ConversationSummary {
       updatedAt: updatedAt ?? this.updatedAt,
       syncState: syncState ?? this.syncState,
       lastMessagePreview: lastMessagePreview ?? this.lastMessagePreview,
+      firstUserMessage: firstUserMessage ?? this.firstUserMessage,
+      messageCount: messageCount ?? this.messageCount,
     );
   }
 
@@ -77,6 +133,8 @@ class ConversationSummary {
     'updated_at': updatedAt.toIso8601String(),
     'sync_state': syncState.name,
     'last_message_preview': lastMessagePreview,
+    'first_user_message': firstUserMessage,
+    'message_count': messageCount,
   };
 
   static ConversationSummary fromDatabase(Map<String, Object?> row) {
@@ -88,6 +146,8 @@ class ConversationSummary {
       updatedAt: _date(row['updated_at']) ?? DateTime.now().toUtc(),
       syncState: ConversationSyncState.parse(row['sync_state']),
       lastMessagePreview: _nullableText(row['last_message_preview']),
+      firstUserMessage: _nullableText(row['first_user_message']),
+      messageCount: _integer(row['message_count']) ?? 0,
     );
   }
 }
@@ -105,4 +165,19 @@ String? _nullableText(Object? value) {
 DateTime? _date(Object? value) {
   if (value == null) return null;
   return DateTime.tryParse(value.toString())?.toUtc();
+}
+
+int? _integer(Object? value) {
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '');
+}
+
+String _comparable(Object? value) {
+  return value
+      ?.toString()
+      .toLowerCase()
+      .replaceAll(RegExp('[^a-z0-9]+'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim() ??
+      '';
 }
