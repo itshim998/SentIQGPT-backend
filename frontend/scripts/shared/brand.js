@@ -1,4 +1,5 @@
 import "../features/final-restraint.js";
+import "../features/guest-experience.js";
 
 export const COMPANY_NAME = "SentIQ";
 export const PRODUCT_NAME = "SentIQ Chat";

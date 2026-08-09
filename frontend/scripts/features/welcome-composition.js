@@ -83,16 +83,15 @@ function initializeWelcomeComposition() {
         welcomeSubtitle,
         "Start with a question, a file, or something you want to work through.",
       );
+      setHidden(welcomeSubtitle, false);
       setHidden(authWelcomeNote, true);
     } else {
       setText(welcomeEyebrow, "SentIQ Chat");
-      setText(welcomeHeading, "Think, research, and build in one place.");
-      setText(
-        welcomeSubtitle,
-        "Ask questions, work with files, search the web, and turn ideas into clearer next steps.",
-      );
+      setText(welcomeHeading, "How can I help?");
+      setText(welcomeSubtitle, "");
+      setHidden(welcomeSubtitle, true);
       if (authWelcomeNote) {
-        setText(authWelcomeNote, "Guest conversations are temporary and stay in this browser tab. Sign in to save and sync your work.");
+        setText(authWelcomeNote, "Log in to save your chats, get smarter responses, generate images, and more.");
         setHidden(authWelcomeNote, false);
       }
     }
