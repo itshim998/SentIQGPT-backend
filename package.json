@@ -54,7 +54,7 @@
     "test:file-generation": "ts-node --project tsconfig.backend.json backend/testFileGeneration.ts",
     "test:frontend-file-generation": "ts-node --project tsconfig.backend.json backend/testFrontendFileGeneration.ts",
     "test:frontend-tool-lifecycle": "node frontend/tests/tool-lifecycle-reducer.test.mjs",
-    "test:frontend-billing": "node --no-warnings frontend/tests/billing-token-usage.test.mjs",
+    "test:frontend-billing": "node --no-warnings frontend/tests/billing-token-usage.test.mjs && node --no-warnings frontend/tests/guest-experience.test.mjs",
     "test:frontend-ui-state": "node scripts/runFrontendUiStateTests.mjs",
     "test:quota-ui-contract": "ts-node --project tsconfig.backend.json backend/billing/testQuotaUiExposure.ts && node --no-warnings frontend/tests/text-quota-state.test.mjs && node --no-warnings frontend/tests/text-quota-controller-contract.test.mjs",
     "test:frontend": "node scripts/runFrontendChecks.mjs",
