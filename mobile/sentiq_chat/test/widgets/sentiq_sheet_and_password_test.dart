@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_theme.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
+import 'package:sentiq_chat/features/chat/presentation/chat_composer.dart';
 import 'package:sentiq_chat/features/chat/presentation/compact_chat_composer.dart';
 import 'package:sentiq_chat/shared/widgets/sentiq_sheet.dart';
 import 'package:sentiq_chat/shared/widgets/sentiq_text_field.dart';
@@ -62,7 +63,41 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('actual compact tools menu opens without Material exception', (
+  testWidgets('expanded response-mode picker has a visible Material ink layer', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SentIQTheme.light(),
+        home: Scaffold(
+          body: ChatComposer(
+            executionMode: ChatExecutionMode.fast,
+            quota: const ChatQuotaState(),
+            generating: false,
+            attachments: const <ChatAttachment>[],
+            webSearchEnabled: false,
+            enabled: true,
+            onExecutionModeChanged: (_) {},
+            onWebSearchChanged: (_) {},
+            onAttachmentAdded: (_) {},
+            onAttachmentRemoved: (_) {},
+            onAttachmentRetry: (_) {},
+            onSend: (_) async => true,
+            onStop: () {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Fast'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Response style'), findsOneWidget);
+    expect(find.text('Quick, direct responses'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('actual compact tools menu opens selected tile without exception', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
@@ -74,7 +109,7 @@ void main() {
             quota: const ChatQuotaState(),
             generating: false,
             attachments: const <ChatAttachment>[],
-            webSearchEnabled: false,
+            webSearchEnabled: true,
             enabled: true,
             onWebSearchChanged: (_) {},
             onAttachmentAdded: (_) {},
