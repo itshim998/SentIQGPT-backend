@@ -5,22 +5,38 @@ import vm from "node:vm";
 
 const root = path.resolve(process.cwd());
 const policyPath = path.join(root, "frontend/scripts/services/conversation-ordering-policy.js");
+const hardeningPath = path.join(root, "frontend/scripts/services/conversation-ordering-hydration-hardening.js");
 const migrationPath = path.join(root, "supabase/migrations/20260809123000_conversation_user_activity_ordering.sql");
+const verificationPath = path.join(root, "supabase/verification/verify_conversation_user_activity_ordering.sql");
+const httpErrorsPath = path.join(root, "backend/httpErrors.ts");
 const authPath = path.join(root, "frontend/scripts/services/auth.js");
 const mainPath = path.join(root, "frontend/scripts/main.js");
 
 const policySource = fs.readFileSync(policyPath, "utf8");
+const hardeningSource = fs.readFileSync(hardeningPath, "utf8");
 const migrationSource = fs.readFileSync(migrationPath, "utf8");
+const verificationSource = fs.readFileSync(verificationPath, "utf8");
+const httpErrorsSource = fs.readFileSync(httpErrorsPath, "utf8");
 const authSource = fs.readFileSync(authPath, "utf8");
 const mainSource = fs.readFileSync(mainPath, "utf8");
 
 const clone = (value) => (value == null ? value : structuredClone(value));
 const ids = (items) => Array.from(items, (item) => item.id);
+const iso = (day, hour = 0) => `2026-08-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:00:00.000Z`;
 const ms = (value) => {
   const parsed = Date.parse(value || "");
   return Number.isFinite(parsed) ? parsed : 0;
 };
-const iso = (day, hour = 0) => `2026-08-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:00:00.000Z`;
+
+function makeLocalStorage() {
+  const values = new Map();
+  return {
+    values,
+    getItem(key) { return values.has(key) ? values.get(key) : null; },
+    setItem(key, value) { values.set(key, String(value)); },
+    removeItem(key) { values.delete(key); },
+  };
+}
 
 function makeLegacyStorage(initialChats = []) {
   const chats = new Map(initialChats.map((chat) => [chat.id, clone(chat)]));
@@ -28,7 +44,7 @@ function makeLegacyStorage(initialChats = []) {
   const syncJobs = new Map();
   const generatedFiles = new Map();
   let aliases = {};
-  let newChatSequence = 0;
+  let createSequence = 0;
 
   function legacyActivity(chat) {
     return chat?.last_activity_at || chat?.last_message_at || chat?.updated || chat?.created || chat?.created_at || "";
@@ -42,36 +58,50 @@ function makeLegacyStorage(initialChats = []) {
     }
   }
 
-  return {
+  const storage = {
     __chats: chats,
     __syncJobs: syncJobs,
     __generatedFiles: generatedFiles,
     get __aliases() { return aliases; },
+
     getActiveUserId() { return "test-user"; },
+
     async createChat(title = "New Chat") {
-      newChatSequence += 1;
-      const id = `created-${newChatSequence}`;
-      const timestamp = iso(9, 12 + newChatSequence);
-      const chat = { id, title, source: "local", created: timestamp, updated: timestamp, messages: [] };
-      chats.set(id, chat);
+      createSequence += 1;
+      const timestamp = iso(9, 12 + createSequence);
+      const chat = {
+        id: `created-${createSequence}`,
+        title,
+        source: "local",
+        created: timestamp,
+        updated: timestamp,
+        messages: [],
+      };
+      chats.set(chat.id, chat);
       return clone(chat);
     },
-    async getChat(id) { return clone(chats.get(id)); },
+
+    async getChat(id) {
+      return clone(chats.get(id));
+    },
+
     async getAllChats() {
       return [...chats.values()]
         .map(clone)
         .sort((left, right) => ms(legacyActivity(right)) - ms(legacyActivity(left)));
     },
+
     async getLocalChats() {
-      return (await this.getAllChats()).filter((chat) => chat.source !== "server");
+      return (await storage.getAllChats()).filter((chat) => chat.source !== "server");
     },
+
     async addMessageToChat(chatId, role, content, meta, options = {}) {
       const chat = chats.get(chatId);
       assert(chat, `chat ${chatId} should exist`);
       const timestamp = options.timestamp || iso(9, 12);
       chat.messages ||= [];
       chat.messages.push({
-        id: `${chatId}-${chat.messages.length + 1}`,
+        id: `${chatId}-message-${chat.messages.length + 1}`,
         role,
         content,
         timestamp,
@@ -82,27 +112,30 @@ function makeLegacyStorage(initialChats = []) {
       chats.set(chatId, chat);
       return clone(chat);
     },
+
     async upsertMessageInChat(chatId, message) {
       const chat = chats.get(chatId);
       assert(chat, `chat ${chatId} should exist`);
       chat.messages ||= [];
       const index = chat.messages.findIndex((item) => item.id === message.id);
-      if (index >= 0) chat.messages[index] = { ...chat.messages[index], ...message };
-      else chat.messages.push({ ...message });
+      if (index >= 0) chat.messages[index] = { ...chat.messages[index], ...clone(message) };
+      else chat.messages.push(clone(message));
       chat.message_count = chat.messages.length;
-      legacyTouch(chat, iso(9, 12));
+      legacyTouch(chat, message.timestamp || iso(9, 12));
       chats.set(chatId, chat);
       return clone(chat);
     },
+
     async updateMessageInChat(chatId, messageId, updates = {}) {
       const chat = chats.get(chatId);
       assert(chat, `chat ${chatId} should exist`);
       const index = (chat.messages || []).findIndex((message) => message.id === messageId);
-      if (index >= 0) chat.messages[index] = { ...chat.messages[index], ...updates };
+      if (index >= 0) chat.messages[index] = { ...chat.messages[index], ...clone(updates) };
       legacyTouch(chat, iso(9, 13));
       chats.set(chatId, chat);
       return clone(chat);
     },
+
     async updateChatTitle(chatId, title, options = {}) {
       const chat = chats.get(chatId);
       assert(chat, `chat ${chatId} should exist`);
@@ -111,6 +144,26 @@ function makeLegacyStorage(initialChats = []) {
       chats.set(chatId, chat);
       return clone(chat);
     },
+
+    async updateChatSyncState(chatId, updates = {}) {
+      const chat = chats.get(chatId);
+      if (!chat) return undefined;
+      Object.assign(chat, clone(updates));
+      if (chat.source === "server") {
+        // Deliberately simulate the legacy monotonic bug: a corrected older
+        // activity cannot directly overwrite a later polluted cache value.
+        const activity = [chat.last_activity_at, chat.updated, chat.created]
+          .filter(Boolean)
+          .sort((left, right) => ms(right) - ms(left))[0];
+        if (activity) {
+          chat.last_activity_at = activity;
+          chat.updated = activity;
+        }
+      }
+      chats.set(chatId, chat);
+      return clone(chat);
+    },
+
     async upsertServerChat(chatData) {
       const existing = chats.get(chatData.id);
       const created = chatData.created || chatData.created_at || existing?.created || iso(1);
@@ -137,6 +190,7 @@ function makeLegacyStorage(initialChats = []) {
       chats.set(chat.id, chat);
       return clone(chat);
     },
+
     async mergeChatMessages(chatId, messages, options = {}) {
       const chat = chats.get(chatId);
       assert(chat, `chat ${chatId} should exist`);
@@ -145,38 +199,34 @@ function makeLegacyStorage(initialChats = []) {
         : [...(chat.messages || []), ...clone(messages)];
       chat.messages.sort((left, right) => ms(left.timestamp || left.created_at) - ms(right.timestamp || right.created_at));
       chat.message_count = chat.messages.length;
-      const lastMessage = chat.messages.at(-1);
-      if (lastMessage) legacyTouch(chat, lastMessage.timestamp || lastMessage.created_at);
+      const last = chat.messages.at(-1);
+      if (last) legacyTouch(chat, last.timestamp || last.created_at);
       chats.set(chatId, chat);
       return clone(chat);
     },
+
     async replaceChatMessages(chatId, messages) {
-      return this.mergeChatMessages(chatId, messages, { replaceExisting: true });
+      return storage.mergeChatMessages(chatId, messages, { replaceExisting: true });
     },
-    async updateChatSyncState(chatId, updates = {}) {
-      const chat = chats.get(chatId);
-      if (!chat) return undefined;
-      Object.assign(chat, clone(updates));
-      if (chat.source === "server") {
-        const activity = [chat.last_activity_at, chat.updated, chat.created]
-          .filter(Boolean)
-          .sort((left, right) => ms(right) - ms(left))[0];
-        if (activity) {
-          chat.last_activity_at = activity;
-          chat.updated = activity;
-        }
-      }
-      chats.set(chatId, chat);
-      return clone(chat);
+
+    async deleteChat(id) {
+      chats.delete(id);
     },
-    async deleteChat(id) { chats.delete(id); },
-    async getConfig(key) { return config.get(key); },
+
+    async getConfig(key) {
+      return clone(config.get(key));
+    },
+
     async setConfig(key, value) {
       config.set(key, clone(value));
       if (String(key).startsWith("conversation_aliases:")) aliases = clone(value || {});
       return value;
     },
-    async getAllConfig() { return Object.fromEntries(config); },
+
+    async getAllConfig() {
+      return Object.fromEntries(config);
+    },
+
     async getStorageStats() {
       return {
         chats: { count: chats.size, limit: config.get("chat_limit") },
@@ -184,25 +234,32 @@ function makeLegacyStorage(initialChats = []) {
         files: { count: 0, limit_mb: 100 },
       };
     },
-    async getAllSyncJobs() { return [...syncJobs.values()].map(clone); },
-    async deleteSyncJob(id) { syncJobs.delete(id); },
-    async getAllGeneratedFiles() { return [...generatedFiles.values()].map(clone); },
-    async deleteGeneratedFile(id) { generatedFiles.delete(id); },
-    async getConversationAliases() { return clone(aliases); },
+
+    async getAllSyncJobs() {
+      return [...syncJobs.values()].map(clone);
+    },
+
+    async deleteSyncJob(id) {
+      syncJobs.delete(id);
+    },
+
+    async getAllGeneratedFiles() {
+      return [...generatedFiles.values()].map(clone);
+    },
+
+    async deleteGeneratedFile(id) {
+      generatedFiles.delete(id);
+    },
+
+    async getConversationAliases() {
+      return clone(aliases);
+    },
   };
+
+  return storage;
 }
 
-function makeLocalStorage() {
-  const values = new Map();
-  return {
-    values,
-    getItem(key) { return values.has(key) ? values.get(key) : null; },
-    setItem(key, value) { values.set(key, String(value)); },
-    removeItem(key) { values.delete(key); },
-  };
-}
-
-function installPolicy(storage, api = null, localStorage = makeLocalStorage()) {
+function installPolicies(storage, api = null, localStorage = makeLocalStorage()) {
   const context = {
     window: { SentIQStorage: storage, SentIQAPI: api, localStorage },
     setTimeout,
@@ -220,23 +277,39 @@ function installPolicy(storage, api = null, localStorage = makeLocalStorage()) {
   };
   context.globalThis = context;
   vm.runInNewContext(policySource, context, { filename: policyPath });
+  vm.runInNewContext(hardeningSource, context, { filename: hardeningPath });
   return { window: context.window, localStorage };
 }
 
-// Static invariants.
-assert.match(authSource, /^import "\.\/conversation-ordering-policy\.js";/m);
-assert.ok(mainSource.indexOf('import "./services/storage.js";') < mainSource.indexOf('import "./services/auth.js";'));
+// ---------------------------------------------------------------------------
+// Static contracts
+// ---------------------------------------------------------------------------
+assert.match(authSource, /^import "\.\/conversation-ordering-policy\.js";\nimport "\.\/conversation-ordering-hydration-hardening\.js";/m);
+assert.ok(
+  mainSource.indexOf('import "./services/storage.js";') < mainSource.indexOf('import "./services/auth.js";'),
+  "storage must initialize before ordering policies",
+);
 assert.match(policySource, /const MAX_STORED_CHATS = 50;/);
+assert.match(policySource, /const RETENTION_CLEANUP_CODE = "conversation_retention_cleanup_required";/);
+assert.match(policySource, /isUnconfirmedServerChat/);
+assert.match(policySource, /purgeLocalConversationResidue/);
+assert.match(policySource, /updateTitleWithoutRecency/);
+assert.match(policySource, /hydrateMessagesWithoutReadRecency/);
+assert.match(policySource, /const result = await method\(\.\.\.args\);[\s\S]*catch \(error\)[\s\S]*RETENTION_CLEANUP_CODE/);
+assert.match(policySource, /await cleanupRemoteRetentionSlot\(conversationId\);[\s\S]*const result = await method\(\.\.\.args\);/);
 assert.doesNotMatch(
   policySource.slice(policySource.indexOf("function activityTimestamp"), policySource.indexOf("function compareChatsByUserActivity")),
   /last_message_at|lastMessageAt|updated_at|chat\?\.updated,/,
+  "canonical activity must never depend on assistant/legacy update timestamps",
 );
-assert.match(policySource, /persistUserActivity/);
-assert.match(policySource, /isTransientBlankServerPlaceholder/);
-assert.match(policySource, /purgeLocalConversationResidue/);
-assert.match(policySource, /updateTitleWithoutRecencyBump/);
-assert.match(policySource, /mergeChatMessagesWithoutReadRecency/);
-assert.match(policySource, /API\.deleteConversation\(leastRecent\.id\)/);
+assert.match(hardeningSource, /exactUserActivity/);
+assert.match(hardeningSource, /message\?\.role !== "user"/);
+assert.match(hardeningSource, /replaceChatMessagesWithExactHydratedActivity/);
+
+assert.match(httpErrorsSource, /conversation_retention_artifact_cleanup_required/);
+assert.match(httpErrorsSource, /CONVERSATION_RETENTION_CLEANUP_CODE = "conversation_retention_cleanup_required"/);
+assert.match(httpErrorsSource, /statusCode: 409/);
+assert.match(httpErrorsSource, /The raw Postgres marker and[\s\S]*remain private/);
 
 assert.match(migrationSource, /m\.role = 'user'/);
 assert.match(migrationSource, /if new\.role = 'user' then/i);
@@ -252,16 +325,21 @@ assert.match(
 );
 assert.match(migrationSource, /conversation_retention_artifact_cleanup_required/);
 assert.match(migrationSource, /public\.generated_files[\s\S]*public\.chat_images/);
+assert.match(verificationSource, /conversation_activity_mismatches/);
+assert.match(verificationSource, /users_over_50_conversations/);
+assert.match(verificationSource, /artifact_safe_fallback/);
 
-// 1) Repair polluted historical cache, including a downgrade.
-const storage = makeLegacyStorage([
+// ---------------------------------------------------------------------------
+// 1. Historical server refresh can DOWNGRADE polluted browser activity.
+// ---------------------------------------------------------------------------
+const refreshedStorage = makeLegacyStorage([
   {
-    id: "old",
+    id: "formula",
     title: "Formula 1 Car Overview",
     source: "server",
     created: iso(1),
     updated: iso(8),
-    last_activity_at: iso(8),
+    last_activity_at: iso(8), // legacy pollution
     messages: [],
     pending_server_sync: false,
   },
@@ -272,97 +350,125 @@ const storage = makeLegacyStorage([
     created: iso(7),
     updated: iso(7, 10),
     last_activity_at: iso(7, 10),
-    messages: [
-      { id: "today-u", role: "user", timestamp: iso(7, 10), content: "today" },
-      { id: "today-a", role: "assistant", timestamp: iso(7, 10), content: "reply" },
-    ],
+    messages: [{ id: "today-u", role: "user", content: "today", timestamp: iso(7, 10) }],
     pending_server_sync: false,
   },
 ]);
-const sharedLocalStorage = makeLocalStorage();
-installPolicy(storage, null, sharedLocalStorage);
-await storage.upsertServerChat({
-  id: "old",
+const refreshedLocalStorage = makeLocalStorage();
+installPolicies(refreshedStorage, null, refreshedLocalStorage);
+await refreshedStorage.upsertServerChat({
+  id: "formula",
   title: "Formula 1 Car Overview",
   created_at: iso(1),
   last_activity_at: iso(2, 9),
   last_message_at: iso(8),
   message_count: 2,
 });
-let ordered = await storage.getAllChats();
-assert.deepEqual(ids(ordered), ["today", "old"]);
+let ordered = await refreshedStorage.getAllChats();
+assert.deepEqual(ids(ordered), ["today", "formula"]);
 assert.equal(ordered[1].last_activity_at, iso(2, 9));
-assert.equal(
-  [...sharedLocalStorage.values.values()].includes(iso(2, 9)),
-  true,
-  "canonical server activity must persist outside polluted legacy cache fields",
-);
+assert.equal([...refreshedLocalStorage.values.values()].includes(iso(2, 9)), true);
 
-// 2) Opening/hydrating an old chat with a newer assistant message does not move it.
-await storage.mergeChatMessages("old", [
-  { id: "old-u", role: "user", timestamp: iso(2, 9), content: "old question" },
-  { id: "old-a", role: "assistant", timestamp: iso(9, 9), content: "assistant reply read today" },
+// ---------------------------------------------------------------------------
+// 2. User's reported case: opening an old chat must not promote it, EVEN if the
+// click happens before the first repaired cloud-list refresh has completed.
+// ---------------------------------------------------------------------------
+const earlyClickStorage = makeLegacyStorage([
+  {
+    id: "formula",
+    title: "Formula 1 Car Overview",
+    source: "server",
+    created: iso(1),
+    updated: iso(9, 8),
+    last_activity_at: iso(9, 8), // stale polluted cache from an old build
+    messages: [],
+    pending_server_sync: false,
+  },
+  {
+    id: "today",
+    title: "What are the benefits of gu...",
+    source: "server",
+    created: iso(8, 12),
+    updated: iso(8, 12),
+    last_activity_at: iso(8, 12),
+    messages: [{ id: "today-u", role: "user", content: "new question", timestamp: iso(8, 12) }],
+    pending_server_sync: false,
+  },
+]);
+installPolicies(earlyClickStorage);
+await earlyClickStorage.mergeChatMessages("formula", [
+  { id: "formula-u", role: "user", content: "old F1 question", timestamp: iso(2, 9) },
+  { id: "formula-a", role: "assistant", content: "reply read today", timestamp: iso(9, 9) },
 ], { replaceExisting: true });
-ordered = await storage.getAllChats();
-assert.deepEqual(ids(ordered), ["today", "old"]);
-assert.equal(ordered[1].updated, iso(2, 9));
+ordered = await earlyClickStorage.getAllChats();
+assert.deepEqual(ids(ordered), ["today", "formula"], "read-only hydration must not promote the old chat");
+assert.equal(ordered[1].last_activity_at, iso(2, 9));
 
-// 3) Assistant output and title edits do not move a chat; a new user query does.
-await storage.addMessageToChat("old", "assistant", "late assistant-only event", null, { timestamp: iso(9, 10) });
-assert.deepEqual(ids(await storage.getAllChats()), ["today", "old"]);
-await storage.addMessageToChat("old", "user", "new user question", null, { timestamp: iso(9, 11) });
-assert.deepEqual(ids(await storage.getAllChats()), ["old", "today"]);
-await storage.updateChatTitle("today", "Renamed", { bumpUpdated: true });
-assert.deepEqual(ids(await storage.getAllChats()), ["old", "today"]);
-assert.equal(await storage.getConfig("chat_limit"), 50);
-assert.equal((await storage.getAllConfig()).chat_limit, 50);
+// ---------------------------------------------------------------------------
+// 3. Assistant output and rename do not move a chat; a new USER query does.
+// ---------------------------------------------------------------------------
+await earlyClickStorage.addMessageToChat("formula", "assistant", "late assistant event", null, { timestamp: iso(9, 10) });
+assert.deepEqual(ids(await earlyClickStorage.getAllChats()), ["today", "formula"]);
+await earlyClickStorage.updateChatTitle("formula", "Renamed Formula chat", { bumpUpdated: true });
+assert.deepEqual(ids(await earlyClickStorage.getAllChats()), ["today", "formula"]);
+await earlyClickStorage.addMessageToChat("formula", "user", "new user query", null, { timestamp: iso(9, 11) });
+assert.deepEqual(ids(await earlyClickStorage.getAllChats()), ["formula", "today"]);
+assert.equal(await earlyClickStorage.getConfig("chat_limit"), 50);
+assert.equal((await earlyClickStorage.getAllConfig()).chat_limit, 50);
 
-// 4) Browser cache physically returns to 50 after creating the 51st committed
-// local chat, using strict user activity rather than legacy `updated` pollution.
-const fiftyChats = Array.from({ length: 50 }, (_, index) => ({
+// ---------------------------------------------------------------------------
+// 4. Local/guest 51st committed chat evicts exact bottom and leaves no local
+// recreation residue (sync queue, generated-file cache, aliases).
+// ---------------------------------------------------------------------------
+const localFifty = Array.from({ length: 50 }, (_, index) => ({
   id: `local-${index + 1}`,
   title: `Local ${index + 1}`,
   source: "local",
   created: `2026-06-${String(Math.min(index + 1, 30)).padStart(2, "0")}T00:00:00.000Z`,
+  // Deliberately pollute the oldest chat's legacy update timestamp.
   updated: index === 0 ? iso(9, 23) : `2026-06-${String(Math.min(index + 1, 30)).padStart(2, "0")}T00:00:00.000Z`,
   messages: index === 0
-    ? [{ id: "local-1-u", role: "user", timestamp: "2026-06-01T00:00:00.000Z", content: "old" }]
+    ? [{ id: "local-1-u", role: "user", content: "old", timestamp: "2026-06-01T00:00:00.000Z" }]
     : [],
 }));
-const retentionStorage = makeLegacyStorage(fiftyChats);
-retentionStorage.__syncJobs.set("stale-message-job", {
-  id: "stale-message-job",
+const localRetentionStorage = makeLegacyStorage(localFifty);
+localRetentionStorage.__syncJobs.set("stale-sync", {
+  id: "stale-sync",
   type: "chat_message",
-  payload: { conversationId: "local-1", messages: [{ role: "user", content: "must never recreate" }] },
+  payload: { conversationId: "local-1" },
 });
-retentionStorage.__generatedFiles.set("stale-generated-file", {
-  id: "stale-generated-file",
+localRetentionStorage.__generatedFiles.set("stale-file", {
+  id: "stale-file",
   chat_id: "local-1",
-  file_name: "old.txt",
 });
-await retentionStorage.setConfig("conversation_aliases:test-user", {
+await localRetentionStorage.setConfig("conversation_aliases:test-user", {
   "local-1": "local-2",
-  "keep-from": "local-1",
-  "keep-alias": "local-3",
+  "points-to-old": "local-1",
+  "keep": "local-3",
 });
-installPolicy(retentionStorage);
-const created = await retentionStorage.createChat("51st chat");
-assert.equal(retentionStorage.__chats.size, 50);
-assert.equal(retentionStorage.__chats.has("local-1"), false);
-assert.equal(retentionStorage.__chats.has(created.id), true);
-assert.equal(retentionStorage.__syncJobs.has("stale-message-job"), false, "retention must remove sync jobs that could recreate the evicted chat");
-assert.equal(retentionStorage.__generatedFiles.has("stale-generated-file"), false, "retention must remove local generated-file cache rows for the evicted chat");
-assert.deepEqual(retentionStorage.__aliases, { "keep-alias": "local-3" }, "retention must remove local aliases that reference the evicted chat");
+installPolicies(localRetentionStorage);
+const createdLocal = await localRetentionStorage.createChat("51st chat");
+assert.equal(localRetentionStorage.__chats.size, 50);
+assert.equal(localRetentionStorage.__chats.has("local-1"), false);
+assert.equal(localRetentionStorage.__chats.has(createdLocal.id), true);
+assert.equal(localRetentionStorage.__syncJobs.has("stale-sync"), false);
+assert.equal(localRetentionStorage.__generatedFiles.has("stale-file"), false);
+assert.deepEqual(localRetentionStorage.__aliases, { keep: "local-3" });
 
-// 5) An authenticated blank New Chat is an existing transient draft by design,
-// not a persisted conversation. It must not evict a real chat until first write.
-const committedServerChats = Array.from({ length: 50 }, (_, index) => ({
-  id: `committed-${index + 1}`,
-  title: `Committed ${index + 1}`,
+// ---------------------------------------------------------------------------
+// 5. Authenticated first user write is not destructive before server ACK.
+// The pending 51st row is transient; once acknowledged it becomes confirmed and
+// exact bottom pruning occurs.
+// ---------------------------------------------------------------------------
+const confirmedFifty = Array.from({ length: 50 }, (_, index) => ({
+  id: `confirmed-${index + 1}`,
+  title: `Confirmed ${index + 1}`,
   source: "server",
   created: `2026-07-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
-  updated: `2026-07-${String((index % 28) + 1).padStart(2, "0")}T12:00:00.000Z`,
   last_activity_at: index === 0
+    ? "2026-07-01T00:00:00.000Z"
+    : `2026-07-${String((index % 28) + 1).padStart(2, "0")}T12:00:00.000Z`,
+  updated: index === 0
     ? "2026-07-01T00:00:00.000Z"
     : `2026-07-${String((index % 28) + 1).padStart(2, "0")}T12:00:00.000Z`,
   message_count: 1,
@@ -370,67 +476,131 @@ const committedServerChats = Array.from({ length: 50 }, (_, index) => ({
   messages: [],
   pending_server_sync: false,
 }));
-const blankDraftStorage = makeLegacyStorage(committedServerChats);
-installPolicy(blankDraftStorage);
-await blankDraftStorage.upsertServerChat({
-  id: "blank-draft",
+confirmedFifty.push({
+  id: "pending-51",
   title: "New Chat",
+  source: "server",
   created: iso(9, 12),
   updated: iso(9, 12),
-  source: "server",
-  pending_server_sync: true,
+  last_activity_at: iso(9, 12),
   message_count: 0,
+  messages: [],
+  pending_server_sync: true,
 });
-assert.equal(blankDraftStorage.__chats.size, 51, "a local-only blank draft must not evict persisted history");
-assert.equal((await blankDraftStorage.getStorageStats()).chats.count, 50, "blank draft must not count toward the persisted 50-chat quota");
-await blankDraftStorage.addMessageToChat("blank-draft", "user", "first real query", null, { timestamp: iso(9, 13) });
-assert.equal(blankDraftStorage.__chats.size, 50, "first user write turns the draft into a committed chat and triggers eviction");
-assert.equal(blankDraftStorage.__chats.has("committed-1"), false, "the bottom committed chat must be evicted on first write");
-assert.equal(blankDraftStorage.__chats.has("blank-draft"), true);
+const pendingStorage = makeLegacyStorage(confirmedFifty);
+installPolicies(pendingStorage);
+await pendingStorage.addMessageToChat("pending-51", "user", "first real query", null, { timestamp: iso(9, 13) });
+assert.equal(pendingStorage.__chats.size, 51, "unconfirmed request must not pre-delete old history");
+assert.equal((await pendingStorage.getStorageStats()).chats.count, 50, "only confirmed stored chats count toward the public cap");
+await pendingStorage.updateChatSyncState("pending-51", {
+  pending_server_sync: false,
+  last_activity_at: iso(9, 13),
+});
+assert.equal(pendingStorage.__chats.size, 50);
+assert.equal(pendingStorage.__chats.has("confirmed-1"), false);
+assert.equal(pendingStorage.__chats.has("pending-51"), true);
 
-// 6) First write of a pending 51st remote chat prepares a slot through the full
-// backend DELETE route. A recent assistant last_message_at must not save the
-// genuinely least-recent conversation.
-const pendingId = "pending-51";
-const remoteLocalStorage = makeLegacyStorage([
-  {
-    id: pendingId,
-    title: "New Chat",
-    source: "server",
-    created: iso(9, 12),
-    updated: iso(9, 12),
-    last_activity_at: iso(9, 12),
-    messages: [],
-    pending_server_sync: true,
+// ---------------------------------------------------------------------------
+// 6. No eager remote deletion: if the raw 51st request succeeds because the DB
+// atomically evicted an artifact-free bottom chat, the browser never calls the
+// destructive DELETE endpoint before that request.
+// ---------------------------------------------------------------------------
+const atomicPendingId = "atomic-pending";
+const atomicLocal = makeLegacyStorage([{
+  id: atomicPendingId,
+  title: "New Chat",
+  source: "server",
+  created: iso(9, 12),
+  updated: iso(9, 12),
+  last_activity_at: iso(9, 12),
+  messages: [{ id: "atomic-u", role: "user", content: "query", timestamp: iso(9, 12) }],
+  pending_server_sync: true,
+}]);
+let atomicRemote = Array.from({ length: 50 }, (_, index) => ({
+  id: `atomic-remote-${index + 1}`,
+  created_at: `2026-07-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+  last_activity_at: `2026-07-${String((index % 28) + 1).padStart(2, "0")}T12:00:00.000Z`,
+}));
+const atomicEvents = [];
+const atomicApi = {
+  async getConversations() {
+    atomicEvents.push("list");
+    return { conversations: clone(atomicRemote) };
   },
-]);
-const remoteChats = Array.from({ length: 50 }, (_, index) => ({
+  async deleteConversation(id) {
+    atomicEvents.push(`delete:${id}`);
+    atomicRemote = atomicRemote.filter((chat) => chat.id !== id);
+    return { success: true };
+  },
+  async sendMessageStream() {
+    atomicEvents.push("send");
+    // Simulate DB trigger: artifact-free oldest is removed in the same successful
+    // transaction that creates the new conversation.
+    atomicRemote = atomicRemote.slice(1);
+    atomicRemote.push({ id: atomicPendingId, created_at: iso(9, 12), last_activity_at: iso(9, 12) });
+    return { tokensReceived: true };
+  },
+};
+const { window: atomicWindow } = installPolicies(atomicLocal, atomicApi);
+await atomicWindow.SentIQAPI.sendMessageStream("query", { conversationId: atomicPendingId }, {});
+assert.equal(atomicEvents[0], "send", "remote DELETE must never happen before the new request is attempted");
+assert.equal(atomicEvents.some((event) => event.startsWith("delete:")), false);
+
+// ---------------------------------------------------------------------------
+// 7. Artifact-bearing bottom chat: first insert is rolled back with the safe
+// public code; only THEN delete exact bottom through the full API and retry once.
+// ---------------------------------------------------------------------------
+const retryPendingId = "retry-pending";
+const retryLocal = makeLegacyStorage([{
+  id: retryPendingId,
+  title: "New Chat",
+  source: "server",
+  created: iso(9, 12),
+  updated: iso(9, 12),
+  last_activity_at: iso(9, 12),
+  messages: [{ id: "retry-u", role: "user", content: "query", timestamp: iso(9, 12) }],
+  pending_server_sync: true,
+}]);
+let retryRemote = Array.from({ length: 50 }, (_, index) => ({
   id: `remote-${index + 1}`,
-  title: `Remote ${index + 1}`,
   created_at: `2026-07-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
   last_activity_at: index === 0
     ? "2026-07-01T00:00:00.000Z"
     : `2026-07-${String((index % 28) + 1).padStart(2, "0")}T12:00:00.000Z`,
+  // Must be ignored for ordering even though the assistant answered recently.
   last_message_at: index === 0 ? iso(9, 23) : undefined,
 }));
-const deletedRemoteIds = [];
-const api = {
-  async getConversations() { return { conversations: clone(remoteChats) }; },
+const retryEvents = [];
+let retryAttempts = 0;
+const retryApi = {
+  async getConversations() {
+    retryEvents.push("list");
+    return { conversations: clone(retryRemote) };
+  },
   async deleteConversation(id) {
-    deletedRemoteIds.push(id);
-    const index = remoteChats.findIndex((chat) => chat.id === id);
-    if (index >= 0) remoteChats.splice(index, 1);
+    retryEvents.push(`delete:${id}`);
+    retryRemote = retryRemote.filter((chat) => chat.id !== id);
     return { success: true };
   },
-  async sendMessageStream() { return { tokensReceived: true }; },
-  async sendMessage() { return { reply: "ok" }; },
-  async syncChatMessages() { return { sync: { persisted: true } }; },
-  async generateImage() { return { image: {} }; },
-  async createConversation() { return { conversation: { id: pendingId } }; },
+  async sendMessageStream() {
+    retryAttempts += 1;
+    retryEvents.push(`send:${retryAttempts}`);
+    if (retryAttempts === 1) {
+      const error = new Error("safe public retention response");
+      error.status = 409;
+      error.code = "conversation_retention_cleanup_required";
+      throw error;
+    }
+    retryRemote.push({ id: retryPendingId, created_at: iso(9, 12), last_activity_at: iso(9, 12) });
+    return { tokensReceived: true };
+  },
 };
-const { window: remoteWindow } = installPolicy(remoteLocalStorage, api);
-await remoteWindow.SentIQAPI.sendMessageStream("first question", { conversationId: pendingId }, {});
-assert.deepEqual(deletedRemoteIds, ["remote-1"]);
-assert.equal(remoteChats.length, 49);
+const { window: retryWindow } = installPolicies(retryLocal, retryApi);
+await retryWindow.SentIQAPI.sendMessageStream("query", { conversationId: retryPendingId }, {});
+assert.deepEqual(retryEvents.slice(0, 4), ["send:1", "list", "delete:remote-1", "send:2"]);
+assert.equal(retryAttempts, 2);
+assert.equal(retryRemote.length, 50);
+assert.equal(retryRemote.some((chat) => chat.id === "remote-1"), false);
+assert.equal(retryRemote.some((chat) => chat.id === retryPendingId), true);
 
-console.log("PASS | Conversation ordering and 50-chat retention policy regression checks passed.");
+console.log("PASS | Conversation ordering, read-only hydration, transactional 50-chat retention, and residue cleanup regressions passed.");
