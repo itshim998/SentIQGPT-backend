@@ -22,22 +22,29 @@ class CloudConversationSource {
       ApiEndpoints.conversations,
     );
     final Object? raw = payload['conversations'] ?? payload['data'];
-    final List<ConversationSummary> items = raw is List
-        ? raw
-              .whereType<Map>()
-              .map(
-                (Map value) => ConversationSummary.fromJson(
-                  value.map(
-                    (Object? key, Object? nested) =>
-                        MapEntry(key.toString(), nested),
-                  ),
-                  ownerScope: ownerScope,
-                ),
-              )
-              .where((ConversationSummary item) => item.id.isNotEmpty)
-              .take(50)
-              .toList()
-        : const <ConversationSummary>[];
+    if (raw is! List) {
+      throw const FormatException('Conversation history response is malformed');
+    }
+
+    final List<ConversationSummary> items = raw
+        .whereType<Map>()
+        .map(
+          (Map value) => ConversationSummary.fromJson(
+            value.map(
+              (Object? key, Object? nested) =>
+                  MapEntry(key.toString(), nested),
+            ),
+            ownerScope: ownerScope,
+          ),
+        )
+        .where((ConversationSummary item) => item.id.isNotEmpty)
+        .take(50)
+        .toList();
+    if (raw.isNotEmpty && items.isEmpty) {
+      throw const FormatException(
+        'Conversation history contains no valid conversation identifiers',
+      );
+    }
 
     final Map<String, String> aliases = <String, String>{};
     final Object? rawMerged = payload['merged'];
