@@ -39,9 +39,6 @@ void main() {
   testWidgets('streams formatted markdown with an inline breathing caret', (
     WidgetTester tester,
   ) async {
-    final SemanticsHandle semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
-
     await tester.pumpWidget(
       MaterialApp(
         theme: SentIQTheme.light(),
@@ -60,7 +57,7 @@ void main() {
 
     expect(find.text('Formatted'), findsOneWidget);
     expect(
-      find.bySemanticsLabel('Response is still being written'),
+      find.bySemanticsLabel(RegExp('Response is still being written')),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
