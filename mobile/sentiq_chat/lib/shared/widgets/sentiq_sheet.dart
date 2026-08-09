@@ -14,33 +14,35 @@ Future<T?> showSentIQSheet<T>({
     barrierDismissible: isDismissible,
     barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
     barrierColor: Colors.black.withValues(alpha: 0.34),
-    transitionDuration: reduceMotion ? Duration.zero : SentIQMotion.standard,
+    transitionDuration: reduceMotion ? Duration.zero : SentIQMotion.quick,
     pageBuilder: (
       BuildContext dialogContext,
       Animation<double> animation,
       Animation<double> secondaryAnimation,
     ) {
       final double maxHeight = MediaQuery.sizeOf(dialogContext).height * 0.82;
-      return SafeArea(
-        top: false,
-        child: Align(
-          alignment: Alignment.bottomCenter,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              SentIQSpacing.sm,
-              SentIQSpacing.sm,
-              SentIQSpacing.sm,
-              SentIQSpacing.sm,
-            ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: 620, maxHeight: maxHeight),
-              child: RefractiveGlassSurface(
-                borderRadius: 30,
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: builder(dialogContext),
+      return RepaintBoundary(
+        child: SafeArea(
+          top: false,
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                SentIQSpacing.sm,
+                SentIQSpacing.sm,
+                SentIQSpacing.sm,
+                SentIQSpacing.sm,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: 620, maxHeight: maxHeight),
+                child: RefractiveGlassSurface(
+                  borderRadius: 30,
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      child: builder(dialogContext),
+                    ),
                   ),
                 ),
               ),
@@ -65,7 +67,7 @@ Future<T?> showSentIQSheet<T>({
         opacity: curved,
         child: ScaleTransition(
           alignment: Alignment.bottomCenter,
-          scale: Tween<double>(begin: 0.975, end: 1).animate(curved),
+          scale: Tween<double>(begin: 0.985, end: 1).animate(curved),
           child: child,
         ),
       );
