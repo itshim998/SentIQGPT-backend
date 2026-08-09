@@ -71,6 +71,7 @@ function makeLegacyStorage(initialChats = []) {
         timestamp,
         ...(meta ? { meta } : {}),
       });
+      chat.message_count = chat.messages.length;
       legacyTouch(chat, timestamp);
       chats.set(chatId, chat);
       return clone(chat);
@@ -82,6 +83,7 @@ function makeLegacyStorage(initialChats = []) {
       const index = chat.messages.findIndex((item) => item.id === message.id);
       if (index >= 0) chat.messages[index] = { ...chat.messages[index], ...message };
       else chat.messages.push({ ...message });
+      chat.message_count = chat.messages.length;
       legacyTouch(chat, iso(9, 12));
       chats.set(chatId, chat);
       return clone(chat);
@@ -136,6 +138,7 @@ function makeLegacyStorage(initialChats = []) {
         ? clone(messages)
         : [...(chat.messages || []), ...clone(messages)];
       chat.messages.sort((left, right) => ms(left.timestamp || left.created_at) - ms(right.timestamp || right.created_at));
+      chat.message_count = chat.messages.length;
       const lastMessage = chat.messages.at(-1);
       if (lastMessage) legacyTouch(chat, lastMessage.timestamp || lastMessage.created_at);
       chats.set(chatId, chat);
@@ -214,6 +217,7 @@ assert.doesNotMatch(
   /last_message_at|lastMessageAt|updated_at|chat\?\.updated,/,
 );
 assert.match(policySource, /persistUserActivity/);
+assert.match(policySource, /isTransientBlankServerPlaceholder/);
 assert.match(policySource, /updateTitleWithoutRecencyBump/);
 assert.match(policySource, /mergeChatMessagesWithoutReadRecency/);
 assert.match(policySource, /API\.deleteConversation\(leastRecent\.id\)/);
@@ -296,8 +300,8 @@ assert.deepEqual(ids(await storage.getAllChats()), ["old", "today"]);
 assert.equal(await storage.getConfig("chat_limit"), 50);
 assert.equal((await storage.getAllConfig()).chat_limit, 50);
 
-// 4) Browser cache physically returns to 50 after creating the 51st chat, using
-// strict user activity rather than legacy `updated` pollution.
+// 4) Browser cache physically returns to 50 after creating the 51st committed
+// local chat, using strict user activity rather than legacy `updated` pollution.
 const fiftyChats = Array.from({ length: 50 }, (_, index) => ({
   id: `local-${index + 1}`,
   title: `Local ${index + 1}`,
@@ -315,7 +319,41 @@ assert.equal(retentionStorage.__chats.size, 50);
 assert.equal(retentionStorage.__chats.has("local-1"), false);
 assert.equal(retentionStorage.__chats.has(created.id), true);
 
-// 5) First write of a pending 51st remote chat prepares a slot through the full
+// 5) An authenticated blank New Chat is an existing transient draft by design,
+// not a persisted conversation. It must not evict a real chat until first write.
+const committedServerChats = Array.from({ length: 50 }, (_, index) => ({
+  id: `committed-${index + 1}`,
+  title: `Committed ${index + 1}`,
+  source: "server",
+  created: `2026-07-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+  updated: `2026-07-${String((index % 28) + 1).padStart(2, "0")}T12:00:00.000Z`,
+  last_activity_at: index === 0
+    ? "2026-07-01T00:00:00.000Z"
+    : `2026-07-${String((index % 28) + 1).padStart(2, "0")}T12:00:00.000Z`,
+  message_count: 1,
+  first_user_message: `question ${index + 1}`,
+  messages: [],
+  pending_server_sync: false,
+}));
+const blankDraftStorage = makeLegacyStorage(committedServerChats);
+installPolicy(blankDraftStorage);
+await blankDraftStorage.upsertServerChat({
+  id: "blank-draft",
+  title: "New Chat",
+  created: iso(9, 12),
+  updated: iso(9, 12),
+  source: "server",
+  pending_server_sync: true,
+  message_count: 0,
+});
+assert.equal(blankDraftStorage.__chats.size, 51, "a local-only blank draft must not evict persisted history");
+assert.equal((await blankDraftStorage.getStorageStats()).chats.count, 50, "blank draft must not count toward the persisted 50-chat quota");
+await blankDraftStorage.addMessageToChat("blank-draft", "user", "first real query", null, { timestamp: iso(9, 13) });
+assert.equal(blankDraftStorage.__chats.size, 50, "first user write turns the draft into a committed chat and triggers eviction");
+assert.equal(blankDraftStorage.__chats.has("committed-1"), false, "the bottom committed chat must be evicted on first write");
+assert.equal(blankDraftStorage.__chats.has("blank-draft"), true);
+
+// 6) First write of a pending 51st remote chat prepares a slot through the full
 // backend DELETE route. A recent assistant last_message_at must not save the
 // genuinely least-recent conversation.
 const pendingId = "pending-51";
