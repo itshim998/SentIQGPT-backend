@@ -20,7 +20,7 @@ void main() {
 
     await controller.initialize();
 
-    expect(controller.state.loading, isFalse);
+    expect(controller.state.loading, isTrue);
     expect(controller.state.selectedConversationId, 'cached-chat');
     expect(repository.cloudLoadStarted, isTrue);
     expect(repository.cloudLoadCompleted, isFalse);
@@ -43,6 +43,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
+    expect(controller.state.loading, isFalse);
     expect(controller.state.selectedConversationId, 'local-new-chat');
     controller.dispose();
   });
