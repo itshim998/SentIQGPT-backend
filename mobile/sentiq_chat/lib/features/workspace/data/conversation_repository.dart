@@ -26,10 +26,13 @@ class ConversationRepository {
        _cloud = cloud,
        _uuid = uuid ?? const Uuid();
 
+  static const int _maximumTitleRepairAttempts = 3;
+
   final ConversationCache _cache;
   final CloudConversationSource _cloud;
   final Uuid _uuid;
   final Set<String> _titleRepairsInFlight = <String>{};
+  final Map<String, int> _titleRepairAttempts = <String, int>{};
 
   Future<ConversationLoadResult> load({
     required String ownerScope,
@@ -52,6 +55,7 @@ class ConversationRepository {
     try {
       final List<ConversationSummary> remote = await _cloud.list(ownerScope);
       await _cache.reconcileCloudSnapshot(ownerScope, remote);
+      _clearResolvedTitleAttempts(remote);
       _scheduleTitleRepair(ownerScope, remote);
       return ConversationLoadResult(
         items: await _cache.list(ownerScope),
@@ -196,14 +200,24 @@ class ConversationRepository {
     return degraded;
   }
 
+  void _clearResolvedTitleAttempts(List<ConversationSummary> remote) {
+    for (final ConversationSummary conversation in remote) {
+      if (!conversation.needsGeneratedTitle) {
+        _titleRepairAttempts.remove(conversation.id);
+      }
+    }
+  }
+
   void _scheduleTitleRepair(
     String ownerScope,
     List<ConversationSummary> remote,
   ) {
     ConversationSummary? candidate;
     for (final ConversationSummary conversation in remote) {
+      final int attempts = _titleRepairAttempts[conversation.id] ?? 0;
       if (conversation.messageCount >= 2 &&
           conversation.needsGeneratedTitle &&
+          attempts < _maximumTitleRepairAttempts &&
           !_titleRepairsInFlight.contains(conversation.id)) {
         candidate = conversation;
         break;
@@ -213,6 +227,8 @@ class ConversationRepository {
 
     final ConversationSummary target = candidate;
     _titleRepairsInFlight.add(target.id);
+    _titleRepairAttempts[target.id] =
+        (_titleRepairAttempts[target.id] ?? 0) + 1;
     unawaited(() async {
       try {
         final ConversationSummary repaired = await _cloud.repairGeneratedTitle(
@@ -222,10 +238,12 @@ class ConversationRepository {
         if (repaired.title != target.title || !repaired.needsGeneratedTitle) {
           await _cache.upsert(repaired);
         }
+        if (!repaired.needsGeneratedTitle) {
+          _titleRepairAttempts.remove(target.id);
+        }
       } catch (_) {
-        // The title endpoint has its own safe fallback. Keeping the title as a
-        // repair candidate allows a later reconciliation to retry without ever
-        // blocking chat history or message delivery.
+        // A later reconciliation may retry, but the per-session attempt bound
+        // prevents a provider outage from becoming an API retry loop.
       } finally {
         _titleRepairsInFlight.remove(target.id);
       }
