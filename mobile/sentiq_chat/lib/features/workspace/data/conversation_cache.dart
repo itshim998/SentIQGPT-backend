@@ -375,15 +375,24 @@ class ConversationCache {
   }
 
   Future<void> _trimScope(Transaction transaction, String ownerScope) async {
-    final List<Map<String, Object?>> rows = await transaction.query(
+    final List<Map<String, Object?>> syncedRows = await transaction.query(
       'conversations',
       columns: const <String>['id', 'sync_state', 'created_at'],
-      where: 'owner_scope = ?',
-      whereArgs: <Object?>[ownerScope],
-      orderBy:
-          'CASE WHEN sync_state = "${ConversationSyncState.synced.name}" '
-          'THEN 0 ELSE 1 END ASC, created_at ASC',
+      where: 'owner_scope = ? AND sync_state = ?',
+      whereArgs: <Object?>[ownerScope, ConversationSyncState.synced.name],
+      orderBy: 'created_at ASC',
     );
+    final List<Map<String, Object?>> pendingRows = await transaction.query(
+      'conversations',
+      columns: const <String>['id', 'sync_state', 'created_at'],
+      where: 'owner_scope = ? AND sync_state != ?',
+      whereArgs: <Object?>[ownerScope, ConversationSyncState.synced.name],
+      orderBy: 'created_at ASC',
+    );
+    final List<Map<String, Object?>> rows = <Map<String, Object?>>[
+      ...syncedRows,
+      ...pendingRows,
+    ];
     final int excessCount = rows.length - maximumConversations;
     if (excessCount <= 0) return;
 
