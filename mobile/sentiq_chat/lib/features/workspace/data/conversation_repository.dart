@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:sentiq_chat/features/workspace/data/cloud_conversation_source.dart';
 import 'package:sentiq_chat/features/workspace/data/conversation_cache.dart';
 import 'package:sentiq_chat/features/workspace/domain/conversation_summary.dart';
@@ -27,6 +29,7 @@ class ConversationRepository {
   final ConversationCache _cache;
   final CloudConversationSource _cloud;
   final Uuid _uuid;
+  final Set<String> _titleRepairsInFlight = <String>{};
 
   Future<ConversationLoadResult> load({
     required String ownerScope,
@@ -41,18 +44,23 @@ class ConversationRepository {
         fromCache: true,
       );
     }
+
+    // Pending local mutations and the authoritative cloud list are deliberately
+    // independent. A single failed offline replay must never prevent a signed-
+    // in user from recovering their server history after restart/reinstall.
+    final bool replayDegraded = await _replayPending(ownerScope);
     try {
-      await _replayPending(ownerScope);
       final List<ConversationSummary> remote = await _cloud.list(ownerScope);
-      await _cache.upsertAll(remote);
+      await _cache.reconcileCloudSnapshot(ownerScope, remote);
+      _scheduleTitleRepair(ownerScope, remote);
       return ConversationLoadResult(
         items: await _cache.list(ownerScope),
-        degraded: false,
+        degraded: replayDegraded,
         fromCache: false,
       );
     } catch (_) {
       return ConversationLoadResult(
-        items: cached,
+        items: await _cache.list(ownerScope),
         degraded: true,
         fromCache: true,
       );
@@ -77,8 +85,17 @@ class ConversationRepository {
     await _cache.upsert(local);
     if (cloudEnabled && networkAvailable) {
       try {
-        local = await _cloud.create(ownerScope, title, preferredId: local.id);
-        await _cache.upsert(local);
+        final ConversationSummary created = await _cloud.create(
+          ownerScope,
+          title,
+          preferredId: local.id,
+        );
+        if (created.id != local.id) {
+          await _cache.remapConversation(local.id, created);
+        } else {
+          await _cache.upsert(created);
+        }
+        local = created;
       } catch (_) {
         // Keep the local-only record for the next reconciliation pass.
       }
@@ -138,32 +155,80 @@ class ConversationRepository {
     }
   }
 
-  Future<void> _replayPending(String ownerScope) async {
+  Future<bool> _replayPending(String ownerScope) async {
     final List<ConversationSummary> pending = await _cache.pending(ownerScope);
+    bool degraded = false;
     for (final ConversationSummary conversation in pending) {
-      switch (conversation.syncState) {
-        case ConversationSyncState.localOnly:
-          final ConversationSummary created = await _cloud.create(
-            ownerScope,
-            conversation.title,
-            preferredId: conversation.id,
-          );
-          await _cache.upsert(created);
-          break;
-        case ConversationSyncState.pendingRename:
-          final ConversationSummary renamed = await _cloud.rename(
-            conversation,
-            conversation.title,
-          );
-          await _cache.upsert(renamed);
-          break;
-        case ConversationSyncState.pendingDelete:
-          await _cloud.delete(conversation.id);
-          await _cache.deleteHard(conversation.id);
-          break;
-        case ConversationSyncState.synced:
-          break;
+      try {
+        switch (conversation.syncState) {
+          case ConversationSyncState.localOnly:
+            final ConversationSummary created = await _cloud.create(
+              ownerScope,
+              conversation.title,
+              preferredId: conversation.id,
+            );
+            if (created.id != conversation.id) {
+              await _cache.remapConversation(conversation.id, created);
+            } else {
+              await _cache.upsert(created);
+            }
+            break;
+          case ConversationSyncState.pendingRename:
+            final ConversationSummary renamed = await _cloud.rename(
+              conversation,
+              conversation.title,
+            );
+            await _cache.upsert(renamed);
+            break;
+          case ConversationSyncState.pendingDelete:
+            await _cloud.delete(conversation.id);
+            await _cache.deleteHard(conversation.id);
+            break;
+          case ConversationSyncState.synced:
+            break;
+        }
+      } catch (_) {
+        // Continue replaying the rest. One malformed/stale mutation must not
+        // poison conversation-list recovery for the entire account.
+        degraded = true;
       }
     }
+    return degraded;
+  }
+
+  void _scheduleTitleRepair(
+    String ownerScope,
+    List<ConversationSummary> remote,
+  ) {
+    ConversationSummary? candidate;
+    for (final ConversationSummary conversation in remote) {
+      if (conversation.messageCount >= 2 &&
+          conversation.needsGeneratedTitle &&
+          !_titleRepairsInFlight.contains(conversation.id)) {
+        candidate = conversation;
+        break;
+      }
+    }
+    if (candidate == null) return;
+
+    final ConversationSummary target = candidate;
+    _titleRepairsInFlight.add(target.id);
+    unawaited(() async {
+      try {
+        final ConversationSummary repaired = await _cloud.repairGeneratedTitle(
+          ownerScope,
+          target,
+        );
+        if (repaired.title != target.title || !repaired.needsGeneratedTitle) {
+          await _cache.upsert(repaired);
+        }
+      } catch (_) {
+        // The title endpoint has its own safe fallback. Keeping the title as a
+        // repair candidate allows a later reconciliation to retry without ever
+        // blocking chat history or message delivery.
+      } finally {
+        _titleRepairsInFlight.remove(target.id);
+      }
+    }());
   }
 }
