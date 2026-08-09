@@ -7,6 +7,9 @@ void main() {
   testWidgets('coalesced response remains visibly progressive', (
     WidgetTester tester,
   ) async {
+    final SemanticsHandle semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
+
     String data = '';
     bool streaming = true;
     late StateSetter update;
@@ -49,10 +52,10 @@ void main() {
       find.bySemanticsLabel('Response is still being written'),
       findsOneWidget,
     );
-    expect(find.text('eight'), findsNothing);
+    expect(find.textContaining('eight'), findsNothing);
 
     await tester.pump(const Duration(milliseconds: 30));
-    expect(find.text('One'), findsOneWidget);
+    expect(find.textContaining('One'), findsOneWidget);
     expect(
       find.bySemanticsLabel('Response is still being written'),
       findsOneWidget,
@@ -70,6 +73,9 @@ void main() {
   testWidgets('completed historical content paints immediately', (
     WidgetTester tester,
   ) async {
+    final SemanticsHandle semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
+
     await tester.pumpWidget(
       MaterialApp(
         theme: SentIQTheme.light(),
