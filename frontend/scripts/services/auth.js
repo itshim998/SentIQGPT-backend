@@ -1,4 +1,5 @@
 import "./conversation-ordering-policy.js";
+import "./conversation-ordering-hydration-hardening.js";
 
 // ================================================================
 // 2. Supabase Auth
