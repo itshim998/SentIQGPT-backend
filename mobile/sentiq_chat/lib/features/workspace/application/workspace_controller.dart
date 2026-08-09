@@ -97,30 +97,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
     _networkSubscription = _networkMonitor.changes.listen(_handleNetworkChange);
   }
 
-  static const int _maximumTitleRepairRefreshes = 4;
-  static const List<Duration> _retryDelays = <Duration>[
-    Duration(seconds: 1),
-    Duration(seconds: 3),
-    Duration(seconds: 8),
-    Duration(seconds: 20),
-    Duration(seconds: 60),
-  ];
-
-  // These are intervals, not absolute times. They produce reconciliation
-  // points at roughly 2s, 6s, 15s, 30s, 60s, 120s, 180s and 300s after a new
-  // conversation. The loop stops as soon as the chat is cloud-synced and has
-  // its summarized title. This covers long-running Fast/Intuitive turns while
-  // keeping list traffic bounded.
-  static const List<Duration> _conversationConvergenceDelays = <Duration>[
-    Duration(seconds: 2),
-    Duration(seconds: 4),
-    Duration(seconds: 9),
-    Duration(seconds: 15),
-    Duration(seconds: 30),
-    Duration(seconds: 60),
-    Duration(seconds: 60),
-    Duration(seconds: 120),
-  ];
+  static const int startupCachedConversationCount = 5;
 
   final WorkspaceSession _session;
   final ConversationRepository _repository;
@@ -129,43 +106,42 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
   bool _networkAvailable = true;
   bool _refreshRequested = false;
   bool _disposed = false;
+  bool _initialCloudHydrationPending = false;
   Future<void>? _refreshFuture;
-  Timer? _retryTimer;
-  int _retryAttempt = 0;
-  Timer? _titleRepairRefreshTimer;
-  final Map<String, int> _titleRepairRefreshAttempts = <String, int>{};
-  final Map<String, Timer> _conversationConvergenceTimers = <String, Timer>{};
-  final Map<String, int> _conversationConvergenceAttempts = <String, int>{};
 
   Future<void> initialize() async {
     final NetworkAvailability availability = await _networkMonitor.current();
     _networkAvailable = availability == NetworkAvailability.online;
 
-    // Paint durable local state first. A signed-in user with a populated cache
-    // should not wait for the network. After reinstall/storage clear there is
-    // no durable local truth, so keep the loading state until the first cloud
-    // reconciliation has had a chance to restore server history.
+    // Only the five most recent cached conversations are painted during cold
+    // start. They provide an instant drawer while the authoritative server list
+    // is restored. SQLite may retain additional rows for offline durability and
+    // pending-operation safety, but they are not surfaced as current history
+    // until a successful cloud snapshot confirms them.
     final ConversationLoadResult cached = await _repository.load(
       ownerScope: _session.ownerScope,
       cloudEnabled: _session.cloudEnabled,
       networkAvailable: false,
     );
-    final String? selected = cached.items.isEmpty ? null : cached.items.first.id;
-    final bool awaitingInitialCloud =
-        cached.items.isEmpty && _session.cloudEnabled && _networkAvailable;
+    final List<ConversationSummary> instant = cached.items
+        .take(startupCachedConversationCount)
+        .toList(growable: false);
+    final String? selected = instant.isEmpty ? null : instant.first.id;
+    _initialCloudHydrationPending = _session.cloudEnabled;
+
     state = state.copyWith(
-      conversations: cached.items,
+      conversations: instant,
       selectedConversationId: selected,
       clearSelection: selected == null,
       networkState: _networkAvailable
           ? WorkspaceNetworkState.online
           : WorkspaceNetworkState.offline,
-      loading: awaitingInitialCloud,
+      loading: _initialCloudHydrationPending && _networkAvailable,
       clearMessage: true,
     );
 
     if (_session.cloudEnabled && _networkAvailable) {
-      if (awaitingInitialCloud) {
+      if (instant.isEmpty) {
         await refresh();
       } else {
         unawaited(refresh());
@@ -173,12 +149,12 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
     }
   }
 
-  /// Coalesces refresh requests instead of dropping them.
+  /// Coalesces event-driven refresh requests instead of dropping them.
   ///
-  /// The old `_refreshing` guard returned immediately when a refresh was in
-  /// flight. A newly-created local conversation could therefore miss its only
-  /// cloud replay if startup reconciliation happened to overlap the tap. Every
-  /// request now guarantees at least one pass after the request was observed.
+  /// Reconciliation is intentionally triggered by meaningful events (startup,
+  /// app resume, reconnect, local conversation actions and query lifecycle), not
+  /// by fixed polling intervals. Multiple simultaneous triggers collapse into
+  /// the smallest number of cloud-list requests needed to reach the latest state.
   Future<void> refresh() {
     if (_disposed) return Future<void>.value();
     _refreshRequested = true;
@@ -209,6 +185,25 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
     );
     if (_disposed) return;
 
+    // During first hydration, a failed server request returns the durable cache.
+    // Keep only the already-painted five rows and the loader instead of making a
+    // stale 50-row cache look authoritative. The next event will retry silently.
+    if (_initialCloudHydrationPending &&
+        _session.cloudEnabled &&
+        _networkAvailable &&
+        result.fromCache) {
+      state = state.copyWith(
+        networkState: WorkspaceNetworkState.online,
+        loading: true,
+        clearMessage: true,
+      );
+      return;
+    }
+
+    if (_session.cloudEnabled && _networkAvailable && !result.fromCache) {
+      _initialCloudHydrationPending = false;
+    }
+
     final bool selectedStillExists = state.selectedConversationId != null &&
         result.items.any(
           (ConversationSummary item) => item.id == state.selectedConversationId,
@@ -220,27 +215,18 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       conversations: result.items,
       selectedConversationId: selected,
       clearSelection: selected == null,
-      networkState: !_networkAvailable
-          ? WorkspaceNetworkState.offline
-          : result.degraded
-          ? WorkspaceNetworkState.degraded
-          : WorkspaceNetworkState.online,
-      loading: false,
+      // A transient cloud request/replay failure is an internal recovery state,
+      // not user-facing product language. Only actual connectivity loss changes
+      // the visible network state.
+      networkState: _networkAvailable
+          ? WorkspaceNetworkState.online
+          : WorkspaceNetworkState.offline,
+      loading: _initialCloudHydrationPending && _networkAvailable,
+      clearMessage: true,
     );
-
-    if (_networkAvailable && _session.cloudEnabled && result.degraded) {
-      _scheduleRetry();
-    } else if (!result.degraded) {
-      _resetRetry();
-    }
-    _scheduleTitleRepairRefresh(result.items);
-    _stopConvergedConversationTimers(result.items);
   }
 
   Future<void> newConversation() async {
-    // Create and select locally first. The repository replays the exact UUID to
-    // the backend so chat streaming and conversation-list sync share one
-    // identity even if the network response arrives later.
     final ConversationSummary created = await _repository.create(
       ownerScope: _session.ownerScope,
       cloudEnabled: _session.cloudEnabled,
@@ -256,13 +242,9 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       ].take(50).toList(growable: false),
       selectedConversationId: created.id,
       clearMessage: true,
-      loading: false,
     );
     if (_session.cloudEnabled && _networkAvailable) {
-      // Do not hold the button callback open on network I/O. The lossless queue
-      // guarantees this request still runs after any in-flight startup refresh.
       unawaited(refresh());
-      _scheduleConversationConvergence(created.id);
     }
   }
 
@@ -296,10 +278,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
                 item.id == updated.id ? updated : item,
           )
           .toList(),
-      message: !_networkAvailable && _session.cloudEnabled
-          ? 'The new title will update when you reconnect.'
-          : null,
-      clearMessage: _networkAvailable || !_session.cloudEnabled,
+      clearMessage: true,
     );
     if (_session.cloudEnabled && _networkAvailable) {
       unawaited(refresh());
@@ -313,7 +292,6 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       networkAvailable: false,
     );
     if (_disposed) return;
-    _cancelConversationConvergence(conversation.id);
     final List<ConversationSummary> remaining = state.conversations
         .where((ConversationSummary item) => item.id != conversation.id)
         .toList();
@@ -321,172 +299,29 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       conversations: remaining,
       selectedConversationId: remaining.isEmpty ? null : remaining.first.id,
       clearSelection: remaining.isEmpty,
-      message: !_networkAvailable && _session.cloudEnabled
-          ? 'This conversation will be removed when you reconnect.'
-          : null,
-      clearMessage: _networkAvailable || !_session.cloudEnabled,
-      loading: false,
+      clearMessage: true,
     );
     if (_session.cloudEnabled && _networkAvailable) {
       unawaited(refresh());
     }
   }
 
-  void _scheduleRetry() {
-    if (_retryTimer != null ||
-        !_networkAvailable ||
-        !_session.cloudEnabled ||
-        _disposed) {
-      return;
-    }
-    final int index = _retryAttempt < _retryDelays.length
-        ? _retryAttempt
-        : _retryDelays.length - 1;
-    final Duration delay = _retryDelays[index];
-    if (_retryAttempt < _retryDelays.length - 1) _retryAttempt += 1;
-    _retryTimer = Timer(delay, () {
-      _retryTimer = null;
-      if (!_disposed && _networkAvailable) unawaited(refresh());
-    });
-  }
-
-  void _resetRetry() {
-    _retryTimer?.cancel();
-    _retryTimer = null;
-    _retryAttempt = 0;
-  }
-
-  void _scheduleTitleRepairRefresh(List<ConversationSummary> conversations) {
-    ConversationSummary? candidate;
-    for (final ConversationSummary conversation in conversations) {
-      if (!conversation.needsGeneratedTitle) {
-        _titleRepairRefreshAttempts.remove(conversation.id);
-        continue;
-      }
-      final int attempts = _titleRepairRefreshAttempts[conversation.id] ?? 0;
-      if (candidate == null &&
-          conversation.messageCount >= 2 &&
-          attempts < _maximumTitleRepairRefreshes) {
-        candidate = conversation;
-      }
-    }
-
-    if (candidate == null ||
-        !_networkAvailable ||
-        !_session.cloudEnabled ||
-        _disposed) {
-      _titleRepairRefreshTimer?.cancel();
-      _titleRepairRefreshTimer = null;
-      return;
-    }
-    if (_titleRepairRefreshTimer != null) return;
-
-    final String conversationId = candidate.id;
-    // `/api/chat/title` has a bounded backend generation timeout. Re-read after
-    // that window so the asynchronously persisted summarized title becomes
-    // visible without requiring an app restart or manual refresh. Polling is
-    // bounded per conversation so a provider outage never creates a loop.
-    _titleRepairRefreshTimer = Timer(const Duration(seconds: 13), () {
-      _titleRepairRefreshTimer = null;
-      _titleRepairRefreshAttempts[conversationId] =
-          (_titleRepairRefreshAttempts[conversationId] ?? 0) + 1;
-      if (!_disposed && _networkAvailable) unawaited(refresh());
-    });
-  }
-
-  void _scheduleConversationConvergence(String conversationId) {
-    if (_disposed || !_session.cloudEnabled || !_networkAvailable) return;
-    if (_conversationConvergenceTimers.containsKey(conversationId)) return;
-    final int attempt = _conversationConvergenceAttempts[conversationId] ?? 0;
-    if (attempt >= _conversationConvergenceDelays.length) {
-      _conversationConvergenceAttempts.remove(conversationId);
-      return;
-    }
-
-    _conversationConvergenceTimers[conversationId] = Timer(
-      _conversationConvergenceDelays[attempt],
-      () async {
-        _conversationConvergenceTimers.remove(conversationId);
-        if (_disposed) return;
-        _conversationConvergenceAttempts[conversationId] = attempt + 1;
-        if (_networkAvailable) await refresh();
-        if (_disposed) return;
-        final ConversationSummary? conversation = _findConversation(
-          conversationId,
-        );
-        if (conversation == null || _isFullyConverged(conversation)) {
-          _cancelConversationConvergence(conversationId);
-          return;
-        }
-        _scheduleConversationConvergence(conversationId);
-      },
-    );
-  }
-
-  void _stopConvergedConversationTimers(
-    List<ConversationSummary> conversations,
-  ) {
-    for (final ConversationSummary conversation in conversations) {
-      if (_isFullyConverged(conversation)) {
-        _titleRepairRefreshAttempts.remove(conversation.id);
-        _cancelConversationConvergence(conversation.id);
-      }
-    }
-  }
-
-  bool _isFullyConverged(ConversationSummary conversation) {
-    return conversation.syncState == ConversationSyncState.synced &&
-        conversation.messageCount >= 2 &&
-        !conversation.needsGeneratedTitle;
-  }
-
-  ConversationSummary? _findConversation(String id) {
-    for (final ConversationSummary conversation in state.conversations) {
-      if (conversation.id == id) return conversation;
-    }
-    return null;
-  }
-
-  void _cancelConversationConvergence(String conversationId) {
-    _conversationConvergenceTimers.remove(conversationId)?.cancel();
-    _conversationConvergenceAttempts.remove(conversationId);
-  }
-
   void _handleNetworkChange(NetworkAvailability availability) {
     final bool wasAvailable = _networkAvailable;
     _networkAvailable = availability == NetworkAvailability.online;
-    if (!_networkAvailable) {
-      _retryTimer?.cancel();
-      _retryTimer = null;
-    }
     state = state.copyWith(
       networkState: _networkAvailable
           ? WorkspaceNetworkState.online
           : WorkspaceNetworkState.offline,
+      loading: _initialCloudHydrationPending && _networkAvailable,
+      clearMessage: true,
     );
-    if (!wasAvailable && _networkAvailable) {
-      unawaited(refresh());
-      for (final ConversationSummary conversation in state.conversations) {
-        if (conversation.syncState != ConversationSyncState.synced ||
-            (conversation.messageCount >= 2 &&
-                conversation.needsGeneratedTitle)) {
-          _scheduleConversationConvergence(conversation.id);
-        }
-      }
-    }
+    if (!wasAvailable && _networkAvailable) unawaited(refresh());
   }
 
   @override
   void dispose() {
     _disposed = true;
-    _retryTimer?.cancel();
-    _titleRepairRefreshTimer?.cancel();
-    for (final Timer timer in _conversationConvergenceTimers.values) {
-      timer.cancel();
-    }
-    _conversationConvergenceTimers.clear();
-    _conversationConvergenceAttempts.clear();
-    _titleRepairRefreshAttempts.clear();
     unawaited(_networkSubscription.cancel());
     super.dispose();
   }
