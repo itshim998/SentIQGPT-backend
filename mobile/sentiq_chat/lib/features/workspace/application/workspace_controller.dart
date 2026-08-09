@@ -97,25 +97,42 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
     _networkSubscription = _networkMonitor.changes.listen(_handleNetworkChange);
   }
 
+  static const List<Duration> _retryDelays = <Duration>[
+    Duration(seconds: 1),
+    Duration(seconds: 3),
+    Duration(seconds: 8),
+    Duration(seconds: 20),
+    Duration(seconds: 60),
+  ];
+
   final WorkspaceSession _session;
   final ConversationRepository _repository;
   final NetworkMonitor _networkMonitor;
   late final StreamSubscription<NetworkAvailability> _networkSubscription;
   bool _networkAvailable = true;
-  bool _refreshing = false;
+  bool _refreshRequested = false;
+  bool _disposed = false;
+  Future<void>? _refreshFuture;
+  Timer? _retryTimer;
+  int _retryAttempt = 0;
+  Timer? _titleRepairRefreshTimer;
 
   Future<void> initialize() async {
     final NetworkAvailability availability = await _networkMonitor.current();
     _networkAvailable = availability == NetworkAvailability.online;
 
-    // Paint durable local state first. A signed-in user should never wait for
-    // the network just to reach the workspace they already have on device.
+    // Paint durable local state first. A signed-in user with a populated cache
+    // should not wait for the network. After reinstall/storage clear there is
+    // no durable local truth, so keep the loading state until the first cloud
+    // reconciliation has had a chance to restore server history.
     final ConversationLoadResult cached = await _repository.load(
       ownerScope: _session.ownerScope,
       cloudEnabled: _session.cloudEnabled,
       networkAvailable: false,
     );
     final String? selected = cached.items.isEmpty ? null : cached.items.first.id;
+    final bool awaitingInitialCloud =
+        cached.items.isEmpty && _session.cloudEnabled && _networkAvailable;
     state = state.copyWith(
       conversations: cached.items,
       selectedConversationId: selected,
@@ -123,71 +140,105 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       networkState: _networkAvailable
           ? WorkspaceNetworkState.online
           : WorkspaceNetworkState.offline,
-      loading: false,
+      loading: awaitingInitialCloud,
       clearMessage: true,
     );
 
-    // Cloud replay/list reconciliation is deliberately detached from the
-    // first paint. It will update this same state when it completes.
     if (_session.cloudEnabled && _networkAvailable) {
-      unawaited(refresh());
+      if (awaitingInitialCloud) {
+        await refresh();
+      } else {
+        unawaited(refresh());
+      }
     }
   }
 
-  Future<void> refresh() async {
-    if (_refreshing) return;
-    _refreshing = true;
+  /// Coalesces refresh requests instead of dropping them.
+  ///
+  /// The old `_refreshing` guard returned immediately when a refresh was in
+  /// flight. A newly-created local conversation could therefore miss its only
+  /// cloud replay if startup reconciliation happened to overlap the tap. Every
+  /// request now guarantees at least one pass after the request was observed.
+  Future<void> refresh() {
+    if (_disposed) return Future<void>.value();
+    _refreshRequested = true;
+    final Future<void>? running = _refreshFuture;
+    if (running != null) return running;
+    final Future<void> future = _drainRefreshQueue();
+    _refreshFuture = future;
+    return future;
+  }
+
+  Future<void> _drainRefreshQueue() async {
     try {
-      final ConversationLoadResult result = await _repository.load(
-        ownerScope: _session.ownerScope,
-        cloudEnabled: _session.cloudEnabled,
-        networkAvailable: _networkAvailable,
-      );
-      final bool selectedStillExists = state.selectedConversationId != null &&
-          result.items.any(
-            (ConversationSummary item) => item.id == state.selectedConversationId,
-          );
-      final String? selected = selectedStillExists
-          ? state.selectedConversationId
-          : (result.items.isEmpty ? null : result.items.first.id);
-      state = state.copyWith(
-        conversations: result.items,
-        selectedConversationId: selected,
-        clearSelection: selected == null,
-        networkState: !_networkAvailable
-            ? WorkspaceNetworkState.offline
-            : result.degraded
-            ? WorkspaceNetworkState.degraded
-            : WorkspaceNetworkState.online,
-        loading: false,
-      );
+      while (_refreshRequested && !_disposed) {
+        _refreshRequested = false;
+        await _refreshOnce();
+      }
     } finally {
-      _refreshing = false;
+      _refreshFuture = null;
+      if (_refreshRequested && !_disposed) unawaited(refresh());
     }
+  }
+
+  Future<void> _refreshOnce() async {
+    final ConversationLoadResult result = await _repository.load(
+      ownerScope: _session.ownerScope,
+      cloudEnabled: _session.cloudEnabled,
+      networkAvailable: _networkAvailable,
+    );
+    if (_disposed) return;
+
+    final bool selectedStillExists = state.selectedConversationId != null &&
+        result.items.any(
+          (ConversationSummary item) => item.id == state.selectedConversationId,
+        );
+    final String? selected = selectedStillExists
+        ? state.selectedConversationId
+        : (result.items.isEmpty ? null : result.items.first.id);
+    state = state.copyWith(
+      conversations: result.items,
+      selectedConversationId: selected,
+      clearSelection: selected == null,
+      networkState: !_networkAvailable
+          ? WorkspaceNetworkState.offline
+          : result.degraded
+          ? WorkspaceNetworkState.degraded
+          : WorkspaceNetworkState.online,
+      loading: false,
+    );
+
+    if (_networkAvailable && _session.cloudEnabled && result.degraded) {
+      _scheduleRetry();
+    } else if (!result.degraded) {
+      _resetRetry();
+    }
+    _scheduleTitleRepairRefresh(result.items);
   }
 
   Future<void> newConversation() async {
-    // Create and select locally first. The repository uses the same UUID when
-    // replaying the create remotely, so cloud reconciliation can happen later
-    // without replacing the visible conversation identity.
+    // Create and select locally first. The repository replays the exact UUID to
+    // the backend so chat streaming and conversation-list sync share one
+    // identity even if the network response arrives later.
     final ConversationSummary created = await _repository.create(
       ownerScope: _session.ownerScope,
       cloudEnabled: _session.cloudEnabled,
       networkAvailable: false,
     );
+    if (_disposed) return;
     state = state.copyWith(
       conversations: <ConversationSummary>[
         created,
         ...state.conversations.where(
           (ConversationSummary item) => item.id != created.id,
         ),
-      ],
+      ].take(50).toList(growable: false),
       selectedConversationId: created.id,
       clearMessage: true,
       loading: false,
     );
     if (_session.cloudEnabled && _networkAvailable) {
-      unawaited(refresh());
+      await refresh();
     }
   }
 
@@ -213,6 +264,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       cloudEnabled: _session.cloudEnabled,
       networkAvailable: false,
     );
+    if (_disposed) return;
     state = state.copyWith(
       conversations: state.conversations
           .map(
@@ -226,7 +278,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       clearMessage: _networkAvailable || !_session.cloudEnabled,
     );
     if (_session.cloudEnabled && _networkAvailable) {
-      unawaited(refresh());
+      await refresh();
     }
   }
 
@@ -236,6 +288,7 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       cloudEnabled: _session.cloudEnabled,
       networkAvailable: false,
     );
+    if (_disposed) return;
     final List<ConversationSummary> remaining = state.conversations
         .where((ConversationSummary item) => item.id != conversation.id)
         .toList();
@@ -250,13 +303,65 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       loading: false,
     );
     if (_session.cloudEnabled && _networkAvailable) {
-      unawaited(refresh());
+      await refresh();
     }
+  }
+
+  void _scheduleRetry() {
+    if (_retryTimer != null ||
+        !_networkAvailable ||
+        !_session.cloudEnabled ||
+        _disposed) {
+      return;
+    }
+    final int index = _retryAttempt < _retryDelays.length
+        ? _retryAttempt
+        : _retryDelays.length - 1;
+    final Duration delay = _retryDelays[index];
+    if (_retryAttempt < _retryDelays.length - 1) _retryAttempt += 1;
+    _retryTimer = Timer(delay, () {
+      _retryTimer = null;
+      if (!_disposed && _networkAvailable) unawaited(refresh());
+    });
+  }
+
+  void _resetRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _retryAttempt = 0;
+  }
+
+  void _scheduleTitleRepairRefresh(List<ConversationSummary> conversations) {
+    final bool hasRepairCandidate = conversations.any(
+      (ConversationSummary item) =>
+          item.messageCount >= 2 && item.needsGeneratedTitle,
+    );
+    if (!hasRepairCandidate ||
+        !_networkAvailable ||
+        !_session.cloudEnabled ||
+        _disposed) {
+      _titleRepairRefreshTimer?.cancel();
+      _titleRepairRefreshTimer = null;
+      return;
+    }
+    if (_titleRepairRefreshTimer != null) return;
+
+    // `/api/chat/title` has a bounded backend generation timeout. Re-read after
+    // that window so the asynchronously persisted summarized title becomes
+    // visible without requiring an app restart or manual refresh.
+    _titleRepairRefreshTimer = Timer(const Duration(seconds: 13), () {
+      _titleRepairRefreshTimer = null;
+      if (!_disposed && _networkAvailable) unawaited(refresh());
+    });
   }
 
   void _handleNetworkChange(NetworkAvailability availability) {
     final bool wasAvailable = _networkAvailable;
     _networkAvailable = availability == NetworkAvailability.online;
+    if (!_networkAvailable) {
+      _retryTimer?.cancel();
+      _retryTimer = null;
+    }
     state = state.copyWith(
       networkState: _networkAvailable
           ? WorkspaceNetworkState.online
@@ -267,6 +372,9 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
 
   @override
   void dispose() {
+    _disposed = true;
+    _retryTimer?.cancel();
+    _titleRepairRefreshTimer?.cancel();
     unawaited(_networkSubscription.cancel());
     super.dispose();
   }
