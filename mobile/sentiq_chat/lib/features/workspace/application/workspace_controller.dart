@@ -204,15 +204,18 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       _initialCloudHydrationPending = false;
     }
 
+    final List<ConversationSummary> conversations = _preservePendingLocalRows(
+      result.items,
+    );
     final bool selectedStillExists = state.selectedConversationId != null &&
-        result.items.any(
+        conversations.any(
           (ConversationSummary item) => item.id == state.selectedConversationId,
         );
     final String? selected = selectedStillExists
         ? state.selectedConversationId
-        : (result.items.isEmpty ? null : result.items.first.id);
+        : (conversations.isEmpty ? null : conversations.first.id);
     state = state.copyWith(
-      conversations: result.items,
+      conversations: conversations,
       selectedConversationId: selected,
       clearSelection: selected == null,
       // A transient cloud request/replay failure is an internal recovery state,
@@ -224,6 +227,26 @@ class WorkspaceController extends StateNotifier<WorkspaceState> {
       loading: _initialCloudHydrationPending && _networkAvailable,
       clearMessage: true,
     );
+  }
+
+  List<ConversationSummary> _preservePendingLocalRows(
+    List<ConversationSummary> incoming,
+  ) {
+    final Set<String> incomingIds = incoming
+        .map((ConversationSummary item) => item.id)
+        .toSet();
+    final List<ConversationSummary> pending = state.conversations
+        .where(
+          (ConversationSummary item) =>
+              item.syncState != ConversationSyncState.synced &&
+              !incomingIds.contains(item.id),
+        )
+        .toList(growable: false);
+    if (pending.isEmpty) return incoming;
+    return <ConversationSummary>[
+      ...pending,
+      ...incoming,
+    ].take(50).toList(growable: false);
   }
 
   Future<void> newConversation() async {
