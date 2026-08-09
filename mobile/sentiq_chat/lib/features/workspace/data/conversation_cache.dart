@@ -178,34 +178,53 @@ class ConversationCache {
   /// backend's 50-chat FIFO eviction all converge to exactly the same history.
   Future<void> reconcileCloudSnapshot(
     String ownerScope,
-    List<ConversationSummary> remote,
-  ) async {
+    List<ConversationSummary> remote, {
+    Map<String, String> aliases = const <String, String>{},
+  }) async {
     final Database database = await open();
     await database.transaction((Transaction transaction) async {
+      final List<ConversationSummary> canonicalRemote = remote
+          .where((ConversationSummary item) => item.id.isNotEmpty)
+          .take(maximumConversations)
+          .toList(growable: false);
+      final Map<String, ConversationSummary> remoteById =
+          <String, ConversationSummary>{
+            for (final ConversationSummary item in canonicalRemote)
+              item.id: item,
+          };
+
+      // The list endpoint can merge duplicate conversations and return aliases.
+      // Move cached messages/turns before stale-row pruning so an offline/local
+      // turn can never be discarded merely because its previous UUID retired.
+      for (final MapEntry<String, String> alias in aliases.entries) {
+        final ConversationSummary? canonical = remoteById[alias.value];
+        if (canonical == null || alias.key == canonical.id) continue;
+        await _remapConversationRows(transaction, alias.key, canonical);
+      }
+
       final List<Map<String, Object?>> localRows = await transaction.query(
         'conversations',
         where: 'owner_scope = ?',
         whereArgs: <Object?>[ownerScope],
       );
-      final Map<String, ConversationSummary> local = <String, ConversationSummary>{
-        for (final Map<String, Object?> row in localRows)
-          row['id'].toString(): ConversationSummary.fromDatabase(row),
-      };
-      final List<ConversationSummary> canonicalRemote = remote
-          .where((ConversationSummary item) => item.id.isNotEmpty)
-          .take(maximumConversations)
-          .toList(growable: false);
+      final Map<String, ConversationSummary> local =
+          <String, ConversationSummary>{
+            for (final Map<String, Object?> row in localRows)
+              row['id'].toString(): ConversationSummary.fromDatabase(row),
+          };
       final Set<String> remoteIds = canonicalRemote
           .map((ConversationSummary item) => item.id)
           .toSet();
 
       for (final ConversationSummary cloud in canonicalRemote) {
         final ConversationSummary? cached = local[cloud.id];
-        if (cached?.syncState == ConversationSyncState.pendingDelete) {
+        if (cached != null &&
+            cached.syncState == ConversationSyncState.pendingDelete) {
           continue;
         }
-        if (cached?.syncState == ConversationSyncState.pendingRename &&
-            cached!.title != cloud.title) {
+        if (cached != null &&
+            cached.syncState == ConversationSyncState.pendingRename &&
+            cached.title != cloud.title) {
           // Preserve the local explicit rename until its PATCH succeeds, while
           // still accepting authoritative cloud activity/message metadata.
           await transaction.insert(
@@ -260,30 +279,61 @@ class ConversationCache {
     }
     final Database database = await open();
     await database.transaction((Transaction transaction) async {
-      await transaction.update(
-        'messages',
-        <String, Object?>{'conversation_id': canonical.id},
-        where: 'conversation_id = ?',
-        whereArgs: <Object?>[previousId],
-      );
-      await transaction.update(
-        'chat_turns',
-        <String, Object?>{'conversation_id': canonical.id},
-        where: 'conversation_id = ?',
-        whereArgs: <Object?>[previousId],
-      );
-      await transaction.delete(
-        'conversations',
-        where: 'id = ?',
-        whereArgs: <Object?>[previousId],
-      );
-      await transaction.insert(
-        'conversations',
-        canonical.toDatabase(),
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await _remapConversationRows(transaction, previousId, canonical);
       await _trimScope(transaction, canonical.ownerScope);
     });
+  }
+
+  Future<void> _remapConversationRows(
+    Transaction transaction,
+    String previousId,
+    ConversationSummary canonical,
+  ) async {
+    final List<Map<String, Object?>> previousRows = await transaction.query(
+      'conversations',
+      where: 'id = ?',
+      whereArgs: <Object?>[previousId],
+      limit: 1,
+    );
+    final ConversationSummary? previous = previousRows.isEmpty
+        ? null
+        : ConversationSummary.fromDatabase(previousRows.first);
+    if (previous == null) return;
+
+    await transaction.update(
+      'messages',
+      <String, Object?>{'conversation_id': canonical.id},
+      where: 'conversation_id = ?',
+      whereArgs: <Object?>[previousId],
+    );
+    await transaction.update(
+      'chat_turns',
+      <String, Object?>{'conversation_id': canonical.id},
+      where: 'conversation_id = ?',
+      whereArgs: <Object?>[previousId],
+    );
+    await transaction.delete(
+      'conversations',
+      where: 'id = ?',
+      whereArgs: <Object?>[previousId],
+    );
+
+    final ConversationSummary replacement = switch (previous.syncState) {
+      ConversationSyncState.pendingDelete => canonical.copyWith(
+        syncState: ConversationSyncState.pendingDelete,
+      ),
+      ConversationSyncState.pendingRename => canonical.copyWith(
+        title: previous.title,
+        syncState: ConversationSyncState.pendingRename,
+      ),
+      ConversationSyncState.localOnly || ConversationSyncState.synced =>
+        canonical.copyWith(syncState: ConversationSyncState.synced),
+    };
+    await transaction.insert(
+      'conversations',
+      replacement.toDatabase(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   Future<void> deleteHard(String id) async {
@@ -331,6 +381,7 @@ class ConversationCache {
       where: 'owner_scope = ?',
       whereArgs: <Object?>[ownerScope],
       orderBy: 'created_at DESC',
+      limit: -1,
       offset: maximumConversations,
     );
     for (final Map<String, Object?> row in excess) {
