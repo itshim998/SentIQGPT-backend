@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 import 'package:sentiq_chat/core/performance/performance_policy.dart';
-import 'package:sentiq_chat/shared/widgets/refractive_glass_surface.dart';
 
 Future<T?> showSentIQSheet<T>({
   required BuildContext context,
@@ -13,36 +12,41 @@ Future<T?> showSentIQSheet<T>({
     context: context,
     barrierDismissible: isDismissible,
     barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
-    barrierColor: Colors.black.withValues(alpha: 0.34),
+    barrierColor: Colors.black.withValues(alpha: 0.48),
     transitionDuration: reduceMotion ? Duration.zero : SentIQMotion.quick,
     pageBuilder: (
       BuildContext dialogContext,
       Animation<double> animation,
       Animation<double> secondaryAnimation,
     ) {
-      final double maxHeight = MediaQuery.sizeOf(dialogContext).height * 0.82;
+      final SentIQPalette palette = dialogContext.sentiqPalette;
+      final double maxHeight = MediaQuery.sizeOf(dialogContext).height * 0.48;
+      final BorderRadius radius = BorderRadius.circular(30);
       return RepaintBoundary(
         child: SafeArea(
           top: false,
           child: Align(
             alignment: Alignment.bottomCenter,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(
-                SentIQSpacing.sm,
-                SentIQSpacing.sm,
-                SentIQSpacing.sm,
-                SentIQSpacing.sm,
-              ),
+              padding: const EdgeInsets.all(SentIQSpacing.sm),
               child: ConstrainedBox(
                 constraints: BoxConstraints(maxWidth: 620, maxHeight: maxHeight),
-                child: RefractiveGlassSurface(
-                  borderRadius: 30,
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: SingleChildScrollView(
-                      physics: const BouncingScrollPhysics(),
-                      child: builder(dialogContext),
-                    ),
+                child: Material(
+                  key: const Key('sentiq-sheet-surface'),
+                  color: palette.surfaceElevated,
+                  surfaceTintColor: Colors.transparent,
+                  elevation: 10,
+                  shadowColor: Colors.black.withValues(alpha: 0.28),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: radius,
+                    side: BorderSide(color: palette.glassBorder),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: SingleChildScrollView(
+                    key: const Key('sentiq-sheet-scroll-view'),
+                    physics: const BouncingScrollPhysics(),
+                    padding: const EdgeInsets.all(SentIQSpacing.md),
+                    child: builder(dialogContext),
                   ),
                 ),
               ),
