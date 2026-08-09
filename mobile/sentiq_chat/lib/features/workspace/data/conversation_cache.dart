@@ -247,6 +247,45 @@ class ConversationCache {
     });
   }
 
+  /// Moves local message/turn ownership when the backend resolves an old UUID
+  /// through a canonical alias. This prevents a duplicate/ghost local chat
+  /// from surviving after the server has already merged it.
+  Future<void> remapConversation(
+    String previousId,
+    ConversationSummary canonical,
+  ) async {
+    if (previousId == canonical.id) {
+      await upsert(canonical);
+      return;
+    }
+    final Database database = await open();
+    await database.transaction((Transaction transaction) async {
+      await transaction.update(
+        'messages',
+        <String, Object?>{'conversation_id': canonical.id},
+        where: 'conversation_id = ?',
+        whereArgs: <Object?>[previousId],
+      );
+      await transaction.update(
+        'chat_turns',
+        <String, Object?>{'conversation_id': canonical.id},
+        where: 'conversation_id = ?',
+        whereArgs: <Object?>[previousId],
+      );
+      await transaction.delete(
+        'conversations',
+        where: 'id = ?',
+        whereArgs: <Object?>[previousId],
+      );
+      await transaction.insert(
+        'conversations',
+        canonical.toDatabase(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await _trimScope(transaction, canonical.ownerScope);
+    });
+  }
+
   Future<void> deleteHard(String id) async {
     final Database database = await open();
     await database.transaction((Transaction transaction) async {
