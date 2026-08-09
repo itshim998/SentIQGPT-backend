@@ -5,11 +5,11 @@ import vm from "node:vm";
 
 const root = path.resolve(process.cwd());
 const specialPath = path.join(root, "frontend/scripts/services/conversation-special-mode-activity.js");
-const livePersistencePath = path.join(root, "backend/live/sentiqLivePersistence.ts");
+const migrationPath = path.join(root, "supabase/migrations/20260809123000_conversation_user_activity_ordering.sql");
 const authPath = path.join(root, "frontend/scripts/services/auth.js");
 
 const specialSource = fs.readFileSync(specialPath, "utf8");
-const liveSource = fs.readFileSync(livePersistencePath, "utf8");
+const migrationSource = fs.readFileSync(migrationPath, "utf8");
 const authSource = fs.readFileSync(authPath, "utf8");
 
 const clone = (value) => (value == null ? value : structuredClone(value));
@@ -24,14 +24,14 @@ assert.match(specialSource, /originalCreateLiveSessionToken/);
 assert.match(specialSource, /conversation_retention_cleanup_required/);
 assert.match(specialSource, /await API\.deleteConversation\(bottom\.id\)/);
 
-assert.match(liveSource, /containsUserActivity/);
-assert.match(liveSource, /turn\.role === "user"/);
-assert.match(liveSource, /\.update\(\{ last_activity_at: activityAt \}\)/);
-assert.doesNotMatch(
-  liveSource.slice(liveSource.indexOf("const containsUserActivity"), liveSource.indexOf("return 1;")),
-  /turn\.role === "assistant"[\s\S]*last_activity_at/,
-  "assistant-only Live audio must not advance activity",
-);
+// SentIQ Live stores one assistant-side transcript artifact. The DB activity
+// policy must classify that artifact as user activity only when it contains a
+// real non-empty "You:" turn; no fake/visible user message is required.
+assert.match(migrationSource, /new\.message_type = 'live_transcript'/);
+assert.match(migrationSource, /new\.role = 'assistant'/);
+assert.match(migrationSource, /You:\[\[:space:\]\]\*\[\^\[:space:\]\]/);
+assert.match(migrationSource, /m\.message_type = 'live_transcript'/);
+assert.match(migrationSource, /m\.role = 'assistant'/);
 
 function installSpecialMode({ storage, api }) {
   const context = {
