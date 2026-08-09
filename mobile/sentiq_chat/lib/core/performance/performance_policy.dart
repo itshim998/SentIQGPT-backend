@@ -24,6 +24,12 @@ abstract final class SentIQPerformancePolicy {
         Platform.numberOfProcessors <= 4;
   }
 
+  /// Android's live backdrop blur is expensive enough to consume a meaningful
+  /// fraction of an 8.3 ms 120 Hz frame budget. SentIQ's glass surfaces keep
+  /// their gradient, border and elevation without sampling the pixels behind
+  /// them, so Android uses the static treatment on every performance tier.
+  static bool get preferStaticGlass => Platform.isAndroid;
+
   static bool reduceMotion(BuildContext context) {
     return MediaQuery.maybeOf(context)?.disableAnimations ??
         WidgetsBinding
@@ -42,7 +48,11 @@ abstract final class SentIQPerformancePolicy {
   }
 
   static ImageFilter? glassFilter(BuildContext context, double requestedSigma) {
-    if (useLowCostEffects(context) || requestedSigma <= 0) return null;
+    if (preferStaticGlass ||
+        useLowCostEffects(context) ||
+        requestedSigma <= 0) {
+      return null;
+    }
     final double sigma = requestedSigma.clamp(0, maximumBlurSigma).toDouble();
     return ImageFilter.blur(sigmaX: sigma, sigmaY: sigma);
   }
