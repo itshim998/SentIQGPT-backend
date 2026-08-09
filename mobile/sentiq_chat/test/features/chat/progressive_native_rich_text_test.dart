@@ -3,6 +3,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_theme.dart';
 import 'package:sentiq_chat/features/chat/presentation/progressive_native_rich_text.dart';
 
+Finder _streamingCaret() {
+  return find.byWidgetPredicate((Widget widget) {
+    return widget is Semantics &&
+        widget.properties.label == 'Response is still being written';
+  });
+}
+
 void main() {
   testWidgets('coalesced response remains visibly progressive', (
     WidgetTester tester,
@@ -31,10 +38,7 @@ void main() {
       ),
     );
 
-    final Finder streamingCaret = find.bySemanticsLabel(
-      RegExp('Response is still being written'),
-    );
-    expect(streamingCaret, findsOneWidget);
+    expect(_streamingCaret(), findsOneWidget);
 
     update(() {
       data = '**One** two three four five six seven eight ';
@@ -45,16 +49,16 @@ void main() {
     // A buffered/final network delivery must not make the whole answer appear
     // in the same frame. The breathing indicator stays alive while received
     // text is being revealed word-by-word.
-    expect(streamingCaret, findsOneWidget);
+    expect(_streamingCaret(), findsOneWidget);
     expect(find.textContaining('eight'), findsNothing);
 
     await tester.pump(const Duration(milliseconds: 30));
     expect(find.textContaining('One'), findsOneWidget);
-    expect(streamingCaret, findsOneWidget);
+    expect(_streamingCaret(), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 1));
     expect(find.textContaining('eight'), findsOneWidget);
-    expect(streamingCaret, findsNothing);
+    expect(_streamingCaret(), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -76,10 +80,7 @@ void main() {
     );
 
     expect(find.text('Already complete'), findsOneWidget);
-    expect(
-      find.bySemanticsLabel(RegExp('Response is still being written')),
-      findsNothing,
-    );
+    expect(_streamingCaret(), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
