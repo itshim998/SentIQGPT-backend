@@ -11,6 +11,10 @@ type SupabaseError = {
   readonly hint?: string | null;
 } | null;
 
+const GUEST_TEXT_POLICY_VERSION = "guest-text-trial-v1";
+const GUEST_TEXT_LIMIT_TOKENS = 8_000;
+const guestTextReservationRequestIds = new Set<string>();
+
 function formatSupabaseError(error: SupabaseError): string {
   if (!error) return "unknown";
   return [
@@ -23,6 +27,20 @@ function formatSupabaseError(error: SupabaseError): string {
 
 function normalizeProviderPlanIds(value: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(value).filter(([, id]) => Boolean(id)));
+}
+
+function normalizeNumber(value: unknown, fallback = 0): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function isGuestTextFeature(identity: BillingIdentity, feature: BillableFeature): boolean {
+  return Boolean(
+    identity.isGuest
+      && !identity.userId
+      && identity.anonymousKeyHash
+      && (feature === "premium_text" || feature === "lite_text"),
+  );
 }
 
 export class BillingRepositoryError extends Error {
@@ -92,6 +110,19 @@ export class BillingRepository {
     return data ?? [];
   }
 
+  async getGuestTextUsageSummary(anonymousKeyHash: string): Promise<any> {
+    const { data, error } = await this.db.rpc("get_guest_text_usage_summary", {
+      p_anonymous_key_hash: anonymousKeyHash,
+    });
+    if (error) {
+      throw new BillingRepositoryError(
+        `Guest text allowance is unavailable: ${formatSupabaseError(error)}`,
+        "guest_text_quota_unavailable",
+      );
+    }
+    return data;
+  }
+
   async getUsageSummary(identity: BillingIdentity): Promise<any> {
     const { data, error } = await this.db.rpc("get_usage_summary", {
       p_user_id: identity.userId,
@@ -100,10 +131,39 @@ export class BillingRepository {
     if (error) {
       throw new BillingRepositoryError(`Failed to get usage summary: ${formatSupabaseError(error)}`);
     }
-    return data;
+    if (!identity.isGuest || identity.userId || !identity.anonymousKeyHash) return data;
+    const guestTextAllowance = await this.getGuestTextUsageSummary(identity.anonymousKeyHash);
+    return {
+      ...(data ?? {}),
+      guest_text_allowance: guestTextAllowance,
+    };
   }
 
   async getUnifiedTextUsageSummaryV2(identity: BillingIdentity): Promise<any> {
+    if (identity.isGuest && !identity.userId && identity.anonymousKeyHash) {
+      const guest = await this.getGuestTextUsageSummary(identity.anonymousKeyHash);
+      return {
+        eligible: true,
+        policy_version: GUEST_TEXT_POLICY_VERSION,
+        plan_code: "free",
+        limit_tokens: normalizeNumber(guest?.limit_tokens, GUEST_TEXT_LIMIT_TOKENS),
+        window_seconds: 0,
+        used_tokens: normalizeNumber(guest?.used_tokens),
+        active_reserved_tokens: normalizeNumber(guest?.active_reserved_tokens),
+        remaining_tokens: normalizeNumber(guest?.remaining_tokens),
+        fast_reserve_tokens: 0,
+        fast_available_tokens: normalizeNumber(guest?.remaining_tokens),
+        intuitive_available_tokens: 0,
+        intuitive_allowed: false,
+        required_mode: "fast",
+        exhausted: guest?.exhausted === true,
+        next_recovery_at: null,
+        full_reset_at: null,
+        rollback_shadow_v1_standard_tokens: 0,
+        rollback_shadow_v1_lite_tokens: 0,
+      };
+    }
+
     const { data, error } = await this.db.rpc("get_unified_text_usage_summary_v2", {
       p_user_id: identity.userId,
       p_anonymous_key_hash: identity.userId ? null : identity.anonymousKeyHash,
@@ -124,6 +184,30 @@ export class BillingRepository {
     readonly requestId: string;
     readonly metadata?: Record<string, unknown>;
   }): Promise<any> {
+    if (isGuestTextFeature(args.identity, args.feature)) {
+      const anonymousKeyHash = args.identity.anonymousKeyHash as string;
+      const minimumTokens = Math.max(1, Math.trunc(normalizeNumber(args.metadata?.minimum_tokens, 256)));
+      const { data, error } = await this.db.rpc("reserve_guest_text_tokens", {
+        p_anonymous_key_hash: anonymousKeyHash,
+        p_feature: args.feature,
+        p_requested_tokens: args.units,
+        p_minimum_tokens: minimumTokens,
+        p_request_id: args.requestId,
+        p_metadata: {
+          ...(args.metadata ?? {}),
+          guest_text_policy_version: GUEST_TEXT_POLICY_VERSION,
+        },
+      });
+      if (error) {
+        throw new BillingRepositoryError(
+          `Guest text reservation is unavailable: ${formatSupabaseError(error)}`,
+          "guest_text_quota_unavailable",
+        );
+      }
+      if (data?.reserved === true) guestTextReservationRequestIds.add(args.requestId);
+      return data;
+    }
+
     const { data, error } = await this.db.rpc("reserve_usage", {
       p_user_id: args.identity.userId,
       p_anonymous_key_hash: args.identity.userId ? null : args.identity.anonymousKeyHash,
@@ -146,6 +230,35 @@ export class BillingRepository {
     readonly minimumTokens: number;
     readonly metadata?: Record<string, unknown>;
   }): Promise<any> {
+    // Guest chat deliberately stays on Fast and uses the isolated 8K guest
+    // reservation path above. Returning plan_not_eligible for Fast makes the
+    // quota service preserve the normal V1 request-budget lifecycle while the
+    // repository supplies the guest-specific cap. Intuitive is rejected.
+    if (args.identity.isGuest && !args.identity.userId && args.identity.anonymousKeyHash) {
+      if (args.executionMode !== "fast") {
+        const guest = await this.getGuestTextUsageSummary(args.identity.anonymousKeyHash);
+        return {
+          reserved: false,
+          reason: "intuitive_fast_required",
+          plan_code: "free",
+          limit_tokens: normalizeNumber(guest?.limit_tokens, GUEST_TEXT_LIMIT_TOKENS),
+          used_tokens: normalizeNumber(guest?.used_tokens),
+          active_reserved_tokens: normalizeNumber(guest?.active_reserved_tokens),
+          remaining_tokens: normalizeNumber(guest?.remaining_tokens),
+          fast_reserve_tokens: 0,
+          fast_available_tokens: normalizeNumber(guest?.remaining_tokens),
+          intuitive_available_tokens: 0,
+          required_mode: "fast",
+          next_recovery_at: null,
+        };
+      }
+      return {
+        reserved: false,
+        reason: "plan_not_eligible",
+        plan_code: "free",
+      };
+    }
+
     const { data, error } = await this.db.rpc("reserve_unified_text_tokens_v2", {
       p_user_id: args.identity.userId,
       p_anonymous_key_hash: args.identity.userId ? null : args.identity.anonymousKeyHash,
@@ -171,6 +284,30 @@ export class BillingRepository {
     readonly route: string;
     readonly metadata?: Record<string, unknown>;
   }): Promise<any> {
+    if (guestTextReservationRequestIds.has(args.requestId)) {
+      const actualTokens = Math.max(1, Math.trunc(normalizeNumber(args.metadata?.actual_token_units, 1)));
+      const { data, error } = await this.db.rpc("commit_guest_text_tokens", {
+        p_request_id: args.requestId,
+        p_reservation_id: null,
+        p_actual_tokens: actualTokens,
+        p_provider: args.provider,
+        p_model: args.model,
+        p_route: args.route,
+        p_metadata: args.metadata ?? {},
+      });
+      if (error) {
+        throw new BillingRepositoryError(
+          `Guest text settlement is unavailable: ${formatSupabaseError(error)}`,
+          "guest_text_quota_unavailable",
+        );
+      }
+      guestTextReservationRequestIds.delete(args.requestId);
+      if (data?.matched !== true) {
+        throw new BillingRepositoryError("Guest text reservation could not be settled.", "guest_text_reservation_missing");
+      }
+      return data;
+    }
+
     const { data, error } = await this.db.rpc("commit_usage_reservation", {
       p_request_id: args.requestId,
       p_provider: args.provider,
@@ -194,7 +331,6 @@ export class BillingRepository {
       p_reservation_id: args.reservationId,
       p_request_id: args.requestId,
       p_actual_tokens: args.actualTokens,
-      p_metadata: args.metadata ?? {},
     });
     if (error) {
       throw new BillingRepositoryError(
@@ -206,6 +342,24 @@ export class BillingRepository {
   }
 
   async releaseReservation(requestId: string): Promise<any> {
+    if (guestTextReservationRequestIds.has(requestId)) {
+      const { data, error } = await this.db.rpc("release_guest_text_tokens", {
+        p_request_id: requestId,
+        p_reservation_id: null,
+      });
+      if (error) {
+        throw new BillingRepositoryError(
+          `Guest text reservation release is unavailable: ${formatSupabaseError(error)}`,
+          "guest_text_quota_unavailable",
+        );
+      }
+      guestTextReservationRequestIds.delete(requestId);
+      if (data?.matched !== true) {
+        throw new BillingRepositoryError("Guest text reservation could not be released.", "guest_text_reservation_missing");
+      }
+      return data;
+    }
+
     const { data, error } = await this.db.rpc("release_usage_reservation", {
       p_request_id: requestId,
     });
