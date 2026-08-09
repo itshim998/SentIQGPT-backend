@@ -384,7 +384,7 @@ class _ChatMessageViewState extends State<ChatMessageView> {
                     icon: const Icon(Icons.play_arrow_rounded, size: 17),
                     label: const Text('Continue'),
                   ),
-                if (widget.message.executionMode != null)
+                if (!_isUser && widget.message.executionMode != null)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 6),
                     child: Text(
