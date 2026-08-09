@@ -66,7 +66,6 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen>
     final WorkspaceController workspaceController = ref.read(
       workspaceControllerProvider(session).notifier,
     );
-    final ChatState chat = ref.watch(chatControllerProvider(session));
     final ChatController chatController = ref.read(
       chatControllerProvider(session).notifier,
     );
@@ -100,11 +99,10 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen>
               : () => Navigator.of(context).maybePop(),
         );
         final Widget canvas = _WorkspaceCanvas(
+          session: session,
           identity: widget.identity,
           workspace: workspace,
           workspaceController: workspaceController,
-          chat: chat,
-          chatController: chatController,
           compact: compactShell,
         );
         return PopScope(
@@ -136,11 +134,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen>
                     elevation: 0,
                     scrolledUnderElevation: 0,
                     titleSpacing: 8,
-                    title: ChatExecutionModeButton(
-                      mode: chat.executionMode,
-                      quota: chat.quota,
-                      onChanged: chatController.setExecutionMode,
-                    ),
+                    title: _WorkspaceExecutionModeTitle(session: session),
                     centerTitle: false,
                     leading: IconButton(
                       tooltip: 'Open conversations',
@@ -148,12 +142,10 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen>
                       onPressed: () => _scaffoldKey.currentState?.openDrawer(),
                     ),
                     actions: <Widget>[
-                      if (selectedId != null &&
-                          chat.thread(selectedId).generating)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 4),
-                          child: _HeaderActivityIndicator(),
-                        ),
+                      _WorkspaceHeaderActivity(
+                        session: session,
+                        conversationId: selectedId,
+                      ),
                       IconButton(
                         tooltip: 'New chat',
                         icon: const Icon(Icons.add_rounded),
@@ -316,69 +308,83 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen>
   }
 }
 
+class _WorkspaceExecutionModeTitle extends ConsumerWidget {
+  const _WorkspaceExecutionModeTitle({required this.session});
+
+  final WorkspaceSession session;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ({ChatExecutionMode mode, ChatQuotaState quota}) view = ref.watch(
+      chatControllerProvider(session).select(
+        (ChatState state) => (
+          mode: state.executionMode,
+          quota: state.quota,
+        ),
+      ),
+    );
+    final ChatController controller = ref.read(
+      chatControllerProvider(session).notifier,
+    );
+    return ChatExecutionModeButton(
+      mode: view.mode,
+      quota: view.quota,
+      onChanged: controller.setExecutionMode,
+    );
+  }
+}
+
+class _WorkspaceHeaderActivity extends ConsumerWidget {
+  const _WorkspaceHeaderActivity({
+    required this.session,
+    required this.conversationId,
+  });
+
+  final WorkspaceSession session;
+  final String? conversationId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final String? id = conversationId;
+    final bool generating = ref.watch(
+      chatControllerProvider(session).select(
+        (ChatState state) => id != null && state.thread(id).generating,
+      ),
+    );
+    if (!generating) return const SizedBox.shrink();
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 4),
+      child: _HeaderActivityIndicator(),
+    );
+  }
+}
+
 class _WorkspaceCanvas extends StatelessWidget {
   const _WorkspaceCanvas({
+    required this.session,
     required this.identity,
     required this.workspace,
     required this.workspaceController,
-    required this.chat,
-    required this.chatController,
     required this.compact,
   });
 
+  final WorkspaceSession session;
   final AppIdentity identity;
   final WorkspaceState workspace;
   final WorkspaceController workspaceController;
-  final ChatState chat;
-  final ChatController chatController;
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final SentIQPalette palette = context.sentiqPalette;
     final String? conversationId = workspace.selectedConversationId;
-    final ChatThreadState thread = conversationId == null
-        ? const ChatThreadState()
-        : chat.thread(conversationId);
     return Column(
       children: <Widget>[
-        if (workspace.networkState != WorkspaceNetworkState.online ||
-            !chat.networkAvailable)
-          Material(
-            color:
-                (!chat.networkAvailable ||
-                    workspace.networkState == WorkspaceNetworkState.offline)
-                ? palette.warning.withValues(alpha: 0.14)
-                : palette.info.withValues(alpha: 0.14),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: SentIQSpacing.md,
-                vertical: SentIQSpacing.xs,
-              ),
-              child: Row(
-                children: <Widget>[
-                  Icon(
-                    !chat.networkAvailable
-                        ? Icons.cloud_off_outlined
-                        : Icons.sync_problem_outlined,
-                    size: 18,
-                  ),
-                  const SizedBox(width: SentIQSpacing.xs),
-                  Expanded(
-                    child: Text(
-                      !chat.networkAvailable
-                          ? 'You are offline. Saved messages remain available and pending changes will retry after reconnecting.'
-                          : 'Cloud sync is taking longer than usual. Cached conversations remain available.',
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: workspaceController.refresh,
-                    child: const Text('Retry'),
-                  ),
-                ],
-              ),
-            ),
-          ),
+        _WorkspaceNetworkBanner(
+          session: session,
+          workspace: workspace,
+          workspaceController: workspaceController,
+        ),
         if (workspace.message != null)
           Padding(
             padding: const EdgeInsets.all(SentIQSpacing.sm),
@@ -397,253 +403,311 @@ class _WorkspaceCanvas extends StatelessWidget {
                   actionLabel: 'New chat',
                   onAction: workspaceController.newConversation,
                 )
-              : Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 900),
-                    child: thread.messages.isEmpty && !thread.loading
-                        ? const _CompactHomePrompt()
-                        : ChatMessageList(
-                            thread: thread,
-                            onRetry: (ChatMessage message) {
-                              unawaited(
-                                chatController.retry(
-                                  conversationId: conversationId,
-                                  userMessage: message,
-                                  trustedDisplayName: identity.displayName,
-                                ),
-                              );
-                            },
-                            onContinue: (ChatMessage message) {
-                              unawaited(
-                                chatController.continueGenerating(
-                                  conversationId: conversationId,
-                                  partialAssistantMessage: message,
-                                  trustedDisplayName: identity.displayName,
-                                ),
-                              );
-                            },
-                            onAskSelected: (String selectedText) {
-                              unawaited(
-                                chatController.askAboutSelectedText(
-                                  conversationId: conversationId,
-                                  selectedText: selectedText,
-                                ),
-                              );
-                            },
-                            onImageAction: chatController.performImageAction,
-                            onArtifactAction:
-                                chatController.performArtifactAction,
-                            onDeleteImage:
-                                (
-                                  ChatMessage message,
-                                  GeneratedImagePayload image,
-                                ) => chatController.deleteGeneratedImage(
-                                  conversationId,
-                                  message.id,
-                                  image,
-                                ),
-                            onDeleteArtifact:
-                                (
-                                  ChatMessage message,
-                                  GeneratedArtifactPayload artifact,
-                                ) => chatController.deleteGeneratedArtifact(
-                                  conversationId,
-                                  message.id,
-                                  artifact,
-                                ),
-                            onSaveArtifactHtml:
-                                chatController.saveArtifactHtml,
-                          ),
-                  ),
+              : _ConversationBody(
+                  session: session,
+                  identity: identity,
+                  conversationId: conversationId,
                 ),
         ),
         if (conversationId != null)
-          SafeArea(
-            top: false,
-            minimum: EdgeInsets.fromLTRB(
-              compact ? SentIQSpacing.sm : SentIQSpacing.lg,
-              SentIQSpacing.xs,
-              compact ? SentIQSpacing.sm : SentIQSpacing.lg,
-              SentIQSpacing.sm,
-            ),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: compact ? 660 : 820),
-                child: compact
-                    ? CompactChatComposer(
-                        executionMode: chat.executionMode,
-                        quota: chat.quota,
-                        generating: thread.generating,
-                        attachments: chat.attachments,
-                        webSearchEnabled: chat.webSearchEnabled,
-                        imageGenerationMode: chat.imageGenerationMode,
-                        imageQuota: chat.imageQuota,
-                        enabled: chat.networkAvailable,
-                        onWebSearchChanged:
-                            chatController.setWebSearchEnabled,
-                        onImageGenerationModeChanged:
-                            chatController.setImageGenerationMode,
-                        onAttachmentAdded: (ChatAttachment attachment) {
-                          unawaited(
-                            chatController.addAttachment(
-                              attachment,
-                              conversationId: conversationId,
-                            ),
-                          );
-                        },
-                        onAttachmentRemoved:
-                            chatController.removeAttachment,
-                        onAttachmentRetry: (String id) {
-                          unawaited(
-                            chatController.retryAttachment(
-                              id,
-                              conversationId: conversationId,
-                            ),
-                          );
-                        },
-                        onAttachmentCancel: (String id) {
-                          unawaited(
-                            chatController.cancelAttachmentUpload(id),
-                          );
-                        },
-                        onDeepResearch: identity.isGuest
-                            ? null
-                            : () => unawaited(
-                                Navigator.of(context)
-                                    .push<void>(
-                                      MaterialPageRoute<void>(
-                                        builder: (_) => DeepResearchScreen(
-                                          conversationId: conversationId,
-                                        ),
-                                      ),
-                                    )
-                                    .then(
-                                      (_) => workspaceController.refresh(),
-                                    ),
-                              ),
-                        onLive: identity.isGuest
-                            ? null
-                            : () => unawaited(
-                                Navigator.of(context)
-                                    .push<void>(
-                                      MaterialPageRoute<void>(
-                                        builder: (_) => LiveScreen(
-                                          conversationId: conversationId,
-                                        ),
-                                      ),
-                                    )
-                                    .then(
-                                      (_) => workspaceController.refresh(),
-                                    ),
-                              ),
-                        onSend: (String text) async {
-                          final bool accepted = await chatController.send(
-                            conversationId: conversationId,
-                            text: text,
-                            trustedDisplayName: identity.displayName,
-                          );
-                          if (accepted) {
-                            unawaited(
-                              _refreshConversationTitle(
-                                workspaceController,
-                              ),
-                            );
-                          }
-                          return accepted;
-                        },
-                        onStop: () =>
-                            unawaited(chatController.stop(conversationId)),
-                      )
-                    : ChatComposer(
-                        executionMode: chat.executionMode,
-                        quota: chat.quota,
-                        generating: thread.generating,
-                        attachments: chat.attachments,
-                        webSearchEnabled: chat.webSearchEnabled,
-                        imageGenerationMode: chat.imageGenerationMode,
-                        imageQuota: chat.imageQuota,
-                        enabled: chat.networkAvailable,
-                        onExecutionModeChanged:
-                            chatController.setExecutionMode,
-                        onWebSearchChanged:
-                            chatController.setWebSearchEnabled,
-                        onImageGenerationModeChanged:
-                            chatController.setImageGenerationMode,
-                        onAttachmentAdded: (ChatAttachment attachment) {
-                          unawaited(
-                            chatController.addAttachment(
-                              attachment,
-                              conversationId: conversationId,
-                            ),
-                          );
-                        },
-                        onAttachmentRemoved:
-                            chatController.removeAttachment,
-                        onAttachmentRetry: (String id) {
-                          unawaited(
-                            chatController.retryAttachment(
-                              id,
-                              conversationId: conversationId,
-                            ),
-                          );
-                        },
-                        onAttachmentCancel: (String id) {
-                          unawaited(
-                            chatController.cancelAttachmentUpload(id),
-                          );
-                        },
-                        onDeepResearch: identity.isGuest
-                            ? null
-                            : () => unawaited(
-                                Navigator.of(context)
-                                    .push<void>(
-                                      MaterialPageRoute<void>(
-                                        builder: (_) => DeepResearchScreen(
-                                          conversationId: conversationId,
-                                        ),
-                                      ),
-                                    )
-                                    .then(
-                                      (_) => workspaceController.refresh(),
-                                    ),
-                              ),
-                        onLive: identity.isGuest
-                            ? null
-                            : () => unawaited(
-                                Navigator.of(context)
-                                    .push<void>(
-                                      MaterialPageRoute<void>(
-                                        builder: (_) => LiveScreen(
-                                          conversationId: conversationId,
-                                        ),
-                                      ),
-                                    )
-                                    .then(
-                                      (_) => workspaceController.refresh(),
-                                    ),
-                              ),
-                        onSend: (String text) async {
-                          final bool accepted = await chatController.send(
-                            conversationId: conversationId,
-                            text: text,
-                            trustedDisplayName: identity.displayName,
-                          );
-                          if (accepted) {
-                            unawaited(
-                              _refreshConversationTitle(
-                                workspaceController,
-                              ),
-                            );
-                          }
-                          return accepted;
-                        },
-                        onStop: () =>
-                            unawaited(chatController.stop(conversationId)),
-                      ),
-              ),
-            ),
+          _ComposerHost(
+            session: session,
+            identity: identity,
+            conversationId: conversationId,
+            workspaceController: workspaceController,
+            compact: compact,
           ),
       ],
+    );
+  }
+}
+
+class _WorkspaceNetworkBanner extends ConsumerWidget {
+  const _WorkspaceNetworkBanner({
+    required this.session,
+    required this.workspace,
+    required this.workspaceController,
+  });
+
+  final WorkspaceSession session;
+  final WorkspaceState workspace;
+  final WorkspaceController workspaceController;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bool networkAvailable = ref.watch(
+      chatControllerProvider(session).select(
+        (ChatState state) => state.networkAvailable,
+      ),
+    );
+    if (workspace.networkState == WorkspaceNetworkState.online &&
+        networkAvailable) {
+      return const SizedBox.shrink();
+    }
+    final SentIQPalette palette = context.sentiqPalette;
+    final bool offline =
+        !networkAvailable ||
+        workspace.networkState == WorkspaceNetworkState.offline;
+    return Material(
+      color: (offline ? palette.warning : palette.info).withValues(alpha: 0.14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: SentIQSpacing.md,
+          vertical: SentIQSpacing.xs,
+        ),
+        child: Row(
+          children: <Widget>[
+            Icon(
+              !networkAvailable
+                  ? Icons.cloud_off_outlined
+                  : Icons.sync_problem_outlined,
+              size: 18,
+            ),
+            const SizedBox(width: SentIQSpacing.xs),
+            Expanded(
+              child: Text(
+                !networkAvailable
+                    ? 'You are offline. Saved messages remain available and pending changes will retry after reconnecting.'
+                    : 'Cloud sync is taking longer than usual. Cached conversations remain available.',
+              ),
+            ),
+            TextButton(
+              onPressed: workspaceController.refresh,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConversationBody extends ConsumerWidget {
+  const _ConversationBody({
+    required this.session,
+    required this.identity,
+    required this.conversationId,
+  });
+
+  final WorkspaceSession session;
+  final AppIdentity identity;
+  final String conversationId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ChatThreadState thread = ref.watch(
+      chatControllerProvider(session).select(
+        (ChatState state) => state.thread(conversationId),
+      ),
+    );
+    final ChatController chatController = ref.read(
+      chatControllerProvider(session).notifier,
+    );
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 900),
+        child: thread.messages.isEmpty && !thread.loading
+            ? const _CompactHomePrompt()
+            : ChatMessageList(
+                thread: thread,
+                onRetry: (ChatMessage message) {
+                  unawaited(
+                    chatController.retry(
+                      conversationId: conversationId,
+                      userMessage: message,
+                      trustedDisplayName: identity.displayName,
+                    ),
+                  );
+                },
+                onContinue: (ChatMessage message) {
+                  unawaited(
+                    chatController.continueGenerating(
+                      conversationId: conversationId,
+                      partialAssistantMessage: message,
+                      trustedDisplayName: identity.displayName,
+                    ),
+                  );
+                },
+                onAskSelected: (String selectedText) {
+                  unawaited(
+                    chatController.askAboutSelectedText(
+                      conversationId: conversationId,
+                      selectedText: selectedText,
+                    ),
+                  );
+                },
+                onImageAction: chatController.performImageAction,
+                onArtifactAction: chatController.performArtifactAction,
+                onDeleteImage:
+                    (ChatMessage message, GeneratedImagePayload image) =>
+                        chatController.deleteGeneratedImage(
+                          conversationId,
+                          message.id,
+                          image,
+                        ),
+                onDeleteArtifact:
+                    (ChatMessage message, GeneratedArtifactPayload artifact) =>
+                        chatController.deleteGeneratedArtifact(
+                          conversationId,
+                          message.id,
+                          artifact,
+                        ),
+                onSaveArtifactHtml: chatController.saveArtifactHtml,
+              ),
+      ),
+    );
+  }
+}
+
+class _ComposerHost extends ConsumerWidget {
+  const _ComposerHost({
+    required this.session,
+    required this.identity,
+    required this.conversationId,
+    required this.workspaceController,
+    required this.compact,
+  });
+
+  final WorkspaceSession session;
+  final AppIdentity identity;
+  final String conversationId;
+  final WorkspaceController workspaceController;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final view = ref.watch(
+      chatControllerProvider(session).select(
+        (ChatState state) => (
+          executionMode: state.executionMode,
+          quota: state.quota,
+          generating: state.thread(conversationId).generating,
+          attachments: state.attachments,
+          webSearchEnabled: state.webSearchEnabled,
+          imageGenerationMode: state.imageGenerationMode,
+          imageQuota: state.imageQuota,
+          networkAvailable: state.networkAvailable,
+        ),
+      ),
+    );
+    final ChatController chatController = ref.read(
+      chatControllerProvider(session).notifier,
+    );
+    final Future<bool> Function(String) onSend = (String text) async {
+      final bool accepted = await chatController.send(
+        conversationId: conversationId,
+        text: text,
+        trustedDisplayName: identity.displayName,
+      );
+      if (accepted) {
+        unawaited(_refreshConversationTitle(workspaceController));
+      }
+      return accepted;
+    };
+    final ValueChanged<ChatAttachment> onAttachmentAdded =
+        (ChatAttachment attachment) {
+          unawaited(
+            chatController.addAttachment(
+              attachment,
+              conversationId: conversationId,
+            ),
+          );
+        };
+    final ValueChanged<String> onAttachmentRetry = (String id) {
+      unawaited(
+        chatController.retryAttachment(
+          id,
+          conversationId: conversationId,
+        ),
+      );
+    };
+    final ValueChanged<String> onAttachmentCancel = (String id) {
+      unawaited(chatController.cancelAttachmentUpload(id));
+    };
+    final VoidCallback? onDeepResearch = identity.isGuest
+        ? null
+        : () => unawaited(
+            Navigator.of(context)
+                .push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => DeepResearchScreen(
+                      conversationId: conversationId,
+                    ),
+                  ),
+                )
+                .then((_) => workspaceController.refresh()),
+          );
+    final VoidCallback? onLive = identity.isGuest
+        ? null
+        : () => unawaited(
+            Navigator.of(context)
+                .push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => LiveScreen(
+                      conversationId: conversationId,
+                    ),
+                  ),
+                )
+                .then((_) => workspaceController.refresh()),
+          );
+
+    return SafeArea(
+      top: false,
+      minimum: EdgeInsets.fromLTRB(
+        compact ? SentIQSpacing.sm : SentIQSpacing.lg,
+        SentIQSpacing.xs,
+        compact ? SentIQSpacing.sm : SentIQSpacing.lg,
+        SentIQSpacing.sm,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: compact ? 660 : 820),
+          child: compact
+              ? CompactChatComposer(
+                  executionMode: view.executionMode,
+                  quota: view.quota,
+                  generating: view.generating,
+                  attachments: view.attachments,
+                  webSearchEnabled: view.webSearchEnabled,
+                  imageGenerationMode: view.imageGenerationMode,
+                  imageQuota: view.imageQuota,
+                  enabled: view.networkAvailable,
+                  onWebSearchChanged: chatController.setWebSearchEnabled,
+                  onImageGenerationModeChanged:
+                      chatController.setImageGenerationMode,
+                  onAttachmentAdded: onAttachmentAdded,
+                  onAttachmentRemoved: chatController.removeAttachment,
+                  onAttachmentRetry: onAttachmentRetry,
+                  onAttachmentCancel: onAttachmentCancel,
+                  onDeepResearch: onDeepResearch,
+                  onLive: onLive,
+                  onSend: onSend,
+                  onStop: () => unawaited(chatController.stop(conversationId)),
+                )
+              : ChatComposer(
+                  executionMode: view.executionMode,
+                  quota: view.quota,
+                  generating: view.generating,
+                  attachments: view.attachments,
+                  webSearchEnabled: view.webSearchEnabled,
+                  imageGenerationMode: view.imageGenerationMode,
+                  imageQuota: view.imageQuota,
+                  enabled: view.networkAvailable,
+                  onExecutionModeChanged: chatController.setExecutionMode,
+                  onWebSearchChanged: chatController.setWebSearchEnabled,
+                  onImageGenerationModeChanged:
+                      chatController.setImageGenerationMode,
+                  onAttachmentAdded: onAttachmentAdded,
+                  onAttachmentRemoved: chatController.removeAttachment,
+                  onAttachmentRetry: onAttachmentRetry,
+                  onAttachmentCancel: onAttachmentCancel,
+                  onDeepResearch: onDeepResearch,
+                  onLive: onLive,
+                  onSend: onSend,
+                  onStop: () => unawaited(chatController.stop(conversationId)),
+                ),
+        ),
+      ),
     );
   }
 }
