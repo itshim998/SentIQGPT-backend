@@ -7,9 +7,6 @@ void main() {
   testWidgets('coalesced response remains visibly progressive', (
     WidgetTester tester,
   ) async {
-    final SemanticsHandle semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
-
     String data = '';
     bool streaming = true;
     late StateSetter update;
@@ -34,10 +31,10 @@ void main() {
       ),
     );
 
-    expect(
-      find.bySemanticsLabel('Response is still being written'),
-      findsOneWidget,
+    final Finder streamingCaret = find.bySemanticsLabel(
+      RegExp('Response is still being written'),
     );
+    expect(streamingCaret, findsOneWidget);
 
     update(() {
       data = '**One** two three four five six seven eight ';
@@ -48,34 +45,22 @@ void main() {
     // A buffered/final network delivery must not make the whole answer appear
     // in the same frame. The breathing indicator stays alive while received
     // text is being revealed word-by-word.
-    expect(
-      find.bySemanticsLabel('Response is still being written'),
-      findsOneWidget,
-    );
+    expect(streamingCaret, findsOneWidget);
     expect(find.textContaining('eight'), findsNothing);
 
     await tester.pump(const Duration(milliseconds: 30));
     expect(find.textContaining('One'), findsOneWidget);
-    expect(
-      find.bySemanticsLabel('Response is still being written'),
-      findsOneWidget,
-    );
+    expect(streamingCaret, findsOneWidget);
 
     await tester.pump(const Duration(seconds: 1));
     expect(find.textContaining('eight'), findsOneWidget);
-    expect(
-      find.bySemanticsLabel('Response is still being written'),
-      findsNothing,
-    );
+    expect(streamingCaret, findsNothing);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('completed historical content paints immediately', (
     WidgetTester tester,
   ) async {
-    final SemanticsHandle semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
-
     await tester.pumpWidget(
       MaterialApp(
         theme: SentIQTheme.light(),
@@ -92,7 +77,7 @@ void main() {
 
     expect(find.text('Already complete'), findsOneWidget);
     expect(
-      find.bySemanticsLabel('Response is still being written'),
+      find.bySemanticsLabel(RegExp('Response is still being written')),
       findsNothing,
     );
     expect(tester.takeException(), isNull);
