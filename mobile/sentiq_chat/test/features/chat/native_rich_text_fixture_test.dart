@@ -66,7 +66,7 @@ void main() {
       return widget is RichText &&
           widget.text.toPlainText().contains('Formatted response');
     });
-    expect(renderedMarkdown, findsAtLeastNWidgets(1));
+    expect(renderedMarkdown, findsWidgets);
     expect(
       find.bySemanticsLabel(
         RegExp('Response is still being written', caseSensitive: false),
