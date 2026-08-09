@@ -128,6 +128,29 @@ export class SentIQLivePersistence implements LiveSessionPersistence {
     if (inserted.error || !inserted.data) {
       throw new Error(inserted.error?.message || "Live transcript could not be committed.");
     }
+
+    // A Live transcript is intentionally stored as one assistant-side artifact
+    // so replaying the chat does not duplicate every spoken turn. History recency,
+    // however, is user activity. When the committed transcript contains at least
+    // one user utterance, advance last_activity_at explicitly at commit time.
+    // Assistant-only audio must never promote the conversation.
+    const containsUserActivity = args.transcript.some((turn) => (
+      turn.role === "user" && typeof turn.text === "string" && turn.text.trim().length > 0
+    ));
+    if (containsUserActivity) {
+      const activityAt = typeof inserted.data.created_at === "string" && inserted.data.created_at
+        ? inserted.data.created_at
+        : new Date().toISOString();
+      const { error: activityError } = await userDb
+        .from("conversations")
+        .update({ last_activity_at: activityAt })
+        .eq("id", args.conversationId)
+        .eq("user_id", args.userId);
+      if (activityError) {
+        throw new Error(activityError.message || "Live conversation activity could not be updated.");
+      }
+    }
+
     return 1;
   }
 }
