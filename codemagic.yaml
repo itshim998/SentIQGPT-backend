@@ -26,11 +26,11 @@ workflows:
       - name: Analyze mobile source
         script: |
           cd "$CM_BUILD_DIR/mobile/sentiq_chat"
-          flutter analyze
+          flutter analyze --no-pub
       - name: Run pre-APK regression suite
         script: |
           cd "$CM_BUILD_DIR/mobile/sentiq_chat"
-          flutter test \
+          flutter test --no-pub \
             test/features/auth \
             test/features/chat \
             test/features/workspace \
