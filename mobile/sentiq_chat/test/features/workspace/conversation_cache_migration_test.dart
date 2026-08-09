@@ -20,7 +20,7 @@ void main() {
     await directory.delete(recursive: true);
   });
 
-  test('migrates a version 1 cache through Phase 3 schema version 4', () async {
+  test('migrates a version 1 cache through conversation sync schema', () async {
     final Database versionOne = await databaseFactoryFfi.openDatabase(
       databasePath,
       options: OpenDatabaseOptions(
@@ -52,13 +52,22 @@ void main() {
       "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
       "('app_meta', 'messages', 'chat_turns') ORDER BY name",
     );
+    final List<Map<String, Object?>> columns = await migrated.rawQuery(
+      'PRAGMA table_info(conversations)',
+    );
+    final Set<String> columnNames = columns
+        .map((Map<String, Object?> row) => row['name']?.toString())
+        .whereType<String>()
+        .toSet();
 
     expect(items.single.title, 'Cached chat');
+    expect(items.single.messageCount, 0);
     expect(tables.map((Map<String, Object?> row) => row['name']), <Object?>[
       'app_meta',
       'chat_turns',
       'messages',
     ]);
+    expect(columnNames, containsAll(<String>['message_count', 'first_user_message']));
     expect(await migrated.getVersion(), CacheMigrations.currentVersion);
     await cache.close();
   });
