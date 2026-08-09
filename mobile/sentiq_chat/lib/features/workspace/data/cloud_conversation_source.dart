@@ -24,6 +24,7 @@ class CloudConversationSource {
           ),
         )
         .where((ConversationSummary item) => item.id.isNotEmpty)
+        .take(50)
         .toList();
   }
 
@@ -70,6 +71,73 @@ class CloudConversationSource {
 
   Future<void> delete(String id) async {
     await _client.deleteJson(ApiEndpoints.conversation(id));
+  }
+
+  /// Repairs generic/first-message fallback titles through the exact same
+  /// first-exchange title endpoint used by the web client. The backend owns
+  /// provider selection and persists the resulting title, so Android and web
+  /// cannot diverge on title-generation policy.
+  Future<ConversationSummary> repairGeneratedTitle(
+    String ownerScope,
+    ConversationSummary conversation,
+  ) async {
+    if (!conversation.needsGeneratedTitle || conversation.messageCount < 2) {
+      return conversation;
+    }
+
+    final Map<String, Object?> payload = await _client.getJson(
+      ApiEndpoints.conversationMessages(conversation.id),
+    );
+    final Object? rawMessages = payload['messages'] ?? payload['data'];
+    if (rawMessages is! List) return conversation;
+
+    String firstUserMessage = '';
+    String firstAssistantReply = '';
+    for (final Object? raw in rawMessages) {
+      if (raw is! Map) continue;
+      final Map<String, Object?> message = raw.map(
+        (Object? key, Object? value) => MapEntry(key.toString(), value),
+      );
+      final String role = (message['role'] ?? message['message_role'] ?? '')
+          .toString()
+          .toLowerCase();
+      final String content =
+          (message['content'] ?? message['text'] ?? message['message'] ?? '')
+              .toString()
+              .trim();
+      if (content.isEmpty) continue;
+      if (firstUserMessage.isEmpty && role == 'user') {
+        firstUserMessage = content;
+        continue;
+      }
+      if (firstUserMessage.isNotEmpty &&
+          firstAssistantReply.isEmpty &&
+          role == 'assistant') {
+        firstAssistantReply = content;
+        break;
+      }
+    }
+    if (firstUserMessage.isEmpty || firstAssistantReply.isEmpty) {
+      return conversation;
+    }
+
+    final Map<String, Object?> titlePayload = await _client.postJson(
+      ApiEndpoints.chatTitle,
+      body: <String, Object?>{
+        'userMessage': firstUserMessage,
+        'assistantReply': firstAssistantReply,
+        'conversationId': conversation.id,
+      },
+    );
+    final String title = titlePayload['title']?.toString().trim() ?? '';
+    if (title.isEmpty) return conversation;
+
+    return conversation.copyWith(
+      title: title,
+      firstUserMessage: firstUserMessage,
+      lastMessagePreview: conversation.lastMessagePreview ?? firstUserMessage,
+      syncState: ConversationSyncState.synced,
+    );
   }
 }
 
