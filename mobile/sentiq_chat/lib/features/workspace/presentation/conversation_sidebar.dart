@@ -35,6 +35,7 @@ class ConversationSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final SentIQPalette palette = context.sentiqPalette;
+    final List<ConversationSummary> visible = state.visibleConversations;
     return Material(
       color: palette.surface,
       child: Column(
@@ -84,9 +85,9 @@ class ConversationSidebar extends StatelessWidget {
           ),
           const SizedBox(height: SentIQSpacing.sm),
           Expanded(
-            child: state.loading && state.conversations.isEmpty
-                ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-                : state.visibleConversations.isEmpty
+            child: visible.isEmpty && state.loading
+                ? Center(child: _ConversationHistoryLoader(color: palette.textMuted))
+                : visible.isEmpty
                 ? const SentIQEmptyState(
                     icon: Icons.chat_bubble_outline_rounded,
                     title: 'No conversations yet',
@@ -96,10 +97,21 @@ class ConversationSidebar extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(
                       horizontal: SentIQSpacing.xs,
                     ),
-                    itemCount: state.visibleConversations.length,
+                    itemCount: visible.length + (state.loading ? 1 : 0),
                     itemBuilder: (BuildContext context, int index) {
-                      final ConversationSummary conversation =
-                          state.visibleConversations[index];
+                      if (index == visible.length) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(
+                            vertical: SentIQSpacing.md,
+                          ),
+                          child: Center(
+                            child: _ConversationHistoryLoader(
+                              color: palette.textMuted,
+                            ),
+                          ),
+                        );
+                      }
+                      final ConversationSummary conversation = visible[index];
                       final bool selected =
                           conversation.id == state.selectedConversationId;
                       return Padding(
@@ -124,11 +136,6 @@ class ConversationSidebar extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          subtitle:
-                              conversation.syncState ==
-                                  ConversationSyncState.synced
-                              ? null
-                              : const Text('Waiting to sync'),
                           onTap: () {
                             controller.selectConversation(conversation.id);
                             onConversationSelected?.call();
@@ -185,6 +192,26 @@ class ConversationSidebar extends StatelessWidget {
             onTap: onAccount,
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ConversationHistoryLoader extends StatelessWidget {
+  const _ConversationHistoryLoader({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Loading conversations',
+      child: SizedBox.square(
+        dimension: 18,
+        child: CircularProgressIndicator(
+          strokeWidth: 1.6,
+          color: color,
+        ),
       ),
     );
   }
