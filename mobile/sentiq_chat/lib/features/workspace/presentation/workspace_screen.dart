@@ -55,6 +55,13 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen>
           .read(chatControllerProvider(_session).notifier)
           .handleLifecycle(state),
     );
+    if (state == AppLifecycleState.resumed && _session.cloudEnabled) {
+      // Foregrounding is a meaningful user event, so refresh once here rather
+      // than polling while the app is stale in the background.
+      unawaited(
+        ref.read(workspaceControllerProvider(_session).notifier).refresh(),
+      );
+    }
   }
 
   @override
@@ -380,11 +387,7 @@ class _WorkspaceCanvas extends StatelessWidget {
     final String? conversationId = workspace.selectedConversationId;
     return Column(
       children: <Widget>[
-        _WorkspaceNetworkBanner(
-          session: session,
-          workspace: workspace,
-          workspaceController: workspaceController,
-        ),
+        _WorkspaceNetworkBanner(session: session, workspace: workspace),
         if (workspace.message != null)
           Padding(
             padding: const EdgeInsets.all(SentIQSpacing.sm),
@@ -426,12 +429,10 @@ class _WorkspaceNetworkBanner extends ConsumerWidget {
   const _WorkspaceNetworkBanner({
     required this.session,
     required this.workspace,
-    required this.workspaceController,
   });
 
   final WorkspaceSession session;
   final WorkspaceState workspace;
-  final WorkspaceController workspaceController;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -440,16 +441,14 @@ class _WorkspaceNetworkBanner extends ConsumerWidget {
         (ChatState state) => state.networkAvailable,
       ),
     );
-    if (workspace.networkState == WorkspaceNetworkState.online &&
-        networkAvailable) {
-      return const SizedBox.shrink();
-    }
-    final SentIQPalette palette = context.sentiqPalette;
     final bool offline =
         !networkAvailable ||
         workspace.networkState == WorkspaceNetworkState.offline;
+    if (!offline) return const SizedBox.shrink();
+
+    final SentIQPalette palette = context.sentiqPalette;
     return Material(
-      color: (offline ? palette.warning : palette.info).withValues(alpha: 0.14),
+      color: palette.warning.withValues(alpha: 0.14),
       child: Padding(
         padding: const EdgeInsets.symmetric(
           horizontal: SentIQSpacing.md,
@@ -457,24 +456,9 @@ class _WorkspaceNetworkBanner extends ConsumerWidget {
         ),
         child: Row(
           children: <Widget>[
-            Icon(
-              !networkAvailable
-                  ? Icons.cloud_off_outlined
-                  : Icons.sync_problem_outlined,
-              size: 18,
-            ),
+            const Icon(Icons.cloud_off_outlined, size: 18),
             const SizedBox(width: SentIQSpacing.xs),
-            Expanded(
-              child: Text(
-                !networkAvailable
-                    ? 'You are offline. Saved messages remain available and pending changes will retry after reconnecting.'
-                    : 'Cloud sync is taking longer than usual. Cached conversations remain available.',
-              ),
-            ),
-            TextButton(
-              onPressed: workspaceController.refresh,
-              child: const Text('Retry'),
-            ),
+            const Expanded(child: Text('No internet connection.')),
           ],
         ),
       ),
@@ -594,16 +578,28 @@ class _ComposerHost extends ConsumerWidget {
       chatControllerProvider(session).notifier,
     );
 
+    // The end of an actual model turn is a precise reconciliation event. This
+    // replaces title/sync polling at fixed 2/6/13-second intervals.
+    ref.listen<bool>(
+      chatControllerProvider(session).select(
+        (ChatState state) => state.thread(conversationId).generating,
+      ),
+      (bool? previous, bool next) {
+        if (previous == true && !next) {
+          unawaited(workspaceController.refresh());
+        }
+      },
+    );
+
     Future<bool> onSend(String text) async {
-      final bool accepted = await chatController.send(
+      // A user query is also a meaningful synchronization point. Fire the
+      // coalesced workspace refresh without delaying message submission.
+      unawaited(workspaceController.refresh());
+      return chatController.send(
         conversationId: conversationId,
         text: text,
         trustedDisplayName: identity.displayName,
       );
-      if (accepted) {
-        unawaited(_refreshConversationTitle(workspaceController));
-      }
-      return accepted;
     }
 
     void onAttachmentAdded(ChatAttachment attachment) {
@@ -745,13 +741,6 @@ class _CompactHomePrompt extends StatelessWidget {
       ),
     );
   }
-}
-
-Future<void> _refreshConversationTitle(WorkspaceController controller) async {
-  await Future<void>.delayed(const Duration(seconds: 2));
-  await controller.refresh();
-  await Future<void>.delayed(const Duration(seconds: 6));
-  await controller.refresh();
 }
 
 class _HeaderActivityIndicator extends StatefulWidget {
