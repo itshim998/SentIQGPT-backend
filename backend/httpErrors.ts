@@ -17,6 +17,9 @@ type HttpErrorOptions = {
   requires_name?: boolean;
 };
 
+const CONVERSATION_RETENTION_DB_MARKER = "conversation_retention_artifact_cleanup_required";
+export const CONVERSATION_RETENTION_CLEANUP_CODE = "conversation_retention_cleanup_required";
+
 export class HttpError extends Error {
   readonly statusCode: number;
   readonly code?: string;
@@ -35,7 +38,27 @@ export class HttpError extends Error {
   }
 }
 
+function isConversationRetentionCleanupError(err: Error): boolean {
+  return String(err?.message || "").includes(CONVERSATION_RETENTION_DB_MARKER);
+}
+
 export function buildHttpErrorResponse(err: Error): HttpErrorResponse {
+  // The database deliberately aborts a 51st-chat insert when the exact bottom
+  // conversation owns Storage-backed artifacts. Expose only a stable public code
+  // so the browser can remove that conversation through the normal DELETE API
+  // (which cleans Storage objects) and retry once. The raw Postgres marker and
+  // internal database details remain private.
+  if (isConversationRetentionCleanupError(err)) {
+    return {
+      statusCode: 409,
+      headers: {},
+      body: {
+        error: "The oldest stored conversation needs cleanup before this conversation can be saved.",
+        code: CONVERSATION_RETENTION_CLEANUP_CODE,
+      },
+    };
+  }
+
   const isHttpError = err instanceof HttpError;
   const statusCode = isHttpError && Number.isInteger(err.statusCode)
     ? err.statusCode

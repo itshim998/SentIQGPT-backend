@@ -4,6 +4,13 @@ on:
   pull_request:
     paths:
       - "frontend/**"
+      - "supabase/migrations/20260809123000_conversation_user_activity_ordering.sql"
+      - "supabase/verification/verify_conversation_user_activity_ordering.sql"
+      - "backend/httpErrors.ts"
+      - "backend/live/sentiqLivePersistence.ts"
+      - "backend/testConversationOrderingPolicy.mjs"
+      - "backend/testConversationRetentionDeferredSyncContract.mjs"
+      - "backend/testConversationSpecialModeActivity.mjs"
       - "scripts/checkFrontendSyntax.mjs"
       - "scripts/frontendBootstrapDomAliases.cjs"
       - "scripts/runFrontendBootstrapCheck.mjs"
@@ -29,6 +36,13 @@ on:
       - "ui/**"
     paths:
       - "frontend/**"
+      - "supabase/migrations/20260809123000_conversation_user_activity_ordering.sql"
+      - "supabase/verification/verify_conversation_user_activity_ordering.sql"
+      - "backend/httpErrors.ts"
+      - "backend/live/sentiqLivePersistence.ts"
+      - "backend/testConversationOrderingPolicy.mjs"
+      - "backend/testConversationRetentionDeferredSyncContract.mjs"
+      - "backend/testConversationSpecialModeActivity.mjs"
       - "scripts/checkFrontendSyntax.mjs"
       - "scripts/frontendBootstrapDomAliases.cjs"
       - "scripts/runFrontendBootstrapCheck.mjs"
@@ -78,6 +92,12 @@ jobs:
 
       - name: Frontend syntax
         run: npm run check:frontend-syntax
+
+      - name: Conversation ordering and retention regressions
+        run: |
+          node backend/testConversationOrderingPolicy.mjs
+          node backend/testConversationRetentionDeferredSyncContract.mjs
+          node backend/testConversationSpecialModeActivity.mjs
 
       - name: Frontend bootstrap
         id: frontend_bootstrap
