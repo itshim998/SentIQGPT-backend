@@ -1,1 +1,6 @@
-{"product":"SentIQ Chat","pass":"12.7.5-unboxed-activity-controls","contentRevision":"33b110d4b4d385821a7ef2f99b437f5402ff6cea","token":"sentiq-unboxed-activity-controls-20260725-33b110d4"}
+{
+  "product": "SentIQ Chat",
+  "pass": "12.7.6-guest-observer-fix",
+  "contentRevision": "7f9b1191b5294756b5910555d6b23a851ad7ba7e",
+  "token": "sentiq-guest-observer-fix-20260810-7f9b1191"
+}
