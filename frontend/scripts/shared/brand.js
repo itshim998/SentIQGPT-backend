@@ -1,5 +1,28 @@
 import "../features/final-restraint.js";
-import "../features/guest-experience.js";
+
+// Guest policy is intentionally loaded after the critical application bootstrap.
+// It performs DOM policy work, API wrapping, and observer installation; keeping it
+// out of the synchronous main.js -> brand.js import chain prevents guest policy
+// work from blocking the initial application paint/startup handshake.
+function loadGuestExperienceAfterBootstrap() {
+  const load = () => {
+    import("../features/guest-experience.js").catch((error) => {
+      window.SentIQBootstrap?.addLimitedReason?.(
+        "guest-experience",
+        "Guest-mode enhancements could not be loaded for this session.",
+      );
+      console.warn("[SentIQ guest experience] deferred module failed to load", error);
+    });
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", load, { once: true });
+  } else {
+    window.setTimeout(load, 0);
+  }
+}
+
+loadGuestExperienceAfterBootstrap();
 
 export const COMPANY_NAME = "SentIQ";
 export const PRODUCT_NAME = "SentIQ Chat";
