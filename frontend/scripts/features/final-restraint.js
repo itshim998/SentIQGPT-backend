@@ -71,8 +71,8 @@ function applyFinalRestraintCopy() {
   setText(".selected-context-label", "Selection");
   setText("#deep-research-mode-bar .composer-mode-pill-label", "Deep Research");
 
-  setText("#auth-modal-title", "Account");
-  setText("#auth-modal-subtitle", "Continue with Google or your email.");
+  setText("#auth-modal-title", "");
+  setText("#auth-modal-subtitle", "");
   setText("#auth-forgot-btn", "Forgot password?");
   setText("#auth-switch-btn", "Create account");
 

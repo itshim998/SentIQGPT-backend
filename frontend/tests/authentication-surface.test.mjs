@@ -11,7 +11,7 @@ for (const token of [
   'AUTHENTICATION_SURFACE_VERSION = "8.3"',
   "authentication-email-path",
   "Google account",
-  "or continue with email",
+  "OR",
   "passwordStrength",
   'getModifierState("CapsLock")',
   'setAttribute("aria-invalid", "true")',

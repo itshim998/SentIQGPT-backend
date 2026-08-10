@@ -4,9 +4,9 @@ const AUTHENTICATION_SURFACE_VERSION = "8.3";
 
 const AUTH_VIEW_COPY = Object.freeze({
   login: Object.freeze({
-    emailTitle: "Email and password",
-    emailDescription: "Use the email address connected to your SentIQ Chat account.",
-    passwordHint: "Enter the password for this account.",
+    emailTitle: "",
+    emailDescription: "",
+    passwordHint: "",
   }),
   signup: Object.freeze({
     emailTitle: "Create with email",
@@ -163,7 +163,7 @@ function initializeAuthenticationSurface() {
   }
 
   const dividerLabel = divider?.querySelector("span:nth-child(2)");
-  setText(dividerLabel, "or continue with email");
+  setText(dividerLabel, "OR");
 
   let emailPath = form.querySelector(".authentication-email-path");
   if (!emailPath) {
@@ -174,8 +174,8 @@ function initializeAuthenticationSurface() {
     const routeHeader = document.createElement("div");
     routeHeader.className = "authentication-route-header";
     routeHeader.innerHTML = `
-      <strong id="authentication-email-path-title">Email and password</strong>
-      <small id="authentication-email-path-description">Use the email address connected to your SentIQ Chat account.</small>
+      <strong id="authentication-email-path-title"></strong>
+      <small id="authentication-email-path-description"></small>
     `;
     emailPath.appendChild(routeHeader);
 
@@ -192,7 +192,7 @@ function initializeAuthenticationSurface() {
     passwordFeedback.className = "authentication-password-feedback";
     passwordFeedback.innerHTML = `
       <div class="authentication-password-feedback-row">
-        <span id="authentication-password-state" aria-live="polite">Password is hidden</span>
+        <span id="authentication-password-state" aria-live="polite"></span>
         <span id="authentication-caps-lock" class="authentication-caps-lock" role="status" aria-live="polite" hidden>Caps Lock is on</span>
       </div>
       <div class="authentication-password-meter" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -250,9 +250,7 @@ function initializeAuthenticationSurface() {
     passwordFeedback.dataset.passwordView = showStrength ? "strength" : "visibility";
     passwordFeedback.dataset.strength = String(showStrength ? strength.level : 0);
     if (passwordState) {
-      setText(passwordState, showStrength
-        ? strength.label
-        : (visible ? "Password is visible" : "Password is hidden"));
+      setText(passwordState, showStrength ? strength.label : "");
     }
     setText(passwordHelp, AUTH_VIEW_COPY[view]?.passwordHint || "");
     if (passwordToggle instanceof HTMLButtonElement) {

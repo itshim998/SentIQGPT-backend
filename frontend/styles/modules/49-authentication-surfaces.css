@@ -79,7 +79,7 @@ body.auth-sensitive-surface-open .app-container.auth-blurred {
 #auth-modal .auth-modal-copy,
 #name-modal .auth-modal-copy {
   margin-bottom: 22px;
-  text-align: left;
+  text-align: center;
 }
 
 #auth-modal .auth-modal-copy h2,
@@ -90,15 +90,17 @@ body.auth-sensitive-surface-open .app-container.auth-blurred {
   font-weight: 670;
   letter-spacing: -0.035em;
   line-height: 1.18;
+  text-align: center;
 }
 
 #auth-modal .auth-modal-copy p,
 #name-modal .auth-modal-copy p {
   max-width: 46ch;
-  margin: 0;
+  margin: 0 auto;
   color: rgba(151, 159, 176, 0.84);
   font-size: 0.82rem;
   line-height: 1.55;
+  text-align: center;
 }
 
 #auth-modal .authentication-form {
@@ -111,29 +113,12 @@ body.auth-sensitive-surface-open .app-container.auth-blurred {
 
 #auth-modal .authentication-method-heading,
 #auth-modal .authentication-route-header {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-#auth-modal .authentication-method-heading span,
-#auth-modal .authentication-route-header strong {
-  color: rgba(229, 231, 237, 0.95);
-  font-size: 0.76rem;
-  font-weight: 640;
-  line-height: 1.35;
-}
-
-#auth-modal .authentication-method-heading small,
-#auth-modal .authentication-route-header small {
-  color: rgba(128, 137, 154, 0.8);
-  font-size: 0.69rem;
-  line-height: 1.45;
+  display: none !important;
 }
 
 #auth-modal .authentication-google-route {
   min-height: 48px;
-  justify-content: flex-start;
+  justify-content: center;
   padding: 11px 15px;
   border-color: rgba(215, 218, 228, 0.12);
   border-radius: 13px;
@@ -414,16 +399,23 @@ body.auth-sensitive-surface-open .app-container.auth-blurred {
 #auth-modal .auth-submit-btn,
 #name-modal .auth-submit-btn {
   min-height: 44px;
-  margin-top: 1px;
-  padding: 10px 15px;
+  margin-top: 6px;
+  padding: 11px 16px;
   border-radius: 12px;
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   font-weight: 650;
+  background: #18181e !important;
+  border: 1px solid rgba(143, 120, 220, 0.55) !important;
+  color: rgba(248, 248, 250, 0.96) !important;
   box-shadow: none;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 #auth-modal .auth-submit-btn:hover:not(:disabled),
 #name-modal .auth-submit-btn:hover:not(:disabled) {
+  background: #23232b !important;
+  border-color: rgba(162, 140, 235, 0.8) !important;
+  color: #ffffff !important;
   transform: none;
 }
 

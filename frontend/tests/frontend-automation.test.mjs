@@ -31,7 +31,7 @@ assert.deepEqual(FRONTEND_CHECK_SEQUENCE, [
 assert.equal(packageJson.scripts["test:frontend"], "node scripts/runFrontendChecks.mjs");
 assert.equal(packageJson.scripts["test:frontend-bootstrap"], "node scripts/runFrontendBootstrapCheck.mjs");
 assert.equal(packageJson.scripts["test:frontend-ui-state"], "node scripts/runFrontendUiStateTests.mjs");
-assert.equal(packageJson.scripts["test:frontend-billing"], "node --no-warnings frontend/tests/billing-token-usage.test.mjs");
+assert.equal(packageJson.scripts["test:frontend-billing"], "node --no-warnings frontend/tests/billing-token-usage.test.mjs && node --no-warnings frontend/tests/guest-experience.test.mjs");
 for (const script of FRONTEND_CHECK_SEQUENCE) {
   assert.equal(typeof packageJson.scripts[script], "string", `Missing npm script: ${script}`);
 }
