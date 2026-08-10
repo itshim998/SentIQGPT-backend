@@ -1,5 +1,4 @@
 import "../features/final-restraint.js";
-import "../features/guest-observer-safety.js";
 import "../features/guest-experience.js";
 
 export const COMPANY_NAME = "SentIQ";
