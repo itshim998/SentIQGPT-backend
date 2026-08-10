@@ -25,6 +25,8 @@ let guestQuotaState = {
 };
 let applyScheduled = false;
 let mutationObserver = null;
+let mutationObserverRoot = null;
+let mutationGuardDepth = 0;
 
 function safeParse(value, fallback = null) {
   try {
@@ -174,11 +176,11 @@ function setActionGuestState(id, subtitle, options = {}) {
   setDisabled(button, disabled);
   button.classList.toggle("auth-disabled", disabled);
   button.classList.toggle("guest-auth-required", disabled);
-  if (disabled) button.dataset.guestAuthRequired = "true";
-  else delete button.dataset.guestAuthRequired;
+  if (disabled) { if (button.dataset.guestAuthRequired !== "true") button.dataset.guestAuthRequired = "true"; }
+  else if (button.dataset.guestAuthRequired) delete button.dataset.guestAuthRequired;
   if (options.forceVisible && guestMode) {
     if (button.style.display === "none") button.style.display = "";
-    button.hidden = false;
+    if (button.hidden) button.hidden = false;
   }
   const subtitleNode = button.querySelector(".composer-action-subtitle");
   if (subtitleNode && subtitle && subtitleNode.textContent !== subtitle) {
@@ -193,12 +195,12 @@ function applyGuestWelcomeCopy() {
   const note = document.getElementById("auth-welcome-note");
   if (heading && heading.textContent !== "How can I help?") heading.textContent = "How can I help?";
   if (subtitle) {
-    subtitle.hidden = true;
-    subtitle.setAttribute("aria-hidden", "true");
+    if (!subtitle.hidden) subtitle.hidden = true;
+    if (subtitle.getAttribute("aria-hidden") !== "true") subtitle.setAttribute("aria-hidden", "true");
   }
   if (note) {
     if (note.textContent !== GUEST_WELCOME_NOTE) note.textContent = GUEST_WELCOME_NOTE;
-    note.style.display = "block";
+    if (note.style.display !== "block") note.style.display = "block";
   }
 }
 
@@ -214,10 +216,10 @@ function applyExecutionModePolicy() {
     control.classList.remove("open");
     if (label) label.textContent = "Fast";
     setDisabled(toggle, true);
-    toggle.setAttribute("aria-expanded", "false");
-    toggle.title = "Guest chats use Fast mode";
+    if (toggle.getAttribute("aria-expanded") !== "false") toggle.setAttribute("aria-expanded", "false");
+    if (toggle.title !== "Guest chats use Fast mode") toggle.title = "Guest chats use Fast mode";
     if (menu) {
-      menu.setAttribute("aria-hidden", "true");
+      if (menu.getAttribute("aria-hidden") !== "true") menu.setAttribute("aria-hidden", "true");
       menu.querySelectorAll("[data-execution-mode]").forEach((option) => {
         const fast = option.getAttribute("data-execution-mode") === "fast";
         option.classList.toggle("active", fast);
@@ -242,7 +244,7 @@ function applyGuestToolPolicy() {
     .forEach((button) => {
       setDisabled(button, true);
       button.classList.add("guest-auth-required");
-      button.title = "Sign in to use this action";
+      if (button.title !== "Sign in to use this action") button.title = "Sign in to use this action";
     });
 }
 
@@ -273,13 +275,14 @@ function applyQuotaLock() {
   if (area) area.classList.toggle("guest-quota-exhausted", locked);
   if (label) {
     label.classList.toggle("visible", locked);
-    label.setAttribute("aria-hidden", locked ? "false" : "true");
+    const nextAriaHidden = locked ? "false" : "true";
+    if (label.getAttribute("aria-hidden") !== nextAriaHidden) label.setAttribute("aria-hidden", nextAriaHidden);
   }
   if (input) {
     if (locked) {
       setDisabled(input, true);
-      input.placeholder = SIGN_IN_TO_CONTINUE;
-      input.setAttribute("aria-label", SIGN_IN_TO_CONTINUE);
+      if (input.placeholder !== SIGN_IN_TO_CONTINUE) input.placeholder = SIGN_IN_TO_CONTINUE;
+      if (input.getAttribute("aria-label") !== SIGN_IN_TO_CONTINUE) input.setAttribute("aria-label", SIGN_IN_TO_CONTINUE);
     } else if (input.getAttribute("aria-label") === SIGN_IN_TO_CONTINUE) {
       input.setAttribute("aria-label", "Message SentIQ Chat");
     }
@@ -291,36 +294,66 @@ function applyQuotaLock() {
   }
 }
 
+function pauseMutationObserver() {
+  mutationGuardDepth += 1;
+  if (mutationGuardDepth === 1 && mutationObserver) {
+    mutationObserver.disconnect();
+  }
+}
+
+function resumeMutationObserver() {
+  mutationGuardDepth = Math.max(0, mutationGuardDepth - 1);
+  if (mutationGuardDepth === 0 && mutationObserver && mutationObserverRoot) {
+    mutationObserver.observe(mutationObserverRoot, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["disabled", "aria-disabled", "aria-hidden", "style", "class"],
+    });
+  }
+}
+
 function applyGuestUi() {
   if (!guestMode) return;
-  applyGuestWelcomeCopy();
-  applyExecutionModePolicy();
-  applyGuestToolPolicy();
-  applyQuotaLock();
+  pauseMutationObserver();
+  try {
+    applyGuestWelcomeCopy();
+    applyExecutionModePolicy();
+    applyGuestToolPolicy();
+    applyQuotaLock();
+  } finally {
+    resumeMutationObserver();
+  }
 }
 
 function scheduleApplyGuestUi() {
   if (!guestMode || applyScheduled) return;
   applyScheduled = true;
-  queueMicrotask(() => {
+  requestAnimationFrame(() => {
     applyScheduled = false;
     applyGuestUi();
   });
 }
 
 function releaseGuestUi() {
-  const subtitle = document.getElementById("welcome-subtitle");
-  if (subtitle) {
-    subtitle.hidden = false;
-    subtitle.removeAttribute("aria-hidden");
+  pauseMutationObserver();
+  try {
+    const subtitle = document.getElementById("welcome-subtitle");
+    if (subtitle) {
+      subtitle.hidden = false;
+      subtitle.removeAttribute("aria-hidden");
+    }
+    document.getElementById("execution-mode-control")?.classList.remove("guest-fast-only");
+    document.querySelector(".chat-input-area")?.classList.remove("guest-quota-exhausted");
+    document.getElementById("guest-quota-lock-label")?.classList.remove("visible");
+    document.querySelectorAll(".guest-auth-required").forEach((node) => {
+      node.classList.remove("guest-auth-required");
+      delete node.dataset.guestAuthRequired;
+    });
+  } finally {
+    resumeMutationObserver();
   }
-  document.getElementById("execution-mode-control")?.classList.remove("guest-fast-only");
-  document.querySelector(".chat-input-area")?.classList.remove("guest-quota-exhausted");
-  document.getElementById("guest-quota-lock-label")?.classList.remove("visible");
-  document.querySelectorAll(".guest-auth-required").forEach((node) => {
-    node.classList.remove("guest-auth-required");
-    delete node.dataset.guestAuthRequired;
-  });
 }
 
 function extractGuestQuota(payload) {
@@ -722,7 +755,11 @@ function installStyles() {
 function installMutationGuard() {
   const root = document.querySelector(".main-content");
   if (!root || mutationObserver) return;
-  mutationObserver = new MutationObserver(() => scheduleApplyGuestUi());
+  mutationObserverRoot = root;
+  mutationObserver = new MutationObserver(() => {
+    if (mutationGuardDepth > 0) return;
+    scheduleApplyGuestUi();
+  });
   mutationObserver.observe(root, {
     subtree: true,
     childList: true,
