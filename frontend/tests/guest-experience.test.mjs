@@ -2,18 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const guestExperience = readFileSync("frontend/scripts/features/guest-experience.js", "utf8");
-const guestObserverSafety = readFileSync("frontend/scripts/features/guest-observer-safety.js", "utf8");
 const welcomeComposition = readFileSync("frontend/scripts/features/welcome-composition.js", "utf8");
 const brand = readFileSync("frontend/scripts/shared/brand.js", "utf8");
 const promptBuilders = readFileSync("backend/ai/PromptBuilders.ts", "utf8");
 
-assert.match(brand, /import "\.\.\/features\/guest-observer-safety\.js";/, "guest observer safety must load before guest experience");
+assert.doesNotMatch(brand, /guest-observer-safety\.js/, "obsolete guest observer safety shim must not be loaded");
 assert.match(brand, /import "\.\.\/features\/guest-experience\.js";/, "guest experience policy must load before chat-controller");
-
-assert.match(guestObserverSafety, /target\.matches\("\.main-content"\)/, "guest observer safety must target only the guest policy root");
-assert.match(guestObserverSafety, /\"disabled\"[\s\S]*\"aria-disabled\"[\s\S]*\"aria-hidden\"[\s\S]*\"style\"[\s\S]*\"class\"/, "guest observer safety must recognize the guest policy's self-mutated attributes");
-assert.match(guestObserverSafety, /const \{ attributes: _attributes, attributeFilter: _attributeFilter, \.\.\.safeOptions \} = options;/, "guest observer safety must strip only attribute observation from the matching observer");
-assert.match(guestObserverSafety, /return super\.observe\(target, safeOptions\);/, "guest observer safety must preserve childList/characterData observation");
 
 assert.match(guestExperience, /mutationObserver\.observe\(root, \{\s*subtree: true,\s*childList: true,\s*characterData: true,\s*\}\);/, "guest policy observer must observe structure/content only");
 assert.doesNotMatch(guestExperience, /mutationObserver\.observe\(root, \{[\s\S]*attributes:\s*true/, "guest policy observer must never observe its own mutable attributes");
