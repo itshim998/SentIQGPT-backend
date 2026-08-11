@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
+import 'package:sentiq_chat/features/chat/presentation/chat_attachment_picker_support.dart';
 import 'package:sentiq_chat/features/multimodal/data/content_policy.dart';
 import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
 import 'package:sentiq_chat/shared/widgets/refractive_glass_surface.dart';
@@ -20,6 +21,7 @@ class ChatComposer extends StatefulWidget {
     required this.attachments,
     required this.webSearchEnabled,
     required this.enabled,
+    this.attachmentsEnabled = true,
     this.imageGenerationMode = false,
     this.imageQuota = const ImageQuotaState(),
     required this.onExecutionModeChanged,
@@ -43,6 +45,7 @@ class ChatComposer extends StatefulWidget {
   final List<ChatAttachment> attachments;
   final bool webSearchEnabled;
   final bool enabled;
+  final bool attachmentsEnabled;
   final bool imageGenerationMode;
   final ImageQuotaState imageQuota;
   final ValueChanged<ChatExecutionMode> onExecutionModeChanged;
@@ -80,7 +83,8 @@ class _ChatComposerState extends State<ChatComposer> {
           widget.attachments.every(
             (ChatAttachment item) => !item.uploading && !item.failed,
           )) &&
-      (widget.imageGenerationMode || widget.quota.allows(widget.executionMode)) &&
+      (widget.imageGenerationMode ||
+          widget.quota.allows(widget.executionMode)) &&
       (!widget.imageGenerationMode || widget.imageQuota.available);
 
   @override
@@ -118,49 +122,32 @@ class _ChatComposerState extends State<ChatComposer> {
   }
 
   Future<void> _pickFiles(BuildContext sheetContext) async {
+    if (!widget.attachmentsEnabled) return;
     Navigator.of(sheetContext).pop();
-    final FilePickerResult? result = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
-      type: FileType.custom,
-      allowedExtensions: const <String>[
-        'pdf',
-        'txt',
-        'md',
-        'csv',
-        'json',
-        'html',
-        'htm',
-        'xml',
-        'yaml',
-        'yml',
-        'dart',
-        'js',
-        'ts',
-        'py',
-        'java',
-        'kt',
-        'c',
-        'cpp',
-        'h',
-        'css',
-        'sql',
-        'png',
-        'jpg',
-        'jpeg',
-        'webp',
-      ],
-      withData: true,
-    );
-    if (result == null) return;
-    for (final PlatformFile file in result.files) {
-      final Uint8List? bytes = file.bytes;
-      if (bytes == null || bytes.isEmpty) continue;
-      _addPickedAttachment(
-        name: file.name,
-        extension: file.extension,
-        size: file.size,
-        bytes: bytes,
+    final FilePickerResult? result;
+    try {
+      result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: FileType.custom,
+        allowedExtensions: sentIQAllowedAttachmentExtensions,
+        withData: false,
       );
+    } catch (_) {
+      if (!mounted) return;
+      _showAttachmentNotice('Could not read that file. Please try again.');
+      return;
+    }
+    if (result == null) return;
+    final List<PickedChatAttachmentResult> picked =
+        await pickedChatAttachmentsFromFiles(result.files);
+    if (!mounted) return;
+    for (final PickedChatAttachmentResult item in picked) {
+      final ChatAttachment? attachment = item.attachment;
+      if (attachment != null) {
+        widget.onAttachmentAdded(attachment);
+        continue;
+      }
+      _showAttachmentNotice('${item.name}: ${item.error}');
     }
   }
 
@@ -168,6 +155,7 @@ class _ChatComposerState extends State<ChatComposer> {
     BuildContext sheetContext, {
     required ImageSource source,
   }) async {
+    if (!widget.attachmentsEnabled) return;
     Navigator.of(sheetContext).pop();
     if (source == ImageSource.gallery) {
       final List<XFile> images = await _imagePicker.pickMultiImage(
@@ -201,7 +189,7 @@ class _ChatComposerState extends State<ChatComposer> {
     required int size,
     required Uint8List bytes,
   }) {
-    final String mimeType = _mimeType(extension);
+    final String mimeType = chatAttachmentMimeType(extension);
     final String? validation = AttachmentPolicy.validate(
       filename: name,
       mimeType: mimeType,
@@ -224,6 +212,12 @@ class _ChatComposerState extends State<ChatComposer> {
     );
   }
 
+  void _showAttachmentNotice(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _showTools() {
     return showSentIQSheet<void>(
       context: context,
@@ -241,28 +235,30 @@ class _ChatComposerState extends State<ChatComposer> {
                 borderRadius: BorderRadius.circular(999),
               ),
             ),
-            _ToolTile(
-              icon: Icons.attach_file_rounded,
-              title: 'Attach files',
-              subtitle: 'PDF, text, code and supported images',
-              onTap: () => unawaited(_pickFiles(sheetContext)),
-            ),
-            _ToolTile(
-              icon: Icons.photo_library_outlined,
-              title: 'Choose images',
-              subtitle: 'Select one or more from your gallery',
-              onTap: () => unawaited(
-                _pickImage(sheetContext, source: ImageSource.gallery),
+            if (widget.attachmentsEnabled) ...<Widget>[
+              _ToolTile(
+                icon: Icons.attach_file_rounded,
+                title: 'Attach files',
+                subtitle: 'PDF, text, code and supported images',
+                onTap: () => unawaited(_pickFiles(sheetContext)),
               ),
-            ),
-            _ToolTile(
-              icon: Icons.photo_camera_outlined,
-              title: 'Take a photo',
-              subtitle: 'Use your Android camera',
-              onTap: () => unawaited(
-                _pickImage(sheetContext, source: ImageSource.camera),
+              _ToolTile(
+                icon: Icons.photo_library_outlined,
+                title: 'Choose images',
+                subtitle: 'Select one or more from your gallery',
+                onTap: () => unawaited(
+                  _pickImage(sheetContext, source: ImageSource.gallery),
+                ),
               ),
-            ),
+              _ToolTile(
+                icon: Icons.photo_camera_outlined,
+                title: 'Take a photo',
+                subtitle: 'Use your Android camera',
+                onTap: () => unawaited(
+                  _pickImage(sheetContext, source: ImageSource.camera),
+                ),
+              ),
+            ],
             if (widget.onImageGenerationModeChanged != null)
               _ToolTile(
                 icon: Icons.auto_awesome_outlined,
@@ -724,8 +720,11 @@ class _ToolTile extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           subtitle: Text(subtitle),
-          trailing: trailing ??
-              (selected ? Icon(Icons.check_rounded, color: palette.accent) : null),
+          trailing:
+              trailing ??
+              (selected
+                  ? Icon(Icons.check_rounded, color: palette.accent)
+                  : null),
           onTap: enabled ? onTap : null,
         ),
       ),
@@ -831,29 +830,6 @@ class _AttachmentPreview extends StatelessWidget {
       ),
     );
   }
-}
-
-String _mimeType(String? extension) {
-  return switch (extension?.toLowerCase()) {
-    'png' => 'image/png',
-    'jpg' || 'jpeg' => 'image/jpeg',
-    'webp' => 'image/webp',
-    'pdf' => 'application/pdf',
-    'csv' => 'text/csv',
-    'json' => 'application/json',
-    'md' => 'text/markdown',
-    'txt' => 'text/plain',
-    'doc' => 'application/msword',
-    'docx' =>
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'ppt' => 'application/vnd.ms-powerpoint',
-    'pptx' =>
-      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    'xls' => 'application/vnd.ms-excel',
-    'xlsx' =>
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    _ => 'application/octet-stream',
-  };
 }
 
 String _fileSize(int bytes) {

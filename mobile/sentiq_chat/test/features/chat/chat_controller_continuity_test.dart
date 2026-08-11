@@ -38,6 +38,7 @@ class FakeChatRepository implements ChatRepositoryContract {
   final Map<String, List<ChatMessage>> cached = <String, List<ChatMessage>>{};
   final List<StreamController<SentIQSseEvent>> streams =
       <StreamController<SentIQSseEvent>>[];
+  final List<ChatTurnRequest> streamedRequests = <ChatTurnRequest>[];
   Completer<SentIQSseConnection>? connectionGate;
   int syncCalls = 0;
   int cancelCalls = 0;
@@ -121,6 +122,7 @@ class FakeChatRepository implements ChatRepositoryContract {
 
   @override
   Future<SentIQSseConnection> stream(ChatTurnRequest request) async {
+    streamedRequests.add(request);
     final Completer<SentIQSseConnection>? gate = connectionGate;
     if (gate != null) return gate.future;
     final StreamController<SentIQSseEvent> controller = newStream();
@@ -479,6 +481,149 @@ void main() {
     );
 
     expect(controller.state.attachments.single.isImage, isTrue);
+    controller.dispose();
+    await network.close();
+  });
+
+  test(
+    'sends ready attachments in Fast and Intuitive request contexts',
+    () async {
+      for (final ChatExecutionMode mode in ChatExecutionMode.values) {
+        final FakeChatRepository repository = FakeChatRepository();
+        final FakeNetworkMonitor network = FakeNetworkMonitor(
+          NetworkAvailability.online,
+        );
+        final ChatController controller = await createController(
+          repository,
+          network,
+        );
+        controller.setExecutionMode(mode);
+
+        await controller.addAttachment(
+          ChatAttachment(
+            id: 'pdf-${mode.name}',
+            name: 'report-${mode.name}.pdf',
+            mimeType: 'application/pdf',
+            sizeBytes: 128,
+            bytes: Uint8List.fromList(<int>[1, 2, 3]),
+          ),
+          conversationId: 'a',
+        );
+        await controller.addAttachment(
+          ChatAttachment(
+            id: 'image-${mode.name}',
+            name: 'photo-${mode.name}.png',
+            mimeType: 'image/png',
+            sizeBytes: 3,
+            bytes: Uint8List.fromList(<int>[4, 5, 6]),
+          ),
+          conversationId: 'a',
+        );
+
+        expect(
+          await controller.send(conversationId: 'a', text: 'Use these files'),
+          isTrue,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        final ChatTurnRequest request = repository.streamedRequests.single;
+        final Map<String, Object?> payload = request.toJson();
+        final Map<String, Object?> context =
+            payload['context']! as Map<String, Object?>;
+        final List<Object?> fileReferences =
+            context['file_references']! as List<Object?>;
+        final Map<String, Object?> fileReference =
+            fileReferences.single! as Map<String, Object?>;
+        final List<Object?> imageAttachments =
+            context['image_attachments']! as List<Object?>;
+        final Map<String, Object?> imageAttachment =
+            imageAttachments.single! as Map<String, Object?>;
+
+        expect(request.executionMode, mode);
+        expect(payload['execution_mode'], mode.name);
+        expect(request.attachments, hasLength(2));
+        expect(fileReference['analysis_id'], 'analysis-pdf-${mode.name}');
+        expect(fileReference['extractedText'], 'Ready');
+        expect(imageAttachment['base64'], isNotEmpty);
+
+        await repository.streams.single.close();
+        controller.dispose();
+        await network.close();
+      }
+    },
+  );
+
+  test('retry resends the original failed-turn attachment snapshot', () async {
+    final FakeChatRepository repository = FakeChatRepository();
+    final FakeNetworkMonitor network = FakeNetworkMonitor(
+      NetworkAvailability.online,
+    );
+    final ChatController controller = await createController(
+      repository,
+      network,
+    );
+
+    await controller.addAttachment(
+      ChatAttachment(
+        id: 'retry-pdf',
+        name: 'retry.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 128,
+        bytes: Uint8List.fromList(<int>[1, 2, 3]),
+      ),
+      conversationId: 'a',
+    );
+    await controller.addAttachment(
+      ChatAttachment(
+        id: 'retry-image',
+        name: 'retry.png',
+        mimeType: 'image/png',
+        sizeBytes: 3,
+        bytes: Uint8List.fromList(<int>[4, 5, 6]),
+      ),
+      conversationId: 'a',
+    );
+
+    expect(
+      await controller.send(conversationId: 'a', text: 'Retry with these'),
+      isTrue,
+    );
+    await Future<void>.delayed(Duration.zero);
+    repository.streams.single.add(
+      event('error', <String, Object?>{
+        'message': 'The attachment could not be read.',
+      }),
+    );
+    await repository.streams.single.close();
+    await Future<void>.delayed(Duration.zero);
+
+    final ChatMessage failedUser = controller.state
+        .thread('a')
+        .messages
+        .firstWhere(
+          (ChatMessage message) => message.role == ChatMessageRole.user,
+        );
+    expect(failedUser.status, ChatMessageStatus.failed);
+    expect(failedUser.canRetry, isTrue);
+
+    await controller.retry(conversationId: 'a', userMessage: failedUser);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(repository.streamedRequests, hasLength(2));
+    final ChatTurnRequest retryRequest = repository.streamedRequests.last;
+    final Map<String, Object?> payload = retryRequest.toJson();
+    final Map<String, Object?> context =
+        payload['context']! as Map<String, Object?>;
+    final List<Object?> fileReferences =
+        context['file_references']! as List<Object?>;
+    final List<Object?> imageAttachments =
+        context['image_attachments']! as List<Object?>;
+
+    expect(retryRequest.attachments, hasLength(2));
+    expect(fileReferences, hasLength(1));
+    expect(imageAttachments, hasLength(1));
+
+    await repository.streams.last.close();
     controller.dispose();
     await network.close();
   });

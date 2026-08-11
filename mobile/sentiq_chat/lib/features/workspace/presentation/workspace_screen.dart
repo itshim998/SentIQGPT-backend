@@ -89,8 +89,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen>
         final AdaptiveWindowClass windowClass = classifyWindow(
           constraints.maxWidth,
         );
-        final bool compactShell =
-            windowClass != AdaptiveWindowClass.expanded;
+        final bool compactShell = windowClass != AdaptiveWindowClass.expanded;
         final Widget sidebar = ConversationSidebar(
           identity: widget.identity,
           state: workspace,
@@ -324,10 +323,7 @@ class _WorkspaceExecutionModeTitle extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final ({ChatExecutionMode mode, ChatQuotaState quota}) view = ref.watch(
       chatControllerProvider(session).select(
-        (ChatState state) => (
-          mode: state.executionMode,
-          quota: state.quota,
-        ),
+        (ChatState state) => (mode: state.executionMode, quota: state.quota),
       ),
     );
     final ChatController controller = ref.read(
@@ -354,9 +350,9 @@ class _WorkspaceHeaderActivity extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final String? id = conversationId;
     final bool generating = ref.watch(
-      chatControllerProvider(session).select(
-        (ChatState state) => id != null && state.thread(id).generating,
-      ),
+      chatControllerProvider(
+        session,
+      ).select((ChatState state) => id != null && state.thread(id).generating),
     );
     if (!generating) return const SizedBox.shrink();
     return const Padding(
@@ -437,9 +433,9 @@ class _WorkspaceNetworkBanner extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final bool networkAvailable = ref.watch(
-      chatControllerProvider(session).select(
-        (ChatState state) => state.networkAvailable,
-      ),
+      chatControllerProvider(
+        session,
+      ).select((ChatState state) => state.networkAvailable),
     );
     final bool offline =
         !networkAvailable ||
@@ -480,9 +476,9 @@ class _ConversationBody extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final ChatThreadState thread = ref.watch(
-      chatControllerProvider(session).select(
-        (ChatState state) => state.thread(conversationId),
-      ),
+      chatControllerProvider(
+        session,
+      ).select((ChatState state) => state.thread(conversationId)),
     );
     final ChatController chatController = ref.read(
       chatControllerProvider(session).notifier,
@@ -581,9 +577,9 @@ class _ComposerHost extends ConsumerWidget {
     // The end of an actual model turn is a precise reconciliation event. This
     // replaces title/sync polling at fixed 2/6/13-second intervals.
     ref.listen<bool>(
-      chatControllerProvider(session).select(
-        (ChatState state) => state.thread(conversationId).generating,
-      ),
+      chatControllerProvider(
+        session,
+      ).select((ChatState state) => state.thread(conversationId).generating),
       (bool? previous, bool next) {
         if (previous == true && !next) {
           unawaited(workspaceController.refresh());
@@ -613,10 +609,7 @@ class _ComposerHost extends ConsumerWidget {
 
     void onAttachmentRetry(String id) {
       unawaited(
-        chatController.retryAttachment(
-          id,
-          conversationId: conversationId,
-        ),
+        chatController.retryAttachment(id, conversationId: conversationId),
       );
     }
 
@@ -630,9 +623,8 @@ class _ComposerHost extends ConsumerWidget {
             Navigator.of(context)
                 .push<void>(
                   MaterialPageRoute<void>(
-                    builder: (_) => DeepResearchScreen(
-                      conversationId: conversationId,
-                    ),
+                    builder: (_) =>
+                        DeepResearchScreen(conversationId: conversationId),
                   ),
                 )
                 .then((_) => workspaceController.refresh()),
@@ -643,9 +635,7 @@ class _ComposerHost extends ConsumerWidget {
             Navigator.of(context)
                 .push<void>(
                   MaterialPageRoute<void>(
-                    builder: (_) => LiveScreen(
-                      conversationId: conversationId,
-                    ),
+                    builder: (_) => LiveScreen(conversationId: conversationId),
                   ),
                 )
                 .then((_) => workspaceController.refresh()),
@@ -671,6 +661,7 @@ class _ComposerHost extends ConsumerWidget {
                   webSearchEnabled: view.webSearchEnabled,
                   imageGenerationMode: view.imageGenerationMode,
                   imageQuota: view.imageQuota,
+                  attachmentsEnabled: !identity.isGuest,
                   enabled: view.networkAvailable,
                   onWebSearchChanged: chatController.setWebSearchEnabled,
                   onImageGenerationModeChanged:
@@ -692,6 +683,7 @@ class _ComposerHost extends ConsumerWidget {
                   webSearchEnabled: view.webSearchEnabled,
                   imageGenerationMode: view.imageGenerationMode,
                   imageQuota: view.imageQuota,
+                  attachmentsEnabled: !identity.isGuest,
                   enabled: view.networkAvailable,
                   onExecutionModeChanged: chatController.setExecutionMode,
                   onWebSearchChanged: chatController.setWebSearchEnabled,

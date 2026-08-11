@@ -168,6 +168,8 @@ class ChatController extends StateNotifier<ChatState> {
       <String, SentIQMultipartUpload>{};
   final Map<String, StreamSubscription<double>> _uploadSubscriptions =
       <String, StreamSubscription<double>>{};
+  final Map<String, List<ChatAttachment>> _requestAttachments =
+      <String, List<ChatAttachment>>{};
   SentIQSseConnection? _fileUpdateConnection;
   Timer? _fileUpdateReconnectTimer;
   Set<String> _knownRequestIds = <String>{};
@@ -411,11 +413,16 @@ class ChatController extends StateNotifier<ChatState> {
     required String text,
     String? trustedDisplayName,
     ChatExecutionMode? executionMode,
+    List<ChatAttachment>? attachmentOverride,
     bool preserveAttachments = false,
   }) async {
     final String trimmed = text.trim();
-    if (trimmed.isEmpty || !state.attachmentsReady) return false;
-    if (state.imageGenerationMode) {
+    final List<ChatAttachment> pendingAttachments =
+        attachmentOverride ?? state.attachments;
+    if (trimmed.isEmpty || !_attachmentsReady(pendingAttachments)) {
+      return false;
+    }
+    if (attachmentOverride == null && state.imageGenerationMode) {
       return _sendImage(
         conversationId: conversationId,
         prompt: trimmed,
@@ -457,8 +464,11 @@ class ChatController extends StateNotifier<ChatState> {
       locallyCreated: true,
     );
     final List<ChatAttachment> attachments = List<ChatAttachment>.unmodifiable(
-      state.attachments,
+      pendingAttachments,
     );
+    if (attachments.isNotEmpty) {
+      _requestAttachments[requestId] = attachments;
+    }
     final List<ChatMessage> nextMessages = <ChatMessage>[
       ...current.messages,
       userMessage,
@@ -477,7 +487,7 @@ class ChatController extends StateNotifier<ChatState> {
         clearSyncNotice: true,
       ),
     );
-    if (!preserveAttachments) {
+    if (!preserveAttachments && attachmentOverride == null) {
       state = state.copyWith(attachments: const <ChatAttachment>[]);
     }
     await _repository.saveAll(_session.ownerScope, <ChatMessage>[
@@ -660,12 +670,21 @@ class ChatController extends StateNotifier<ChatState> {
     required ChatMessage userMessage,
     String? trustedDisplayName,
   }) async {
-    await send(
+    final String? originalRequestId = userMessage.clientRequestId;
+    final List<ChatAttachment>? originalAttachments = originalRequestId == null
+        ? null
+        : _requestAttachments[originalRequestId];
+    final bool accepted = await send(
       conversationId: conversationId,
       text: userMessage.content,
       trustedDisplayName: trustedDisplayName,
       executionMode: userMessage.executionMode,
+      attachmentOverride: originalAttachments,
+      preserveAttachments: originalAttachments != null,
     );
+    if (accepted && originalRequestId != null) {
+      _requestAttachments.remove(originalRequestId);
+    }
   }
 
   Future<void> continueGenerating({
@@ -1128,6 +1147,9 @@ class ChatController extends StateNotifier<ChatState> {
     );
     await _repository.saveAll(_session.ownerScope, messages);
     await _repository.updateTurnState(requestId, assistantStatus.name);
+    if (assistantStatus == ChatMessageStatus.complete) {
+      _requestAttachments.remove(requestId);
+    }
   }
 
   Future<void> performImageAction(
@@ -1456,6 +1478,12 @@ class ChatController extends StateNotifier<ChatState> {
       if (item.id == id) return item;
     }
     return null;
+  }
+
+  bool _attachmentsReady(List<ChatAttachment> attachments) {
+    return attachments.every(
+      (ChatAttachment item) => !item.uploading && !item.failed,
+    );
   }
 
   void _onNetworkChange(NetworkAvailability availability) {

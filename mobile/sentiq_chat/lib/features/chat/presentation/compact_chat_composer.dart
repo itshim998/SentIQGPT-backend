@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:sentiq_chat/core/design_system/sentiq_tokens.dart';
 import 'package:sentiq_chat/core/performance/performance_policy.dart';
 import 'package:sentiq_chat/features/chat/domain/chat_models.dart';
+import 'package:sentiq_chat/features/chat/presentation/chat_attachment_picker_support.dart';
 import 'package:sentiq_chat/features/multimodal/data/content_policy.dart';
 import 'package:sentiq_chat/features/multimodal/domain/multimodal_models.dart';
 import 'package:sentiq_chat/shared/widgets/refractive_glass_surface.dart';
@@ -92,7 +93,10 @@ class ChatExecutionModeButton extends StatelessWidget {
                 return FadeTransition(
                   opacity: animation,
                   child: ScaleTransition(
-                    scale: Tween<double>(begin: 0.96, end: 1).animate(animation),
+                    scale: Tween<double>(
+                      begin: 0.96,
+                      end: 1,
+                    ).animate(animation),
                     child: child,
                   ),
                 );
@@ -133,6 +137,7 @@ class CompactChatComposer extends StatefulWidget {
     required this.attachments,
     required this.webSearchEnabled,
     required this.enabled,
+    this.attachmentsEnabled = true,
     this.imageGenerationMode = false,
     this.imageQuota = const ImageQuotaState(),
     required this.onWebSearchChanged,
@@ -155,6 +160,7 @@ class CompactChatComposer extends StatefulWidget {
   final List<ChatAttachment> attachments;
   final bool webSearchEnabled;
   final bool enabled;
+  final bool attachmentsEnabled;
   final bool imageGenerationMode;
   final ImageQuotaState imageQuota;
   final ValueChanged<bool> onWebSearchChanged;
@@ -191,7 +197,8 @@ class _CompactChatComposerState extends State<CompactChatComposer> {
           widget.attachments.every(
             (ChatAttachment item) => !item.uploading && !item.failed,
           )) &&
-      (widget.imageGenerationMode || widget.quota.allows(widget.executionMode)) &&
+      (widget.imageGenerationMode ||
+          widget.quota.allows(widget.executionMode)) &&
       (!widget.imageGenerationMode || widget.imageQuota.available);
 
   bool get _showContextRow =>
@@ -231,49 +238,32 @@ class _CompactChatComposerState extends State<CompactChatComposer> {
   }
 
   Future<void> _pickFiles(BuildContext sheetContext) async {
+    if (!widget.attachmentsEnabled) return;
     Navigator.of(sheetContext).pop();
-    final FilePickerResult? result = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
-      type: FileType.custom,
-      allowedExtensions: const <String>[
-        'pdf',
-        'txt',
-        'md',
-        'csv',
-        'json',
-        'html',
-        'htm',
-        'xml',
-        'yaml',
-        'yml',
-        'dart',
-        'js',
-        'ts',
-        'py',
-        'java',
-        'kt',
-        'c',
-        'cpp',
-        'h',
-        'css',
-        'sql',
-        'png',
-        'jpg',
-        'jpeg',
-        'webp',
-      ],
-      withData: true,
-    );
-    if (result == null) return;
-    for (final PlatformFile file in result.files) {
-      final Uint8List? bytes = file.bytes;
-      if (bytes == null || bytes.isEmpty) continue;
-      _addPickedAttachment(
-        name: file.name,
-        extension: file.extension,
-        size: file.size,
-        bytes: bytes,
+    final FilePickerResult? result;
+    try {
+      result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: FileType.custom,
+        allowedExtensions: sentIQAllowedAttachmentExtensions,
+        withData: false,
       );
+    } catch (_) {
+      if (!mounted) return;
+      _showAttachmentNotice('Could not read that file. Please try again.');
+      return;
+    }
+    if (result == null) return;
+    final List<PickedChatAttachmentResult> picked =
+        await pickedChatAttachmentsFromFiles(result.files);
+    if (!mounted) return;
+    for (final PickedChatAttachmentResult item in picked) {
+      final ChatAttachment? attachment = item.attachment;
+      if (attachment != null) {
+        widget.onAttachmentAdded(attachment);
+        continue;
+      }
+      _showAttachmentNotice('${item.name}: ${item.error}');
     }
   }
 
@@ -281,6 +271,7 @@ class _CompactChatComposerState extends State<CompactChatComposer> {
     BuildContext sheetContext, {
     required ImageSource source,
   }) async {
+    if (!widget.attachmentsEnabled) return;
     Navigator.of(sheetContext).pop();
     if (source == ImageSource.gallery) {
       final List<XFile> images = await _imagePicker.pickMultiImage(
@@ -314,16 +305,16 @@ class _CompactChatComposerState extends State<CompactChatComposer> {
     required int size,
     required Uint8List bytes,
   }) {
-    final String mimeType = _mimeType(extension);
+    final String mimeType = chatAttachmentMimeType(extension);
     final String? validation = AttachmentPolicy.validate(
       filename: name,
       mimeType: mimeType,
       sizeBytes: size,
     );
     if (validation != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$name: $validation')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$name: $validation')));
       return;
     }
     widget.onAttachmentAdded(
@@ -337,6 +328,12 @@ class _CompactChatComposerState extends State<CompactChatComposer> {
     );
   }
 
+  void _showAttachmentNotice(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _showTools() {
     return showSentIQSheet<void>(
       context: context,
@@ -344,28 +341,30 @@ class _CompactChatComposerState extends State<CompactChatComposer> {
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            _ToolTile(
-              icon: Icons.attach_file_rounded,
-              title: 'Attach files',
-              subtitle: 'PDF, text, code and supported images',
-              onTap: () => unawaited(_pickFiles(sheetContext)),
-            ),
-            _ToolTile(
-              icon: Icons.photo_library_outlined,
-              title: 'Choose images',
-              subtitle: 'Select one or more from your gallery',
-              onTap: () => unawaited(
-                _pickImage(sheetContext, source: ImageSource.gallery),
+            if (widget.attachmentsEnabled) ...<Widget>[
+              _ToolTile(
+                icon: Icons.attach_file_rounded,
+                title: 'Attach files',
+                subtitle: 'PDF, text, code and supported images',
+                onTap: () => unawaited(_pickFiles(sheetContext)),
               ),
-            ),
-            _ToolTile(
-              icon: Icons.photo_camera_outlined,
-              title: 'Take a photo',
-              subtitle: 'Use your Android camera',
-              onTap: () => unawaited(
-                _pickImage(sheetContext, source: ImageSource.camera),
+              _ToolTile(
+                icon: Icons.photo_library_outlined,
+                title: 'Choose images',
+                subtitle: 'Select one or more from your gallery',
+                onTap: () => unawaited(
+                  _pickImage(sheetContext, source: ImageSource.gallery),
+                ),
               ),
-            ),
+              _ToolTile(
+                icon: Icons.photo_camera_outlined,
+                title: 'Take a photo',
+                subtitle: 'Use your Android camera',
+                onTap: () => unawaited(
+                  _pickImage(sheetContext, source: ImageSource.camera),
+                ),
+              ),
+            ],
             if (widget.onImageGenerationModeChanged != null)
               _ToolTile(
                 icon: Icons.auto_awesome_outlined,
@@ -451,7 +450,8 @@ class _CompactChatComposerState extends State<CompactChatComposer> {
                     itemCount: widget.attachments.length,
                     separatorBuilder: (_, _) => const SizedBox(width: 6),
                     itemBuilder: (BuildContext context, int index) {
-                      final ChatAttachment attachment = widget.attachments[index];
+                      final ChatAttachment attachment =
+                          widget.attachments[index];
                       return _AttachmentPreview(
                         attachment: attachment,
                         onRemove: () =>
@@ -620,9 +620,9 @@ class _ContextChip extends StatelessWidget {
         const SizedBox(width: 4),
         Text(
           label,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: palette.textSecondary,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.labelSmall?.copyWith(color: palette.textSecondary),
         ),
       ],
     );
@@ -749,8 +749,11 @@ class _ToolTile extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           subtitle: Text(subtitle),
-          trailing: trailing ??
-              (selected ? Icon(Icons.check_rounded, color: palette.accent) : null),
+          trailing:
+              trailing ??
+              (selected
+                  ? Icon(Icons.check_rounded, color: palette.accent)
+                  : null),
           onTap: enabled ? onTap : null,
         ),
       ),
@@ -822,18 +825,4 @@ class _AttachmentPreview extends StatelessWidget {
       ),
     );
   }
-}
-
-String _mimeType(String? extension) {
-  return switch (extension?.toLowerCase()) {
-    'png' => 'image/png',
-    'jpg' || 'jpeg' => 'image/jpeg',
-    'webp' => 'image/webp',
-    'pdf' => 'application/pdf',
-    'csv' => 'text/csv',
-    'json' => 'application/json',
-    'md' => 'text/markdown',
-    'txt' => 'text/plain',
-    _ => 'application/octet-stream',
-  };
 }
