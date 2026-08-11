@@ -248,6 +248,32 @@ function applyGuestToolPolicy() {
     });
 }
 
+function releaseGuestToolPolicy() {
+  const clearGuestAction = (button) => {
+    if (!button || (
+      button.dataset.guestAuthRequired !== "true"
+      && !button.classList.contains("guest-auth-required")
+    )) return;
+
+    // Guest mode owns the disabled state it applied during bootstrap. Restore
+    // the controls before the authenticated capability and quota layers apply
+    // their current restrictions. Leaving either marker behind makes the tool
+    // action sheet continue to present the control as unavailable.
+    setDisabled(button, false);
+    button.classList.remove("auth-disabled", "guest-auth-required");
+    delete button.dataset.guestAuthRequired;
+  };
+
+  ["file-attach-btn", "websurf-basic-btn", "image-gen-btn", "deep-research-btn"]
+    .forEach((id) => clearGuestAction(document.getElementById(id)));
+
+  document.querySelectorAll(".starter-action-btn.guest-auth-required").forEach((button) => {
+    setDisabled(button, false);
+    button.classList.remove("guest-auth-required");
+    if (button.title === "Sign in to use this action") button.removeAttribute("title");
+  });
+}
+
 function ensureQuotaLockLabel() {
   const wrapper = document.querySelector(".input-field-wrapper");
   if (!wrapper) return null;
@@ -347,10 +373,7 @@ function releaseGuestUi() {
     document.getElementById("execution-mode-control")?.classList.remove("guest-fast-only");
     document.querySelector(".chat-input-area")?.classList.remove("guest-quota-exhausted");
     document.getElementById("guest-quota-lock-label")?.classList.remove("visible");
-    document.querySelectorAll(".guest-auth-required").forEach((node) => {
-      node.classList.remove("guest-auth-required");
-      delete node.dataset.guestAuthRequired;
-    });
+    releaseGuestToolPolicy();
   } finally {
     resumeMutationObserver();
   }

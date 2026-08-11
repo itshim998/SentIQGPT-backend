@@ -21,6 +21,10 @@ assert.match(guestExperience, /executionMode: "fast"/, "guest requests must be f
 assert.match(guestExperience, /webSearchMode: null/, "guest requests must not retain manual WebSurf mode");
 assert.match(guestExperience, /setActionGuestState\("file-attach-btn"[\s\S]*disabled: true/, "Attach files must be auth-gated for guests");
 assert.match(guestExperience, /setActionGuestState\("websurf-basic-btn"[\s\S]*disabled: true/, "WebSurf must be auth-gated for guests");
+assert.match(guestExperience, /function releaseGuestToolPolicy\([\s\S]*setDisabled\(button, false\)[\s\S]*classList\.remove\("auth-disabled", "guest-auth-required"\)/,
+  "Signed-in release must restore the native control state and remove the guest-only action-sheet marker");
+assert.match(guestExperience, /\["file-attach-btn", "websurf-basic-btn", "image-gen-btn", "deep-research-btn"\][\s\S]*clearGuestAction/,
+  "Signed-in release must clear every guest-gated composer tool, including WebSurf and Deep Research");
 assert.match(guestExperience, /guestQuotaState\.exhausted/, "guest composer must react to exhausted quota state");
 assert.match(guestExperience, /Sign in to continue/, "exhausted guest composer must show the sign-in continuation label");
 
