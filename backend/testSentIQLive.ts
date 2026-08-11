@@ -1100,7 +1100,16 @@ function testFrontendFoundation(): void {
   `;
   execFileSync(process.execPath, ["--input-type=module", "-e", composerTest], { stdio: "pipe" });
 
-  const audioModuleUrl = `data:text/javascript;base64,${Buffer.from(audioProtocol).toString("base64")}`;
+  const isolatedAudioProtocol = audioProtocol.replace(
+    'import { emitLivePcmLevel } from "./live-audio-visual-state.mjs";',
+    "const emitLivePcmLevel = () => {};",
+  );
+  assert.notEqual(
+    isolatedAudioProtocol,
+    audioProtocol,
+    "the audio protocol fixture should isolate the visual-level hook",
+  );
+  const audioModuleUrl = `data:text/javascript;base64,${Buffer.from(isolatedAudioProtocol).toString("base64")}`;
   const audioProtocolTest = `
     import assert from "node:assert/strict";
     import {

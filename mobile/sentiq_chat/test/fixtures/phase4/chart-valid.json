@@ -1,0 +1,11 @@
+{
+  "chart_type": "bar",
+  "chartjs_config": {
+    "type": "bar",
+    "data": {
+      "labels": ["A", "B", "C"],
+      "datasets": [{"label": "Values", "data": [3, 7, 5]}]
+    },
+    "options": {"plugins": {"title": {"text": "Fixture chart"}}}
+  }
+}

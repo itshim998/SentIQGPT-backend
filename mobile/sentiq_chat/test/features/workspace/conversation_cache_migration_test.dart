@@ -1,0 +1,74 @@
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:sentiq_chat/features/workspace/data/conversation_cache.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+void main() {
+  late Directory directory;
+  late String databasePath;
+
+  setUpAll(sqfliteFfiInit);
+
+  setUp(() async {
+    directory = await Directory.systemTemp.createTemp('sentiq-cache-test-');
+    databasePath = '${directory.path}/workspace.db';
+  });
+
+  tearDown(() async {
+    await databaseFactoryFfi.deleteDatabase(databasePath);
+    await directory.delete(recursive: true);
+  });
+
+  test('migrates a version 1 cache through conversation sync schema', () async {
+    final Database versionOne = await databaseFactoryFfi.openDatabase(
+      databasePath,
+      options: OpenDatabaseOptions(
+        version: 1,
+        onCreate: (Database database, int version) async {
+          for (final String statement in CacheMigrations.steps[1]!) {
+            await database.execute(statement);
+          }
+        },
+      ),
+    );
+    await versionOne.insert('conversations', <String, Object?>{
+      'id': 'conversation-1',
+      'owner_scope': 'user-1',
+      'title': 'Cached chat',
+      'created_at': '2026-08-06T00:00:00.000Z',
+      'updated_at': '2026-08-06T00:00:00.000Z',
+      'sync_state': 'synced',
+    });
+    await versionOne.close();
+
+    final ConversationCache cache = ConversationCache(
+      factory: databaseFactoryFfi,
+      databasePath: databasePath,
+    );
+    final items = await cache.list('user-1');
+    final Database migrated = await cache.open();
+    final List<Map<String, Object?>> tables = await migrated.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+      "('app_meta', 'messages', 'chat_turns') ORDER BY name",
+    );
+    final List<Map<String, Object?>> columns = await migrated.rawQuery(
+      'PRAGMA table_info(conversations)',
+    );
+    final Set<String> columnNames = columns
+        .map((Map<String, Object?> row) => row['name']?.toString())
+        .whereType<String>()
+        .toSet();
+
+    expect(items.single.title, 'Cached chat');
+    expect(items.single.messageCount, 0);
+    expect(tables.map((Map<String, Object?> row) => row['name']), <Object?>[
+      'app_meta',
+      'chat_turns',
+      'messages',
+    ]);
+    expect(columnNames, containsAll(<String>['message_count', 'first_user_message']));
+    expect(await migrated.getVersion(), CacheMigrations.currentVersion);
+    await cache.close();
+  });
+}

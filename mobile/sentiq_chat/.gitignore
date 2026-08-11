@@ -1,0 +1,31 @@
+# Flutter and Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Generated Android files are created from the pinned Flutter SDK in CI until
+# the final native release configuration is committed in Phase 6.
+android/.gradle/
+android/local.properties
+android/key.properties
+
+# Local Phase 6 verifier runtime materialization
+.tooling/
+tool/.phase6_local_release.runtime.ps1
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Test output
+test/failures/
+android/*.jks
+android/*.keystore
+android/app/*.jks
+android/app/*.keystore

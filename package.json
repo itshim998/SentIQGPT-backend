@@ -90,13 +90,12 @@
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
     "helmet": "^8.1.0",
-    "jszip": "^3.10.1",
     "jose": "^6.2.2",
+    "jszip": "^3.10.1",
     "multer": "^1.4.5-lts.1",
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.18.0",
-    "pptxgenjs": "^4.0.1",
-    "sharp": "^0.33.5",
+    "sharp": "^0.35.3",
     "tesseract.js": "^7.0.0",
     "zod": "^3.23.0"
   },
@@ -112,5 +111,9 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "overrides": {
+    "uuid": "11.1.1",
+    "nanoid": "5.1.16"
   }
 }

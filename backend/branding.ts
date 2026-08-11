@@ -1,3 +1,5 @@
+import "./mobile/mobileContract";
+
 export const COMPANY_NAME = "SentIQ";
 export const PRODUCT_NAME = "SentIQ Chat";
 export const PRODUCT_SHORT_NAME = PRODUCT_NAME;

@@ -1,0 +1,12 @@
+{
+  "mode": "live",
+  "quota_ui_enabled": true,
+  "identity": {"is_guest": false},
+  "summary": {
+    "plan_code": "free",
+    "status": "active",
+    "quotas": {
+      "image_generation": {"used": 1, "limit": 2, "remaining": 1}
+    }
+  }
+}

@@ -1,0 +1,61 @@
+event: token
+data: {"type":"token","text":"Hello"}
+
+event: file_token
+data: {"type":"file_token","text":" file"}
+
+event: file_artifact
+data: {"type":"file_artifact","filename":"report.pdf"}
+
+event: thinking
+data: {"type":"thinking","message":"Planning"}
+
+event: structured_response
+data: {"type":"structured_response","response":{"answer":"Structured"}}
+
+event: route
+data: {"type":"route","route":"reasoning"}
+
+event: tool_selected
+data: {"type":"tool_selected","tool":"web_surf"}
+
+event: tool_started
+data: {"type":"tool_started","tool":"web_surf"}
+
+event: tool_result
+data: {"type":"tool_result","status":"complete"}
+
+event: tool_error
+data: {"type":"tool_error","error":"temporary"}
+
+event: websurf_sources
+data: {"type":"websurf_sources","sources":[{"title":"Source","url":"https://example.com"}]}
+
+event: websurf_complete
+data: {"type":"websurf_complete","status":"complete"}
+
+event: memory
+data: {"type":"memory","message":"Memory updated"}
+
+event: sync
+data: {"type":"sync","sync":{"status":"saved"}}
+
+event: file_analysis
+data: {"type":"file_analysis","message":"Reading file"}
+
+event: deep_research_progress
+data: {"type":"deep_research_progress","message":"Researching"}
+
+event: deep_research_source
+data: {"type":"deep_research_source","title":"Paper"}
+
+event: deep_research_complete
+data: {"type":"deep_research_complete","status":"complete"}
+
+event: deep_research_error
+data: {"type":"deep_research_error","error":"source failed"}
+
+event: error
+data: {"type":"error","error":"failed"}
+
+data: [DONE]
