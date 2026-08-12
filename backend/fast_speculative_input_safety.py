@@ -1,8 +1,10 @@
 """Buffered provider speculation for ordinary Fast text streams.
 
-The provider may begin while the existing input-safety classifier runs, but no
-response headers or provider bytes are released until the classifier approves
-the request. Ineligible requests delegate to the original /llm/stream handler.
+The provider may begin immediately for eligible Fast requests. Fast-path safety
+checks remain implemented in this module for rollback/re-enable purposes, but
+are disabled so they cannot delay the first streamed byte.
+
+Ineligible requests delegate to the original /llm/stream handler.
 """
 
 from __future__ import annotations
@@ -21,11 +23,13 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-# The implementation is active for its deliberately narrow request class. A
-# separate, explicit negative switch is used for emergency rollback so stale
-# inherited Azure values cannot silently leave the optimized image disabled.
+# The optimized Fast speculation lane remains deliberately narrow. Fast safety
+# checks are intentionally disabled for now so input/output safety cannot add
+# request-start latency. The safety implementation below is retained intact for
+# future controlled re-enablement.
 FEATURE_FLAG = "SENTIQ_FAST_PARALLEL_INPUT_SAFETY_ENABLED"
 FORCE_DISABLE_FLAG = "SENTIQ_FAST_PARALLEL_INPUT_SAFETY_FORCE_DISABLED"
+FAST_SAFETY_ENABLED = False
 BUFFER_ITEMS_ENV = "SENTIQ_FAST_SPECULATIVE_BUFFER_ITEMS"
 DEFAULT_BUFFER_ITEMS = 512
 ELIGIBLE_TASKS = frozenset({"chat", "general"})
@@ -328,7 +332,7 @@ def _speculative_event_generator(
     user_id: str,
     source: SpeculativeProviderBuffer,
 ) -> Iterator[str]:
-    safety_monitor = service.StreamingSafetyMonitor(user_id, request.task)
+    safety_monitor = service.StreamingSafetyMonitor(user_id, request.task) if FAST_SAFETY_ENABLED else None
     full_output_parts: list[str] = []
     capacity_event_sent = False
 
@@ -349,7 +353,7 @@ def _speculative_event_generator(
                     text_delta = str(chunk.get("text") or "")
                     if text_delta:
                         full_output_parts.append(text_delta)
-                        if not safety_monitor.add_token(text_delta):
+                        if safety_monitor is not None and not safety_monitor.add_token(text_delta):
                             service.logger.warning("[Safety] Output violation detected - terminating speculative stream")
                             yield f"event: error\ndata: {json.dumps({'code': 'safety_violation', 'message': 'Response blocked due to safety concerns'})}\n\n"
                             return
@@ -358,7 +362,7 @@ def _speculative_event_generator(
 
             text_chunk = str(chunk)
             full_output_parts.append(text_chunk)
-            if not safety_monitor.add_token(text_chunk):
+            if safety_monitor is not None and not safety_monitor.add_token(text_chunk):
                 service.logger.warning("[Safety] Output violation detected - terminating speculative stream")
                 yield f"event: error\ndata: {json.dumps({'code': 'safety_violation', 'message': 'Response blocked due to safety concerns'})}\n\n"
                 return
@@ -370,7 +374,7 @@ def _speculative_event_generator(
                 yield f"event: capacity\ndata: {json.dumps({'capacity': telemetry['capacity']})}\n\n"
 
         final_output = "".join(full_output_parts).strip()
-        if final_output:
+        if FAST_SAFETY_ENABLED and final_output:
             output_safe, output_classification, _ = service.check_output_safety(
                 final_output,
                 user_id,
@@ -419,9 +423,10 @@ def build_stream_endpoint(service: Any, original_stream: Callable[..., Any]) -> 
         service.log_model_tool_gateway_diagnostic(request, effective_model_override, streaming=True)
         _, _, _, suppressed_image_envelope = _effective_provider_transport(request)
         service.logger.info(
-            "[FastSpeculation] provider_started user=%s task=%s mode=fast release_gate=input_safety implicit_image_tool_suppressed=%s",
+            "[FastSpeculation] provider_started user=%s task=%s mode=fast safety_enabled=%s implicit_image_tool_suppressed=%s",
             user_id,
             request.task,
+            FAST_SAFETY_ENABLED,
             suppressed_image_envelope,
         )
 
@@ -430,47 +435,50 @@ def build_stream_endpoint(service: Any, original_stream: Callable[..., Any]) -> 
             service.get_current_groq_call_telemetry,
         )
         source.start()
-        safety_started = time.perf_counter()
-        try:
-            is_safe, classification, _ = await run_in_threadpool(
-                service.check_input_safety,
-                request.prompt,
-                user_id,
-                "/llm/stream",
-                request.task,
-                request.safety_mode,
-            )
-        except BaseException:
-            source.cancel("input_safety_exception")
-            raise
 
-        safety_duration_ms = round((time.perf_counter() - safety_started) * 1000, 1)
-        if not is_safe:
-            source.cancel("input_safety_blocked")
-            source.wait(timeout=0.25)
-            service.logger.warning(
-                "[Safety] Speculative stream input blocked user=%s classification=%s buffered_items=%s",
+        if FAST_SAFETY_ENABLED:
+            safety_started = time.perf_counter()
+            try:
+                is_safe, classification, _ = await run_in_threadpool(
+                    service.check_input_safety,
+                    request.prompt,
+                    user_id,
+                    "/llm/stream",
+                    request.task,
+                    request.safety_mode,
+                )
+            except BaseException:
+                source.cancel("input_safety_exception")
+                raise
+
+            safety_duration_ms = round((time.perf_counter() - safety_started) * 1000, 1)
+            if not is_safe:
+                source.cancel("input_safety_blocked")
+                source.wait(timeout=0.25)
+                service.logger.warning(
+                    "[Safety] Speculative stream input blocked user=%s classification=%s buffered_items=%s",
+                    user_id,
+                    classification,
+                    source.buffered_items(),
+                )
+                reason = (
+                    "safety_violation"
+                    if classification in service.EXPLICIT_BLOCKED_CLASSIFICATIONS
+                    else "safety_degraded"
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail={"status": "blocked", "reason": reason},
+                )
+
+            service.logger.info(
+                "[FastSpeculation] input_safety_approved user=%s classification=%s duration_ms=%s buffered_items=%s",
                 user_id,
                 classification,
+                safety_duration_ms,
                 source.buffered_items(),
             )
-            reason = (
-                "safety_violation"
-                if classification in service.EXPLICIT_BLOCKED_CLASSIFICATIONS
-                else "safety_degraded"
-            )
-            raise HTTPException(
-                status_code=400,
-                detail={"status": "blocked", "reason": reason},
-            )
 
-        service.logger.info(
-            "[FastSpeculation] input_safety_approved user=%s classification=%s duration_ms=%s buffered_items=%s",
-            user_id,
-            classification,
-            safety_duration_ms,
-            source.buffered_items(),
-        )
         return StreamingResponse(
             _speculative_event_generator(service, request, user_id, source),
             media_type="text/event-stream",
@@ -509,9 +517,10 @@ def install(service: Any) -> None:
     app.add_api_route("/llm/stream", endpoint, methods=["POST"])
     app.state.fast_speculative_input_safety_installed = True
     service.logger.info(
-        "[FastSpeculation] installed enabled=%s force_disabled=%s buffer_items=%s eligible_tasks=%s",
+        "[FastSpeculation] installed enabled=%s force_disabled=%s safety_enabled=%s buffer_items=%s eligible_tasks=%s",
         _feature_enabled(),
         _env_bool(FORCE_DISABLE_FLAG, False),
+        FAST_SAFETY_ENABLED,
         _buffer_item_limit(),
         ",".join(sorted(ELIGIBLE_TASKS)),
     )
