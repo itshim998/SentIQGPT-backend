@@ -188,6 +188,12 @@
   transition: color 160ms ease, opacity 160ms ease;
 }
 
+/* Guest mode already uses .guest-fast-only as its authenticated-state marker.
+   Hide only the quota status copy; quota enforcement remains unchanged. */
+.chat-input-wrapper:has(.execution-mode-control.guest-fast-only) .text-quota-status {
+  display: none !important;
+}
+
 .text-quota-status[hidden] {
   display: none;
 }
