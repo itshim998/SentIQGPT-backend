@@ -140,3 +140,15 @@
     box-shadow: none;
   }
 }
+
+.composer-action-menu,
+.chat-input-wrapper .composer-action-menu,
+.chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu,
+.chat-input-wrapper[data-composer-version="5.1"] .composer-action-menu {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.052), transparent 34%),
+    radial-gradient(circle at 14% 0%, rgba(158, 135, 226, 0.09), transparent 42%),
+    #0a0d15 !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
