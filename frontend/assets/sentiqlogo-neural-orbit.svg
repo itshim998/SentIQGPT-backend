@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">SentIQ Chat Neural Orbit</title>
+  <desc id="desc">A neural network brain with connected nodes and a central intelligence point.</desc>
+  <g stroke="#F0F1F4" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 53
+      C20 42 27 34 37 30
+      C46 20 59 18 69 23
+      C79 19 91 23 98 31
+      C107 36 111 46 110 56
+      C115 65 111 75 104 80
+      C102 90 95 97 85 99
+      C78 107 67 109 59 104
+      C49 108 39 103 35 95
+      C25 93 20 86 21 77
+      C14 70 14 60 18 53Z"/>
+    <path d="M28 46 L43 42 L55 30 L69 40 L84 31 L99 47"/>
+    <path d="M22 63 L39 59 L49 71 L67 61 L82 72 L105 61"/>
+    <path d="M35 91 L46 78 L61 92 L76 83 L93 92"/>
+    <path d="M43 42 L39 59 L46 78"/>
+    <path d="M55 30 L67 61 L61 92"/>
+    <path d="M84 31 L82 72 L76 83"/>
+    <path d="M69 40 L67 61 L61 70"/>
+    <path d="M99 47 L105 61 L93 92"/>
+  </g>
+  <g fill="#F0F1F4">
+    <circle cx="28" cy="46" r="4"/>
+    <circle cx="43" cy="42" r="4.4"/>
+    <circle cx="55" cy="30" r="4.2"/>
+    <circle cx="69" cy="40" r="4.1"/>
+    <circle cx="84" cy="31" r="4.2"/>
+    <circle cx="99" cy="47" r="4.1"/>
+    <circle cx="22" cy="63" r="4.1"/>
+    <circle cx="39" cy="59" r="4.3"/>
+    <circle cx="67" cy="61" r="4.6"/>
+    <circle cx="82" cy="72" r="4.1"/>
+    <circle cx="105" cy="61" r="4.1"/>
+    <circle cx="35" cy="91" r="4"/>
+    <circle cx="46" cy="78" r="4.1"/>
+    <circle cx="61" cy="92" r="4.2"/>
+    <circle cx="76" cy="83" r="4"/>
+    <circle cx="93" cy="92" r="4"/>
+  </g>
+  <circle cx="67" cy="61" r="7.2" fill="#F0F1F4"/>
+</svg>
