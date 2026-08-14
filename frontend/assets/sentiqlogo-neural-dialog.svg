@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">SentIQ Chat Neural Dialog</title>
+  <desc id="desc">A brain-shaped dialogue outline containing an integrated vertical pulse pattern.</desc>
+  <g stroke="#F0F1F4" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M64 17
+      C56 10 44 10 35 15
+      C27 20 22 27 20 37
+      C14 40 11 47 12 55
+      C13 64 19 70 27 73
+      C29 82 35 88 44 90
+      C49 97 57 100 64 99
+      L64 112
+      L75 102
+      C84 99 89 94 91 87
+      C99 84 105 77 106 69
+      C115 65 117 56 114 48
+      C112 42 108 38 103 36
+      C101 27 95 21 87 16
+      C79 11 71 11 64 17Z"/>
+    <path d="M64 17 C61 22 61 28 64 33"/>
+    <path d="M64 33 C66 29 66 23 64 17"/>
+  </g>
+  <g fill="#F0F1F4">
+    <rect x="45" y="53" width="5" height="22" rx="2.5"/>
+    <rect x="56" y="44" width="5" height="40" rx="2.5"/>
+    <rect x="67" y="36" width="5" height="56" rx="2.5"/>
+    <rect x="78" y="48" width="5" height="34" rx="2.5"/>
+    <circle cx="48" cy="80" r="2.6"/>
+    <circle cx="58.5" cy="88" r="2.6"/>
+    <circle cx="69.5" cy="96" r="2.6"/>
+    <circle cx="80.5" cy="86" r="2.6"/>
+  </g>
+</svg>
