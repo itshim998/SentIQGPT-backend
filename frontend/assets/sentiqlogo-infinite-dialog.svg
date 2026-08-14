@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">SentIQ Chat Infinite Dialog</title>
+  <desc id="desc">Two interlocking dialogue bubbles forming a continuous conversational loop.</desc>
+  <g stroke="#F0F1F4" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M62 20
+      L77 13
+      L92 21
+      L97 35
+      L94 48
+      L83 56
+      L72 55
+      L68 61
+      L55 61
+      L43 54
+      L38 42
+      L40 29
+      L51 21
+      Z"/>
+    <path d="M66 59
+      L73 52
+      L84 51
+      L94 57
+      L98 68
+      L96 81
+      L86 91
+      L72 97
+      L58 91
+      L51 80
+      L52 68
+      L59 61
+      Z"/>
+    <path d="M43 54 L39 70 L55 61"/>
+    <path d="M86 91 L91 106 L77 97"/>
+  </g>
+  <g fill="#F0F1F4">
+    <circle cx="59" cy="61" r="3.1"/>
+    <circle cx="69" cy="61" r="3.1"/>
+    <circle cx="79" cy="61" r="3.1"/>
+  </g>
+</svg>
