@@ -4,6 +4,7 @@
   const PRODUCT_NAME = "SentIQ Chat";
   const ASSET_LOADING_VERSION = "11.6";
   const LOCAL_MARK_HREF = "assets/sentiq-chat-mark.svg";
+  const UI_STABILITY_STYLESHEET = "styles/modules/86-ui-stability.css";
   const INTER_VARIABLE_STYLESHEET = "https://fonts.googleapis.com/css2?family=Inter:wght@300..700&display=swap";
   const limitedReasons = new Map();
   const root = document.documentElement;
@@ -58,6 +59,13 @@
       href: "scripts/main.js",
       fetchpriority: "high",
       "data-asset-loading-version": ASSET_LOADING_VERSION,
+    });
+
+    ensureLink({
+      selector: `link[rel="stylesheet"][href="${UI_STABILITY_STYLESHEET}"]`,
+      rel: "stylesheet",
+      href: UI_STABILITY_STYLESHEET,
+      "data-ui-stability-version": ASSET_LOADING_VERSION,
     });
 
     root.dataset.headAssetLoadingVersion = ASSET_LOADING_VERSION;
