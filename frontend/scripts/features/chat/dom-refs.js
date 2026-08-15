@@ -1,3 +1,4 @@
+import "../logo-activity.js";
 import "../ui-state-runtime.js";
 import "../authentication-surface.js";
 import "../settings-workspace.js";
