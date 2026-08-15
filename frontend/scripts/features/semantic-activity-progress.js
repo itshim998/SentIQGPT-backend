@@ -78,6 +78,22 @@ function initSemanticActivityProgress() {
     return logo;
   }
 
+  function restoreFallbackSpinner(loader) {
+    let spinner = loader.querySelector(":scope > .response-inline-spinner");
+    if (spinner instanceof HTMLElement) return spinner;
+    spinner = document.createElement("span");
+    spinner.className = "response-inline-spinner";
+    spinner.setAttribute("aria-hidden", "true");
+    const copy = loader.querySelector(":scope > .semantic-activity-copy");
+    if (copy) loader.insertBefore(spinner, copy);
+    else loader.prepend(spinner);
+    return spinner;
+  }
+
+  function removeActivityLogo(loader) {
+    loader.querySelector(":scope > sentiq-activity-logo")?.remove();
+  }
+
   function applyInlineState(loader, state) {
     if (!(loader instanceof HTMLElement)) return;
     const label = getSemanticActivityLabel(state);
@@ -89,8 +105,13 @@ function initSemanticActivityProgress() {
     setAttribute(loader, "aria-atomic", "true");
     setAttribute(loader, "aria-label", label);
 
-    ensureActivityLogo(loader, state);
-    loader.querySelector(":scope > .response-inline-spinner")?.remove();
+    if (ACTIVITY_LOGO_VARIANTS[state]) {
+      ensureActivityLogo(loader, state);
+      loader.querySelector(":scope > .response-inline-spinner")?.remove();
+    } else {
+      removeActivityLogo(loader);
+      restoreFallbackSpinner(loader);
+    }
 
     let copy = loader.querySelector(":scope > .semantic-activity-copy");
     const originalCopy = loader.querySelector(":scope > span:last-child:not(.response-inline-spinner)");
