@@ -15,10 +15,12 @@ assert.match(progressSource, /thinking:\s*["']neural-orbit["']/);
 assert.match(progressSource, /["']reading-files["']:\s*["']infinite-dialog["']/);
 assert.match(progressSource, /["']preparing-document["']:\s*["']infinite-dialog["']/);
 assert.match(progressSource, /document\.createElement\(["']sentiq-activity-logo["']\)/);
-assert.match(progressSource, /variant["'],\s*variant/);
-assert.match(progressSource, /state["'],\s*state/);
+assert.match(progressSource, /setAttribute\("variant", variant\)/);
+assert.match(progressSource, /setAttribute\("state", state\)/);
 assert.match(progressSource, /response-inline-spinner["']\)\?\.remove/);
-assert.doesNotMatch(progressSource, /responseInlineSpin|animation\s*:\s*.*spin/);
+assert.match(progressSource, /restoreFallbackSpinner/);
+assert.match(progressSource, /removeActivityLogo/);
+assert.doesNotMatch(progressSource, /setInterval|progressPercent|percentage/);
 
 assert.match(logoSource, /neural-orbit/);
 assert.match(logoSource, /infinite-dialog/);
@@ -32,8 +34,15 @@ assert.match(css, /sentiq-logo-reading-files/);
 assert.match(css, /sentiq-activity-mark/);
 assert.match(css, /response-inline-spinner/);
 assert.match(css, /display:\s*none\s*!important/);
-assert.match(css, /neural orbit/);
-assert.match(css, /infinite dialog/);
-assert.doesNotMatch(css, /rotate\(/i);
+assert.match(css, /Neural Orbit/);
+assert.match(css, /Infinite Dialog/);
+assert.match(
+  css,
+  /data-semantic-activity-state="thinking"[^}]*>\s*sentiq-activity-logo/s,
+);
+assert.match(
+  css,
+  /data-semantic-activity-state="reading-files"[^}]*>\s*sentiq-activity-logo/s,
+);
 
 console.log("Phase 4 Neural Orbit activity-logo checks passed.");
