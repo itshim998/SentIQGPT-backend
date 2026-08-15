@@ -25,6 +25,9 @@ for (const token of [
   'removeStartupScreen({ animate: false })',
   'screen.classList.add("is-exiting")',
   'window.setTimeout(() => {',
+  'UI_STABILITY_STYLESHEET = "styles/modules/86-ui-stability.css"',
+  'link[rel="stylesheet"][href="${UI_STABILITY_STYLESHEET}"]',
+  'data-ui-stability-version',
 ]) {
   assert.ok(bootstrapSource.includes(token), `Bootstrap startup contract missing ${token}`);
 }
@@ -56,5 +59,7 @@ assert.ok(logoRuntime.includes('customElements.define("sentiq-activity-logo"'),
   "Reusable activity-logo primitive must be registered");
 assert.ok(logoRuntime.includes('neural-dialog'),
   "Neural Dialog variant must remain available to bootstrap");
+assert.equal(logoRuntime.includes('setBooleanAttribute(this, "aria-busy", true)'), false,
+  "Activity-logo primitive must not expose aria-busy on the visual mark itself");
 
 console.log("Neural Dialog startup lifecycle gate passed.");
