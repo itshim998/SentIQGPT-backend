@@ -16,6 +16,12 @@ const SURFACE_SELECTOR = [
   ".generated-file-panel",
 ].join(", ");
 
+const ACTIVITY_LOGO_VARIANTS = Object.freeze({
+  thinking: "neural-orbit",
+  "reading-files": "infinite-dialog",
+  "preparing-document": "infinite-dialog",
+});
+
 function initSemanticActivityProgress() {
   const chatMessages = document.getElementById("chat-messages");
   if (!(chatMessages instanceof HTMLElement)) return;
@@ -46,6 +52,32 @@ function initSemanticActivityProgress() {
     searchTimers.delete(loader);
   }
 
+  function ensureActivityLogo(loader, state) {
+    if (!(loader instanceof HTMLElement)) return null;
+    const variant = ACTIVITY_LOGO_VARIANTS[state];
+    if (!variant || !window.customElements?.get("sentiq-activity-logo")) return null;
+
+    let logo = loader.querySelector(":scope > sentiq-activity-logo");
+    if (!(logo instanceof HTMLElement)) {
+      logo = document.createElement("sentiq-activity-logo");
+      logo.className = "sentiq-activity-mark sentiq-logo-activity-mark";
+      logo.setAttribute("aria-hidden", "true");
+      logo.setAttribute("size", "28px");
+      const spinner = loader.querySelector(":scope > .response-inline-spinner");
+      spinner?.remove();
+      const existingCopy = loader.querySelector(":scope > .semantic-activity-copy, :scope > span:last-child:not(.response-inline-spinner)");
+      if (existingCopy) loader.insertBefore(logo, existingCopy);
+      else loader.appendChild(logo);
+    }
+
+    logo.setAttribute("variant", variant);
+    logo.setAttribute("state", state);
+    logo.setAttribute("size", "28px");
+    logo.classList.toggle("sentiq-logo-thinking", state === "thinking");
+    logo.classList.toggle("sentiq-logo-reading-files", state === "reading-files" || state === "preparing-document");
+    return logo;
+  }
+
   function applyInlineState(loader, state) {
     if (!(loader instanceof HTMLElement)) return;
     const label = getSemanticActivityLabel(state);
@@ -57,8 +89,9 @@ function initSemanticActivityProgress() {
     setAttribute(loader, "aria-atomic", "true");
     setAttribute(loader, "aria-label", label);
 
-    const spinner = loader.querySelector(".response-inline-spinner");
-    spinner?.setAttribute("aria-hidden", "true");
+    ensureActivityLogo(loader, state);
+    loader.querySelector(":scope > .response-inline-spinner")?.remove();
+
     let copy = loader.querySelector(":scope > .semantic-activity-copy");
     const originalCopy = loader.querySelector(":scope > span:last-child:not(.response-inline-spinner)");
     if (!copy && originalCopy) {
@@ -82,7 +115,7 @@ function initSemanticActivityProgress() {
   function enhanceInline(loader) {
     if (!(loader instanceof HTMLElement)) return;
     const bubble = loader.closest(".message.assistant");
-    const copy = loader.querySelector(":scope > span:last-child:not(.response-inline-spinner)");
+    const copy = loader.querySelector(":scope > span:last-child:not(.response-inline-spinner), :scope > .semantic-activity-copy");
     let state = inferSemanticActivity({
       text: copy?.textContent || loader.textContent,
       loaderKind: bubble?.dataset.loaderKind,
