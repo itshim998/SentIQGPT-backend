@@ -1,5 +1,5 @@
 /* ============================================================
-   SentIQ Activity Logo — reusable semantic activity primitive
+   SentIQ Activity Logo — reusable animated logo surface
 
    Three visual layers:
    1. static vector geometry
@@ -9,6 +9,10 @@
    Phase 7 adds theme-aware color tokens without introducing separate
    raster/vector logo assets. The same SVG geometry is retained in both
    dark and light presentation contexts.
+
+   Phase 9 keeps continuous motion on compositor-friendly properties only:
+   opacity and transform. Gradient movement is implemented on a child
+   layer so background-position never participates in the animation loop.
    ============================================================ */
 
 .sentiq-activity-logo {
@@ -16,7 +20,6 @@
   --sentiq-activity-logo-base-opacity: 0.9;
   --sentiq-activity-logo-breath-opacity: 0.38;
   --sentiq-activity-logo-shimmer-opacity: 0.92;
-  --sentiq-activity-logo-shimmer-width: 24%;
   --sentiq-activity-logo-geometry-filter: none;
   --sentiq-activity-logo-breath-color: rgba(255, 255, 255, 0.96);
   --sentiq-activity-logo-shimmer-gradient:
@@ -78,17 +81,18 @@
   mask-position: center;
   -webkit-mask-size: contain;
   mask-size: contain;
-  transform: scale(1.01);
+  transform: scale(1.01) translateZ(0);
+  transform-origin: center;
+  will-change: opacity, transform;
+  backface-visibility: hidden;
   animation: sentiqActivityLogoBreathe 2.7s ease-in-out infinite;
 }
 
-/* Layer 3 — the shimmer is clipped to the vector mark, so the light moves
-   through the logo strokes rather than sweeping across the whole surface. */
+/* Layer 3 — the shimmer container clips a larger gradient child to the
+   actual logo mask. Only the child transform moves during the loop. */
 .sentiq-activity-logo__shimmer {
   z-index: 3;
-  background: var(--sentiq-activity-logo-shimmer-gradient);
-  background-size: 250% 100%;
-  background-position: 160% 0;
+  overflow: hidden;
   opacity: var(--sentiq-activity-logo-shimmer-opacity);
   -webkit-mask-image: var(--sentiq-activity-logo-asset);
   mask-image: var(--sentiq-activity-logo-asset);
@@ -98,19 +102,35 @@
   mask-position: center;
   -webkit-mask-size: contain;
   mask-size: contain;
-  animation: sentiqActivityLogoShimmer 2.35s cubic-bezier(0.42, 0, 0.58, 1) infinite;
   filter: var(--sentiq-activity-logo-shimmer-shadow);
 }
 
-.sentiq-activity-logo[data-state="loading"] .sentiq-activity-logo__shimmer {
+.sentiq-activity-logo__shimmer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -125%;
+  width: 250%;
+  height: 100%;
+  background: var(--sentiq-activity-logo-shimmer-gradient);
+  background-size: 100% 100%;
+  background-position: 0 0;
+  transform: translate3d(0, 0, 0);
+  transform-origin: center;
+  will-change: transform;
+  backface-visibility: hidden;
+  animation: sentiqActivityLogoShimmer 2.35s cubic-bezier(0.42, 0, 0.58, 1) infinite;
+}
+
+.sentiq-activity-logo[data-state="loading"] .sentiq-activity-logo__shimmer::before {
   animation-duration: 2.7s;
 }
 
-.sentiq-activity-logo[data-state="thinking"] .sentiq-activity-logo__shimmer {
+.sentiq-activity-logo[data-state="thinking"] .sentiq-activity-logo__shimmer::before {
   animation-duration: 2.05s;
 }
 
-.sentiq-activity-logo[data-state="reading-files"] .sentiq-activity-logo__shimmer {
+.sentiq-activity-logo[data-state="reading-files"] .sentiq-activity-logo__shimmer::before {
   animation-duration: 2.55s;
 }
 
@@ -131,7 +151,7 @@
   animation: sentiqActivityDialogBreath 3.6s ease-in-out infinite;
 }
 
-.sentiq-activity-logo[data-variant="infinite-dialog"] .sentiq-activity-logo__shimmer {
+.sentiq-activity-logo[data-variant="infinite-dialog"] .sentiq-activity-logo__shimmer::before {
   --sentiq-activity-logo-shimmer-gradient:
     linear-gradient(
       105deg,
@@ -145,9 +165,7 @@
       transparent 69%,
       transparent 100%
     );
-  background-size: 210% 100%;
   animation: sentiqActivityDialogLoop 3.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-  --sentiq-activity-logo-shimmer-shadow: drop-shadow(0 0 7px rgba(255, 255, 255, 0.2));
 }
 
 .sentiq-activity-logo[data-variant="neural-dialog"] {
@@ -218,29 +236,29 @@ html.theme-light .sentiq-activity-logo[data-variant="infinite-dialog"] {
   0%,
   100% {
     opacity: 0.22;
-    transform: scale(1);
+    transform: scale(1) translateZ(0);
   }
   50% {
     opacity: 0.58;
-    transform: scale(1.018);
+    transform: scale(1.018) translateZ(0);
   }
 }
 
 @keyframes sentiqActivityLogoShimmer {
   0% {
-    background-position: 160% 0;
+    transform: translate3d(0, 0, 0);
   }
   18% {
-    background-position: 108% 0;
+    transform: translate3d(26%, 0, 0);
   }
   46% {
-    background-position: 44% 0;
+    transform: translate3d(92%, 0, 0);
   }
   70% {
-    background-position: -18% 0;
+    transform: translate3d(154%, 0, 0);
   }
   100% {
-    background-position: -58% 0;
+    transform: translate3d(182%, 0, 0);
   }
 }
 
@@ -248,59 +266,51 @@ html.theme-light .sentiq-activity-logo[data-variant="infinite-dialog"] {
   0%,
   100% {
     opacity: 0.2;
-    transform: scale(1);
+    transform: scale(1) translateZ(0);
   }
   22% {
     opacity: 0.34;
-    transform: scale(1.006);
+    transform: scale(1.006) translateZ(0);
   }
   50% {
     opacity: 0.28;
-    transform: scale(1.012);
+    transform: scale(1.012) translateZ(0);
   }
   78% {
     opacity: 0.38;
-    transform: scale(1.006);
+    transform: scale(1.006) translateZ(0);
   }
 }
 
 @keyframes sentiqActivityDialogLoop {
   0% {
-    background-position: -62% 0;
+    transform: translate3d(182%, 0, 0);
   }
   18% {
-    background-position: 12% 0;
+    transform: translate3d(116%, 0, 0);
   }
   38% {
-    background-position: 74% 0;
+    transform: translate3d(60%, 0, 0);
   }
   50% {
-    background-position: 104% 0;
+    transform: translate3d(32%, 0, 0);
   }
   62% {
-    background-position: 74% 0;
+    transform: translate3d(60%, 0, 0);
   }
   82% {
-    background-position: 12% 0;
+    transform: translate3d(116%, 0, 0);
   }
   100% {
-    background-position: -62% 0;
+    transform: translate3d(182%, 0, 0);
   }
 }
 
-/* ============================================================
-   Phase 8 — Motion accessibility
-
-   When the user requests reduced motion, the activity mark is intentionally
-   static. Both the regular shimmer and the Infinite Dialog loop are disabled;
-   the breathing layer becomes a fixed, low-opacity highlight only.
-   ============================================================ */
-
 @media (prefers-reduced-motion: reduce) {
   .sentiq-activity-logo__breath,
-  .sentiq-activity-logo__shimmer,
+  .sentiq-activity-logo__shimmer::before,
   .sentiq-activity-logo[data-variant="infinite-dialog"] .sentiq-activity-logo__breath,
-  .sentiq-activity-logo[data-variant="infinite-dialog"] .sentiq-activity-logo__shimmer {
+  .sentiq-activity-logo[data-variant="infinite-dialog"] .sentiq-activity-logo__shimmer::before {
     animation: none !important;
   }
 
@@ -309,27 +319,33 @@ html.theme-light .sentiq-activity-logo[data-variant="infinite-dialog"] {
     transform: none;
   }
 
-  .sentiq-activity-logo__shimmer {
+  .sentiq-activity-logo__shimmer::before {
     opacity: 0;
-    background-position: 50% 0;
-    filter: none;
-  }
-
-  .sentiq-activity-logo[data-variant="infinite-dialog"] .sentiq-activity-logo__breath {
-    opacity: 0.28;
     transform: none;
   }
+}
 
-  .sentiq-activity-logo[data-variant="infinite-dialog"] .sentiq-activity-logo__shimmer {
-    opacity: 0;
-    background-position: 50% 0;
-    filter: none;
-  }
+/* Pass 9: the runtime compositor policy can force the same static treatment
+   for reduced-capability or Save-Data sessions without adding JS-driven
+   animation orchestration to the logo component. */
+html[data-sentiq-compositor-policy="reduced"] .sentiq-activity-logo__breath,
+html[data-sentiq-compositor-policy="reduced"] .sentiq-activity-logo__shimmer::before {
+  animation: none !important;
+}
+
+html[data-sentiq-compositor-policy="reduced"] .sentiq-activity-logo__breath {
+  opacity: 0.3;
+  transform: none;
+}
+
+html[data-sentiq-compositor-policy="reduced"] .sentiq-activity-logo__shimmer::before {
+  opacity: 0;
+  transform: none;
 }
 
 @media (forced-colors: active) {
   .sentiq-activity-logo__breath,
-  .sentiq-activity-logo__shimmer {
+  .sentiq-activity-logo__shimmer::before {
     background: CanvasText;
     filter: none;
   }
