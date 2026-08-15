@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const nodeCommand = process.execPath;
 
 export const FRONTEND_CHECK_SEQUENCE = Object.freeze([
   "check:frontend-syntax",
@@ -14,20 +15,38 @@ export const FRONTEND_CHECK_SEQUENCE = Object.freeze([
   "test:frontend-ui-state",
 ]);
 
+export const FRONTEND_ACTIVITY_LOGO_CHECKS = Object.freeze([
+  "frontend/tests/phase4-thinking-logo.test.mjs",
+  "frontend/tests/phase5-infinite-dialog.test.mjs",
+  "frontend/tests/phase7-logo-theme.test.mjs",
+  "frontend/tests/phase8-motion-accessibility.test.mjs",
+  "frontend/tests/phase9-logo-performance.test.mjs",
+]);
+
+function runCommand(command, args, label) {
+  const result = spawnSync(command, args, {
+    cwd: repositoryRoot,
+    env: { ...process.env, SENTIQ_FRONTEND_QA: "1" },
+    shell: false,
+    stdio: "inherit",
+  });
+
+  if (result.error) throw new Error(`${label} could not start: ${result.error.message}`);
+  if (result.status !== 0) throw new Error(`${label} failed with exit code ${result.status ?? "unknown"}.`);
+}
+
 export function runFrontendChecks() {
   const completed = [];
   for (const script of FRONTEND_CHECK_SEQUENCE) {
     console.log(`\n[frontend-qa] npm run ${script}`);
-    const result = spawnSync(npmCommand, ["run", script], {
-      cwd: repositoryRoot,
-      env: { ...process.env, SENTIQ_FRONTEND_QA: "1" },
-      shell: false,
-      stdio: "inherit",
-    });
-
-    if (result.error) throw new Error(`${script} could not start: ${result.error.message}`);
-    if (result.status !== 0) throw new Error(`${script} failed with exit code ${result.status ?? "unknown"}.`);
+    runCommand(npmCommand, ["run", script], script);
     completed.push(script);
+  }
+
+  for (const testFile of FRONTEND_ACTIVITY_LOGO_CHECKS) {
+    console.log(`\n[frontend-qa] node --no-warnings ${testFile}`);
+    runCommand(nodeCommand, ["--no-warnings", testFile], testFile);
+    completed.push(testFile);
   }
 
   console.log(`\nAutomated frontend checks passed (${completed.length} gates).`);
