@@ -5,6 +5,10 @@
    1. static vector geometry
    2. restrained breathing highlight
    3. moving shimmer clipped to the logo geometry
+
+   Phase 7 adds theme-aware color tokens without introducing separate
+   raster/vector logo assets. The same SVG geometry is retained in both
+   dark and light presentation contexts.
    ============================================================ */
 
 .sentiq-activity-logo {
@@ -13,6 +17,21 @@
   --sentiq-activity-logo-breath-opacity: 0.38;
   --sentiq-activity-logo-shimmer-opacity: 0.92;
   --sentiq-activity-logo-shimmer-width: 24%;
+  --sentiq-activity-logo-geometry-filter: none;
+  --sentiq-activity-logo-breath-color: rgba(255, 255, 255, 0.96);
+  --sentiq-activity-logo-shimmer-gradient:
+    linear-gradient(
+      105deg,
+      transparent 0%,
+      transparent 36%,
+      rgba(255, 255, 255, 0) 40%,
+      rgba(255, 255, 255, 0.96) 48%,
+      rgba(255, 255, 255, 0.56) 53%,
+      rgba(255, 255, 255, 0) 61%,
+      transparent 66%,
+      transparent 100%
+    );
+  --sentiq-activity-logo-shimmer-shadow: drop-shadow(0 0 6px rgba(255, 255, 255, 0.18));
   position: relative;
   display: inline-block;
   width: var(--sentiq-activity-logo-size);
@@ -41,6 +60,7 @@
   z-index: 1;
   object-fit: contain;
   opacity: var(--sentiq-activity-logo-base-opacity);
+  filter: var(--sentiq-activity-logo-geometry-filter);
   user-select: none;
   -webkit-user-drag: none;
 }
@@ -48,7 +68,7 @@
 /* Layer 2 — a soft duplicate that breathes with the mark. */
 .sentiq-activity-logo__breath {
   z-index: 2;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--sentiq-activity-logo-breath-color);
   opacity: var(--sentiq-activity-logo-breath-opacity);
   -webkit-mask-image: var(--sentiq-activity-logo-asset);
   mask-image: var(--sentiq-activity-logo-asset);
@@ -66,18 +86,7 @@
    through the logo strokes rather than sweeping across the whole surface. */
 .sentiq-activity-logo__shimmer {
   z-index: 3;
-  background:
-    linear-gradient(
-      105deg,
-      transparent 0%,
-      transparent 36%,
-      rgba(255, 255, 255, 0.0) 40%,
-      rgba(255, 255, 255, 0.96) 48%,
-      rgba(255, 255, 255, 0.56) 53%,
-      rgba(255, 255, 255, 0.0) 61%,
-      transparent 66%,
-      transparent 100%
-    );
+  background: var(--sentiq-activity-logo-shimmer-gradient);
   background-size: 250% 100%;
   background-position: 160% 0;
   opacity: var(--sentiq-activity-logo-shimmer-opacity);
@@ -90,7 +99,7 @@
   -webkit-mask-size: contain;
   mask-size: contain;
   animation: sentiqActivityLogoShimmer 2.35s cubic-bezier(0.42, 0, 0.58, 1) infinite;
-  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.18));
+  filter: var(--sentiq-activity-logo-shimmer-shadow);
 }
 
 .sentiq-activity-logo[data-state="loading"] .sentiq-activity-logo__shimmer {
@@ -123,27 +132,80 @@
 }
 
 .sentiq-activity-logo[data-variant="infinite-dialog"] .sentiq-activity-logo__shimmer {
-  background:
+  --sentiq-activity-logo-shimmer-gradient:
     linear-gradient(
       105deg,
       transparent 0%,
       transparent 27%,
-      rgba(255, 255, 255, 0.0) 33%,
+      rgba(255, 255, 255, 0) 33%,
       rgba(255, 255, 255, 0.52) 41%,
       rgba(255, 255, 255, 1) 48%,
       rgba(255, 255, 255, 0.52) 55%,
-      rgba(255, 255, 255, 0.0) 63%,
+      rgba(255, 255, 255, 0) 63%,
       transparent 69%,
       transparent 100%
     );
   background-size: 210% 100%;
   animation: sentiqActivityDialogLoop 3.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-  filter: drop-shadow(0 0 7px rgba(255, 255, 255, 0.2));
+  --sentiq-activity-logo-shimmer-shadow: drop-shadow(0 0 7px rgba(255, 255, 255, 0.2));
 }
 
 .sentiq-activity-logo[data-variant="neural-dialog"] {
   --sentiq-activity-logo-breath-opacity: 0.3;
   --sentiq-activity-logo-shimmer-opacity: 0.88;
+}
+
+/* ============================================================
+   Phase 7 — Light presentation
+
+   The application already owns the actual theme state. These selectors
+   intentionally bind only to explicit light-theme markers so the logo never
+   becomes dark merely because the operating system prefers light mode while
+   SentIQ Chat itself is still rendered in its dark workspace.
+
+   Supported host markers:
+   - html[data-theme="light"]
+   - html[data-color-scheme="light"]
+   - html.theme-light
+*/
+
+html[data-theme="light"] .sentiq-activity-logo,
+html[data-color-scheme="light"] .sentiq-activity-logo,
+html.theme-light .sentiq-activity-logo {
+  --sentiq-activity-logo-geometry-filter: brightness(0.2) contrast(1.08);
+  --sentiq-activity-logo-breath-color: rgba(35, 38, 44, 0.96);
+  --sentiq-activity-logo-shimmer-gradient:
+    linear-gradient(
+      105deg,
+      transparent 0%,
+      transparent 36%,
+      rgba(18, 20, 24, 0) 40%,
+      rgba(12, 14, 18, 0.96) 48%,
+      rgba(45, 48, 54, 0.62) 53%,
+      rgba(18, 20, 24, 0) 61%,
+      transparent 66%,
+      transparent 100%
+    );
+  --sentiq-activity-logo-shimmer-shadow: drop-shadow(0 0 5px rgba(20, 22, 26, 0.12));
+}
+
+html[data-theme="light"] .sentiq-activity-logo[data-variant="infinite-dialog"],
+html[data-color-scheme="light"] .sentiq-activity-logo[data-variant="infinite-dialog"],
+html.theme-light .sentiq-activity-logo[data-variant="infinite-dialog"] {
+  --sentiq-activity-logo-shimmer-gradient:
+    linear-gradient(
+      105deg,
+      transparent 0%,
+      transparent 27%,
+      rgba(18, 20, 24, 0) 33%,
+      rgba(38, 41, 47, 0.54) 41%,
+      rgba(10, 12, 16, 0.96) 48%,
+      rgba(38, 41, 47, 0.54) 55%,
+      rgba(18, 20, 24, 0) 63%,
+      transparent 69%,
+      transparent 100%
+    );
+  --sentiq-activity-logo-shimmer-shadow: drop-shadow(0 0 6px rgba(20, 22, 26, 0.12));
 }
 
 /* Compact sizing remains visually balanced without changing the source SVG. */
@@ -252,5 +314,6 @@
 
   .sentiq-activity-logo__geometry {
     opacity: 1;
+    filter: none;
   }
 }
