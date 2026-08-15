@@ -33,10 +33,19 @@ html[data-sentiq-boot-state="failed"] .app-container {
     radial-gradient(ellipse 62% 42% at 50% 28%, rgba(149, 123, 232, 0.1), transparent 72%),
     #06070b;
   color: var(--text-secondary, #aab1bf);
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 240ms ease, transform 280ms cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
 .sentiq-startup-screen[hidden] {
   display: none !important;
+}
+
+.sentiq-startup-screen.is-exiting {
+  opacity: 0;
+  transform: scale(1.018);
+  pointer-events: none;
 }
 
 .sentiq-startup-content {
@@ -48,6 +57,19 @@ html[data-sentiq-boot-state="failed"] .app-container {
   letter-spacing: 0.01em;
 }
 
+.sentiq-startup-content.sentiq-startup-logo-mode {
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.sentiq-startup-content.sentiq-startup-logo-mode > .sentiq-activity-logo {
+  display: block;
+  flex: 0 0 auto;
+}
+
+/* Legacy startup spinner styles intentionally retained only for safe fallback
+   markup. The active startup surface now uses Neural Dialog. */
 .sentiq-startup-spinner {
   width: 16px;
   height: 16px;
@@ -163,6 +185,15 @@ html[data-sentiq-boot-state="failed"] .app-container {
 }
 
 @media (prefers-reduced-motion: reduce), (update: slow) {
+  .sentiq-startup-screen {
+    transition: none !important;
+  }
+
+  .sentiq-startup-screen.is-exiting {
+    opacity: 0;
+    transform: none;
+  }
+
   .sentiq-startup-spinner {
     animation: none;
     opacity: 0.8;
