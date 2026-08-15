@@ -1,5 +1,5 @@
 /* ============================================================
-   SentIQ Activity Logo — reusable animated logo surface
+   SentIQ Activity Logo — reusable semantic activity primitive
 
    Three visual layers:
    1. static vector geometry
@@ -167,7 +167,7 @@
    - html[data-theme="light"]
    - html[data-color-scheme="light"]
    - html.theme-light
-*/
+   ============================================================ */
 
 html[data-theme="light"] .sentiq-activity-logo,
 html[data-color-scheme="light"] .sentiq-activity-logo,
@@ -288,10 +288,20 @@ html.theme-light .sentiq-activity-logo[data-variant="infinite-dialog"] {
   }
 }
 
+/* ============================================================
+   Phase 8 — Motion accessibility
+
+   When the user requests reduced motion, the activity mark is intentionally
+   static. Both the regular shimmer and the Infinite Dialog loop are disabled;
+   the breathing layer becomes a fixed, low-opacity highlight only.
+   ============================================================ */
+
 @media (prefers-reduced-motion: reduce) {
   .sentiq-activity-logo__breath,
-  .sentiq-activity-logo__shimmer {
-    animation: none;
+  .sentiq-activity-logo__shimmer,
+  .sentiq-activity-logo[data-variant="infinite-dialog"] .sentiq-activity-logo__breath,
+  .sentiq-activity-logo[data-variant="infinite-dialog"] .sentiq-activity-logo__shimmer {
+    animation: none !important;
   }
 
   .sentiq-activity-logo__breath {
@@ -300,8 +310,20 @@ html.theme-light .sentiq-activity-logo[data-variant="infinite-dialog"] {
   }
 
   .sentiq-activity-logo__shimmer {
-    opacity: 0.32;
+    opacity: 0;
     background-position: 50% 0;
+    filter: none;
+  }
+
+  .sentiq-activity-logo[data-variant="infinite-dialog"] .sentiq-activity-logo__breath {
+    opacity: 0.28;
+    transform: none;
+  }
+
+  .sentiq-activity-logo[data-variant="infinite-dialog"] .sentiq-activity-logo__shimmer {
+    opacity: 0;
+    background-position: 50% 0;
+    filter: none;
   }
 }
 
