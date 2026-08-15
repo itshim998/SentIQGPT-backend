@@ -8,6 +8,12 @@
 
 const LOGO_ACTIVITY_VERSION = "1.0.0";
 const LOGO_ACTIVITY_STYLE_ID = "sentiq-activity-logo-styles";
+const LOGO_SIZE_MAP = Object.freeze({
+  sm: "28px",
+  md: "44px",
+  lg: "72px",
+  xl: "96px",
+});
 
 const LOGO_VARIANTS = Object.freeze({
   "neural-dialog": Object.freeze({
@@ -39,6 +45,13 @@ function normalizeState(value, variant) {
   const state = String(value || "").trim().toLowerCase();
   if (LOGO_STATES.has(state)) return state;
   return LOGO_VARIANTS[variant].defaultState;
+}
+
+function resolveSize(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (LOGO_SIZE_MAP[normalized]) return LOGO_SIZE_MAP[normalized];
+  if (/^\d+(?:\.\d+)?(?:px|rem|em|vw|vh)$/.test(normalized)) return normalized;
+  return "64px";
 }
 
 function assetUrl(path) {
@@ -80,11 +93,6 @@ class SentiQActivityLogo extends HTMLElement {
     return ["variant", "state", "size", "label", "aria-label"];
   }
 
-  constructor() {
-    super();
-    this._rendered = false;
-  }
-
   connectedCallback() {
     ensureStylesheet();
     this._render();
@@ -99,6 +107,7 @@ class SentiQActivityLogo extends HTMLElement {
     const state = normalizeState(this.getAttribute("state"), variant);
     const config = LOGO_VARIANTS[variant];
     const src = assetUrl(config.asset);
+    const size = resolveSize(this.getAttribute("size"));
     const label = String(this.getAttribute("aria-label") || this.getAttribute("label") || "").trim();
     const accessibleLabel = label || (
       state === "loading" ? "Loading SentIQ Chat"
@@ -106,11 +115,11 @@ class SentiQActivityLogo extends HTMLElement {
           : "Thinking"
     );
 
-    this.className = "sentiq-activity-logo";
+    this.classList.add("sentiq-activity-logo");
     this.dataset.version = LOGO_ACTIVITY_VERSION;
     this.dataset.variant = variant;
     this.dataset.state = state;
-    this.style.setProperty("--sentiq-activity-logo-size", this.getAttribute("size") || "64px");
+    this.style.setProperty("--sentiq-activity-logo-size", size);
     this.style.setProperty("--sentiq-activity-logo-asset", `url("${src}")`);
 
     if (this.getAttribute("role") !== "img") this.setAttribute("role", "img");
@@ -118,10 +127,9 @@ class SentiQActivityLogo extends HTMLElement {
     setBooleanAttribute(this, "aria-busy", true);
 
     const existing = this.querySelector(".sentiq-activity-logo__geometry");
-    if (existing) {
-      existing.src = src;
+    if (existing instanceof HTMLImageElement) {
+      if (existing.src !== src) existing.src = src;
       existing.alt = "";
-      this._rendered = true;
       return;
     }
 
@@ -144,7 +152,6 @@ class SentiQActivityLogo extends HTMLElement {
     shimmer.setAttribute("aria-hidden", "true");
 
     this.append(geometry, breath, shimmer);
-    this._rendered = true;
   }
 }
 
