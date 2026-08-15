@@ -7,6 +7,7 @@
    ============================================================ */
 
 const LOGO_ACTIVITY_VERSION = "1.0.0";
+const LOGO_ACTIVITY_STYLE_ID = "sentiq-activity-logo-styles";
 
 const LOGO_VARIANTS = Object.freeze({
   "neural-dialog": Object.freeze({
@@ -48,6 +49,26 @@ function assetUrl(path) {
   }
 }
 
+function stylesheetUrl() {
+  try {
+    return new URL("../../styles/modules/91-logo-activity.css", import.meta.url).href;
+  } catch {
+    return "styles/modules/91-logo-activity.css";
+  }
+}
+
+function ensureStylesheet() {
+  if (typeof document === "undefined") return;
+  if (document.getElementById(LOGO_ACTIVITY_STYLE_ID)) return;
+
+  const link = document.createElement("link");
+  link.id = LOGO_ACTIVITY_STYLE_ID;
+  link.rel = "stylesheet";
+  link.href = stylesheetUrl();
+  link.dataset.sentiqFeature = "logo-activity";
+  document.head?.appendChild(link);
+}
+
 function setBooleanAttribute(element, name, value) {
   const next = Boolean(value);
   if (next) element.setAttribute(name, "");
@@ -65,6 +86,7 @@ class SentiQActivityLogo extends HTMLElement {
   }
 
   connectedCallback() {
+    ensureStylesheet();
     this._render();
   }
 
@@ -93,13 +115,12 @@ class SentiQActivityLogo extends HTMLElement {
 
     if (this.getAttribute("role") !== "img") this.setAttribute("role", "img");
     if (this.getAttribute("aria-label") !== accessibleLabel) this.setAttribute("aria-label", accessibleLabel);
-    setBooleanAttribute(this, "aria-busy", state === "loading" || state === "thinking" || state === "reading-files");
+    setBooleanAttribute(this, "aria-busy", true);
 
     const existing = this.querySelector(".sentiq-activity-logo__geometry");
     if (existing) {
-      const image = existing;
-      image.src = src;
-      image.alt = "";
+      existing.src = src;
+      existing.alt = "";
       this._rendered = true;
       return;
     }
@@ -126,6 +147,8 @@ class SentiQActivityLogo extends HTMLElement {
     this._rendered = true;
   }
 }
+
+ensureStylesheet();
 
 if (!customElements.get("sentiq-activity-logo")) {
   customElements.define("sentiq-activity-logo", SentiQActivityLogo);
