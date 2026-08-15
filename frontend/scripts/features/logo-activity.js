@@ -82,12 +82,6 @@ function ensureStylesheet() {
   document.head?.appendChild(link);
 }
 
-function setBooleanAttribute(element, name, value) {
-  const next = Boolean(value);
-  if (next) element.setAttribute(name, "");
-  else element.removeAttribute(name);
-}
-
 class SentiQActivityLogo extends HTMLElement {
   static get observedAttributes() {
     return ["variant", "state", "size", "label", "aria-label"];
@@ -124,7 +118,6 @@ class SentiQActivityLogo extends HTMLElement {
 
     if (this.getAttribute("role") !== "img") this.setAttribute("role", "img");
     if (this.getAttribute("aria-label") !== accessibleLabel) this.setAttribute("aria-label", accessibleLabel);
-    setBooleanAttribute(this, "aria-busy", true);
 
     const existing = this.querySelector(".sentiq-activity-logo__geometry");
     if (existing instanceof HTMLImageElement) {
