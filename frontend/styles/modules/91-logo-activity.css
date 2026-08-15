@@ -1,0 +1,186 @@
+/* ============================================================
+   SentIQ Activity Logo — reusable animated logo surface
+
+   Three visual layers:
+   1. static vector geometry
+   2. restrained breathing highlight
+   3. moving shimmer clipped to the logo geometry
+   ============================================================ */
+
+.sentiq-activity-logo {
+  --sentiq-activity-logo-size: 64px;
+  --sentiq-activity-logo-base-opacity: 0.9;
+  --sentiq-activity-logo-breath-opacity: 0.38;
+  --sentiq-activity-logo-shimmer-opacity: 0.92;
+  --sentiq-activity-logo-shimmer-width: 24%;
+  position: relative;
+  display: inline-block;
+  width: var(--sentiq-activity-logo-size);
+  height: var(--sentiq-activity-logo-size);
+  flex: 0 0 var(--sentiq-activity-logo-size);
+  line-height: 0;
+  isolation: isolate;
+  contain: layout paint style;
+  overflow: visible;
+  vertical-align: middle;
+}
+
+.sentiq-activity-logo__geometry,
+.sentiq-activity-logo__breath,
+.sentiq-activity-logo__shimmer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+/* Layer 1 — the actual vector mark. */
+.sentiq-activity-logo__geometry {
+  z-index: 1;
+  object-fit: contain;
+  opacity: var(--sentiq-activity-logo-base-opacity);
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Layer 2 — a soft duplicate that breathes with the mark. */
+.sentiq-activity-logo__breath {
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.96);
+  opacity: var(--sentiq-activity-logo-breath-opacity);
+  -webkit-mask-image: var(--sentiq-activity-logo-asset);
+  mask-image: var(--sentiq-activity-logo-asset);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  transform: scale(1.01);
+  animation: sentiqActivityLogoBreathe 2.7s ease-in-out infinite;
+}
+
+/* Layer 3 — the shimmer is clipped to the vector mark, so the light moves
+   through the logo strokes rather than sweeping across the whole surface. */
+.sentiq-activity-logo__shimmer {
+  z-index: 3;
+  background:
+    linear-gradient(
+      105deg,
+      transparent 0%,
+      transparent 36%,
+      rgba(255, 255, 255, 0.0) 40%,
+      rgba(255, 255, 255, 0.96) 48%,
+      rgba(255, 255, 255, 0.56) 53%,
+      rgba(255, 255, 255, 0.0) 61%,
+      transparent 66%,
+      transparent 100%
+    );
+  background-size: 250% 100%;
+  background-position: 160% 0;
+  opacity: var(--sentiq-activity-logo-shimmer-opacity);
+  -webkit-mask-image: var(--sentiq-activity-logo-asset);
+  mask-image: var(--sentiq-activity-logo-asset);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  animation: sentiqActivityLogoShimmer 2.35s cubic-bezier(0.42, 0, 0.58, 1) infinite;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.18));
+}
+
+.sentiq-activity-logo[data-state="loading"] .sentiq-activity-logo__shimmer {
+  animation-duration: 2.7s;
+}
+
+.sentiq-activity-logo[data-state="thinking"] .sentiq-activity-logo__shimmer {
+  animation-duration: 2.05s;
+}
+
+.sentiq-activity-logo[data-state="reading-files"] .sentiq-activity-logo__shimmer {
+  animation-duration: 2.55s;
+}
+
+.sentiq-activity-logo[data-variant="neural-orbit"] {
+  --sentiq-activity-logo-breath-opacity: 0.46;
+  --sentiq-activity-logo-shimmer-opacity: 0.96;
+}
+
+.sentiq-activity-logo[data-variant="infinite-dialog"] {
+  --sentiq-activity-logo-breath-opacity: 0.34;
+  --sentiq-activity-logo-shimmer-opacity: 0.9;
+}
+
+.sentiq-activity-logo[data-variant="neural-dialog"] {
+  --sentiq-activity-logo-breath-opacity: 0.3;
+  --sentiq-activity-logo-shimmer-opacity: 0.88;
+}
+
+/* Compact sizing remains visually balanced without changing the source SVG. */
+.sentiq-activity-logo[data-size="sm"] { --sentiq-activity-logo-size: 28px; }
+.sentiq-activity-logo[data-size="md"] { --sentiq-activity-logo-size: 44px; }
+.sentiq-activity-logo[data-size="lg"] { --sentiq-activity-logo-size: 72px; }
+.sentiq-activity-logo[data-size="xl"] { --sentiq-activity-logo-size: 96px; }
+
+@keyframes sentiqActivityLogoBreathe {
+  0%,
+  100% {
+    opacity: 0.22;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.58;
+    transform: scale(1.018);
+  }
+}
+
+@keyframes sentiqActivityLogoShimmer {
+  0% {
+    background-position: 160% 0;
+  }
+  18% {
+    background-position: 108% 0;
+  }
+  46% {
+    background-position: 44% 0;
+  }
+  70% {
+    background-position: -18% 0;
+  }
+  100% {
+    background-position: -58% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sentiq-activity-logo__breath,
+  .sentiq-activity-logo__shimmer {
+    animation: none;
+  }
+
+  .sentiq-activity-logo__breath {
+    opacity: 0.3;
+    transform: none;
+  }
+
+  .sentiq-activity-logo__shimmer {
+    opacity: 0.32;
+    background-position: 50% 0;
+  }
+}
+
+@media (forced-colors: active) {
+  .sentiq-activity-logo__breath,
+  .sentiq-activity-logo__shimmer {
+    background: CanvasText;
+    filter: none;
+  }
+
+  .sentiq-activity-logo__geometry {
+    opacity: 1;
+  }
+}
