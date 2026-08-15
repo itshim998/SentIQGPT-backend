@@ -196,3 +196,70 @@
     box-shadow: none;
   }
 }
+
+/* ============================================================
+   Phase 4 — Neural Orbit / Infinite Dialog activity marks
+   The existing semantic labels remain the accessible status surface.
+   The selected activity logos replace the generic spinner only for
+   thinking/file-analysis states.
+   ============================================================ */
+
+.chat-messages .response-inline-loader.semantic-activity-progress > sentiq-activity-logo.sentiq-activity-mark {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  flex: 0 0 28px;
+  margin: -4px 0 -4px -1px;
+  animation: none !important;
+  transform: none !important;
+}
+
+.chat-messages .response-inline-loader.semantic-activity-progress > sentiq-activity-logo.sentiq-logo-thinking {
+  --sentiq-activity-logo-base-opacity: 0.82;
+  --sentiq-activity-logo-breath-opacity: 0.42;
+  --sentiq-activity-logo-shimmer-opacity: 0.98;
+}
+
+.chat-messages .response-inline-loader.semantic-activity-progress > sentiq-activity-logo.sentiq-logo-reading-files {
+  --sentiq-activity-logo-base-opacity: 0.78;
+  --sentiq-activity-logo-breath-opacity: 0.34;
+  --sentiq-activity-logo-shimmer-opacity: 0.9;
+}
+
+/* The semantic activity logo is the only visual progress primitive for these
+   states. The legacy spinner cannot appear beside it. */
+.chat-messages .response-inline-loader.semantic-activity-progress[data-semantic-activity-state="thinking"] > .response-inline-spinner,
+.chat-messages .response-inline-loader.semantic-activity-progress[data-semantic-activity-state="reading-files"] > .response-inline-spinner,
+.chat-messages .response-inline-loader.semantic-activity-progress[data-semantic-activity-state="preparing-document"] > .response-inline-spinner {
+  display: none !important;
+  animation: none !important;
+}
+
+/* Neural Orbit is intentionally not a rotating ring. Its activity comes from
+   the base mark's breathing highlight and localized line shimmer. */
+.chat-messages .response-inline-loader.semantic-activity-progress[data-semantic-activity-state="thinking"] > sentiq-activity-logo {
+  --sentiq-activity-logo-shimmer-width: 22%;
+}
+
+.chat-messages .response-inline-loader.semantic-activity-progress[data-semantic-activity-state="reading-files"] > sentiq-activity-logo,
+.chat-messages .response-inline-loader.semantic-activity-progress[data-semantic-activity-state="preparing-document"] > sentiq-activity-logo {
+  --sentiq-activity-logo-shimmer-width: 20%;
+}
+
+@media (max-width: 480px) {
+  .chat-messages .response-inline-loader.semantic-activity-progress > sentiq-activity-logo.sentiq-activity-mark {
+    width: 26px;
+    height: 26px;
+    min-width: 26px;
+    flex-basis: 26px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-messages .response-inline-loader.semantic-activity-progress > sentiq-activity-logo.sentiq-activity-mark {
+    --sentiq-activity-logo-base-opacity: 0.82;
+    --sentiq-activity-logo-breath-opacity: 0.26;
+    --sentiq-activity-logo-shimmer-opacity: 0.32;
+  }
+}
