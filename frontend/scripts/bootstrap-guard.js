@@ -9,7 +9,6 @@
   const root = document.documentElement;
   let isReady = false;
   let didFail = false;
-  let readinessTimer = null;
 
   root.dataset.sentiqBootState = "loading";
 
@@ -92,17 +91,31 @@
     screen.setAttribute("role", "status");
     screen.setAttribute("aria-live", "polite");
     screen.innerHTML = [
-      '<div class="sentiq-startup-content">',
-      '<span class="sentiq-startup-spinner" aria-hidden="true"></span>',
-      '<span id="sentiq-startup-copy">Opening SentIQ Chat…</span>',
+      '<div class="sentiq-startup-content sentiq-startup-logo-mode">',
+      '<sentiq-activity-logo variant="neural-dialog" state="loading" size="88px" aria-label="Loading SentIQ Chat"></sentiq-activity-logo>',
       "</div>",
     ].join("");
     document.body?.prepend(screen);
     return screen;
   }
 
-  function removeStartupScreen() {
-    document.getElementById("sentiq-startup-screen")?.remove();
+  function removeStartupScreen({ animate = true } = {}) {
+    const screen = document.getElementById("sentiq-startup-screen");
+    if (!screen) return;
+
+    if (!animate || document.documentElement.dataset.sentiqMotionPolicy === "reduced") {
+      screen.remove();
+      return;
+    }
+
+    if (screen.dataset.startupExit === "true") return;
+    screen.dataset.startupExit = "true";
+    screen.classList.add("is-exiting");
+
+    const duration = 240;
+    window.setTimeout(() => {
+      screen.remove();
+    }, duration);
   }
 
   function canUseStorage(storageName) {
@@ -166,9 +179,8 @@
   function markReady() {
     if (didFail) return;
     isReady = true;
-    window.clearTimeout(readinessTimer);
     root.dataset.sentiqBootState = "ready";
-    removeStartupScreen();
+    removeStartupScreen({ animate: true });
     render();
     document.dispatchEvent(new CustomEvent("sentiq-ui-ready"));
   }
@@ -176,9 +188,8 @@
   function fail() {
     if (isReady || didFail) return;
     didFail = true;
-    window.clearTimeout(readinessTimer);
     root.dataset.sentiqBootState = "failed";
-    removeStartupScreen();
+    removeStartupScreen({ animate: false });
     disablePrimaryActions();
     render();
   }
@@ -213,10 +224,6 @@
       return;
     }
     ensureStartupScreen();
-    readinessTimer = window.setTimeout(() => {
-      const copy = document.getElementById("sentiq-startup-copy");
-      if (copy && !isReady && !didFail) copy.textContent = "Still getting your workspace ready…";
-    }, 6500);
   });
 
   window.addEventListener("error", () => fail());
