@@ -13,6 +13,7 @@ const tsNodeExecutable = resolve(
 const preloadPath = resolve(repositoryRoot, "scripts/frontendBootstrapDomAliases.cjs");
 const sourcePath = resolve(repositoryRoot, "backend/testFrontendBootstrap.ts");
 const generatedPath = resolve(repositoryRoot, "backend/.testFrontendBootstrap.pass12.generated.ts");
+const startupLogoTestPath = resolve(repositoryRoot, "frontend/tests/bootstrap-startup-logo.test.mjs");
 const existingNodeOptions = String(process.env.NODE_OPTIONS || "").trim();
 const nodeOptions = [existingNodeOptions, `--require=${JSON.stringify(preloadPath)}`].filter(Boolean).join(" ");
 
@@ -44,6 +45,14 @@ try {
 if (result?.error) {
   console.error(`Frontend bootstrap check could not start: ${result.error.message}`);
   process.exitCode = 1;
-} else {
+} else if ((result?.status ?? 1) !== 0) {
   process.exitCode = result?.status ?? 1;
+} else {
+  const startupLogoResult = spawnSync(process.execPath, [startupLogoTestPath], {
+    cwd: repositoryRoot,
+    env: process.env,
+    shell: false,
+    stdio: "inherit",
+  });
+  process.exitCode = startupLogoResult.error ? 1 : (startupLogoResult.status ?? 1);
 }
