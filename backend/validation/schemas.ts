@@ -36,6 +36,8 @@ export const ChatRequestSchema = z.object({
   execution_mode: z.enum(["fast", "intuitive"]).optional(),
   clientRequestId: z.string().min(1).max(120).optional(),
   client_request_id: z.string().min(1).max(120).optional(),
+  generationId: z.string().uuid().optional(),
+  generation_id: z.string().uuid().optional(),
   context: z.object({
     recent_messages: z.array(RecentMessageSchema).max(50).optional(),
     memories: z.array(ContextMemorySchema).max(100).optional(),
@@ -63,10 +65,11 @@ export const ChatRequestSchema = z.object({
     trustedProfile: TrustedProfileContextSchema.optional(),
     trusted_profile: TrustedProfileContextSchema.optional(),
   }).optional(),
-}).transform(({ conversation_id, client_request_id, execution_mode, ...rest }) => ({
+}).transform(({ conversation_id, client_request_id, execution_mode, generation_id, ...rest }) => ({
   ...rest,
   conversationId: rest.conversationId ?? conversation_id,
   clientRequestId: rest.clientRequestId ?? client_request_id,
+  generationId: rest.generationId ?? generation_id,
   executionMode: normalizeExecutionMode(rest.executionMode ?? execution_mode),
   context: rest.context
     ? {
