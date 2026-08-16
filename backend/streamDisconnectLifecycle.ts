@@ -1,10 +1,12 @@
 export interface StreamRequestLifecycle {
   readonly complete: boolean;
-  once(event: "close", listener: () => void): unknown;
+  readonly __sentiqGenerationDetached?: boolean;
+  once(event: "close" | "sentiq-generation-cancel", listener: () => void): unknown;
 }
 
 export interface StreamResponseLifecycle {
   readonly writableEnded: boolean;
+  readonly __sentiqGenerationDetached?: boolean;
   once(event: "close", listener: () => void): unknown;
 }
 
@@ -26,14 +28,24 @@ export function attachStreamDisconnectLifecycle(args: {
     args.onDisconnect();
   };
 
-  // IncomingMessage "close" describes the inbound request lifecycle. A complete
-  // body is normal and must not interrupt an outbound response that is still streaming.
+  // A generation-owned transport is intentionally detached from the model
+  // lifecycle. Closing an SSE subscriber only removes that subscriber.
+  const transportDetached = () => Boolean(args.request.__sentiqGenerationDetached || args.response.__sentiqGenerationDetached);
+
   args.request.once("close", () => {
-    if (args.request.complete) return;
+    if (args.request.complete || transportDetached()) return;
     markDisconnected();
   });
+
   args.response.once("close", () => {
-    if (args.response.writableEnded) return;
+    if (args.response.writableEnded || transportDetached()) return;
+    markDisconnected();
+  });
+
+  // Explicit product-level cancellation remains connected to the existing
+  // request AbortController without treating ordinary transport close as a
+  // cancellation signal.
+  args.request.once("sentiq-generation-cancel", () => {
     markDisconnected();
   });
 
