@@ -29,6 +29,32 @@ test("Phase 4 lifecycle retries transient SSE disconnects", () => {
   assert.match(lifecycle, /subscribeUntilTerminal/);
 });
 
+test("Phase 7 stores monotonically increasing sequences and recovers gaps from the last contiguous event", () => {
+  assert.match(lifecycle, /lastSequence/);
+  assert.match(lifecycle, /generation_sequence_gap/);
+  assert.match(lifecycle, /expected .* received/);
+  assert.match(lifecycle, /searchParams\.set\("after", String\(entry\.lastSequence\)\)/);
+  assert.match(lifecycle, /pendingReplayThrough/);
+});
+
+test("Phase 8 maintains independent per-chat generation registries", () => {
+  assert.match(lifecycle, /chatGenerationRegistry/);
+  assert.match(lifecycle, /getChatRegistry\(entry\.chatId\)/);
+  assert.match(lifecycle, /generationId: entry\.generationId/);
+  assert.match(lifecycle, /requestId: entry\.requestId/);
+  assert.match(lifecycle, /responseBuffer: entry\.responseBuffer/);
+  assert.match(lifecycle, /lastSequence: entry\.lastSequence/);
+  assert.match(lifecycle, /startedAt: entry\.startedAt/);
+  assert.match(lifecycle, /completedAt: entry\.completedAt/);
+  assert.match(lifecycle, /getChatGenerations/);
+});
+
+test("Phase 8 generation ownership prefers the creating conversation over the currently visible chat", () => {
+  assert.match(lifecycle, /context\.conversationId/);
+  assert.match(lifecycle, /started\?\.conversation_id/);
+  assert.match(lifecycle, /chat-list-item\.active/);
+});
+
 test("bootstrap loads the lifecycle adapter after UI readiness", () => {
   assert.match(bootstrap, /sentiq-ui-ready/);
   assert.match(bootstrap, /generation-lifecycle\.js/);
