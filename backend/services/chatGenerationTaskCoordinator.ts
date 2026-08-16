@@ -3,6 +3,7 @@ import {
   cancelChatGeneration,
   markChatGenerationCompleted,
   markChatGenerationFailed,
+  type ChatGenerationRow,
 } from "./chatGenerationService";
 
 export type ChatGenerationEvent = {
@@ -12,16 +13,19 @@ export type ChatGenerationEvent = {
   [key: string]: unknown;
 };
 
+export type ChatGenerationExecution = {
+  cancel: () => void;
+};
+
 export type ChatGenerationTaskContext = {
   generationId: string;
   clientRequestId?: string | null;
   userId: string;
   userDb?: any;
-  request: any;
+  generation?: ChatGenerationRow | null;
 };
 
 type Subscriber = (event: ChatGenerationEvent) => void | Promise<void>;
-
 type Task = ChatGenerationTaskContext & {
   events: ChatGenerationEvent[];
   subscribers: Set<Subscriber>;
@@ -32,12 +36,16 @@ type Task = ChatGenerationTaskContext & {
   terminal: boolean;
   explicitCancelRequested: boolean;
   lastCheckpointAt: number;
+  lastCheckpointTokens: number;
   lastErrorCode: string | null;
+  execution?: ChatGenerationExecution;
+  runPromise?: Promise<void>;
   cleanupTimer?: NodeJS.Timeout;
 };
 
 const EVENT_BUFFER_LIMIT = 1000;
 const CHECKPOINT_INTERVAL_MS = 750;
+const CHECKPOINT_TOKEN_INTERVAL = 75;
 const TERMINAL_RETENTION_MS = 10 * 60 * 1000;
 
 class ChatGenerationTaskCoordinator {
@@ -45,6 +53,7 @@ class ChatGenerationTaskCoordinator {
 
   has(generationId: string): boolean { return this.tasks.has(generationId); }
   get(generationId: string): Task | null { return this.tasks.get(generationId) ?? null; }
+
   findByClientRequestId(clientRequestId: string): Task | null {
     const normalized = String(clientRequestId || "").trim();
     if (!normalized) return null;
@@ -53,19 +62,24 @@ class ChatGenerationTaskCoordinator {
 
   start(context: ChatGenerationTaskContext): Task {
     const existing = this.tasks.get(context.generationId);
-    if (existing) return existing;
+    if (existing) {
+      if (context.userDb && !existing.userDb) existing.userDb = context.userDb;
+      if (context.generation && !existing.generation) existing.generation = context.generation;
+      return existing;
+    }
     const task: Task = {
       ...context,
       events: [],
       subscribers: new Set(),
-      sequence: 0,
-      partialText: "",
-      tokensGenerated: 0,
-      status: "queued",
-      terminal: false,
-      explicitCancelRequested: false,
-      lastCheckpointAt: 0,
-      lastErrorCode: null,
+      sequence: Number(context.generation?.last_event_sequence ?? 0),
+      partialText: String(context.generation?.partial_text ?? ""),
+      tokensGenerated: Number(context.generation?.tokens_generated ?? 0),
+      status: context.generation?.status === "cancel_requested" ? "cancel_requested" : "queued",
+      terminal: ["completed", "failed", "cancelled"].includes(String(context.generation?.status)),
+      explicitCancelRequested: context.generation?.status === "cancel_requested",
+      lastCheckpointAt: Date.now(),
+      lastCheckpointTokens: Number(context.generation?.tokens_generated ?? 0),
+      lastErrorCode: context.generation?.error_code ?? null,
     };
     this.tasks.set(task.generationId, task);
     return task;
@@ -82,8 +96,12 @@ class ChatGenerationTaskCoordinator {
     } else if (payload.type === "error") {
       task.lastErrorCode = typeof payload.code === "string" && payload.code ? payload.code : "generation_failed";
       task.status = "failed";
+    } else if (payload.type === "generation_snapshot") {
+      task.status = typeof payload.status === "string" ? payload.status as Task["status"] : task.status;
+      if (typeof payload.partial_text === "string") task.partialText = payload.partial_text;
+      if (Number.isFinite(Number(payload.tokens_generated))) task.tokensGenerated = Number(payload.tokens_generated);
     } else {
-      task.status = "running";
+      task.status = task.status === "queued" ? "running" : task.status;
     }
 
     task.sequence += 1;
@@ -95,7 +113,7 @@ class ChatGenerationTaskCoordinator {
     return event;
   }
 
-  async snapshot(generationId: string, persisted?: any): Promise<Record<string, unknown>> {
+  async snapshot(generationId: string, persisted?: ChatGenerationRow | null): Promise<Record<string, unknown>> {
     const task = this.tasks.get(generationId);
     if (task) {
       return {
@@ -124,7 +142,9 @@ class ChatGenerationTaskCoordinator {
   subscribe(generationId: string, subscriber: Subscriber, afterSequence = 0): () => void {
     const task = this.tasks.get(generationId);
     if (!task) return () => undefined;
-    for (const event of task.events) if (event.sequence > afterSequence) void Promise.resolve(subscriber(event));
+    for (const event of task.events) {
+      if (event.sequence > afterSequence) void Promise.resolve(subscriber(event));
+    }
     if (!task.terminal) task.subscribers.add(subscriber);
     return () => { task.subscribers.delete(subscriber); };
   }
@@ -155,6 +175,7 @@ class ChatGenerationTaskCoordinator {
     task.status = "failed";
     task.terminal = true;
     task.lastErrorCode = errorCode || "generation_failed";
+    await this.checkpoint(task, true);
     if (task.userDb) {
       await markChatGenerationFailed(task.userDb, {
         userId: task.userId,
@@ -174,6 +195,7 @@ class ChatGenerationTaskCoordinator {
     task.status = "cancelled";
     task.terminal = true;
     task.explicitCancelRequested = true;
+    await this.checkpoint(task, true);
     if (task.userDb) {
       await cancelChatGeneration(task.userDb, task.userId, task.generationId).catch(() => undefined);
     }
@@ -185,11 +207,13 @@ class ChatGenerationTaskCoordinator {
     if (!task || task.terminal) return false;
     task.explicitCancelRequested = true;
     task.status = "cancel_requested";
-    if (typeof task.request?.emit === "function") task.request.emit("sentiq-generation-cancel");
+    task.execution?.cancel();
     return true;
   }
 
-  isExplicitCancelRequested(generationId: string): boolean { return Boolean(this.tasks.get(generationId)?.explicitCancelRequested); }
+  isExplicitCancelRequested(generationId: string): boolean {
+    return Boolean(this.tasks.get(generationId)?.explicitCancelRequested);
+  }
 
   private async emitTerminal(task: Task, type: "generation_completed" | "generation_failed" | "generation_cancelled", status: string) {
     task.sequence += 1;
@@ -210,8 +234,10 @@ class ChatGenerationTaskCoordinator {
   private async checkpoint(task: Task, force: boolean): Promise<void> {
     if (!task.userDb) return;
     const now = Date.now();
-    if (!force && now - task.lastCheckpointAt < CHECKPOINT_INTERVAL_MS) return;
+    const tokenDelta = task.tokensGenerated - task.lastCheckpointTokens;
+    if (!force && now - task.lastCheckpointAt < CHECKPOINT_INTERVAL_MS && tokenDelta < CHECKPOINT_TOKEN_INTERVAL) return;
     task.lastCheckpointAt = now;
+    task.lastCheckpointTokens = task.tokensGenerated;
     await checkpointChatGeneration(task.userDb, {
       userId: task.userId,
       generationId: task.generationId,
@@ -221,7 +247,9 @@ class ChatGenerationTaskCoordinator {
         lastEventSequence: task.sequence,
         status: task.status === "queued" ? "running" : task.status,
       },
-    }).catch(() => undefined);
+    }).catch((error) => {
+      console.warn(`[GenerationCheckpoint] failed generation=${task.generationId} error=${error instanceof Error ? error.message : String(error)}`);
+    });
   }
 
   private scheduleCleanup(task: Task): void {
