@@ -15,6 +15,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   window[INSTALL_KEY] = true;
 
   const activeGenerations = new Map();
+  const chatGenerationRegistry = new Map();
   let foregroundGenerationId = null;
   let stopRequestedBeforeGeneration = false;
   let pendingGenerationStarts = 0;
@@ -65,6 +66,15 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     return error;
   }
 
+  function createSequenceGapError(expected, received) {
+    const error = new Error(`Generation event sequence gap: expected ${expected}, received ${received}.`);
+    error.name = "GenerationSequenceGapError";
+    error.code = "generation_sequence_gap";
+    error.expectedSequence = expected;
+    error.receivedSequence = received;
+    return error;
+  }
+
   function wait(ms, signal) {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) {
@@ -92,21 +102,69 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     return index;
   }
 
+  function getChatRegistry(chatId) {
+    const normalized = typeof chatId === "string" && chatId.trim() ? chatId.trim() : "__unassigned__";
+    let registry = chatGenerationRegistry.get(normalized);
+    if (!registry) {
+      registry = new Map();
+      chatGenerationRegistry.set(normalized, registry);
+    }
+    return registry;
+  }
+
+  function publicGenerationEntry(entry) {
+    return {
+      generationId: entry.generationId,
+      requestId: entry.requestId,
+      chatId: entry.chatId,
+      status: entry.status,
+      responseBuffer: entry.responseBuffer,
+      lastSequence: entry.lastSequence,
+      subscription: entry.subscription ? {
+        active: Boolean(entry.subscription.active),
+        reconnectAttempts: Number(entry.subscription.reconnectAttempts || 0),
+      } : null,
+      startedAt: entry.startedAt,
+      completedAt: entry.completedAt,
+    };
+  }
+
+  function registerGeneration(entry) {
+    getChatRegistry(entry.chatId).set(entry.generationId, entry);
+  }
+
+  function dispatchGenerationEvent(entry, event) {
+    try {
+      window.dispatchEvent(new CustomEvent("sentiq-generation-event", {
+        detail: {
+          generation: publicGenerationEntry(entry),
+          event,
+        },
+      }));
+    } catch {
+      // Registry observers are non-critical to generation execution.
+    }
+  }
+
   function emitSnapshotDelta(entry, snapshot) {
     const partialText = typeof snapshot?.partial_text === "string" ? snapshot.partial_text : "";
-    if (!partialText) return;
+    if (!partialText) {
+      entry.responseBuffer = entry.deliveredText;
+      return;
+    }
+
     let delta = "";
     if (partialText.startsWith(entry.deliveredText)) {
       delta = partialText.slice(entry.deliveredText.length);
     } else {
       delta = partialText.slice(commonPrefixLength(entry.deliveredText, partialText));
     }
+
+    entry.deliveredText = partialText;
+    entry.responseBuffer = partialText;
     if (delta) {
-      entry.deliveredText = partialText;
       entry.tokensReceived = true;
       entry.callbacks.onToken?.(delta);
-    } else {
-      entry.deliveredText = partialText;
     }
   }
 
@@ -127,62 +185,120 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     if (event.generation_id && event.generation_id !== entry.generationId) return false;
 
     const sequence = Number(event.sequence);
-    if (Number.isFinite(sequence) && sequence > 0 && sequence <= entry.lastSequence) return false;
-    if (Number.isFinite(sequence) && sequence > 0) entry.lastSequence = sequence;
+    const hasSequence = Number.isFinite(sequence) && sequence > 0;
+
+    if (event.type === "generation_snapshot") {
+      if (hasSequence && sequence < entry.lastSequence) return false;
+      if (hasSequence && sequence > entry.lastSequence) {
+        entry.pendingReplayThrough = Math.max(entry.pendingReplayThrough || 0, sequence);
+      }
+      if (typeof event.status === "string") entry.status = event.status;
+      emitSnapshotDelta(entry, event);
+
+      const terminalSnapshot = Boolean(event.terminal)
+        || ["completed", "failed", "cancelled"].includes(String(event.status || ""));
+      if (terminalSnapshot && hasSequence) {
+        entry.lastSequence = sequence;
+        entry.pendingReplayThrough = 0;
+      }
+      dispatchGenerationEvent(entry, event);
+      if (terminalSnapshot) {
+        entry.terminal = true;
+        entry.completedAt = entry.completedAt || new Date().toISOString();
+        if (event.status === "cancelled") entry.cancelled = true;
+        if (event.status === "failed") {
+          const error = new Error(String(event.error_code || "Generation failed."));
+          error.code = typeof event.error_code === "string" ? event.error_code : "generation_failed";
+          entry.error = error;
+          entry.callbacks.onError?.(error, {
+            tokensReceived: entry.tokensReceived,
+            interrupted: entry.interrupted,
+          });
+        }
+        if (event.status === "completed") entry.callbacks.onDone?.();
+        return true;
+      }
+      return false;
+    }
+
+    if (hasSequence) {
+      if (sequence <= entry.lastSequence) return false;
+      if (sequence > entry.lastSequence + 1) {
+        throw createSequenceGapError(entry.lastSequence + 1, sequence);
+      }
+
+      if (entry.pendingReplayThrough && sequence <= entry.pendingReplayThrough) {
+        entry.lastSequence = sequence;
+        if (sequence === entry.pendingReplayThrough) entry.pendingReplayThrough = 0;
+        dispatchGenerationEvent(entry, event);
+        return false;
+      }
+
+      entry.lastSequence = sequence;
+    }
 
     switch (event.type) {
-      case "generation_snapshot":
-        emitSnapshotDelta(entry, event);
-        return false;
       case "token": {
         const text = String(event.text || "");
         if (!text) return false;
+        entry.status = "running";
         entry.deliveredText += text;
+        entry.responseBuffer = entry.deliveredText;
         entry.tokensReceived = true;
         entry.callbacks.onToken?.(text);
-        return false;
+        break;
       }
       case "file_token":
+        entry.status = "running";
         if (event.text) {
           entry.tokensReceived = true;
           entry.callbacks.onFileToken?.(event.text, event);
         }
-        return false;
+        break;
       case "file_artifact":
+        entry.status = "running";
         entry.tokensReceived = true;
         entry.callbacks.onFileArtifact?.(event);
-        return false;
+        break;
       case "thinking":
+        entry.status = "running";
         if (event.text) entry.callbacks.onThinking?.(event.text);
-        return false;
+        break;
       case "structured_response":
+        entry.status = "running";
         if (event.response) {
           entry.structuredReceived = true;
           entry.callbacks.onStructuredResponse?.(event.response);
         }
-        return false;
+        break;
       case "route":
+        entry.status = "running";
         if (event.route) entry.callbacks.onRoute?.(event.route, event);
-        return false;
+        break;
       case "tool_selected":
       case "tool_started":
       case "tool_result":
       case "tool_error":
+        entry.status = "running";
         if (event.tool) entry.callbacks.onToolLifecycle?.(event);
-        return false;
+        break;
       case "websurf_sources":
+        entry.status = "running";
         if (event.web_search) entry.callbacks.onWebSurfSources?.(event.web_search, event);
-        return false;
+        break;
       case "websurf_complete":
+        entry.status = "running";
         if (event.web_search) entry.callbacks.onWebSurfComplete?.(event, event.web_search);
-        return false;
+        break;
       case "memory":
+        entry.status = "running";
         if (event.memory) entry.callbacks.onMemory?.(event.memory);
-        return false;
+        break;
       case "sync":
         if (event.sync) entry.callbacks.onSync?.(event.sync, event.degraded || null);
-        return false;
+        break;
       case "error": {
+        entry.status = "failed";
         const error = new Error(String(event.error || "Generation failed."));
         error.code = typeof event.code === "string" ? event.code : "generation_failed";
         error.details = event;
@@ -192,21 +308,28 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           tokensReceived: entry.tokensReceived,
           interrupted: entry.interrupted,
         });
+        dispatchGenerationEvent(entry, event);
         return true;
       }
       case "generation_completed":
+        entry.status = "completed";
         emitSnapshotDelta(entry, event);
         entry.terminal = true;
+        entry.completedAt = new Date().toISOString();
         entry.callbacks.onDone?.();
-        return true;
+        break;
       case "generation_cancelled":
+        entry.status = "cancelled";
         emitSnapshotDelta(entry, event);
         entry.terminal = true;
         entry.cancelled = true;
-        return true;
+        entry.completedAt = new Date().toISOString();
+        break;
       case "generation_failed": {
+        entry.status = "failed";
         emitSnapshotDelta(entry, event);
         entry.terminal = true;
+        entry.completedAt = new Date().toISOString();
         const error = new Error(String(event.error_code || "Generation failed."));
         error.code = typeof event.error_code === "string" ? event.error_code : "generation_failed";
         error.details = event;
@@ -216,82 +339,92 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           tokensReceived: entry.tokensReceived,
           interrupted: entry.interrupted,
         });
-        return true;
+        break;
       }
       default:
-        return false;
+        break;
     }
+
+    dispatchGenerationEvent(entry, event);
+    return entry.terminal;
   }
 
   async function subscribeOnce(entry, signal) {
+    entry.subscription.active = true;
+    entry.subscription.reconnectAttempts = Number(entry.subscription.reconnectAttempts || 0);
     const headers = await buildAuthHeaders();
     const url = new URL(`${SENTIQ_API_BASE}/api/chat/generations/${encodeURIComponent(entry.generationId)}/events`);
     if (entry.lastSequence > 0) url.searchParams.set("after", String(entry.lastSequence));
 
-    const response = await fetch(url.toString(), {
-      method: "GET",
-      headers,
-      signal,
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const error = new Error(body?.error || `Generation subscription failed: HTTP ${response.status}`);
-      error.status = response.status;
-      error.code = body?.code || "generation_subscription_failed";
-      throw error;
-    }
-    if (!response.body?.getReader) throw new Error("Generation event stream is unavailable.");
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    const processLines = (lines) => {
-      for (const line of lines) {
-        const event = extractSsePayload(line);
-        if (event === "[DONE]") return true;
-        if (event && emitEvent(entry, event)) return true;
+    try {
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers,
+        signal,
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const error = new Error(body?.error || `Generation subscription failed: HTTP ${response.status}`);
+        error.status = response.status;
+        error.code = body?.code || "generation_subscription_failed";
+        throw error;
       }
-      return false;
-    };
+      if (!response.body?.getReader) throw new Error("Generation event stream is unavailable.");
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        if (buffer) {
-          const lines = buffer.split("\n");
-          buffer = "";
-          if (processLines(lines)) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      const processLines = (lines) => {
+        for (const line of lines) {
+          const event = extractSsePayload(line);
+          if (event === "[DONE]") return true;
+          if (event && emitEvent(entry, event)) return true;
         }
-        return;
+        return false;
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          if (buffer) {
+            const lines = buffer.split("\n");
+            buffer = "";
+            if (processLines(lines)) return;
+          }
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        if (processLines(lines) || entry.terminal) return;
       }
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      if (processLines(lines) || entry.terminal) return;
+    } finally {
+      entry.subscription.active = false;
     }
   }
 
   async function subscribeUntilTerminal(entry, signal) {
-    let reconnectAttempts = 0;
     while (!entry.terminal && !entry.cancelled) {
       if (signal?.aborted) return { detached: true };
       try {
         await subscribeOnce(entry, signal);
         if (entry.terminal || entry.cancelled) break;
         if (signal?.aborted) return { detached: true };
-        reconnectAttempts += 1;
-        if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+        entry.subscription.reconnectAttempts += 1;
+        if (entry.subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
           throw new Error("Generation event stream disconnected repeatedly.");
         }
-        await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts - 1)), signal);
+        await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, entry.subscription.reconnectAttempts - 1)), signal);
       } catch (error) {
         if (error?.name === "AbortError" || signal?.aborted) return { detached: true };
         if (entry.cancelRequested) return { cancelled: true };
-        reconnectAttempts += 1;
-        if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) throw error;
-        await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts - 1)), signal);
+        // A sequence gap is specifically recoverable from the last contiguous
+        // sequence. Do not advance lastSequence past the gap.
+        entry.subscription.reconnectAttempts += 1;
+        if (entry.subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) throw error;
+        await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, entry.subscription.reconnectAttempts - 1)), signal);
       }
     }
     return { cancelled: entry.cancelled };
@@ -299,6 +432,8 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
 
   async function cancelGeneration(generationId, { keepalive = false } = {}) {
     if (!generationId) return null;
+    const entry = activeGenerations.get(generationId);
+    if (entry) entry.cancelRequested = true;
     const headers = await buildAuthHeaders();
     const response = await fetch(
       `${SENTIQ_API_BASE}/api/chat/generations/${encodeURIComponent(generationId)}/cancel`,
@@ -317,6 +452,10 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   async function cancelAllGenerations({ keepalive = false } = {}) {
     const ids = Array.from(activeGenerations.keys());
     if (!ids.length) return null;
+    for (const id of ids) {
+      const entry = activeGenerations.get(id);
+      if (entry) entry.cancelRequested = true;
+    }
     const headers = await buildAuthHeaders();
     const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generations/cancel-all`, {
       method: "POST",
@@ -344,17 +483,31 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         ? started.generationId
         : "";
 
-    if (!generationId) {
-      return API.__legacySendMessageStream(message, context, callbacks, signal);
-    }
+    if (!generationId) return API.__legacySendMessageStream(message, context, callbacks, signal);
 
-    const activeChatId = document.querySelector(".chat-list-item.active")?.getAttribute("data-id") || context.conversationId || null;
+    // Prefer the conversation that created the generation. Falling back to the
+    // visible chat after the POST would incorrectly reassign a background job if
+    // the user navigated while POST /api/chat was resolving.
+    const chatId = context.conversationId
+      || context.conversation_id
+      || started?.conversation_id
+      || started?.conversationId
+      || document.querySelector(".chat-list-item.active")?.getAttribute("data-id")
+      || "__unassigned__";
+
     const entry = {
       generationId,
-      chatId: activeChatId,
-      clientRequestId: context.clientRequestId || context.client_request_id || null,
-      callbacks,
+      requestId: context.clientRequestId || context.client_request_id || started?.client_request_id || null,
+      clientRequestId: context.clientRequestId || context.client_request_id || started?.client_request_id || null,
+      chatId,
+      status: typeof started?.status === "string" ? started.status : "queued",
+      responseBuffer: "",
       lastSequence: 0,
+      pendingReplayThrough: 0,
+      subscription: { active: false, reconnectAttempts: 0, signal: null },
+      startedAt: new Date().toISOString(),
+      completedAt: null,
+      callbacks,
       deliveredText: "",
       tokensReceived: false,
       structuredReceived: false,
@@ -364,9 +517,17 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       terminal: false,
       error: null,
     };
+
     activeGenerations.set(generationId, entry);
+    registerGeneration(entry);
     foregroundGenerationId = generationId;
     callbacks.onGenerationStarted?.(generationId, started);
+    dispatchGenerationEvent(entry, {
+      type: "generation_started",
+      generation_id: generationId,
+      sequence: 0,
+      status: entry.status,
+    });
 
     if (stopRequestedBeforeGeneration) {
       stopRequestedBeforeGeneration = false;
@@ -408,9 +569,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         error: entry.error,
       };
     } finally {
-      if (activeGenerations.get(generationId) === entry && entry.terminal) {
-        activeGenerations.delete(generationId);
-      }
+      if (activeGenerations.get(generationId) === entry && entry.terminal) activeGenerations.delete(generationId);
       if (foregroundGenerationId === generationId && entry.terminal) foregroundGenerationId = null;
     }
   }
@@ -451,9 +610,22 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     getActiveGenerations: () => Array.from(activeGenerations.values()).map((entry) => ({
       generationId: entry.generationId,
       chatId: entry.chatId,
-      status: entry.terminal ? "terminal" : entry.cancelRequested ? "cancel_requested" : "running",
+      status: entry.status,
+      lastSequence: entry.lastSequence,
     })),
+    getChatGenerations: (chatId) => Array.from(getChatRegistry(chatId).values()).map(publicGenerationEntry),
+    getGeneration: (generationId) => {
+      const entry = Array.from(chatGenerationRegistry.values()).map((registry) => registry.get(generationId)).find(Boolean);
+      return entry ? publicGenerationEntry(entry) : null;
+    },
+    getGenerationRegistry: () => {
+      const result = {};
+      for (const [chatId, registry] of chatGenerationRegistry.entries()) {
+        result[chatId] = Array.from(registry.values()).map(publicGenerationEntry);
+      }
+      return result;
+    },
   });
 
-  console.info("[GenerationLifecycle] Phase 4 frontend transport lifecycle installed.");
+  console.info("[GenerationLifecycle] Phase 7/8 generation sequencing + per-chat registry installed.");
 })();
