@@ -72,7 +72,7 @@ function initializeUiStability() {
     textareaSizeFrame = window.requestAnimationFrame(() => {
       textareaSizeFrame = 0;
       const computed = window.getComputedStyle(chatInput);
-      const minHeight = Math.max(40, parsePixelValue(computed.minHeight, 44));
+      const minHeight = Math.max(30, parsePixelValue(computed.minHeight, 34));
       const maxHeight = Math.max(minHeight, parsePixelValue(computed.maxHeight, 150));
       const measurementHeight = `${Math.round(minHeight)}px`;
 

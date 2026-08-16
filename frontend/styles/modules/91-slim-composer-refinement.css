@@ -1,0 +1,85 @@
+/* ============================================================
+   SentIQ Chat — Slimmer Message Composer Refinement
+   
+   Refines the message composer to be slightly slimmer and more elegant
+   on desktop while preserving touch accessibility, deterministic autosizing,
+   and visual balance across both home and ongoing conversation states.
+   ============================================================ */
+
+@media (min-width: 769px) {
+  .chat-input-wrapper[data-composer-version="5.1"] {
+    --sentiq-composer-control-size: 34px;
+    --sentiq-composer-field-min-height: 34px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
+    min-height: 48px;
+    padding: 5px 8px;
+    column-gap: 8px;
+    row-gap: 4px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper {
+    min-height: var(--sentiq-composer-field-min-height, 34px);
+    align-items: center;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .input-field-wrapper textarea,
+  .chat-input-wrapper[data-composer-version="5.1"] #chat-input {
+    min-height: var(--sentiq-composer-field-min-height, 34px);
+    padding: 6px 4px 5px;
+    font-size: 0.92rem;
+    line-height: 1.42;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .input-tools,
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn,
+  .chat-input-wrapper[data-composer-version="5.1"] .btn-send,
+  .chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice {
+    width: var(--sentiq-composer-control-size, 34px);
+    height: var(--sentiq-composer-control-size, 34px);
+    min-width: var(--sentiq-composer-control-size, 34px);
+    min-height: var(--sentiq-composer-control-size, 34px);
+    padding: 0;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .btn-send svg,
+  .chat-input-wrapper[data-composer-version="5.1"] .btn-live-voice svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-control,
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle {
+    height: var(--sentiq-composer-control-size, 34px);
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .execution-mode-toggle {
+    min-width: 76px;
+    padding-inline: 8px;
+    font-size: 0.75rem;
+    gap: 4px;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-mode-pill {
+    height: 28px;
+    padding: 0 4px 0 8px;
+    font-size: 0.74rem;
+  }
+
+  .chat-input-wrapper[data-composer-version="5.1"] .composer-hint-overlay {
+    font-size: 0.9rem;
+    left: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (update: slow) {
+  .chat-input-wrapper[data-composer-version="5.1"] > .chat-input-area {
+    transition-duration: 0ms;
+  }
+}
