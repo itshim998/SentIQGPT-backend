@@ -110,7 +110,6 @@ set search_path = public, pg_temp
 as $$
 declare
   v_user_id uuid;
-  v_generation_id uuid;
 begin
   if new.role <> 'user' or nullif(btrim(coalesce(new.client_request_id, '')), '') is null then
     return new;
@@ -146,16 +145,6 @@ begin
     end,
     started_at = coalesce(public.chat_generations.started_at, now());
 
-  select cg.id
-    into v_generation_id
-  from public.chat_generations cg
-  where cg.user_id = v_user_id
-    and cg.client_request_id = nullif(btrim(new.client_request_id), '');
-
-  -- The user message itself does not need generation_id, but keeping the
-  -- generation association recoverable from the request ID makes duplicate
-  -- and retry paths deterministic.
-  perform v_generation_id;
   return new;
 end;
 $$;
