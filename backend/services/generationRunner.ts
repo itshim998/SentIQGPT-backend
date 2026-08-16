@@ -1,4 +1,5 @@
 import { getChatGenerationById, markChatGenerationRunning, type ChatGenerationRow } from "./chatGenerationService";
+import { closeTokenAllowanceAccounting } from "../context/requestBudgetContext";
 import {
   chatGenerationTaskCoordinator,
   type ChatGenerationExecution,
@@ -36,7 +37,6 @@ export class GenerationEventSink {
   headersSent = false;
   writableEnded = false;
   __sentiqGenerationDetached: true = true;
-
   private readonly headers = new Map<string, string>();
   private readonly listeners = new Map<string, Array<(...args: any[]) => void>>();
   private buffer = "";
@@ -45,11 +45,7 @@ export class GenerationEventSink {
   private readonly onError: (error: unknown) => void;
   private readonly generationId: string;
 
-  constructor(
-    generationId: string,
-    onFrame: (frame: Record<string, unknown> | "[DONE]") => Promise<void> | void,
-    onError: (error: unknown) => void,
-  ) {
+  constructor(generationId: string, onFrame: (frame: Record<string, unknown> | "[DONE]") => Promise<void> | void, onError: (error: unknown) => void) {
     this.generationId = generationId;
     this.onFrame = onFrame;
     this.onError = onError;
@@ -96,9 +92,7 @@ export class GenerationEventSink {
     if (payload === "[DONE]") { this.publishChain = this.publishChain.then(() => this.onFrame("[DONE]")); return; }
     try { const parsed = JSON.parse(payload); if (parsed && typeof parsed === "object") this.queueFrame(parsed as Record<string, unknown>); } catch {}
   }
-  private queueFrame(frame: Record<string, unknown>): void {
-    this.publishChain = this.publishChain.then(() => this.onFrame(frame)).catch((error) => this.onError(error));
-  }
+  private queueFrame(frame: Record<string, unknown>): void { this.publishChain = this.publishChain.then(() => this.onFrame(frame)).catch((error) => this.onError(error)); }
 }
 
 type RegisteredExecution = { handler: GenerationExecutorHandler; snapshot: GenerationRequestSnapshot };
@@ -182,11 +176,7 @@ export async function runGeneration(generationId: string): Promise<void> {
 
     const request = buildExecutionRequest(requestSnapshot, generation);
     let runnerError: unknown = null;
-    const sink = new GenerationEventSink(
-      generation.id,
-      async (frame) => { if (frame !== "[DONE]") await chatGenerationTaskCoordinator.publish(generation!.id, frame); },
-      (error) => { runnerError = runnerError ?? error; },
-    );
+    const sink = new GenerationEventSink(generation.id, async (frame) => { if (frame !== "[DONE]") await chatGenerationTaskCoordinator.publish(generation!.id, frame); }, (error) => { runnerError = runnerError ?? error; });
     const executionHandle: ChatGenerationExecution = { cancel: () => request.emit("sentiq-generation-cancel") };
     task.execution = executionHandle;
     task.runPromise = (async () => {
@@ -203,6 +193,9 @@ export async function runGeneration(generationId: string): Promise<void> {
         if (task.explicitCancelRequested) await chatGenerationTaskCoordinator.cancelled(generation!.id);
         else await chatGenerationTaskCoordinator.failed(generation!.id, String((error as any)?.code || (error as any)?.name || "generation_failed"));
       } finally {
+        if (generation?.client_request_id) {
+          try { closeTokenAllowanceAccounting({ requestId: generation.client_request_id, releasePending: true }); } catch (error) { console.warn(`[GenerationQuota] settlement cleanup failed generation=${generation.id}: ${error instanceof Error ? error.message : String(error)}`); }
+        }
         task.execution = undefined;
         task.runPromise = undefined;
         unregisterGenerationExecution(generation!.id);
