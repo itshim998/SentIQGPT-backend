@@ -56,7 +56,6 @@ export class GenerationEventSink {
   removeHeader(name: string) { this.headers.delete(name.toLowerCase()); return this; }
   flushHeaders() { this.headersSent = true; }
   status(code: number) { this.statusCode = code; return this; }
-
   write(chunk: unknown) { if (this.writableEnded) return false; this.headersSent = true; this.ingest(chunk); return true; }
   end(chunk?: unknown) {
     if (this.writableEnded) return this;
@@ -119,11 +118,7 @@ function snapshotFromGeneration(generation: ChatGenerationRow): GenerationReques
   body.generation_id = generation.id;
   body.executionMode = generation.execution_mode ?? body.executionMode ?? "fast";
   body.execution_mode = generation.execution_mode ?? body.execution_mode ?? "fast";
-  return {
-    body,
-    originalUrl: typeof snapshot.originalUrl === "string" ? snapshot.originalUrl : "/api/chat",
-    user: snapshot.user && typeof snapshot.user === "object" ? snapshot.user as Record<string, unknown> : { sub: generation.user_id, isGuest: false },
-  };
+  return { body, originalUrl: typeof snapshot.originalUrl === "string" ? snapshot.originalUrl : "/api/chat", user: snapshot.user && typeof snapshot.user === "object" ? snapshot.user as Record<string, unknown> : { sub: generation.user_id, isGuest: false } };
 }
 
 function buildExecutionRequest(snapshot: GenerationRequestSnapshot, generation: ChatGenerationRow): GenerationExecutionRequest {
@@ -154,8 +149,7 @@ function buildGuestGenerationRow(task: ReturnType<typeof chatGenerationTaskCoord
     execution_mode: body.executionMode === "intuitive" ? "intuitive" : "fast",
     model_route: null,
     execution_snapshot: {}, started_at: now, completed_at: null, failed_at: null, cancelled_at: null,
-    error_code: task.lastErrorCode, partial_text: task.partialText, tokens_generated: task.tokensGenerated,
-    last_event_sequence: task.sequence, created_at: now, updated_at: now,
+    error_code: task.lastErrorCode, partial_text: task.partialText, tokens_generated: task.tokensGenerated, last_event_sequence: task.sequence, created_at: now, updated_at: now,
   };
 }
 
@@ -185,6 +179,11 @@ export async function runGeneration(generationId: string): Promise<void> {
 
     const taskContext: ChatGenerationTaskContext = { generationId: generation.id, clientRequestId: generation.client_request_id, userId: generation.user_id, userDb, generation };
     const task = chatGenerationTaskCoordinator.start(taskContext);
+    if (task.explicitCancelRequested || generation.status === "cancel_requested") {
+      await chatGenerationTaskCoordinator.cancelled(generation.id);
+      return;
+    }
+
     const request = buildExecutionRequest(requestSnapshot, generation);
     let runnerError: unknown = null;
     const sink = new GenerationEventSink(generation.id, (frame) => { if (frame !== "[DONE]") void chatGenerationTaskCoordinator.publish(generation!.id, frame); }, (error) => { runnerError = runnerError ?? error; });
