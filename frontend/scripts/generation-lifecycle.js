@@ -17,6 +17,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   const activeGenerations = new Map();
   let foregroundGenerationId = null;
   let stopRequestedBeforeGeneration = false;
+  let pendingGenerationStarts = 0;
   let pageTeardownStarted = false;
   const MAX_RECONNECT_ATTEMPTS = 8;
   const RECONNECT_BASE_MS = 350;
@@ -328,8 +329,15 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   }
 
   async function patchedSendMessageStream(message, context = {}, callbacks = {}, signal = null) {
-    const safeContext = { ...(context || {}), signal: null };
-    const started = await API.sendMessage(message, safeContext);
+    pendingGenerationStarts += 1;
+    let started;
+    try {
+      const safeContext = { ...(context || {}), signal: null };
+      started = await API.sendMessage(message, safeContext);
+    } finally {
+      pendingGenerationStarts = Math.max(0, pendingGenerationStarts - 1);
+    }
+
     const generationId = typeof started?.generation_id === "string"
       ? started.generation_id
       : typeof started?.generationId === "string"
@@ -417,7 +425,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       void cancelGeneration(generationId).catch((error) => {
         console.warn("[GenerationLifecycle] Explicit Stop cancellation failed:", error);
       });
-    } else {
+    } else if (pendingGenerationStarts > 0) {
       stopRequestedBeforeGeneration = true;
     }
   }
