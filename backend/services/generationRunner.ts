@@ -1,4 +1,3 @@
-import { getOrAssignUserDatabase } from "../dbRouter";
 import { getChatGenerationById, markChatGenerationRunning, type ChatGenerationRow } from "./chatGenerationService";
 import {
   chatGenerationTaskCoordinator,
@@ -46,85 +45,34 @@ export class GenerationEventSink {
   private readonly onError: (error: unknown) => void;
   private readonly generationId: string;
 
-  constructor(
-    generationId: string,
-    onFrame: (frame: Record<string, unknown> | "[DONE]") => void,
-    onError: (error: unknown) => void,
-  ) {
+  constructor(generationId: string, onFrame: (frame: Record<string, unknown> | "[DONE]") => void, onError: (error: unknown) => void) {
     this.generationId = generationId;
     this.onFrame = onFrame;
     this.onError = onError;
   }
 
-  setHeader(name: string, value: string | number | readonly string[]) {
-    this.headers.set(name.toLowerCase(), Array.isArray(value) ? value.join(", ") : String(value));
-    return this;
-  }
-
+  setHeader(name: string, value: string | number | readonly string[]) { this.headers.set(name.toLowerCase(), Array.isArray(value) ? value.join(", ") : String(value)); return this; }
   getHeader(name: string) { return this.headers.get(name.toLowerCase()); }
   removeHeader(name: string) { this.headers.delete(name.toLowerCase()); return this; }
   flushHeaders() { this.headersSent = true; }
   status(code: number) { this.statusCode = code; return this; }
 
-  write(chunk: unknown) {
-    if (this.writableEnded) return false;
-    this.headersSent = true;
-    this.ingest(chunk);
-    return true;
-  }
-
+  write(chunk: unknown) { if (this.writableEnded) return false; this.headersSent = true; this.ingest(chunk); return true; }
   end(chunk?: unknown) {
     if (this.writableEnded) return this;
     if (typeof chunk !== "undefined") this.ingest(chunk);
     this.flushBufferedFrame();
     this.writableEnded = true;
-    void this.publishChain.finally(() => {
-      this.emit("finish");
-      this.emit("close");
-    });
+    void this.publishChain.finally(() => { this.emit("finish"); this.emit("close"); });
     return this;
   }
-
-  json(body: unknown) {
-    this.headersSent = true;
-    this.queueFrame({ type: "structured_response", response: body, generation_id: this.generationId });
-    return this.end();
-  }
-
+  json(body: unknown) { this.headersSent = true; this.queueFrame({ type: "structured_response", response: body, generation_id: this.generationId }); return this.end(); }
   send(body: unknown) { return this.json(body); }
-
-  on(event: string, listener: (...args: any[]) => void) {
-    const list = this.listeners.get(event) ?? [];
-    list.push(listener);
-    this.listeners.set(event, list);
-    return this;
-  }
-
-  once(event: string, listener: (...args: any[]) => void) {
-    const onceListener = (...args: any[]) => {
-      this.removeListener(event, onceListener);
-      listener(...args);
-    };
-    return this.on(event, onceListener);
-  }
-
-  removeListener(event: string, listener: (...args: any[]) => void) {
-    const list = this.listeners.get(event) ?? [];
-    this.listeners.set(event, list.filter((candidate) => candidate !== listener));
-    return this;
-  }
-
-  emit(event: string, ...args: any[]) {
-    for (const listener of this.listeners.get(event) ?? []) {
-      try { listener(...args); } catch (error) { this.onError(error); }
-    }
-    return true;
-  }
-
-  async flush(): Promise<void> {
-    this.flushBufferedFrame();
-    await this.publishChain;
-  }
+  on(event: string, listener: (...args: any[]) => void) { const list = this.listeners.get(event) ?? []; list.push(listener); this.listeners.set(event, list); return this; }
+  once(event: string, listener: (...args: any[]) => void) { const onceListener = (...args: any[]) => { this.removeListener(event, onceListener); listener(...args); }; return this.on(event, onceListener); }
+  removeListener(event: string, listener: (...args: any[]) => void) { const list = this.listeners.get(event) ?? []; this.listeners.set(event, list.filter((candidate) => candidate !== listener)); return this; }
+  emit(event: string, ...args: any[]) { for (const listener of this.listeners.get(event) ?? []) { try { listener(...args); } catch (error) { this.onError(error); } } return true; }
+  async flush(): Promise<void> { this.flushBufferedFrame(); await this.publishChain; }
 
   private ingest(chunk: unknown): void {
     this.buffer += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk ?? "");
@@ -136,131 +84,79 @@ export class GenerationEventSink {
       this.parseFrame(frameText);
     }
   }
-
-  private flushBufferedFrame(): void {
-    const frameText = this.buffer.trim();
-    this.buffer = "";
-    if (frameText) this.parseFrame(frameText);
-  }
-
+  private flushBufferedFrame(): void { const frameText = this.buffer.trim(); this.buffer = ""; if (frameText) this.parseFrame(frameText); }
   private parseFrame(frameText: string): void {
-    const dataLine = frameText
-      .split("\n")
-      .find((line) => line.startsWith("data:"));
+    const dataLine = frameText.split("\n").find((line) => line.startsWith("data:"));
     if (!dataLine) return;
     const payload = dataLine.slice(5).trim();
     if (!payload) return;
-    if (payload === "[DONE]") {
-      this.publishChain = this.publishChain.then(() => {
-        this.onFrame("[DONE]");
-      });
-      return;
-    }
-    try {
-      const parsed = JSON.parse(payload);
-      if (!parsed || typeof parsed !== "object") return;
-      this.queueFrame(parsed as Record<string, unknown>);
-    } catch {
-      // Ignore malformed transport frames; the underlying handler owns the
-      // authoritative model error path.
-    }
+    if (payload === "[DONE]") { this.publishChain = this.publishChain.then(() => this.onFrame("[DONE]")); return; }
+    try { const parsed = JSON.parse(payload); if (parsed && typeof parsed === "object") this.queueFrame(parsed as Record<string, unknown>); } catch {}
   }
-
-  private queueFrame(frame: Record<string, unknown>): void {
-    this.publishChain = this.publishChain.then(() => this.onFrame(frame)).catch((error) => {
-      this.onError(error);
-    });
-  }
+  private queueFrame(frame: Record<string, unknown>): void { this.publishChain = this.publishChain.then(() => this.onFrame(frame)).catch((error) => this.onError(error)); }
 }
 
-type RegisteredExecution = {
-  handler: GenerationExecutorHandler;
-  snapshot: GenerationRequestSnapshot;
-};
-
+type RegisteredExecution = { handler: GenerationExecutorHandler; snapshot: GenerationRequestSnapshot };
 const registeredExecutions = new Map<string, RegisteredExecution>();
 let defaultGenerationExecutor: GenerationExecutorHandler | null = null;
 
-export function registerGenerationExecutor(handler: GenerationExecutorHandler): void {
-  defaultGenerationExecutor = handler;
-}
+export function registerGenerationExecutor(handler: GenerationExecutorHandler): void { defaultGenerationExecutor = handler; }
+export function registerGenerationExecution(generationId: string, execution: RegisteredExecution): void { registeredExecutions.set(generationId, execution); }
+export function unregisterGenerationExecution(generationId: string): void { registeredExecutions.delete(generationId); }
 
-export function registerGenerationExecution(
-  generationId: string,
-  execution: RegisteredExecution,
-): void {
-  registeredExecutions.set(generationId, execution);
-}
+function toRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 
-export function unregisterGenerationExecution(generationId: string): void {
-  registeredExecutions.delete(generationId);
-}
-
-function toRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
+function snapshotFromGeneration(generation: ChatGenerationRow): GenerationRequestSnapshot | null {
+  const snapshot = toRecord(generation.execution_snapshot);
+  const body = toRecord(snapshot.body);
+  if (!body.message && typeof snapshot.message === "string") body.message = snapshot.message;
+  if (!body.message) return null;
+  body.conversationId = generation.conversation_id;
+  body.conversation_id = generation.conversation_id;
+  body.clientRequestId = generation.client_request_id ?? body.clientRequestId;
+  body.client_request_id = generation.client_request_id ?? body.client_request_id;
+  body.generationId = generation.id;
+  body.generation_id = generation.id;
+  body.executionMode = generation.execution_mode ?? body.executionMode ?? "fast";
+  body.execution_mode = generation.execution_mode ?? body.execution_mode ?? "fast";
+  return {
+    body,
+    originalUrl: typeof snapshot.originalUrl === "string" ? snapshot.originalUrl : "/api/chat",
+    user: snapshot.user && typeof snapshot.user === "object" ? snapshot.user as Record<string, unknown> : { sub: generation.user_id, isGuest: false },
+  };
 }
 
 function buildExecutionRequest(snapshot: GenerationRequestSnapshot, generation: ChatGenerationRow): GenerationExecutionRequest {
   const listeners = new Map<string, Array<() => void>>();
-  const body = {
-    ...toRecord(snapshot.body),
-    conversationId: generation.conversation_id,
-    conversation_id: generation.conversation_id,
-    clientRequestId: generation.client_request_id ?? snapshot.body.clientRequestId,
-    client_request_id: generation.client_request_id ?? snapshot.body.client_request_id,
-    generationId: generation.id,
-    generation_id: generation.id,
-    executionMode: generation.execution_mode ?? snapshot.body.executionMode ?? "fast",
-    execution_mode: generation.execution_mode ?? snapshot.body.execution_mode ?? "fast",
-  };
+  const body = { ...toRecord(snapshot.body), conversationId: generation.conversation_id, conversation_id: generation.conversation_id, clientRequestId: generation.client_request_id ?? snapshot.body.clientRequestId, client_request_id: generation.client_request_id ?? snapshot.body.client_request_id, generationId: generation.id, generation_id: generation.id, executionMode: generation.execution_mode ?? snapshot.body.executionMode ?? "fast", execution_mode: generation.execution_mode ?? snapshot.body.execution_mode ?? "fast" };
   const headers = { ...(snapshot.headers ?? {}) };
   const request: GenerationExecutionRequest = {
-    body,
-    headers,
-    originalUrl: snapshot.originalUrl || "/api/chat",
-    user: snapshot.user ?? { sub: generation.user_id, isGuest: false },
-    complete: true,
-    __sentiqGenerationDetached: true,
-    once(event, listener) {
-      const list = listeners.get(event) ?? [];
-      list.push(listener);
-      listeners.set(event, list);
-      return request;
-    },
-    on(event, listener) {
-      const list = listeners.get(event) ?? [];
-      list.push(listener);
-      listeners.set(event, list);
-      return request;
-    },
-    emit(event) {
-      for (const listener of listeners.get(event) ?? []) {
-        try { listener(); } catch { /* execution listeners are best-effort */ }
-      }
-      return true;
-    },
-    get(name) {
-      const normalized = name.toLowerCase();
-      return Object.entries(headers).find(([key]) => key.toLowerCase() === normalized)?.[1];
-    },
+    body, headers, originalUrl: snapshot.originalUrl || "/api/chat", user: snapshot.user ?? { sub: generation.user_id, isGuest: false }, complete: true, __sentiqGenerationDetached: true,
+    once(event, listener) { const list = listeners.get(event) ?? []; list.push(listener); listeners.set(event, list); return request; },
+    on(event, listener) { const list = listeners.get(event) ?? []; list.push(listener); listeners.set(event, list); return request; },
+    emit(event) { for (const listener of listeners.get(event) ?? []) { try { listener(); } catch {} } return true; },
+    get(name) { const normalized = name.toLowerCase(); return Object.entries(headers).find(([key]) => key.toLowerCase() === normalized)?.[1]; },
   };
   return request;
 }
 
-async function loadGeneration(generationId: string): Promise<{ generation: ChatGenerationRow; userDb: any }> {
-  const task = chatGenerationTaskCoordinator.get(generationId);
-  if (task?.userDb) {
-    const result = await getChatGenerationById(task.userDb, task.userId, generationId);
-    if (result.error) throw result.error;
-    if (!result.data) throw Object.assign(new Error("Generation not found"), { code: "generation_not_found" });
-    return { generation: result.data, userDb: task.userDb };
-  }
-
-  throw Object.assign(new Error("Generation execution context is unavailable"), {
-    code: "generation_execution_context_unavailable",
-  });
+function buildGuestGenerationRow(task: ReturnType<typeof chatGenerationTaskCoordinator.get>): ChatGenerationRow | null {
+  if (!task) return null;
+  const body = toRecord(registeredExecutions.get(task.generationId)?.snapshot.body);
+  const conversationId = typeof body.conversationId === "string" ? body.conversationId : typeof body.conversation_id === "string" ? body.conversation_id : "guest-conversation";
+  const now = new Date().toISOString();
+  return {
+    id: task.generationId,
+    conversation_id: conversationId,
+    user_id: task.userId,
+    client_request_id: task.clientRequestId ?? null,
+    status: task.status,
+    execution_mode: body.executionMode === "intuitive" ? "intuitive" : "fast",
+    model_route: null,
+    execution_snapshot: {}, started_at: now, completed_at: null, failed_at: null, cancelled_at: null,
+    error_code: task.lastErrorCode, partial_text: task.partialText, tokens_generated: task.tokensGenerated,
+    last_event_sequence: task.sequence, created_at: now, updated_at: now,
+  };
 }
 
 export async function runGeneration(generationId: string): Promise<void> {
@@ -274,84 +170,39 @@ export async function runGeneration(generationId: string): Promise<void> {
 
   const runPromise = (async () => {
     let userDb: any = existingTask?.userDb ?? null;
-    let generation: ChatGenerationRow | null = null;
-
-    if (existingTask?.generation) {
-      generation = existingTask.generation as ChatGenerationRow;
-    } else if (existingTask?.userDb) {
+    let generation: ChatGenerationRow | null = existingTask?.generation ?? null;
+    if (!generation && existingTask?.userDb) {
       const loaded = await getChatGenerationById(existingTask.userDb, existingTask.userId, generationId);
       if (loaded.error) throw loaded.error;
       generation = loaded.data;
-      userDb = existingTask.userDb;
     }
-
-    if (!generation) {
-      const loaded = await loadGeneration(generationId);
-      generation = loaded.generation;
-      userDb = loaded.userDb;
-    }
-    if (!generation) throw Object.assign(new Error("Generation not found"), { code: "generation_not_found" });
+    if (!generation) generation = buildGuestGenerationRow(existingTask);
+    if (!generation) throw Object.assign(new Error("Generation execution context is unavailable"), { code: "generation_execution_context_unavailable" });
     if (["completed", "failed", "cancelled"].includes(generation.status)) return;
 
-    const requestSnapshot = execution?.snapshot;
-    if (!requestSnapshot) {
-      throw Object.assign(new Error("Generation request snapshot is unavailable"), { code: "generation_snapshot_unavailable" });
-    }
+    const requestSnapshot = execution?.snapshot ?? snapshotFromGeneration(generation);
+    if (!requestSnapshot) throw Object.assign(new Error("Generation request snapshot is unavailable"), { code: "generation_snapshot_unavailable" });
 
-    const taskContext: ChatGenerationTaskContext = {
-      generationId: generation.id,
-      clientRequestId: generation.client_request_id,
-      userId: generation.user_id,
-      userDb,
-      generation,
-    };
+    const taskContext: ChatGenerationTaskContext = { generationId: generation.id, clientRequestId: generation.client_request_id, userId: generation.user_id, userDb, generation };
     const task = chatGenerationTaskCoordinator.start(taskContext);
     const request = buildExecutionRequest(requestSnapshot, generation);
     let runnerError: unknown = null;
-
-    const sink = new GenerationEventSink(
-      generation.id,
-      (frame) => {
-        if (frame === "[DONE]") return;
-        void chatGenerationTaskCoordinator.publish(generation!.id, frame);
-      },
-      (error) => { runnerError = runnerError ?? error; },
-    );
-
-    const executionHandle: ChatGenerationExecution = {
-      cancel: () => request.emit("sentiq-generation-cancel"),
-    };
+    const sink = new GenerationEventSink(generation.id, (frame) => { if (frame !== "[DONE]") void chatGenerationTaskCoordinator.publish(generation!.id, frame); }, (error) => { runnerError = runnerError ?? error; });
+    const executionHandle: ChatGenerationExecution = { cancel: () => request.emit("sentiq-generation-cancel") };
     task.execution = executionHandle;
     task.runPromise = (async () => {
       try {
-        await markChatGenerationRunning(userDb, generation!.user_id, generation!.id).catch(() => undefined);
+        if (userDb) await markChatGenerationRunning(userDb, generation!.user_id, generation!.id).catch(() => undefined);
         task.status = "running";
-        const handlerResult = handler(request, sink, (error) => {
-          if (error) runnerError = error;
-        });
-        await Promise.resolve(handlerResult);
+        await Promise.resolve(handler(request, sink, (error) => { if (error) runnerError = error; }));
         await sink.flush();
-
-        if (task.explicitCancelRequested) {
-          await chatGenerationTaskCoordinator.cancelled(generation!.id);
-        } else if (runnerError) {
-          await chatGenerationTaskCoordinator.failed(
-            generation!.id,
-            String((runnerError as any)?.code || (runnerError as any)?.name || "generation_failed"),
-          );
-        } else {
-          await chatGenerationTaskCoordinator.complete(generation!.id);
-        }
+        if (task.explicitCancelRequested) await chatGenerationTaskCoordinator.cancelled(generation!.id);
+        else if (runnerError) await chatGenerationTaskCoordinator.failed(generation!.id, String((runnerError as any)?.code || (runnerError as any)?.name || "generation_failed"));
+        else await chatGenerationTaskCoordinator.complete(generation!.id);
       } catch (error) {
         runnerError = error;
-        if (task.explicitCancelRequested) {
-          await chatGenerationTaskCoordinator.cancelled(generation!.id);
-        } else {
-          await chatGenerationTaskCoordinator.failed(
-            generation!.id,
-            String((error as any)?.code || (error as any)?.name || "generation_failed"),
-          );
-        }
+        if (task.explicitCancelRequested) await chatGenerationTaskCoordinator.cancelled(generation!.id);
+        else await chatGenerationTaskCoordinator.failed(generation!.id, String((error as any)?.code || (error as any)?.name || "generation_failed"));
       } finally {
         task.execution = undefined;
         task.runPromise = undefined;
