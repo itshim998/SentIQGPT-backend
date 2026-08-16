@@ -41,11 +41,15 @@ export class GenerationEventSink {
   private readonly listeners = new Map<string, Array<(...args: any[]) => void>>();
   private buffer = "";
   private publishChain = Promise.resolve();
-  private readonly onFrame: (frame: Record<string, unknown> | "[DONE]") => void;
+  private readonly onFrame: (frame: Record<string, unknown> | "[DONE]") => Promise<void> | void;
   private readonly onError: (error: unknown) => void;
   private readonly generationId: string;
 
-  constructor(generationId: string, onFrame: (frame: Record<string, unknown> | "[DONE]") => void, onError: (error: unknown) => void) {
+  constructor(
+    generationId: string,
+    onFrame: (frame: Record<string, unknown> | "[DONE]") => Promise<void> | void,
+    onError: (error: unknown) => void,
+  ) {
     this.generationId = generationId;
     this.onFrame = onFrame;
     this.onError = onError;
@@ -92,7 +96,9 @@ export class GenerationEventSink {
     if (payload === "[DONE]") { this.publishChain = this.publishChain.then(() => this.onFrame("[DONE]")); return; }
     try { const parsed = JSON.parse(payload); if (parsed && typeof parsed === "object") this.queueFrame(parsed as Record<string, unknown>); } catch {}
   }
-  private queueFrame(frame: Record<string, unknown>): void { this.publishChain = this.publishChain.then(() => this.onFrame(frame)).catch((error) => this.onError(error)); }
+  private queueFrame(frame: Record<string, unknown>): void {
+    this.publishChain = this.publishChain.then(() => this.onFrame(frame)).catch((error) => this.onError(error));
+  }
 }
 
 type RegisteredExecution = { handler: GenerationExecutorHandler; snapshot: GenerationRequestSnapshot };
@@ -140,17 +146,7 @@ function buildGuestGenerationRow(task: ReturnType<typeof chatGenerationTaskCoord
   const body = toRecord(registeredExecutions.get(task.generationId)?.snapshot.body);
   const conversationId = typeof body.conversationId === "string" ? body.conversationId : typeof body.conversation_id === "string" ? body.conversation_id : "guest-conversation";
   const now = new Date().toISOString();
-  return {
-    id: task.generationId,
-    conversation_id: conversationId,
-    user_id: task.userId,
-    client_request_id: task.clientRequestId ?? null,
-    status: task.status,
-    execution_mode: body.executionMode === "intuitive" ? "intuitive" : "fast",
-    model_route: null,
-    execution_snapshot: {}, started_at: now, completed_at: null, failed_at: null, cancelled_at: null,
-    error_code: task.lastErrorCode, partial_text: task.partialText, tokens_generated: task.tokensGenerated, last_event_sequence: task.sequence, created_at: now, updated_at: now,
-  };
+  return { id: task.generationId, conversation_id: conversationId, user_id: task.userId, client_request_id: task.clientRequestId ?? null, status: task.status, execution_mode: body.executionMode === "intuitive" ? "intuitive" : "fast", model_route: null, execution_snapshot: {}, started_at: now, completed_at: null, failed_at: null, cancelled_at: null, error_code: task.lastErrorCode, partial_text: task.partialText, tokens_generated: task.tokensGenerated, last_event_sequence: task.sequence, created_at: now, updated_at: now };
 }
 
 export async function runGeneration(generationId: string): Promise<void> {
@@ -186,7 +182,11 @@ export async function runGeneration(generationId: string): Promise<void> {
 
     const request = buildExecutionRequest(requestSnapshot, generation);
     let runnerError: unknown = null;
-    const sink = new GenerationEventSink(generation.id, (frame) => { if (frame !== "[DONE]") void chatGenerationTaskCoordinator.publish(generation!.id, frame); }, (error) => { runnerError = runnerError ?? error; });
+    const sink = new GenerationEventSink(
+      generation.id,
+      async (frame) => { if (frame !== "[DONE]") await chatGenerationTaskCoordinator.publish(generation!.id, frame); },
+      (error) => { runnerError = runnerError ?? error; },
+    );
     const executionHandle: ChatGenerationExecution = { cancel: () => request.emit("sentiq-generation-cancel") };
     task.execution = executionHandle;
     task.runPromise = (async () => {
