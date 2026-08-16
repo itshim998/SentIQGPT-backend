@@ -67,16 +67,18 @@ class ChatGenerationTaskCoordinator {
       if (context.generation && !existing.generation) existing.generation = context.generation;
       return existing;
     }
+    const persistedSequence = Math.max(0, Number(context.generation?.last_event_sequence ?? 0));
+    const persistedStatus = String(context.generation?.status ?? "queued");
     const task: Task = {
       ...context,
       events: [],
       subscribers: new Set(),
-      sequence: Number(context.generation?.last_event_sequence ?? 0),
+      sequence: persistedSequence,
       partialText: String(context.generation?.partial_text ?? ""),
       tokensGenerated: Number(context.generation?.tokens_generated ?? 0),
-      status: context.generation?.status === "cancel_requested" ? "cancel_requested" : "queued",
-      terminal: ["completed", "failed", "cancelled"].includes(String(context.generation?.status)),
-      explicitCancelRequested: context.generation?.status === "cancel_requested",
+      status: persistedStatus === "cancel_requested" ? "cancel_requested" : ["completed", "failed", "cancelled"].includes(persistedStatus) ? persistedStatus as Task["status"] : "queued",
+      terminal: ["completed", "failed", "cancelled"].includes(persistedStatus),
+      explicitCancelRequested: persistedStatus === "cancel_requested",
       lastCheckpointAt: Date.now(),
       lastCheckpointTokens: Number(context.generation?.tokens_generated ?? 0),
       lastErrorCode: context.generation?.error_code ?? null,
@@ -124,8 +126,12 @@ class ChatGenerationTaskCoordinator {
         partial_text: task.partialText,
         tokens_generated: task.tokensGenerated,
         last_event_sequence: task.sequence,
+        sequence: task.sequence,
+        terminal: task.terminal,
+        error_code: task.lastErrorCode,
       };
     }
+    const sequence = Number(persisted?.last_event_sequence ?? 0);
     return {
       type: "generation_snapshot",
       generation_id: generationId,
@@ -135,17 +141,40 @@ class ChatGenerationTaskCoordinator {
       status: persisted?.status ?? "queued",
       partial_text: persisted?.partial_text ?? "",
       tokens_generated: Number(persisted?.tokens_generated ?? 0),
-      last_event_sequence: Number(persisted?.last_event_sequence ?? 0),
+      last_event_sequence: sequence,
+      sequence,
+      terminal: ["completed", "failed", "cancelled"].includes(String(persisted?.status ?? "")),
+      error_code: persisted?.error_code ?? null,
+    };
+  }
+
+  getReplayInfo(generationId: string, afterSequence = 0): { canReplay: boolean; oldestSequence: number | null; latestSequence: number } {
+    const task = this.tasks.get(generationId);
+    if (!task) return { canReplay: false, oldestSequence: null, latestSequence: 0 };
+    const normalizedAfter = Math.max(0, Math.floor(afterSequence));
+    const oldestSequence = task.events.length > 0 ? task.events[0].sequence : null;
+    const latestSequence = task.sequence;
+    if (normalizedAfter >= latestSequence) return { canReplay: true, oldestSequence, latestSequence };
+    if (oldestSequence === null) return { canReplay: normalizedAfter === latestSequence, oldestSequence, latestSequence };
+    return {
+      canReplay: normalizedAfter >= oldestSequence - 1,
+      oldestSequence,
+      latestSequence,
     };
   }
 
   subscribe(generationId: string, subscriber: Subscriber, afterSequence = 0): () => void {
     const task = this.tasks.get(generationId);
     if (!task) return () => undefined;
-    for (const event of task.events) {
-      if (event.sequence > afterSequence) void Promise.resolve(subscriber(event));
-    }
+
+    // Register before replay. `publish()` is async but cannot interleave between
+    // these synchronous operations, so no live event can land in the replay gap.
     if (!task.terminal) task.subscribers.add(subscriber);
+    const replay = task.events.filter((event) => event.sequence > Math.max(0, Math.floor(afterSequence)));
+    for (const event of replay) {
+      void Promise.resolve(subscriber(event)).catch(() => undefined);
+    }
+
     return () => { task.subscribers.delete(subscriber); };
   }
 
