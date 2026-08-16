@@ -37,3 +37,24 @@ test("Phase 6 persists execution snapshot and partial output", () => {
   assert.match(service, /checkpointChatGeneration/);
   assert.match(migration, /add column if not exists execution_snapshot jsonb/);
 });
+
+test("Phase 7 seeds event sequence from durable state and exposes replay metadata", () => {
+  assert.match(coordinator, /sequence: persistedSequence/);
+  assert.match(coordinator, /last_event_sequence/);
+  assert.match(coordinator, /getReplayInfo\(generationId, afterSequence = 0\)/);
+  assert.match(coordinator, /canReplay/);
+  assert.match(coordinator, /Register before replay/);
+  assert.match(coordinator, /event\.sequence > Math\.max\(0, Math\.floor\(afterSequence\)\)/);
+});
+
+test("Phase 7 snapshot carries the authoritative sequence for resynchronization", () => {
+  assert.match(coordinator, /sequence: task\.sequence/);
+  assert.match(coordinator, /terminal: task\.terminal/);
+  assert.match(coordinator, /last_event_sequence: sequence/);
+});
+
+test("Phase 7 transport replays from the requested contiguous sequence", () => {
+  assert.match(transport, /req\.headers\["last-event-id"\] \?\? req\.query\.after/);
+  assert.match(transport, /subscribe\(generationId, \(event\)/);
+  assert.match(transport, /Math\.max\(0, afterSequence\)/);
+});
