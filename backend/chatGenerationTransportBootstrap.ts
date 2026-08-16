@@ -79,16 +79,14 @@ function compactExecutionSnapshot(body: Record<string, unknown>): Record<string,
   };
 }
 
-function buildRequestSnapshot(request: Request): Record<string, unknown> {
+function buildRequestSnapshot(request: Request): { persisted: Record<string, unknown>; live: Record<string, unknown>; originalUrl: string; user: Record<string, unknown> | null } {
   const requestUser = getRequestUser(request);
   return {
-    body: compactExecutionSnapshot(request.body as Record<string, unknown>),
+    persisted: compactExecutionSnapshot(request.body as Record<string, unknown>),
+    live: { ...(request.body as Record<string, unknown>) },
     originalUrl: request.originalUrl,
     user: requestUser
-      ? {
-          sub: requestUser.sub,
-          isGuest: Boolean(requestUser.isGuest),
-        }
+      ? { sub: requestUser.sub, isGuest: Boolean(requestUser.isGuest) }
       : null,
   };
 }
@@ -113,22 +111,15 @@ async function prepareGeneration(request: Request) {
   const requestedGenerationId = normalizeGenerationId(parsed.data.generationId);
   let conversationId = parsed.data.conversationId || null;
   const executionMode = parsed.data.executionMode;
-  const executionSnapshot = buildRequestSnapshot(request);
+  const snapshot = buildRequestSnapshot(request);
 
   if (requestUser && !requestUser.isGuest) {
     const userDb = await resolveUserDatabase(requestUser);
     if (!userDb) throw new Error("User database unavailable");
     const initialized = await userDb.rpc("initialize_user_session", { p_user_id: userId });
     if (initialized.error) throw initialized.error;
-    const resolved = await resolveConversationForTurn(userDb, {
-      userId,
-      clientRequestId,
-      conversationId,
-      title: "New Chat",
-    });
-    if (resolved.error || !resolved.data?.conversation_id) {
-      throw resolved.error || new Error("Unable to resolve conversation");
-    }
+    const resolved = await resolveConversationForTurn(userDb, { userId, clientRequestId, conversationId, title: "New Chat" });
+    if (resolved.error || !resolved.data?.conversation_id) throw resolved.error || new Error("Unable to resolve conversation");
     conversationId = resolved.data.conversation_id;
 
     const existing = await getChatGenerationByClientRequestId(userDb, userId, clientRequestId);
@@ -141,17 +132,15 @@ async function prepareGeneration(request: Request) {
         clientRequestId,
         generationId: requestedGenerationId,
         executionMode,
-        executionSnapshot,
+        executionSnapshot: snapshot.persisted,
       });
-      if (created.error || !created.data) {
-        throw created.error || new Error("Unable to create chat generation");
-      }
+      if (created.error || !created.data) throw created.error || new Error("Unable to create chat generation");
       generation = created.data;
     } else if (Object.keys(generation.execution_snapshot || {}).length === 0) {
       const updated = await updateChatGenerationExecutionSnapshot(userDb, {
         userId,
         generationId: generation.id,
-        executionSnapshot,
+        executionSnapshot: snapshot.persisted,
       });
       if (updated.error) throw updated.error;
       generation = updated.data || generation;
@@ -178,7 +167,8 @@ async function prepareGeneration(request: Request) {
       conversationId: generation.conversation_id,
       status: generation.status,
       generation,
-      executionSnapshot,
+      persistedSnapshot: snapshot.persisted,
+      liveSnapshot: { body: snapshot.live, originalUrl: snapshot.originalUrl, user: snapshot.user },
     };
   }
 
@@ -204,7 +194,8 @@ async function prepareGeneration(request: Request) {
     conversationId,
     status: task?.status ?? "queued",
     generation: task?.generation ?? null,
-    executionSnapshot,
+    persistedSnapshot: snapshot.persisted,
+    liveSnapshot: { body: snapshot.live, originalUrl: snapshot.originalUrl, user: snapshot.user },
   };
 }
 
@@ -216,27 +207,16 @@ async function resolveOwnedGeneration(request: Request, generationId: string) {
     if (!task) return { requestUser, userId, userDb: null, generationId, generation: null, task: null };
     return { requestUser, userId, userDb: null, generationId, generation: task.generation ?? null, task };
   }
-
   const userDb = await resolveUserDatabase(requestUser);
   if (!userDb) throw new Error("User database unavailable");
   const initialized = await userDb.rpc("initialize_user_session", { p_user_id: userId });
   if (initialized.error) throw initialized.error;
   const result = await getChatGenerationById(userDb, userId, generationId);
   if (result.error) throw result.error;
-  return {
-    requestUser,
-    userId,
-    userDb,
-    generationId,
-    generation: result.data,
-    task: chatGenerationTaskCoordinator.get(generationId),
-  };
+  return { requestUser, userId, userDb, generationId, generation: result.data, task: chatGenerationTaskCoordinator.get(generationId) };
 }
 
-async function startGeneration(
-  legacyFinalHandler: GenerationExecutorHandler,
-  context: Awaited<ReturnType<typeof prepareGeneration>>,
-): Promise<void> {
+async function startGeneration(legacyFinalHandler: GenerationExecutorHandler, context: Awaited<ReturnType<typeof prepareGeneration>>): Promise<void> {
   const existing = chatGenerationTaskCoordinator.get(context.generationId);
   if (existing?.runPromise) return existing.runPromise;
   if (["completed", "failed", "cancelled"].includes(context.status)) return;
@@ -244,11 +224,7 @@ async function startGeneration(
   registerGenerationExecutor(legacyFinalHandler);
   registerGenerationExecution(context.generationId, {
     handler: legacyFinalHandler,
-    snapshot: {
-      body: compactExecutionSnapshot(context.executionSnapshot.body as Record<string, unknown>),
-      originalUrl: String(context.executionSnapshot.originalUrl || "/api/chat"),
-      user: (context.executionSnapshot.user as Record<string, unknown> | null) ?? null,
-    },
+    snapshot: context.liveSnapshot,
   });
 
   const task = chatGenerationTaskCoordinator.start({
@@ -258,14 +234,11 @@ async function startGeneration(
     userDb: context.userDb,
     generation: context.generation,
   });
-
   if (task.runPromise) return task.runPromise;
   return runGeneration(context.generationId);
 }
 
-function formatGenerationEvent(event: Record<string, unknown>): string {
-  return `data: ${JSON.stringify(event)}\n\n`;
-}
+function formatGenerationEvent(event: Record<string, unknown>): string { return `data: ${JSON.stringify(event)}\n\n`; }
 
 function openGenerationSubscription(response: Response, generationId: string, context: any, afterSequence = 0) {
   response.status(200);
@@ -275,30 +248,13 @@ function openGenerationSubscription(response: Response, generationId: string, co
   response.setHeader("X-Accel-Buffering", "no");
   response.flushHeaders?.();
 
-  const emit = (event: Record<string, unknown>) => {
-    if ((response as any).writableEnded) return;
-    try { response.write(formatGenerationEvent(event)); } catch {}
-  };
-  const emitDoneAndClose = () => {
-    if ((response as any).writableEnded) return;
-    try { response.write("data: [DONE]\n\n"); response.end(); } catch {}
-  };
-
+  const emit = (event: Record<string, unknown>) => { if (!(response as any).writableEnded) { try { response.write(formatGenerationEvent(event)); } catch {} } };
+  const emitDoneAndClose = () => { if (!(response as any).writableEnded) { try { response.write("data: [DONE]\n\n"); response.end(); } catch {} } };
   let closed = false;
   let unsubscribe: (() => void) | null = null;
-  const heartbeat = setInterval(() => {
-    if (!closed && !(response as any).writableEnded) {
-      try { response.write(": keepalive\n\n"); } catch {}
-    }
-  }, 15000);
+  const heartbeat = setInterval(() => { if (!closed && !(response as any).writableEnded) { try { response.write(": keepalive\n\n"); } catch {} } }, 15000);
   heartbeat.unref?.();
-  const cleanup = () => {
-    if (closed) return;
-    closed = true;
-    clearInterval(heartbeat);
-    unsubscribe?.();
-    unsubscribe = null;
-  };
+  const cleanup = () => { if (closed) return; closed = true; clearInterval(heartbeat); unsubscribe?.(); unsubscribe = null; };
   response.once("close", cleanup);
   response.once("finish", cleanup);
 
@@ -312,15 +268,9 @@ function openGenerationSubscription(response: Response, generationId: string, co
     }
 
     if (context.userDb && persisted) {
-      const task = chatGenerationTaskCoordinator.start({
-        generationId,
-        clientRequestId: persisted.client_request_id,
-        userId: context.userId,
-        userDb: context.userDb,
-        generation: persisted,
-      });
-      if (!task.terminal && !task.runPromise && persisted.status === "running") {
-        registerGenerationExecutor(defaultGenerationExecutorForRoute as GenerationExecutorHandler);
+      const task = chatGenerationTaskCoordinator.start({ generationId, clientRequestId: persisted.client_request_id, userId: context.userId, userDb: context.userDb, generation: persisted });
+      const restartable = ["queued", "running", "generating", "persisting", "waiting_for_tool", "cancel_requested"].includes(String(persisted.status));
+      if (!task.terminal && !task.runPromise && restartable) {
         void runGeneration(generationId).catch((error) => {
           void chatGenerationTaskCoordinator.failed(generationId, String((error as any)?.code || "generation_restart_failed"));
         });
@@ -330,105 +280,29 @@ function openGenerationSubscription(response: Response, generationId: string, co
     const task = chatGenerationTaskCoordinator.get(generationId);
     emit(await chatGenerationTaskCoordinator.snapshot(generationId, persisted));
     if (task) {
-      unsubscribe = chatGenerationTaskCoordinator.subscribe(
-        generationId,
-        (event) => {
-          emit(event);
-          if (["generation_completed", "generation_failed", "generation_cancelled"].includes(String(event.type))) emitDoneAndClose();
-        },
-        Math.max(0, afterSequence),
-      );
+      unsubscribe = chatGenerationTaskCoordinator.subscribe(generationId, (event) => {
+        emit(event);
+        if (["generation_completed", "generation_failed", "generation_cancelled"].includes(String(event.type))) emitDoneAndClose();
+      }, Math.max(0, afterSequence));
       if (task.terminal) emitDoneAndClose();
       return;
     }
 
     if (["completed", "failed", "cancelled"].includes(String(persisted?.status))) {
       const terminalType = persisted.status === "completed" ? "generation_completed" : persisted.status === "cancelled" ? "generation_cancelled" : "generation_failed";
-      emit({
-        generation_id: generationId,
-        sequence: Number(persisted.last_event_sequence ?? 0) + 1,
-        type: terminalType,
-        status: persisted.status,
-        partial_text: persisted.partial_text ?? "",
-        error_code: persisted.error_code ?? null,
-      });
+      emit({ generation_id: generationId, sequence: Number(persisted.last_event_sequence ?? 0) + 1, type: terminalType, status: persisted.status, partial_text: persisted.partial_text ?? "", error_code: persisted.error_code ?? null });
       emitDoneAndClose();
     }
-  })().catch((error) => {
-    emit({ type: "error", code: String((error as any)?.code || "generation_subscription_failed"), error: "Generation subscription failed." });
-    emitDoneAndClose();
-  });
+  })().catch((error) => { emit({ type: "error", code: String((error as any)?.code || "generation_subscription_failed"), error: "Generation subscription failed." }); emitDoneAndClose(); });
 }
-
-let defaultGenerationExecutorForRoute: GenerationExecutorHandler | null = null;
 
 function installGenerationRoutes(app: any) {
   if (app.__sentiqGenerationRoutesInstalled) return;
   app.__sentiqGenerationRoutesInstalled = true;
-
-  app.get(EVENTS_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => {
-    try {
-      const context = await resolveOwnedGeneration(req, String(req.params.generationId || ""));
-      if (!context.generation && !context.task) return res.status(404).json({ error: "Generation not found.", code: "generation_not_found" });
-      const after = Number(req.headers["last-event-id"] ?? req.query.after ?? 0);
-      openGenerationSubscription(res, context.generationId, context, Number.isFinite(after) ? Math.max(0, after) : 0);
-    } catch {
-      res.status(500).json({ error: "Unable to subscribe to generation.", code: "generation_subscription_failed" });
-    }
-  });
-
-  app.get(STATUS_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => {
-    try {
-      const context = await resolveOwnedGeneration(req, String(req.params.generationId || ""));
-      if (context.task) {
-        res.json(await chatGenerationTaskCoordinator.snapshot(context.generationId, context.generation));
-        return;
-      }
-      if (!context.generation) return res.status(404).json({ error: "Generation not found.", code: "generation_not_found" });
-      res.json(context.generation);
-    } catch {
-      res.status(500).json({ error: "Unable to load generation status.", code: "generation_status_failed" });
-    }
-  });
-
-  app.post(CANCEL_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => {
-    try {
-      const generationId = String(req.params.generationId || "").trim();
-      if (!generationId) return res.status(400).json({ error: "generationId is required" });
-      const context = await resolveOwnedGeneration(req, generationId);
-      if (!context.generation && !context.task) return res.status(404).json({ error: "Generation not found.", code: "generation_not_found" });
-      if (context.userDb) {
-        const cancel = await requestChatGenerationCancel(context.userDb, context.userId, generationId);
-        if (cancel.error) throw cancel.error;
-      }
-      const requested = await chatGenerationTaskCoordinator.requestCancel(generationId);
-      res.status(202).json({ generation_id: generationId, status: requested ? "cancel_requested" : context.generation?.status ?? "cancel_requested" });
-    } catch {
-      res.status(500).json({ error: "Unable to cancel generation.", code: "generation_cancel_failed" });
-    }
-  });
-
-  app.post(CANCEL_ALL_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => {
-    const ids = Array.isArray(req.body?.generation_ids)
-      ? req.body.generation_ids.map((id: unknown) => String(id || "").trim()).filter(Boolean).slice(0, 32)
-      : [];
-    const results: Array<{ generation_id: string; status: string }> = [];
-    for (const generationId of ids) {
-      try {
-        const context = await resolveOwnedGeneration(req, generationId);
-        if (!context.generation && !context.task) {
-          results.push({ generation_id: generationId, status: "not_found" });
-          continue;
-        }
-        if (context.userDb) await requestChatGenerationCancel(context.userDb, context.userId, generationId);
-        const requested = await chatGenerationTaskCoordinator.requestCancel(generationId);
-        results.push({ generation_id: generationId, status: requested ? "cancel_requested" : context.generation?.status ?? "cancel_requested" });
-      } catch {
-        results.push({ generation_id: generationId, status: "unavailable" });
-      }
-    }
-    res.json({ results });
-  });
+  app.get(EVENTS_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => { try { const context = await resolveOwnedGeneration(req, String(req.params.generationId || "")); if (!context.generation && !context.task) return res.status(404).json({ error: "Generation not found.", code: "generation_not_found" }); const after = Number(req.headers["last-event-id"] ?? req.query.after ?? 0); openGenerationSubscription(res, context.generationId, context, Number.isFinite(after) ? Math.max(0, after) : 0); } catch { res.status(500).json({ error: "Unable to subscribe to generation.", code: "generation_subscription_failed" }); } });
+  app.get(STATUS_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => { try { const context = await resolveOwnedGeneration(req, String(req.params.generationId || "")); if (context.task) { res.json(await chatGenerationTaskCoordinator.snapshot(context.generationId, context.generation)); return; } if (!context.generation) return res.status(404).json({ error: "Generation not found.", code: "generation_not_found" }); res.json(context.generation); } catch { res.status(500).json({ error: "Unable to load generation status.", code: "generation_status_failed" }); } });
+  app.post(CANCEL_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => { try { const generationId = String(req.params.generationId || "").trim(); if (!generationId) return res.status(400).json({ error: "generationId is required" }); const context = await resolveOwnedGeneration(req, generationId); if (!context.generation && !context.task) return res.status(404).json({ error: "Generation not found.", code: "generation_not_found" }); if (context.userDb) { const cancel = await requestChatGenerationCancel(context.userDb, context.userId, generationId); if (cancel.error) throw cancel.error; } const requested = await chatGenerationTaskCoordinator.requestCancel(generationId); res.status(202).json({ generation_id: generationId, status: requested ? "cancel_requested" : context.generation?.status ?? "cancel_requested" }); } catch { res.status(500).json({ error: "Unable to cancel generation.", code: "generation_cancel_failed" }); } });
+  app.post(CANCEL_ALL_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => { const ids = Array.isArray(req.body?.generation_ids) ? req.body.generation_ids.map((id: unknown) => String(id || "").trim()).filter(Boolean).slice(0, 32) : []; const results: Array<{ generation_id: string; status: string }> = []; for (const generationId of ids) { try { const context = await resolveOwnedGeneration(req, generationId); if (!context.generation && !context.task) { results.push({ generation_id: generationId, status: "not_found" }); continue; } if (context.userDb) await requestChatGenerationCancel(context.userDb, context.userId, generationId); const requested = await chatGenerationTaskCoordinator.requestCancel(generationId); results.push({ generation_id: generationId, status: requested ? "cancel_requested" : context.generation?.status ?? "cancel_requested" }); } catch { results.push({ generation_id: generationId, status: "unavailable" }); } } res.json({ results }); });
 }
 
 function installCompatibilityRouteInterceptors() {
@@ -437,46 +311,29 @@ function installCompatibilityRouteInterceptors() {
   const application = (express as any).application;
   const originalPost = application.post;
   const originalListen = application.listen;
-
   application.post = function patchedPost(path: string, ...handlers: any[]) {
     if (path === STREAM_PATH || path === BUFFERED_PATH) {
       const legacyFinalHandler = handlers[handlers.length - 1] as GenerationExecutorHandler;
       const middleware = handlers.slice(0, -1);
-      defaultGenerationExecutorForRoute = legacyFinalHandler;
       registerGenerationExecutor(legacyFinalHandler);
-
       const replacement = async (req: Request, res: Response, next: NextFunction) => {
         try {
           const context = await prepareGeneration(req);
           if (!chatGenerationTaskCoordinator.has(context.generationId) && !["completed", "failed", "cancelled"].includes(context.status)) {
-            void startGeneration(legacyFinalHandler, context).catch(async (error) => {
-              await chatGenerationTaskCoordinator.failed(context.generationId, String((error as any)?.code || "generation_start_failed"));
-            });
+            void startGeneration(legacyFinalHandler, context).catch(async (error) => { await chatGenerationTaskCoordinator.failed(context.generationId, String((error as any)?.code || "generation_start_failed")); });
           }
           if (path === BUFFERED_PATH) {
-            res.status(202).json({
-              generation_id: context.generationId,
-              conversation_id: context.conversationId,
-              client_request_id: context.clientRequestId,
-              status: context.status === "completed" ? "completed" : "running",
-            });
+            res.status(202).json({ generation_id: context.generationId, conversation_id: context.conversationId, client_request_id: context.clientRequestId, status: context.status === "completed" ? "completed" : "running" });
             return;
           }
           const after = Number(req.headers["last-event-id"] ?? req.query?.after ?? 0);
           openGenerationSubscription(res, context.generationId, context, Number.isFinite(after) ? Math.max(0, after) : 0);
-        } catch (error) {
-          next(error);
-        }
+        } catch (error) { next(error); }
       };
       return originalPost.call(this, path, ...middleware, replacement);
     }
     return originalPost.call(this, path, ...handlers);
   };
-
-  application.listen = function patchedListen(this: any, ...args: any[]) {
-    installGenerationRoutes(this);
-    return originalListen.apply(this, args);
-  };
+  application.listen = function patchedListen(this: any, ...args: any[]) { installGenerationRoutes(this); return originalListen.apply(this, args); };
 }
-
 installCompatibilityRouteInterceptors();
