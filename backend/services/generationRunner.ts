@@ -1,0 +1,366 @@
+import { getOrAssignUserDatabase } from "../dbRouter";
+import { getChatGenerationById, markChatGenerationRunning, type ChatGenerationRow } from "./chatGenerationService";
+import {
+  chatGenerationTaskCoordinator,
+  type ChatGenerationExecution,
+  type ChatGenerationTaskContext,
+} from "./chatGenerationTaskCoordinator";
+
+export type GenerationExecutorHandler = (
+  request: GenerationExecutionRequest,
+  response: GenerationEventSink,
+  next: (error?: unknown) => void,
+) => unknown;
+
+export type GenerationRequestSnapshot = {
+  body: Record<string, unknown>;
+  headers?: Record<string, string>;
+  originalUrl?: string;
+  user?: Record<string, unknown> | null;
+};
+
+export interface GenerationExecutionRequest {
+  body: Record<string, unknown>;
+  headers: Record<string, string>;
+  originalUrl: string;
+  user: Record<string, unknown> | null;
+  complete: boolean;
+  __sentiqGenerationDetached: true;
+  once(event: "close" | "sentiq-generation-cancel", listener: () => void): this;
+  on(event: "close" | "sentiq-generation-cancel", listener: () => void): this;
+  emit(event: "close" | "sentiq-generation-cancel"): boolean;
+  get(name: string): string | undefined;
+}
+
+export class GenerationEventSink {
+  statusCode = 200;
+  headersSent = false;
+  writableEnded = false;
+  __sentiqGenerationDetached: true = true;
+
+  private readonly headers = new Map<string, string>();
+  private readonly listeners = new Map<string, Array<(...args: any[]) => void>>();
+  private buffer = "";
+  private publishChain = Promise.resolve();
+  private readonly onFrame: (frame: Record<string, unknown> | "[DONE]") => void;
+  private readonly onError: (error: unknown) => void;
+  private readonly generationId: string;
+
+  constructor(
+    generationId: string,
+    onFrame: (frame: Record<string, unknown> | "[DONE]") => void,
+    onError: (error: unknown) => void,
+  ) {
+    this.generationId = generationId;
+    this.onFrame = onFrame;
+    this.onError = onError;
+  }
+
+  setHeader(name: string, value: string | number | readonly string[]) {
+    this.headers.set(name.toLowerCase(), Array.isArray(value) ? value.join(", ") : String(value));
+    return this;
+  }
+
+  getHeader(name: string) { return this.headers.get(name.toLowerCase()); }
+  removeHeader(name: string) { this.headers.delete(name.toLowerCase()); return this; }
+  flushHeaders() { this.headersSent = true; }
+  status(code: number) { this.statusCode = code; return this; }
+
+  write(chunk: unknown) {
+    if (this.writableEnded) return false;
+    this.headersSent = true;
+    this.ingest(chunk);
+    return true;
+  }
+
+  end(chunk?: unknown) {
+    if (this.writableEnded) return this;
+    if (typeof chunk !== "undefined") this.ingest(chunk);
+    this.flushBufferedFrame();
+    this.writableEnded = true;
+    void this.publishChain.finally(() => {
+      this.emit("finish");
+      this.emit("close");
+    });
+    return this;
+  }
+
+  json(body: unknown) {
+    this.headersSent = true;
+    this.queueFrame({ type: "structured_response", response: body, generation_id: this.generationId });
+    return this.end();
+  }
+
+  send(body: unknown) { return this.json(body); }
+
+  on(event: string, listener: (...args: any[]) => void) {
+    const list = this.listeners.get(event) ?? [];
+    list.push(listener);
+    this.listeners.set(event, list);
+    return this;
+  }
+
+  once(event: string, listener: (...args: any[]) => void) {
+    const onceListener = (...args: any[]) => {
+      this.removeListener(event, onceListener);
+      listener(...args);
+    };
+    return this.on(event, onceListener);
+  }
+
+  removeListener(event: string, listener: (...args: any[]) => void) {
+    const list = this.listeners.get(event) ?? [];
+    this.listeners.set(event, list.filter((candidate) => candidate !== listener));
+    return this;
+  }
+
+  emit(event: string, ...args: any[]) {
+    for (const listener of this.listeners.get(event) ?? []) {
+      try { listener(...args); } catch (error) { this.onError(error); }
+    }
+    return true;
+  }
+
+  async flush(): Promise<void> {
+    this.flushBufferedFrame();
+    await this.publishChain;
+  }
+
+  private ingest(chunk: unknown): void {
+    this.buffer += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk ?? "");
+    while (true) {
+      const separatorIndex = this.buffer.indexOf("\n\n");
+      if (separatorIndex < 0) break;
+      const frameText = this.buffer.slice(0, separatorIndex);
+      this.buffer = this.buffer.slice(separatorIndex + 2);
+      this.parseFrame(frameText);
+    }
+  }
+
+  private flushBufferedFrame(): void {
+    const frameText = this.buffer.trim();
+    this.buffer = "";
+    if (frameText) this.parseFrame(frameText);
+  }
+
+  private parseFrame(frameText: string): void {
+    const dataLine = frameText
+      .split("\n")
+      .find((line) => line.startsWith("data:"));
+    if (!dataLine) return;
+    const payload = dataLine.slice(5).trim();
+    if (!payload) return;
+    if (payload === "[DONE]") {
+      this.publishChain = this.publishChain.then(() => {
+        this.onFrame("[DONE]");
+      });
+      return;
+    }
+    try {
+      const parsed = JSON.parse(payload);
+      if (!parsed || typeof parsed !== "object") return;
+      this.queueFrame(parsed as Record<string, unknown>);
+    } catch {
+      // Ignore malformed transport frames; the underlying handler owns the
+      // authoritative model error path.
+    }
+  }
+
+  private queueFrame(frame: Record<string, unknown>): void {
+    this.publishChain = this.publishChain.then(() => this.onFrame(frame)).catch((error) => {
+      this.onError(error);
+    });
+  }
+}
+
+type RegisteredExecution = {
+  handler: GenerationExecutorHandler;
+  snapshot: GenerationRequestSnapshot;
+};
+
+const registeredExecutions = new Map<string, RegisteredExecution>();
+let defaultGenerationExecutor: GenerationExecutorHandler | null = null;
+
+export function registerGenerationExecutor(handler: GenerationExecutorHandler): void {
+  defaultGenerationExecutor = handler;
+}
+
+export function registerGenerationExecution(
+  generationId: string,
+  execution: RegisteredExecution,
+): void {
+  registeredExecutions.set(generationId, execution);
+}
+
+export function unregisterGenerationExecution(generationId: string): void {
+  registeredExecutions.delete(generationId);
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function buildExecutionRequest(snapshot: GenerationRequestSnapshot, generation: ChatGenerationRow): GenerationExecutionRequest {
+  const listeners = new Map<string, Array<() => void>>();
+  const body = {
+    ...toRecord(snapshot.body),
+    conversationId: generation.conversation_id,
+    conversation_id: generation.conversation_id,
+    clientRequestId: generation.client_request_id ?? snapshot.body.clientRequestId,
+    client_request_id: generation.client_request_id ?? snapshot.body.client_request_id,
+    generationId: generation.id,
+    generation_id: generation.id,
+    executionMode: generation.execution_mode ?? snapshot.body.executionMode ?? "fast",
+    execution_mode: generation.execution_mode ?? snapshot.body.execution_mode ?? "fast",
+  };
+  const headers = { ...(snapshot.headers ?? {}) };
+  const request: GenerationExecutionRequest = {
+    body,
+    headers,
+    originalUrl: snapshot.originalUrl || "/api/chat",
+    user: snapshot.user ?? { sub: generation.user_id, isGuest: false },
+    complete: true,
+    __sentiqGenerationDetached: true,
+    once(event, listener) {
+      const list = listeners.get(event) ?? [];
+      list.push(listener);
+      listeners.set(event, list);
+      return request;
+    },
+    on(event, listener) {
+      const list = listeners.get(event) ?? [];
+      list.push(listener);
+      listeners.set(event, list);
+      return request;
+    },
+    emit(event) {
+      for (const listener of listeners.get(event) ?? []) {
+        try { listener(); } catch { /* execution listeners are best-effort */ }
+      }
+      return true;
+    },
+    get(name) {
+      const normalized = name.toLowerCase();
+      return Object.entries(headers).find(([key]) => key.toLowerCase() === normalized)?.[1];
+    },
+  };
+  return request;
+}
+
+async function loadGeneration(generationId: string): Promise<{ generation: ChatGenerationRow; userDb: any }> {
+  const task = chatGenerationTaskCoordinator.get(generationId);
+  if (task?.userDb) {
+    const result = await getChatGenerationById(task.userDb, task.userId, generationId);
+    if (result.error) throw result.error;
+    if (!result.data) throw Object.assign(new Error("Generation not found"), { code: "generation_not_found" });
+    return { generation: result.data, userDb: task.userDb };
+  }
+
+  throw Object.assign(new Error("Generation execution context is unavailable"), {
+    code: "generation_execution_context_unavailable",
+  });
+}
+
+export async function runGeneration(generationId: string): Promise<void> {
+  const existingTask = chatGenerationTaskCoordinator.get(generationId);
+  if (existingTask?.terminal) return;
+  if (existingTask?.runPromise) return existingTask.runPromise;
+
+  const execution = registeredExecutions.get(generationId);
+  const handler = execution?.handler ?? defaultGenerationExecutor;
+  if (!handler) throw Object.assign(new Error("No generation executor is registered"), { code: "generation_executor_unavailable" });
+
+  const runPromise = (async () => {
+    let userDb: any = existingTask?.userDb ?? null;
+    let generation: ChatGenerationRow | null = null;
+
+    if (existingTask?.generation) {
+      generation = existingTask.generation as ChatGenerationRow;
+    } else if (existingTask?.userDb) {
+      const loaded = await getChatGenerationById(existingTask.userDb, existingTask.userId, generationId);
+      if (loaded.error) throw loaded.error;
+      generation = loaded.data;
+      userDb = existingTask.userDb;
+    }
+
+    if (!generation) {
+      const loaded = await loadGeneration(generationId);
+      generation = loaded.generation;
+      userDb = loaded.userDb;
+    }
+    if (!generation) throw Object.assign(new Error("Generation not found"), { code: "generation_not_found" });
+    if (["completed", "failed", "cancelled"].includes(generation.status)) return;
+
+    const requestSnapshot = execution?.snapshot;
+    if (!requestSnapshot) {
+      throw Object.assign(new Error("Generation request snapshot is unavailable"), { code: "generation_snapshot_unavailable" });
+    }
+
+    const taskContext: ChatGenerationTaskContext = {
+      generationId: generation.id,
+      clientRequestId: generation.client_request_id,
+      userId: generation.user_id,
+      userDb,
+      generation,
+    };
+    const task = chatGenerationTaskCoordinator.start(taskContext);
+    const request = buildExecutionRequest(requestSnapshot, generation);
+    let runnerError: unknown = null;
+
+    const sink = new GenerationEventSink(
+      generation.id,
+      (frame) => {
+        if (frame === "[DONE]") return;
+        void chatGenerationTaskCoordinator.publish(generation!.id, frame);
+      },
+      (error) => { runnerError = runnerError ?? error; },
+    );
+
+    const executionHandle: ChatGenerationExecution = {
+      cancel: () => request.emit("sentiq-generation-cancel"),
+    };
+    task.execution = executionHandle;
+    task.runPromise = (async () => {
+      try {
+        await markChatGenerationRunning(userDb, generation!.user_id, generation!.id).catch(() => undefined);
+        task.status = "running";
+        const handlerResult = handler(request, sink, (error) => {
+          if (error) runnerError = error;
+        });
+        await Promise.resolve(handlerResult);
+        await sink.flush();
+
+        if (task.explicitCancelRequested) {
+          await chatGenerationTaskCoordinator.cancelled(generation!.id);
+        } else if (runnerError) {
+          await chatGenerationTaskCoordinator.failed(
+            generation!.id,
+            String((runnerError as any)?.code || (runnerError as any)?.name || "generation_failed"),
+          );
+        } else {
+          await chatGenerationTaskCoordinator.complete(generation!.id);
+        }
+      } catch (error) {
+        runnerError = error;
+        if (task.explicitCancelRequested) {
+          await chatGenerationTaskCoordinator.cancelled(generation!.id);
+        } else {
+          await chatGenerationTaskCoordinator.failed(
+            generation!.id,
+            String((error as any)?.code || (error as any)?.name || "generation_failed"),
+          );
+        }
+      } finally {
+        task.execution = undefined;
+        task.runPromise = undefined;
+        unregisterGenerationExecution(generation!.id);
+      }
+    })();
+    await task.runPromise;
+  })();
+
+  if (existingTask) existingTask.runPromise = runPromise;
+  return runPromise;
+}
