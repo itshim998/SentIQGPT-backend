@@ -29,26 +29,17 @@
   }
 
   .conversation-attention-marker {
-    max-width: 64px;
-    padding-inline: 6px;
+    margin-left: 4px;
   }
 }
 
 @media (max-width: 420px) {
   .conversation-attention-marker {
-    width: 22px;
-    min-width: 22px;
-    padding: 0;
+    margin-left: 3px;
   }
 
   .conversation-attention-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
+    display: none;
   }
 
   .sentiq-attention-status {
