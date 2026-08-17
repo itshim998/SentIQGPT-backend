@@ -104,12 +104,16 @@ begin
         or s.last_heartbeat_at < now() - make_interval(secs => greatest(15, p_lease_seconds))
       )
     returning s.id, s.user_id, s.anonymous_id
+  ),
+  requested_generations as (
+    update public.chat_generations g
+    set status = 'cancel_requested'
+    where g.generation_session_id in (select id from closed_sessions)
+      and g.status in ('queued','running','waiting_for_tool','generating','persisting','recoverable')
+    returning g.id
   )
-  update public.chat_generations g
-  set status = 'cancel_requested'
-  where g.generation_session_id in (select id from closed_sessions)
-    and g.status in ('queued','running','waiting_for_tool','generating','persisting','recoverable')
-  returning g.generation_session_id, g.user_id, null::text;
+  select cs.id, cs.user_id, cs.anonymous_id
+  from closed_sessions cs;
 end;
 $$;
 
