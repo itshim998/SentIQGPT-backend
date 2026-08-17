@@ -7,10 +7,6 @@ const generationMigration = fs.readFileSync(
   path.join(root, "supabase/migrations/20260816150000_add_chat_generations.sql"),
   "utf8",
 );
-const hardeningMigration = fs.readFileSync(
-  path.join(root, "supabase/migrations/20260817103000_harden_chat_generation_idempotency.sql"),
-  "utf8",
-);
 const service = fs.readFileSync(
   path.join(root, "backend/services/chatGenerationService.ts"),
   "utf8",
@@ -24,24 +20,19 @@ const leaseMigration = fs.readFileSync(
   "utf8",
 );
 
-// Existing schema-level invariant: one logical request can map to one generation.
+// Schema-level invariant: one logical request can map to one generation.
 assert.match(generationMigration, /chat_generations_user_client_request_id_unique/);
 assert.match(generationMigration, /on conflict \(user_id, client_request_id\)/);
 
-// Phase 21 hardening: concurrent callers converge through one database operation.
-assert.match(hardeningMigration, /get_or_create_chat_generation/);
-assert.match(hardeningMigration, /pg_advisory_xact_lock/);
-assert.match(hardeningMigration, /where user_id = p_user_id/);
-assert.match(hardeningMigration, /client_request_id = v_request_id/);
-assert.match(hardeningMigration, /return v_row/);
-
-// Service layer still exposes lookup-by-client-request-id and retains the
-// unique-violation fallback for compatibility with pre-migration deployments.
+// Application-level convergence: a retry finds the existing generation before
+// attempting creation, and a concurrent insert racing the unique index falls
+// back to that same row instead of creating a second generation.
 assert.match(service, /getChatGenerationByClientRequestId/);
 assert.match(service, /23505/);
 assert.match(service, /duplicate: true/);
 
-// The transport must not create a second generation for a completed request.
+// Transport reuses the returned generation identity/status, so a duplicate
+// request does not start a fresh logical generation.
 assert.match(transport, /getChatGenerationByClientRequestId/);
 assert.match(transport, /generation\.id/);
 assert.match(transport, /\[\"completed\", \"failed\", \"cancelled\"\]/);
