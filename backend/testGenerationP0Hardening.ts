@@ -6,25 +6,30 @@ import { chatGenerationTaskCoordinator } from "./services/chatGenerationTaskCoor
 const root = path.resolve(__dirname, "..");
 const read = (relative: string) => fs.readFileSync(path.join(root, relative), "utf8");
 
-async function testEventDeliveryOrderAndLeaseFence() {
+async function testEventDeliveryOrderAndDurability() {
   const notifications: number[] = [];
   const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const userDb = {
     rpc: async (name: string, args: Record<string, unknown>) => {
       rpcCalls.push({ name, args });
-      return {
-        data: [{
-          id: "00000000-0000-4000-8000-000000000001",
-          conversation_id: "00000000-0000-4000-8000-000000000002",
-          user_id: "00000000-0000-4000-8000-000000000003",
-          client_request_id: "p0-test",
-          generation_session_id: null,
-          status: "running",
-          execution_lease_id: "lease-p0",
-        }],
-        error: null,
-      };
+      if (name === "append_chat_generation_event_fenced") {
+        return { data: [{ generation_id: args.p_generation_id, sequence: args.p_sequence, event_payload: args.p_event_payload }], error: null };
+      }
+      return { data: null, error: null };
     },
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            gt: () => ({
+              order: () => ({
+                limit: async () => ({ data: [], error: null }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    }),
   };
 
   const task = chatGenerationTaskCoordinator.start({
@@ -69,11 +74,11 @@ async function testEventDeliveryOrderAndLeaseFence() {
   }
 
   unsubscribe();
-  assert.deepEqual(notifications, Array.from({ length: notifications.length }, (_, index) => index + 1));
-  const checkpoint = rpcCalls.find((call) => call.name === "checkpoint_chat_generation_fenced");
-  assert.ok(checkpoint, "checkpoint must use the fenced RPC");
-  assert.equal(checkpoint?.args.p_lease_id, "lease-p0");
-  assert.equal(checkpoint?.args.p_last_event_sequence, 76);
+  assert.deepEqual(notifications, Array.from({ length: 75 }, (_, index) => index + 1));
+  const persisted = rpcCalls.filter((call) => call.name === "append_chat_generation_event_fenced");
+  assert.equal(persisted.length, 75, "every emitted event must be durably persisted");
+  assert.equal(persisted[persisted.length - 1]?.args.p_sequence, 75, "durable cursor must reach the final emitted event");
+  assert.equal(persisted[0]?.args.p_sequence, 1, "durable cursor must begin at sequence 1");
 }
 
 function testSourceContracts() {
@@ -82,25 +87,28 @@ function testSourceContracts() {
   const session = read("frontend/scripts/generation-session.js");
   const runner = read("backend/services/generationRunner.ts");
   const coordinator = read("backend/services/chatGenerationTaskCoordinator.ts");
-  const migration = read("supabase/migrations/20260817113000_harden_generation_p0_controls.sql");
+  const eventsService = read("backend/services/chatGenerationEventService.ts");
+  const migration = read("supabase/migrations/20260817123000_durable_generation_event_log.sql");
 
   assert.ok(lifecycle.includes("handlePageTeardown"), "legacy page teardown handler should remain visible until fully retired");
   assert.ok(transport.includes("bulk_cancellation_requires_explicit_intent"), "bulk cancellation must require explicit intent");
+  assert.ok(transport.includes("after > 0 is replay-only"), "reconnect protocol must not mix snapshot and history");
   assert.ok(session.includes('window.addEventListener("pagehide"'), "generation session must remain the lifecycle owner");
   assert.ok(runner.includes("CONTROL_POLL_MS"), "generation runner must poll durable control state");
   assert.ok(runner.includes("executionOwnershipLost"), "generation runner must abort after lease ownership loss");
   assert.ok(runner.includes("renewChatGenerationExecutionLease"), "lease renewals must be checked");
-  assert.ok(coordinator.includes("executionLeaseId"), "task state must retain the execution lease id");
-  assert.ok(coordinator.includes("checkpointChatGenerationFenced"), "checkpoint writes must be lease fenced");
-  assert.ok(coordinator.includes("finalizeChatGenerationFenced"), "terminal writes must be lease fenced");
-  assert.ok(migration.includes("checkpoint_chat_generation_fenced"), "database must expose fenced checkpoint mutation");
-  assert.ok(migration.includes("finalize_chat_generation_fenced"), "database must expose fenced terminal mutation");
+  assert.ok(coordinator.includes("deliveryChain"), "subscriber delivery must use a serialized queue");
+  assert.ok(coordinator.includes("DURABLE_EVENT_POLL_MS"), "subscriptions must poll durable events across replicas");
+  assert.ok(coordinator.includes("appendChatGenerationEventFenced"), "emitted events must use the fenced durable append");
+  assert.ok(eventsService.includes("listChatGenerationEvents"), "replay must read the durable event log");
+  assert.ok(migration.includes("append_chat_generation_event_fenced"), "database must atomically append and advance the durable cursor");
+  assert.ok(migration.includes("primary key (generation_id, sequence)"), "event sequence must be unique per generation");
   assert.ok(migration.includes("status = 'cancel_requested'"), "session expiry must emit a durable cancellation state");
 }
 
 async function main() {
   testSourceContracts();
-  await testEventDeliveryOrderAndLeaseFence();
+  await testEventDeliveryOrderAndDurability();
   console.log("Generation P0 hardening tests passed.");
 }
 
