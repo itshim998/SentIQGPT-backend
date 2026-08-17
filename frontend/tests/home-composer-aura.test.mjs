@@ -84,6 +84,11 @@ for (const token of [
   assert.ok(visibilitySource.includes(token), `Visible home composer aura missing ${token}`);
 }
 
+const tokensSource = await readFile(
+  new URL("../styles/modules/01-tokens-base.css", import.meta.url),
+  "utf8",
+);
+
 for (const token of [
   "--sentiq-home-top-space: minmax(72px, 0.82fr)",
   "--sentiq-home-bottom-space: minmax(64px, 1fr)",
@@ -97,10 +102,17 @@ for (const token of [
   "z-index: 0",
   "ellipse at 50% 50%",
   "transform: translate3d(-50%, -50%, 0)",
+  ".main-content.is-empty-chat .main-content-glow::before",
+  "top: 58%",
   "opacity: 0.82",
 ]) {
   assert.ok(compositionSource.includes(token), `Gemini-style centered composer aura missing ${token}`);
 }
+
+assert.ok(
+  tokensSource.includes("ellipse at 50% 58%"),
+  "Canvas home glow token must be centered at 58% behind the composer",
+);
 
 assert.equal(
   compositionSource.includes("top: calc(50% + 92px)"),

@@ -174,7 +174,7 @@ body::after {
 }
 
 .main-content.is-empty-chat .main-content-glow::before {
-  top: 29%;
+  top: 58%;
   width: clamp(620px, 72vw, 1220px);
   height: clamp(500px, 58vw, 900px);
   transform: translate(-50%, -50%);
@@ -242,7 +242,7 @@ body::after {
   }
 
   .main-content.is-empty-chat .main-content-glow::before {
-    top: 25%;
+    top: 58%;
     width: 132vw;
     height: min(86vh, 820px);
     transform: translate(-50%, -50%);

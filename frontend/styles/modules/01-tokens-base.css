@@ -89,7 +89,7 @@ html:root {
   --sentiq-canvas-ambient-blend: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-primary) 100%);
   --sentiq-canvas-open: linear-gradient(180deg, rgba(255,255,255,0.012), transparent 30%), rgba(5,7,12,0.52);
   --sentiq-canvas-vignette: linear-gradient(90deg, rgba(0,0,0,0.08), transparent 18%, transparent 82%, rgba(0,0,0,0.1));
-  --sentiq-canvas-home-glow: radial-gradient(ellipse at 50% 28%, rgba(139,92,246,0.11), rgba(139,92,246,0.036) 34%, transparent 66%);
+  --sentiq-canvas-home-glow: radial-gradient(ellipse at 50% 58%, rgba(139,92,246,0.11), rgba(139,92,246,0.036) 34%, transparent 66%);
   --sentiq-canvas-depth-wash: linear-gradient(180deg, rgba(255,255,255,0.012), transparent 40%, rgba(4,6,11,0.14) 100%);
   --sentiq-canvas-edge-fade: radial-gradient(ellipse at 50% 62%, transparent 0%, rgba(0,0,0,0.22) 100%);
 

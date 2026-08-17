@@ -67,6 +67,10 @@
   pointer-events: none;
 }
 
+.main-content.is-empty-chat .main-content-glow::before {
+  top: 58%;
+}
+
 .main-content.is-empty-chat[data-home-composer-aura="settled"]
   > .chat-input-wrapper::after {
   opacity: 0.82;
