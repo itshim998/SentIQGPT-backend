@@ -1,7 +1,7 @@
 -- RUN ON: Database 2, 3, 4 (Data shards)
 -- Prevent malformed LLM title envelopes such as ```json, ```json {, and
 -- incomplete JSON objects from ever being persisted to conversation history.
--- Also repairs existing malformed titles from the affected title-generation path.
+-- Also repairs malformed titles already persisted by the affected title path.
 
 create or replace function public.normalize_conversation_title_input(
   p_conversation_id uuid,
@@ -24,7 +24,7 @@ begin
 
   -- First accept valid JSON, including markdown-fenced JSON.
   begin
-    candidate := regexp_replace(raw, '^```(?:json)?\\s*|\\s*```$', '', 'gi');
+    candidate := regexp_replace(raw, '^```(?:json)?[[:space:]]*|[[:space:]]*```$', '', 'gi');
     parsed := candidate::jsonb;
     if jsonb_typeof(parsed) = 'object' then
       candidate := parsed ->> 'title';
@@ -36,16 +36,17 @@ begin
   end;
 
   -- Then tolerate incomplete/prose-wrapped JSON when a title field is still
-  -- recoverable. This deliberately does not accept the raw JSON shell itself.
+  -- recoverable. Valid JSON handles escaped quotes above; this fallback only
+  -- needs the common title form used by the generation prompt.
   if nullif(btrim(candidate), '') is null then
     candidate := (regexp_match(
       raw,
-      '"title"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"'
+      '"title"[[:space:]]*:[[:space:]]*"([^"]*)"'
     ))[1];
   end if;
 
-  candidate := btrim(regexp_replace(coalesce(candidate, ''), '\\s+', ' ', 'g'));
-  candidate := regexp_replace(candidate, '^```(?:json)?\\s*|\\s*```$', '', 'gi');
+  candidate := btrim(regexp_replace(coalesce(candidate, ''), '[[:space:]]+', ' ', 'g'));
+  candidate := regexp_replace(candidate, '^```(?:json)?[[:space:]]*|[[:space:]]*```$', '', 'gi');
   candidate := btrim(candidate);
 
   -- Reject provider scaffolding. Legitimate titles may contain words such as
@@ -53,8 +54,8 @@ begin
   if candidate <> ''
      and length(candidate) between 3 and 120
      and candidate !~ '^```'
-     and candidate !~ '^\\s*[\\{\\[]'
-     and candidate !~ '\\b"title"\\s*:'
+     and candidate !~ '^[[:space:]]*[\{\[]'
+     and candidate !~ '"title"[[:space:]]*:'
   then
     return left(candidate, 120);
   end if;
@@ -69,7 +70,7 @@ begin
   order by m.created_at asc, m.id asc
   limit 1;
 
-  first_user_message := btrim(regexp_replace(coalesce(first_user_message, ''), '\\s+', ' ', 'g'));
+  first_user_message := btrim(regexp_replace(coalesce(first_user_message, ''), '[[:space:]]+', ' ', 'g'));
   if first_user_message <> '' then
     return left(first_user_message, 120);
   end if;
@@ -103,6 +104,6 @@ set title = public.normalize_conversation_title_input(c.id, c.title)
 where c.title is not null
   and (
     btrim(c.title) ~ '^```'
-    or btrim(c.title) ~ '^\\s*[\\{\\[]'
-    or btrim(c.title) ~ '"title"\\s*:'
+    or btrim(c.title) ~ '^[[:space:]]*[\{\[]'
+    or btrim(c.title) ~ '"title"[[:space:]]*:'
   );
