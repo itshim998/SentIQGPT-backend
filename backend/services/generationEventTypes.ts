@@ -23,7 +23,6 @@ const CANONICAL_ALIASES: Record<string, GenerationEventType> = {
   tool_result: "tool_result",
   tool_error: "tool_result",
   token: "token",
-  file_token: "token",
   structured_response: "structured_response",
   generation_checkpoint: "generation_checkpoint",
   generation_completed: "generation_completed",
@@ -40,7 +39,7 @@ export type CanonicalGenerationEvent = {
   generation_id: string;
   conversation_id: string | null;
   sequence: number;
-  type: GenerationEventType;
+  type: GenerationEventType | string;
   original_type?: string;
   [key: string]: unknown;
 };
