@@ -46,7 +46,7 @@ export class GenerationEventSink {
   private readonly onError: (error: unknown) => void;
   private readonly generationId: string;
 
-  constructor(generationId: string, onFrame: (frame: Record<string, unknown> | "[DONE") => Promise<void> | void, onError: (error: unknown) => void) {
+  constructor(generationId: string, onFrame: (frame: Record<string, unknown> | "[DONE]") => Promise<void> | void, onError: (error: unknown) => void) {
     this.generationId = generationId;
     this.onFrame = onFrame;
     this.onError = onError;
