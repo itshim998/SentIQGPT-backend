@@ -27,8 +27,6 @@ type Task = ChatGenerationTaskContext & {
   status: "queued" | "running" | "completed" | "failed" | "cancel_requested" | "cancelled";
   terminal: boolean;
   explicitCancelRequested: boolean;
-  lastCheckpointAt: number;
-  lastCheckpointTokens: number;
   lastErrorCode: string | null;
   executionLeaseId: string | null;
   execution?: ChatGenerationExecution;
@@ -40,8 +38,6 @@ type Task = ChatGenerationTaskContext & {
 };
 
 const EVENT_BUFFER_LIMIT = 1000;
-const CHECKPOINT_INTERVAL_MS = 750;
-const CHECKPOINT_TOKEN_INTERVAL = 75;
 const TERMINAL_RETENTION_MS = 10 * 60 * 1000;
 const SESSION_LEASE_SECONDS = 45;
 const SESSION_LEASE_SWEEP_MS = 15000;
@@ -78,7 +74,6 @@ class ChatGenerationTaskCoordinator {
       status: persistedStatus === "cancel_requested" ? "cancel_requested" : ["completed","failed","cancelled"].includes(persistedStatus) ? persistedStatus as Task["status"] : "queued",
       terminal: ["completed","failed","cancelled"].includes(persistedStatus),
       explicitCancelRequested: persistedStatus === "cancel_requested",
-      lastCheckpointAt: Date.now(), lastCheckpointTokens: Number(context.generation?.tokens_generated ?? 0),
       lastErrorCode: context.generation?.error_code ?? null,
       executionLeaseId: context.generation?.execution_lease_id ?? null,
       deliveryChain: Promise.resolve(),
@@ -96,7 +91,7 @@ class ChatGenerationTaskCoordinator {
       generation_id: task.generationId,
       conversation_id: task.conversationId ?? task.generation?.conversation_id ?? null,
       sequence: explicitSequence ?? ++task.sequence,
-      type: canonicalType ?? (originalType || "generation_checkpoint") as ChatGenerationEvent["type"],
+      type: canonicalType ?? (originalType || "generation_event") as ChatGenerationEvent["type"],
       ...(canonicalType && canonicalType !== originalType ? { original_type: originalType } : {}),
     } as ChatGenerationEvent;
     task.sequence = Math.max(task.sequence, Number(event.sequence));
@@ -119,17 +114,17 @@ class ChatGenerationTaskCoordinator {
     }));
   }
 
-  private async persistEvent(task: Task, event: ChatGenerationEvent): Promise<void> {
+  private async persistEvent(task: Task, event: ChatGenerationEvent, state?: { partialText?: string; tokensGenerated?: number; status?: string; errorCode?: string | null }): Promise<void> {
     if (!task.userDb || !task.executionLeaseId) return;
     const result = await appendChatGenerationEventFenced(task.userDb, {
       userId: task.userId,
       generationId: task.generationId,
       leaseId: task.executionLeaseId,
       event,
-      partialText: task.partialText,
-      tokensGenerated: task.tokensGenerated,
-      status: task.status,
-      errorCode: task.lastErrorCode,
+      partialText: state?.partialText ?? task.partialText,
+      tokensGenerated: state?.tokensGenerated ?? task.tokensGenerated,
+      status: state?.status ?? task.status,
+      errorCode: state?.errorCode ?? task.lastErrorCode,
     });
     if (result.error || !result.data) throw result.error || new Error("Generation event persistence failed");
   }
@@ -145,9 +140,7 @@ class ChatGenerationTaskCoordinator {
     if (!task.userDb || task.pollTimer || task.terminal) return;
     task.pollTimer = setInterval(() => {
       if (!task.subscribers.size || task.terminal) return;
-      void this.enqueue(task, () => this.pollDurableEvents(task)).catch((error) => {
-        console.warn(`[GenerationEvents] durable poll failed generation=${task.generationId}: ${error instanceof Error ? error.message : String(error)}`);
-      });
+      void this.enqueue(task, () => this.pollDurableEvents(task)).catch((error) => console.warn(`[GenerationEvents] durable poll failed generation=${task.generationId}: ${error instanceof Error ? error.message : String(error)}`));
     }, DURABLE_EVENT_POLL_MS);
     task.pollTimer.unref?.();
   }
@@ -160,9 +153,9 @@ class ChatGenerationTaskCoordinator {
     try {
       const events = await this.importDurableEvents(task, task.sequence);
       for (const event of events) {
-        if (Number(event.sequence) <= task.sequence && task.events.some((candidate) => candidate.sequence === event.sequence)) continue;
         this.appendEvent(task, event, Number(event.sequence));
-        if (event.type === "token" && typeof event.text === "string") task.partialText = task.partialText + event.text;
+        if (typeof event.partial_text === "string") task.partialText = event.partial_text;
+        if (Number.isFinite(Number(event.tokens_generated))) task.tokensGenerated = Number(event.tokens_generated);
         if (typeof event.status === "string") task.status = event.status as Task["status"];
         if (typeof event.error_code === "string") task.lastErrorCode = event.error_code;
         await this.notify(task, event);
@@ -178,21 +171,8 @@ class ChatGenerationTaskCoordinator {
     else task.status = task.status === "queued" ? "running" : task.status;
 
     const event = this.appendEvent(task, payload);
-    const checkpointNeeded = Boolean(task.userDb && task.executionLeaseId && (Date.now() - task.lastCheckpointAt >= CHECKPOINT_INTERVAL_MS || task.tokensGenerated - task.lastCheckpointTokens >= CHECKPOINT_TOKEN_INTERVAL));
-    if (checkpointNeeded) {
-      task.lastCheckpointAt = Date.now();
-      task.lastCheckpointTokens = task.tokensGenerated;
-    }
-
-    await this.enqueue(task, async () => {
-      await this.persistEvent(task, event);
-      await this.notify(task, event);
-      if (checkpointNeeded) {
-        const checkpoint = this.appendEvent(task, { type: "generation_checkpoint", status: task.status, partial_text: task.partialText, tokens_generated: task.tokensGenerated, last_event_sequence: event.sequence });
-        await this.persistEvent(task, checkpoint);
-        await this.notify(task, checkpoint);
-      }
-    });
+    const eventState = { partialText: task.partialText, tokensGenerated: task.tokensGenerated, status: task.status, errorCode: task.lastErrorCode };
+    await this.enqueue(task, async () => { await this.persistEvent(task, event, eventState); await this.notify(task, event); });
     return event;
   }
 
@@ -219,15 +199,9 @@ class ChatGenerationTaskCoordinator {
         state.nextSequence = Number(event.sequence);
       }
       const local = task.events.filter((event) => Number(event.sequence) > state.nextSequence).sort((left, right) => left.sequence - right.sequence);
-      for (const event of local) {
-        await state.callback(event);
-        state.nextSequence = Number(event.sequence);
-      }
+      for (const event of local) { await state.callback(event); state.nextSequence = Number(event.sequence); }
     }).catch((error) => console.warn(`[GenerationEvents] replay failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`));
-    return () => {
-      task.subscribers.delete(state);
-      if (!task.subscribers.size) this.stopPolling(task);
-    };
+    return () => { task.subscribers.delete(state); if (!task.subscribers.size) this.stopPolling(task); };
   }
 
   async complete(generationId: string): Promise<void> {
@@ -235,11 +209,10 @@ class ChatGenerationTaskCoordinator {
     if (task.explicitCancelRequested) return this.cancelled(generationId);
     task.status = "completed";
     const event = this.appendEvent(task, { type: "generation_completed", status: "completed", partial_text: task.partialText });
+    const eventState = { partialText: task.partialText, tokensGenerated: task.tokensGenerated, status: "completed", errorCode: task.lastErrorCode };
     task.terminal = true;
-    await this.enqueue(task, async () => { await this.persistEvent(task, event); await this.notify(task, event); });
-    this.stopPolling(task);
-    task.subscribers.clear();
-    this.scheduleCleanup(task);
+    await this.enqueue(task, async () => { await this.persistEvent(task, event, eventState); await this.notify(task, event); });
+    this.stopPolling(task); task.subscribers.clear(); this.scheduleCleanup(task);
   }
 
   async failed(generationId: string, errorCode = "generation_failed"): Promise<void> {
@@ -247,27 +220,21 @@ class ChatGenerationTaskCoordinator {
     if (task.explicitCancelRequested) return this.cancelled(generationId);
     task.status = "failed"; task.lastErrorCode = errorCode || "generation_failed";
     const event = this.appendEvent(task, { type: "generation_failed", status: "failed", partial_text: task.partialText, error_code: task.lastErrorCode });
+    const eventState = { partialText: task.partialText, tokensGenerated: task.tokensGenerated, status: "failed", errorCode: task.lastErrorCode };
     task.terminal = true;
-    await this.enqueue(task, async () => { await this.persistEvent(task, event); await this.notify(task, event); });
-    this.stopPolling(task);
-    task.subscribers.clear();
-    this.scheduleCleanup(task);
+    await this.enqueue(task, async () => { await this.persistEvent(task, event, eventState); await this.notify(task, event); });
+    this.stopPolling(task); task.subscribers.clear(); this.scheduleCleanup(task);
   }
 
   async cancelled(generationId: string): Promise<void> {
     const task = this.tasks.get(generationId); if (!task || task.terminal) return;
     task.status = "cancelled"; task.explicitCancelRequested = true;
     const event = this.appendEvent(task, { type: "generation_cancelled", status: "cancelled", partial_text: task.partialText });
+    const eventState = { partialText: task.partialText, tokensGenerated: task.tokensGenerated, status: "cancelled", errorCode: task.lastErrorCode };
     task.terminal = true;
-    if (task.userDb && task.executionLeaseId) {
-      await this.enqueue(task, async () => { await this.persistEvent(task, event); await this.notify(task, event); });
-    } else {
-      await this.enqueue(task, async () => { await this.notify(task, event); });
-      if (task.userDb) await cancelChatGeneration(task.userDb, task.userId, task.generationId).catch(() => undefined);
-    }
-    this.stopPolling(task);
-    task.subscribers.clear();
-    this.scheduleCleanup(task);
+    if (task.userDb && task.executionLeaseId) await this.enqueue(task, async () => { await this.persistEvent(task, event, eventState); await this.notify(task, event); });
+    else { await this.enqueue(task, async () => { await this.notify(task, event); }); if (task.userDb) await cancelChatGeneration(task.userDb, task.userId, task.generationId).catch(() => undefined); }
+    this.stopPolling(task); task.subscribers.clear(); this.scheduleCleanup(task);
   }
 
   async requestCancel(generationId: string): Promise<boolean> { const task = this.tasks.get(generationId); if (!task || task.terminal) return false; task.explicitCancelRequested = true; task.status = "cancel_requested"; task.execution?.cancel(); return true; }
