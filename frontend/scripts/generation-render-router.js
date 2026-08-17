@@ -12,7 +12,7 @@
   window[INSTALL_KEY] = true;
 
   const registry = new Map(); // conversationId -> Map<generationId, GenerationState>
-  const pendingBeforeStart = new Map();
+  const pendingBeforeStart = [];
   let chatListObserver = null;
   let activeChatObserver = null;
 
@@ -54,16 +54,6 @@
     return generations || null;
   }
 
-  function getLatestGeneration(conversationId) {
-    const generations = getChatRegistry(conversationId, false);
-    if (!generations?.size) return null;
-    return Array.from(generations.values()).sort((a, b) => {
-      const aTime = Date.parse(a.startedAt || "") || 0;
-      const bTime = Date.parse(b.startedAt || "") || 0;
-      return bTime - aTime;
-    })[0] || null;
-  }
-
   function getChatIndicatorState(conversationId) {
     const generations = getChatRegistry(conversationId, false);
     if (!generations?.size) return null;
@@ -93,9 +83,13 @@
 
   function updateChatIndicator(conversationId) {
     const id = normalizeId(conversationId);
-    if (!id || !chatList) return;
+    if (!id) return;
+    const chatList = document.getElementById("chat-list");
+    if (!chatList) return;
     const state = getChatIndicatorState(id);
-    const items = Array.from(document.querySelectorAll(`.chat-list-item[data-id="${CSS.escape(id)}"]`));
+    const items = Array.from(chatList.querySelectorAll(".chat-list-item[data-id]"))
+      .filter((item) => normalizeId(item.getAttribute("data-id")) === id);
+
     for (const item of items) {
       const indicator = state ? ensureIndicator(item) : item.querySelector(":scope > .sentiq-generation-indicator");
       item.dataset.generationState = state || "idle";
@@ -138,9 +132,6 @@
 
   function queueCallback(entry, callbackName, args) {
     entry.pendingCallbacks.push({ callbackName, args });
-    if (callbackName === "onToken" && typeof args[0] === "string") {
-      entry.responseBuffer += args[0];
-    }
   }
 
   function isVisible(entry) {
@@ -164,9 +155,7 @@
 
   function routeCallback(entry, callbackName, args) {
     if (!entry) return;
-    if (callbackName === "onGenerationStarted") {
-      entry.startedDelivered = true;
-    }
+    if (callbackName === "onGenerationStarted") entry.startedDelivered = true;
 
     if (isVisible(entry)) {
       invokeOriginal(entry, callbackName, args);
@@ -181,14 +170,10 @@
 
   function handleCallback(entry, callbackName, args) {
     if (!entry) {
-      const queue = pendingBeforeStart.get(callbackName) || [];
-      queue.push(args);
-      pendingBeforeStart.set(callbackName, queue);
+      pendingBeforeStart.push({ callbackName, args });
       return;
     }
-    if (callbackName === "onToken" && typeof args[0] === "string") {
-      entry.responseBuffer += args[0];
-    }
+    if (callbackName === "onToken" && typeof args[0] === "string") entry.responseBuffer += args[0];
     routeCallback(entry, callbackName, args);
   }
 
@@ -215,26 +200,17 @@
       "onWebSurfComplete",
       "onMemory",
       "onSync",
-      "onError",
-      "onDone",
     ];
 
     for (const name of callbackNames) {
-      wrapped[name] = (...args) => {
-        const entry = entryRef.current;
-        handleCallback(entry, name, args);
-      };
+      wrapped[name] = (...args) => handleCallback(entryRef.current, name, args);
     }
 
     wrapped.onGenerationStarted = (generationId, started) => {
       const resolvedGenerationId = normalizeId(generationId);
       const conversationId = resolveConversationId(context, started || {});
       if (!resolvedGenerationId || !conversationId) {
-        const entry = entryRef.current;
-        if (entry) routeCallback(entry, "onGenerationStarted", [generationId, started]);
-        else {
-          pendingBeforeStart.set("onGenerationStarted", [[generationId, started]]);
-        }
+        pendingBeforeStart.push({ callbackName: "onGenerationStarted", args: [generationId, started] });
         return;
       }
 
