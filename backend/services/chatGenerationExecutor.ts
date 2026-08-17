@@ -28,11 +28,9 @@ export async function executeChatGeneration(
       code: "generation_executor_unavailable",
     });
   }
-
   await Promise.resolve(executor(request, sink, (error) => {
     if (error) throw error;
   }));
-  await sink.flush();
 }
 
 export const CHAT_GENERATION_EXECUTOR_CONTRACT =
