@@ -53,8 +53,8 @@ begin
   -- JSON; the rejection is structural, not keyword-based.
   if candidate <> ''
      and length(candidate) between 3 and 120
-     and candidate !~ '^```'
-     and candidate !~ '^[[:space:]]*[\{\[]'
+     and left(candidate, 3) <> '```'
+     and left(candidate, 1) not in ('{', '[')
      and candidate !~ '"title"[[:space:]]*:'
   then
     return left(candidate, 120);
@@ -103,7 +103,7 @@ update public.conversations c
 set title = public.normalize_conversation_title_input(c.id, c.title)
 where c.title is not null
   and (
-    btrim(c.title) ~ '^```'
-    or btrim(c.title) ~ '^[[:space:]]*[\{\[]'
+    left(btrim(c.title), 3) = '```'
+    or left(btrim(c.title), 1) in ('{', '[')
     or btrim(c.title) ~ '"title"[[:space:]]*:'
   );
