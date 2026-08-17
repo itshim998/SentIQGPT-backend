@@ -24,7 +24,7 @@ begin
 
   -- First accept valid JSON, including markdown-fenced JSON.
   begin
-    candidate := regexp_replace(raw, '^```(?:json)?[[:space:]]*|[[:space:]]*```$', '', 'gi');
+    candidate := regexp_replace(raw, '^`{1,3}(?:json)?[[:space:]]*|[[:space:]]*`{1,3}$', '', 'gi');
     parsed := candidate::jsonb;
     if jsonb_typeof(parsed) = 'object' then
       candidate := parsed ->> 'title';
@@ -46,14 +46,14 @@ begin
   end if;
 
   candidate := btrim(regexp_replace(coalesce(candidate, ''), '[[:space:]]+', ' ', 'g'));
-  candidate := regexp_replace(candidate, '^```(?:json)?[[:space:]]*|[[:space:]]*```$', '', 'gi');
+  candidate := regexp_replace(candidate, '^`{1,3}(?:json)?[[:space:]]*|[[:space:]]*`{1,3}$', '', 'gi');
   candidate := btrim(candidate);
 
   -- Reject provider scaffolding. Legitimate titles may contain words such as
   -- JSON; the rejection is structural, not keyword-based.
   if candidate <> ''
      and length(candidate) between 3 and 120
-     and left(candidate, 3) <> '```'
+     and left(candidate, 1) <> '`'
      and left(candidate, 1) not in ('{', '[')
      and candidate !~ '"title"[[:space:]]*:'
   then
@@ -103,7 +103,7 @@ update public.conversations c
 set title = public.normalize_conversation_title_input(c.id, c.title)
 where c.title is not null
   and (
-    left(btrim(c.title), 3) = '```'
+    left(btrim(c.title), 1) = '`'
     or left(btrim(c.title), 1) in ('{', '[')
     or btrim(c.title) ~ '"title"[[:space:]]*:'
   );
