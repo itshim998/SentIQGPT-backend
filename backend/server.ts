@@ -4,4 +4,5 @@
 // /api/chat/stream into generation-aware operations while preserving the
 // existing handler as the execution engine during this migration.
 import "./chatGenerationTransportBootstrap";
+import "./chatGenerationRehydrationRoutes";
 import "./serverLegacy";
