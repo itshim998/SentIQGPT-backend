@@ -5,26 +5,18 @@ import {
   markChatGenerationFailed,
   type ChatGenerationRow,
 } from "./chatGenerationService";
+import { expireStaleChatGenerationSessions } from "./chatGenerationSessionService";
 
-export type ChatGenerationEvent = {
-  generation_id: string;
-  sequence: number;
-  type: string;
-  [key: string]: unknown;
-};
-
-export type ChatGenerationExecution = {
-  cancel: () => void;
-};
-
+export type ChatGenerationEvent = { generation_id: string; sequence: number; type: string; [key: string]: unknown };
+export type ChatGenerationExecution = { cancel: () => void };
 export type ChatGenerationTaskContext = {
   generationId: string;
   clientRequestId?: string | null;
   userId: string;
+  generationSessionId?: string | null;
   userDb?: any;
   generation?: ChatGenerationRow | null;
 };
-
 type Subscriber = (event: ChatGenerationEvent) => void | Promise<void>;
 type Task = ChatGenerationTaskContext & {
   events: ChatGenerationEvent[];
@@ -47,17 +39,23 @@ const EVENT_BUFFER_LIMIT = 1000;
 const CHECKPOINT_INTERVAL_MS = 750;
 const CHECKPOINT_TOKEN_INTERVAL = 75;
 const TERMINAL_RETENTION_MS = 10 * 60 * 1000;
+const SESSION_LEASE_SECONDS = 45;
+const SESSION_LEASE_SWEEP_MS = 15000;
 
 class ChatGenerationTaskCoordinator {
   private readonly tasks = new Map<string, Task>();
+  private readonly leaseTimer: NodeJS.Timeout;
+
+  constructor() {
+    this.leaseTimer = setInterval(() => { void this.sweepExpiredGenerationSessions(); }, SESSION_LEASE_SWEEP_MS);
+    this.leaseTimer.unref?.();
+  }
 
   has(generationId: string): boolean { return this.tasks.has(generationId); }
   get(generationId: string): Task | null { return this.tasks.get(generationId) ?? null; }
-
   findByClientRequestId(clientRequestId: string): Task | null {
     const normalized = String(clientRequestId || "").trim();
-    if (!normalized) return null;
-    return Array.from(this.tasks.values()).find((task) => task.clientRequestId === normalized) ?? null;
+    return normalized ? Array.from(this.tasks.values()).find((task) => task.clientRequestId === normalized) ?? null : null;
   }
 
   start(context: ChatGenerationTaskContext): Task {
@@ -65,22 +63,22 @@ class ChatGenerationTaskCoordinator {
     if (existing) {
       if (context.userDb && !existing.userDb) existing.userDb = context.userDb;
       if (context.generation && !existing.generation) existing.generation = context.generation;
+      if (context.generationSessionId && !existing.generationSessionId) existing.generationSessionId = context.generationSessionId;
       return existing;
     }
     const persistedSequence = Math.max(0, Number(context.generation?.last_event_sequence ?? 0));
     const persistedStatus = String(context.generation?.status ?? "queued");
+    const generationSessionId = context.generationSessionId ?? context.generation?.generation_session_id ?? null;
     const task: Task = {
       ...context,
-      events: [],
-      subscribers: new Set(),
-      sequence: persistedSequence,
+      generationSessionId,
+      events: [], subscribers: new Set(), sequence: persistedSequence,
       partialText: String(context.generation?.partial_text ?? ""),
       tokensGenerated: Number(context.generation?.tokens_generated ?? 0),
       status: persistedStatus === "cancel_requested" ? "cancel_requested" : ["completed", "failed", "cancelled"].includes(persistedStatus) ? persistedStatus as Task["status"] : "queued",
       terminal: ["completed", "failed", "cancelled"].includes(persistedStatus),
       explicitCancelRequested: persistedStatus === "cancel_requested",
-      lastCheckpointAt: Date.now(),
-      lastCheckpointTokens: Number(context.generation?.tokens_generated ?? 0),
+      lastCheckpointAt: Date.now(), lastCheckpointTokens: Number(context.generation?.tokens_generated ?? 0),
       lastErrorCode: context.generation?.error_code ?? null,
     };
     this.tasks.set(task.generationId, task);
@@ -90,26 +88,13 @@ class ChatGenerationTaskCoordinator {
   async publish(generationId: string, payload: Record<string, unknown>): Promise<ChatGenerationEvent | null> {
     const task = this.tasks.get(generationId);
     if (!task || task.terminal) return null;
-
-    if (payload.type === "token" && typeof payload.text === "string") {
-      task.partialText += payload.text;
-      task.tokensGenerated += 1;
-      task.status = "running";
-    } else if (payload.type === "error") {
-      task.lastErrorCode = typeof payload.code === "string" && payload.code ? payload.code : "generation_failed";
-      task.status = "failed";
-    } else if (payload.type === "generation_snapshot") {
-      task.status = typeof payload.status === "string" ? payload.status as Task["status"] : task.status;
-      if (typeof payload.partial_text === "string") task.partialText = payload.partial_text;
-      if (Number.isFinite(Number(payload.tokens_generated))) task.tokensGenerated = Number(payload.tokens_generated);
-    } else {
-      task.status = task.status === "queued" ? "running" : task.status;
-    }
-
+    if (payload.type === "token" && typeof payload.text === "string") { task.partialText += payload.text; task.tokensGenerated += 1; task.status = "running"; }
+    else if (payload.type === "error") { task.lastErrorCode = typeof payload.code === "string" && payload.code ? payload.code : "generation_failed"; task.status = "failed"; }
+    else if (payload.type === "generation_snapshot") { task.status = typeof payload.status === "string" ? payload.status as Task["status"] : task.status; if (typeof payload.partial_text === "string") task.partialText = payload.partial_text; if (Number.isFinite(Number(payload.tokens_generated))) task.tokensGenerated = Number(payload.tokens_generated); }
+    else task.status = task.status === "queued" ? "running" : task.status;
     task.sequence += 1;
     const event: ChatGenerationEvent = { ...payload, generation_id: task.generationId, sequence: task.sequence };
-    task.events.push(event);
-    if (task.events.length > EVENT_BUFFER_LIMIT) task.events.splice(0, task.events.length - EVENT_BUFFER_LIMIT);
+    task.events.push(event); if (task.events.length > EVENT_BUFFER_LIMIT) task.events.splice(0, task.events.length - EVENT_BUFFER_LIMIT);
     await this.checkpoint(task, false);
     await Promise.allSettled(Array.from(task.subscribers, (subscriber) => subscriber(event)));
     return event;
@@ -117,177 +102,86 @@ class ChatGenerationTaskCoordinator {
 
   async snapshot(generationId: string, persisted?: ChatGenerationRow | null): Promise<Record<string, unknown>> {
     const task = this.tasks.get(generationId);
-    if (task) {
-      return {
-        type: "generation_snapshot",
-        generation_id: task.generationId,
-        client_request_id: task.clientRequestId ?? null,
-        status: task.status,
-        partial_text: task.partialText,
-        tokens_generated: task.tokensGenerated,
-        last_event_sequence: task.sequence,
-        sequence: task.sequence,
-        terminal: task.terminal,
-        error_code: task.lastErrorCode,
-      };
-    }
+    if (task) return { type: "generation_snapshot", generation_id: task.generationId, client_request_id: task.clientRequestId ?? null, generation_session_id: task.generationSessionId ?? null, status: task.status, partial_text: task.partialText, tokens_generated: task.tokensGenerated, last_event_sequence: task.sequence, sequence: task.sequence, terminal: task.terminal, error_code: task.lastErrorCode };
     const sequence = Number(persisted?.last_event_sequence ?? 0);
-    return {
-      type: "generation_snapshot",
-      generation_id: generationId,
-      client_request_id: persisted?.client_request_id ?? null,
-      conversation_id: persisted?.conversation_id ?? null,
-      execution_mode: persisted?.execution_mode ?? null,
-      status: persisted?.status ?? "queued",
-      partial_text: persisted?.partial_text ?? "",
-      tokens_generated: Number(persisted?.tokens_generated ?? 0),
-      last_event_sequence: sequence,
-      sequence,
-      terminal: ["completed", "failed", "cancelled"].includes(String(persisted?.status ?? "")),
-      error_code: persisted?.error_code ?? null,
-    };
+    return { type: "generation_snapshot", generation_id: generationId, client_request_id: persisted?.client_request_id ?? null, conversation_id: persisted?.conversation_id ?? null, generation_session_id: persisted?.generation_session_id ?? null, execution_mode: persisted?.execution_mode ?? null, status: persisted?.status ?? "queued", partial_text: persisted?.partial_text ?? "", tokens_generated: Number(persisted?.tokens_generated ?? 0), last_event_sequence: sequence, sequence, terminal: ["completed", "failed", "cancelled"].includes(String(persisted?.status ?? "")), error_code: persisted?.error_code ?? null };
   }
 
   getReplayInfo(generationId: string, afterSequence = 0): { canReplay: boolean; oldestSequence: number | null; latestSequence: number } {
-    const task = this.tasks.get(generationId);
-    if (!task) return { canReplay: false, oldestSequence: null, latestSequence: 0 };
-    const normalizedAfter = Math.max(0, Math.floor(afterSequence));
-    const oldestSequence = task.events.length > 0 ? task.events[0].sequence : null;
-    const latestSequence = task.sequence;
+    const task = this.tasks.get(generationId); if (!task) return { canReplay: false, oldestSequence: null, latestSequence: 0 };
+    const normalizedAfter = Math.max(0, Math.floor(afterSequence)); const oldestSequence = task.events.length ? task.events[0].sequence : null; const latestSequence = task.sequence;
     if (normalizedAfter >= latestSequence) return { canReplay: true, oldestSequence, latestSequence };
     if (oldestSequence === null) return { canReplay: normalizedAfter === latestSequence, oldestSequence, latestSequence };
-    return {
-      canReplay: normalizedAfter >= oldestSequence - 1,
-      oldestSequence,
-      latestSequence,
-    };
+    return { canReplay: normalizedAfter >= oldestSequence - 1, oldestSequence, latestSequence };
   }
 
   subscribe(generationId: string, subscriber: Subscriber, afterSequence = 0): () => void {
-    const task = this.tasks.get(generationId);
-    if (!task) return () => undefined;
-
-    // Register before replay. `publish()` is async but cannot interleave between
-    // these synchronous operations, so no live event can land in the replay gap.
+    const task = this.tasks.get(generationId); if (!task) return () => undefined;
     if (!task.terminal) task.subscribers.add(subscriber);
     const replay = task.events.filter((event) => event.sequence > Math.max(0, Math.floor(afterSequence)));
-    for (const event of replay) {
-      void Promise.resolve(subscriber(event)).catch(() => undefined);
-    }
-
+    for (const event of replay) void Promise.resolve(subscriber(event)).catch(() => undefined);
     return () => { task.subscribers.delete(subscriber); };
   }
 
   async complete(generationId: string): Promise<void> {
-    const task = this.tasks.get(generationId);
-    if (!task || task.terminal) return;
-    if (task.explicitCancelRequested) return this.cancelled(generationId);
-    task.status = "completed";
-    task.terminal = true;
-    await this.checkpoint(task, true);
-    if (task.userDb) {
-      await markChatGenerationCompleted(task.userDb, {
-        userId: task.userId,
-        generationId: task.generationId,
-        partialText: task.partialText,
-        tokensGenerated: task.tokensGenerated,
-        lastEventSequence: task.sequence,
-      }).catch(() => undefined);
-    }
+    const task = this.tasks.get(generationId); if (!task || task.terminal) return; if (task.explicitCancelRequested) return this.cancelled(generationId);
+    task.status = "completed"; task.terminal = true; await this.checkpoint(task, true);
+    if (task.userDb) await markChatGenerationCompleted(task.userDb, { userId: task.userId, generationId: task.generationId, partialText: task.partialText, tokensGenerated: task.tokensGenerated, lastEventSequence: task.sequence }).catch(() => undefined);
     await this.emitTerminal(task, "generation_completed", "completed");
   }
 
   async failed(generationId: string, errorCode = "generation_failed"): Promise<void> {
-    const task = this.tasks.get(generationId);
-    if (!task || task.terminal) return;
-    if (task.explicitCancelRequested) return this.cancelled(generationId);
-    task.status = "failed";
-    task.terminal = true;
-    task.lastErrorCode = errorCode || "generation_failed";
-    await this.checkpoint(task, true);
-    if (task.userDb) {
-      await markChatGenerationFailed(task.userDb, {
-        userId: task.userId,
-        generationId: task.generationId,
-        errorCode: task.lastErrorCode,
-        partialText: task.partialText,
-        tokensGenerated: task.tokensGenerated,
-        lastEventSequence: task.sequence,
-      }).catch(() => undefined);
-    }
+    const task = this.tasks.get(generationId); if (!task || task.terminal) return; if (task.explicitCancelRequested) return this.cancelled(generationId);
+    task.status = "failed"; task.terminal = true; task.lastErrorCode = errorCode || "generation_failed"; await this.checkpoint(task, true);
+    if (task.userDb) await markChatGenerationFailed(task.userDb, { userId: task.userId, generationId: task.generationId, errorCode: task.lastErrorCode, partialText: task.partialText, tokensGenerated: task.tokensGenerated, lastEventSequence: task.sequence }).catch(() => undefined);
     await this.emitTerminal(task, "generation_failed", "failed");
   }
 
   async cancelled(generationId: string): Promise<void> {
-    const task = this.tasks.get(generationId);
-    if (!task || task.terminal) return;
-    task.status = "cancelled";
-    task.terminal = true;
-    task.explicitCancelRequested = true;
-    await this.checkpoint(task, true);
-    if (task.userDb) {
-      await cancelChatGeneration(task.userDb, task.userId, task.generationId).catch(() => undefined);
-    }
+    const task = this.tasks.get(generationId); if (!task || task.terminal) return;
+    task.status = "cancelled"; task.terminal = true; task.explicitCancelRequested = true; await this.checkpoint(task, true);
+    if (task.userDb) await cancelChatGeneration(task.userDb, task.userId, task.generationId).catch(() => undefined);
     await this.emitTerminal(task, "generation_cancelled", "cancelled");
   }
 
   async requestCancel(generationId: string): Promise<boolean> {
-    const task = this.tasks.get(generationId);
-    if (!task || task.terminal) return false;
-    task.explicitCancelRequested = true;
-    task.status = "cancel_requested";
-    task.execution?.cancel();
-    return true;
+    const task = this.tasks.get(generationId); if (!task || task.terminal) return false;
+    task.explicitCancelRequested = true; task.status = "cancel_requested"; task.execution?.cancel(); return true;
   }
+  isExplicitCancelRequested(generationId: string): boolean { return Boolean(this.tasks.get(generationId)?.explicitCancelRequested); }
 
-  isExplicitCancelRequested(generationId: string): boolean {
-    return Boolean(this.tasks.get(generationId)?.explicitCancelRequested);
+  private async sweepExpiredGenerationSessions(): Promise<void> {
+    const byDb = new Map<any, Task[]>();
+    for (const task of this.tasks.values()) {
+      if (task.terminal || !task.generationSessionId || !task.userDb) continue;
+      const list = byDb.get(task.userDb) ?? []; list.push(task); byDb.set(task.userDb, list);
+    }
+    for (const [userDb, tasks] of byDb) {
+      try {
+        const expired = await expireStaleChatGenerationSessions(userDb, SESSION_LEASE_SECONDS);
+        if (expired.error || !expired.data?.length) continue;
+        const staleIds = new Set(expired.data.map((row: any) => String(row.session_id)));
+        for (const task of tasks) if (task.generationSessionId && staleIds.has(task.generationSessionId)) await this.requestCancel(task.generationId);
+      } catch (error) {
+        console.warn(`[GenerationSessionLease] sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   }
 
   private async emitTerminal(task: Task, type: "generation_completed" | "generation_failed" | "generation_cancelled", status: string) {
-    task.sequence += 1;
-    const event: ChatGenerationEvent = {
-      generation_id: task.generationId,
-      sequence: task.sequence,
-      type,
-      status,
-      partial_text: task.partialText,
-      ...(task.lastErrorCode ? { error_code: task.lastErrorCode } : {}),
-    };
-    task.events.push(event);
-    await Promise.allSettled(Array.from(task.subscribers, (subscriber) => subscriber(event)));
-    task.subscribers.clear();
-    this.scheduleCleanup(task);
+    task.sequence += 1; const event: ChatGenerationEvent = { generation_id: task.generationId, sequence: task.sequence, type, status, partial_text: task.partialText, ...(task.lastErrorCode ? { error_code: task.lastErrorCode } : {}) };
+    task.events.push(event); await Promise.allSettled(Array.from(task.subscribers, (subscriber) => subscriber(event))); task.subscribers.clear(); this.scheduleCleanup(task);
   }
 
   private async checkpoint(task: Task, force: boolean): Promise<void> {
     if (!task.userDb) return;
-    const now = Date.now();
-    const tokenDelta = task.tokensGenerated - task.lastCheckpointTokens;
+    const now = Date.now(); const tokenDelta = task.tokensGenerated - task.lastCheckpointTokens;
     if (!force && now - task.lastCheckpointAt < CHECKPOINT_INTERVAL_MS && tokenDelta < CHECKPOINT_TOKEN_INTERVAL) return;
-    task.lastCheckpointAt = now;
-    task.lastCheckpointTokens = task.tokensGenerated;
-    await checkpointChatGeneration(task.userDb, {
-      userId: task.userId,
-      generationId: task.generationId,
-      checkpoint: {
-        partialText: task.partialText,
-        tokensGenerated: task.tokensGenerated,
-        lastEventSequence: task.sequence,
-        status: task.status === "queued" ? "running" : task.status,
-      },
-    }).catch((error) => {
-      console.warn(`[GenerationCheckpoint] failed generation=${task.generationId} error=${error instanceof Error ? error.message : String(error)}`);
-    });
+    task.lastCheckpointAt = now; task.lastCheckpointTokens = task.tokensGenerated;
+    await checkpointChatGeneration(task.userDb, { userId: task.userId, generationId: task.generationId, checkpoint: { partialText: task.partialText, tokensGenerated: task.tokensGenerated, lastEventSequence: task.sequence, status: task.status === "queued" ? "running" : task.status } }).catch((error) => console.warn(`[GenerationCheckpoint] failed generation=${task.generationId} error=${error instanceof Error ? error.message : String(error)}`));
   }
 
-  private scheduleCleanup(task: Task): void {
-    if (task.cleanupTimer) clearTimeout(task.cleanupTimer);
-    task.cleanupTimer = setTimeout(() => {
-      if (this.tasks.get(task.generationId) === task) this.tasks.delete(task.generationId);
-    }, TERMINAL_RETENTION_MS);
-    task.cleanupTimer.unref?.();
-  }
+  private scheduleCleanup(task: Task): void { if (task.cleanupTimer) clearTimeout(task.cleanupTimer); task.cleanupTimer = setTimeout(() => { if (this.tasks.get(task.generationId) === task) this.tasks.delete(task.generationId); }, TERMINAL_RETENTION_MS); task.cleanupTimer.unref?.(); }
 }
 
 export const chatGenerationTaskCoordinator = new ChatGenerationTaskCoordinator();
