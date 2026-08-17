@@ -4,41 +4,29 @@ import {
   getChatGenerationById,
   releaseChatGenerationExecutionLease,
   markChatGenerationRunning,
+  MAX_ACTIVE_GENERATIONS_PER_USER,
   type ChatGenerationRow,
 } from "./chatGenerationService";
 import { closeTokenAllowanceAccounting } from "../context/requestBudgetContext";
-import {
-  chatGenerationTaskCoordinator,
-  type ChatGenerationExecution,
-  type ChatGenerationTaskContext,
-} from "./chatGenerationTaskCoordinator";
+import { chatGenerationTaskCoordinator, type ChatGenerationExecution, type ChatGenerationTaskContext } from "./chatGenerationTaskCoordinator";
 
+const CONCURRENCY_RETRY_MS = 2000;
 export type GenerationExecutorHandler = (request: GenerationExecutionRequest, response: GenerationEventSink, next: (error?: unknown) => void) => unknown;
 export type GenerationRequestSnapshot = { body: Record<string, unknown>; headers?: Record<string, string>; originalUrl?: string; user?: Record<string, unknown> | null };
-export interface GenerationExecutionRequest {
-  body: Record<string, unknown>; headers: Record<string, string>; originalUrl: string; user: Record<string, unknown> | null;
-  complete: boolean; signal: AbortSignal; __sentiqGenerationDetached: true;
-  once(event: "close" | "sentiq-generation-cancel", listener: () => void): this;
-  on(event: "close" | "sentiq-generation-cancel", listener: () => void): this;
-  emit(event: "close" | "sentiq-generation-cancel"): boolean; get(name: string): string | undefined;
-}
+export interface GenerationExecutionRequest { body: Record<string, unknown>; headers: Record<string, string>; originalUrl: string; user: Record<string, unknown> | null; complete: boolean; signal: AbortSignal; __sentiqGenerationDetached: true; once(event: "close" | "sentiq-generation-cancel", listener: () => void): this; on(event: "close" | "sentiq-generation-cancel", listener: () => void): this; emit(event: "close" | "sentiq-generation-cancel"): boolean; get(name: string): string | undefined; }
 
 export class GenerationEventSink {
   statusCode = 200; headersSent = false; writableEnded = false; __sentiqGenerationDetached: true = true;
-  private readonly headers = new Map<string, string>(); private readonly listeners = new Map<string, Array<(...args: any[]) => void>>();
-  private buffer = ""; private publishChain = Promise.resolve();
-  private readonly onFrame: (frame: Record<string, unknown> | "[DONE]") => Promise<void> | void;
-  private readonly onError: (error: unknown) => void; private readonly generationId: string;
+  private readonly headers = new Map<string, string>(); private readonly listeners = new Map<string, Array<(...args: any[]) => void>>(); private buffer = ""; private publishChain = Promise.resolve();
+  private readonly onFrame: (frame: Record<string, unknown> | "[DONE]") => Promise<void> | void; private readonly onError: (error: unknown) => void; private readonly generationId: string;
   constructor(generationId: string, onFrame: (frame: Record<string, unknown> | "[DONE]") => Promise<void> | void, onError: (error: unknown) => void) { this.generationId = generationId; this.onFrame = onFrame; this.onError = onError; }
   setHeader(name: string, value: string | number | readonly string[]) { this.headers.set(name.toLowerCase(), Array.isArray(value) ? value.join(", ") : String(value)); return this; }
   getHeader(name: string) { return this.headers.get(name.toLowerCase()); }
   removeHeader(name: string) { this.headers.delete(name.toLowerCase()); return this; }
-  flushHeaders() { this.headersSent = true; }
-  status(code: number) { this.statusCode = code; return this; }
+  flushHeaders() { this.headersSent = true; } status(code: number) { this.statusCode = code; return this; }
   write(chunk: unknown) { if (this.writableEnded) return false; this.headersSent = true; this.ingest(chunk); return true; }
   end(chunk?: unknown) { if (this.writableEnded) return this; if (typeof chunk !== "undefined") this.ingest(chunk); this.flushBufferedFrame(); this.writableEnded = true; void this.publishChain.finally(() => { this.emit("finish"); this.emit("close"); }); return this; }
-  json(body: unknown) { this.headersSent = true; this.queueFrame({ type: "structured_response", response: body, generation_id: this.generationId }); return this.end(); }
-  send(body: unknown) { return this.json(body); }
+  json(body: unknown) { this.headersSent = true; this.queueFrame({ type: "structured_response", response: body, generation_id: this.generationId }); return this.end(); } send(body: unknown) { return this.json(body); }
   on(event: string, listener: (...args: any[]) => void) { const list = this.listeners.get(event) ?? []; list.push(listener); this.listeners.set(event, list); return this; }
   once(event: string, listener: (...args: any[]) => void) { const onceListener = (...args: any[]) => { this.removeListener(event, onceListener); listener(...args); }; return this.on(event, onceListener); }
   removeListener(event: string, listener: (...args: any[]) => void) { const list = this.listeners.get(event) ?? []; this.listeners.set(event, list.filter((candidate) => candidate !== listener)); return this; }
@@ -51,8 +39,7 @@ export class GenerationEventSink {
 }
 
 type RegisteredExecution = { handler: GenerationExecutorHandler; snapshot: GenerationRequestSnapshot };
-const registeredExecutions = new Map<string, RegisteredExecution>();
-let defaultGenerationExecutor: GenerationExecutorHandler | null = null;
+const registeredExecutions = new Map<string, RegisteredExecution>(); let defaultGenerationExecutor: GenerationExecutorHandler | null = null;
 export function registerGenerationExecutor(handler: GenerationExecutorHandler): void { defaultGenerationExecutor = handler; }
 export function registerGenerationExecution(generationId: string, execution: RegisteredExecution): void { registeredExecutions.set(generationId, execution); }
 export function unregisterGenerationExecution(generationId: string): void { registeredExecutions.delete(generationId); }
@@ -69,17 +56,24 @@ export async function runGeneration(generationId: string): Promise<void> {
     if (!generation && existingTask?.userDb) { const loaded = await getChatGenerationById(existingTask.userDb, existingTask.userId, generationId); if (loaded.error) throw loaded.error; generation = loaded.data; }
     if (!generation) generation = buildGuestGenerationRow(existingTask); if (!generation) throw Object.assign(new Error("Generation execution context is unavailable"), { code: "generation_execution_context_unavailable" }); if (["completed", "failed", "cancelled"].includes(generation.status)) return;
     const requestSnapshot = execution?.snapshot ?? snapshotFromGeneration(generation); if (!requestSnapshot) throw Object.assign(new Error("Generation request snapshot is unavailable"), { code: "generation_snapshot_unavailable" });
-    const taskContext: ChatGenerationTaskContext = { generationId: generation.id, clientRequestId: generation.client_request_id, generationSessionId: generation.generation_session_id, userId: generation.user_id, userDb, generation };
-    const task = chatGenerationTaskCoordinator.start(taskContext);
+    const task = chatGenerationTaskCoordinator.start({ generationId: generation.id, clientRequestId: generation.client_request_id, generationSessionId: generation.generation_session_id, conversationId: generation.conversation_id, userId: generation.user_id, userDb, generation });
     if (task.explicitCancelRequested || generation.status === "cancel_requested") { await chatGenerationTaskCoordinator.cancelled(generation.id); return; }
 
     const leaseId = randomUUID();
     if (userDb) {
-      const claimed = await claimChatGenerationExecution(userDb, { userId: generation.user_id, generationId: generation.id, leaseId, leaseSeconds: 60 });
-      if (claimed.error || !claimed.data) throw Object.assign(new Error("Generation execution lease unavailable"), { code: "generation_execution_lease_unavailable", cause: claimed.error });
+      const claimed = await claimChatGenerationExecution(userDb, { userId: generation.user_id, generationId: generation.id, leaseId, leaseSeconds: 60, maxActiveGenerations: MAX_ACTIVE_GENERATIONS_PER_USER });
+      if (claimed.error || !claimed.data) {
+        if (claimed.error?.code === "55P03") {
+          task.status = "queued";
+          setTimeout(() => { if (!chatGenerationTaskCoordinator.get(generationId)?.terminal) void runGeneration(generationId).catch(() => undefined); }, CONCURRENCY_RETRY_MS).unref?.();
+          return;
+        }
+        throw Object.assign(new Error("Generation execution lease unavailable"), { code: "generation_execution_lease_unavailable", cause: claimed.error });
+      }
       generation = claimed.data; task.generation = generation;
     }
 
+    await chatGenerationTaskCoordinator.publish(generation.id, { type: "generation_started", status: "running" });
     const { request } = buildExecutionRequest(requestSnapshot, generation); let runnerError: unknown = null;
     const sink = new GenerationEventSink(generation.id, async (frame) => { if (frame !== "[DONE]") await chatGenerationTaskCoordinator.publish(generation!.id, frame); }, (error) => { runnerError = runnerError ?? error; });
     const executionHandle: ChatGenerationExecution = { cancel: () => { request.emit("sentiq-generation-cancel"); request.emit("close"); } }; task.execution = executionHandle;
@@ -88,15 +82,12 @@ export async function runGeneration(generationId: string): Promise<void> {
       try {
         if (userDb) await markChatGenerationRunning(userDb, generation!.user_id, generation!.id).catch(() => undefined); task.status = "running";
         await Promise.resolve(handler(request, sink, (error) => { if (error) runnerError = error; })); await sink.flush();
-        if (task.explicitCancelRequested || request.signal.aborted) await chatGenerationTaskCoordinator.cancelled(generation!.id);
-        else if (runnerError) await chatGenerationTaskCoordinator.failed(generation!.id, String((runnerError as any)?.code || (runnerError as any)?.name || "generation_failed"));
-        else await chatGenerationTaskCoordinator.complete(generation!.id);
-      } catch (error) { runnerError = error; if (task.explicitCancelRequested || request.signal.aborted) await chatGenerationTaskCoordinator.cancelled(generation!.id); else await chatGenerationTaskCoordinator.failed(generation!.id, String((error as any)?.code || (error as any)?.name || "generation_failed"));
-      } finally {
-        if (renewTimer) clearInterval(renewTimer);
-        if (userDb) await releaseChatGenerationExecutionLease(userDb, { userId: generation!.user_id, generationId: generation!.id, leaseId }).catch(() => undefined);
+        if (task.explicitCancelRequested || request.signal.aborted) await chatGenerationTaskCoordinator.cancelled(generation!.id); else if (runnerError) await chatGenerationTaskCoordinator.failed(generation!.id, String((runnerError as any)?.code || (runnerError as any)?.name || "generation_failed")); else await chatGenerationTaskCoordinator.complete(generation!.id);
+      } catch (error) { runnerError = error; if (task.explicitCancelRequested || request.signal.aborted) await chatGenerationTaskCoordinator.cancelled(generation!.id); else await chatGenerationTaskCoordinator.failed(generation!.id, String((error as any)?.code || (error as any)?.name || "generation_failed")); }
+      finally {
+        if (renewTimer) clearInterval(renewTimer); if (userDb) await releaseChatGenerationExecutionLease(userDb, { userId: generation!.user_id, generationId: generation!.id, leaseId }).catch(() => undefined);
         if (generation?.client_request_id) { try { closeTokenAllowanceAccounting({ requestId: generation.client_request_id, releasePending: true }); } catch (error) { console.warn(`[GenerationQuota] settlement cleanup failed generation=${generation.id}: ${error instanceof Error ? error.message : String(error)}`); } }
-        task.execution = undefined; task.runPromise = undefined; unregisterGenerationExecution(generation!.id);
+        task.execution = undefined; task.runPromise = undefined; registeredExecutions.delete(generation!.id);
       }
     })();
     await task.runPromise;
