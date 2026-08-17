@@ -1,61 +1,8 @@
-export type ChatGenerationSession = {
-  id: string;
-  user_id: string | null;
-  anonymous_id: string | null;
-  status: "open" | "closed";
-  created_at: string;
-  last_heartbeat_at: string;
-  closed_at: string | null;
-};
-
-function normalizeAnonymousId(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim();
-  return normalized || null;
-}
-
-function normalizeSession(row: any): ChatGenerationSession {
-  return {
-    id: String(row.id),
-    user_id: row.user_id ?? null,
-    anonymous_id: row.anonymous_id ?? null,
-    status: row.status === "closed" ? "closed" : "open",
-    created_at: String(row.created_at),
-    last_heartbeat_at: String(row.last_heartbeat_at),
-    closed_at: row.closed_at ?? null,
-  };
-}
-
-export async function openChatGenerationSession(userDb: any, userId: string | null, anonymousId: string | null) {
-  const result = await userDb.rpc("open_chat_generation_session", {
-    p_user_id: userId || null,
-    p_anonymous_id: normalizeAnonymousId(anonymousId),
-  });
-  const row = Array.isArray(result.data) ? result.data[0] : result.data;
-  return { data: row ? normalizeSession(row) : null, error: result.error };
-}
-
-export async function heartbeatChatGenerationSession(userDb: any, sessionId: string, userId: string | null, anonymousId: string | null) {
-  const result = await userDb.rpc("heartbeat_chat_generation_session", {
-    p_session_id: sessionId,
-    p_user_id: userId || null,
-    p_anonymous_id: normalizeAnonymousId(anonymousId),
-  });
-  const row = Array.isArray(result.data) ? result.data[0] : result.data;
-  return { data: row ? normalizeSession(row) : null, error: result.error };
-}
-
-export async function closeChatGenerationSession(userDb: any, sessionId: string, userId: string | null, anonymousId: string | null) {
-  const result = await userDb.rpc("close_chat_generation_session", {
-    p_session_id: sessionId,
-    p_user_id: userId || null,
-    p_anonymous_id: normalizeAnonymousId(anonymousId),
-  });
-  const row = Array.isArray(result.data) ? result.data[0] : result.data;
-  return { data: row ? normalizeSession(row) : null, error: result.error };
-}
-
-export async function expireStaleChatGenerationSessions(userDb: any, leaseSeconds = 45) {
-  const result = await userDb.rpc("expire_stale_chat_generation_sessions", { p_lease_seconds: leaseSeconds });
-  return { data: Array.isArray(result.data) ? result.data : [], error: result.error };
-}
+export type ChatGenerationSession = { id: string; user_id: string | null; anonymous_id: string | null; status: "open" | "closed"; created_at: string; last_heartbeat_at: string; closed_at: string | null };
+function normalizeAnonymousId(value: unknown): string | null { if (typeof value !== "string") return null; const normalized = value.trim(); return normalized || null; }
+function normalizeSession(row: any): ChatGenerationSession { return { id: String(row.id), user_id: row.user_id ?? null, anonymous_id: row.anonymous_id ?? null, status: row.status === "closed" ? "closed" : "open", created_at: String(row.created_at), last_heartbeat_at: String(row.last_heartbeat_at), closed_at: row.closed_at ?? null }; }
+export async function openChatGenerationSession(userDb: any, userId: string | null, anonymousId: string | null) { const result = await userDb.rpc("open_chat_generation_session", { p_user_id: userId || null, p_anonymous_id: normalizeAnonymousId(anonymousId) }); const row = Array.isArray(result.data) ? result.data[0] : result.data; return { data: row ? normalizeSession(row) : null, error: result.error }; }
+export async function claimChatGenerationRequest(userDb: any, sessionId: string, userId: string, clientRequestId: string) { const result = await userDb.rpc("claim_chat_generation_request", { p_session_id: sessionId, p_user_id: userId, p_client_request_id: clientRequestId }); return { data: Array.isArray(result.data) ? result.data[0] : result.data, error: result.error }; }
+export async function heartbeatChatGenerationSession(userDb: any, sessionId: string, userId: string | null, anonymousId: string | null) { const result = await userDb.rpc("heartbeat_chat_generation_session", { p_session_id: sessionId, p_user_id: userId || null, p_anonymous_id: normalizeAnonymousId(anonymousId) }); const row = Array.isArray(result.data) ? result.data[0] : result.data; return { data: row ? normalizeSession(row) : null, error: result.error }; }
+export async function closeChatGenerationSession(userDb: any, sessionId: string, userId: string | null, anonymousId: string | null) { const result = await userDb.rpc("close_chat_generation_session", { p_session_id: sessionId, p_user_id: userId || null, p_anonymous_id: normalizeAnonymousId(anonymousId) }); const row = Array.isArray(result.data) ? result.data[0] : result.data; return { data: row ? normalizeSession(row) : null, error: result.error }; }
+export async function expireStaleChatGenerationSessions(userDb: any, leaseSeconds = 45) { const result = await userDb.rpc("expire_stale_chat_generation_sessions", { p_lease_seconds: leaseSeconds }); return { data: Array.isArray(result.data) ? result.data : [], error: result.error }; }
