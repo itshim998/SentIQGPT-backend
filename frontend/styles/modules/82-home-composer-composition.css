@@ -1,10 +1,10 @@
 /* ============================================================
    SentIQ Chat — Pass 12.6.5
-   Centred home composition and lowered composer-wrapped aura
+   Centred home composition and Gemini-style centered composer aura
 
-   Keeps the established welcome and composer geometry untouched while moving
-   only the decorative colour field downward so it surrounds the composer and
-   remains visible at its sides and lower edge.
+   Keeps the established welcome and composer geometry untouched while
+   centering the organic purple radial aura directly behind the message
+   composer capsule (like Google Gemini).
    ============================================================ */
 
 @media (min-width: 769px) {
@@ -48,31 +48,23 @@
 }
 
 .main-content.is-empty-chat > .chat-input-wrapper::after {
-  top: calc(50% + 92px);
-  width: calc(100% + 164px);
-  height: calc(100% + 96px);
+  top: 50%;
+  left: 50%;
+  width: calc(100% + 180px);
+  height: calc(100% + 120px);
   z-index: 0;
   border-radius: 999px;
   background:
     radial-gradient(
-      ellipse at -2% 56%,
-      rgba(160, 126, 246, 0.25) 0%,
-      rgba(139, 101, 226, 0.105) 42%,
-      transparent 72%
-    ),
-    radial-gradient(
-      ellipse at 102% 56%,
-      rgba(160, 126, 246, 0.25) 0%,
-      rgba(139, 101, 226, 0.105) 42%,
-      transparent 72%
-    ),
-    radial-gradient(
-      ellipse at 50% 106%,
-      rgba(155, 116, 242, 0.34) 0%,
-      rgba(134, 94, 220, 0.17) 34%,
-      rgba(101, 67, 181, 0.06) 56%,
-      transparent 76%
+      ellipse at 50% 50%,
+      rgba(160, 126, 246, 0.32) 0%,
+      rgba(142, 106, 232, 0.20) 34%,
+      rgba(112, 78, 204, 0.09) 58%,
+      rgba(83, 55, 158, 0.03) 72%,
+      transparent 82%
     );
+  transform: translate3d(-50%, -50%, 0);
+  pointer-events: none;
 }
 
 .main-content.is-empty-chat[data-home-composer-aura="settled"]
@@ -82,9 +74,9 @@
 
 @media (min-width: 769px) and (max-width: 1180px) {
   .main-content.is-empty-chat > .chat-input-wrapper::after {
-    top: calc(50% + 72px);
-    width: calc(100% + 128px);
-    height: calc(100% + 82px);
+    top: 50%;
+    width: calc(100% + 140px);
+    height: calc(100% + 96px);
   }
 }
 
@@ -104,9 +96,9 @@
   }
 
   .main-content.is-empty-chat > .chat-input-wrapper::after {
-    top: calc(50% + 34px);
-    width: calc(100% + 56px);
-    height: calc(100% + 54px);
+    top: 50%;
+    width: calc(100% + 64px);
+    height: calc(100% + 60px);
   }
 
   .main-content.is-empty-chat[data-home-composer-aura="settled"]
@@ -117,8 +109,8 @@
 
 @media (max-width: 480px) {
   .main-content.is-empty-chat > .chat-input-wrapper::after {
-    top: calc(50% + 28px);
-    width: calc(100% + 34px);
+    top: 50%;
+    width: calc(100% + 36px);
     height: calc(100% + 46px);
   }
 

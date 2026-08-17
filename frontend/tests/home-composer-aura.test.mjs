@@ -90,30 +90,27 @@ for (const token of [
   "width: min(var(--sentiq-home-composer-shell-width), calc(100% - 48px))",
   "padding-top: 18px",
   "isolation: isolate",
-  "top: calc(50% + 92px)",
-  "top: calc(50% + 72px)",
-  "top: calc(50% + 34px)",
-  "top: calc(50% + 28px)",
-  "width: calc(100% + 164px)",
-  "height: calc(100% + 96px)",
+  "top: 50%",
+  "left: 50%",
+  "width: calc(100% + 180px)",
+  "height: calc(100% + 120px)",
   "z-index: 0",
-  "ellipse at -2% 56%",
-  "ellipse at 102% 56%",
-  "ellipse at 50% 106%",
+  "ellipse at 50% 50%",
+  "transform: translate3d(-50%, -50%, 0)",
   "opacity: 0.82",
 ]) {
-  assert.ok(compositionSource.includes(token), `Lowered composer-wrapped aura missing ${token}`);
+  assert.ok(compositionSource.includes(token), `Gemini-style centered composer aura missing ${token}`);
 }
 
 assert.equal(
-  compositionSource.includes("top: calc(50% + 16px)"),
+  compositionSource.includes("top: calc(50% + 92px)"),
   false,
-  "The former high desktop aura position must not return",
+  "The former offset desktop aura position must not return",
 );
 assert.equal(
-  compositionSource.includes("ellipse at 50% 50%"),
+  compositionSource.includes("ellipse at 50% 106%"),
   false,
-  "The final aura must not return to a filled field between the heading and composer",
+  "The former bottom-weighted gradient must not return",
 );
 assert.equal(
   compositionSource.includes("filter: blur("),
@@ -131,4 +128,4 @@ assert.equal(
   "The retired full-width under-composer wash must not return",
 );
 
-console.log("Home composer aura gate passed: the welcome and composer geometry stay fixed while the purple field is lowered around the composer's sides and lower edge.");
+console.log("Home composer aura gate passed: the welcome and composer geometry stay fixed while the purple halo is centered directly behind the message composer capsule (Gemini style).");
