@@ -5,6 +5,7 @@ export const CHAT_GENERATION_STATUSES = [
 
 export type ChatGenerationStatus = typeof CHAT_GENERATION_STATUSES[number];
 export type ChatGenerationExecutionMode = "fast" | "intuitive";
+export const MAX_ACTIVE_GENERATIONS_PER_USER = 3;
 
 export type ChatGenerationRow = {
   id: string;
@@ -142,12 +143,15 @@ export async function checkpointChatGeneration(userDb: any, args: { userId: stri
   return { data: result.data ? normalizeRow(result.data) : null, error: result.error };
 }
 
-export async function claimChatGenerationExecution(userDb: any, args: { userId: string; generationId: string; leaseId: string; leaseSeconds?: number }) {
+export async function claimChatGenerationExecution(userDb: any, args: { userId: string; generationId: string; leaseId: string; leaseSeconds?: number; maxActiveGenerations?: number }) {
   const result = await userDb.rpc("claim_chat_generation_execution", {
     p_user_id: normalizeRequired(args.userId, "userId"),
     p_generation_id: normalizeRequired(args.generationId, "generationId"),
     p_lease_id: normalizeRequired(args.leaseId, "leaseId"),
     p_lease_seconds: Number.isFinite(args.leaseSeconds) ? Math.max(15, Math.floor(args.leaseSeconds!)) : 60,
+    p_max_active_generations: Number.isFinite(args.maxActiveGenerations)
+      ? Math.max(1, Math.floor(args.maxActiveGenerations!))
+      : MAX_ACTIVE_GENERATIONS_PER_USER,
   });
   const row = Array.isArray(result.data) ? result.data[0] : result.data;
   return { data: row ? normalizeRow(row) : null, error: result.error };
@@ -155,56 +159,28 @@ export async function claimChatGenerationExecution(userDb: any, args: { userId: 
 
 export async function renewChatGenerationExecutionLease(userDb: any, args: { userId: string; generationId: string; leaseId: string; leaseSeconds?: number }) {
   const result = await userDb.rpc("renew_chat_generation_execution_lease", {
-    p_user_id: normalizeRequired(args.userId, "userId"),
-    p_generation_id: normalizeRequired(args.generationId, "generationId"),
-    p_lease_id: normalizeRequired(args.leaseId, "leaseId"),
+    p_user_id: normalizeRequired(args.userId, "userId"), p_generation_id: normalizeRequired(args.generationId, "generationId"), p_lease_id: normalizeRequired(args.leaseId, "leaseId"),
     p_lease_seconds: Number.isFinite(args.leaseSeconds) ? Math.max(15, Math.floor(args.leaseSeconds!)) : 60,
   });
   const row = Array.isArray(result.data) ? result.data[0] : result.data;
   return { data: row ? normalizeRow(row) : null, error: result.error };
 }
-
 export async function releaseChatGenerationExecutionLease(userDb: any, args: { userId: string; generationId: string; leaseId: string }) {
-  const result = await userDb.rpc("release_chat_generation_execution_lease", {
-    p_user_id: normalizeRequired(args.userId, "userId"),
-    p_generation_id: normalizeRequired(args.generationId, "generationId"),
-    p_lease_id: normalizeRequired(args.leaseId, "leaseId"),
-  });
+  const result = await userDb.rpc("release_chat_generation_execution_lease", { p_user_id: normalizeRequired(args.userId, "userId"), p_generation_id: normalizeRequired(args.generationId, "generationId"), p_lease_id: normalizeRequired(args.leaseId, "leaseId") });
   const row = Array.isArray(result.data) ? result.data[0] : result.data;
   return { data: row ? normalizeRow(row) : null, error: result.error };
 }
-
 export async function markChatGenerationRecoverable(userDb: any, args: { userId: string; generationId: string; error?: string }) {
-  const result = await userDb.rpc("mark_chat_generation_recoverable", {
-    p_user_id: normalizeRequired(args.userId, "userId"),
-    p_generation_id: normalizeRequired(args.generationId, "generationId"),
-    p_error: args.error || "backend_execution_lease_expired",
-  });
+  const result = await userDb.rpc("mark_chat_generation_recoverable", { p_user_id: normalizeRequired(args.userId, "userId"), p_generation_id: normalizeRequired(args.generationId, "generationId"), p_error: args.error || "backend_execution_lease_expired" });
   const row = Array.isArray(result.data) ? result.data[0] : result.data;
   return { data: row ? normalizeRow(row) : null, error: result.error };
 }
-
-export async function markChatGenerationRunning(userDb: any, userId: string, generationId: string) {
-  return checkpointChatGeneration(userDb, { userId, generationId, checkpoint: { status: "running" } });
-}
-export async function markChatGenerationCompleted(userDb: any, args: { userId: string; generationId: string; partialText?: string; tokensGenerated?: number; lastEventSequence?: number }) {
-  return checkpointChatGeneration(userDb, { userId: args.userId, generationId: args.generationId, checkpoint: { status: "completed", partialText: args.partialText, tokensGenerated: args.tokensGenerated, lastEventSequence: args.lastEventSequence } });
-}
+export async function markChatGenerationRunning(userDb: any, userId: string, generationId: string) { return checkpointChatGeneration(userDb, { userId, generationId, checkpoint: { status: "running" } }); }
+export async function markChatGenerationCompleted(userDb: any, args: { userId: string; generationId: string; partialText?: string; tokensGenerated?: number; lastEventSequence?: number }) { return checkpointChatGeneration(userDb, { userId: args.userId, generationId: args.generationId, checkpoint: { status: "completed", partialText: args.partialText, tokensGenerated: args.tokensGenerated, lastEventSequence: args.lastEventSequence } }); }
 export async function markChatGenerationFailed(userDb: any, args: { userId: string; generationId: string; errorCode: string; partialText?: string; tokensGenerated?: number; lastEventSequence?: number }) {
-  const result = await userDb.from("chat_generations").update({ status: "failed", error_code: normalizeRequired(args.errorCode, "errorCode"), failed_at: new Date().toISOString(), ...(typeof args.partialText === "string" ? { partial_text: args.partialText } : {}), ...(Number.isFinite(args.tokensGenerated) ? { tokens_generated: Math.max(0, Math.floor(args.tokensGenerated!)) } : {}), ...(Number.isFinite(args.lastEventSequence) ? { last_event_sequence: Math.max(0, Math.floor(args.lastEventSequence!)) } : {}) })
-    .eq("id", normalizeRequired(args.generationId, "generationId")).eq("user_id", normalizeRequired(args.userId, "userId")).select(CHAT_GENERATION_COLUMNS).maybeSingle();
+  const result = await userDb.from("chat_generations").update({ status: "failed", error_code: normalizeRequired(args.errorCode, "errorCode"), failed_at: new Date().toISOString(), ...(typeof args.partialText === "string" ? { partial_text: args.partialText } : {}), ...(Number.isFinite(args.tokensGenerated) ? { tokens_generated: Math.max(0, Math.floor(args.tokensGenerated!)) } : {}), ...(Number.isFinite(args.lastEventSequence) ? { last_event_sequence: Math.max(0, Math.floor(args.lastEventSequence!)) } : {}) }).eq("id", normalizeRequired(args.generationId, "generationId")).eq("user_id", normalizeRequired(args.userId, "userId")).select(CHAT_GENERATION_COLUMNS).maybeSingle();
   return { data: result.data ? normalizeRow(result.data) : null, error: result.error };
 }
-export async function requestChatGenerationCancel(userDb: any, userId: string, generationId: string) {
-  const result = await userDb.rpc("request_chat_generation_cancel", { p_user_id: normalizeRequired(userId, "userId"), p_generation_id: normalizeRequired(generationId, "generationId") });
-  const row = Array.isArray(result.data) ? result.data[0] : result.data;
-  return { data: row ? normalizeRow(row) : null, error: result.error };
-}
-export async function cancelChatGeneration(userDb: any, userId: string, generationId: string) {
-  const result = await userDb.rpc("cancel_chat_generation", { p_user_id: normalizeRequired(userId, "userId"), p_generation_id: normalizeRequired(generationId, "generationId") });
-  const row = Array.isArray(result.data) ? result.data[0] : result.data;
-  return { data: row ? normalizeRow(row) : null, error: result.error };
-}
-
-export const CHAT_GENERATION_CANCELLATION_INVARIANT =
-  "SSE subscriber disconnects do not cancel chat generations; cancellation requires an explicit generation cancellation operation.";
+export async function requestChatGenerationCancel(userDb: any, userId: string, generationId: string) { const result = await userDb.rpc("request_chat_generation_cancel", { p_user_id: normalizeRequired(userId, "userId"), p_generation_id: normalizeRequired(generationId, "generationId") }); const row = Array.isArray(result.data) ? result.data[0] : result.data; return { data: row ? normalizeRow(row) : null, error: result.error }; }
+export async function cancelChatGeneration(userDb: any, userId: string, generationId: string) { const result = await userDb.rpc("cancel_chat_generation", { p_user_id: normalizeRequired(userId, "userId"), p_generation_id: normalizeRequired(generationId, "generationId") }); const row = Array.isArray(result.data) ? result.data[0] : result.data; return { data: row ? normalizeRow(row) : null, error: result.error }; }
+export const CHAT_GENERATION_CANCELLATION_INVARIANT = "SSE subscriber disconnects do not cancel chat generations; cancellation requires an explicit generation cancellation operation.";
