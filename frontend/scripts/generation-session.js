@@ -13,10 +13,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   let heartbeatTimer = null;
   let closed = false;
 
-  function createAnonymousId() {
-    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
-    return `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-  }
+  function createAnonymousId() { if (window.crypto?.randomUUID) return window.crypto.randomUUID(); return `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`; }
   function getAnonymousId() {
     try {
       const current = localStorage.getItem(STORAGE_KEYS.anonymousQuotaId);
@@ -31,10 +28,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     try { const token = await window.SentIQAuth?.getAccessToken?.(); if (token) value.Authorization = `Bearer ${token}`; } catch {}
     return value;
   }
-  function startHeartbeat() {
-    if (heartbeatTimer || !sessionId) return;
-    heartbeatTimer = window.setInterval(() => { void heartbeat(); }, LEASE_HEARTBEAT_MS);
-  }
+  function startHeartbeat() { if (heartbeatTimer || !sessionId) return; heartbeatTimer = window.setInterval(() => { void heartbeat(); }, LEASE_HEARTBEAT_MS); }
   async function openSession() {
     if (closed) return null;
     const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions`, { method: "POST", headers: await headers(), body: "{}", cache: "no-store" });
@@ -44,11 +38,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     startHeartbeat();
     return sessionId;
   }
-  async function ensure() {
-    if (sessionId && !closed) return sessionId;
-    if (!openPromise) openPromise = openSession().finally(() => { openPromise = null; });
-    return openPromise;
-  }
+  async function ensure() { if (sessionId && !closed) return sessionId; if (!openPromise) openPromise = openSession().finally(() => { openPromise = null; }); return openPromise; }
   async function heartbeat() {
     if (!sessionId || closed) return;
     try {
@@ -61,24 +51,22 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     closed = true;
     if (heartbeatTimer) window.clearInterval(heartbeatTimer);
     heartbeatTimer = null;
-    const id = sessionId;
-    sessionId = null;
-    try {
-      await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(id)}/close`, { method: "POST", headers: await headers(), body: "{}", keepalive: true, cache: "no-store" });
-    } catch {}
+    const id = sessionId; sessionId = null;
+    try { await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(id)}/close`, { method: "POST", headers: await headers(), body: "{}", keepalive: true, cache: "no-store" }); } catch {}
   }
-  function reopenAfterRestore() {
-    if (!closed) return;
-    closed = false;
-    sessionId = null;
-    void ensure();
+  function reopenAfterRestore() { if (!closed) return; closed = false; sessionId = null; void ensure(); }
+
+  const API = window.SentIQAPI;
+  if (API?.sendMessage && !API.__generationSessionWrappedSendMessage) {
+    const originalSendMessage = API.sendMessage.bind(API);
+    API.sendMessage = async (message, context = {}) => {
+      const id = await ensure();
+      return originalSendMessage(message, id ? { ...(context || {}), generation_session_id: id } : context);
+    };
+    API.__generationSessionWrappedSendMessage = true;
   }
 
-  window.addEventListener("pagehide", (event) => {
-    if (event.persisted) return;
-    void close();
-  });
+  window.addEventListener("pagehide", (event) => { if (!event.persisted) void close(); });
   window.addEventListener("pageshow", (event) => { if (event.persisted) reopenAfterRestore(); });
-
   window.SentIQGenerationSession = Object.freeze({ ensure, heartbeat, close, getId: () => sessionId, isClosed: () => closed });
 })();
