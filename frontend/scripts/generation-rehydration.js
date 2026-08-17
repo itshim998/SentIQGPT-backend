@@ -8,7 +8,6 @@ import "./generation-session.js";
   window[INSTALL_KEY] = true;
 
   const API_BASE = window.SENTIQ_API_BASE || "";
-  const ACTIVE_STATUSES = new Set(["queued", "running", "cancel_requested", "waiting_for_tool", "generating", "persisting"]);
 
   function normalizeId(value) { const normalized = typeof value === "string" ? value.trim() : ""; return normalized || null; }
   async function authHeaders() {
@@ -29,13 +28,16 @@ import "./generation-session.js";
     const localGenerations = registry.getChat(conversationId); const localById = new Map(localGenerations.map((entry) => [entry.generationId, entry]));
     for (const persisted of generations) {
       const generationId = normalizeId(persisted?.id); if (!generationId) continue;
-      const local = localById.get(generationId); if (!local) continue;
+      if (!localById.has(generationId)) {
+        registry.rehydrateGeneration?.(persisted, conversationId);
+        continue;
+      }
+      const local = localById.get(generationId);
       local.status = String(persisted.status || local.status);
       local.lastSequence = Math.max(Number(local.lastSequence || 0), Number(persisted.last_event_sequence || 0));
-      if (typeof persisted.partial_text === "string" && persisted.partial_text.length > local.responseBuffer.length) local.responseBuffer = persisted.partial_text;
+      if (typeof persisted.partial_text === "string" && persisted.partial_text.length >= local.responseBuffer.length) local.responseBuffer = persisted.partial_text;
       if (persisted.completed_at) local.completedAt = persisted.completed_at;
       if (persisted.status === "cancelled") local.cancelRequested = true;
-      if (ACTIVE_STATUSES.has(String(persisted.status))) local.subscription = local.subscription || "sse";
     }
     registry.flushChat(conversationId);
     window.dispatchEvent(new CustomEvent("sentiq-generation-state-rehydrated", { detail: { conversationId, generations } }));
@@ -53,5 +55,5 @@ import "./generation-session.js";
   observer.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ["class", "data-id"] });
   window.SentIQGenerationRehydration = Object.freeze({ refresh: rehydrateVisibleChat, getConversationGenerations: fetchGenerationState });
   scheduleRehydrate(250);
-  console.info("[GenerationRehydration] Phase 11 generation state reconciliation installed.");
+  console.info("[GenerationRehydration] Phase 11 generation state reconciliation + registry recreation installed.");
 })();
