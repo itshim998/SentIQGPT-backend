@@ -1,7 +1,7 @@
 -- RUN ON: Database 2, 3, 4 (Data shards)
 -- Prevent malformed LLM title envelopes such as ```json, ```json {, and
 -- incomplete JSON objects from ever being persisted to conversation history.
--- Also repairs existing malformed titles from the first user message.
+-- Also repairs existing malformed titles from the affected title-generation path.
 
 create or replace function public.normalize_conversation_title_input(
   p_conversation_id uuid,
@@ -48,8 +48,8 @@ begin
   candidate := regexp_replace(candidate, '^```(?:json)?\\s*|\\s*```$', '', 'gi');
   candidate := btrim(candidate);
 
-  -- Reject provider scaffolding. Legitimate titles are allowed to contain
-  -- normal prose such as the word "JSON"; the rejection is structural.
+  -- Reject provider scaffolding. Legitimate titles may contain words such as
+  -- JSON; the rejection is structural, not keyword-based.
   if candidate <> ''
      and length(candidate) between 3 and 120
      and candidate !~ '^```'
@@ -78,11 +78,23 @@ begin
 end;
 $$;
 
+create or replace function public.sanitize_conversation_title_trigger()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  new.title := public.normalize_conversation_title_input(new.id, new.title);
+  return new;
+end;
+$$;
+
 drop trigger if exists conversations_sanitize_title on public.conversations;
 create trigger conversations_sanitize_title
 before insert or update of title on public.conversations
 for each row
-execute function public.normalize_conversation_title_input(NEW.id, NEW.title);
+execute function public.sanitize_conversation_title_trigger();
 
 -- Repair malformed titles already persisted by the affected title-generation
 -- path. Only suspicious envelope-shaped values are rewritten.
