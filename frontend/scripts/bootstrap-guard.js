@@ -238,8 +238,10 @@
   window.addEventListener("unhandledrejection", () => fail());
 
   document.addEventListener("sentiq-ui-ready", () => {
-    import("./generation-lifecycle.js").catch((error) => {
-      console.warn("[GenerationLifecycle] Failed to load Phase 4 lifecycle adapter:", error);
-    });
+    import("./generation-lifecycle.js")
+      .then(() => import("./generation-render-router.js"))
+      .catch((error) => {
+        console.warn("[GenerationLifecycle] Failed to load generation lifecycle adapters:", error);
+      });
   }, { once: true });
 })();
