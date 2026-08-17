@@ -3,7 +3,6 @@ import {
   claimChatGenerationExecution,
   getChatGenerationById,
   releaseChatGenerationExecutionLease,
-  markChatGenerationRunning,
   MAX_ACTIVE_GENERATIONS_PER_USER,
   type ChatGenerationRow,
 } from "./chatGenerationService";
@@ -12,20 +11,34 @@ import { chatGenerationTaskCoordinator, type ChatGenerationExecution, type ChatG
 import { executeChatGeneration } from "./chatGenerationExecutor";
 
 const CONCURRENCY_RETRY_MS = 2000;
+const CONTROL_POLL_MS = 2000;
+const LEASE_RENEW_MS = 15000;
 export type GenerationExecutorHandler = (request: GenerationExecutionRequest, response: GenerationEventSink, next: (error?: unknown) => void) => unknown;
 export type GenerationRequestSnapshot = { body: Record<string, unknown>; headers?: Record<string, string>; originalUrl?: string; user?: Record<string, unknown> | null };
 export interface GenerationExecutionRequest { body: Record<string, unknown>; headers: Record<string, string>; originalUrl: string; user: Record<string, unknown> | null; complete: boolean; signal: AbortSignal; __sentiqGenerationDetached: true; once(event: "close" | "sentiq-generation-cancel", listener: () => void): this; on(event: "close" | "sentiq-generation-cancel", listener: () => void): this; emit(event: "close" | "sentiq-generation-cancel"): boolean; get(name: string): string | undefined; }
 
 export class GenerationEventSink {
-  statusCode = 200; headersSent = false; writableEnded = false; __sentiqGenerationDetached: true = true;
-  private readonly headers = new Map<string, string>(); private readonly listeners = new Map<string, Array<(...args: any[]) => void>>(); private buffer = ""; private publishChain = Promise.resolve();
-  private readonly onFrame: (frame: Record<string, unknown> | "[DONE]") => Promise<void> | void; private readonly onError: (error: unknown) => void; private readonly generationId: string;
+  statusCode = 200;
+  headersSent = false;
+  writableEnded = false;
+  __sentiqGenerationDetached: true = true;
+  private readonly headers = new Map<string, string>();
+  private readonly listeners = new Map<string, Array<(...args: any[]) => void>>();
+  private buffer = "";
+  private publishChain = Promise.resolve();
+  private readonly onFrame: (frame: Record<string, unknown> | "[DONE]") => Promise<void> | void;
+  private readonly onError: (error: unknown) => void;
+  private readonly generationId: string;
   constructor(generationId: string, onFrame: (frame: Record<string, unknown> | "[DONE]") => Promise<void> | void, onError: (error: unknown) => void) { this.generationId = generationId; this.onFrame = onFrame; this.onError = onError; }
   setHeader(name: string, value: string | number | readonly string[]) { this.headers.set(name.toLowerCase(), Array.isArray(value) ? value.join(", ") : String(value)); return this; }
-  getHeader(name: string) { return this.headers.get(name.toLowerCase()); } removeHeader(name: string) { this.headers.delete(name.toLowerCase()); return this; } flushHeaders() { this.headersSent = true; } status(code: number) { this.statusCode = code; return this; }
+  getHeader(name: string) { return this.headers.get(name.toLowerCase()); }
+  removeHeader(name: string) { this.headers.delete(name.toLowerCase()); return this; }
+  flushHeaders() { this.headersSent = true; }
+  status(code: number) { this.statusCode = code; return this; }
   write(chunk: unknown) { if (this.writableEnded) return false; this.headersSent = true; this.ingest(chunk); return true; }
   end(chunk?: unknown) { if (this.writableEnded) return this; if (typeof chunk !== "undefined") this.ingest(chunk); this.flushBufferedFrame(); this.writableEnded = true; void this.publishChain.finally(() => { this.emit("finish"); this.emit("close"); }); return this; }
-  json(body: unknown) { this.headersSent = true; this.queueFrame({ type: "structured_response", response: body, generation_id: this.generationId }); return this.end(); } send(body: unknown) { return this.json(body); }
+  json(body: unknown) { this.headersSent = true; this.queueFrame({ type: "structured_response", response: body, generation_id: this.generationId }); return this.end(); }
+  send(body: unknown) { return this.json(body); }
   on(event: string, listener: (...args: any[]) => void) { const list = this.listeners.get(event) ?? []; list.push(listener); this.listeners.set(event, list); return this; }
   once(event: string, listener: (...args: any[]) => void) { const onceListener = (...args: any[]) => { this.removeListener(event, onceListener); listener(...args); }; return this.on(event, onceListener); }
   removeListener(event: string, listener: (...args: any[]) => void) { const list = this.listeners.get(event) ?? []; this.listeners.set(event, list.filter((candidate) => candidate !== listener)); return this; }
@@ -45,7 +58,8 @@ function buildGuestGenerationRow(task: ReturnType<typeof chatGenerationTaskCoord
 export async function runGeneration(generationId: string): Promise<void> {
   const existingTask = chatGenerationTaskCoordinator.get(generationId); if (existingTask?.terminal) return; if (existingTask?.runPromise) return existingTask.runPromise;
   const runPromise = (async () => {
-    let userDb: any = existingTask?.userDb ?? null; let generation: ChatGenerationRow | null = existingTask?.generation ?? null;
+    let userDb: any = existingTask?.userDb ?? null;
+    let generation: ChatGenerationRow | null = existingTask?.generation ?? null;
     if (!generation && existingTask?.userDb) { const loaded = await getChatGenerationById(existingTask.userDb, existingTask.userId, generationId); if (loaded.error) throw loaded.error; generation = loaded.data; }
     if (!generation) generation = buildGuestGenerationRow(existingTask); if (!generation) throw Object.assign(new Error("Generation execution context is unavailable"), { code: "generation_execution_context_unavailable" }); if (["completed", "failed", "cancelled"].includes(generation.status)) return;
     const taskContext: ChatGenerationTaskContext = { generationId: generation.id, clientRequestId: generation.client_request_id, generationSessionId: generation.generation_session_id, conversationId: generation.conversation_id, userId: generation.user_id, userDb, generation, liveExecutionSnapshot: existingTask?.liveExecutionSnapshot };
@@ -55,19 +69,86 @@ export async function runGeneration(generationId: string): Promise<void> {
     if (userDb) {
       const claimed = await claimChatGenerationExecution(userDb, { userId: generation.user_id, generationId: generation.id, leaseId, leaseSeconds: 60, maxActiveGenerations: MAX_ACTIVE_GENERATIONS_PER_USER });
       if (claimed.error || !claimed.data) { if (claimed.error?.code === "55P03") { task.status = "queued"; setTimeout(() => { if (!chatGenerationTaskCoordinator.get(generationId)?.terminal) void runGeneration(generationId).catch(() => undefined); }, CONCURRENCY_RETRY_MS).unref?.(); return; } throw Object.assign(new Error("Generation execution lease unavailable"), { code: "generation_execution_lease_unavailable", cause: claimed.error }); }
-      generation = claimed.data; task.generation = generation;
+      generation = claimed.data;
+      task.generation = generation;
+      task.executionLeaseId = leaseId;
     }
     await chatGenerationTaskCoordinator.publish(generation.id, { type: "generation_started", conversation_id: generation.conversation_id, status: "running" });
-    const request = buildExecutionRequest(requestSnapshot, generation); let runnerError: unknown = null;
-    const sink = new GenerationEventSink(generation.id, async (frame) => { if (frame !== "[DONE]") await chatGenerationTaskCoordinator.publish(generation!.id, frame); }, (error) => { runnerError = runnerError ?? error; });
+    const request = buildExecutionRequest(requestSnapshot, generation);
+    let runnerError: unknown = null;
+    let executionOwnershipLost = false;
+    const sink = new GenerationEventSink(generation.id, async (frame) => { if (frame !== "[DONE]") await chatGenerationTaskCoordinator.publish(generation!.id, frame); }, (error) => {
+      runnerError = runnerError ?? error;
+      if (String((error as any)?.message || "").includes("lease lost")) {
+        executionOwnershipLost = true;
+        task.execution?.cancel();
+      }
+    });
     task.execution = { cancel: () => { request.emit("sentiq-generation-cancel"); request.emit("close"); } };
-    const renewTimer = userDb ? setInterval(() => { void import("./chatGenerationService").then(({ renewChatGenerationExecutionLease }) => renewChatGenerationExecutionLease(userDb, { userId: generation!.user_id, generationId: generation!.id, leaseId, leaseSeconds: 60 })).catch(() => undefined); }, 20000) : null; renewTimer?.unref?.();
+
+    const controlTimer = userDb ? setInterval(() => {
+      void getChatGenerationById(userDb, generation!.user_id, generation!.id).then((latest) => {
+        if (latest.error || !latest.data) return;
+        const currentLeaseId = latest.data.execution_lease_id;
+        const currentStatus = String(latest.data.status || "");
+        if (currentLeaseId !== leaseId) {
+          executionOwnershipLost = true;
+          task.execution?.cancel();
+          return;
+        }
+        if (["cancel_requested", "cancelled"].includes(currentStatus)) {
+          task.explicitCancelRequested = true;
+          task.status = "cancel_requested";
+          task.execution?.cancel();
+        }
+      }).catch(() => undefined);
+    }, CONTROL_POLL_MS) : null;
+    controlTimer?.unref?.();
+
+    const renewTimer = userDb ? setInterval(() => {
+      void import("./chatGenerationService").then(({ renewChatGenerationExecutionLease }) =>
+        renewChatGenerationExecutionLease(userDb, { userId: generation!.user_id, generationId: generation!.id, leaseId, leaseSeconds: 60 }),
+      ).then((renewed) => {
+        if (renewed.error || !renewed.data) {
+          executionOwnershipLost = true;
+          task.execution?.cancel();
+        }
+      }).catch(() => {
+        executionOwnershipLost = true;
+        task.execution?.cancel();
+      });
+    }, LEASE_RENEW_MS) : null;
+    renewTimer?.unref?.();
+
     task.runPromise = (async () => {
-      try { if (userDb) await markChatGenerationRunning(userDb, generation!.user_id, generation!.id).catch(() => undefined); task.status = "running"; await executeChatGeneration(request, sink); await sink.flush(); if (task.explicitCancelRequested || request.signal.aborted) await chatGenerationTaskCoordinator.cancelled(generation!.id); else if (runnerError) await chatGenerationTaskCoordinator.failed(generation!.id, String((runnerError as any)?.code || (runnerError as any)?.name || "generation_failed")); else await chatGenerationTaskCoordinator.complete(generation!.id); }
-      catch (error) { runnerError = error; if (task.explicitCancelRequested || request.signal.aborted) await chatGenerationTaskCoordinator.cancelled(generation!.id); else await chatGenerationTaskCoordinator.failed(generation!.id, String((error as any)?.code || (error as any)?.name || "generation_failed")); }
-      finally { if (renewTimer) clearInterval(renewTimer); if (userDb) await releaseChatGenerationExecutionLease(userDb, { userId: generation!.user_id, generationId: generation!.id, leaseId }).catch(() => undefined); if (generation?.client_request_id) { try { closeTokenAllowanceAccounting({ requestId: generation.client_request_id, releasePending: true }); } catch (error) { console.warn(`[GenerationQuota] settlement cleanup failed generation=${generation.id}: ${error instanceof Error ? error.message : String(error)}`); } } task.execution = undefined; task.runPromise = undefined; }
+      try {
+        task.status = "running";
+        await executeChatGeneration(request, sink);
+        await sink.flush();
+        if (executionOwnershipLost) return;
+        if (task.explicitCancelRequested || request.signal.aborted) await chatGenerationTaskCoordinator.cancelled(generation!.id);
+        else if (runnerError) await chatGenerationTaskCoordinator.failed(generation!.id, String((runnerError as any)?.code || (runnerError as any)?.name || "generation_failed"));
+        else await chatGenerationTaskCoordinator.complete(generation!.id);
+      } catch (error) {
+        runnerError = error;
+        if (executionOwnershipLost) return;
+        if (task.explicitCancelRequested || request.signal.aborted) await chatGenerationTaskCoordinator.cancelled(generation!.id);
+        else await chatGenerationTaskCoordinator.failed(generation!.id, String((error as any)?.code || (error as any)?.name || "generation_failed"));
+      } finally {
+        if (controlTimer) clearInterval(controlTimer);
+        if (renewTimer) clearInterval(renewTimer);
+        if (userDb) await releaseChatGenerationExecutionLease(userDb, { userId: generation!.user_id, generationId: generation!.id, leaseId }).catch(() => undefined);
+        if (generation?.client_request_id) {
+          try { closeTokenAllowanceAccounting({ requestId: generation.client_request_id, releasePending: true }); }
+          catch (error) { console.warn(`[GenerationQuota] settlement cleanup failed generation=${generation.id}: ${error instanceof Error ? error.message : String(error)}`); }
+        }
+        task.execution = undefined;
+        task.executionLeaseId = null;
+        task.runPromise = undefined;
+      }
     })();
     await task.runPromise;
   })();
-  if (existingTask) existingTask.runPromise = runPromise; return runPromise;
+  if (existingTask) existingTask.runPromise = runPromise;
+  return runPromise;
 }
