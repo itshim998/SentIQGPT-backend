@@ -1,5 +1,5 @@
 export const CHAT_GENERATION_STATUSES = [
-  "queued", "running", "completed", "failed", "cancel_requested", "cancelled",
+  "queued", "running", "completed", "failed", "recoverable", "cancel_requested", "cancelled",
   "waiting_for_tool", "generating", "persisting",
 ] as const;
 
@@ -26,6 +26,10 @@ export type ChatGenerationRow = {
   created_at: string;
   updated_at: string;
   execution_snapshot?: Record<string, unknown>;
+  execution_lease_id: string | null;
+  execution_lease_expires_at: string | null;
+  recovery_attempts: number;
+  last_execution_error: string | null;
 };
 
 export type CreateChatGenerationInput = {
@@ -50,7 +54,8 @@ const CHAT_GENERATION_COLUMNS = [
   "id", "conversation_id", "user_id", "client_request_id", "generation_session_id",
   "status", "execution_mode", "model_route", "started_at", "completed_at", "failed_at",
   "cancelled_at", "error_code", "partial_text", "tokens_generated", "last_event_sequence",
-  "created_at", "updated_at", "execution_snapshot",
+  "created_at", "updated_at", "execution_snapshot", "execution_lease_id",
+  "execution_lease_expires_at", "recovery_attempts", "last_execution_error",
 ].join(", ");
 
 function normalizeRequired(value: unknown, field: string): string {
@@ -80,6 +85,10 @@ function normalizeRow(row: any): ChatGenerationRow {
     last_event_sequence: Number.isFinite(Number(row.last_event_sequence)) ? Number(row.last_event_sequence) : 0,
     created_at: String(row.created_at), updated_at: String(row.updated_at),
     execution_snapshot: row.execution_snapshot && typeof row.execution_snapshot === "object" ? row.execution_snapshot : {},
+    execution_lease_id: row.execution_lease_id ?? null,
+    execution_lease_expires_at: row.execution_lease_expires_at ?? null,
+    recovery_attempts: Number.isFinite(Number(row.recovery_attempts)) ? Number(row.recovery_attempts) : 0,
+    last_execution_error: row.last_execution_error ?? null,
   };
 }
 
@@ -132,6 +141,49 @@ export async function checkpointChatGeneration(userDb: any, args: { userId: stri
     .select(CHAT_GENERATION_COLUMNS).maybeSingle();
   return { data: result.data ? normalizeRow(result.data) : null, error: result.error };
 }
+
+export async function claimChatGenerationExecution(userDb: any, args: { userId: string; generationId: string; leaseId: string; leaseSeconds?: number }) {
+  const result = await userDb.rpc("claim_chat_generation_execution", {
+    p_user_id: normalizeRequired(args.userId, "userId"),
+    p_generation_id: normalizeRequired(args.generationId, "generationId"),
+    p_lease_id: normalizeRequired(args.leaseId, "leaseId"),
+    p_lease_seconds: Number.isFinite(args.leaseSeconds) ? Math.max(15, Math.floor(args.leaseSeconds!)) : 60,
+  });
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  return { data: row ? normalizeRow(row) : null, error: result.error };
+}
+
+export async function renewChatGenerationExecutionLease(userDb: any, args: { userId: string; generationId: string; leaseId: string; leaseSeconds?: number }) {
+  const result = await userDb.rpc("renew_chat_generation_execution_lease", {
+    p_user_id: normalizeRequired(args.userId, "userId"),
+    p_generation_id: normalizeRequired(args.generationId, "generationId"),
+    p_lease_id: normalizeRequired(args.leaseId, "leaseId"),
+    p_lease_seconds: Number.isFinite(args.leaseSeconds) ? Math.max(15, Math.floor(args.leaseSeconds!)) : 60,
+  });
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  return { data: row ? normalizeRow(row) : null, error: result.error };
+}
+
+export async function releaseChatGenerationExecutionLease(userDb: any, args: { userId: string; generationId: string; leaseId: string }) {
+  const result = await userDb.rpc("release_chat_generation_execution_lease", {
+    p_user_id: normalizeRequired(args.userId, "userId"),
+    p_generation_id: normalizeRequired(args.generationId, "generationId"),
+    p_lease_id: normalizeRequired(args.leaseId, "leaseId"),
+  });
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  return { data: row ? normalizeRow(row) : null, error: result.error };
+}
+
+export async function markChatGenerationRecoverable(userDb: any, args: { userId: string; generationId: string; error?: string }) {
+  const result = await userDb.rpc("mark_chat_generation_recoverable", {
+    p_user_id: normalizeRequired(args.userId, "userId"),
+    p_generation_id: normalizeRequired(args.generationId, "generationId"),
+    p_error: args.error || "backend_execution_lease_expired",
+  });
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  return { data: row ? normalizeRow(row) : null, error: result.error };
+}
+
 export async function markChatGenerationRunning(userDb: any, userId: string, generationId: string) {
   return checkpointChatGeneration(userDb, { userId, generationId, checkpoint: { status: "running" } });
 }
