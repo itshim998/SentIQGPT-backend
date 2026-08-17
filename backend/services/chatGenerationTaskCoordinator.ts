@@ -4,7 +4,17 @@ import { normalizeGenerationEventType, type CanonicalGenerationEvent } from "./g
 
 export type ChatGenerationEvent = CanonicalGenerationEvent;
 export type ChatGenerationExecution = { cancel: () => void };
-export type ChatGenerationTaskContext = { generationId: string; clientRequestId?: string | null; userId: string; conversationId?: string | null; generationSessionId?: string | null; userDb?: any; generation?: ChatGenerationRow | null };
+export type LiveExecutionSnapshot = { body: Record<string, unknown>; headers?: Record<string, string>; originalUrl?: string; user?: Record<string, unknown> | null };
+export type ChatGenerationTaskContext = {
+  generationId: string;
+  clientRequestId?: string | null;
+  userId: string;
+  conversationId?: string | null;
+  generationSessionId?: string | null;
+  userDb?: any;
+  generation?: ChatGenerationRow | null;
+  liveExecutionSnapshot?: LiveExecutionSnapshot;
+};
 type Subscriber = (event: ChatGenerationEvent) => void | Promise<void>;
 type Task = ChatGenerationTaskContext & { events: ChatGenerationEvent[]; subscribers: Set<Subscriber>; sequence: number; partialText: string; tokensGenerated: number; status: "queued" | "running" | "completed" | "failed" | "cancel_requested" | "cancelled"; terminal: boolean; explicitCancelRequested: boolean; lastCheckpointAt: number; lastCheckpointTokens: number; lastErrorCode: string | null; execution?: ChatGenerationExecution; runPromise?: Promise<void>; cleanupTimer?: NodeJS.Timeout };
 
@@ -30,11 +40,24 @@ class ChatGenerationTaskCoordinator {
       if (context.generation && !existing.generation) existing.generation = context.generation;
       if (context.generationSessionId && !existing.generationSessionId) existing.generationSessionId = context.generationSessionId;
       if (context.conversationId && !existing.conversationId) existing.conversationId = context.conversationId;
+      if (context.liveExecutionSnapshot && !existing.liveExecutionSnapshot) existing.liveExecutionSnapshot = context.liveExecutionSnapshot;
       return existing;
     }
     const persistedSequence = Math.max(0, Number(context.generation?.last_event_sequence ?? 0));
     const persistedStatus = String(context.generation?.status ?? "queued");
-    const task: Task = { ...context, conversationId: context.conversationId ?? context.generation?.conversation_id ?? null, generationSessionId: context.generationSessionId ?? context.generation?.generation_session_id ?? null, events: [], subscribers: new Set(), sequence: persistedSequence, partialText: String(context.generation?.partial_text ?? ""), tokensGenerated: Number(context.generation?.tokens_generated ?? 0), status: persistedStatus === "cancel_requested" ? "cancel_requested" : ["completed","failed","cancelled"].includes(persistedStatus) ? persistedStatus as Task["status"] : "queued", terminal: ["completed","failed","cancelled"].includes(persistedStatus), explicitCancelRequested: persistedStatus === "cancel_requested", lastCheckpointAt: Date.now(), lastCheckpointTokens: Number(context.generation?.tokens_generated ?? 0), lastErrorCode: context.generation?.error_code ?? null };
+    const task: Task = {
+      ...context,
+      conversationId: context.conversationId ?? context.generation?.conversation_id ?? null,
+      generationSessionId: context.generationSessionId ?? context.generation?.generation_session_id ?? null,
+      events: [], subscribers: new Set(), sequence: persistedSequence,
+      partialText: String(context.generation?.partial_text ?? ""),
+      tokensGenerated: Number(context.generation?.tokens_generated ?? 0),
+      status: persistedStatus === "cancel_requested" ? "cancel_requested" : ["completed","failed","cancelled"].includes(persistedStatus) ? persistedStatus as Task["status"] : "queued",
+      terminal: ["completed","failed","cancelled"].includes(persistedStatus),
+      explicitCancelRequested: persistedStatus === "cancel_requested",
+      lastCheckpointAt: Date.now(), lastCheckpointTokens: Number(context.generation?.tokens_generated ?? 0),
+      lastErrorCode: context.generation?.error_code ?? null,
+    };
     this.tasks.set(task.generationId, task); return task;
   }
 
