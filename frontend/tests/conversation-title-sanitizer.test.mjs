@@ -8,6 +8,7 @@ const cases = [
   ["fenced JSON", '```json\n{"title":"Groq Title Regression"}\n```', "Groq Title Regression"],
   ["incomplete JSON envelope", '```json\n{"title":"Recovered Title"', "Recovered Title"],
   ["fence only", "```json", ""],
+  ["short fence shell", "``json", ""],
   ["fence plus partial object", "```json {", ""],
   ["closing fence only", "```", ""],
   ["raw JSON object without title", '{"reply":"hello"}', ""],
