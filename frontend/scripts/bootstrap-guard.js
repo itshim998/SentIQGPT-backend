@@ -30,20 +30,10 @@
   function optimizeHeadAssets() {
     if (!document.head) return;
 
-    const primaryIcon = ensureLink({
-      selector: 'link[rel="icon"]',
-      rel: "icon",
-      type: "image/svg+xml",
-      href: LOCAL_MARK_HREF,
-    });
+    const primaryIcon = ensureLink({ selector: 'link[rel="icon"]', rel: "icon", type: "image/svg+xml", href: LOCAL_MARK_HREF });
     primaryIcon?.setAttribute("data-asset-loading-version", ASSET_LOADING_VERSION);
-
     document.head.querySelectorAll('link[rel="shortcut icon"]').forEach((link) => link.remove());
-    ensureLink({
-      selector: 'link[rel="apple-touch-icon"]',
-      rel: "apple-touch-icon",
-      href: LOCAL_MARK_HREF,
-    })?.setAttribute("data-asset-loading-version", ASSET_LOADING_VERSION);
+    ensureLink({ selector: 'link[rel="apple-touch-icon"]', rel: "apple-touch-icon", href: LOCAL_MARK_HREF })?.setAttribute("data-asset-loading-version", ASSET_LOADING_VERSION);
 
     const fontStylesheet = document.head.querySelector('link[rel="stylesheet"][href*="fonts.googleapis.com/css2?family=Inter"]');
     if (fontStylesheet) {
@@ -53,29 +43,14 @@
       fontStylesheet.setAttribute("data-asset-loading-version", ASSET_LOADING_VERSION);
     }
 
-    ensureLink({
-      selector: 'link[rel="modulepreload"][href="scripts/main.js"]',
-      rel: "modulepreload",
-      href: "scripts/main.js",
-      fetchpriority: "high",
-      "data-asset-loading-version": ASSET_LOADING_VERSION,
-    });
-
-    ensureLink({
-      selector: `link[rel="stylesheet"][href="${UI_STABILITY_STYLESHEET}"]`,
-      rel: "stylesheet",
-      href: UI_STABILITY_STYLESHEET,
-      "data-ui-stability-version": ASSET_LOADING_VERSION,
-    });
-
+    ensureLink({ selector: 'link[rel="modulepreload"][href="scripts/main.js"]', rel: "modulepreload", href: "scripts/main.js", fetchpriority: "high", "data-asset-loading-version": ASSET_LOADING_VERSION });
+    ensureLink({ selector: `link[rel="stylesheet"][href="${UI_STABILITY_STYLESHEET}"]`, rel: "stylesheet", href: UI_STABILITY_STYLESHEET, "data-ui-stability-version": ASSET_LOADING_VERSION });
     root.dataset.headAssetLoadingVersion = ASSET_LOADING_VERSION;
   }
 
   optimizeHeadAssets();
 
-  function getBanner() {
-    return document.getElementById("compatibility-banner");
-  }
+  function getBanner() { return document.getElementById("compatibility-banner"); }
 
   function ensureErrorBanner() {
     let banner = getBanner();
@@ -98,11 +73,7 @@
     screen.className = "sentiq-startup-screen";
     screen.setAttribute("role", "status");
     screen.setAttribute("aria-live", "polite");
-    screen.innerHTML = [
-      '<div class="sentiq-startup-content sentiq-startup-logo-mode">',
-      '<sentiq-activity-logo variant="neural-dialog" state="loading" size="88px" aria-label="Loading SentIQ Chat"></sentiq-activity-logo>',
-      "</div>",
-    ].join("");
+    screen.innerHTML = ['<div class="sentiq-startup-content sentiq-startup-logo-mode">', '<sentiq-activity-logo variant="neural-dialog" state="loading" size="88px" aria-label="Loading SentIQ Chat"></sentiq-activity-logo>', "</div>"].join("");
     document.body?.prepend(screen);
     return screen;
   }
@@ -110,20 +81,14 @@
   function removeStartupScreen({ animate = true } = {}) {
     const screen = document.getElementById("sentiq-startup-screen");
     if (!screen) return;
-
     if (!animate || document.documentElement.dataset.sentiqMotionPolicy === "reduced") {
       screen.remove();
       return;
     }
-
     if (screen.dataset.startupExit === "true") return;
     screen.dataset.startupExit = "true";
     screen.classList.add("is-exiting");
-
-    const duration = 240;
-    window.setTimeout(() => {
-      screen.remove();
-    }, duration);
+    window.setTimeout(() => screen.remove(), 240);
   }
 
   function canUseStorage(storageName) {
@@ -158,14 +123,12 @@
     const message = document.getElementById("compatibility-banner-message");
     banner.classList.toggle("is-error", didFail);
     banner.classList.remove("has-message");
-
     if (didFail) {
       banner.hidden = false;
       banner.classList.add("has-message");
       if (message) message.textContent = `${PRODUCT_NAME} could not finish starting. A browser, network, or storage setting may be blocking required functionality.`;
       return;
     }
-
     banner.remove();
   }
 
@@ -178,9 +141,7 @@
 
   function addLimitedReason(code, message) {
     const key = String(code || "limited");
-    if (!limitedReasons.has(key)) {
-      limitedReasons.set(key, String(message || "Some features are unavailable in this browser session."));
-    }
+    if (!limitedReasons.has(key)) limitedReasons.set(key, String(message || "Some features are unavailable in this browser session."));
     render();
   }
 
@@ -206,24 +167,14 @@
     addLimitedReason,
     fail,
     getCapabilities: () => capabilities,
-    getStatus: () => ({
-      ready: isReady,
-      failed: didFail,
-      limited: Array.from(limitedReasons.keys()),
-    }),
+    getStatus: () => ({ ready: isReady, failed: didFail, limited: Array.from(limitedReasons.keys()) }),
     markReady,
   };
 
   if (!capabilities.fetch) fail();
-  if (!capabilities.indexedDb) {
-    addLimitedReason("indexed-db", "Browser storage is unavailable. This session will use temporary in-memory storage.");
-  }
-  if (!capabilities.localStorage) {
-    addLimitedReason("local-storage", "Some browser preferences cannot be saved in this session.");
-  }
-  if (!capabilities.readableStream || !capabilities.textDecoder) {
-    addLimitedReason("streaming", "Live response streaming is unavailable. Responses will load after they finish.");
-  }
+  if (!capabilities.indexedDb) addLimitedReason("indexed-db", "Browser storage is unavailable. This session will use temporary in-memory storage.");
+  if (!capabilities.localStorage) addLimitedReason("local-storage", "Some browser preferences cannot be saved in this session.");
+  if (!capabilities.readableStream || !capabilities.textDecoder) addLimitedReason("streaming", "Live response streaming is unavailable. Responses will load after they finish.");
 
   document.addEventListener("DOMContentLoaded", () => {
     render();
@@ -240,6 +191,7 @@
   document.addEventListener("sentiq-ui-ready", () => {
     import("./generation-lifecycle.js")
       .then(() => import("./generation-render-router.js"))
+      .then(() => import("./generation-rehydration.js"))
       .catch((error) => {
         console.warn("[GenerationLifecycle] Failed to load generation lifecycle adapters:", error);
       });
