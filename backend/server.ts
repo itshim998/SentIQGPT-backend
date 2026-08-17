@@ -7,3 +7,6 @@ import "./chatGenerationTransportBootstrap";
 import "./chatGenerationRehydrationRoutes";
 import "./chatGenerationSessionRoutes";
 import "./serverLegacy";
+// Load after the legacy route registration so the generation executor is known;
+// the recovery module then scans durable generations and re-enters runGeneration().
+import "./services/generationRecovery";
