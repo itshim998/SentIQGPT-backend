@@ -11,6 +11,8 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   let openPromise = null;
   let heartbeatTimer = null;
   let closed = false;
+  const rehydratedEntries = new Map();
+
   function createAnonymousId() { if (window.crypto?.randomUUID) return window.crypto.randomUUID(); return `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`; }
   function getAnonymousId() { try { const current = localStorage.getItem(STORAGE_KEYS.anonymousQuotaId); if (current && current.length <= 96) return current; const legacy = localStorage.getItem(LEGACY_STORAGE_KEYS.anonymousQuotaId); if (legacy && legacy.length <= 96) { localStorage.setItem(STORAGE_KEYS.anonymousQuotaId, legacy); return legacy; } const created = createAnonymousId(); localStorage.setItem(STORAGE_KEYS.anonymousQuotaId, created); return created; } catch { return createAnonymousId(); } }
   async function headers() { const value = { "Content-Type": "application/json", "X-SentIQ-Anonymous-Id": getAnonymousId() }; try { const token = await window.SentIQAuth?.getAccessToken?.(); if (token) value.Authorization = `Bearer ${token}`; } catch {} return value; }
@@ -21,6 +23,83 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   async function heartbeat() { if (!sessionId || closed) return; try { const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(sessionId)}/heartbeat`, { method: "POST", headers: await headers(), body: "{}", keepalive: true, cache: "no-store" }); if (!response.ok) { sessionId = null; await ensure(); } } catch {} }
   async function close() { if (!sessionId || closed) return; closed = true; if (heartbeatTimer) window.clearInterval(heartbeatTimer); heartbeatTimer = null; const id = sessionId; sessionId = null; try { await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(id)}/close`, { method: "POST", headers: await headers(), body: "{}", keepalive: true, cache: "no-store" }); } catch {} }
   function reopenAfterRestore() { if (!closed) return; closed = false; sessionId = null; void ensure(); }
+
+  function currentVisibleChatId() { return document.querySelector(".chat-list-item.active")?.getAttribute("data-id") || null; }
+  function findRehydratedGeneration(generationId) { return rehydratedEntries.get(generationId) || null; }
+  function ensureRehydratedRenderer(entry) {
+    if (!entry || entry.renderer || currentVisibleChatId() !== entry.conversationId) return;
+    const messages = document.querySelector("#chat-messages");
+    if (!messages) return;
+    const bubble = document.createElement("div");
+    bubble.className = "message assistant sentiq-rehydrated-generation";
+    bubble.dataset.chatId = entry.conversationId;
+    if (entry.requestId) bubble.dataset.requestId = entry.requestId;
+    const content = document.createElement("div");
+    content.className = "message-content sentiq-reveal-target is-visible";
+    content.textContent = entry.responseBuffer || "";
+    bubble.appendChild(content);
+    messages.appendChild(bubble);
+    entry.renderer = { bubble, content, renderedText: entry.responseBuffer || "" };
+    try { messages.scrollTo({ top: messages.scrollHeight, behavior: "auto" }); } catch {}
+  }
+  function syncRehydratedRenderer(entry) {
+    ensureRehydratedRenderer(entry);
+    if (!entry.renderer) return;
+    const next = String(entry.responseBuffer || "");
+    if (next === entry.renderer.renderedText) return;
+    entry.renderer.content.textContent = next;
+    entry.renderer.renderedText = next;
+    try { document.querySelector("#chat-messages")?.scrollTo({ top: document.querySelector("#chat-messages")?.scrollHeight || 0, behavior: "smooth" }); } catch {}
+  }
+  function handleRehydratedEvent(event) {
+    const detail = event?.detail || {};
+    const generation = detail.generation || {};
+    const generationId = generation.generationId || generation.generation_id;
+    if (!generationId) return;
+    const entry = findRehydratedGeneration(generationId);
+    if (!entry) return;
+    if (generation.conversationId) entry.conversationId = generation.conversationId;
+    if (typeof generation.responseBuffer === "string") entry.responseBuffer = generation.responseBuffer;
+    const payload = detail.event || {};
+    if (payload.type === "generation_completed") entry.terminal = true;
+    if (payload.type === "generation_cancelled") entry.terminal = true;
+    if (payload.type === "generation_failed") entry.terminal = true;
+    syncRehydratedRenderer(entry);
+  }
+  function handleRehydratedRegistration(event) {
+    const persisted = event?.detail?.persisted || {};
+    const generation = event?.detail?.generation || {};
+    const generationId = generation.generationId || generation.generation_id || persisted.id || persisted.generation_id;
+    if (!generationId) return;
+    rehydratedEntries.set(generationId, {
+      generationId,
+      conversationId: generation.conversationId || persisted.conversation_id || null,
+      requestId: generation.requestId || persisted.client_request_id || null,
+      status: generation.status || persisted.status || "queued",
+      responseBuffer: generation.responseBuffer || persisted.partial_text || "",
+      renderer: null,
+      terminal: Boolean(generation.terminal),
+    });
+    const entry = rehydratedEntries.get(generationId);
+    ensureRehydratedRenderer(entry);
+    syncRehydratedRenderer(entry);
+  }
+  document.addEventListener("sentiq-generation-rehydrated", handleRehydratedRegistration);
+  document.addEventListener("sentiq-generation-event", handleRehydratedEvent);
+  document.addEventListener("click", (event) => {
+    const item = event.target instanceof Element ? event.target.closest(".chat-list-item[data-id]") : null;
+    if (!item) return;
+    window.setTimeout(() => { for (const entry of rehydratedEntries.values()) if (entry.conversationId === currentVisibleChatId()) syncRehydratedRenderer(entry); }, 0);
+  }, true);
+  document.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("#send-btn") : null;
+    if (!button?.classList.contains("is-stop")) return;
+    const visible = currentVisibleChatId();
+    const candidate = Array.from(rehydratedEntries.values()).find((entry) => entry.conversationId === visible && !entry.terminal && ["queued","running","cancel_requested","waiting_for_tool","generating","persisting"].includes(entry.status));
+    if (!candidate) return;
+    void window.SentIQGenerationLifecycle?.cancelGeneration?.(candidate.generationId).catch?.(() => undefined);
+  }, true);
+  window.addEventListener("pageshow", () => { for (const entry of rehydratedEntries.values()) if (entry.conversationId === currentVisibleChatId()) syncRehydratedRenderer(entry); });
 
   const API = window.SentIQAPI;
   if (API?.sendMessage && !API.__generationSessionWrappedSendMessage) {
