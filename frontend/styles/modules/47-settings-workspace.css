@@ -474,10 +474,28 @@
   letter-spacing: 0.09em;
 }
 
+#settings-modal .billing-current-workspace .billing-refresh-btn,
 #settings-modal .billing-current-workspace .btn {
   min-height: 36px;
-  padding-inline: 13px;
+  min-width: 36px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+#settings-modal .billing-current-workspace .billing-refresh-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+#settings-modal .billing-current-workspace .billing-refresh-btn.is-refreshing svg {
+  animation: sentiqMotionProgressSpin 0.8s linear infinite;
 }
 
 #settings-modal .billing-usage-workspace {

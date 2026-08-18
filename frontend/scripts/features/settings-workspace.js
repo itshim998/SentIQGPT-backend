@@ -11,7 +11,7 @@ const SECTION_META = Object.freeze({
   billing: Object.freeze({
     eyebrow: "Plan & usage",
     title: "Plan, tokens, and upgrades",
-    description: "See the active plan, understand remaining allowances, and compare upgrades without leaving the settings workspace.",
+    description: "See your active plan, remaining plan limits, and explore upgrades.",
   }),
   memory: Object.freeze({
     eyebrow: "Personalization",
@@ -170,7 +170,7 @@ function sectionHeading(kicker, title, description) {
   wrapper.className = "settings-workspace-section-heading settings-workspace-generated-heading";
   wrapper.innerHTML = `
     <div>
-      <span class="settings-workspace-section-kicker">${kicker}</span>
+      ${kicker ? `<span class="settings-workspace-section-kicker">${kicker}</span>` : ""}
       <h4>${title}</h4>
       ${description ? `<p>${description}</p>` : ""}
     </div>
@@ -337,9 +337,9 @@ function initializeSettingsWorkspace() {
     plans.classList.add("settings-workspace-section", "billing-plans-workspace");
     if (!usage.previousElementSibling?.matches("[data-settings-generated-heading='usage']")) {
       const heading = sectionHeading(
-        "Rolling allowances",
-        "Token and feature usage",
-        "Standard and Lite track model input plus generated output. Other feature allowances remain separate.",
+        null,
+        "Plan limits",
+        null,
       );
       heading.dataset.settingsGeneratedHeading = "usage";
       usage.before(heading);

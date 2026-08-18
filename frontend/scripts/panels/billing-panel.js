@@ -76,15 +76,8 @@ import "../features/text-quota-controller.js";
     const allowance = normalizeTextAllowance(rawAllowance);
     if (!allowance) return "";
     const percent = calculateUsagePercent(allowance.limitTokens, allowance.remainingTokens);
-    const recoveryAt = allowance.nextRecoveryAt || allowance.fullResetAt;
-    const recovery = recoveryAt ? `More tokens in ${formatRecoveryCountdown(recoveryAt)}` : "Tokens return progressively over five hours.";
-    const modeMessage = allowance.exhausted
-      ? recovery
-      : allowance.intuitiveAvailableTokens < 1_500
-        ? `Fast remains available. ${recovery}`
-        : "Fast can use the full balance; Intuitive keeps the final 10K protected.";
     return `
-      <div class="billing-meter billing-meter-unified" data-feature="unified_text" aria-description="One shared rolling text-token allowance with the final 10K protected for Fast.">
+      <div class="billing-meter billing-meter-unified" data-feature="unified_text" aria-description="One shared rolling text-token allowance.">
         <div class="billing-meter-row">
           <span>Text tokens</span>
           <strong>${escapeHtml(`${formatCompactTokenNumber(allowance.remainingTokens)} / ${formatCompactTokenNumber(allowance.limitTokens)} left`)}</strong>
@@ -93,12 +86,6 @@ import "../features/text-quota-controller.js";
           <span style="width:${percent}%"></span>
           <i style="left:${Math.max(0, Math.min(100, ((allowance.limitTokens - allowance.fastReserveTokens) / Math.max(1, allowance.limitTokens)) * 100))}%"></i>
         </div>
-        <div class="billing-unified-breakdown">
-          <span><strong>${escapeHtml(formatCompactTokenNumber(allowance.fastAvailableTokens))}</strong> Fast</span>
-          <span><strong>${escapeHtml(formatCompactTokenNumber(allowance.intuitiveAvailableTokens))}</strong> Intuitive</span>
-          <span><strong>${escapeHtml(formatCompactTokenNumber(allowance.fastReserveTokens))}</strong> protected</span>
-        </div>
-        <span class="billing-meter-description">${escapeHtml(modeMessage)}</span>
       </div>
     `;
   }
@@ -127,16 +114,23 @@ import "../features/text-quota-controller.js";
     const unifiedTextActive = billingState.quota_ui_enabled === true
       && Boolean(normalizeTextAllowance(summary.text_allowance));
     const currentPlan = planName(summary.plan_code);
-    const status = summary.status === "active" ? "Active" : summary.status === "canceling" ? "Cancels at renewal" : "Available";
+    const status = summary.status === "active" ? "Active" : summary.status === "canceling" ? "Cancels at renewal" : "";
 
     panel.innerHTML = `
       <div class="billing-current">
         <div>
           <span class="billing-eyebrow">Current plan</span>
           <h3>${escapeHtml(currentPlan)}</h3>
-          <p>${escapeHtml(status)}</p>
+          ${status ? `<p>${escapeHtml(status)}</p>` : ""}
         </div>
-        <button id="billing-refresh-btn" class="btn btn-secondary" type="button">Refresh</button>
+        <button id="billing-refresh-btn" class="btn btn-secondary billing-refresh-btn" type="button" aria-label="Refresh plan limits" title="Refresh">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+            <path d="M3 3v5h5"></path>
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+            <path d="M21 21v-5h-5"></path>
+          </svg>
+        </button>
       </div>
       <div class="billing-usage-grid">
         ${unifiedTextActive
@@ -228,6 +222,8 @@ import "../features/text-quota-controller.js";
       return null;
     }
     if (!API || (!force && loadingPromise)) return loadingPromise;
+    const refreshBtn = panel?.querySelector("#billing-refresh-btn");
+    refreshBtn?.classList.add("is-refreshing");
     loadingPromise = Promise.all([
       API.getBillingPlans(),
       API.getBillingMe(),
@@ -242,6 +238,7 @@ import "../features/text-quota-controller.js";
       return null;
     }).finally(() => {
       loadingPromise = null;
+      refreshBtn?.classList.remove("is-refreshing");
     });
     return loadingPromise;
   }
