@@ -37,8 +37,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     const content = document.createElement("div");
     content.className = "message-content sentiq-reveal-target is-visible";
     content.textContent = entry.responseBuffer || "";
-    bubble.appendChild(content);
-    messages.appendChild(bubble);
+    bubble.appendChild(content); messages.appendChild(bubble);
     entry.renderer = { bubble, content, renderedText: entry.responseBuffer || "" };
     try { messages.scrollTo({ top: messages.scrollHeight, behavior: "auto" }); } catch {}
   }
@@ -47,59 +46,71 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     if (!entry.renderer) return;
     const next = String(entry.responseBuffer || "");
     if (next === entry.renderer.renderedText) return;
-    entry.renderer.content.textContent = next;
-    entry.renderer.renderedText = next;
-    try { document.querySelector("#chat-messages")?.scrollTo({ top: document.querySelector("#chat-messages")?.scrollHeight || 0, behavior: "smooth" }); } catch {}
+    entry.renderer.content.textContent = next; entry.renderer.renderedText = next;
+    try { const box = document.querySelector("#chat-messages"); if (box) box.scrollTo({ top: box.scrollHeight, behavior: "smooth" }); } catch {}
   }
   function handleRehydratedEvent(event) {
-    const detail = event?.detail || {};
-    const generation = detail.generation || {};
-    const generationId = generation.generationId || generation.generation_id;
-    if (!generationId) return;
-    const entry = findRehydratedGeneration(generationId);
-    if (!entry) return;
+    const detail = event?.detail || {}; const generation = detail.generation || {}; const generationId = generation.generationId || generation.generation_id; if (!generationId) return;
+    const entry = findRehydratedGeneration(generationId); if (!entry) return;
     if (generation.conversationId) entry.conversationId = generation.conversationId;
     if (typeof generation.responseBuffer === "string") entry.responseBuffer = generation.responseBuffer;
     const payload = detail.event || {};
-    if (payload.type === "generation_completed") entry.terminal = true;
-    if (payload.type === "generation_cancelled") entry.terminal = true;
-    if (payload.type === "generation_failed") entry.terminal = true;
+    if (["generation_completed", "generation_cancelled", "generation_failed"].includes(String(payload.type))) entry.terminal = true;
     syncRehydratedRenderer(entry);
   }
   function handleRehydratedRegistration(event) {
-    const persisted = event?.detail?.persisted || {};
-    const generation = event?.detail?.generation || {};
-    const generationId = generation.generationId || generation.generation_id || persisted.id || persisted.generation_id;
-    if (!generationId) return;
-    rehydratedEntries.set(generationId, {
-      generationId,
-      conversationId: generation.conversationId || persisted.conversation_id || null,
-      requestId: generation.requestId || persisted.client_request_id || null,
-      status: generation.status || persisted.status || "queued",
-      responseBuffer: generation.responseBuffer || persisted.partial_text || "",
-      renderer: null,
-      terminal: Boolean(generation.terminal),
-    });
-    const entry = rehydratedEntries.get(generationId);
-    ensureRehydratedRenderer(entry);
-    syncRehydratedRenderer(entry);
+    const persisted = event?.detail?.persisted || {}; const generation = event?.detail?.generation || {};
+    const generationId = generation.generationId || generation.generation_id || persisted.id || persisted.generation_id; if (!generationId) return;
+    rehydratedEntries.set(generationId, { generationId, conversationId: generation.conversationId || persisted.conversation_id || null, requestId: generation.requestId || persisted.client_request_id || null, status: generation.status || persisted.status || "queued", responseBuffer: generation.responseBuffer || persisted.partial_text || "", renderer: null, terminal: Boolean(generation.terminal) });
+    syncRehydratedRenderer(rehydratedEntries.get(generationId));
   }
   document.addEventListener("sentiq-generation-rehydrated", handleRehydratedRegistration);
   document.addEventListener("sentiq-generation-event", handleRehydratedEvent);
   document.addEventListener("click", (event) => {
     const item = event.target instanceof Element ? event.target.closest(".chat-list-item[data-id]") : null;
-    if (!item) return;
-    window.setTimeout(() => { for (const entry of rehydratedEntries.values()) if (entry.conversationId === currentVisibleChatId()) syncRehydratedRenderer(entry); }, 0);
+    if (item) window.setTimeout(() => { for (const entry of rehydratedEntries.values()) if (entry.conversationId === currentVisibleChatId()) syncRehydratedRenderer(entry); }, 0);
   }, true);
   document.addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest("#send-btn") : null;
     if (!button?.classList.contains("is-stop")) return;
     const visible = currentVisibleChatId();
     const candidate = Array.from(rehydratedEntries.values()).find((entry) => entry.conversationId === visible && !entry.terminal && ["queued","running","cancel_requested","waiting_for_tool","generating","persisting"].includes(entry.status));
-    if (!candidate) return;
-    void window.SentIQGenerationLifecycle?.cancelGeneration?.(candidate.generationId).catch?.(() => undefined);
+    if (candidate) void window.SentIQGenerationLifecycle?.cancelGeneration?.(candidate.generationId).catch?.(() => undefined);
   }, true);
   window.addEventListener("pageshow", () => { for (const entry of rehydratedEntries.values()) if (entry.conversationId === currentVisibleChatId()) syncRehydratedRenderer(entry); });
+
+  function bridgeLifecycleRegistry() {
+    const lifecycle = window.SentIQGenerationLifecycle;
+    const router = window.SentIQChatGenerationRegistry;
+    if (!lifecycle || !router || lifecycle.__sentiqRegistryBridgeInstalled) return;
+    const mergedChat = (chatId) => {
+      const map = new Map();
+      for (const item of lifecycle.getChatGenerations?.(chatId) || []) map.set(item.generationId, item);
+      for (const item of router.getChat?.(chatId) || []) map.set(item.generationId, item);
+      return Array.from(map.values());
+    };
+    const mergedAll = () => {
+      const map = new Map();
+      for (const group of lifecycle.getGenerationRegistry?.() ? Object.entries(lifecycle.getGenerationRegistry()) : []) for (const item of group[1] || []) map.set(item.generationId, { ...item });
+      for (const group of router.getAll?.() || []) for (const item of group.generations || []) map.set(item.generationId, { ...item });
+      return Array.from(map.values());
+    };
+    const bridged = Object.freeze({
+      ...lifecycle,
+      __sentiqRegistryBridgeInstalled: true,
+      getActiveGenerations: () => {
+        const map = new Map((lifecycle.getActiveGenerations?.() || []).map((item) => [item.generationId, item]));
+        for (const item of mergedAll()) if (["queued","running","cancel_requested","waiting_for_tool","generating","persisting"].includes(item.status)) map.set(item.generationId, item);
+        return Array.from(map.values());
+      },
+      getChatGenerations: mergedChat,
+      getGeneration: (generationId) => mergedAll().find((item) => item.generationId === generationId) || lifecycle.getGeneration?.(generationId) || null,
+      getGenerationRegistry: () => mergedAll().reduce((acc, item) => { (acc[item.chatId || item.conversationId || "__unassigned__"] ||= []).push(item); return acc; }, {}),
+    });
+    window.SentIQGenerationLifecycle = bridged;
+  }
+  const bridgeTimer = window.setInterval(() => { bridgeLifecycleRegistry(); if (window.SentIQGenerationLifecycle?.__sentiqRegistryBridgeInstalled) window.clearInterval(bridgeTimer); }, 250);
+  bridgeLifecycleRegistry();
 
   const API = window.SentIQAPI;
   if (API?.sendMessage && !API.__generationSessionWrappedSendMessage) {
