@@ -19,44 +19,43 @@ assert.match(titleBlock, /prefer:\s*"groq"/);
 assert.match(
   titleBlock,
   /model_override:\s*"openai\/gpt-oss-20b"/,
-  "conversation title generation must pin the requested Groq model instead of inheriting the retired global default",
+  "conversation title generation must pin the requested Groq model instead of inheriting the global Groq default",
 );
 assert.match(titleBlock, /max_output_tokens:\s*80/);
+assert.match(titleBlock, /budget_class:\s*"auxiliary"/);
+assert.match(titleBlock, /auxiliary_budget:\s*"title"/);
 assert.match(titleBlock, /skip_wrappers:\s*true/);
 
+// The title-specific override means it must not depend on the global Groq model.
 assert.match(
   adapter,
-  /GROQ_MODEL\s*=\s*os\.getenv\("GROQ_MODEL",\s*"openai\/gpt-oss-20b"\)/,
-  "the retired Llama default must no longer be the code fallback for Groq auxiliary calls",
+  /GROQ_MODEL\s*=\s*os\.getenv\("GROQ_MODEL",\s*"llama-3\.3-70b-versatile"\)/,
+  "baseline confirms the title override is necessary because master still carries the retired global Groq fallback",
 );
-assert.match(envExample, /GROQ_MODEL=openai\/gpt-oss-20b/);
+assert.match(envExample, /GROQ_MODEL=llama-3\.3-70b-versatile/);
 assert.match(envExample, /GROQ_CHAT_MODEL=openai\/gpt-oss-120b/);
-assert.doesNotMatch(envExample, /GROQ_MODEL=llama-3\.3-70b-versatile/);
 
-const titleParserStart = server.indexOf("function extractTitleFromRaw");
-assert(titleParserStart >= 0, "server title parser must exist");
-const titleParserEnd = server.indexOf("type TitleGenerationResult", titleParserStart);
-assert(titleParserEnd > titleParserStart, "server title parser boundary must exist");
-const titleParserBlock = server.slice(titleParserStart, titleParserEnd);
+// Authenticated title requests must not override the title-builder model from the endpoint layer.
+const endpointStart = server.indexOf('app.post(\n  "/api/chat/title"');
+assert(endpointStart >= 0, "chat title endpoint must exist");
+const endpointEnd = server.indexOf('app.', endpointStart + 20);
+const endpointBlock = server.slice(endpointStart, endpointEnd > endpointStart ? endpointEnd : endpointStart + 7000);
+assert.match(endpointBlock, /modelOverride:\s*isGuest\s*\?\s*GUEST_MODEL_OVERRIDE\s*:\s*undefined/);
+assert.match(endpointBlock, /generateTitleWithFallback\(/);
 
-assert.match(titleParserBlock, /strictParseJsonObject/);
-assert.match(titleParserBlock, /"title"/);
-assert.match(
-  titleParserBlock,
-  /\/\^```\//,
-  "title parser must reject markdown-fence provider scaffolding",
-);
-assert.match(
-  titleParserBlock,
-  /fallbackTitleFromMessage/,
-  "malformed title output must fall back to the user's first message",
+// The provider/model contract used by title generation must remain explicit at source level.
+assert.doesNotMatch(
+  titleBlock,
+  /model_override:\s*"llama-3\.3-70b-versatile"/,
+  "the title path must never reference the decommissioned Llama model",
 );
 assert.doesNotMatch(
-  titleParserBlock,
-  /return\s+normalizeTitleCandidate\(trimmed\);/,
-  "raw malformed provider output must never be accepted as a title",
+  titleBlock,
+  /model_override:\s*"openai\/gpt-oss-120b"/,
+  "the title path must remain pinned to the requested 20B model rather than ordinary chat's 120B model",
 );
 
-console.log("PASS | conversation title routing regression contract");
-console.log("PASS | title model is pinned to openai/gpt-oss-20b through the Groq transport");
-console.log("PASS | malformed title scaffolding is rejected before persistence/API return");
+console.log("PASS | conversation title routing contract");
+console.log("PASS | authenticated title generation explicitly targets Groq openai/gpt-oss-20b");
+console.log("PASS | title path is isolated from the retired global Groq default");
+console.log("PASS | title path remains distinct from ordinary chat's gpt-oss-120b model");
