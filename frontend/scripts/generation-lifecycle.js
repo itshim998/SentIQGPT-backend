@@ -19,7 +19,6 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   let foregroundGenerationId = null;
   let stopRequestedBeforeGeneration = false;
   let pendingGenerationStarts = 0;
-  let pageTeardownStarted = false;
   const MAX_RECONNECT_ATTEMPTS = 8;
   const RECONNECT_BASE_MS = 350;
   const RECONNECT_MAX_MS = 5000;
@@ -420,8 +419,6 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       } catch (error) {
         if (error?.name === "AbortError" || signal?.aborted) return { detached: true };
         if (entry.cancelRequested) return { cancelled: true };
-        // A sequence gap is specifically recoverable from the last contiguous
-        // sequence. Do not advance lastSequence past the gap.
         entry.subscription.reconnectAttempts += 1;
         if (entry.subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) throw error;
         await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, entry.subscription.reconnectAttempts - 1)), signal);
@@ -485,9 +482,6 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
 
     if (!generationId) return API.__legacySendMessageStream(message, context, callbacks, signal);
 
-    // Prefer the conversation that created the generation. Falling back to the
-    // visible chat after the POST would incorrectly reassign a background job if
-    // the user navigated while POST /api/chat was resolving.
     const chatId = context.conversationId
       || context.conversation_id
       || started?.conversation_id
@@ -589,20 +583,11 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     }
   }
 
-  function handlePageTeardown() {
-    if (pageTeardownStarted) return;
-    pageTeardownStarted = true;
-    for (const entry of activeGenerations.values()) entry.cancelRequested = true;
-    void cancelAllGenerations({ keepalive: true }).catch(() => undefined);
-  }
-
   const legacySendMessageStream = API.sendMessageStream.bind(API);
   API.__legacySendMessageStream = legacySendMessageStream;
   API.sendMessageStream = patchedSendMessageStream;
 
   document.addEventListener("click", handleExplicitStop, true);
-  window.addEventListener("pagehide", handlePageTeardown, true);
-  window.addEventListener("beforeunload", handlePageTeardown, true);
 
   window.SentIQGenerationLifecycle = Object.freeze({
     cancelGeneration,
