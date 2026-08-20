@@ -12,12 +12,13 @@ test("Phase 4 lifecycle adapter uses durable generation endpoints", () => {
   assert.match(lifecycle, /\/api\/chat\/generations\/cancel-all/);
 });
 
-test("Phase 4 lifecycle distinguishes Stop and transport teardown", () => {
+test("Phase 4 lifecycle keeps explicit Stop separate from browser teardown", () => {
   assert.match(lifecycle, /closest\("#send-btn"\)/);
   assert.match(lifecycle, /classList\.contains\("is-stop"\)/);
   assert.match(lifecycle, /entry\.cancelRequested = true/);
-  assert.match(lifecycle, /pagehide/);
-  assert.match(lifecycle, /beforeunload/);
+  assert.doesNotMatch(lifecycle, /addEventListener\("pagehide"/);
+  assert.doesNotMatch(lifecycle, /addEventListener\("beforeunload"/);
+  assert.doesNotMatch(lifecycle, /function handlePageTeardown/);
   assert.match(lifecycle, /AbortError/);
   assert.match(lifecycle, /detached/);
 });
