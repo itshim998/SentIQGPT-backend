@@ -66,3 +66,12 @@ SENTIQGPT_FULL_CODEBASE_CONTEXT.md
 
 .agents/
 SentIQ_Chat_for_consumers.txt
+
+# Mobile / Flutter build artifacts
+mobile/**/build/
+mobile/**/.dart_tool/
+mobile/**/.flutter-plugins*
+mobile/**/.gradle/
+mobile/**/local.properties
+mobile/**/android/.gradle/
+mobile/**/android/local.properties
