@@ -141,7 +141,7 @@ import { SENTIQ_API_BASE } from "./config.js";
     wrapped.onGenerationStarted = (generationId, started) => {
       const resolvedGenerationId = normalizeId(generationId); const conversationId = resolveConversationId(context, started || {});
       if (!resolvedGenerationId || !conversationId) { pendingBeforeStart.push({ callbackName: "onGenerationStarted", args: [generationId, started] }); return; }
-      const entry = prepareCanonicalEntry(getGenerationEntry(resolvedGenerationId), wrapped, conversationId, false);
+      const entry = prepareCanonicalEntry(getGenerationEntry(resolvedGenerationId), callbacks, conversationId, false);
       if (!entry) { pendingBeforeStart.push({ callbackName: "onGenerationStarted", args: [generationId, started] }); return; }
       entry.requestId = entry.requestId || normalizeId(context?.clientRequestId || context?.client_request_id || started?.client_request_id);
       entry.clientRequestId = entry.clientRequestId || entry.requestId;
@@ -182,7 +182,7 @@ import { SENTIQ_API_BASE } from "./config.js";
 
     const existing = getGenerationEntry(generationId);
     if (existing) {
-      prepareCanonicalEntry(existing, existing.callbacks, chatId, true);
+      prepareCanonicalEntry(existing, existing.originalCallbacks || existing.callbacks, chatId, true);
       existing.status = typeof persisted.status === "string" ? persisted.status : existing.status;
       existing.lastSequence = Math.max(Number(existing.lastSequence || 0), Number(persisted.last_event_sequence || 0));
       if (typeof persisted.partial_text === "string" && persisted.partial_text.length >= String(existing.responseBuffer || "").length) existing.responseBuffer = persisted.partial_text;
@@ -305,7 +305,7 @@ import { SENTIQ_API_BASE } from "./config.js";
   }
 
   window.SentIQChatGenerationRegistry = Object.freeze({
-    get(conversationId, generationId) { return getGenerationEntry(generationId)?.conversationId === normalizeId(conversationId) ? getGenerationEntry(generationId) : null; },
+    get(conversationId, generationId) { const entry = getGenerationEntry(generationId); return entry?.conversationId === normalizeId(conversationId) ? entry : null; },
     getChat(conversationId) { return getChatGenerations(conversationId); },
     getAll() { return getAllGenerations(); },
     flushChat,
