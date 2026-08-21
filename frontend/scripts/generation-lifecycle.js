@@ -132,6 +132,42 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     getChatRegistry(entry.chatId).set(entry.generationId, entry);
   }
 
+  function isGenerationRunning(entry) {
+    return Boolean(entry && !entry.terminal && !["completed", "failed", "cancelled"].includes(String(entry.status || "")));
+  }
+
+  function getVisibleConversationId() {
+    const id = document.querySelector(".chat-list-item.active")?.getAttribute("data-id");
+    return typeof id === "string" && id.trim() ? id.trim() : null;
+  }
+
+  function getStopTargetEntry() {
+    const foreground = foregroundGenerationId ? getGenerationEntry(foregroundGenerationId) : null;
+    if (isGenerationRunning(foreground)) return foreground;
+
+    const visibleChatId = getVisibleConversationId();
+    if (visibleChatId) {
+      const visibleGenerations = getGenerationEntries(visibleChatId).filter(isGenerationRunning);
+      if (visibleGenerations.length) {
+        return visibleGenerations.sort((left, right) => {
+          const leftTime = Date.parse(left.startedAt || "") || 0;
+          const rightTime = Date.parse(right.startedAt || "") || 0;
+          return rightTime - leftTime;
+        })[0];
+      }
+    }
+
+    const registryEntries = Array.from(chatGenerationRegistry.values())
+      .flatMap((registry) => Array.from(registry.values()))
+      .filter(isGenerationRunning);
+    if (!registryEntries.length) return null;
+    return registryEntries.sort((left, right) => {
+      const leftTime = Date.parse(left.startedAt || "") || 0;
+      const rightTime = Date.parse(right.startedAt || "") || 0;
+      return rightTime - leftTime;
+    })[0];
+  }
+
   function registerExternalGeneration(entry) {
     const generationId = typeof entry?.generationId === "string" ? entry.generationId.trim() : "";
     const chatId = typeof (entry?.chatId || entry?.conversationId) === "string"
@@ -140,7 +176,11 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     if (!generationId || !chatId) return null;
 
     const existing = getChatRegistry(chatId).get(generationId);
-    if (existing) return existing;
+    if (existing) {
+      if (!existing.terminal && !activeGenerations.has(generationId)) activeGenerations.set(generationId, existing);
+      if (!existing.terminal && !isGenerationRunning(getGenerationEntry(foregroundGenerationId || ""))) foregroundGenerationId = generationId;
+      return existing;
+    }
 
     const canonical = {
       ...entry,
@@ -169,7 +209,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     registerGeneration(canonical);
     if (!canonical.terminal) {
       activeGenerations.set(generationId, canonical);
-      if (!foregroundGenerationId) foregroundGenerationId = generationId;
+      if (!isGenerationRunning(getGenerationEntry(foregroundGenerationId || ""))) foregroundGenerationId = generationId;
     }
     return canonical;
   }
@@ -512,8 +552,13 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
 
   async function cancelGeneration(generationId, { keepalive = false } = {}) {
     if (!generationId) return null;
-    const entry = activeGenerations.get(generationId);
-    if (entry) entry.cancelRequested = true;
+    const entry = getGenerationEntry(generationId);
+    if (entry) {
+      if (!entry.terminal) {
+        entry.cancelRequested = true;
+        activeGenerations.set(generationId, entry);
+      }
+    }
     const headers = await buildAuthHeaders();
     const response = await fetch(
       `${SENTIQ_API_BASE}/api/chat/generations/${encodeURIComponent(generationId)}/cancel`,
@@ -530,10 +575,13 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   }
 
   async function cancelAllGenerations({ keepalive = false } = {}) {
-    const ids = Array.from(activeGenerations.keys());
+    const ids = Array.from(new Set([
+      ...activeGenerations.keys(),
+      ...Array.from(chatGenerationRegistry.values()).flatMap((registry) => Array.from(registry.values()).filter(isGenerationRunning).map((entry) => entry.generationId)),
+    ]));
     if (!ids.length) return null;
     for (const id of ids) {
-      const entry = activeGenerations.get(id);
+      const entry = getGenerationEntry(id);
       if (entry) entry.cancelRequested = true;
     }
     const headers = await buildAuthHeaders();
@@ -659,8 +707,8 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   function handleExplicitStop(event) {
     const button = event.target instanceof Element ? event.target.closest("#send-btn") : null;
     if (!button || !button.classList.contains("is-stop")) return;
-    const generationId = foregroundGenerationId;
-    const entry = generationId ? activeGenerations.get(generationId) : null;
+    const entry = getStopTargetEntry();
+    const generationId = entry?.generationId || null;
     if (entry) {
       entry.cancelRequested = true;
       void cancelGeneration(generationId).catch((error) => {
@@ -699,6 +747,4 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       return result;
     },
   });
-
-  console.info("[GenerationLifecycle] Phase 7/8 generation sequencing + canonical browser generation registry installed.");
 })();
