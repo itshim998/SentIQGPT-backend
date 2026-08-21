@@ -79,6 +79,7 @@ async function testEventDeliveryOrderAndDurability() {
   assert.equal(persisted.length, 75, "every emitted event must be durably persisted");
   assert.equal(persisted[persisted.length - 1]?.args.p_sequence, 75, "durable cursor must reach the final emitted event");
   assert.equal(persisted[0]?.args.p_sequence, 1, "durable cursor must begin at sequence 1");
+  assert.ok(persisted.every((call) => call.args.p_lease_id === "lease-p0"), "every durable event append must be lease fenced");
 }
 
 function testSourceContracts() {
@@ -90,7 +91,8 @@ function testSourceContracts() {
   const eventsService = read("backend/services/chatGenerationEventService.ts");
   const migration = read("supabase/migrations/20260817123000_durable_generation_event_log.sql");
 
-  assert.ok(lifecycle.includes("handlePageTeardown"), "legacy page teardown handler should remain visible until fully retired");
+  assert.ok(!lifecycle.includes("handlePageTeardown"), "generation lifecycle must not own page teardown cancellation");
+  assert.ok(!lifecycle.includes('window.addEventListener("pagehide"'), "pagehide must not cancel through generation lifecycle");
   assert.ok(transport.includes("bulk_cancellation_requires_explicit_intent"), "bulk cancellation must require explicit intent");
   assert.ok(transport.includes("after > 0 is replay-only"), "reconnect protocol must not mix snapshot and history");
   assert.ok(session.includes('window.addEventListener("pagehide"'), "generation session must remain the lifecycle owner");
