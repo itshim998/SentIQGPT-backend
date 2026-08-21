@@ -56,6 +56,45 @@
     });
   }
 
+  function applyTextDelta(renderer, token) {
+    if (typeof token === "string" && token) renderer.text += token;
+    scheduleRender(renderer);
+  }
+
+  function createCallbacks(renderer) {
+    return Object.freeze({
+      onGenerationSnapshot(snapshot) {
+        if (typeof snapshot?.partial_text === "string") renderer.text = snapshot.partial_text;
+        scheduleRender(renderer, true);
+      },
+      onToken(token) {
+        applyTextDelta(renderer, token);
+      },
+      onFileToken(token) {
+        applyTextDelta(renderer, token);
+      },
+      onDone() {
+        renderer.terminal = true;
+        scheduleRender(renderer, true);
+      },
+      onError() {
+        renderer.terminal = true;
+        scheduleRender(renderer, true);
+      },
+    });
+  }
+
+  function attachCallbacksToCanonicalEntry(renderer, generation) {
+    if (!generation?.rehydrated) return;
+    const lifecycle = window.SentIQGenerationLifecycle;
+    const entry = lifecycle?.getGenerationEntry?.(renderer.generationId);
+    if (!entry) return;
+    if (!entry.rehydrated) entry.rehydrated = true;
+    if (!entry.rehydratedRendererCallbacks) entry.rehydratedRendererCallbacks = renderer.callbacks;
+    if (!entry.originalCallbacks) entry.originalCallbacks = entry.callbacks || {};
+    entry.callbacks = { ...(entry.callbacks || {}), ...renderer.callbacks };
+  }
+
   function ensureRenderer(generation) {
     const generationId = normalizeId(generation?.generationId || generation?.generation_id);
     const conversationId = normalizeId(generation?.conversationId || generation?.conversation_id || generation?.chatId || generation?.chat_id);
@@ -72,7 +111,9 @@
         rafId: 0,
         forceRender: false,
         terminal: false,
+        callbacks: null,
       };
+      renderer.callbacks = createCallbacks(renderer);
       renderers.set(generationId, renderer);
     } else {
       renderer.conversationId = conversationId;
@@ -81,6 +122,7 @@
       }
     }
 
+    attachCallbacksToCanonicalEntry(renderer, generation);
     scheduleRender(renderer, true);
     return renderer;
   }
@@ -91,26 +133,26 @@
 
     switch (event.type) {
       case "generation_snapshot":
-        if (typeof event.partial_text === "string") renderer.text = event.partial_text;
-        break;
+        renderer.callbacks.onGenerationSnapshot(event);
+        return;
       case "token":
+        renderer.callbacks.onToken(event.text);
+        return;
       case "file_token":
-        if (typeof event.text === "string" && event.text) renderer.text += event.text;
-        break;
+        renderer.callbacks.onFileToken(event.text);
+        return;
       case "generation_completed":
         if (typeof event.partial_text === "string") renderer.text = event.partial_text;
-        renderer.terminal = true;
-        break;
+        renderer.callbacks.onDone();
+        return;
       case "generation_cancelled":
       case "generation_failed":
         if (typeof event.partial_text === "string") renderer.text = event.partial_text;
-        renderer.terminal = true;
-        break;
+        renderer.callbacks.onError();
+        return;
       default:
         return;
     }
-
-    scheduleRender(renderer, renderer.terminal);
   }
 
   function handleRehydratedGeneration(event) {
