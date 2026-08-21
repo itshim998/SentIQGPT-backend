@@ -38,7 +38,7 @@
   }
   function ensureStartupScreen() {
     let screen = document.getElementById("sentiq-startup-screen"); if (screen) return screen;
-    screen = document.createElement("div"); screen.id = "sentiq-startup-screen"; screen.className = "sentiq-startup-screen"; screen.setAttribute("role", "status"); screen.setAttribute("aria-live", "polite"); screen.innerHTML = ['<div class="startup-screen sentiq-startup-logo-mode">', '<sentiq-activity-logo variant="neural-dialog" state="loading" size="88px" aria-label="Loading SentIQ Chat"></sentiq-activity-logo>', "</div>"].join(""); document.body?.prepend(screen); return screen;
+    screen = document.createElement("div"); screen.id = "sentiq-startup-screen"; screen.className = "sentiq-startup-screen"; screen.setAttribute("role", "status"); screen.setAttribute("aria-live", "polite"); screen.innerHTML = ['<div class="sentiq-startup-content sentiq-startup-logo-mode">', '<sentiq-activity-logo variant="neural-dialog" state="loading" size="88px" aria-label="Loading SentIQ Chat"></sentiq-activity-logo>', "</div>"].join(""); document.body?.prepend(screen); return screen;
   }
   function removeStartupScreen({ animate = true } = {}) {
     const screen = document.getElementById("sentiq-startup-screen"); if (!screen) return;
