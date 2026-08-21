@@ -51,6 +51,27 @@
   font-size: 0.86rem;
 }
 
+.billing-current .billing-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+.billing-current .billing-refresh-btn:hover {
+  color: var(--text-primary);
+}
+
+.billing-current .billing-refresh-btn.is-refreshing svg {
+  animation: sentiqMotionProgressSpin 0.8s linear infinite;
+}
+
 .billing-usage-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
