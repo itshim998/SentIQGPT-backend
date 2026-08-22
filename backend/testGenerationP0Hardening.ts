@@ -98,7 +98,9 @@ function testSourceContracts() {
   assert.ok(session.includes('window.addEventListener("pagehide"'), "generation session must remain the lifecycle owner");
   assert.ok(runner.includes("CONTROL_POLL_MS"), "generation runner must poll durable control state");
   assert.ok(runner.includes("executionOwnershipLost"), "generation runner must abort after lease ownership loss");
+  assert.ok(runner.includes("getChatGenerationById(userDb"), "generation runner must observe remote cancellation state");
   assert.ok(runner.includes("renewChatGenerationExecutionLease"), "lease renewals must be checked");
+  assert.ok(coordinator.includes("executionLeaseId"), "task state must retain the execution lease id");
   assert.ok(coordinator.includes("deliveryChain"), "subscriber delivery must use a serialized queue");
   assert.ok(coordinator.includes("DURABLE_EVENT_POLL_MS"), "subscriptions must poll durable events across replicas");
   assert.ok(coordinator.includes("appendChatGenerationEventFenced"), "emitted events must use the fenced durable append");
