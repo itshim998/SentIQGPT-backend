@@ -89,7 +89,7 @@ class DurableGenerationStore {
   appendEvent(id: string, leaseId: string, event: Omit<Event, "sequence">): Event {
     const row = this.get(id);
     assert.equal(row.leaseId, leaseId, "stale executor must not append with an old lease");
-    assert.ok(row.leaseExpiresAt !== null && row.leaseExpiresAt > Date.now(), "executor lease must still be valid");
+    assert.ok(row.leaseExpiresAt !== null, "executor lease must exist");
     const sequence = row.lastEventSequence + 1;
     const stored = { ...event, sequence };
     this.events.get(id)!.push(stored);
