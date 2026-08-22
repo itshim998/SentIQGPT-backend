@@ -1,5 +1,9 @@
 import { chatGenerationTaskCoordinator } from "./chatGenerationTaskCoordinator";
-import { getGuestGenerationDatabase } from "./guestGenerationStore";
+import {
+  claimGuestGenerationRecoveryAttempt,
+  getGuestGenerationDatabase,
+  recordGuestGenerationRecoveryFailure,
+} from "./guestGenerationStore";
 import { runGeneration } from "./generationRunner";
 
 type GuestGenerationRecoveryRow = {
@@ -42,8 +46,21 @@ function shouldRecover(row: GuestGenerationRecoveryRow, nowMs: number): boolean 
     && (!Number.isFinite(updatedAt) || updatedAt <= nowMs - STALE_EXECUTION_MS);
 }
 
-async function recoverShard(db: ReturnType<typeof getGuestGenerationDatabase>, row: GuestGenerationRecoveryRow): Promise<void> {
+async function recoverShard(
+  db: ReturnType<typeof getGuestGenerationDatabase>,
+  row: GuestGenerationRecoveryRow,
+): Promise<void> {
   if (row.recovery_attempts >= MAX_RECOVERY_ATTEMPTS) return;
+
+  const attempt = await claimGuestGenerationRecoveryAttempt(
+    db,
+    row.user_id,
+    row.id,
+    row.recovery_attempts,
+  );
+  if (attempt.error) return;
+  if (!attempt.claimed) return;
+
   const task = chatGenerationTaskCoordinator.start({
     generationId: row.id,
     clientRequestId: row.client_request_id,
@@ -55,10 +72,13 @@ async function recoverShard(db: ReturnType<typeof getGuestGenerationDatabase>, r
     liveExecutionSnapshot: undefined,
   });
   if (task.runPromise || task.terminal) return;
+
   try {
     await runGeneration(row.id);
   } catch (error) {
-    await chatGenerationTaskCoordinator.failed(row.id, String((error as any)?.code || "guest_generation_recovery_failed")).catch(() => undefined);
+    const message = String((error as any)?.code || "guest_generation_recovery_failed");
+    await recordGuestGenerationRecoveryFailure(db, row.user_id, row.id, message).catch(() => undefined);
+    await chatGenerationTaskCoordinator.failed(row.id, message).catch(() => undefined);
   }
 }
 
