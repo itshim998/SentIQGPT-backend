@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getDataShardDatabases } from "../dbRouter";
 
 const DATA_SHARDS = getDataShardDatabases();
+const GUEST_OWNER_KEY_VERSION = "sentiq-guest-generation-v1|";
 
 export function normalizeGuestOwnerKey(value: unknown): string {
   const normalized = typeof value === "string" ? value.trim() : "";
@@ -11,12 +12,18 @@ export function normalizeGuestOwnerKey(value: unknown): string {
 }
 
 function shardIndex(ownerKey: string): number {
-  const digest = createHash("sha256").update(ownerKey).digest();
+  const normalized = normalizeGuestOwnerKey(ownerKey);
+  const digest = createHash("sha256").update(normalized).digest();
   return digest.readUInt32BE(0) % DATA_SHARDS.length;
 }
 
+/**
+ * Resolve a data shard from the canonical durable guest owner key.
+ * The owner key is already a versioned SHA-256 digest derived from the
+ * browser anonymous ID; do not hash it again during shard selection.
+ */
 export function getGuestGenerationDatabase(ownerKey: string): SupabaseClient {
-  return createGuestGenerationDbProxy(DATA_SHARDS[shardIndex(normalizeGuestOwnerKey(ownerKey))]);
+  return createGuestGenerationDbProxy(DATA_SHARDS[shardIndex(ownerKey)]);
 }
 
 export function createGuestGenerationDbProxy(base: SupabaseClient): SupabaseClient {
@@ -56,11 +63,63 @@ export function createGuestGenerationDbProxy(base: SupabaseClient): SupabaseClie
 }
 
 export function guestGenerationOwnerKeyFromAnonymousId(anonymousId: string): string {
-  return createHash("sha256").update("sentiq-guest-generation-v1|").update(normalizeGuestOwnerKey(anonymousId)).digest("hex");
+  return createHash("sha256")
+    .update(GUEST_OWNER_KEY_VERSION)
+    .update(normalizeGuestOwnerKey(anonymousId))
+    .digest("hex");
 }
 
 export function getGuestGenerationOwnerKeyForRequest(req: { headers?: Record<string, unknown> }): string {
   const raw = req.headers?.["x-sentiq-anonymous-id"];
   const anonymousId = Array.isArray(raw) ? String(raw[0] || "") : String(raw || "");
   return guestGenerationOwnerKeyFromAnonymousId(normalizeGuestOwnerKey(anonymousId));
+}
+
+export async function claimGuestGenerationRecoveryAttempt(
+  userDb: SupabaseClient,
+  ownerKey: string,
+  generationId: string,
+  expectedAttempts: number,
+  errorMessage = "backend_execution_recovery_started",
+) {
+  const currentAttempts = Number.isFinite(expectedAttempts) ? Math.max(0, Math.floor(expectedAttempts)) : 0;
+  const result = await userDb
+    .from("chat_generations")
+    .update({
+      recovery_attempts: currentAttempts + 1,
+      last_execution_error: errorMessage,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", generationId)
+    .eq("user_id", normalizeGuestOwnerKey(ownerKey))
+    .eq("recovery_attempts", currentAttempts)
+    .select("id, recovery_attempts, last_execution_error, updated_at")
+    .maybeSingle();
+
+  return {
+    data: result.data ? {
+      id: String(result.data.id),
+      recovery_attempts: Number(result.data.recovery_attempts ?? currentAttempts + 1),
+      last_execution_error: result.data.last_execution_error ?? null,
+      updated_at: result.data.updated_at ?? null,
+    } : null,
+    error: result.error,
+    claimed: Boolean(result.data),
+  };
+}
+
+export async function recordGuestGenerationRecoveryFailure(
+  userDb: SupabaseClient,
+  ownerKey: string,
+  generationId: string,
+  errorMessage: string,
+) {
+  return userDb
+    .from("chat_generations")
+    .update({
+      last_execution_error: String(errorMessage || "guest_generation_recovery_failed").slice(0, 512),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", generationId)
+    .eq("user_id", normalizeGuestOwnerKey(ownerKey));
 }
