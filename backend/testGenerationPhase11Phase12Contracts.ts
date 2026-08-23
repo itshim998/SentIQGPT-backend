@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 
 const runner = fs.readFileSync(path.resolve(__dirname, "services/generationRunner.ts"), "utf8");
 const rehydrationRoutes = fs.readFileSync(path.resolve(__dirname, "chatGenerationRehydrationRoutes.ts"), "utf8");
@@ -33,5 +32,9 @@ const bootstrap = fs.readFileSync(path.resolve(__dirname, "../frontend/scripts/b
 
  test("Phase 12 keeps browser transport detached from executor cancellation", () => {
   assert.match(runner, /__sentiqGenerationDetached: true/);
-  assert.match(runner, /const executionHandle: ChatGenerationExecution/);
+  assert.match(
+    runner,
+    /once\("close", \(\) => \{ if \(!abortController\.signal\.aborted && request\.__sentiqGenerationDetached !== true\) abort\(\); \}\)/,
+  );
+  assert.doesNotMatch(runner, /const executionHandle: ChatGenerationExecution/);
 });
