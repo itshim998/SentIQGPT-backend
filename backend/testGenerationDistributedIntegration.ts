@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
 /**
@@ -10,7 +11,7 @@ import test from "node:test";
  * one durable generation/event store, so it adds zero Azure startup traffic.
  */
 
-type Status = "queued" | "running" | "cancel_requested" | "completed" | "failed" | "cancelled";
+type Status = "queued" | "running" | "recoverable" | "cancel_requested" | "completed" | "failed" | "cancelled";
 
 type Event = {
   sequence: number;
@@ -148,10 +149,10 @@ class SerializedSubscription {
   }
 }
 
-const CONTRACT_ROOT = new URL(".", import.meta.url);
+const CONTRACT_ROOT = __dirname;
 
 function read(relative: string): string {
-  return fs.readFileSync(new URL(relative, CONTRACT_ROOT), "utf8");
+  return fs.readFileSync(path.resolve(CONTRACT_ROOT, relative), "utf8");
 }
 
 test("guest generation survives crash and recovers on the same shard", () => {
