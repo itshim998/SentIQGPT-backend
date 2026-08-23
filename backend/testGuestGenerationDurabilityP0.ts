@@ -1,15 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
-const root = new URL(".", import.meta.url);
-const migration = fs.readFileSync(new URL("../supabase/migrations/20260817140000_durable_guest_generations.sql", import.meta.url), "utf8");
-const store = fs.readFileSync(new URL("./services/guestGenerationStore.ts", import.meta.url), "utf8");
-const transport = fs.readFileSync(new URL("./chatGenerationTransportBootstrap.ts", import.meta.url), "utf8");
-const recovery = fs.readFileSync(new URL("./services/guestGenerationRecovery.ts", import.meta.url), "utf8");
-const server = fs.readFileSync(new URL("./server.ts", import.meta.url), "utf8");
-
-void root;
+const migration = fs.readFileSync(path.resolve(__dirname, "../supabase/migrations/20260817140000_durable_guest_generations.sql"), "utf8");
+const store = fs.readFileSync(path.resolve(__dirname, "services/guestGenerationStore.ts"), "utf8");
+const transport = fs.readFileSync(path.resolve(__dirname, "chatGenerationTransportBootstrap.ts"), "utf8");
+const recovery = fs.readFileSync(path.resolve(__dirname, "services/guestGenerationRecovery.ts"), "utf8");
+const server = fs.readFileSync(path.resolve(__dirname, "server.ts"), "utf8");
 
 test("guest generation persistence exists outside auth.users", () => {
   assert.match(migration, /create table if not exists public\.guest_chat_generations/);
