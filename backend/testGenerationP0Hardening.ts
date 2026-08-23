@@ -94,7 +94,14 @@ function testSourceContracts() {
   assert.ok(!lifecycle.includes("handlePageTeardown"), "generation lifecycle must not own page teardown cancellation");
   assert.ok(!lifecycle.includes('window.addEventListener("pagehide"'), "pagehide must not cancel through generation lifecycle");
   assert.ok(transport.includes("bulk_cancellation_requires_explicit_intent"), "bulk cancellation must require explicit intent");
-  assert.ok(transport.includes("after > 0 is replay-only"), "reconnect protocol must not mix snapshot and history");
+  assert.ok(
+    transport.includes("const subscriptionAfter = cursor > 0 ? cursor : Number(persisted?.last_event_sequence ?? task.sequence);"),
+    "reconnects with a cursor must subscribe from replay history rather than mixing in a fresh snapshot",
+  );
+  assert.ok(
+    transport.includes("if (cursor === 0) emit(await chatGenerationTaskCoordinator.snapshot(generationId, persisted));"),
+    "fresh connections may receive a snapshot, while cursor-based reconnects remain replay-only",
+  );
   assert.ok(session.includes('window.addEventListener("pagehide"'), "generation session must remain the lifecycle owner");
   assert.ok(runner.includes("CONTROL_POLL_MS"), "generation runner must poll durable control state");
   assert.ok(runner.includes("executionOwnershipLost"), "generation runner must abort after lease ownership loss");
