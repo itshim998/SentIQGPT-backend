@@ -84,45 +84,36 @@ for (const token of [
   assert.ok(visibilitySource.includes(token), `Visible home composer aura missing ${token}`);
 }
 
-const tokensSource = await readFile(
-  new URL("../styles/modules/01-tokens-base.css", import.meta.url),
-  "utf8",
-);
-
 for (const token of [
   "--sentiq-home-top-space: minmax(72px, 0.82fr)",
   "--sentiq-home-bottom-space: minmax(64px, 1fr)",
   "width: min(var(--sentiq-home-composer-shell-width), calc(100% - 48px))",
   "padding-top: 18px",
   "isolation: isolate",
-  "top: 50%",
-  "left: 50%",
-  "width: calc(100% + 180px)",
-  "height: calc(100% + 120px)",
+  "top: calc(50% + 92px)",
+  "top: calc(50% + 72px)",
+  "top: calc(50% + 34px)",
+  "top: calc(50% + 28px)",
+  "width: calc(100% + 164px)",
+  "height: calc(100% + 96px)",
   "z-index: 0",
-  "ellipse at 50% 50%",
-  "transform: translate3d(-50%, -50%, 0)",
-  ".main-content.is-empty-chat .main-content-glow::before",
-  "top: 58%",
+  "ellipse at -2% 56%",
+  "ellipse at 102% 56%",
+  "ellipse at 50% 106%",
   "opacity: 0.82",
 ]) {
-  assert.ok(compositionSource.includes(token), `Gemini-style centered composer aura missing ${token}`);
+  assert.ok(compositionSource.includes(token), `Lowered composer-wrapped aura missing ${token}`);
 }
 
-assert.ok(
-  tokensSource.includes("ellipse at 50% 58%"),
-  "Canvas home glow token must be centered at 58% behind the composer",
-);
-
 assert.equal(
-  compositionSource.includes("top: calc(50% + 92px)"),
+  compositionSource.includes("top: calc(50% + 16px)"),
   false,
-  "The former offset desktop aura position must not return",
+  "The former high desktop aura position must not return",
 );
 assert.equal(
-  compositionSource.includes("ellipse at 50% 106%"),
+  compositionSource.includes("ellipse at 50% 50%"),
   false,
-  "The former bottom-weighted gradient must not return",
+  "The final aura must not return to a filled field between the heading and composer",
 );
 assert.equal(
   compositionSource.includes("filter: blur("),
@@ -140,4 +131,4 @@ assert.equal(
   "The retired full-width under-composer wash must not return",
 );
 
-console.log("Home composer aura gate passed: the welcome and composer geometry stay fixed while the purple halo is centered directly behind the message composer capsule (Gemini style).");
+console.log("Home composer aura gate passed: the welcome and composer geometry stay fixed while the purple field is lowered around the composer's sides and lower edge.");

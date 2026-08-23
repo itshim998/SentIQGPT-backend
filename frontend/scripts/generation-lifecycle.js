@@ -132,6 +132,121 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     getChatRegistry(entry.chatId).set(entry.generationId, entry);
   }
 
+  function isGenerationRunning(entry) {
+    return Boolean(entry && !entry.terminal && !["completed", "failed", "cancelled"].includes(String(entry.status || "")));
+  }
+
+  function getVisibleConversationId() {
+    const id = document.querySelector(".chat-list-item.active")?.getAttribute("data-id");
+    return typeof id === "string" && id.trim() ? id.trim() : null;
+  }
+
+  function getStopTargetEntry() {
+    const foreground = foregroundGenerationId ? getGenerationEntry(foregroundGenerationId) : null;
+    if (isGenerationRunning(foreground)) return foreground;
+
+    const visibleChatId = getVisibleConversationId();
+    if (visibleChatId) {
+      const visibleGenerations = getGenerationEntries(visibleChatId).filter(isGenerationRunning);
+      if (visibleGenerations.length) {
+        return visibleGenerations.sort((left, right) => {
+          const leftTime = Date.parse(left.startedAt || "") || 0;
+          const rightTime = Date.parse(right.startedAt || "") || 0;
+          return rightTime - leftTime;
+        })[0];
+      }
+    }
+
+    const registryEntries = Array.from(chatGenerationRegistry.values())
+      .flatMap((registry) => Array.from(registry.values()))
+      .filter(isGenerationRunning);
+    if (!registryEntries.length) return null;
+    return registryEntries.sort((left, right) => {
+      const leftTime = Date.parse(left.startedAt || "") || 0;
+      const rightTime = Date.parse(right.startedAt || "") || 0;
+      return rightTime - leftTime;
+    })[0];
+  }
+
+  function registerExternalGeneration(entry) {
+    const generationId = typeof entry?.generationId === "string" ? entry.generationId.trim() : "";
+    const chatId = typeof (entry?.chatId || entry?.conversationId) === "string"
+      ? String(entry.chatId || entry.conversationId).trim()
+      : "";
+    if (!generationId || !chatId) return null;
+
+    const existing = getChatRegistry(chatId).get(generationId);
+    if (existing) {
+      if (!existing.terminal && !activeGenerations.has(generationId)) activeGenerations.set(generationId, existing);
+      if (!existing.terminal && !isGenerationRunning(getGenerationEntry(foregroundGenerationId || ""))) foregroundGenerationId = generationId;
+      return existing;
+    }
+
+    const canonical = {
+      ...entry,
+      generationId,
+      chatId,
+      conversationId: entry.conversationId || chatId,
+      requestId: entry.requestId || entry.clientRequestId || null,
+      clientRequestId: entry.clientRequestId || entry.requestId || null,
+      status: typeof entry.status === "string" ? entry.status : "queued",
+      responseBuffer: typeof entry.responseBuffer === "string" ? entry.responseBuffer : "",
+      lastSequence: Number.isFinite(Number(entry.lastSequence)) ? Number(entry.lastSequence) : 0,
+      subscription: entry.subscription || { active: false, reconnectAttempts: 0, signal: null },
+      startedAt: entry.startedAt || new Date().toISOString(),
+      completedAt: entry.completedAt || null,
+      callbacks: entry.callbacks || {},
+      pendingCallbacks: Array.isArray(entry.pendingCallbacks) ? entry.pendingCallbacks : [],
+      terminal: Boolean(entry.terminal) || ["completed", "failed", "cancelled"].includes(String(entry.status || "")),
+      cancelRequested: Boolean(entry.cancelRequested),
+      cancelled: Boolean(entry.cancelled),
+      tokensReceived: Boolean(entry.tokensReceived),
+      structuredReceived: Boolean(entry.structuredReceived),
+      interrupted: Boolean(entry.interrupted),
+      error: entry.error || null,
+    };
+
+    registerGeneration(canonical);
+    if (!canonical.terminal) {
+      activeGenerations.set(generationId, canonical);
+      if (!isGenerationRunning(getGenerationEntry(foregroundGenerationId || ""))) foregroundGenerationId = generationId;
+    }
+    return canonical;
+  }
+
+  function unregisterGeneration(generationId) {
+    const normalized = typeof generationId === "string" ? generationId.trim() : "";
+    if (!normalized) return false;
+    activeGenerations.delete(normalized);
+    for (const registry of chatGenerationRegistry.values()) {
+      if (registry.delete(normalized)) {
+        if (foregroundGenerationId === normalized) foregroundGenerationId = null;
+        return true;
+      }
+    }
+    if (foregroundGenerationId === normalized) foregroundGenerationId = null;
+    return false;
+  }
+
+  function getGenerationEntry(generationId) {
+    const normalized = typeof generationId === "string" ? generationId.trim() : "";
+    if (!normalized) return null;
+    return Array.from(chatGenerationRegistry.values()).map((registry) => registry.get(normalized)).find(Boolean) || null;
+  }
+
+  function getGenerationEntries(chatId) {
+    const registry = getChatRegistry(chatId);
+    return Array.from(registry.values());
+  }
+
+  function getGenerationRegistryEntries() {
+    const result = {};
+    for (const [chatId, registry] of chatGenerationRegistry.entries()) {
+      result[chatId] = Array.from(registry.values());
+    }
+    return result;
+  }
+
   function dispatchGenerationEvent(entry, event) {
     try {
       window.dispatchEvent(new CustomEvent("sentiq-generation-event", {
@@ -204,6 +319,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       if (terminalSnapshot) {
         entry.terminal = true;
         entry.completedAt = entry.completedAt || new Date().toISOString();
+        activeGenerations.delete(entry.generationId);
         if (event.status === "cancelled") entry.cancelled = true;
         if (event.status === "failed") {
           const error = new Error(String(event.error_code || "Generation failed."));
@@ -215,6 +331,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           });
         }
         if (event.status === "completed") entry.callbacks.onDone?.();
+        if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
         return true;
       }
       return false;
@@ -315,7 +432,9 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         emitSnapshotDelta(entry, event);
         entry.terminal = true;
         entry.completedAt = new Date().toISOString();
+        activeGenerations.delete(entry.generationId);
         entry.callbacks.onDone?.();
+        if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
         break;
       case "generation_cancelled":
         entry.status = "cancelled";
@@ -323,12 +442,15 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         entry.terminal = true;
         entry.cancelled = true;
         entry.completedAt = new Date().toISOString();
+        activeGenerations.delete(entry.generationId);
+        if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
         break;
       case "generation_failed": {
         entry.status = "failed";
         emitSnapshotDelta(entry, event);
         entry.terminal = true;
         entry.completedAt = new Date().toISOString();
+        activeGenerations.delete(entry.generationId);
         const error = new Error(String(event.error_code || "Generation failed."));
         error.code = typeof event.error_code === "string" ? event.error_code : "generation_failed";
         error.details = event;
@@ -338,6 +460,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           tokensReceived: entry.tokensReceived,
           interrupted: entry.interrupted,
         });
+        if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
         break;
       }
       default:
@@ -419,8 +542,6 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       } catch (error) {
         if (error?.name === "AbortError" || signal?.aborted) return { detached: true };
         if (entry.cancelRequested) return { cancelled: true };
-        // A sequence gap is specifically recoverable from the last contiguous
-        // sequence. Do not advance lastSequence past the gap.
         entry.subscription.reconnectAttempts += 1;
         if (entry.subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) throw error;
         await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, entry.subscription.reconnectAttempts - 1)), signal);
@@ -431,8 +552,13 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
 
   async function cancelGeneration(generationId, { keepalive = false } = {}) {
     if (!generationId) return null;
-    const entry = activeGenerations.get(generationId);
-    if (entry) entry.cancelRequested = true;
+    const entry = getGenerationEntry(generationId);
+    if (entry) {
+      if (!entry.terminal) {
+        entry.cancelRequested = true;
+        activeGenerations.set(generationId, entry);
+      }
+    }
     const headers = await buildAuthHeaders();
     const response = await fetch(
       `${SENTIQ_API_BASE}/api/chat/generations/${encodeURIComponent(generationId)}/cancel`,
@@ -449,10 +575,13 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   }
 
   async function cancelAllGenerations({ keepalive = false } = {}) {
-    const ids = Array.from(activeGenerations.keys());
+    const ids = Array.from(new Set([
+      ...activeGenerations.keys(),
+      ...Array.from(chatGenerationRegistry.values()).flatMap((registry) => Array.from(registry.values()).filter(isGenerationRunning).map((entry) => entry.generationId)),
+    ]));
     if (!ids.length) return null;
     for (const id of ids) {
-      const entry = activeGenerations.get(id);
+      const entry = getGenerationEntry(id);
       if (entry) entry.cancelRequested = true;
     }
     const headers = await buildAuthHeaders();
@@ -484,9 +613,6 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
 
     if (!generationId) return API.__legacySendMessageStream(message, context, callbacks, signal);
 
-    // Prefer the conversation that created the generation. Falling back to the
-    // visible chat after the POST would incorrectly reassign a background job if
-    // the user navigated while POST /api/chat was resolving.
     const chatId = context.conversationId
       || context.conversation_id
       || started?.conversation_id
@@ -499,6 +625,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       requestId: context.clientRequestId || context.client_request_id || started?.client_request_id || null,
       clientRequestId: context.clientRequestId || context.client_request_id || started?.client_request_id || null,
       chatId,
+      conversationId: chatId,
       status: typeof started?.status === "string" ? started.status : "queued",
       responseBuffer: "",
       lastSequence: 0,
@@ -507,6 +634,10 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       startedAt: new Date().toISOString(),
       completedAt: null,
       callbacks,
+      pendingCallbacks: [],
+      readyAcknowledged: false,
+      startedDelivered: false,
+      rehydrated: false,
       deliveredText: "",
       tokensReceived: false,
       structuredReceived: false,
@@ -576,8 +707,8 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   function handleExplicitStop(event) {
     const button = event.target instanceof Element ? event.target.closest("#send-btn") : null;
     if (!button || !button.classList.contains("is-stop")) return;
-    const generationId = foregroundGenerationId;
-    const entry = generationId ? activeGenerations.get(generationId) : null;
+    const entry = getStopTargetEntry();
+    const generationId = entry?.generationId || null;
     if (entry) {
       entry.cancelRequested = true;
       void cancelGeneration(generationId).catch((error) => {
@@ -597,15 +728,15 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   window.SentIQGenerationLifecycle = Object.freeze({
     cancelGeneration,
     cancelAllGenerations,
-    getActiveGenerations: () => Array.from(activeGenerations.values()).map((entry) => ({
-      generationId: entry.generationId,
-      chatId: entry.chatId,
-      status: entry.status,
-      lastSequence: entry.lastSequence,
-    })),
+    registerExternalGeneration,
+    unregisterGeneration,
+    getGenerationEntry,
+    getGenerationEntries,
+    getGenerationRegistryEntries,
+    getActiveGenerations: () => Array.from(activeGenerations.values()).map((entry) => publicGenerationEntry(entry)),
     getChatGenerations: (chatId) => Array.from(getChatRegistry(chatId).values()).map(publicGenerationEntry),
     getGeneration: (generationId) => {
-      const entry = Array.from(chatGenerationRegistry.values()).map((registry) => registry.get(generationId)).find(Boolean);
+      const entry = getGenerationEntry(generationId);
       return entry ? publicGenerationEntry(entry) : null;
     },
     getGenerationRegistry: () => {
@@ -616,6 +747,4 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       return result;
     },
   });
-
-  console.info("[GenerationLifecycle] Phase 7/8 generation sequencing + per-chat registry installed.");
 })();

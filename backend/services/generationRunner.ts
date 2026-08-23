@@ -77,7 +77,13 @@ export async function runGeneration(generationId: string): Promise<void> {
     const request = buildExecutionRequest(requestSnapshot, generation);
     let runnerError: unknown = null;
     let executionOwnershipLost = false;
-    const sink = new GenerationEventSink(generation.id, async (frame) => { if (frame !== "[DONE]") await chatGenerationTaskCoordinator.publish(generation!.id, frame); }, (error) => { runnerError = runnerError ?? error; });
+    const sink = new GenerationEventSink(generation.id, async (frame) => { if (frame !== "[DONE]") await chatGenerationTaskCoordinator.publish(generation!.id, frame); }, (error) => {
+      runnerError = runnerError ?? error;
+      if (String((error as any)?.message || "").includes("lease lost")) {
+        executionOwnershipLost = true;
+        task.execution?.cancel();
+      }
+    });
     task.execution = { cancel: () => { request.emit("sentiq-generation-cancel"); request.emit("close"); } };
 
     const controlTimer = userDb ? setInterval(() => {
@@ -119,11 +125,7 @@ export async function runGeneration(generationId: string): Promise<void> {
         task.status = "running";
         await executeChatGeneration(request, sink);
         await sink.flush();
-        if (executionOwnershipLost) {
-          // The durable owner changed or the lease could no longer be renewed.
-          // Stop here and let the current owner/recovery path decide the outcome.
-          return;
-        }
+        if (executionOwnershipLost) return;
         if (task.explicitCancelRequested || request.signal.aborted) await chatGenerationTaskCoordinator.cancelled(generation!.id);
         else if (runnerError) await chatGenerationTaskCoordinator.failed(generation!.id, String((runnerError as any)?.code || (runnerError as any)?.name || "generation_failed"));
         else await chatGenerationTaskCoordinator.complete(generation!.id);
