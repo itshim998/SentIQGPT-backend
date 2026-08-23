@@ -90,6 +90,7 @@ function testSourceContracts() {
   const coordinator = read("backend/services/chatGenerationTaskCoordinator.ts");
   const eventsService = read("backend/services/chatGenerationEventService.ts");
   const migration = read("supabase/migrations/20260817123000_durable_generation_event_log.sql");
+  const controlsMigration = read("supabase/migrations/20260817113000_harden_generation_p0_controls.sql");
 
   assert.ok(!lifecycle.includes("handlePageTeardown"), "generation lifecycle must not own page teardown cancellation");
   assert.ok(!lifecycle.includes('window.addEventListener("pagehide"'), "pagehide must not cancel through generation lifecycle");
@@ -114,7 +115,7 @@ function testSourceContracts() {
   assert.ok(eventsService.includes("listChatGenerationEvents"), "replay must read the durable event log");
   assert.ok(migration.includes("append_chat_generation_event_fenced"), "database must atomically append and advance the durable cursor");
   assert.ok(migration.includes("primary key (generation_id, sequence)"), "event sequence must be unique per generation");
-  assert.ok(migration.includes("status = 'cancel_requested'"), "session expiry must emit a durable cancellation state");
+  assert.ok(controlsMigration.includes("set status = 'cancel_requested'"), "session expiry must emit a durable cancellation state");
 }
 
 async function main() {
