@@ -43,14 +43,15 @@ test("Phase 6 persists execution snapshot and partial output", () => {
 
 test("Phase 7 seeds event sequence from durable state and exposes durable replay metadata", () => {
   assert.match(coordinator, /sequence: persistedSequence/);
-  assert.match(eventService, /list_chat_generation_events/);
+  assert.match(eventService, /listChatGenerationEvents/);
+  assert.match(eventService, /chat_generation_events/);
   assert.match(eventLogMigration, /primary key \(generation_id, sequence\)/);
 });
 
 test("Phase 7 snapshot carries the authoritative sequence for resynchronization", () => {
   assert.match(coordinator, /sequence: task\.sequence/);
   assert.match(coordinator, /terminal: task\.terminal/);
-  assert.match(coordinator, /last_event_sequence/);
+  assert.match(coordinator, /last_event_sequence: sequence/);
 });
 
 test("Phase 7 transport replays from the requested contiguous sequence", () => {
