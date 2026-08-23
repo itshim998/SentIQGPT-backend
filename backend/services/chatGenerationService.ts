@@ -130,6 +130,15 @@ export async function createChatGeneration(userDb: any, input: CreateChatGenerat
   return { data: result.data ? normalizeRow(result.data) : null, error: result.error, duplicate: false };
 }
 
+export async function updateChatGenerationExecutionSnapshot(userDb: any, args: { userId: string; generationId: string; executionSnapshot: Record<string, unknown> }) {
+  const result = await userDb.from("chat_generations").update({ execution_snapshot: args.executionSnapshot })
+    .eq("id", normalizeRequired(args.generationId, "generationId"))
+    .eq("user_id", normalizeRequired(args.userId, "userId"))
+    .select(CHAT_GENERATION_COLUMNS)
+    .maybeSingle();
+  return { data: result.data ? normalizeRow(result.data) : null, error: result.error };
+}
+
 export async function checkpointChatGeneration(userDb: any, args: { userId: string; generationId: string; checkpoint: ChatGenerationCheckpoint }) {
   const patch: Record<string, unknown> = {};
   if (typeof args.checkpoint.partialText === "string") patch.partial_text = args.checkpoint.partialText;
