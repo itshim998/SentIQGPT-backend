@@ -12,24 +12,24 @@ const migration = fs.readFileSync(path.resolve(__dirname, "../supabase/migration
 const eventLogMigration = fs.readFileSync(path.resolve(__dirname, "../supabase/migrations/20260817123000_durable_generation_event_log.sql"), "utf8");
 
 test("Phase 5 runner is transport-independent", () => {
-  assert.match(runner, /export async function runGeneration\\(generationId: string\\)/);
+  assert.match(runner, /export async function runGeneration\(generationId: string\)/);
   assert.match(runner, /GenerationExecutionRequest/);
   assert.match(runner, /GenerationEventSink/);
   assert.doesNotMatch(runner, /import .*express/);
-  assert.doesNotMatch(runner, /\\bResponse\\b/);
+  assert.doesNotMatch(runner, /\bResponse\b/);
 });
 
 test("Phase 5 transport starts runner and keeps Express response at subscription boundary", () => {
-  assert.match(transport, /runGeneration\\(context\\.generationId\\)/);
-  assert.match(transport, /openGenerationSubscription\\(res/);
-  assert.match(transport, /res\\.status\\(202\\)\\.json/);
+  assert.match(transport, /runGeneration\(context\.generationId\)/);
+  assert.match(transport, /openGenerationSubscription\(res/);
+  assert.match(transport, /res\.status\(202\)\.json/);
   assert.doesNotMatch(transport, /startLegacyGeneration/);
 });
 
 test("Phase 6 generation progress is durably persisted through the fenced event log", () => {
   assert.match(coordinator, /appendChatGenerationEventFenced/);
-  assert.match(coordinator, /partialText: state\\?\\.partialText \\?\\? task\\.partialText/);
-  assert.match(coordinator, /tokensGenerated: state\\?\\.tokensGenerated \\?\\? task\\.tokensGenerated/);
+  assert.match(coordinator, /partialText: state\?\.partialText \?\? task\.partialText/);
+  assert.match(coordinator, /tokensGenerated: state\?\.tokensGenerated \?\? task\.tokensGenerated/);
   assert.match(coordinator, /status: durableStatus/);
   assert.match(eventService, /append_chat_generation_event_fenced/);
 });
@@ -48,17 +48,17 @@ test("Phase 7 seeds event sequence from durable state and exposes durable replay
   assert.ok(coordinator.includes("listChatGenerationEvents(task.userDb, { userId: task.userId, generationId: task.generationId, afterSequence"));
   assert.match(coordinator, /DURABLE_EVENT_POLL_MS/);
   assert.ok(eventService.includes("list_chat_generation_events"));
-  assert.match(eventLogMigration, /primary key \\(generation_id, sequence\\)/);
+  assert.match(eventLogMigration, /primary key \(generation_id, sequence\)/);
 });
 
 test("Phase 7 snapshot carries the authoritative sequence for resynchronization", () => {
-  assert.match(coordinator, /sequence: task\\.sequence/);
-  assert.match(coordinator, /terminal: task\\.terminal/);
+  assert.match(coordinator, /sequence: task\.sequence/);
+  assert.match(coordinator, /terminal: task\.terminal/);
   assert.match(coordinator, /last_event_sequence: sequence/);
 });
 
 test("Phase 7 transport replays from the requested contiguous sequence", () => {
-  assert.match(transport, /req\\.headers\\["last-event-id"\\] \\?\\? req\\.query\\.after/);
-  assert.match(transport, /subscribe\\(generationId, \\(event\\)/);
-  assert.match(transport, /Math\\.max\\(0, afterSequence\\)/);
+  assert.match(transport, /req\.headers\["last-event-id"\] \?\? req\.query\.after/);
+  assert.match(transport, /subscribe\(generationId, \(event\)/);
+  assert.match(transport, /Math\.max\(0, afterSequence\)/);
 });
