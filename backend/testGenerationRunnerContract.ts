@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
-const runner = fs.readFileSync(new URL("./services/generationRunner.ts", import.meta.url), "utf8");
-const coordinator = fs.readFileSync(new URL("./services/chatGenerationTaskCoordinator.ts", import.meta.url), "utf8");
-const service = fs.readFileSync(new URL("./services/chatGenerationService.ts", import.meta.url), "utf8");
-const transport = fs.readFileSync(new URL("./chatGenerationTransportBootstrap.ts", import.meta.url), "utf8");
-const migration = fs.readFileSync(new URL("../supabase/migrations/20260816162000_add_generation_execution_snapshot.sql", import.meta.url), "utf8");
+const runner = fs.readFileSync(path.resolve(__dirname, "services/generationRunner.ts"), "utf8");
+const coordinator = fs.readFileSync(path.resolve(__dirname, "services/chatGenerationTaskCoordinator.ts"), "utf8");
+const service = fs.readFileSync(path.resolve(__dirname, "services/chatGenerationService.ts"), "utf8");
+const transport = fs.readFileSync(path.resolve(__dirname, "chatGenerationTransportBootstrap.ts"), "utf8");
+const migration = fs.readFileSync(path.resolve(__dirname, "../supabase/migrations/20260816162000_add_generation_execution_snapshot.sql"), "utf8");
 
 test("Phase 5 runner is transport-independent", () => {
   assert.match(runner, /export async function runGeneration\(generationId: string\)/);
