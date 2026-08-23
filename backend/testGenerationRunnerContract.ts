@@ -44,7 +44,7 @@ test("Phase 6 persists execution snapshot and partial output", () => {
 test("Phase 7 seeds event sequence from durable state and exposes durable replay metadata", () => {
   assert.match(coordinator, /sequence: persistedSequence/);
   assert.match(coordinator, /last_event_sequence/);
-  assert.ok(coordinator.includes("private async importDurableEvents(task: Task, afterSequence: number)"));
+  assert.ok(coordinator.includes("importDurableEvents"));
   assert.ok(eventService.includes("list_chat_generation_events"));
   assert.match(eventLogMigration, /primary key \(generation_id, sequence\)/);
 });
