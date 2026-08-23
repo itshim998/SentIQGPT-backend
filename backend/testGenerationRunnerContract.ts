@@ -46,7 +46,8 @@ test("Phase 7 seeds event sequence from durable state and exposes durable replay
   assert.match(coordinator, /last_event_sequence/);
   assert.ok(coordinator.includes("private async importDurableEvents(task: Task, afterSequence: number)"));
   assert.ok(coordinator.includes("listChatGenerationEvents(task.userDb, { userId: task.userId, generationId: task.generationId, afterSequence"));
-  assert.match(coordinator, /DURABLE_EVENT_POLL_MS/);
+  assert.ok(coordinator.includes("startPolling(task: Task)"));
+  assert.ok(coordinator.includes("pollDurableEvents(task: Task)"));
   assert.ok(eventService.includes("list_chat_generation_events"));
   assert.match(eventLogMigration, /primary key \(generation_id, sequence\)/);
 });
