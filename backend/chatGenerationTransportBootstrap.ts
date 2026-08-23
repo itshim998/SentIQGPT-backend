@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { verifyJWT, getRequestUser } from "./middleware/auth";
 import { getOrAssignUserDatabase } from "./dbRouter";
 import { resolveConversationForTurn } from "./services/conversationService";
-import { createChatGeneration, getChatGenerationByClientRequestId, getChatGenerationById, requestChatGenerationCancel, updateChatGenerationExecutionSnapshot } from "./services/chatGenerationService";
+import { createChatGeneration, getChatGenerationByClientRequestId, getChatGenerationById, requestChatGenerationCancel, updateChatGenerationExecutionSnapshot, type ChatGenerationRow } from "./services/chatGenerationService";
 import { getGuestGenerationDatabase, getGuestGenerationOwnerKeyForRequest } from "./services/guestGenerationStore";
 import { ChatRequestSchema } from "./validation/schemas";
 import { chatGenerationTaskCoordinator } from "./services/chatGenerationTaskCoordinator";
@@ -27,34 +27,41 @@ function compactExecutionSnapshot(body: Record<string, unknown>): Record<string,
 }
 function buildRequestSnapshot(request: Request) { const requestUser = getRequestUser(request); return { persisted: compactExecutionSnapshot(request.body as Record<string, unknown>), live: { ...(request.body as Record<string, unknown>) }, originalUrl: request.originalUrl, user: requestUser ? { sub: requestUser.sub, isGuest: Boolean(requestUser.isGuest) } : null }; }
 async function resolveUserDatabase(requestUser: any): Promise<any | null> { if (!requestUser?.sub || requestUser.isGuest) return null; return getOrAssignUserDatabase(requestUser.sub); }
+function requireConversationId(value: unknown, source: string): string { const normalized = typeof value === "string" ? value.trim() : ""; if (!normalized) throw new Error(`${source} conversationId is required`); return normalized; }
 async function prepareGeneration(request: Request) {
   const parsed = ChatRequestSchema.safeParse(request.body); if (!parsed.success) { const error = new Error("Invalid chat request"); (error as any).statusCode = 400; (error as any).details = parsed.error.flatten(); throw error; }
-  const requestUser = getRequestUser(request); const authenticatedUser = Boolean(requestUser && !requestUser.isGuest); const clientRequestId = normalizeRequestId(parsed.data.clientRequestId); const requestedGenerationId = normalizeGenerationId(parsed.data.generationId); let conversationId = parsed.data.conversationId || null; const executionMode = parsed.data.executionMode; const snapshot = buildRequestSnapshot(request);
+  const requestUser = getRequestUser(request); const authenticatedUser = Boolean(requestUser && !requestUser.isGuest); const clientRequestId = normalizeRequestId(parsed.data.clientRequestId); const requestedGenerationId = normalizeGenerationId(parsed.data.generationId); let conversationId = typeof parsed.data.conversationId === "string" ? parsed.data.conversationId.trim() || null : null; const executionMode = parsed.data.executionMode; const snapshot = buildRequestSnapshot(request);
   if (authenticatedUser) {
     const userId = String(requestUser!.sub); const userDb = await resolveUserDatabase(requestUser); if (!userDb) throw new Error("User database unavailable");
     const initialized = await userDb.rpc("initialize_user_session", { p_user_id: userId }); if (initialized.error) throw initialized.error;
-    const resolved = await resolveConversationForTurn(userDb, { userId, clientRequestId, conversationId, title: "New Chat" }); if (resolved.error || !resolved.data?.conversation_id) throw resolved.error || new Error("Unable to resolve conversation"); conversationId = resolved.data.conversation_id;
-    const existing = await getChatGenerationByClientRequestId(userDb, userId, clientRequestId); if (existing.error) throw existing.error; let generation = existing.data;
-    if (!generation) { const created = await createChatGeneration(userDb, { conversationId, userId, clientRequestId, generationId: requestedGenerationId, executionMode, executionSnapshot: snapshot.persisted }); if (created.error || !created.data) throw created.error || new Error("Unable to create chat generation"); generation = created.data; }
-    else if (Object.keys(generation.execution_snapshot || {}).length === 0) { const updated = await updateChatGenerationExecutionSnapshot(userDb, { userId, generationId: generation.id, executionSnapshot: snapshot.persisted }); if (updated.error) throw updated.error; generation = updated.data || generation; }
-    request.body = { ...request.body, conversationId: generation.conversation_id, conversation_id: generation.conversation_id, clientRequestId: generation.client_request_id, client_request_id: generation.client_request_id, generationId: generation.id, generation_id: generation.id, executionMode: generation.execution_mode ?? executionMode, execution_mode: generation.execution_mode ?? executionMode };
-    return { requestUser, userId, userDb, generationId: generation.id, clientRequestId: generation.client_request_id || clientRequestId, conversationId: generation.conversation_id, status: generation.status, generation, persistedSnapshot: snapshot.persisted, liveSnapshot: { body: request.body as Record<string, unknown>, headers: {}, originalUrl: snapshot.originalUrl, user: snapshot.user } };
+    const resolved = await resolveConversationForTurn(userDb, { userId, clientRequestId, conversationId, title: "New Chat" }); if (resolved.error || !resolved.data?.conversation_id) throw resolved.error || new Error("Unable to resolve conversation"); conversationId = requireConversationId(resolved.data.conversation_id, "Resolved");
+    const existing = await getChatGenerationByClientRequestId(userDb, userId, clientRequestId); if (existing.error) throw existing.error;
+    let generation: ChatGenerationRow;
+    if (existing.data) {
+      generation = existing.data;
+      if (Object.keys(generation.execution_snapshot || {}).length === 0) { const updated = await updateChatGenerationExecutionSnapshot(userDb, { userId, generationId: generation.id, executionSnapshot: snapshot.persisted }); if (updated.error) throw updated.error; if (updated.data) generation = updated.data; }
+    } else {
+      const created = await createChatGeneration(userDb, { conversationId, userId, clientRequestId, generationId: requestedGenerationId, executionMode, executionSnapshot: snapshot.persisted }); if (created.error || !created.data) throw created.error || new Error("Unable to create chat generation"); generation = created.data;
+    }
+    conversationId = requireConversationId(generation.conversation_id, "Generation");
+    request.body = { ...request.body, conversationId, conversation_id: conversationId, clientRequestId: generation.client_request_id, client_request_id: generation.client_request_id, generationId: generation.id, generation_id: generation.id, executionMode: generation.execution_mode ?? executionMode, execution_mode: generation.execution_mode ?? executionMode };
+    return { requestUser, userId, userDb, generationId: generation.id, clientRequestId: generation.client_request_id || clientRequestId, conversationId, status: generation.status, generation, persistedSnapshot: snapshot.persisted, liveSnapshot: { body: request.body as Record<string, unknown>, headers: {}, originalUrl: snapshot.originalUrl, user: snapshot.user } };
   }
 
   if (!requestUser?.isGuest) throw new Error("Guest authentication context unavailable");
   const guestOwnerKey = getGuestGenerationOwnerKeyForRequest(request);
   const userDb = getGuestGenerationDatabase(guestOwnerKey);
   const userId = guestOwnerKey;
+  conversationId = requireConversationId(conversationId || randomUUID(), "Guest");
   const existing = await getChatGenerationByClientRequestId(userDb, userId, clientRequestId); if (existing.error) throw existing.error;
-  let generation = existing.data;
-  if (!generation) {
-    const created = await createChatGeneration(userDb, { conversationId, userId, clientRequestId, generationId: requestedGenerationId, executionMode, executionSnapshot: snapshot.persisted });
-    if (created.error || !created.data) throw created.error || new Error("Unable to create guest chat generation");
-    generation = created.data;
-  } else if (Object.keys(generation.execution_snapshot || {}).length === 0) {
-    const updated = await updateChatGenerationExecutionSnapshot(userDb, { userId, generationId: generation.id, executionSnapshot: snapshot.persisted }); if (updated.error) throw updated.error; generation = updated.data || generation;
+  let generation: ChatGenerationRow;
+  if (existing.data) {
+    generation = existing.data;
+    if (Object.keys(generation.execution_snapshot || {}).length === 0) { const updated = await updateChatGenerationExecutionSnapshot(userDb, { userId, generationId: generation.id, executionSnapshot: snapshot.persisted }); if (updated.error) throw updated.error; if (updated.data) generation = updated.data; }
+  } else {
+    const created = await createChatGeneration(userDb, { conversationId, userId, clientRequestId, generationId: requestedGenerationId, executionMode, executionSnapshot: snapshot.persisted }); if (created.error || !created.data) throw created.error || new Error("Unable to create guest chat generation"); generation = created.data;
   }
-  conversationId = generation.conversation_id;
+  conversationId = requireConversationId(generation.conversation_id, "Generation");
   request.body = { ...request.body, conversationId, conversation_id: conversationId, clientRequestId: generation.client_request_id, client_request_id: generation.client_request_id, generationId: generation.id, generation_id: generation.id, executionMode: generation.execution_mode ?? executionMode, execution_mode: generation.execution_mode ?? executionMode };
   return { requestUser, userId, userDb, generationId: generation.id, clientRequestId: generation.client_request_id || clientRequestId, conversationId, status: generation.status, generation, persistedSnapshot: snapshot.persisted, liveSnapshot: { body: request.body as Record<string, unknown>, headers: {}, originalUrl: snapshot.originalUrl, user: snapshot.user } };
 }
@@ -72,7 +79,7 @@ async function resolveOwnedGeneration(request: Request, generationId: string) {
 async function startGeneration(_legacyFinalHandler: GenerationExecutorHandler, context: Awaited<ReturnType<typeof prepareGeneration>>): Promise<void> {
   const existing = chatGenerationTaskCoordinator.get(context.generationId); if (existing?.runPromise) return existing.runPromise; if (["completed", "failed", "cancelled"].includes(context.status)) return;
   if (!getChatGenerationExecutor()) registerChatGenerationExecutor(_legacyFinalHandler);
-  const task = chatGenerationTaskCoordinator.start({ generationId: context.generationId, clientRequestId: context.clientRequestId, generationSessionId: (context.generation as any)?.generation_session_id ?? null, conversationId: context.conversationId, userId: context.userId, userDb: context.userDb, generation: context.generation, liveExecutionSnapshot: context.liveSnapshot });
+  const task = chatGenerationTaskCoordinator.start({ generationId: context.generationId, clientRequestId: context.clientRequestId, generationSessionId: context.generation.generation_session_id, conversationId: context.conversationId, userId: context.userId, userDb: context.userDb, generation: context.generation, liveExecutionSnapshot: context.liveSnapshot });
   if (task.runPromise) return task.runPromise; return runGeneration(context.generationId);
 }
 function formatGenerationEvent(event: Record<string, unknown>): string { return `data: ${JSON.stringify(event)}\n\n`; }
