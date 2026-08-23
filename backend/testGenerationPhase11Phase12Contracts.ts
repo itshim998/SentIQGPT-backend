@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
-const runner = fs.readFileSync(new URL("./services/generationRunner.ts", import.meta.url), "utf8");
-const rehydrationRoutes = fs.readFileSync(new URL("./chatGenerationRehydrationRoutes.ts", import.meta.url), "utf8");
-const rehydration = fs.readFileSync(new URL("../frontend/scripts/generation-rehydration.js", import.meta.url), "utf8");
-const bootstrap = fs.readFileSync(new URL("../frontend/scripts/bootstrap-guard.js", import.meta.url), "utf8");
+const runner = fs.readFileSync(path.resolve(__dirname, "services/generationRunner.ts"), "utf8");
+const rehydrationRoutes = fs.readFileSync(path.resolve(__dirname, "chatGenerationRehydrationRoutes.ts"), "utf8");
+const rehydration = fs.readFileSync(path.resolve(__dirname, "../frontend/scripts/generation-rehydration.js"), "utf8");
+const bootstrap = fs.readFileSync(path.resolve(__dirname, "../frontend/scripts/bootstrap-guard.js"), "utf8");
 
  test("Phase 11 exposes conversation-scoped durable generation state", () => {
   assert.match(rehydrationRoutes, /\/api\/conversations\/:conversationId\/generations/);
