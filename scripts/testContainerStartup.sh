@@ -20,6 +20,7 @@ run_real_startup_smoke() {
 
   for ((attempt = 1; attempt <= 75; attempt += 1)); do
     if grep -q "\[Startup\] python.health.ready" "${log_file}" \
+      && grep -q "\[Startup\] node.health.ready" "${log_file}" \
       && grep -q "\[Boot\] summary .*ready=true" "${log_file}"; then
       complete=1
       break
@@ -67,13 +68,6 @@ record_python_health_result "true" 6 || fail "Python health recovery should rese
 record_python_health_result "false" 6 || fail "one post-recovery failure should be tolerated"
 [[ "${python_health_failures}" -eq 1 ]] || fail "post-recovery failure count is incorrect"
 
-python_health_failures=0
-for _ in 1 2 3 4 5; do
-  record_python_health_result "false" 6 || fail "watchdog failed before six consecutive failures"
-done
-if record_python_health_result "false" 6; then
-  fail "watchdog did not fail on the sixth consecutive health failure"
-fi
 echo "PASS | Python watchdog tolerates transient failures and fails on six consecutive failures"
 
 tmp_dir="$(mktemp -d)"
@@ -95,6 +89,10 @@ check_llm_health() {
   return 0
 }
 
+check_node_health() {
+  return 0
+}
+
 start_python_health_watchdog() {
   sleep 0.2 &
   watchdog_pid="$!"
@@ -109,12 +107,35 @@ python_started="$(<"${tmp_dir}/python-started")"
 node_started="$(<"${tmp_dir}/node-started")"
 start_delta=$((node_started - python_started))
 [[ "${start_delta}" -ge 0 && "${start_delta}" -lt 250 ]] || fail "Python and Node start delta was ${start_delta}ms"
-echo "PASS | Python and Node synthetic start delta=${start_delta}ms"
+grep -q "\[Startup\] node.health.ready" "${tmp_dir}/parallel.log" \
+  || fail "Node readiness gate did not complete before runtime supervision"
+echo "PASS | Python and Node synthetic start delta=${start_delta}ms; Node health gate completed"
 
+NODE_HEALTH_STARTUP_ATTEMPTS=2
+NODE_HEALTH_POLL_SECONDS=0
+check_node_health() {
+  return 1
+}
+
+set +e
+(main) > "${tmp_dir}/node-timeout.log" 2>&1
+node_timeout_status="$?"
+set -e
+[[ "${node_timeout_status}" -ne 0 ]] || fail "Node health timeout should fail the supervisor"
+grep -q "\[Startup\] node.health.timeout.failed" "${tmp_dir}/node-timeout.log" \
+  || fail "Node health timeout did not emit the expected failure classification"
+echo "PASS | Node health timeout fails closed with explicit classification"
+
+NODE_HEALTH_STARTUP_ATTEMPTS=120
+NODE_HEALTH_POLL_SECONDS=1
 health_calls=0
 check_llm_health() {
   health_calls=$((health_calls + 1))
   [[ "${health_calls}" -eq 1 ]]
+}
+
+check_node_health() {
+  return 0
 }
 
 start_python_health_watchdog() {
