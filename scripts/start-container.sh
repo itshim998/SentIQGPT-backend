@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 PYTHON_HEALTH_INTERVAL_SECONDS=10
 PYTHON_HEALTH_FAILURE_THRESHOLD=6
+NODE_HEALTH_STARTUP_ATTEMPTS="${NODE_HEALTH_STARTUP_ATTEMPTS:-120}"
+NODE_HEALTH_POLL_SECONDS="${NODE_HEALTH_POLL_SECONDS:-1}"
 
 startup_now_ms() {
   local now
@@ -89,6 +91,19 @@ except Exception:
 PY
 }
 
+check_node_health() {
+  python - "http://127.0.0.1:${PORT}/health" <<'PY'
+import sys
+from urllib.request import urlopen
+
+try:
+    with urlopen(sys.argv[1], timeout=2) as response:
+        sys.exit(0 if response.status == 200 else 1)
+except Exception:
+    sys.exit(1)
+PY
+}
+
 record_python_health_result() {
   local healthy="$1"
   local failure_threshold="$2"
@@ -121,6 +136,41 @@ monitor_python_health() {
       return 1
     fi
   done
+}
+
+wait_for_node_health() {
+  local max_attempts="${NODE_HEALTH_STARTUP_ATTEMPTS}"
+  local poll_seconds="${NODE_HEALTH_POLL_SECONDS}"
+  local attempt=1
+
+  if ! [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]]; then
+    startup_fail "node.health.config"
+    return 1
+  fi
+  if ! [[ "${poll_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    startup_fail "node.health.config"
+    return 1
+  fi
+
+  startup_phase="node.health"
+  startup_log "node.health.wait.begin"
+  until check_node_health; do
+    if ! kill -0 "${node_pid}" 2>/dev/null; then
+      startup_fail "node.health.process-exited"
+      reap_child "${node_pid}"
+      terminate
+      exit "${child_exit_status}"
+    fi
+    if [[ "${attempt}" -ge "${max_attempts}" ]]; then
+      startup_fail "node.health.timeout"
+      terminate
+      exit 1
+    fi
+    sleep "${poll_seconds}"
+    attempt=$((attempt + 1))
+  done
+
+  startup_log "node.health.ready"
 }
 
 start_python_process() {
@@ -198,6 +248,8 @@ main() {
   export LLM_SERVICE_PORT="${LLM_SERVICE_PORT:-3002}"
   export LLM_SERVICE_HOST="${LLM_SERVICE_HOST:-127.0.0.1}"
   export LLM_SERVICE_URL="${LLM_SERVICE_URL:-http://127.0.0.1:${LLM_SERVICE_PORT}}"
+  export NODE_HEALTH_STARTUP_ATTEMPTS="${NODE_HEALTH_STARTUP_ATTEMPTS}"
+  export NODE_HEALTH_POLL_SECONDS="${NODE_HEALTH_POLL_SECONDS}"
   configure_fast_latency_observability
   validate_runtime_configuration
 
@@ -242,6 +294,7 @@ main() {
   done
 
   startup_log "python.health.ready"
+  wait_for_node_health
   startup_phase="runtime"
   start_python_health_watchdog
 
