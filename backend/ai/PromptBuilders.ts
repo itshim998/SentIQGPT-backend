@@ -1760,6 +1760,7 @@ export function buildTitleGeneratePrompt(args: {
     task: "general",
     prompt,
     prefer: "groq",
+    model_override: "openai/gpt-oss-20b",
     user_id: args.userId || args.conversationId,
     safety_mode: "low_risk_text",
     max_output_tokens: 80,
