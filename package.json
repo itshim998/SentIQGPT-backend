@@ -82,7 +82,9 @@
     "test:unified-text-routing": "ts-node --project tsconfig.backend.json backend/billing/testUnifiedTextRoutePolicy.ts",
     "billing:verify-razorpay-config": "ts-node --project tsconfig.backend.json backend/billing/verifyRazorpayConfig.ts",
     "test:generation-distributed": "ts-node --project tsconfig.backend.json backend/testGenerationDistributedIntegration.ts",
-    "test:production-startup": "node scripts/testProductionStartup.mjs"
+    "test:production-startup": "node scripts/testProductionStartup.mjs",
+    "verify:live-generation": "node scripts/verifyLiveGenerationReliability.mjs",
+    "verify:live-generation:reconnect": "node scripts/verifyLiveGenerationReconnect.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0",
