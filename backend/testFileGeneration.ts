@@ -1,5 +1,5 @@
 import assert from "assert";
-import { readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import {
   detectGeneratedFileFormat,
@@ -777,7 +777,10 @@ function sourceBlock(source: string, needle: string, chars = 1800): string {
 }
 
 function testStorageApiSourceGuards(): void {
-  const server = readFileSync(resolve(__dirname, "server.ts"), "utf8");
+  const serverPath = existsSync(resolve(__dirname, "serverLegacy.ts"))
+    ? resolve(__dirname, "serverLegacy.ts")
+    : resolve(__dirname, "server.ts");
+  const server = readFileSync(serverPath, "utf8");
   const storage = readFileSync(resolve(__dirname, "tools/fileGeneration/fileStorageService.ts"), "utf8");
   const generator = readFileSync(resolve(__dirname, "tools/fileGeneration/fileGenerator.ts"), "utf8");
 
