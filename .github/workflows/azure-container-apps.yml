@@ -310,11 +310,7 @@ jobs:
             echo 'No last-ready revision is available for the selected image deployment.'
             exit 1
           }
-          suffix="$(printf '%s' "${IMAGE_TAG}" \
-            | tr '[:upper:]' '[:lower:]' \
-            | sed 's/[^a-z0-9-]/-/g' \
-            | cut -c1-20)"
-          suffix="rollback-${suffix:-manual}-${GITHUB_RUN_ID}"
+          suffix="rollback-${GITHUB_RUN_ID}"
           new_revision="${APP_NAME}--${suffix}"
           deploy_image="${{ vars.AZURE_ACR_LOGIN_SERVER }}/${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
