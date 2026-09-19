@@ -16,6 +16,10 @@
     return normalizeId(document.querySelector(".chat-list-item.active")?.getAttribute("data-id"));
   }
 
+  function isForegroundStreamActive() {
+    return Boolean(document.querySelector(".message.assistant .typing-active") || document.querySelector(".message.assistant.typing-active"));
+  }
+
   function isVisible(renderer) {
     return Boolean(renderer?.conversationId && getVisibleConversationId() === renderer.conversationId);
   }
@@ -23,11 +27,27 @@
   function render(renderer, force = false) {
     if (!renderer || !renderer.text || !isVisible(renderer)) return;
     if (!force && renderer.renderedText === renderer.text) return;
+    // Do NOT interfere if chat-controller is currently active with a foreground stream
+    if (isForegroundStreamActive()) return;
 
     const chat = window.SentIQChat;
     if (typeof chat?.appendMessageBubble !== "function") return;
 
     try {
+      if (renderer.bubble && renderer.bubble.isConnected) {
+        const contentDiv = renderer.bubble.querySelector(".message-content");
+        if (contentDiv) {
+          if (typeof chat.renderAssistantMessageHtml === "function") {
+            contentDiv.innerHTML = chat.renderAssistantMessageHtml(renderer.text);
+          } else {
+            contentDiv.textContent = renderer.text;
+          }
+          renderer.renderedText = renderer.text;
+          if (renderer.terminal) renderer.bubble = null;
+          return;
+        }
+      }
+
       const previous = renderer.bubble;
       const result = chat.appendMessageBubble("assistant", renderer.text);
       const bubble = result?.bubble || null;
@@ -39,6 +59,7 @@
 
       renderer.bubble = bubble;
       renderer.renderedText = renderer.text;
+      if (renderer.terminal) renderer.bubble = null;
     } catch (error) {
       console.warn("[GenerationRehydratedRenderer] Render failed:", error);
     }
@@ -102,6 +123,14 @@
 
     let renderer = renderers.get(generationId);
     if (!renderer) {
+      if (renderers.size > 20) {
+        for (const [id, item] of renderers.entries()) {
+          if (item.terminal) {
+            renderers.delete(id);
+            if (renderers.size <= 20) break;
+          }
+        }
+      }
       renderer = {
         generationId,
         conversationId,

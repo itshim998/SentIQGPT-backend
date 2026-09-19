@@ -15,7 +15,29 @@ const CONTROL_POLL_MS = 2000;
 const LEASE_RENEW_MS = 15000;
 export type GenerationExecutorHandler = (request: GenerationExecutionRequest, response: GenerationEventSink, next: (error?: unknown) => void) => unknown;
 export type GenerationRequestSnapshot = { body: Record<string, unknown>; headers?: Record<string, string>; originalUrl?: string; user?: Record<string, unknown> | null };
-export interface GenerationExecutionRequest { body: Record<string, unknown>; headers: Record<string, string>; originalUrl: string; user: Record<string, unknown> | null; complete: boolean; signal: AbortSignal; __sentiqGenerationDetached: true; once(event: "close" | "sentiq-generation-cancel", listener: () => void): this; on(event: "close" | "sentiq-generation-cancel", listener: () => void): this; emit(event: "close" | "sentiq-generation-cancel"): boolean; get(name: string): string | undefined; }
+export interface GenerationExecutionRequest {
+  body: Record<string, unknown>;
+  headers: Record<string, string>;
+  ip: string;
+  socket: { remoteAddress: string; encrypted?: boolean };
+  query: Record<string, unknown>;
+  params: Record<string, string>;
+  path: string;
+  originalUrl: string;
+  method?: string;
+  user: Record<string, unknown> | null;
+  complete: boolean;
+  signal: AbortSignal;
+  __sentiqGenerationDetached: true;
+  once(event: string, listener: (...args: any[]) => void): this;
+  on(event: string, listener: (...args: any[]) => void): this;
+  removeListener(event: string, listener: (...args: any[]) => void): this;
+  off(event: string, listener: (...args: any[]) => void): this;
+  emit(event: string, ...args: any[]): boolean;
+  listeners?(event: string): Array<(...args: any[]) => void>;
+  get(name: string): string | undefined;
+  header?(name: string): string | undefined;
+}
 
 export class GenerationEventSink {
   statusCode = 200;
@@ -42,6 +64,7 @@ export class GenerationEventSink {
   on(event: string, listener: (...args: any[]) => void) { const list = this.listeners.get(event) ?? []; list.push(listener); this.listeners.set(event, list); return this; }
   once(event: string, listener: (...args: any[]) => void) { const onceListener = (...args: any[]) => { this.removeListener(event, onceListener); listener(...args); }; return this.on(event, onceListener); }
   removeListener(event: string, listener: (...args: any[]) => void) { const list = this.listeners.get(event) ?? []; this.listeners.set(event, list.filter((candidate) => candidate !== listener)); return this; }
+  off(event: string, listener: (...args: any[]) => void) { return this.removeListener(event, listener); }
   emit(event: string, ...args: any[]) { for (const listener of this.listeners.get(event) ?? []) { try { listener(...args); } catch (error) { this.onError(error); } } return true; }
   async flush(): Promise<void> { this.flushBufferedFrame(); await this.publishChain; }
   private ingest(chunk: unknown): void { this.buffer += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk ?? ""); while (true) { const separatorIndex = this.buffer.indexOf("\n\n"); if (separatorIndex < 0) break; const frameText = this.buffer.slice(0, separatorIndex); this.buffer = this.buffer.slice(separatorIndex + 2); this.parseFrame(frameText); } }
@@ -52,7 +75,42 @@ export class GenerationEventSink {
 
 function toRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function snapshotFromGeneration(generation: ChatGenerationRow): GenerationRequestSnapshot | null { const snapshot = toRecord(generation.execution_snapshot); const body = toRecord(snapshot.body); if (!body.message && typeof snapshot.message === "string") body.message = snapshot.message; if (!body.message) return null; body.conversationId = generation.conversation_id; body.conversation_id = generation.conversation_id; body.clientRequestId = generation.client_request_id ?? body.clientRequestId; body.client_request_id = generation.client_request_id ?? body.client_request_id; body.generationId = generation.id; body.generation_id = generation.id; body.executionMode = generation.execution_mode ?? body.executionMode ?? "fast"; body.execution_mode = generation.execution_mode ?? body.execution_mode ?? "fast"; return { body, originalUrl: typeof snapshot.originalUrl === "string" ? snapshot.originalUrl : "/api/chat", user: snapshot.user && typeof snapshot.user === "object" ? snapshot.user as Record<string, unknown> : { sub: generation.user_id, isGuest: false } }; }
-function buildExecutionRequest(snapshot: GenerationRequestSnapshot, generation: ChatGenerationRow): GenerationExecutionRequest { const listeners = new Map<string, Array<() => void>>(); const abortController = new AbortController(); const body = { ...toRecord(snapshot.body), conversationId: generation.conversation_id, conversation_id: generation.conversation_id, clientRequestId: generation.client_request_id ?? snapshot.body.clientRequestId, client_request_id: generation.client_request_id ?? snapshot.body.client_request_id, generationId: generation.id, generation_id: generation.id, executionMode: generation.execution_mode ?? snapshot.body.executionMode ?? "fast", execution_mode: generation.execution_mode ?? snapshot.body.execution_mode ?? "fast" }; const headers = { ...(snapshot.headers ?? {}) }; const request: GenerationExecutionRequest = { body, headers, originalUrl: snapshot.originalUrl || "/api/chat", user: snapshot.user ?? { sub: generation.user_id, isGuest: false }, complete: true, signal: abortController.signal, __sentiqGenerationDetached: true, once(event, listener) { const list = listeners.get(event) ?? []; list.push(listener); listeners.set(event, list); return request; }, on(event, listener) { const list = listeners.get(event) ?? []; list.push(listener); listeners.set(event, list); return request; }, emit(event) { for (const listener of listeners.get(event) ?? []) { try { listener(); } catch {} } return true; }, get(name) { const normalized = name.toLowerCase(); return Object.entries(headers).find(([key]) => key.toLowerCase() === normalized)?.[1]; } }; request.once("sentiq-generation-cancel", () => abortController.abort(new Error("Generation cancelled by user."))); request.once("close", () => { if (!abortController.signal.aborted && request.__sentiqGenerationDetached !== true) abortController.abort(); }); return request; }
+function buildExecutionRequest(snapshot: GenerationRequestSnapshot, generation: ChatGenerationRow): GenerationExecutionRequest {
+  const listeners = new Map<string, Array<(...args: any[]) => void>>();
+  const abortController = new AbortController();
+  const body = { ...toRecord(snapshot.body), conversationId: generation.conversation_id, conversation_id: generation.conversation_id, clientRequestId: generation.client_request_id ?? snapshot.body?.clientRequestId, client_request_id: generation.client_request_id ?? snapshot.body?.client_request_id, generationId: generation.id, generation_id: generation.id, executionMode: generation.execution_mode ?? snapshot.body?.executionMode ?? "fast", execution_mode: generation.execution_mode ?? snapshot.body?.execution_mode ?? "fast" };
+  const headers = { ...(snapshot.headers ?? {}) };
+  const ip = (snapshot as any)?.ip || (headers["x-forwarded-for"] || "").split(",")[0]?.trim() || "127.0.0.1";
+  const query = (snapshot as any)?.query ?? {};
+  const params = (snapshot as any)?.params ?? {};
+  const path = (snapshot as any)?.path || snapshot.originalUrl || "/api/chat";
+  const request: GenerationExecutionRequest = {
+    body,
+    headers,
+    ip,
+    socket: { remoteAddress: ip, encrypted: false },
+    query,
+    params,
+    path,
+    originalUrl: snapshot.originalUrl || "/api/chat",
+    method: "POST",
+    user: snapshot.user ?? { sub: generation.user_id, isGuest: false },
+    complete: true,
+    signal: abortController.signal,
+    __sentiqGenerationDetached: true,
+    once(event, listener) { const list = listeners.get(event) ?? []; list.push(listener); listeners.set(event, list); return request; },
+    on(event, listener) { const list = listeners.get(event) ?? []; list.push(listener); listeners.set(event, list); return request; },
+    removeListener(event, listener) { const list = listeners.get(event) ?? []; listeners.set(event, list.filter((candidate) => candidate !== listener)); return request; },
+    off(event, listener) { return request.removeListener(event, listener); },
+    emit(event, ...args) { for (const listener of listeners.get(event) ?? []) { try { listener(...args); } catch {} } return true; },
+    listeners(event) { return listeners.get(event) ?? []; },
+    get(name) { const normalized = name.toLowerCase(); return Object.entries(headers).find(([key]) => key.toLowerCase() === normalized)?.[1]; },
+    header(name) { return request.get(name); }
+  };
+  request.once("sentiq-generation-cancel", () => abortController.abort(new Error("Generation cancelled by user.")));
+  request.once("close", () => { if (!abortController.signal.aborted && request.__sentiqGenerationDetached !== true) abortController.abort(); });
+  return request;
+}
 function buildGuestGenerationRow(task: ReturnType<typeof chatGenerationTaskCoordinator.get>): ChatGenerationRow | null { if (!task) return null; const now = new Date().toISOString(); return { id: task.generationId, conversation_id: task.conversationId ?? "guest-conversation", user_id: task.userId, client_request_id: task.clientRequestId ?? null, generation_session_id: task.generationSessionId ?? null, status: task.status as ChatGenerationRow["status"], execution_mode: "fast", model_route: null, execution_snapshot: {}, started_at: now, completed_at: null, failed_at: null, cancelled_at: null, error_code: task.lastErrorCode, partial_text: task.partialText, tokens_generated: task.tokensGenerated, last_event_sequence: task.sequence, created_at: now, updated_at: now, execution_lease_id: null, execution_lease_expires_at: null, recovery_attempts: 0, last_execution_error: null }; }
 
 export async function runGeneration(generationId: string): Promise<void> {

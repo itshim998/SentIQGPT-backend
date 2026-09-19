@@ -42,17 +42,65 @@ import "./generation-session.js";
     registry.flushChat(conversationId);
     window.dispatchEvent(new CustomEvent("sentiq-generation-state-rehydrated", { detail: { conversationId, generations } }));
   }
-  let refreshTimer = null; let refreshInFlight = null;
+  function hasActiveGenerations(conversationId) {
+    const registry = window.SentIQChatGenerationRegistry;
+    if (!registry) return false;
+    const gens = registry.getChat?.(conversationId) || [];
+    return gens.some((g) => !g.terminal && ["queued", "running", "cancel_requested", "waiting_for_tool", "generating", "persisting"].includes(String(g.status || "")));
+  }
+
+  let refreshTimer = null; let refreshInFlight = null; let lastRehydratedId = null; let lastRehydrateTime = 0; let lastKnownVisibleId = null;
   async function rehydrateVisibleChat() {
     const conversationId = getVisibleConversationId(); if (!conversationId) return [];
+    if (document.querySelector(".message.assistant .typing-active") || document.querySelector(".message.assistant.typing-active")) return [];
     if (refreshInFlight) return refreshInFlight;
-    refreshInFlight = (async () => { try { const generations = await fetchGenerationState(conversationId); reconcileConversation(conversationId, generations); return generations; } catch (error) { console.warn("[GenerationRehydration] Unable to refresh generation state:", error); return []; } finally { refreshInFlight = null; } })();
+    const now = Date.now();
+    const hasActive = hasActiveGenerations(conversationId);
+    const minInterval = hasActive ? 3000 : 30000;
+    if (conversationId === lastRehydratedId && now - lastRehydrateTime < minInterval) return [];
+    lastKnownVisibleId = conversationId;
+    refreshInFlight = (async () => {
+      try {
+        const generations = await fetchGenerationState(conversationId);
+        lastRehydratedId = conversationId;
+        lastRehydrateTime = Date.now();
+        reconcileConversation(conversationId, generations);
+        return generations;
+      } catch (error) {
+        lastRehydrateTime = Date.now();
+        console.warn("[GenerationRehydration] Unable to refresh generation state:", error?.message || error);
+        return [];
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
     return refreshInFlight;
   }
   function scheduleRehydrate(delay = 40) { if (refreshTimer) clearTimeout(refreshTimer); refreshTimer = window.setTimeout(() => { refreshTimer = null; void rehydrateVisibleChat(); }, delay); }
-  document.addEventListener("click", (event) => { const item = event.target instanceof Element ? event.target.closest(".chat-list-item[data-id]") : null; if (item) scheduleRehydrate(0); }, true);
-  const observer = new MutationObserver(() => scheduleRehydrate(0));
-  observer.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ["class", "data-id"] });
+  function scheduleRehydrateIfChanged(delay = 300) {
+    const visibleId = getVisibleConversationId();
+    if (visibleId && visibleId !== lastKnownVisibleId) {
+      lastKnownVisibleId = visibleId;
+      scheduleRehydrate(delay);
+    }
+  }
+  document.addEventListener("click", (event) => {
+    const item = event.target instanceof Element ? event.target.closest(".chat-list-item[data-id]") : null;
+    if (item) {
+      const id = normalizeId(item.getAttribute("data-id"));
+      if (id !== lastKnownVisibleId) {
+        lastKnownVisibleId = id;
+        scheduleRehydrate(0);
+      }
+    }
+  }, true);
+
+  const chatListTarget = document.getElementById("chat-list");
+  if (chatListTarget) {
+    const observer = new MutationObserver(() => scheduleRehydrateIfChanged(300));
+    observer.observe(chatListTarget, { childList: true, subtree: false });
+  }
+
   window.SentIQGenerationRehydration = Object.freeze({ refresh: rehydrateVisibleChat, getConversationGenerations: fetchGenerationState });
   scheduleRehydrate(250);
   console.info("[GenerationRehydration] Phase 11 generation state reconciliation + registry recreation installed.");

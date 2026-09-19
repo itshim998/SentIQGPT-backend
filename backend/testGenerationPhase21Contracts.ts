@@ -16,7 +16,7 @@ const transport = fs.readFileSync(
   "utf8",
 );
 const leaseMigration = fs.readFileSync(
-  path.join(root, "supabase/migrations/20260817100000_add_generation_event_types_and_concurrency.sql"),
+  path.join(root, "supabase/migrations/20260817101000_add_generation_event_types_and_concurrency.sql"),
   "utf8",
 );
 

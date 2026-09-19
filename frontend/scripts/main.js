@@ -439,25 +439,31 @@ if (!document.getElementById(conversationHistoryStyleId)) {
       const alreadyEnhanced = currentItems.every((item) => item.dataset.historyActionsEnhanced === "true");
       if (chatList.dataset.historySignature === signature && alreadyEnhanced) return;
 
-      clearGeneratedLabels();
-      currentItems.forEach(enhanceChatActions);
+      isMutatingHistoryDom = true;
+      try {
+        clearGeneratedLabels();
+        currentItems.forEach(enhanceChatActions);
 
-      const collapsedWrapper = chatList.querySelector(":scope > .chat-list-collapsed-wrapper");
-      const topItems = getHistoryItems(chatList);
-      const lastTopGroup = insertGroupLabels(chatList, topItems);
-      if (collapsedWrapper) {
-        const hiddenItems = getHistoryItems(collapsedWrapper);
-        const firstHiddenGroup = hiddenItems[0]?.dataset.historyGroup || null;
-        insertGroupLabels(
-          collapsedWrapper,
-          hiddenItems,
-          firstHiddenGroup && firstHiddenGroup === lastTopGroup ? lastTopGroup : null,
-        );
+        const collapsedWrapper = chatList.querySelector(":scope > .chat-list-collapsed-wrapper");
+        const topItems = getHistoryItems(chatList);
+        const lastTopGroup = insertGroupLabels(chatList, topItems);
+        if (collapsedWrapper) {
+          const hiddenItems = getHistoryItems(collapsedWrapper);
+          const firstHiddenGroup = hiddenItems[0]?.dataset.historyGroup || null;
+          insertGroupLabels(
+            collapsedWrapper,
+            hiddenItems,
+            firstHiddenGroup && firstHiddenGroup === lastTopGroup ? lastTopGroup : null,
+          );
+        }
+
+        chatList.dataset.historySignature = signature;
+      } finally {
+        isMutatingHistoryDom = false;
       }
-
-      chatList.dataset.historySignature = signature;
     }
 
+    let isMutatingHistoryDom = false;
     function scheduleEnhancement() {
       if (enhancementScheduled) return;
       enhancementScheduled = true;
@@ -478,7 +484,14 @@ if (!document.getElementById(conversationHistoryStyleId)) {
       }, Math.max(1000, nextMidnight.getTime() - now.getTime()));
     }
 
-    const observer = new MutationObserver(scheduleEnhancement);
+    const observer = new MutationObserver((records) => {
+      if (isMutatingHistoryDom) return;
+      const hasStructuralChanges = records.some((r) => (
+        Array.from(r.addedNodes).some((n) => n instanceof HTMLElement && (n.classList.contains("chat-list-item") || n.classList.contains("chat-list-collapsed-wrapper")))
+        || Array.from(r.removedNodes).some((n) => n instanceof HTMLElement && (n.classList.contains("chat-list-item") || n.classList.contains("chat-list-collapsed-wrapper")))
+      ));
+      if (hasStructuralChanges) scheduleEnhancement();
+    });
     observer.observe(chatList, { childList: true, subtree: true });
 
     document.addEventListener("pointerdown", (event) => {

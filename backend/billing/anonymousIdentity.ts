@@ -24,13 +24,13 @@ export function getAnonymousIdHeaderName(): string {
 }
 
 export function createAnonymousKeyHash(req: Request): string {
-  const forwardedFor = normalizeHeader(req.headers["x-forwarded-for"]).split(",")[0]?.trim();
-  const ip = forwardedFor || req.ip || req.socket.remoteAddress || "unknown";
-  const userAgent = normalizeHeader(req.headers["user-agent"]) || "unknown";
-  const deviceHint = normalizeHeader(req.headers["sec-ch-ua-platform"])
-    || normalizeHeader(req.headers["sec-ch-ua"])
+  const forwardedFor = normalizeHeader(req?.headers?.["x-forwarded-for"]).split(",")[0]?.trim();
+  const ip = forwardedFor || req?.ip || req?.socket?.remoteAddress || "127.0.0.1";
+  const userAgent = normalizeHeader(req?.headers?.["user-agent"]) || "unknown";
+  const deviceHint = normalizeHeader(req?.headers?.["sec-ch-ua-platform"])
+    || normalizeHeader(req?.headers?.["sec-ch-ua"])
     || "unknown";
-  const anonymousId = normalizeHeader(req.headers[ANON_HEADER]) || "none";
+  const anonymousId = normalizeHeader(req?.headers?.[ANON_HEADER]) || "none";
   return createHash("sha256")
     .update(readSecret())
     .update("|")

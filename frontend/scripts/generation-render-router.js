@@ -64,11 +64,24 @@ import { SENTIQ_API_BASE } from "./config.js";
     const state = getChatIndicatorState(id);
     const items = Array.from(chatList.querySelectorAll(".chat-list-item[data-id]")).filter((item) => normalizeId(item.getAttribute("data-id")) === id);
     for (const item of items) {
+      const targetState = state || "idle";
       const indicator = state ? ensureIndicator(item) : item.querySelector(":scope > .sentiq-generation-indicator");
-      item.dataset.generationState = state || "idle";
+      if (item.dataset.generationState !== targetState) {
+        item.dataset.generationState = targetState;
+      }
       if (!indicator) continue;
-      indicator.classList.toggle("is-generating", state === "generating"); indicator.classList.toggle("is-ready", state === "ready");
-      indicator.textContent = state === "generating" ? "● Generating…" : state === "ready" ? "✓ Response ready" : ""; indicator.hidden = !state;
+      const isGenerating = state === "generating";
+      const isReady = state === "ready";
+      if (indicator.classList.contains("is-generating") !== isGenerating) {
+        indicator.classList.toggle("is-generating", isGenerating);
+      }
+      if (indicator.classList.contains("is-ready") !== isReady) {
+        indicator.classList.toggle("is-ready", isReady);
+      }
+      const nextText = isGenerating ? "● Generating…" : isReady ? "✓ Response ready" : "";
+      if (indicator.textContent !== nextText) indicator.textContent = nextText;
+      const nextHidden = !state;
+      if (indicator.hidden !== nextHidden) indicator.hidden = nextHidden;
     }
   }
   function updateAllIndicators() {
@@ -76,33 +89,71 @@ import { SENTIQ_API_BASE } from "./config.js";
     document.querySelectorAll(".chat-list-item[data-id]").forEach((item) => { const id = normalizeId(item.getAttribute("data-id")); if (id) ids.add(id); });
     for (const id of ids) updateChatIndicator(id);
   }
+  function updateChatIndicatorsForEntry(entry) {
+    if (!entry) return;
+    const targetIds = new Set([
+      entry.conversationId,
+      entry.chatId,
+      entry.localChatId,
+      entry.targetChatId,
+      getVisibleConversationId(),
+    ].filter(Boolean));
+    for (const id of targetIds) updateChatIndicator(id);
+  }
+  function unpackCallbacks(callbacks) {
+    if (!callbacks || typeof callbacks !== "object") return {};
+    if (callbacks.__isWrapped && callbacks.__originalCallbacks) {
+      return unpackCallbacks(callbacks.__originalCallbacks);
+    }
+    return callbacks;
+  }
   function acknowledgeReady(conversationId) {
     const generations = getChatGenerations(conversationId); if (!generations.length) return;
     for (const generation of generations) if (generation.status === "completed") generation.readyAcknowledged = true;
     updateChatIndicator(conversationId);
   }
   function invokeOriginal(entry, callbackName, args) {
-    const callback = entry?.originalCallbacks?.[callbackName] || entry?.callbacks?.[callbackName]; if (typeof callback !== "function") return;
+    let callback = entry?.originalCallbacks?.[callbackName];
+    if (typeof callback !== "function" && entry?.callbacks && !entry.callbacks.__isWrapped) {
+      callback = entry.callbacks[callbackName];
+    }
+    if (typeof callback !== "function") return;
     try { callback(...args); } catch (error) { console.warn(`[GenerationRenderRouter] ${callbackName} callback failed:`, error); }
   }
   function queueCallback(entry, callbackName, args) {
     if (!Array.isArray(entry.pendingCallbacks)) entry.pendingCallbacks = [];
     entry.pendingCallbacks.push({ callbackName, args });
   }
-  function isVisible(entry) { return Boolean(entry?.conversationId && getVisibleConversationId() === entry.conversationId); }
+  function isVisible(entry) {
+    if (!entry) return false;
+    const visibleId = getVisibleConversationId();
+    if (!visibleId) return true;
+    return Boolean(
+      (entry.conversationId && visibleId === entry.conversationId)
+      || (entry.chatId && visibleId === entry.chatId)
+      || (entry.localChatId && visibleId === entry.localChatId)
+      || (entry.targetChatId && visibleId === entry.targetChatId)
+    );
+  }
   function flushEntry(entry) {
     if (!entry || !isVisible(entry)) return;
     const queued = Array.isArray(entry.pendingCallbacks) ? entry.pendingCallbacks.splice(0) : [];
     for (const item of queued) invokeOriginal(entry, item.callbackName, item.args);
     if (entry.status === "completed") entry.readyAcknowledged = true;
-    updateChatIndicator(entry.conversationId);
+    updateChatIndicatorsForEntry(entry);
   }
   function flushChat(conversationId) { for (const entry of getChatGenerations(conversationId)) flushEntry(entry); acknowledgeReady(conversationId); }
   function routeCallback(entry, callbackName, args) {
     if (!entry) return;
     if (callbackName === "onGenerationStarted") entry.startedDelivered = true;
-    if (isVisible(entry)) { invokeOriginal(entry, callbackName, args); if (callbackName === "onDone" && entry.status === "completed") entry.readyAcknowledged = true; updateChatIndicator(entry.conversationId); return; }
-    queueCallback(entry, callbackName, args); updateChatIndicator(entry.conversationId);
+    if (isVisible(entry)) {
+      invokeOriginal(entry, callbackName, args);
+      if (callbackName === "onDone" && entry.status === "completed") entry.readyAcknowledged = true;
+      updateChatIndicatorsForEntry(entry);
+      return;
+    }
+    queueCallback(entry, callbackName, args);
+    updateChatIndicatorsForEntry(entry);
   }
   function handleCallback(entry, callbackName, args) {
     if (!entry) { pendingBeforeStart.push({ callbackName, args }); return; }
@@ -110,16 +161,21 @@ import { SENTIQ_API_BASE } from "./config.js";
     routeCallback(entry, callbackName, args);
   }
   function markTerminal(entry, status) {
-    entry.status = status; entry.completedAt = entry.completedAt || nowIso(); entry.subscription = null;
-    if (status === "completed" && isVisible(entry)) entry.readyAcknowledged = true;
-    updateChatIndicator(entry.conversationId);
+    entry.status = status;
+    entry.completedAt = entry.completedAt || nowIso();
+    entry.subscription = null;
+    if (status === "completed") entry.readyAcknowledged = true;
+    updateChatIndicatorsForEntry(entry);
   }
-  function prepareCanonicalEntry(entry, callbacks, conversationId, rehydrated = false) {
+  function prepareCanonicalEntry(entry, callbacks, conversationId, rehydrated = false, context = null) {
     if (!entry) return null;
+    const unwrapped = unpackCallbacks(callbacks);
     entry.conversationId = entry.conversationId || conversationId;
-    entry.chatId = entry.chatId || conversationId;
-    entry.originalCallbacks = entry.originalCallbacks || callbacks || {};
-    entry.callbacks = entry.callbacks || callbacks || {};
+    entry.chatId = entry.chatId || normalizeId(context?.chatId || context?.localChatId) || conversationId;
+    entry.localChatId = entry.localChatId || normalizeId(context?.localChatId || context?.chatId) || null;
+    entry.targetChatId = entry.targetChatId || normalizeId(context?.targetChatId || context?.chatId) || null;
+    entry.originalCallbacks = (entry.originalCallbacks && !entry.originalCallbacks.__isWrapped) ? entry.originalCallbacks : unwrapped;
+    entry.callbacks = entry.callbacks || unwrapped;
     entry.pendingCallbacks = Array.isArray(entry.pendingCallbacks) ? entry.pendingCallbacks : [];
     entry.readyAcknowledged = Boolean(entry.readyAcknowledged);
     entry.startedDelivered = Boolean(entry.startedDelivered);
@@ -135,23 +191,49 @@ import { SENTIQ_API_BASE } from "./config.js";
   }
 
   function makeWrappedCallbacks(callbacks, entryRef, context) {
-    const wrapped = { ...callbacks };
+    const realCallbacks = unpackCallbacks(callbacks);
+    const wrapped = { ...realCallbacks };
+    wrapped.__isWrapped = true;
+    wrapped.__originalCallbacks = realCallbacks;
     const callbackNames = ["onGenerationStarted", "onToken", "onFileToken", "onFileArtifact", "onThinking", "onStructuredResponse", "onRoute", "onToolLifecycle", "onWebSurfSources", "onWebSurfComplete", "onMemory", "onSync"];
     for (const name of callbackNames) wrapped[name] = (...args) => handleCallback(entryRef.current, name, args);
     wrapped.onGenerationStarted = (generationId, started) => {
-      const resolvedGenerationId = normalizeId(generationId); const conversationId = resolveConversationId(context, started || {});
-      if (!resolvedGenerationId || !conversationId) { pendingBeforeStart.push({ callbackName: "onGenerationStarted", args: [generationId, started] }); return; }
-      const entry = prepareCanonicalEntry(getGenerationEntry(resolvedGenerationId), callbacks, conversationId, false);
-      if (!entry) { pendingBeforeStart.push({ callbackName: "onGenerationStarted", args: [generationId, started] }); return; }
+      const resolvedGenerationId = normalizeId(generationId);
+      const conversationId = resolveConversationId(context, started || {});
+      if (!resolvedGenerationId || !conversationId) {
+        pendingBeforeStart.push({ callbackName: "onGenerationStarted", args: [generationId, started] });
+        return;
+      }
+      const entry = prepareCanonicalEntry(getGenerationEntry(resolvedGenerationId), realCallbacks, conversationId, false, context);
+      if (!entry) {
+        pendingBeforeStart.push({ callbackName: "onGenerationStarted", args: [generationId, started] });
+        return;
+      }
       entry.requestId = entry.requestId || normalizeId(context?.clientRequestId || context?.client_request_id || started?.client_request_id);
       entry.clientRequestId = entry.clientRequestId || entry.requestId;
       entry.status = typeof started?.status === "string" ? started.status : entry.status || "running";
       entry.lastSequence = Math.max(Number(entry.lastSequence || 0), Number(started?.last_event_sequence || 0));
       entryRef.current = entry;
-      routeCallback(entry, "onGenerationStarted", [generationId, started]); flushEntry(entry); updateChatIndicator(conversationId);
+      routeCallback(entry, "onGenerationStarted", [generationId, started]);
+      flushEntry(entry);
+      updateChatIndicatorsForEntry(entry);
     };
-    wrapped.onDone = (...args) => { const entry = entryRef.current; if (entry) { markTerminal(entry, "completed"); handleCallback(entry, "onDone", args); } };
-    wrapped.onError = (...args) => { const entry = entryRef.current; if (entry) { markTerminal(entry, "failed"); handleCallback(entry, "onError", args); } };
+    wrapped.onDone = (...args) => {
+      const entry = entryRef.current;
+      if (entry) {
+        flushEntry(entry);
+        handleCallback(entry, "onDone", args);
+        markTerminal(entry, "completed");
+      }
+    };
+    wrapped.onError = (...args) => {
+      const entry = entryRef.current;
+      if (entry) {
+        flushEntry(entry);
+        handleCallback(entry, "onError", args);
+        markTerminal(entry, "failed");
+      }
+    };
     return wrapped;
   }
 
@@ -164,7 +246,7 @@ import { SENTIQ_API_BASE } from "./config.js";
       entry.subscription = null;
       if (!entry.completedAt && result?.cancelled) markTerminal(entry, "cancelled");
       else if (!entry.completedAt && result?.detached) { entry.status = "running"; entry.subscription = "detached"; }
-      updateChatIndicator(entry.conversationId);
+      updateChatIndicatorsForEntry(entry);
     }
     return result;
   };
@@ -182,7 +264,7 @@ import { SENTIQ_API_BASE } from "./config.js";
 
     const existing = getGenerationEntry(generationId);
     if (existing) {
-      prepareCanonicalEntry(existing, existing.originalCallbacks || existing.callbacks, chatId, true);
+      prepareCanonicalEntry(existing, unpackCallbacks(existing.originalCallbacks || existing.callbacks), chatId, true);
       existing.status = typeof persisted.status === "string" ? persisted.status : existing.status;
       existing.lastSequence = Math.max(Number(existing.lastSequence || 0), Number(persisted.last_event_sequence || 0));
       if (typeof persisted.partial_text === "string" && persisted.partial_text.length >= String(existing.responseBuffer || "").length) existing.responseBuffer = persisted.partial_text;
@@ -257,15 +339,20 @@ import { SENTIQ_API_BASE } from "./config.js";
         if (!response.ok) throw new Error(`Generation rehydration subscription failed: HTTP ${response.status}`);
         const reader = response.body?.getReader?.(); if (!reader) throw new Error("Generation event stream unavailable.");
         const decoder = new TextDecoder(); let buffer = ""; let done = false;
-        while (!done && !entry.terminal) {
-          const chunk = await reader.read(); if (chunk.done) { done = true; break; }
-          buffer += decoder.decode(chunk.value, { stream: true });
-          const lines = buffer.split("\n"); buffer = lines.pop() || "";
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const payload = line.slice(6).trim(); if (!payload || payload === "[DONE]") continue;
-            try { const event = JSON.parse(payload); if (handleRehydratedEvent(entry, event)) { done = true; break; } } catch {}
+        try {
+          while (!done && !entry.terminal) {
+            const chunk = await reader.read(); if (chunk.done) { done = true; break; }
+            buffer += decoder.decode(chunk.value, { stream: true });
+            const lines = buffer.split("\n"); buffer = lines.pop() || "";
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              const payload = line.slice(6).trim(); if (!payload || payload === "[DONE]") continue;
+              try { const event = JSON.parse(payload); if (handleRehydratedEvent(entry, event)) { done = true; break; } } catch {}
+            }
           }
+        } finally {
+          try { await reader.cancel(); } catch {}
+          try { reader.releaseLock(); } catch {}
         }
         if (entry.terminal) break;
         attempts += 1; entry.subscription.reconnectAttempts = attempts;
@@ -297,10 +384,13 @@ import { SENTIQ_API_BASE } from "./config.js";
   function installObservers() {
     const handleChatVisibilityChange = () => { const visibleChatId = getVisibleConversationId(); if (visibleChatId) flushChat(visibleChatId); updateAllIndicators(); };
     document.addEventListener("click", (event) => { const item = event.target instanceof Element ? event.target.closest(".chat-list-item[data-id]") : null; if (!item) return; window.setTimeout(handleChatVisibilityChange, 0); }, true);
-    activeChatObserver = new MutationObserver(() => { const visibleChatId = getVisibleConversationId(); if (visibleChatId) flushChat(visibleChatId); });
-    activeChatObserver.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ["class", "data-id"] });
+    const chatListElement = document.getElementById("chat-list");
+    if (chatListElement) {
+      activeChatObserver = new MutationObserver(() => { const visibleChatId = getVisibleConversationId(); if (visibleChatId) flushChat(visibleChatId); });
+      activeChatObserver.observe(chatListElement, { subtree: true, attributes: true, attributeFilter: ["class", "aria-current"] });
+    }
     chatListObserver = new MutationObserver(() => updateAllIndicators());
-    const observeTarget = document.getElementById("chat-list") || document.body; chatListObserver.observe(observeTarget, { subtree: true, childList: true });
+    const observeTarget = chatListElement || document.body; chatListObserver.observe(observeTarget, { subtree: true, childList: true });
     window.addEventListener("resize", updateAllIndicators); handleChatVisibilityChange();
   }
 

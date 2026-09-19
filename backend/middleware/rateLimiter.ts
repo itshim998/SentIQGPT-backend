@@ -17,20 +17,33 @@ function extractKey(req: Request): string {
   return req.ip || req.socket.remoteAddress || "unknown";
 }
 
-// General API rate limiter: 100 req/min
+const envRpm = Number(process.env.SENTIQ_RPM) || 120;
+const generalMax = Math.max(envRpm * 10, 1200);
+
+// General API rate limiter: 1200 req/min (high headroom for SPA sync & status polling)
 export const generalRateLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 100,
+  max: generalMax,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: extractKey,
+  skip: (req: Request) => {
+    const path = req.path || req.originalUrl || "";
+    return (
+      path.endsWith("/health") ||
+      path.includes("/live/status") ||
+      path.includes("/chat/sync") ||
+      path.includes("/billing/usage") ||
+      path.includes("/billing/me")
+    );
+  },
   message: { error: "Too many requests. Please try again later.", retryAfterMs: 60000 },
 });
 
-// AI endpoint rate limiter: 30 req/min
+// AI endpoint rate limiter: 60 req/min
 export const aiRateLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 30,
+  max: Math.max(envRpm, 60),
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: extractKey,

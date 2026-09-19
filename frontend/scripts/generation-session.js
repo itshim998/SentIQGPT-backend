@@ -16,18 +16,33 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   function createAnonymousId() { if (window.crypto?.randomUUID) return window.crypto.randomUUID(); return `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`; }
   function getAnonymousId() { try { const current = localStorage.getItem(STORAGE_KEYS.anonymousQuotaId); if (current && current.length <= 96) return current; const legacy = localStorage.getItem(LEGACY_STORAGE_KEYS.anonymousQuotaId); if (legacy && legacy.length <= 96) { localStorage.setItem(STORAGE_KEYS.anonymousQuotaId, legacy); return legacy; } const created = createAnonymousId(); localStorage.setItem(STORAGE_KEYS.anonymousQuotaId, created); return created; } catch { return createAnonymousId(); } }
   async function headers() { const value = { "Content-Type": "application/json", "X-SentIQ-Anonymous-Id": getAnonymousId() }; try { const token = await window.SentIQAuth?.getAccessToken?.(); if (token) value.Authorization = `Bearer ${token}`; } catch {} return value; }
-  function startHeartbeat() { if (heartbeatTimer || !sessionId) return; heartbeatTimer = window.setInterval(() => { void heartbeat(); }, LEASE_HEARTBEAT_MS); }
-  async function openSession() { if (closed) return null; const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions`, { method: "POST", headers: await headers(), body: "{}", cache: "no-store" }); if (!response.ok) throw new Error(`Generation session open failed: ${response.status}`); const data = await response.json().catch(() => ({})); sessionId = typeof data.generation_session_id === "string" ? data.generation_session_id : null; startHeartbeat(); return sessionId; }
-  async function ensure() { if (sessionId && !closed) return sessionId; if (!openPromise) openPromise = openSession().finally(() => { openPromise = null; }); return openPromise; }
-  async function claim(clientRequestId) { if (!clientRequestId) return true; const id = await ensure(); if (!id) return true; const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(id)}/claim-request`, { method: "POST", headers: await headers(), body: JSON.stringify({ client_request_id: clientRequestId }), keepalive: true, cache: "no-store" }); return response.ok; }
-  async function heartbeat() { if (!sessionId || closed) return; try { const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(sessionId)}/heartbeat`, { method: "POST", headers: await headers(), body: "{}", keepalive: true, cache: "no-store" }); if (!response.ok) { sessionId = null; await ensure(); } } catch {} }
-  async function close() { if (!sessionId || closed) return; closed = true; if (heartbeatTimer) window.clearInterval(heartbeatTimer); heartbeatTimer = null; const id = sessionId; sessionId = null; try { await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(id)}/close`, { method: "POST", headers: await headers(), body: "{}", keepalive: true, cache: "no-store" }); } catch {} }
+  function hasAnyActiveGenerations() {
+    try {
+      const active = window.SentIQGenerationLifecycle?.getActiveGenerations?.();
+      return Array.isArray(active) && active.length > 0;
+    } catch {
+      return false;
+    }
+  }
+  function startHeartbeat() {
+    if (heartbeatTimer || !sessionId) return;
+    heartbeatTimer = window.setInterval(() => {
+      if (hasAnyActiveGenerations()) void heartbeat();
+    }, LEASE_HEARTBEAT_MS);
+  }
+  async function openSession() { if (closed) return null; const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions`, { method: "POST", headers: await headers(), body: "{}", cache: "no-store" }); if (!response.ok) throw new Error(`Generation session open failed: ${response.status}`); const data = await response.json().catch(() => ({})); sessionId = typeof data.generation_session_id === "string" && data.generation_session_id !== "undefined" ? data.generation_session_id : (data.session?.id || null); startHeartbeat(); return sessionId; }
+  async function ensure() { if (sessionId && sessionId !== "undefined" && !closed) return sessionId; if (!openPromise) openPromise = openSession().finally(() => { openPromise = null; }); return openPromise; }
+  async function claim(clientRequestId) { if (!clientRequestId) return true; const id = await ensure(); if (!id || id === "undefined") return true; const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(id)}/claim-request`, { method: "POST", headers: await headers(), body: JSON.stringify({ client_request_id: clientRequestId }), keepalive: true, cache: "no-store" }); return response.ok; }
+  async function heartbeat() { if (!sessionId || sessionId === "undefined" || closed) return; try { const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(sessionId)}/heartbeat`, { method: "POST", headers: await headers(), body: "{}", keepalive: true, cache: "no-store" }); if (!response.ok) { sessionId = null; await ensure(); } } catch {} }
+  async function close() { if (!sessionId || sessionId === "undefined" || closed) return; closed = true; if (heartbeatTimer) window.clearInterval(heartbeatTimer); heartbeatTimer = null; const id = sessionId; sessionId = null; try { await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(id)}/close`, { method: "POST", headers: await headers(), body: "{}", keepalive: true, cache: "no-store" }); } catch {} }
   function reopenAfterRestore() { if (!closed) return; closed = false; sessionId = null; void ensure(); }
 
   function currentVisibleChatId() { return document.querySelector(".chat-list-item.active")?.getAttribute("data-id") || null; }
   function findRehydratedGeneration(generationId) { return rehydratedEntries.get(generationId) || null; }
   function ensureRehydratedRenderer(entry) {
-    if (!entry || entry.renderer || currentVisibleChatId() !== entry.conversationId) return;
+    if (!entry || entry.terminal || entry.renderer || currentVisibleChatId() !== entry.conversationId) return;
+    if (document.querySelector(".message.assistant .typing-active") || document.querySelector(".message.assistant.typing-active")) return;
+    if (entry.requestId && document.querySelector(`.message.assistant[data-request-id="${entry.requestId}"]`)) return;
     const messages = document.querySelector("#chat-messages");
     if (!messages) return;
     const bubble = document.createElement("div");
@@ -39,15 +54,15 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     content.textContent = entry.responseBuffer || "";
     bubble.appendChild(content); messages.appendChild(bubble);
     entry.renderer = { bubble, content, renderedText: entry.responseBuffer || "" };
-    try { messages.scrollTo({ top: messages.scrollHeight, behavior: "auto" }); } catch {}
   }
   function syncRehydratedRenderer(entry) {
+    if (!entry || entry.terminal) return;
+    if (document.querySelector(".message.assistant .typing-active") || document.querySelector(".message.assistant.typing-active")) return;
     ensureRehydratedRenderer(entry);
     if (!entry.renderer) return;
     const next = String(entry.responseBuffer || "");
     if (next === entry.renderer.renderedText) return;
     entry.renderer.content.textContent = next; entry.renderer.renderedText = next;
-    try { const box = document.querySelector("#chat-messages"); if (box) box.scrollTo({ top: box.scrollHeight, behavior: "smooth" }); } catch {}
   }
   function handleRehydratedEvent(event) {
     const detail = event?.detail || {}; const generation = detail.generation || {}; const generationId = generation.generationId || generation.generation_id; if (!generationId) return;
@@ -55,12 +70,26 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     if (generation.conversationId) entry.conversationId = generation.conversationId;
     if (typeof generation.responseBuffer === "string") entry.responseBuffer = generation.responseBuffer;
     const payload = detail.event || {};
-    if (["generation_completed", "generation_cancelled", "generation_failed"].includes(String(payload.type))) entry.terminal = true;
+    if (["generation_completed", "generation_cancelled", "generation_failed"].includes(String(payload.type))) {
+      entry.terminal = true;
+      entry.renderer = null;
+    }
     syncRehydratedRenderer(entry);
+  }
+  const MAX_REHYDRATED_ENTRIES = 20;
+  function pruneRehydratedEntries() {
+    if (rehydratedEntries.size <= MAX_REHYDRATED_ENTRIES) return;
+    for (const [id, item] of rehydratedEntries.entries()) {
+      if (item.terminal) {
+        rehydratedEntries.delete(id);
+        if (rehydratedEntries.size <= MAX_REHYDRATED_ENTRIES) break;
+      }
+    }
   }
   function handleRehydratedRegistration(event) {
     const persisted = event?.detail?.persisted || {}; const generation = event?.detail?.generation || {};
     const generationId = generation.generationId || generation.generation_id || persisted.id || persisted.generation_id; if (!generationId) return;
+    pruneRehydratedEntries();
     rehydratedEntries.set(generationId, { generationId, conversationId: generation.conversationId || persisted.conversation_id || null, requestId: generation.requestId || persisted.client_request_id || null, status: generation.status || persisted.status || "queued", responseBuffer: generation.responseBuffer || persisted.partial_text || "", renderer: null, terminal: Boolean(generation.terminal) });
     syncRehydratedRenderer(rehydratedEntries.get(generationId));
   }

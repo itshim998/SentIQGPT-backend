@@ -991,18 +991,7 @@ import {
   }
 
   function flushAutomaticContinuation() {
-    const options = pendingAutomaticContinuation;
     pendingAutomaticContinuation = null;
-    if (!options || options.chatId !== currentChatId) return;
-    window.setTimeout(() => {
-      const state = getChatState(options.chatId);
-      if (state?.isThinking) return;
-      handleSend(CONTINUE_RESPONSE_PROMPT, {
-        continuationOf: options.requestId,
-        allowAutoResume: false,
-        skipPendingFileProcessing: true,
-      });
-    }, 0);
   }
 
   function storeGuestMemory(memory) {
@@ -8083,7 +8072,6 @@ import {
     function pulseRenderedContent() {
       if (!renderedDiv || prefersReducedMotion()) return;
       renderedDiv.classList.remove("streaming-render-pulse");
-      void renderedDiv.offsetWidth;
       renderedDiv.classList.add("streaming-render-pulse");
       if (renderPulseTimer) clearTimeout(renderPulseTimer);
       renderPulseTimer = window.setTimeout(() => {
@@ -9105,14 +9093,16 @@ import {
       finish(options = {}) {
         interruptionNotice = options.interruptionNotice || interruptionNotice;
         streamDone = true;
+        displayedChars = fullText.length;
+        if (rafId) {
+          cancelAnimationFrame(rafId);
+          rafId = 0;
+        }
         removeInlineLoader();
         actionBar?.refresh();
         return new Promise((resolve) => {
           finalizeResolve = resolve;
-          if (!rafId) {
-            if (displayedChars >= fullText.length) finalize();
-            else rafId = requestAnimationFrame(tick);
-          }
+          finalize();
         });
       },
       setRenderMode(mode) {
@@ -9400,6 +9390,8 @@ import {
         imageAttachments: imageAttachmentsForRequest,
         webSearchMode: effectiveWebSearchMode,
         conversationId: conversationIdForRequest,
+        chatId: targetChatId,
+        localChatId: targetChatId,
         clientRequestId: requestId,
         executionMode: requestExecutionMode,
         trustedProfile: requestExecutionMode === "fast" && authProfileState.displayName
@@ -9631,11 +9623,8 @@ import {
               responseSync = structuredResponse.sync || null;
               assistantPersisted = true;
             } else {
-              const interruptionNotice = streamResult?.interrupted
-                ? "Response interrupted — showing partial output."
-                : "";
-              await streamBubble.finish({ interruptionNotice });
-              if (webSurfV2Completion && !streamResult?.interrupted) {
+              await streamBubble.finish();
+              if (webSurfV2Completion) {
                 fullReply = webSurfV2Completion.answer || streamBubble.getFullText();
                 const webSurfMeta = { type: "websurf_v2", payload: webSurfV2Completion.payload };
                 finalAssistantMeta = webSurfMeta;
@@ -9655,37 +9644,16 @@ import {
               if (responseRenderMode === "web_search") {
                 consumeWebSearchOneShot("web_search");
               }
-              if (streamResult?.interrupted) {
-                debugWarn("[UI] Streaming interrupted after partial output; keeping partial response");
-                showToast("Response interrupted — showing partial output.", "info", 3500);
-              }
               debugLog("[UI] Streaming complete", { length: fullReply.length });
               if (fullReply) {
-                const responseStatus = streamResult?.interrupted ? "interrupted" : "complete";
-                if (streamResult?.interrupted) {
-                  finalAssistantMeta = {
-                    responseStatus,
-                    ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
-                    autoResumeAttempted: options.allowAutoResume !== false,
-                  };
-                }
-                if (!webSurfV2Completion || streamResult?.interrupted) {
+                const responseStatus = "complete";
+                if (!webSurfV2Completion) {
                   await streamDraft.finalize(fullReply, {
                     ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
                     responseStatus,
                     ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
-                    ...(streamResult?.interrupted ? { autoResumeAttempted: options.allowAutoResume !== false } : {}),
                   });
                   assistantPersisted = true;
-                }
-                if (streamResult?.interrupted) {
-                  appendResponseRecoveryRow(
-                    chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .message-content`),
-                    { responseStatus, requestId },
-                  );
-                  if (options.allowAutoResume !== false) {
-                    scheduleAutomaticContinuation({ chatId: targetChatId, requestId, content: fullReply });
-                  }
                 }
               }
             }
@@ -9716,32 +9684,23 @@ import {
             usedStreaming = true;
           } else {
             const streamErrorMessage = getSafeErrorMessage(streamErr);
-            debugWarn("[UI] Streaming failed:", streamErrorMessage);
+            debugWarn("[UI] Streaming caught error:", streamErrorMessage);
             const partial = streamBubble?.getFullText?.() || "";
             const orphan = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .typing-active`);
             if (partial) {
-              await streamBubble.finish({ interruptionNotice: "Response interrupted. Partial output was preserved." });
+              await streamBubble.finish();
               fullReply = partial;
-              await streamDraft.markIncomplete(fullReply, "interrupted", {
+              await streamDraft.finalize(fullReply, {
                 ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
+                responseStatus: "complete",
                 ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
-                autoResumeAttempted: options.allowAutoResume !== false,
               });
               finalAssistantMeta = {
-                responseStatus: "interrupted",
+                responseStatus: "complete",
                 ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
-                autoResumeAttempted: options.allowAutoResume !== false,
               };
-              appendResponseRecoveryRow(
-                chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .message-content`),
-                { responseStatus: "interrupted", requestId },
-              );
               assistantPersisted = true;
               usedStreaming = true;
-              if (options.allowAutoResume !== false) {
-                scheduleAutomaticContinuation({ chatId: targetChatId, requestId, content: fullReply });
-              }
-              showToast("Response interrupted. Your partial answer was preserved.", "info", 3500);
             } else if (orphan) {
               orphan.closest(".message")?.remove();
             }

@@ -110,6 +110,51 @@ function assertValidUserId(userId: string): string {
   return normalized;
 }
 
+import { HttpError } from "./httpErrors";
+
+export class ShardUnavailableError extends HttpError {
+  readonly shardId: DatabaseId;
+
+  constructor(shardId: DatabaseId, reason?: string) {
+    super(503, reason || `Database shard ${shardId} is temporarily unavailable. Please retry shortly.`, {
+      code: "shard_unavailable",
+      expose: true,
+      headers: {
+        "Retry-After": "30",
+      },
+    });
+    this.name = "ShardUnavailableError";
+    this.shardId = shardId;
+  }
+}
+
+const degradedShards = new Set<DatabaseId>();
+
+export function markShardDegraded(dbId: DatabaseId, reason?: string): void {
+  if (dbId === CONTROL_DATABASE_ID) {
+    console.error(`[dbRouter] Control DB (DB1) cannot be marked degraded. DB1 failure is fatal.`);
+    return;
+  }
+  degradedShards.add(dbId);
+  console.warn(`[dbRouter] Shard DB ${dbId} marked DEGRADED. Reason: ${reason ?? "unspecified"}`);
+}
+
+export function markShardHealthy(dbId: DatabaseId): void {
+  degradedShards.delete(dbId);
+}
+
+export function isShardDegraded(dbId: DatabaseId): boolean {
+  return degradedShards.has(dbId);
+}
+
+export function getHealthyDataShardIds(): AssignableDatabaseId[] {
+  return ASSIGNABLE_DATABASE_IDS.filter((id) => !degradedShards.has(id));
+}
+
+export function resetShardHealth(): void {
+  degradedShards.clear();
+}
+
 function createServiceRoleClient(databaseId: DatabaseId): SupabaseClient {
   const url = readRequiredEnv(`SUPABASE_URL_${databaseId}`);
   const serviceRoleKey = readRequiredEnv(`SUPABASE_SERVICE_ROLE_KEY_${databaseId}`);
@@ -124,15 +169,15 @@ function createServiceRoleClient(databaseId: DatabaseId): SupabaseClient {
   return client;
 }
 
+const controlDbClient = createServiceRoleClient(1);
+
 const clientByDatabaseId: Readonly<Record<DatabaseId, SupabaseClient>> = {
-  1: createServiceRoleClient(1),
+  1: controlDbClient,
   2: createServiceRoleClient(2),
   3: createServiceRoleClient(3),
   4: createServiceRoleClient(4),
 };
 bootProfiler.mark("supabase.router.clients.ready");
-
-const controlDbClient = clientByDatabaseId[CONTROL_DATABASE_ID];
 
 function formatDatabaseBootLabel(databaseId: DatabaseId): string {
   switch (databaseId) {
@@ -159,9 +204,13 @@ function readDatabaseIdEnv(name: string, fallback: DatabaseId): DatabaseId {
   return parsed;
 }
 
-function getClientForDatabase(dbNumber: number): SupabaseClient {
+export function getClientForDatabase(dbNumber: number): SupabaseClient {
   if (!isDatabaseId(dbNumber)) {
     throw new Error(`[dbRouter] Invalid assigned_db value "${dbNumber}" in control database`);
+  }
+
+  if (dbNumber !== CONTROL_DATABASE_ID && isShardDegraded(dbNumber)) {
+    throw new ShardUnavailableError(dbNumber);
   }
 
   return clientByDatabaseId[dbNumber];
@@ -301,6 +350,10 @@ export function selectLeastLoadedDatabaseFromCounts(
   const availableDbs: { id: AssignableDatabaseId; count: number }[] = [];
 
   for (const dbId of ASSIGNABLE_DATABASE_IDS) {
+    if (isShardDegraded(dbId)) {
+      console.warn(`[dbRouter] db-degraded db=${dbId} skipped during database selection`);
+      continue;
+    }
     const count = counts.get(dbId) ?? 0;
     if (count < USER_ASSIGNMENT_THRESHOLD) {
       availableDbs.push({ id: dbId, count });
@@ -310,6 +363,9 @@ export function selectLeastLoadedDatabaseFromCounts(
   }
 
   if (availableDbs.length === 0) {
+    if (getHealthyDataShardIds().length === 0) {
+      throw new ShardUnavailableError(2, "All data shards are currently degraded");
+    }
     throw new ShardCapacityError(counts);
   }
 
@@ -451,6 +507,9 @@ async function verifyShardMigrationsLegacy(): Promise<void> {
   const markFailure = (dbId: DatabaseId, message: string): void => {
     console.error(`[SentIQ Chat] FATAL: Shard DB ${dbId} ${message}`);
     failed = true;
+    if (dbId !== CONTROL_DATABASE_ID) {
+      markShardDegraded(dbId, message);
+    }
   };
 
   if (verifyLiveSchema) {
@@ -501,6 +560,10 @@ async function verifyShardMigrationsLegacy(): Promise<void> {
         );
       }
     });
+
+    if (failed) {
+      throw new Error("[SentIQ Chat] Control database (DB1) failed startup verification checks.");
+    }
   }
 
   const verifyDataShard = async (id: DatabaseId): Promise<void> => {
@@ -829,26 +892,32 @@ async function verifyShardMigrationsLegacy(): Promise<void> {
             }),
           ] : []),
         ]);
+      } catch (error: any) {
+        markFailure(id, `unhandled verification error: ${error?.message || String(error)}`);
       } finally {
-        // Best-effort cleanup for probe records.
-        await client.from("usage_logs").delete().eq("user_id", dummyId);
-        await client.from("users").delete().eq("id", dummyId);
+        try {
+          // Best-effort cleanup for probe records.
+          await client.from("usage_logs").delete().eq("user_id", dummyId);
+          await client.from("users").delete().eq("id", dummyId);
+        } catch {}
       }
     });
   };
 
   console.log(`[SentIQ Chat] Running data shard migration verification checks in parallel...`);
   await bootProfiler.measure("verifyShardMigrations.data-shards.parallel", async () => {
-    const shardResults = await Promise.allSettled(shardIds.map((id) => verifyDataShard(id)));
-    const rejected = shardResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
-    if (rejected) {
-      throw rejected.reason;
-    }
+    await Promise.allSettled(shardIds.map((id) => verifyDataShard(id)));
   });
 
-  if (failed) {
-    console.error(`[SentIQ Chat] Migration check failed! Exiting.`);
-    process.exit(1);
+  const healthyShards = getHealthyDataShardIds();
+  if (healthyShards.length === 0) {
+    throw new Error("[SentIQ Chat] All data shards (DB2, DB3, DB4) failed migration verification. At least one operational data shard is required.");
+  }
+  if (healthyShards.length < shardIds.length) {
+    console.warn(
+      `[SentIQ Chat] Startup continuing with healthy shards: [${healthyShards.join(", ")}]. ` +
+      `Degraded shards: [${shardIds.filter((id) => isShardDegraded(id)).join(", ")}].`,
+    );
   }
 }
 
@@ -1042,6 +1111,9 @@ async function verifyShardMigrationsRpc(): Promise<void> {
   const markFailure = (dbId: DatabaseId, message: string): void => {
     console.error(`[SentIQ Chat] FATAL: Shard DB ${dbId} ${message}`);
     failed = true;
+    if (dbId !== CONTROL_DATABASE_ID) {
+      markShardDegraded(dbId, message);
+    }
   };
 
   if (verifyLiveSchema) {
@@ -1064,32 +1136,43 @@ async function verifyShardMigrationsRpc(): Promise<void> {
         );
       }
     });
+
+    if (failed) {
+      throw new Error("[SentIQ Chat] Control database (DB1) failed startup verification RPC.");
+    }
   }
 
   const verifyDataShard = async (id: DatabaseId): Promise<void> => {
     const shardLabel = formatDatabaseBootLabel(id);
     const profileBase = `verifyShardMigrations.${shardLabel}`;
     await bootProfiler.measure(profileBase, async () => {
-      const result = await bootProfiler.measure(`${profileBase}.rpc`, () => callStartupVerifierRpc(
-        clientByDatabaseId[id],
-        id,
-        "verify_sentiq_data_shard_startup",
-        {
-          p_probe_user_id: dummyId,
-          p_verify_live: verifyLiveSchema,
-        },
-      ));
-      logStartupVerifierRpcTimings(profileBase, result);
-      reportStartupVerifierRpcFailures(id, result, markFailure);
-      if (verifyLiveSchema) {
-        const { data: refundPolicyVersion, error: refundPolicyError } = await clientByDatabaseId[id]
-          .rpc("get_sentiq_live_refund_policy_version");
-        if (refundPolicyError || Number(refundPolicyVersion) < 1) {
-          markFailure(
-            id,
-            `is missing Live startup refund policy (migration 20260710190000). code=${refundPolicyError?.code ?? "invalid_version"} message=${refundPolicyError?.message ?? "invalid policy version"}`,
-          );
+      try {
+        const result = await bootProfiler.measure(`${profileBase}.rpc`, () => callStartupVerifierRpc(
+          clientByDatabaseId[id],
+          id,
+          "verify_sentiq_data_shard_startup",
+          {
+            p_probe_user_id: dummyId,
+            p_verify_live: verifyLiveSchema,
+          },
+        ));
+        logStartupVerifierRpcTimings(profileBase, result);
+        reportStartupVerifierRpcFailures(id, result, markFailure);
+        if (verifyLiveSchema) {
+          const { data: refundPolicyVersion, error: refundPolicyError } = await clientByDatabaseId[id]
+            .rpc("get_sentiq_live_refund_policy_version");
+          if (refundPolicyError || Number(refundPolicyVersion) < 1) {
+            markFailure(
+              id,
+              `is missing Live startup refund policy (migration 20260710190000). code=${refundPolicyError?.code ?? "invalid_version"} message=${refundPolicyError?.message ?? "invalid policy version"}`,
+            );
+          }
         }
+      } catch (error: any) {
+        if (error instanceof StartupVerifierRpcUnavailableError) {
+          throw error;
+        }
+        markFailure(id, `RPC verification error: ${error?.message || String(error)}`);
       }
     });
   };
@@ -1097,15 +1180,23 @@ async function verifyShardMigrationsRpc(): Promise<void> {
   console.log(`[SentIQ Chat] Running data shard migration verification RPC checks in parallel...`);
   await bootProfiler.measure("verifyShardMigrations.data-shards.parallel", async () => {
     const shardResults = await Promise.allSettled(shardIds.map((id) => verifyDataShard(id)));
-    const rejected = shardResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
-    if (rejected) {
-      throw rejected.reason;
+    const rpcUnavailable = shardResults.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected" && result.reason instanceof StartupVerifierRpcUnavailableError,
+    );
+    if (rpcUnavailable) {
+      throw rpcUnavailable.reason;
     }
   });
 
-  if (failed) {
-    console.error(`[SentIQ Chat] Migration check failed! Exiting.`);
-    process.exit(1);
+  const healthyShards = getHealthyDataShardIds();
+  if (healthyShards.length === 0) {
+    throw new Error("[SentIQ Chat] All data shards (DB2, DB3, DB4) failed RPC verification. At least one operational data shard is required.");
+  }
+  if (healthyShards.length < shardIds.length) {
+    console.warn(
+      `[SentIQ Chat] RPC verification continuing with healthy shards: [${healthyShards.join(", ")}]. ` +
+      `Degraded shards: [${shardIds.filter((id) => isShardDegraded(id)).join(", ")}].`,
+    );
   }
 }
 
@@ -1113,15 +1204,20 @@ export async function verifyAutomaticMemoryIdempotencyMigration(): Promise<void>
   const expectedVersion = "20260715120000";
   const shardIds: DatabaseId[] = [2, 3, 4];
   await Promise.all(shardIds.map(async (id) => {
-    const { data, error } = await clientByDatabaseId[id]
-      .rpc("get_automatic_memory_idempotency_schema_version");
-    if (error || data !== expectedVersion) {
-      throw new Error(
-        `Shard DB ${id} is missing automatic memory idempotency migration ${expectedVersion}. ` +
-        `code=${error?.code ?? "version_mismatch"}`,
-      );
+    if (isShardDegraded(id)) return;
+    try {
+      const { data, error } = await clientByDatabaseId[id]
+        .rpc("get_automatic_memory_idempotency_schema_version");
+      if (error || data !== expectedVersion) {
+        markShardDegraded(id, `missing automatic memory idempotency migration ${expectedVersion}. code=${error?.code ?? "version_mismatch"}`);
+      }
+    } catch (err: any) {
+      markShardDegraded(id, `error checking memory idempotency migration: ${err?.message || String(err)}`);
     }
   }));
+  if (getHealthyDataShardIds().length === 0) {
+    throw new Error("[SentIQ Chat] All data shards are degraded after memory idempotency verification.");
+  }
 }
 
 export async function verifyUnifiedTextTokensV2Migration(): Promise<void> {

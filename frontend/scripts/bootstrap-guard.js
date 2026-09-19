@@ -44,7 +44,7 @@
     const screen = document.getElementById("sentiq-startup-screen"); if (!screen) return;
     if (!animate || document.documentElement.dataset.sentiqMotionPolicy === "reduced") { screen.remove(); return; }
     if (screen.dataset.startupExit === "true") return;
-    screen.dataset.startupExit = "true"; screen.classList.add("is-exiting"); window.setTimeout(() => screen.remove(), 240);
+    screen.dataset.startupExit = "true"; screen.classList.add("is-exiting"); window.setTimeout(() => { screen.remove(); }, 240);
   }
   function canUseStorage(storageName) {
     try { const storage = window[storageName]; if (!storage) return false; const key = "__sentiq_storage_probe__"; storage.setItem(key, "1"); storage.removeItem(key); return true; } catch { return false; }

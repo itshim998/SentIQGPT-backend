@@ -128,8 +128,31 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     };
   }
 
+  const MAX_REGISTRY_ENTRIES_PER_CHAT = 15;
+
+  function pruneTerminalEntryCallbacks(entry) {
+    if (!entry) return;
+    entry.subscription = null;
+  }
+
   function registerGeneration(entry) {
-    getChatRegistry(entry.chatId).set(entry.generationId, entry);
+    if (!entry?.generationId) return;
+    const registry = getChatRegistry(entry.chatId);
+    registry.set(entry.generationId, entry);
+    if (entry.conversationId && entry.conversationId !== entry.chatId) {
+      getChatRegistry(entry.conversationId).set(entry.generationId, entry);
+    }
+    if (entry.localChatId && entry.localChatId !== entry.chatId && entry.localChatId !== entry.conversationId) {
+      getChatRegistry(entry.localChatId).set(entry.generationId, entry);
+    }
+    if (registry.size > MAX_REGISTRY_ENTRIES_PER_CHAT) {
+      for (const [id, item] of registry.entries()) {
+        if (item.terminal || ["completed", "failed", "cancelled"].includes(String(item.status || ""))) {
+          registry.delete(id);
+          if (registry.size <= MAX_REGISTRY_ENTRIES_PER_CHAT) break;
+        }
+      }
+    }
   }
 
   function isGenerationRunning(entry) {
@@ -186,6 +209,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       ...entry,
       generationId,
       chatId,
+      localChatId: entry.localChatId || null,
       conversationId: entry.conversationId || chatId,
       requestId: entry.requestId || entry.clientRequestId || null,
       clientRequestId: entry.clientRequestId || entry.requestId || null,
@@ -332,6 +356,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         }
         if (event.status === "completed") entry.callbacks.onDone?.();
         if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+        pruneTerminalEntryCallbacks(entry);
         return true;
       }
       return false;
@@ -425,6 +450,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           interrupted: entry.interrupted,
         });
         dispatchGenerationEvent(entry, event);
+        pruneTerminalEntryCallbacks(entry);
         return true;
       }
       case "generation_completed":
@@ -435,6 +461,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         activeGenerations.delete(entry.generationId);
         entry.callbacks.onDone?.();
         if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+        pruneTerminalEntryCallbacks(entry);
         break;
       case "generation_cancelled":
         entry.status = "cancelled";
@@ -444,6 +471,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         entry.completedAt = new Date().toISOString();
         activeGenerations.delete(entry.generationId);
         if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+        pruneTerminalEntryCallbacks(entry);
         break;
       case "generation_failed": {
         entry.status = "failed";
@@ -461,6 +489,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           interrupted: entry.interrupted,
         });
         if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+        pruneTerminalEntryCallbacks(entry);
         break;
       }
       default:
@@ -501,26 +530,49 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       const processLines = (lines) => {
         for (const line of lines) {
           const event = extractSsePayload(line);
-          if (event === "[DONE]") return true;
+          if (event === "[DONE]") {
+            entry.terminal = true;
+            entry.status = "completed";
+            entry.completedAt = new Date().toISOString();
+            activeGenerations.delete(entry.generationId);
+            entry.callbacks.onDone?.();
+            if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+            pruneTerminalEntryCallbacks(entry);
+            return true;
+          }
           if (event && emitEvent(entry, event)) return true;
         }
         return false;
       };
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          if (buffer) {
-            const lines = buffer.split("\n");
-            buffer = "";
-            if (processLines(lines)) return;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            if (buffer) {
+              const lines = buffer.split("\n");
+              buffer = "";
+              if (processLines(lines)) return;
+            }
+            if (entry.tokensReceived || entry.structuredReceived) {
+              entry.terminal = true;
+              entry.status = "completed";
+              entry.completedAt = new Date().toISOString();
+              activeGenerations.delete(entry.generationId);
+              entry.callbacks.onDone?.();
+              if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+              pruneTerminalEntryCallbacks(entry);
+            }
+            return;
           }
-          return;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          if (processLines(lines) || entry.terminal) return;
         }
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        if (processLines(lines) || entry.terminal) return;
+      } finally {
+        try { await reader.cancel(); } catch {}
+        try { reader.releaseLock(); } catch {}
       }
     } finally {
       entry.subscription.active = false;
@@ -533,6 +585,11 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       try {
         await subscribeOnce(entry, signal);
         if (entry.terminal || entry.cancelled) break;
+        if (entry.tokensReceived || entry.structuredReceived) {
+          entry.terminal = true;
+          entry.status = "completed";
+          break;
+        }
         if (signal?.aborted) return { detached: true };
         entry.subscription.reconnectAttempts += 1;
         if (entry.subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
@@ -542,6 +599,11 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       } catch (error) {
         if (error?.name === "AbortError" || signal?.aborted) return { detached: true };
         if (entry.cancelRequested) return { cancelled: true };
+        if (entry.tokensReceived || entry.structuredReceived) {
+          entry.terminal = true;
+          entry.status = "completed";
+          break;
+        }
         entry.subscription.reconnectAttempts += 1;
         if (entry.subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) throw error;
         await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, entry.subscription.reconnectAttempts - 1)), signal);
@@ -613,19 +675,33 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
 
     if (!generationId) return API.__legacySendMessageStream(message, context, callbacks, signal);
 
-    const chatId = context.conversationId
+    const localChatId = context.chatId
+      || context.localChatId
+      || document.querySelector(".chat-list-item.active")?.getAttribute("data-id")
+      || null;
+
+    const chatId = context.chatId
+      || context.localChatId
+      || context.conversationId
       || context.conversation_id
       || started?.conversation_id
       || started?.conversationId
-      || document.querySelector(".chat-list-item.active")?.getAttribute("data-id")
+      || localChatId
       || "__unassigned__";
+
+    const conversationId = started?.conversation_id
+      || started?.conversationId
+      || context.conversationId
+      || context.conversation_id
+      || chatId;
 
     const entry = {
       generationId,
       requestId: context.clientRequestId || context.client_request_id || started?.client_request_id || null,
       clientRequestId: context.clientRequestId || context.client_request_id || started?.client_request_id || null,
       chatId,
-      conversationId: chatId,
+      localChatId,
+      conversationId,
       status: typeof started?.status === "string" ? started.status : "queued",
       responseBuffer: "",
       lastSequence: 0,
@@ -689,7 +765,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           error: null,
         };
       }
-      if (entry.error && !entry.tokensReceived) throw entry.error;
+      if (entry.error && !entry.tokensReceived && !entry.structuredReceived) throw entry.error;
       return {
         structured: entry.structuredReceived,
         tokensReceived: entry.tokensReceived,
@@ -701,6 +777,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     } finally {
       if (activeGenerations.get(generationId) === entry && entry.terminal) activeGenerations.delete(generationId);
       if (foregroundGenerationId === generationId && entry.terminal) foregroundGenerationId = null;
+      if (entry.terminal) pruneTerminalEntryCallbacks(entry);
     }
   }
 

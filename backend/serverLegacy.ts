@@ -517,7 +517,7 @@ const upload = multer({
 // ---- Helpers ----
 function asyncHandler(fn: (req: Request, res: Response) => Promise<void>) {
   return (req: Request, res: Response, next: NextFunction) => {
-    fn(req, res).catch(next);
+    return fn(req, res).catch(next);
   };
 }
 
@@ -2607,12 +2607,33 @@ app.get(
     await ensureNamedWorkspaceProfile(userId, "conversations.messages", userDb);
     
     // Fetch conversation details (including title) along with messages
-    const resolved = await getOwnedConversationResolvingAliasOrThrow(
-      userDb,
-      userId,
-      conversationId,
-      "conversations.messages",
-    );
+    let resolved;
+    try {
+      resolved = await getOwnedConversationResolvingAliasOrThrow(
+        userDb,
+        userId,
+        conversationId,
+        "conversations.messages",
+      );
+    } catch (err: any) {
+      if (err?.statusCode === 404 || err?.status === 404) {
+        res.json({
+          conversation: {
+            id: conversationId,
+            title: "New Chat",
+            created_at: new Date().toISOString(),
+            last_activity_at: null,
+          },
+          canonicalConversationId: conversationId,
+          requestedConversationId: conversationId,
+          aliased: false,
+          message_count: 0,
+          messages: [],
+        });
+        return;
+      }
+      throw err;
+    }
     const conversation = resolved.conversation;
     
     const messages = await listConversationMessagesOrThrow(

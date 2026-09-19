@@ -29,10 +29,11 @@ function createShardClient(databaseId: number): SupabaseClient {
 
 function shouldRecover(row: any, nowMs: number): boolean {
   const status = String(row.status || "");
-  if (status === "queued" || status === "recoverable") return true;
-  if (!["running", "waiting_for_tool", "generating", "persisting"].includes(status)) return false;
-  const leaseExpires = row.execution_lease_expires_at ? Date.parse(row.execution_lease_expires_at) : NaN;
+  if (!["queued", "recoverable", "running", "waiting_for_tool", "generating", "persisting"].includes(status)) return false;
   const updatedAt = Date.parse(row.updated_at || "");
+  // Ignore abandoned generations older than 30 minutes
+  if (Number.isFinite(updatedAt) && nowMs - updatedAt > 30 * 60 * 1000) return false;
+  const leaseExpires = row.execution_lease_expires_at ? Date.parse(row.execution_lease_expires_at) : NaN;
   return (!Number.isFinite(leaseExpires) || leaseExpires <= nowMs)
     && (!Number.isFinite(updatedAt) || updatedAt <= nowMs - STALE_EXECUTION_MS);
 }
@@ -79,13 +80,15 @@ export async function recoverStaleGenerations(): Promise<void> {
 
   for (const databaseId of DATA_DATABASE_IDS) {
     try {
-      const userDb = createShardClient(databaseId);
+      const { getDataShardDatabases } = await import("../dbRouter");
+      const userDb = getDataShardDatabases()[databaseId - 2];
+      if (!userDb) continue;
       const result = await userDb
         .from("chat_generations")
         .select("id, conversation_id, user_id, client_request_id, generation_session_id, status, execution_mode, model_route, started_at, completed_at, failed_at, cancelled_at, error_code, partial_text, tokens_generated, last_event_sequence, created_at, updated_at, execution_snapshot, execution_lease_id, execution_lease_expires_at, recovery_attempts, last_execution_error")
         .in("status", ["queued", "running", "recoverable", "waiting_for_tool", "generating", "persisting"])
-        .order("updated_at", { ascending: true })
-        .limit(200);
+        .order("updated_at", { ascending: false })
+        .limit(10);
       if (result.error) {
         console.warn(`[GenerationRecovery] shard=${databaseId} scan failed: ${result.error.message}`);
         continue;
@@ -94,7 +97,7 @@ export async function recoverStaleGenerations(): Promise<void> {
       for (const raw of result.data || []) {
         if (!shouldRecover(raw, nowMs)) continue;
         const row = raw as ChatGenerationRow;
-        void recoverGeneration(userDb, row);
+        await recoverGeneration(userDb, row).catch(() => undefined);
       }
     } catch (error) {
       console.warn(`[GenerationRecovery] shard=${databaseId} unavailable: ${error instanceof Error ? error.message : String(error)}`);

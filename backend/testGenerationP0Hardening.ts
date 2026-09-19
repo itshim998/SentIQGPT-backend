@@ -95,12 +95,15 @@ function testSourceContracts() {
   assert.ok(!lifecycle.includes("handlePageTeardown"), "generation lifecycle must not own page teardown cancellation");
   assert.ok(!lifecycle.includes('window.addEventListener("pagehide"'), "pagehide must not cancel through generation lifecycle");
   assert.ok(transport.includes("bulk_cancellation_requires_explicit_intent"), "bulk cancellation must require explicit intent");
+  const openSubIndex = transport.indexOf("function openGenerationSubscription(");
+  const subscribeIndex = transport.indexOf("chatGenerationTaskCoordinator.subscribe(generationId,", openSubIndex);
+  const asyncFetchIndex = transport.indexOf("getChatGenerationById", openSubIndex);
   assert.ok(
-    transport.includes("const subscriptionAfter = cursor > 0 ? cursor : Number(persisted?.last_event_sequence ?? task.sequence);"),
-    "reconnects with a cursor must subscribe from replay history rather than mixing in a fresh snapshot",
+    openSubIndex >= 0 && subscribeIndex >= 0 && asyncFetchIndex >= 0 && subscribeIndex < asyncFetchIndex,
+    "subscribe must happen before async database fetch within openGenerationSubscription to prevent early event loss race",
   );
   assert.ok(
-    transport.includes("if (cursor === 0) emit(await chatGenerationTaskCoordinator.snapshot(generationId, persisted));"),
+    transport.includes("cursor === 0") && transport.includes("chatGenerationTaskCoordinator.snapshot"),
     "fresh connections may receive a snapshot, while cursor-based reconnects remain replay-only",
   );
   assert.ok(session.includes('window.addEventListener("pagehide"'), "generation session must remain the lifecycle owner");

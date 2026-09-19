@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getDataShardDatabases } from "../dbRouter";
+import { getDataShardDatabases, isShardDegraded, ShardUnavailableError, type AssignableDatabaseId } from "../dbRouter";
 
 const DATA_SHARDS = getDataShardDatabases();
 const GUEST_OWNER_KEY_VERSION = "sentiq-guest-generation-v1|";
@@ -11,10 +11,22 @@ export function normalizeGuestOwnerKey(value: unknown): string {
   return normalized;
 }
 
+export function getGuestAssignedShardId(ownerKey: string): AssignableDatabaseId {
+  const normalized = normalizeGuestOwnerKey(ownerKey);
+  const digest = createHash("sha256").update(normalized).digest();
+  const index = digest.readUInt32BE(0) % DATA_SHARDS.length;
+  return (index + 2) as AssignableDatabaseId;
+}
+
 function shardIndex(ownerKey: string): number {
   const normalized = normalizeGuestOwnerKey(ownerKey);
   const digest = createHash("sha256").update(normalized).digest();
-  return digest.readUInt32BE(0) % DATA_SHARDS.length;
+  const index = digest.readUInt32BE(0) % DATA_SHARDS.length;
+  const shardId = (index + 2) as AssignableDatabaseId;
+  if (isShardDegraded(shardId)) {
+    throw new ShardUnavailableError(shardId, `Data shard DB ${shardId} assigned to guest is currently degraded`);
+  }
+  return index;
 }
 
 /**
@@ -69,10 +81,17 @@ export function guestGenerationOwnerKeyFromAnonymousId(anonymousId: string): str
     .digest("hex");
 }
 
-export function getGuestGenerationOwnerKeyForRequest(req: { headers?: Record<string, unknown> }): string {
+export function getGuestGenerationOwnerKeyForRequest(req: { headers?: Record<string, unknown>; ip?: string; socket?: { remoteAddress?: string } }): string {
   const raw = req.headers?.["x-sentiq-anonymous-id"];
-  const anonymousId = Array.isArray(raw) ? String(raw[0] || "") : String(raw || "");
-  return guestGenerationOwnerKeyFromAnonymousId(normalizeGuestOwnerKey(anonymousId));
+  const anonymousId = Array.isArray(raw) ? String(raw[0] || "").trim() : String(raw || "").trim();
+  if (anonymousId) {
+    return guestGenerationOwnerKeyFromAnonymousId(anonymousId);
+  }
+  const forwardedFor = String(req.headers?.["x-forwarded-for"] || "").split(",")[0]?.trim();
+  const ip = forwardedFor || req.ip || req.socket?.remoteAddress || "127.0.0.1";
+  const userAgent = String(req.headers?.["user-agent"] || "unknown");
+  const fallbackId = `anon-ip-${ip}-${userAgent}`;
+  return guestGenerationOwnerKeyFromAnonymousId(fallbackId);
 }
 
 export async function claimGuestGenerationRecoveryAttempt(

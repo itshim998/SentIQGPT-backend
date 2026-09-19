@@ -7,7 +7,7 @@ const eventTypes = fs.readFileSync(path.join(root, "backend/services/generationE
 const coordinator = fs.readFileSync(path.join(root, "backend/services/chatGenerationTaskCoordinator.ts"), "utf8");
 const runner = fs.readFileSync(path.join(root, "backend/services/generationRunner.ts"), "utf8");
 const service = fs.readFileSync(path.join(root, "backend/services/chatGenerationService.ts"), "utf8");
-const migration = fs.readFileSync(path.join(root, "supabase/migrations/20260817100000_add_generation_event_types_and_concurrency.sql"), "utf8");
+const migration = fs.readFileSync(path.join(root, "supabase/migrations/20260817101000_add_generation_event_types_and_concurrency.sql"), "utf8");
 
 for (const type of [
   "generation_started", "route", "thinking", "tool_started", "tool_result", "token",

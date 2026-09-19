@@ -75,3 +75,8 @@ mobile/**/.gradle/
 mobile/**/local.properties
 mobile/**/android/.gradle/
 mobile/**/android/local.properties
+
+# Local tooling and test harness (sensitive/ephemeral)
+scripts/verifyProductionReadiness.js
+pyrightconfig.json
+supabase/.temp/

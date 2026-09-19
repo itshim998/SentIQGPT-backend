@@ -357,7 +357,7 @@ export async function insertConversationMessage(userDb: any, data: InsertConvers
     }
   }
 
-  const result = await userDb
+  let result = await userDb
     .from("messages")
     .insert({
       conversation_id: data.conversationId,
@@ -379,6 +379,31 @@ export async function insertConversationMessage(userDb: any, data: InsertConvers
     })
     .select(MESSAGE_SELECT_COLUMNS)
     .maybeSingle();
+
+  if (result.error && result.error.code === "42P10") {
+    result = await userDb
+      .from("messages")
+      .insert({
+        conversation_id: data.conversationId,
+        role: data.role,
+        content: data.content,
+        client_request_id: null,
+        message_type: normalizedMessageType,
+        image_url: data.imageUrl || null,
+        storage_path: data.storagePath || null,
+        prompt: data.prompt || null,
+        provider: data.provider || null,
+        file_size_bytes: typeof data.fileSizeBytes === "number" ? data.fileSizeBytes : null,
+        file_url: data.fileUrl || null,
+        file_name: data.fileName || null,
+        file_format: data.fileFormat || null,
+        mime_type: data.mimeType || null,
+        generated_file_id: data.generatedFileId || null,
+        preview_json: data.previewJson || null,
+      })
+      .select(MESSAGE_SELECT_COLUMNS)
+      .maybeSingle();
+  }
 
   if (result.error && canDeduplicateByClientRequestId && result.error.code === "23505") {
     const duplicateResult = await getConversationMessageByClientRequestId(userDb, {

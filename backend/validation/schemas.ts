@@ -39,8 +39,8 @@ export const ChatRequestSchema = z.object({
   generationId: z.string().uuid().optional(),
   generation_id: z.string().uuid().optional(),
   context: z.object({
-    recent_messages: z.array(RecentMessageSchema).max(50).optional(),
-    memories: z.array(ContextMemorySchema).max(100).optional(),
+    recent_messages: z.array(RecentMessageSchema).max(50).nullable().optional(),
+    memories: z.array(ContextMemorySchema).max(100).nullable().optional(),
     file_references: z.array(z.object({
       filename: z.string(),
       extractedText: z.string().optional().default(""),
@@ -54,16 +54,16 @@ export const ChatRequestSchema = z.object({
     }).transform(({ document_id, source_document_id, documentId, sourceDocumentId, ...file }) => ({
       ...file,
       sourceDocumentId: sourceDocumentId ?? source_document_id ?? documentId ?? document_id,
-    }))).max(10).optional(),
+    }))).max(10).nullable().optional(),
     image_attachments: z.array(z.object({
       filename: z.string().min(1).max(255),
       mime_type: z.enum(["image/png", "image/jpeg", "image/webp"]),
       base64: z.string().min(1).max(14_000_000),
       size_bytes: z.number().int().min(1).max(10 * 1024 * 1024),
-    })).max(3).optional(),
-    web_search_mode: z.enum(["basic", "advanced"]).optional(),
-    trustedProfile: TrustedProfileContextSchema.optional(),
-    trusted_profile: TrustedProfileContextSchema.optional(),
+    })).max(3).nullable().optional(),
+    web_search_mode: z.enum(["basic", "advanced"]).nullable().optional(),
+    trustedProfile: TrustedProfileContextSchema.nullable().optional(),
+    trusted_profile: TrustedProfileContextSchema.nullable().optional(),
   }).optional(),
 }).transform(({ conversation_id, client_request_id, execution_mode, generation_id, ...rest }) => ({
   ...rest,
@@ -74,7 +74,13 @@ export const ChatRequestSchema = z.object({
   context: rest.context
     ? {
         ...rest.context,
-        trustedProfile: rest.context.trustedProfile ?? rest.context.trusted_profile,
+        recent_messages: rest.context.recent_messages ?? undefined,
+        memories: rest.context.memories ?? undefined,
+        file_references: rest.context.file_references ?? undefined,
+        image_attachments: rest.context.image_attachments ?? undefined,
+        web_search_mode: rest.context.web_search_mode ?? undefined,
+        trustedProfile: (rest.context.trustedProfile ?? rest.context.trusted_profile) ?? undefined,
+        trusted_profile: (rest.context.trusted_profile ?? rest.context.trustedProfile) ?? undefined,
       }
     : undefined,
 }));
