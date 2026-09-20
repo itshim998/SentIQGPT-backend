@@ -295,6 +295,21 @@ const windowObj = {
   MutationObserver: FakeMutationObserver
 };
 
+const customElementsRegistry = new Map();
+const customElements = {
+  get(name) {
+    return customElementsRegistry.get(String(name || "").toLowerCase());
+  },
+  define(name, constructor) {
+    customElementsRegistry.set(String(name || "").toLowerCase(), constructor);
+  },
+  whenDefined(name) {
+    return Promise.resolve(this.get(name));
+  },
+  upgrade() {}
+};
+windowObj.customElements = customElements;
+
 for (const [key, value] of Object.entries({
   window: windowObj,
   document,
@@ -311,7 +326,8 @@ for (const [key, value] of Object.entries({
   fetch: windowObj.fetch,
   MutationObserver: FakeMutationObserver,
   FileReader: class { readAsDataURL() { this.result = "data:"; this.onload?.(); } },
-  CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options?.detail; } }
+  CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options?.detail; } },
+  customElements
 })) {
   Object.defineProperty(globalThis, key, { value, configurable: true });
 }
