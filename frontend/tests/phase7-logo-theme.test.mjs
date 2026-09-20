@@ -21,7 +21,7 @@ for (const selector of [
   'html[data-color-scheme="light"] .sentiq-activity-logo',
   'html.theme-light .sentiq-activity-logo',
 ]) {
-  assert.match(css, new RegExp(selector.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")), `Missing light-theme selector ${selector}`);
+  assert.ok(css.includes(selector), `Missing light-theme selector ${selector}`);
 }
 
 assert.match(css, /brightness\(0\.2\) contrast\(1\.08\)/, "Light mode should turn the white SVG geometry into dark graphite.");

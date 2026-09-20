@@ -90,30 +90,19 @@ for (const token of [
   "width: min(var(--sentiq-home-composer-shell-width), calc(100% - 48px))",
   "padding-top: 18px",
   "isolation: isolate",
-  "top: calc(50% + 92px)",
-  "top: calc(50% + 72px)",
-  "top: calc(50% + 34px)",
-  "top: calc(50% + 28px)",
-  "width: calc(100% + 164px)",
-  "height: calc(100% + 96px)",
+  "top: 50%",
+  "left: 50%",
   "z-index: 0",
-  "ellipse at -2% 56%",
-  "ellipse at 102% 56%",
-  "ellipse at 50% 106%",
+  "ellipse at 50% 50%",
   "opacity: 0.82",
 ]) {
-  assert.ok(compositionSource.includes(token), `Lowered composer-wrapped aura missing ${token}`);
+  assert.ok(compositionSource.includes(token), `Centered composer-wrapped aura missing ${token}`);
 }
 
 assert.equal(
   compositionSource.includes("top: calc(50% + 16px)"),
   false,
   "The former high desktop aura position must not return",
-);
-assert.equal(
-  compositionSource.includes("ellipse at 50% 50%"),
-  false,
-  "The final aura must not return to a filled field between the heading and composer",
 );
 assert.equal(
   compositionSource.includes("filter: blur("),

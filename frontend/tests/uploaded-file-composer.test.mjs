@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,7 +8,10 @@ const controller = readFileSync(resolve(root, "frontend/scripts/features/chat-co
 const html = readFileSync(resolve(root, "frontend/index.html"), "utf8");
 const composerCss = readFileSync(resolve(root, "frontend/styles/modules/07-composer.css"), "utf8");
 const messageCss = readFileSync(resolve(root, "frontend/styles/modules/05-rich-responses.css"), "utf8");
-const server = readFileSync(resolve(root, "backend/server.ts"), "utf8");
+const serverPath = existsSync(resolve(root, "backend/serverLegacy.ts"))
+  ? resolve(root, "backend/serverLegacy.ts")
+  : resolve(root, "backend/server.ts");
+const server = readFileSync(serverPath, "utf8");
 
 const composerStart = html.indexOf('<div class="chat-input-area">');
 const attachmentArea = html.indexOf('id="file-preview-area"', composerStart);

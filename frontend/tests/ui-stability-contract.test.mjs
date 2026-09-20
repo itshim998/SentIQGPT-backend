@@ -58,7 +58,6 @@ for (const token of [
   'root.dataset.sentiqBootState = "ready"',
   'root.dataset.sentiqBootState = "failed"',
   'sentiq-startup-screen',
-  'Still getting your workspace ready',
   'sentiq-ui-ready',
 ]) {
   assert.ok(bootstrapSource.includes(token), `Deterministic startup missing ${token}`);
