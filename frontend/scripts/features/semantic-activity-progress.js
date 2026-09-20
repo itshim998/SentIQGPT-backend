@@ -264,7 +264,6 @@ function initSemanticActivityProgress() {
   observer.observe(chatMessages, {
     childList: true,
     subtree: true,
-    characterData: true,
     attributes: true,
     attributeFilter: ["data-loader-kind", "class", "aria-busy", "src"],
   });

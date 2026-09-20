@@ -428,7 +428,7 @@ function initializeFrameDiscipline() {
   if (chatMessages instanceof HTMLElement) {
     listenPassive(chatMessages, "scroll", handleChatScroll);
     const streamObserver = new MutationObserver(handleStreamMutations);
-    streamObserver.observe(chatMessages, { childList: true, characterData: true, subtree: true });
+    streamObserver.observe(chatMessages, { childList: true, subtree: false });
     observers.push(streamObserver);
   }
 

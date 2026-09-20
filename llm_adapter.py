@@ -30,6 +30,7 @@ import hashlib
 import threading
 import logging
 import importlib
+import importlib.util
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from collections import OrderedDict
@@ -1435,7 +1436,7 @@ def _build_google_genai_config(
         kwargs["tool_config"] = GOOGLE_GENAI_TYPES_MODULE.ToolConfig(
             function_calling_config=GOOGLE_GENAI_TYPES_MODULE.FunctionCallingConfig(mode="AUTO"),
         )
-        policy = str(sentiq_tool_request.get("tool_choice_policy") or "").strip()
+        policy = str(sentiq_tool_request.get("tool_choice_policy") or "").strip() if sentiq_tool_request else ""
         if policy:
             kwargs["system_instruction"] = policy
     _log_sentiq_tool_diagnostic(
@@ -1770,7 +1771,7 @@ def _web_gemini_attempts() -> list[GeminiAttempt]:
 
 
 def _is_reasoning_request(task: str, provider: str, model: Optional[str], skip_wrappers: bool) -> bool:
-    return task in CHATLIKE_TASKS and provider == "groq" and _is_gpt_oss_model(model) and bool(skip_wrappers)
+    return task in CHATLIKE_TASKS and provider == "groq" and _is_gpt_oss_model(model) and skip_wrappers
 
 
 def _is_lite_model(model: Optional[str], model_override: Optional[str]) -> bool:
@@ -2548,6 +2549,7 @@ def _parse_pollinations_sse_event(raw_line: str) -> dict[str, Any]:
 
     finish_reason = None
     text = ""
+    tool_calls: list[dict[str, Any]] = []
     choices = payload.get("choices")
     if isinstance(choices, list) and choices:
         first_choice = choices[0]
@@ -2555,7 +2557,6 @@ def _parse_pollinations_sse_event(raw_line: str) -> dict[str, Any]:
             if isinstance(first_choice.get("finish_reason"), str):
                 finish_reason = first_choice["finish_reason"]
             delta = first_choice.get("delta")
-            tool_calls: list[dict[str, Any]] = []
             if isinstance(delta, dict):
                 text = _extract_openai_text_stream(delta.get("content"))
                 raw_tool_calls = delta.get("tool_calls")
@@ -2565,7 +2566,7 @@ def _parse_pollinations_sse_event(raw_line: str) -> dict[str, Any]:
     return {
         "kind": "chunk",
         "text": text,
-        "tool_calls": tool_calls if "tool_calls" in locals() else [],
+        "tool_calls": tool_calls,
         "finish_reason": finish_reason,
         "payload": payload,
     }
@@ -3214,7 +3215,7 @@ def call_llm_router(
             result = _invoke_gemini(
                 effective_prompt,
                 resolved_override,
-                high_thinking=_is_gemma_model(resolved_override or model) and bool(skip_wrappers),
+                high_thinking=_is_gemma_model(resolved_override or model) and skip_wrappers,
                 max_output_tokens=max_output_tokens,
                 execution_mode=execution_mode,
                 sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "gemini", resolved_override or model),
@@ -3456,11 +3457,11 @@ def stream_llm_router(
     sentiq_tool_request: Optional[dict[str, Any]] = None,
     required_capabilities: Optional[list[str]] = None,
     tool_transport_mode: Optional[str] = None,
+    prefer: Optional[str] = None,
 ):
     """
     Streaming variant — yields text chunks.
-    Routes to Pollinations or Gemini based on model_override.
-    Prefers Pollinations; falls back to alternate Pollinations model, then Gemini.
+    Routes to Gemini, Groq, or Pollinations based on task and model_override.
     """
     _groq_call_state.telemetry = None
     _nvidia_call_state.telemetry = None
@@ -3469,7 +3470,8 @@ def stream_llm_router(
     effective_reasoning_effort = (
         "medium" if execution_mode == "intuitive" else "low"
     ) if task in CHATLIKE_TASKS else reasoning_effort
-    provider, resolved_override = resolve_model_override(model_override, "pollinations")
+    default_provider = prefer or get_provider_for_task(task)
+    provider, resolved_override = resolve_model_override(model_override, default_provider)
     intuitive_lane_active = _nemotron_intuitive_lane_enabled(
         execution_mode,
         task,
@@ -3746,9 +3748,6 @@ def stream_llm_router(
             raise ModelToolCapabilityUnavailableError("No capable buffered tool fallback route is available") from buffered_tool_error
 
     # --- Gemini text streaming path ---
-    if not GEMINI_KEY_RECORDS:
-        raise RuntimeError("No Gemini API keys configured")
-
     if gemini_stream_attempts is None:
         if _is_lite_model(model, model_override):
             gemini_stream_attempts = _lite_gemini_attempts()
@@ -3756,11 +3755,13 @@ def stream_llm_router(
             gemini_stream_attempts = [
                 GeminiAttempt(
                     model,
-                    high_thinking=_is_gemma_model(model) and bool(skip_wrappers),
+                    high_thinking=_is_gemma_model(model) and skip_wrappers,
                 )
             ]
 
     try:
+        if not GEMINI_KEY_RECORDS:
+            raise RuntimeError("No Gemini API keys configured")
         yield from _stream_gemini_attempt_chain(
             prompt,
             gemini_stream_attempts,
@@ -3773,6 +3774,29 @@ def stream_llm_router(
         return
     except Exception as gemini_stream_error:
         logger.warning("Gemini/Gemma stream chain failed before first text: %s", _redact_secrets(gemini_stream_error))
+        if GROQ_API_KEYS and not image_attachments and not sentiq_tool_request:
+            try:
+                logger.info("[Fallback] Attempting Groq GPT-OSS stream fallback after Gemini error")
+                for api_key in _get_round_robin_groq_keys():
+                    try:
+                        for chunk in _call_groq_stream(
+                            prompt,
+                            api_key,
+                            GROQ_CHAT_MODEL,
+                            max_output_tokens=max_output_tokens,
+                            reasoning_effort=effective_reasoning_effort,
+                            execution_mode=execution_mode,
+                        ):
+                            if chunk:
+                                yield chunk
+                        logger.info("[Fallback] Groq GPT-OSS stream fallback succeeded")
+                        return
+                    except Exception as groq_err:
+                        logger.warning("[Fallback] Groq key failed: %s", groq_err)
+                        continue
+            except Exception as groq_fallback_err:
+                logger.warning("[Fallback] Groq fallback failed: %s", groq_fallback_err)
+
         pollinations_model = (
             "openai-large"
             if stream_reasoning_request
@@ -3831,7 +3855,6 @@ def _parse_safety_response(response_text: str) -> str:
     
     # Try JSON parsing
     try:
-        import json
         data = json.loads(response_text.strip())
         if isinstance(data, dict):
             classification = data.get("classification", data.get("result", ""))

@@ -66,11 +66,13 @@ function initializeStreamingPolish() {
     const loader = content.querySelector(".response-inline-loader:not(.sentiq-streaming-handoff-ghost)");
     if (!(loader instanceof HTMLElement)) return null;
     state.lastLoaderText = String(loader.textContent || "").replace(/\s+/g, " ").trim();
-    state.loaderSnapshot = loader.cloneNode(true);
-    state.loaderPosition = {
-      left: Math.round(loader.offsetLeft),
-      top: Math.round(loader.offsetTop),
-    };
+    if (!state.handoffStarted && !reducedMotion.matches && !state.loaderSnapshot) {
+      state.loaderSnapshot = loader.cloneNode(true);
+      state.loaderPosition = {
+        left: Math.round(loader.offsetLeft),
+        top: Math.round(loader.offsetTop),
+      };
+    }
     rememberActivity(state, state.lastLoaderText);
     return loader;
   }
@@ -271,7 +273,6 @@ function initializeStreamingPolish() {
   observer.observe(chatMessages, {
     childList: true,
     subtree: true,
-    characterData: true,
     attributes: true,
     attributeFilter: ["class", "data-semantic-activity-state", "data-loader-kind"],
   });

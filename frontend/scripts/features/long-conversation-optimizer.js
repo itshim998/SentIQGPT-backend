@@ -571,24 +571,43 @@ function initializeLongConversationOptimizer() {
     getHistoryItems().forEach((item) => historyObserver?.observe(item));
   }
 
+  const lastMeasuredHeights = new WeakMap();
   const messageResizeObserver = typeof ResizeObserver === "function"
     ? new ResizeObserver((entries) => {
+        let changed = false;
         entries.forEach((entry) => {
           if (!(entry.target instanceof HTMLElement)) return;
           const height = entry.borderBoxSize?.[0]?.blockSize || entry.contentRect.height;
-          if (height > 0) setStyle(entry.target, "--sentiq-message-intrinsic-size", `${Math.round(height)}px`);
+          if (height > 0) {
+            const previous = lastMeasuredHeights.get(entry.target) || 0;
+            if (Math.abs(height - previous) >= 6) {
+              lastMeasuredHeights.set(entry.target, height);
+              setStyle(entry.target, "--sentiq-message-intrinsic-size", `${Math.round(height)}px`);
+              changed = true;
+            }
+          }
         });
-        scheduleMessageWindow("resize-observer");
-        frameApi?.scheduleScrollAnchor?.("long-conversation:message-resize");
+        if (changed) {
+          scheduleMessageWindow("resize-observer");
+          frameApi?.scheduleScrollAnchor?.("long-conversation:message-resize");
+        }
       })
     : null;
   if (messageResizeObserver) observers.push(messageResizeObserver);
 
   const chatMutationObserver = new MutationObserver((records) => {
+    records.forEach((record) => {
+      record.removedNodes.forEach((node) => {
+        if (node instanceof HTMLElement) {
+          messageObserver?.unobserve?.(node);
+          messageResizeObserver?.unobserve?.(node);
+        }
+      });
+    });
     registerCurrentMessages();
     handleChatMutations(records);
   });
-  chatMutationObserver.observe(chatMessages, { childList: true, subtree: true, characterData: true });
+  chatMutationObserver.observe(chatMessages, { childList: true, subtree: false });
   observers.push(chatMutationObserver);
 
   if (chatList instanceof HTMLElement) {

@@ -1115,6 +1115,7 @@ async def stream_llm(request: LLMInvokeRequest):
                 sentiq_tool_request=request.sentiq_tool_request,
                 required_capabilities=request.required_capabilities,
                 tool_transport_mode=request.tool_transport_mode,
+                prefer=request.prefer,
             ):
                 if not capacity_event_sent:
                     telemetry = get_current_groq_call_telemetry()
