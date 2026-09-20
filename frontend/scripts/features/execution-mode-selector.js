@@ -114,11 +114,13 @@ function initializeExecutionModeSelector() {
 
     control.dataset.executionMode = selectedMode;
     toggle.dataset.executionMode = selectedMode;
-    toggle.title = `${detail.label} mode — ${detail.description}`;
-    toggle.setAttribute(
-      "aria-label",
-      `${detail.label} execution mode. ${detail.description} Choose execution mode.`,
-    );
+    if (!control.classList.contains("guest-fast-only")) {
+      toggle.title = `${detail.label} mode — ${detail.description}`;
+      toggle.setAttribute(
+        "aria-label",
+        `${detail.label} execution mode. ${detail.description} Choose execution mode.`,
+      );
+    }
 
     if (!String(label.textContent || "").trim()) label.textContent = detail.label;
 

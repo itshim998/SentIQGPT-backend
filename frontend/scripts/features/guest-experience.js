@@ -212,9 +212,9 @@ function applyExecutionModePolicy() {
   if (!control || !toggle) return;
 
   if (guestMode) {
-    control.classList.add("guest-fast-only");
-    control.classList.remove("open");
-    if (label) label.textContent = "Fast";
+    if (!control.classList.contains("guest-fast-only")) control.classList.add("guest-fast-only");
+    if (control.classList.contains("open")) control.classList.remove("open");
+    if (label && label.textContent !== "Fast") label.textContent = "Fast";
     setDisabled(toggle, true);
     if (toggle.getAttribute("aria-expanded") !== "false") toggle.setAttribute("aria-expanded", "false");
     if (toggle.title !== "Guest chats use Fast mode") toggle.title = "Guest chats use Fast mode";
@@ -222,14 +222,20 @@ function applyExecutionModePolicy() {
       if (menu.getAttribute("aria-hidden") !== "true") menu.setAttribute("aria-hidden", "true");
       menu.querySelectorAll("[data-execution-mode]").forEach((option) => {
         const fast = option.getAttribute("data-execution-mode") === "fast";
-        option.classList.toggle("active", fast);
-        option.setAttribute("aria-selected", fast ? "true" : "false");
+        if (option.classList.contains("active") !== fast) option.classList.toggle("active", fast);
+        const ariaSelected = fast ? "true" : "false";
+        if (option.getAttribute("aria-selected") !== ariaSelected) option.setAttribute("aria-selected", ariaSelected);
         setDisabled(option, true);
       });
     }
   } else {
-    control.classList.remove("guest-fast-only");
+    if (control.classList.contains("guest-fast-only")) control.classList.remove("guest-fast-only");
+    setDisabled(toggle, false);
     if (toggle.title === "Guest chats use Fast mode") toggle.title = "Choose execution mode";
+    document.querySelectorAll(".execution-mode-option").forEach((option) => {
+      setDisabled(option, false);
+      if (option.title === "Guest chats use Fast mode") option.removeAttribute("title");
+    });
   }
 }
 
@@ -370,7 +376,17 @@ function releaseGuestUi() {
       subtitle.hidden = false;
       subtitle.removeAttribute("aria-hidden");
     }
-    document.getElementById("execution-mode-control")?.classList.remove("guest-fast-only");
+    const execControl = document.getElementById("execution-mode-control");
+    const execToggle = document.getElementById("execution-mode-toggle");
+    execControl?.classList.remove("guest-fast-only");
+    if (execToggle) {
+      setDisabled(execToggle, false);
+      if (execToggle.title === "Guest chats use Fast mode") execToggle.title = "Choose execution mode";
+    }
+    document.querySelectorAll(".execution-mode-option").forEach((opt) => {
+      setDisabled(opt, false);
+      if (opt.title === "Guest chats use Fast mode") opt.removeAttribute("title");
+    });
     document.querySelector(".chat-input-area")?.classList.remove("guest-quota-exhausted");
     document.getElementById("guest-quota-lock-label")?.classList.remove("visible");
     releaseGuestToolPolicy();
@@ -788,7 +804,7 @@ function installMutationGuard() {
     childList: true,
     characterData: true,
     attributes: true,
-    attributeFilter: ["disabled", "aria-disabled", "aria-hidden", "style", "class"],
+    attributeFilter: ["disabled", "aria-disabled", "aria-hidden", "class"],
   });
 }
 

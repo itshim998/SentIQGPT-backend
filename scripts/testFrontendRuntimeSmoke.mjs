@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { extname, normalize, resolve } from "node:path";
+import { extname, normalize, resolve, relative, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
 
@@ -32,6 +32,10 @@ function findChromeExecutable() {
   const configured = String(process.env.CHROME_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || "").trim();
   const candidates = [
     configured,
+    process.env.LOCALAPPDATA && resolve(process.env.LOCALAPPDATA, "Google/Chrome/Application/chrome.exe"),
+    process.env.PROGRAMFILES && resolve(process.env.PROGRAMFILES, "Google/Chrome/Application/chrome.exe"),
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
     "/usr/bin/google-chrome-stable",
     "/usr/bin/google-chrome",
     "/usr/bin/chromium",
@@ -53,9 +57,10 @@ function findChromeExecutable() {
 
 function safeFilePath(requestUrl = "/") {
   const pathname = decodeURIComponent(new URL(requestUrl, `http://${HOST}`).pathname);
-  const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
-  const candidate = resolve(frontendRoot, normalize(relative));
-  return candidate === frontendRoot || candidate.startsWith(`${frontendRoot}/`) ? candidate : null;
+  const relativePath = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  const candidate = resolve(frontendRoot, normalize(relativePath));
+  const relCandidate = relative(frontendRoot, candidate);
+  return !relCandidate.startsWith("..") && !isAbsolute(relCandidate) ? candidate : null;
 }
 
 function createStaticServer() {
@@ -252,15 +257,39 @@ try {
   const interactionBefore = await page.evaluate(() => ({
     plusExpanded: document.getElementById("composer-plus-btn")?.getAttribute("aria-expanded") || "",
     modeExpanded: document.getElementById("execution-mode-toggle")?.getAttribute("aria-expanded") || "",
+    modeDisabled: document.getElementById("execution-mode-toggle")?.disabled
+      || document.getElementById("execution-mode-toggle")?.getAttribute("aria-disabled") === "true",
   }));
   await page.click("#composer-plus-btn");
   await sleep(80);
   const plusExpanded = await page.$eval("#composer-plus-btn", (element) => element.getAttribute("aria-expanded") || "");
   await page.click("#composer-plus-btn");
   await sleep(40);
+
+  // 1. Guest mode execution-mode toggle interaction
   await page.click("#execution-mode-toggle");
   await sleep(80);
-  const modeExpanded = await page.$eval("#execution-mode-toggle", (element) => element.getAttribute("aria-expanded") || "");
+  const guestModeExpanded = await page.$eval("#execution-mode-toggle", (element) => element.getAttribute("aria-expanded") || "");
+
+  // 2. Authenticated mode execution-mode toggle interaction
+  await page.evaluate(() => {
+    document.dispatchEvent(new CustomEvent("sentiq-auth-changed", {
+      detail: { session: { user: { id: "smoke-test-user" } } },
+    }));
+  });
+  await sleep(80);
+  const authModeBefore = await page.$eval("#execution-mode-toggle", (element) => element.getAttribute("aria-expanded") || "");
+  const authModeDisabled = await page.$eval("#execution-mode-toggle", (element) => element.disabled
+    || element.getAttribute("aria-disabled") === "true");
+  await page.click("#execution-mode-toggle");
+  await sleep(80);
+  const authModeOpened = await page.$eval("#execution-mode-toggle", (element) => element.getAttribute("aria-expanded") || "");
+  await page.click("#execution-mode-toggle");
+  await sleep(40);
+  const authModeClosed = await page.$eval("#execution-mode-toggle", (element) => element.getAttribute("aria-expanded") || "");
+  await page.evaluate(() => {
+    document.dispatchEvent(new CustomEvent("sentiq-auth-changed", { detail: { session: null } }));
+  });
 
   const interaction = await page.evaluate(() => ({
     plusPresent: Boolean(document.getElementById("composer-plus-btn")),
@@ -273,7 +302,10 @@ try {
   interaction.plusBefore = interactionBefore.plusExpanded;
   interaction.plusExpanded = plusExpanded;
   interaction.modeBefore = interactionBefore.modeExpanded;
-  interaction.modeExpanded = modeExpanded;
+  interaction.modeExpanded = guestModeExpanded;
+  interaction.guestModeExpanded = guestModeExpanded;
+  interaction.authModeOpened = authModeOpened;
+  interaction.authModeClosed = authModeClosed;
 
   const report = {
     url,
@@ -300,7 +332,12 @@ try {
   if (interaction.readyState !== "complete") failures.push(`document.readyState=${interaction.readyState}`);
   if (!interaction.plusPresent || !interaction.modePresent) failures.push("core composer controls are missing");
   if (interaction.plusExpanded === interaction.plusBefore) failures.push("composer action control did not change state when clicked");
-  if (interaction.modeExpanded === interaction.modeBefore) failures.push("execution-mode control did not change state when clicked");
+  if (interactionBefore.modeDisabled !== true || guestModeExpanded !== "false") {
+    failures.push("guest execution-mode toggle did not enforce disabled Fast-only contract");
+  }
+  if (authModeDisabled !== false || authModeOpened === authModeBefore || authModeOpened !== "true" || authModeClosed !== "false") {
+    failures.push("authenticated execution-mode control did not change state when clicked");
+  }
   if (interaction.mobileNavigationState !== "desktop") failures.push(`desktop mobile-navigation state was ${interaction.mobileNavigationState || "missing"}`);
   if (pageErrors.length) failures.push(`${pageErrors.length} uncaught page error(s)`);
   if (domContentLoadedMs > 8_000) failures.push(`DOMContentLoaded took ${domContentLoadedMs}ms`);

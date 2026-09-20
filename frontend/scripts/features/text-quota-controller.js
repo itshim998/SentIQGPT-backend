@@ -103,9 +103,19 @@ const NOTICE_DURATION_MS = 7_000;
   function syncIntuitiveOption(selectable) {
     const option = document.querySelector('[data-execution-mode="intuitive"]');
     if (!option) return;
-    option.classList.toggle("is-quota-unavailable", !selectable);
-    option.setAttribute("aria-disabled", selectable ? "false" : "true");
-    option.title = selectable ? "Intuitive" : "Intuitive will return as tokens refresh";
+    const isGuestFastOnly = document.getElementById("execution-mode-control")?.classList.contains("guest-fast-only");
+    const allowed = selectable && !isGuestFastOnly;
+    if (option.classList.contains("is-quota-unavailable") !== !allowed) {
+      option.classList.toggle("is-quota-unavailable", !allowed);
+    }
+    const ariaVal = allowed ? "false" : "true";
+    if (option.getAttribute("aria-disabled") !== ariaVal) {
+      option.setAttribute("aria-disabled", ariaVal);
+    }
+    if (!isGuestFastOnly) {
+      const nextTitle = allowed ? "Intuitive" : "Intuitive will return as tokens refresh";
+      if (option.title !== nextTitle) option.title = nextTitle;
+    }
   }
 
   function switchToFast(message = "Switched to Fast to protect your remaining tokens.") {
