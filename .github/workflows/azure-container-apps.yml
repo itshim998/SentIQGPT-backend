@@ -55,7 +55,7 @@ jobs:
           --only-show-errors
           --output none
 
-      - name: Prove last-ready runtime and prevent full-rollout overwrite
+      - name: Prove last-ready runtime and determine deployment source
         id: preflight
         shell: bash
         env:
@@ -68,15 +68,11 @@ jobs:
             --resource-group "${RESOURCE_GROUP}" \
             --query 'properties.configuration.activeRevisionsMode' \
             -o tsv)"
-          if [[ "${mode,,}" == "multiple" ]]; then
-            echo 'Verified full-rollout blue/green mode is active; ordinary deployment will skip to prevent an overwrite.'
-            echo "deploy=false" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-          [[ "${mode,,}" == "single" ]] || {
+          [[ "${mode,,}" == "single" || "${mode,,}" == "multiple" ]] || {
             echo 'Unsupported Azure revision mode.'
             exit 1
           }
+          echo "Verified Azure revision mode: ${mode}; multiple mode will not skip ordinary deployment."
 
           target_port="$(az containerapp show \
             --name "${APP_NAME}" \
@@ -95,6 +91,28 @@ jobs:
             -o tsv)"
           [[ "${target_port}" == "3001" && -n "${latest_ready}" && -n "${fqdn}" ]] || {
             echo 'Last-ready Azure production metadata is incomplete.'
+            exit 1
+          }
+
+          source_health="$(az containerapp revision show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${latest_ready}" \
+            --query 'properties.healthState' \
+            -o tsv 2>/dev/null || true)"
+          [[ "${source_health}" == "Healthy" ]] || {
+            echo "Last-ready source revision ${latest_ready} is not healthy."
+            exit 1
+          }
+
+          readiness_path="$(az containerapp revision show \
+            --name "${APP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --revision "${latest_ready}" \
+            --query "properties.template.containers[0].probes[?type=='Readiness'].httpGet.path | [0]" \
+            -o tsv)"
+          [[ "${readiness_path}" == "/ready" ]] || {
+            echo 'Last-ready revision does not use the production /ready gate.'
             exit 1
           }
 
@@ -118,59 +136,53 @@ jobs:
             exit 1
           }
 
-          ready_status=0
-          for attempt in $(seq 1 90); do
-            ready_status="$(curl \
-              --silent \
-              --output /dev/null \
-              --write-out '%{http_code}' \
-              --max-time 15 \
-              "https://${fqdn}/ready" || true)"
-            [[ "${ready_status}" == "200" ]] && break
-            sleep 2
-          done
-          [[ "${ready_status}" == "200" ]] || {
-            echo 'Last-ready production failed /ready.'
-            exit 1
-          }
+          if [[ "${mode,,}" == "single" ]]; then
+            ready_status=0
+            for attempt in $(seq 1 90); do
+              ready_status="$(curl \
+                --silent \
+                --output /dev/null \
+                --write-out '%{http_code}' \
+                --max-time 15 \
+                "https://${fqdn}/ready" || true)"
+              [[ "${ready_status}" == "200" ]] && break
+              sleep 2
+            done
+            [[ "${ready_status}" == "200" ]] || {
+              echo 'Last-ready production failed /ready.'
+              exit 1
+            }
+          fi
+
           replica="$(az containerapp replica list \
             --name "${APP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
             --revision "${latest_ready}" \
             --query '[0].name' \
-            -o tsv)"
-          [[ -n "${replica}" ]] || {
+            -o tsv 2>/dev/null || true)"
+          if [[ -n "${replica}" ]]; then
+            runtime_command="$(node scripts/verifyAzureRuntimeEnvironment.mjs --emit-command)"
+            runtime_log="${RUNNER_TEMP}/ordinary-deploy-runtime-${GITHUB_RUN_ID}.log"
+            trap 'rm -f "${runtime_log}"' EXIT
+            bash scripts/execAzureContainerAppCommand.sh \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --revision "${latest_ready}" \
+              --replica "${replica}" \
+              --container "${IMAGE_REPOSITORY}" \
+              --command "${runtime_command}" | tee "${runtime_log}"
+            grep -a '"event": "azure_runtime_environment"' "${runtime_log}" \
+              | tail -1 \
+              | jq -e '.ok == true' >/dev/null
+          elif [[ "${mode,,}" == "single" ]]; then
             echo 'Last-ready production has no running replica.'
             exit 1
-          }
+          fi
 
-          runtime_command="$(node scripts/verifyAzureRuntimeEnvironment.mjs --emit-command)"
-          runtime_log="${RUNNER_TEMP}/ordinary-deploy-runtime-${GITHUB_RUN_ID}.log"
-          trap 'rm -f "${runtime_log}"' EXIT
-          bash scripts/execAzureContainerAppCommand.sh \
-            --name "${APP_NAME}" \
-            --resource-group "${RESOURCE_GROUP}" \
-            --revision "${latest_ready}" \
-            --replica "${replica}" \
-            --container "${IMAGE_REPOSITORY}" \
-            --command "${runtime_command}" | tee "${runtime_log}"
-          grep -a '"event": "azure_runtime_environment"' "${runtime_log}" \
-            | tail -1 \
-            | jq -e '.ok == true' >/dev/null
-
-          readiness_path="$(az containerapp revision show \
-            --name "${APP_NAME}" \
-            --resource-group "${RESOURCE_GROUP}" \
-            --revision "${latest_ready}" \
-            --query "properties.template.containers[0].probes[?type=='Readiness'].httpGet.path | [0]" \
-            -o tsv)"
-          [[ "${readiness_path}" == "/ready" ]] || {
-            echo 'Last-ready revision does not use the production /ready gate.'
-            exit 1
-          }
           echo "deploy=true" >> "${GITHUB_OUTPUT}"
           echo "previous_revision=${latest_ready}" >> "${GITHUB_OUTPUT}"
           echo "fqdn=${fqdn}" >> "${GITHUB_OUTPUT}"
+          echo "mode=${mode,,}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
         if: steps.preflight.outputs.deploy == 'true'
@@ -199,11 +211,15 @@ jobs:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           PREVIOUS_REVISION: ${{ steps.preflight.outputs.previous_revision }}
           FQDN: ${{ steps.preflight.outputs.fqdn }}
+          MODE: ${{ steps.preflight.outputs.mode }}
           DEPLOY_IMAGE: ${{ vars.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_REPOSITORY }}:${{ github.sha }}
         run: |
           set -Eeuo pipefail
           suffix="${GITHUB_SHA::12}"
           new_revision="${APP_NAME}--${suffix}"
+          mode="${MODE:-$(az containerapp show --name "${APP_NAME}" --resource-group "${RESOURCE_GROUP}" --query 'properties.configuration.activeRevisionsMode' -o tsv)}"
+          mode="${mode,,}"
+
           az containerapp revision copy \
             --name "${APP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
@@ -214,37 +230,57 @@ jobs:
             --only-show-errors \
             --output none
 
-          verified=0
+          candidate_ready=0
           for attempt in $(seq 1 120); do
-            latest_ready="$(az containerapp show \
-              --name "${APP_NAME}" \
-              --resource-group "${RESOURCE_GROUP}" \
-              --query 'properties.latestReadyRevisionName' \
-              -o tsv 2>/dev/null || true)"
             health="$(az containerapp revision show \
               --name "${APP_NAME}" \
               --resource-group "${RESOURCE_GROUP}" \
               --revision "${new_revision}" \
               --query 'properties.healthState' \
               -o tsv 2>/dev/null || true)"
-            ready_status="$(curl \
-              --silent \
-              --output /dev/null \
-              --write-out '%{http_code}' \
-              --max-time 15 \
-              "https://${FQDN}/ready" || true)"
-            if [[ "${latest_ready}" == "${new_revision}" \
-              && "${health}" == "Healthy" \
-              && "${ready_status}" == "200" ]]; then
-              verified=1
-              break
+            if [[ "${mode}" == "multiple" ]]; then
+              candidate_fqdn="$(az containerapp revision show \
+                --name "${APP_NAME}" \
+                --resource-group "${RESOURCE_GROUP}" \
+                --revision "${new_revision}" \
+                --query 'properties.fqdn' \
+                -o tsv 2>/dev/null || true)"
+              candidate_status="$(curl \
+                --silent \
+                --output /dev/null \
+                --write-out '%{http_code}' \
+                --max-time 15 \
+                "https://${candidate_fqdn}/ready" || true)"
+              if [[ "${health}" == "Healthy" && "${candidate_status}" == "200" ]]; then
+                candidate_ready=1
+                break
+              fi
+            else
+              latest_ready="$(az containerapp show \
+                --name "${APP_NAME}" \
+                --resource-group "${RESOURCE_GROUP}" \
+                --query 'properties.latestReadyRevisionName' \
+                -o tsv 2>/dev/null || true)"
+              ready_status="$(curl \
+                --silent \
+                --output /dev/null \
+                --write-out '%{http_code}' \
+                --max-time 15 \
+                "https://${FQDN}/ready" || true)"
+              if [[ "${latest_ready}" == "${new_revision}" \
+                && "${health}" == "Healthy" \
+                && "${ready_status}" == "200" ]]; then
+                candidate_ready=1
+                break
+              fi
             fi
             sleep 3
           done
-          [[ "${verified}" == "1" ]] || {
-            echo 'The immutable ordinary deployment did not become healthy.'
+          [[ "${candidate_ready}" == "1" ]] || {
+            echo 'Candidate revision failed verification and received no intentional traffic.'
             exit 1
           }
+
           deployed_image="$(az containerapp revision show \
             --name "${APP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
@@ -255,7 +291,45 @@ jobs:
             echo 'Deployed image does not match the immutable commit tag.'
             exit 1
           }
-          echo "Azure Container App deployed safely on ${new_revision}."
+
+          if [[ "${mode}" == "multiple" ]]; then
+            az containerapp ingress traffic set \
+              --name "${APP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --revision-weight "${PREVIOUS_REVISION}=0" "${new_revision}=100" \
+              --only-show-errors \
+              --output none
+          fi
+
+          public_ready=0
+          for attempt in $(seq 1 30); do
+            public_status="$(curl \
+              --silent \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              --max-time 15 \
+              "https://${FQDN}/ready" || true)"
+            if [[ "${public_status}" == "200" ]]; then
+              public_ready=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [[ "${public_ready}" != "1" ]]; then
+            if [[ "${mode}" == "multiple" ]]; then
+              echo 'Public /ready verification failed after activation; restoring traffic to previous revision.'
+              az containerapp ingress traffic set \
+                --name "${APP_NAME}" \
+                --resource-group "${RESOURCE_GROUP}" \
+                --revision-weight "${PREVIOUS_REVISION}=100" "${new_revision}=0" \
+                --only-show-errors \
+                --output none || true
+            fi
+            echo 'Azure Container App did not pass public /ready after activation.'
+            exit 1
+          fi
+          echo "Azure Container App deployed safely on ${new_revision}; previous revision remains available."
 
   rollback:
     name: Deploy existing image tag

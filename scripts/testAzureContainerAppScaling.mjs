@@ -130,7 +130,19 @@ assert.equal(
 assert.doesNotMatch(workflow, /renderAzureContainerAppUpdate\.mjs/);
 assert.doesNotMatch(workflow, /az containerapp update[\s\S]*--yaml/);
 assert.match(workflow, /verifyAzureRuntimeEnvironment\.mjs --emit-command/);
-assert.match(workflow, /multiple[\s\S]*ordinary deployment will skip/i);
+assert.match(workflow, /push:[\s\S]*?branches:[\s\S]*?- master/, "push trigger must listen on master");
+assert.match(workflow, /paths-ignore:[\s\S]*?- ["']frontend\/\*\*/, "frontend changes must remain ignored because frontend is hosted on Cloudflare");
+assert.match(workflow, /paths-ignore:[\s\S]*?- ["']docs\/\*\*[\s\S]*?- ["']\*\.md/, "documentation paths must remain ignored where intended");
+assert.doesNotMatch(workflow, /paths-ignore:[\s\S]*?- ["'](?:backend|Dockerfile|package\.json)/, "qualifying backend and deployment paths must not be ignored");
+assert.doesNotMatch(workflow, /if \[\[ "\$\{mode,,?\}" == "multiple" \]\]; then[\s\S]*?deploy=false/, "multiple-revision mode must not short-circuit deployment");
+assert.match(workflow, /\[\[ "\$\{mode,,?\}" == "single" \|\| "\$\{mode,,?\}" == "multiple" \]\]/, "workflow must support both single and multiple revision modes");
+assert.match(workflow, /tags: \$\{\{ vars\.AZURE_ACR_LOGIN_SERVER \}\}\/\$\{\{ env\.IMAGE_REPOSITORY \}\}:\$\{\{ github\.sha \}\}/, "must build immutable image using exact git sha tag");
+assert.match(workflow, /candidate_status="\$\(curl[\s\S]*?https:\/\/\$\{candidate_fqdn\}\/ready[\s\S]*?az containerapp ingress traffic set/, "candidate readiness verification must occur before traffic switch");
+assert.match(workflow, /\[\[ "\$\{deployed_image\}" == "\$\{DEPLOY_IMAGE\}" \]\]/, "exact image verification required before traffic switch");
+assert.match(workflow, /az containerapp ingress traffic set[\s\S]*?--revision-weight "\$\{PREVIOUS_REVISION\}=0" "\$\{new_revision\}=100"/, "explicit 100/0 traffic activation required in multiple mode");
+assert.match(workflow, /public_ready[\s\S]*?az containerapp ingress traffic set[\s\S]*?--revision-weight "\$\{PREVIOUS_REVISION\}=100" "\$\{new_revision\}=0"/, "post-activation failure must immediately restore traffic to previous revision");
+assert.match(workflow, /echo "Azure Container App deployed safely on \$\{new_revision\}; previous revision remains available\."/, "previous revision must remain available for rollback");
+assert.doesNotMatch(workflow, /az containerapp revision (?:delete|deactivate)/, "failure path must not destroy rollback revision");
 assert.doesNotMatch(workflow, /^\s*az containerapp exec/m);
 assert.match(workflow, /bash scripts\/execAzureContainerAppCommand\.sh/);
 
