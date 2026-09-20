@@ -276,8 +276,8 @@ function installPolicies(storage, api = null, localStorage = makeLocalStorage())
     Promise,
   };
   context.globalThis = context;
-  vm.runInNewContext(policySource, context, { filename: policyPath });
-  vm.runInNewContext(hardeningSource, context, { filename: hardeningPath });
+  vm.runInNewContext(`(() => {\n${policySource}\n})();`, context, { filename: policyPath });
+  vm.runInNewContext(`(() => {\n${hardeningSource}\n})();`, context, { filename: hardeningPath });
   return { window: context.window, localStorage };
 }
 
@@ -312,7 +312,70 @@ assert.match(httpErrorsSource, /statusCode: 409/);
 assert.match(httpErrorsSource, /The raw Postgres marker and[\s\S]*remain private/);
 
 assert.match(migrationSource, /m\.role = 'user'/);
-assert.match(migrationSource, /if new\.role = 'user' then/i);
+
+// Verify touch_conversation_last_activity trigger function structure
+assert.match(
+  migrationSource,
+  /create\s+or\s+replace\s+function\s+public\.touch_conversation_last_activity\(\)/i,
+  "touch_conversation_last_activity trigger function must be defined",
+);
+assert.match(
+  migrationSource,
+  /new\.role\s*=\s*'user'/i,
+  "user role messages must advance conversation recency",
+);
+assert.match(
+  migrationSource,
+  /new\.role\s*=\s*'assistant'\s+and\s+new\.message_type\s*=\s*'live_transcript'/i,
+  "live_transcript assistant messages must be checked for qualifying speech",
+);
+assert.match(
+  migrationSource,
+  /update\s+public\.conversations\s+set\s+last_activity_at\s*=\s*greatest\(/i,
+  "last_activity_at must be updated on qualifying messages",
+);
+
+// Semantic invariant verification for touch_conversation_last_activity:
+// 1. normal user messages update last_activity_at;
+// 2. assistant messages do not;
+// 3. qualifying live_transcript assistant messages containing user speech do;
+// 4. unrelated assistant messages do not.
+const liveTranscriptRegexMatch = migrationSource.match(/new\.message_type\s*=\s*'live_transcript'[\s\S]*?~[\s\S]*?E'([^']+)'/);
+assert.ok(liveTranscriptRegexMatch, "live transcript user speech regex pattern must be present in migration");
+
+const liveTranscriptPattern = new RegExp(
+  liveTranscriptRegexMatch[1]
+    .replace(/\\\\n/g, "\n")
+    .replace(/\[\^\[:space:\]\]/g, "\\S")
+    .replace(/\[\[:space:\]\]/g, "\\s"),
+  "m",
+);
+
+function shouldAdvanceConversationActivity(msg) {
+  if (msg.role === "user") return true;
+  if (msg.role === "assistant" && msg.message_type === "live_transcript") {
+    return liveTranscriptPattern.test(msg.content || "");
+  }
+  return false;
+}
+
+// 1. Normal user messages update last_activity_at
+assert.equal(shouldAdvanceConversationActivity({ role: "user", content: "Tell me about space" }), true);
+assert.equal(shouldAdvanceConversationActivity({ role: "user", content: "" }), true);
+
+// 2. Assistant messages do not update last_activity_at
+assert.equal(shouldAdvanceConversationActivity({ role: "assistant", content: "Space is vast...", message_type: "chat" }), false);
+assert.equal(shouldAdvanceConversationActivity({ role: "assistant", content: "Here are the details." }), false);
+
+// 3. Qualifying live_transcript assistant messages containing user speech do update activity
+assert.equal(shouldAdvanceConversationActivity({ role: "assistant", message_type: "live_transcript", content: "You: Hello\nAI: Hi there!" }), true);
+assert.equal(shouldAdvanceConversationActivity({ role: "assistant", message_type: "live_transcript", content: "AI: Connected\nYou: What is the plan?" }), true);
+
+// 4. Unrelated assistant messages do not (e.g. live transcript without user speech or non-live messages mentioning 'You:')
+assert.equal(shouldAdvanceConversationActivity({ role: "assistant", message_type: "live_transcript", content: "AI: Hello and welcome." }), false);
+assert.equal(shouldAdvanceConversationActivity({ role: "assistant", message_type: "live_transcript", content: "You:    " }), false);
+assert.equal(shouldAdvanceConversationActivity({ role: "assistant", message_type: "chat", content: "You: this was typed by assistant" }), false);
+
 assert.match(migrationSource, /max_conversations constant integer := 50/i);
 assert.match(migrationSource, /get_conversation_user_activity_schema_version/);
 assert.match(

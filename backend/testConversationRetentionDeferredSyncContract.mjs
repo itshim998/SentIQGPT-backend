@@ -3,7 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 const root = path.resolve(process.cwd());
-const server = fs.readFileSync(path.join(root, "backend/server.ts"), "utf8");
+const serverPath = fs.existsSync(path.join(root, "backend/serverLegacy.ts"))
+  ? path.join(root, "backend/serverLegacy.ts")
+  : path.join(root, "backend/server.ts");
+const server = fs.readFileSync(serverPath, "utf8");
 const policy = fs.readFileSync(path.join(root, "frontend/scripts/services/conversation-ordering-policy.js"), "utf8");
 const httpErrors = fs.readFileSync(path.join(root, "backend/httpErrors.ts"), "utf8");
 
