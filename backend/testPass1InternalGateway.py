@@ -1,5 +1,5 @@
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Iterator
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -33,7 +33,7 @@ def gateway_config(
     runtime_env: str,
     unsafe_enabled: bool = False,
     host: str = "127.0.0.1",
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     original = (
         llm_service.INTERNAL_SERVICE_TOKEN,
         llm_service.RUNTIME_ENV,

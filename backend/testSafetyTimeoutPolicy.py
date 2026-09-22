@@ -1,5 +1,6 @@
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -21,7 +22,7 @@ def patched_gateway(
     *,
     input_classification: str = llm_service.SafetyResult.SAFE,
     output_classification: str | None = None,
-) -> Iterator[dict[str, list[Any]]]:
+) -> Generator[dict[str, list[Any]], None, None]:
     original_token = llm_service.INTERNAL_SERVICE_TOKEN
     original_unsafe = llm_service.UNSAFE_INTERNAL_ENDPOINTS_ENABLED
     original_call_safety_model = llm_service.call_safety_model
@@ -53,7 +54,7 @@ def patched_gateway(
     def fake_stream_router(*_, **__):
         yield "Cloudflare is a web infrastructure and security company."
 
-    def capture_safety_event(event_name: str, **kwargs: str) -> None:
+    def capture_safety_event(event_name: str, **kwargs: Any) -> None:
         events.append({"event": event_name, **{k: str(v) for k, v in kwargs.items()}})
 
     llm_service.INTERNAL_SERVICE_TOKEN = TEST_TOKEN
