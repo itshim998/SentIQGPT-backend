@@ -11,11 +11,10 @@ function sourceBlock(source: string, needle: string, chars = 2200): string {
 function run(): void {
   const llmService = readFileSync(resolve(__dirname, "llm_service.py"), "utf8");
   const invokeBlock = sourceBlock(llmService, 'async def invoke_llm');
-  const safetyIndex = invokeBlock.indexOf('check_input_safety(request.prompt');
-  const reserveIndex = invokeBlock.indexOf('reserve_llm_request_slot(user_id)');
-  assert.ok(safetyIndex >= 0, "invoke safety check exists");
+  const safetyIndex = invokeBlock.indexOf('check_input_safety');
+  const reserveIndex = invokeBlock.indexOf('reserve_llm_request_slot');
+  assert.strictEqual(safetyIndex, -1, "invoke does not execute input safety");
   assert.ok(reserveIndex >= 0, "invoke quota reservation exists");
-  assert.ok(safetyIndex < reserveIndex, "invoke safety runs before quota reservation");
 
   const fallbackBlock = sourceBlock(llmService, 'def should_fallback_quota_rpc');
   assert.match(fallbackBlock, /return is_missing_quota_rpc_error\(error\)/, "quota fallback is limited to confirmed missing RPC drift");

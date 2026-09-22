@@ -43,10 +43,10 @@ def main() -> None:
     stream_targets = awaited_threadpool_targets(find_async_function("stream_llm"))
 
     assert_true("from starlette.concurrency import run_in_threadpool" in SOURCE, "llm service imports run_in_threadpool")
-    assert_true("check_input_safety" in invoke_targets, "invoke input safety runs off the event loop")
+    assert_true("check_input_safety" not in invoke_targets, "invoke input safety is bypassed")
     assert_true("reserve_llm_request_slot" in invoke_targets, "invoke quota reservation runs off the event loop")
     assert_true("call_llm_router" in invoke_targets, "invoke provider call runs off the event loop")
-    assert_true("check_input_safety" in stream_targets, "stream input safety runs off the event loop")
+    assert_true("check_input_safety" not in stream_targets, "stream input safety is bypassed")
 
     print("\nLLM service threadpool regression validation passed.")
 

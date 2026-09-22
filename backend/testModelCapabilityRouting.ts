@@ -25,7 +25,7 @@ async function main(): Promise<void> {
     ["sentiq_tools_streaming"],
   ), true);
   assert.equal(routeSupportsCapabilities(
-    { provider: "groq", model: "llama-3.3-70b-versatile" },
+    { provider: "groq", model: "legacy-unsupported-model" },
     ["sentiq_tools_streaming"],
   ), false);
   assert.equal(routeSupportsCapabilities(

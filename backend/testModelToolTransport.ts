@@ -50,7 +50,7 @@ assert.equal(SENTIQ_MODEL_TOOL_ENV.diagnostics, "SENTIQ_MODEL_TOOL_DIAGNOSTICS_E
 assert.equal(isGroqSentIQToolModel("gpt-oss-120b"), true);
 assert.equal(isGroqSentIQToolModel("openai/gpt-oss-120b"), true);
 assert.equal(isGroqSentIQToolModel("groq:openai/gpt-oss-120b"), true);
-assert.equal(isGroqSentIQToolModel("llama-3.3-70b-versatile"), false);
+assert.equal(isGroqSentIQToolModel("legacy-unsupported-model"), false);
 
 assert.deepEqual(getSentIQToolCapability("groq"), {
   provider: "groq",
@@ -119,7 +119,7 @@ try {
     getAutomaticSentIQToolsForRoute({ provider: "pollinations", model: "mistral" }, false),
     expectedAuthenticatedTools,
   );
-  assert.deepEqual(getAutomaticSentIQToolsForRoute({ provider: "groq", model: "llama-3.3-70b-versatile" }, true), []);
+  assert.deepEqual(getAutomaticSentIQToolsForRoute({ provider: "groq", model: "legacy-unsupported-model" }, true), []);
   assert.deepEqual(getModelToolRuntimeSnapshot(), {
     registryEnabled: true,
     groqTransportEnabled: true,

@@ -235,14 +235,11 @@ async def consume_response(response) -> str:
     return "".join(parts)
 
 
-async def test_provider_overlaps_safety_without_early_release() -> None:
-    safety_release = threading.Event()
+async def test_provider_streams_immediately_without_safety_delay() -> None:
     provider_started = threading.Event()
 
     def safety_check(*_args: Any, **_kwargs: Any):
-        if not safety_release.wait(2.0):
-            raise RuntimeError("safety gate test timed out")
-        return True, "SAFE", "SAFE"
+        raise AssertionError("safety check must not be called when safety is disabled")
 
     def provider():
         provider_started.set()
@@ -259,54 +256,39 @@ async def test_provider_overlaps_safety_without_early_release() -> None:
     endpoint = speculative.build_stream_endpoint(service, original_stream)
     with speculative_enabled_environment():
         task = asyncio.create_task(endpoint(production_plain_text_request()))
-        try:
-            assert_true(await asyncio.to_thread(provider_started.wait, 1.0), "provider must start while safety is pending")
-            await asyncio.sleep(0.05)
-            assert_true(not task.done(), "no response may be returned before safety approval")
-            safety_release.set()
-            response = await asyncio.wait_for(task, 2.0)
-            body = await asyncio.wait_for(consume_response(response), 2.0)
-            assert_true("OK" in body and "[DONE]" in body, "approved output must be released normally")
-            assert_true(not delegated, "eligible request must not use serial endpoint")
-            assert_equal(service.log_calls, 1, "route diagnostic count")
-            provider_call = service.provider_calls[0]
-            assert_equal(provider_call["sentiq_tool_request"], None, "provider receives no implicit image tool")
-            assert_equal(provider_call["required_capabilities"], [], "provider receives no implicit tool capability")
-            assert_equal(provider_call["tool_transport_mode"], "none", "provider receives text-only transport")
-        finally:
-            safety_release.set()
+        response = await asyncio.wait_for(task, 2.0)
+        body = await asyncio.wait_for(consume_response(response), 2.0)
+        assert_true("OK" in body and "[DONE]" in body, "stream output must be released immediately")
+        assert_true(not delegated, "eligible request must not use serial endpoint")
+        assert_equal(service.log_calls, 1, "route diagnostic count")
+        provider_call = service.provider_calls[0]
+        assert_equal(provider_call["sentiq_tool_request"], None, "provider receives no implicit image tool")
+        assert_equal(provider_call["required_capabilities"], [], "provider receives no implicit tool capability")
+        assert_equal(provider_call["tool_transport_mode"], "none", "provider receives text-only transport")
 
 
-async def test_blocked_input_discards_speculative_output() -> None:
-    provider_started = threading.Event()
-    provider_finished = threading.Event()
+async def test_speculative_streaming_never_invokes_safety() -> None:
+    safety_called = False
 
     def safety_check(*_args: Any, **_kwargs: Any):
-        assert_true(provider_started.wait(1.0), "provider should already be speculative")
+        nonlocal safety_called
+        safety_called = True
         return False, "UNSAFE", "UNSAFE"
 
     def provider():
-        try:
-            provider_started.set()
-            yield "SECRET-NOT-RELEASED"
-        finally:
-            provider_finished.set()
+        yield "STREAMED-DIRECTLY"
 
     service = FakeService(safety_check, provider)
 
     async def original_stream(_request):
-        raise AssertionError("blocked eligible request delegated unexpectedly")
+        raise AssertionError("delegated unexpectedly")
 
     endpoint = speculative.build_stream_endpoint(service, original_stream)
     with speculative_enabled_environment():
-        try:
-            await endpoint(production_plain_text_request())
-        except HTTPException as error:
-            assert_equal(error.status_code, 400, "blocked HTTP status")
-            assert_equal(error.detail, {"status": "blocked", "reason": "safety_violation"}, "blocked response contract")
-        else:
-            raise AssertionError("blocked request returned a streaming response")
-        assert_true(provider_finished.wait(1.0), "speculative provider iterator must close")
+        response = await endpoint(production_plain_text_request())
+        body = await consume_response(response)
+        assert_true("STREAMED-DIRECTLY" in body, "stream output emitted without safety blocking")
+        assert_true(not safety_called, "safety check was not called during speculative stream")
 
 
 async def test_explicit_image_request_delegates_unchanged() -> None:
@@ -333,10 +315,10 @@ def main() -> None:
     print("PASS | image_intent_and_transport_normalization")
     test_buffer_preserves_context_and_order()
     print("PASS | buffer_preserves_context_and_order")
-    asyncio.run(test_provider_overlaps_safety_without_early_release())
-    print("PASS | provider_overlaps_safety_without_early_release")
-    asyncio.run(test_blocked_input_discards_speculative_output())
-    print("PASS | blocked_input_discards_speculative_output")
+    asyncio.run(test_provider_streams_immediately_without_safety_delay())
+    print("PASS | provider_streams_immediately_without_safety_delay")
+    asyncio.run(test_speculative_streaming_never_invokes_safety())
+    print("PASS | speculative_streaming_never_invokes_safety")
     asyncio.run(test_explicit_image_request_delegates_unchanged())
     print("PASS | explicit_image_request_delegates_unchanged")
     print("Fast speculative input-safety validation passed.")

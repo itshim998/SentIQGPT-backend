@@ -197,7 +197,7 @@ GROQ_API_KEYS = [
     os.getenv("GROQ_API_KEY_5", ""),
 ]
 GROQ_API_KEYS = [k for k in GROQ_API_KEYS if k]
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", "openai/gpt-oss-120b")
 
 # --- Smart model routing aliases (resolved to provider-native model IDs) ---

@@ -173,24 +173,20 @@ def main() -> None:
             )
 
             original_call_safety_model = llm_service.call_safety_model
+            called_safety_model = False
+            def safety_model_spy(*_args, **_kwargs):
+                nonlocal called_safety_model
+                called_safety_model = True
+                raise AssertionError("safety model should not be invoked")
             try:
-                llm_service.call_safety_model = lambda *_args, **_kwargs: (llm_service.SafetyResult.SAFE, "raw-preview")
+                llm_service.call_safety_model = safety_model_spy
                 safety_health = client.get("/llm/safety/health", headers=TOKEN_HEADER)
                 assert_true(safety_health.status_code == 200, "valid token reaches safety health")
                 assert_true(
-                    safety_health.json() == {"status": "ok", "available": True, "fail_closed": True},
-                    "safety health exposes only sanitized fail-closed status",
+                    safety_health.json() == {"status": "disabled", "available": False, "execution": "disabled"},
+                    "safety health reports disabled status without invoking safety model",
                 )
-
-                def fail_safety_health(*_args, **_kwargs):
-                    raise RuntimeError("private-provider-detail")
-
-                llm_service.call_safety_model = fail_safety_health
-                degraded_health = client.get("/llm/safety/health", headers=TOKEN_HEADER)
-                assert_true(
-                    degraded_health.json() == {"status": "degraded", "available": False, "fail_closed": True},
-                    "degraded safety health does not expose internal errors",
-                )
+                assert_true(not called_safety_model, "safety health does not invoke safety model")
             finally:
                 llm_service.call_safety_model = original_call_safety_model
 

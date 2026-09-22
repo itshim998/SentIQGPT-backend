@@ -21,7 +21,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, model_validator
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, cast
 import uvicorn
 import requests
 
@@ -194,9 +194,9 @@ def log_safety_violation(
     endpoint: str,
 ) -> None:
     """Log a safety check result to the in-memory audit log."""
-    from datetime import datetime
+    from datetime import datetime, timezone
     entry = SafetyAuditEntry(
-        timestamp=datetime.utcnow().isoformat() + "Z",
+        timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         check_type=check_type,
         classification=classification,
         user_id=user_id or "unknown",
@@ -901,23 +901,6 @@ async def health_details():
 @app.post("/llm/invoke", response_model=LLMInvokeResponse)
 async def invoke_llm(request: LLMInvokeRequest):
     try:
-        user_id_for_safety = request.user_id or GUEST_USER_ID
-        is_safe, classification, _ = await run_in_threadpool(
-            check_input_safety,
-            request.prompt,
-            user_id_for_safety,
-            "/llm/invoke",
-            request.task,
-            request.safety_mode,
-        )
-        if not is_safe:
-            logger.warning("[Safety] Input blocked for user=%s classification=%s", user_id_for_safety, classification)
-            reason = "safety_violation" if classification in EXPLICIT_BLOCKED_CLASSIFICATIONS else "safety_degraded"
-            raise HTTPException(
-                status_code=400,
-                detail={"status": "blocked", "reason": reason},
-            )
-
         if is_guest_user(request.user_id):
             user_id = GUEST_USER_ID
             effective_model_override = (
@@ -953,7 +936,7 @@ async def invoke_llm(request: LLMInvokeRequest):
             request.budget_policy,
             request.execution_mode,
             request.sentiq_tool_request,
-            request.required_capabilities,
+            cast(Optional[list[str]], request.required_capabilities),
             request.tool_transport_mode,
         )
         # Resolve the actual provider (not just the prefer hint)
@@ -1050,28 +1033,6 @@ class StreamingSafetyMonitor:
 @app.post("/llm/stream")
 async def stream_llm(request: LLMInvokeRequest):
     """SSE streaming endpoint for provider responses as text/event-stream."""
-    
-    # ── INPUT SAFETY GUARD (pre-check before streaming) ──
-    user_id_for_safety = request.user_id or GUEST_USER_ID
-    is_safe, classification, _ = await run_in_threadpool(
-        check_input_safety,
-        request.prompt,
-        user_id_for_safety,
-        "/llm/stream",
-        request.task,
-        request.safety_mode,
-    )
-    if not is_safe:
-        logger.warning("[Safety] Stream input blocked for user=%s classification=%s", user_id_for_safety, classification)
-        reason = "safety_violation" if classification in EXPLICIT_BLOCKED_CLASSIFICATIONS else "safety_degraded"
-        raise HTTPException(
-            status_code=400,
-            detail={"status": "blocked", "reason": reason},
-        )
-    
-    # Check if this is a chart-related task (exempt from output guard)
-    is_chart_task = request.task in {"chart", "chart_generate", "chart_generation"}
-    
     def event_generator():
         try:
             if is_guest_user(request.user_id):
@@ -1095,10 +1056,6 @@ async def stream_llm(request: LLMInvokeRequest):
                 )
             log_model_tool_gateway_diagnostic(request, effective_model_override, streaming=True)
             
-            # ── OUTPUT SAFETY MONITOR ──
-            # Skip for chart generation to prevent false positives on code/data
-            safety_monitor = None if is_chart_task else StreamingSafetyMonitor(user_id, request.task)
-            full_output_parts: list[str] = []
             capacity_event_sent = False
             
             for chunk in stream_llm_router(
@@ -1113,7 +1070,7 @@ async def stream_llm(request: LLMInvokeRequest):
                 skip_wrappers=bool(request.skip_wrappers),
                 budget_policy=request.budget_policy,
                 sentiq_tool_request=request.sentiq_tool_request,
-                required_capabilities=request.required_capabilities,
+                required_capabilities=cast(Optional[list[str]], request.required_capabilities),
                 tool_transport_mode=request.tool_transport_mode,
                 prefer=request.prefer,
             ):
@@ -1128,44 +1085,17 @@ async def stream_llm(request: LLMInvokeRequest):
                         yield f"event: usage\ndata: {json.dumps({'usage': usage})}\n\n"
                         continue
                     if chunk.get("kind") == "text_delta":
-                        text_delta = str(chunk.get("text") or "")
-                        if safety_monitor and text_delta:
-                            full_output_parts.append(text_delta)
-                            if not safety_monitor.add_token(text_delta):
-                                logger.warning("[Safety] Output violation detected - terminating stream")
-                                yield f"event: error\ndata: {json.dumps({'code': 'safety_violation', 'message': 'Response blocked due to safety concerns'})}\n\n"
-                                return
+                        yield f"data: {json.dumps({'delta': chunk})}\n\n"
+                        continue
                     yield f"data: {json.dumps({'delta': chunk})}\n\n"
                     continue
 
-                # Check output safety (if monitor active)
-                if safety_monitor:
-                    full_output_parts.append(chunk)
-                    if not safety_monitor.add_token(chunk):
-                        # Safety violation detected — terminate stream
-                        logger.warning("[Safety] Output violation detected — terminating stream")
-                        yield f"event: error\ndata: {json.dumps({'code': 'safety_violation', 'message': 'Response blocked due to safety concerns'})}\n\n"
-                        return
-                
                 # SSE format: data: <text>\n\n
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
             if not capacity_event_sent:
                 telemetry = get_current_groq_call_telemetry()
                 if telemetry and telemetry.get("capacity"):
                     yield f"event: capacity\ndata: {json.dumps({'capacity': telemetry['capacity']})}\n\n"
-            if safety_monitor:
-                final_output = "".join(full_output_parts).strip()
-                if final_output:
-                    output_safe, output_classification, _ = check_output_safety(final_output, user_id, "/llm/stream", request.task)
-                    if not output_safe:
-                        code = "safety_violation" if output_classification in EXPLICIT_BLOCKED_CLASSIFICATIONS else "safety_degraded"
-                        logger.warning(
-                            "[Safety] Final stream output blocked user=%s classification=%s",
-                            user_id,
-                            output_classification,
-                        )
-                        yield f"event: error\ndata: {json.dumps({'code': code, 'message': 'Response blocked due to safety concerns'})}\n\n"
-                        return
             yield "data: [DONE]\n\n"
         except ModelToolCapabilityUnavailableError as e:
             logger.error("Streaming tool capability unavailable: %s", e)
@@ -1395,21 +1325,12 @@ async def get_safety_audit(
 
 @app.get("/llm/safety/health")
 async def safety_health():
-    """Check if the safety model is accessible."""
-    try:
-        # Quick test call with innocuous input
-        call_safety_model("Hello, how are you?", timeout=5, check_type="input")
-        return {
-            "status": "ok",
-            "available": True,
-            "fail_closed": True,
-        }
-    except Exception:
-        return {
-            "status": "degraded",
-            "available": False,
-            "fail_closed": True,
-        }
+    """Report that safety execution is disabled."""
+    return {
+        "status": "disabled",
+        "available": False,
+        "execution": "disabled",
+    }
 
 
 if __name__ == "__main__":

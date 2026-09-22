@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator
 
 from fastapi.testclient import TestClient
 
@@ -19,9 +19,9 @@ def assert_true(condition: bool, label: str) -> None:
 @contextmanager
 def patched_gateway(
     *,
-    input_classification: str,
+    input_classification: str = llm_service.SafetyResult.SAFE,
     output_classification: str | None = None,
-) -> Iterator[list[dict[str, str]]]:
+) -> Iterator[dict[str, list[Any]]]:
     original_token = llm_service.INTERNAL_SERVICE_TOKEN
     original_unsafe = llm_service.UNSAFE_INTERNAL_ENDPOINTS_ENABLED
     original_call_safety_model = llm_service.call_safety_model
@@ -30,8 +30,10 @@ def patched_gateway(
     original_log_safety_event = llm_service.log_safety_event
 
     events: list[dict[str, str]] = []
+    safety_calls: list[dict[str, Any]] = []
 
-    def fake_safety_model(_text: str, *_, check_type: str = "input", **__) -> tuple[str, str]:
+    def fake_safety_model(text: str, *_, check_type: str = "input", **kwargs: Any) -> tuple[str, str]:
+        safety_calls.append({"text": text, "check_type": check_type, **kwargs})
         if check_type == "output":
             return output_classification or llm_service.SafetyResult.SAFE, "synthetic-output"
         return input_classification, "synthetic-input"
@@ -61,8 +63,10 @@ def patched_gateway(
     llm_service.stream_llm_router = fake_stream_router
     llm_service.log_safety_event = capture_safety_event
 
+    ctx: dict[str, list[Any]] = {"events": events, "safety_calls": safety_calls}
+
     try:
-        yield events
+        yield ctx
     finally:
         llm_service.INTERNAL_SERVICE_TOKEN = original_token
         llm_service.UNSAFE_INTERNAL_ENDPOINTS_ENABLED = original_unsafe
@@ -96,48 +100,54 @@ def post_stream(client: TestClient, *, safety_mode: str | None = None):
 
 def main() -> None:
     with TestClient(llm_service.app) as client:
-        with patched_gateway(input_classification=llm_service.SafetyResult.SAFE):
+        # 1. Normal chat invoke with SAFE does not invoke safety model
+        with patched_gateway(input_classification=llm_service.SafetyResult.SAFE) as ctx:
             response = post_invoke(client, task="chat", safety_mode=llm_service.SAFETY_MODE_LOW_RISK_TEXT)
-            assert_true(response.status_code == 200, "normal chat safety SAFE succeeds")
+            assert_true(response.status_code == 200, "normal chat invoke succeeds")
             assert_true("Cloudflare" in response.json()["result"]["text"], "normal chat returns model text")
+            assert_true(len(ctx["safety_calls"]) == 0, "normal chat invoke does not call safety model")
 
-        with patched_gateway(input_classification=llm_service.SafetyResult.TIMEOUT) as events:
+        # 2. Normal chat invoke with synthetic TIMEOUT does not invoke safety model
+        with patched_gateway(input_classification=llm_service.SafetyResult.TIMEOUT) as ctx:
             response = post_invoke(client, task="chat", safety_mode=llm_service.SAFETY_MODE_LOW_RISK_TEXT)
-            assert_true(response.status_code == 200, "normal chat safety TIMEOUT succeeds degraded")
-            assert_true(
-                any(event["event"] == "safety.input.timeout.allow_degraded" for event in events),
-                "normal chat timeout emits degraded-open safety event",
-            )
+            assert_true(response.status_code == 200, "chat invoke succeeds without safety timeout block")
+            assert_true(len(ctx["safety_calls"]) == 0, "chat invoke bypasses safety call on timeout")
 
-        with patched_gateway(input_classification=llm_service.SafetyResult.UNSAFE) as events:
+        # 3. Normal chat invoke with synthetic UNSAFE does not invoke safety model
+        with patched_gateway(input_classification=llm_service.SafetyResult.UNSAFE) as ctx:
             response = post_invoke(client, task="chat", safety_mode=llm_service.SAFETY_MODE_LOW_RISK_TEXT)
-            assert_true(response.status_code == 400, "normal chat safety UNSAFE blocks")
-            assert_true(response.json()["detail"]["reason"] == "safety_violation", "unsafe block keeps violation reason")
-            assert_true(
-                any(event["event"] == "safety.input.blocked.explicit" for event in events),
-                "unsafe input emits explicit blocked safety event",
-            )
+            assert_true(response.status_code == 200, "chat invoke proceeds directly without safety check")
+            assert_true(len(ctx["safety_calls"]) == 0, "chat invoke does not invoke safety model")
 
+        # 4. Specialized tasks proceed without safety calls
         for task in ["file_generate", "memory_classify", "web_search_synthesis", "image_generate"]:
-            with patched_gateway(input_classification=llm_service.SafetyResult.TIMEOUT):
+            with patched_gateway(input_classification=llm_service.SafetyResult.UNSAFE) as ctx:
                 response = post_invoke(client, task=task)
-                assert_true(response.status_code == 400, f"{task} safety TIMEOUT remains fail-closed")
-                assert_true(response.json()["detail"]["reason"] == "safety_degraded", f"{task} timeout uses degraded reason")
+                assert_true(response.status_code == 200, f"{task} invoke succeeds directly")
+                assert_true(len(ctx["safety_calls"]) == 0, f"{task} does not invoke safety model")
 
+        # 5. Streaming does not execute input safety, StreamingSafetyMonitor, or output safety
         with patched_gateway(
-            input_classification=llm_service.SafetyResult.SAFE,
-            output_classification=llm_service.SafetyResult.TIMEOUT,
-        ) as events:
+            input_classification=llm_service.SafetyResult.UNSAFE,
+            output_classification=llm_service.SafetyResult.UNSAFE,
+        ) as ctx:
             response = post_stream(client, safety_mode=llm_service.SAFETY_MODE_LOW_RISK_TEXT)
             text = response.text
             assert_true(response.status_code == 200, "streaming chat starts normally")
             assert_true("Cloudflare" in text, "streaming chat emits normal text")
-            assert_true("Response blocked due to safety concerns" not in text, "output safety TIMEOUT does not emit generic safety failure")
-            assert_true("data: [DONE]" in text, "output safety TIMEOUT completes stream")
-            assert_true(
-                any(event["event"] == "safety.output.timeout.degraded" for event in events),
-                "output timeout emits degraded output safety event",
+            assert_true("Response blocked due to safety concerns" not in text, "output safety does not block stream")
+            assert_true("data: [DONE]" in text, "stream completes normally with [DONE]")
+            assert_true(len(ctx["safety_calls"]) == 0, "stream does not call safety model")
+
+        # 6. Retained helper function contracts remain intact when called directly
+        with patched_gateway(input_classification=llm_service.SafetyResult.UNSAFE) as ctx:
+            safe, classification, _ = llm_service.check_input_safety(
+                "harmful text",
+                "guest",
+                "/direct_check",
             )
+            assert_true(not safe, "retained check_input_safety helper detects unsafe text")
+            assert_true(len(ctx["safety_calls"]) == 1, "retained helper executes underlying model when invoked directly")
 
     print("\nSafety timeout policy validation passed.")
 

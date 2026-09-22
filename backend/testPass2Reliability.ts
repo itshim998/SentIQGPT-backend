@@ -86,11 +86,9 @@ function assertAuthBeforeLimiter(route: string): void {
   assert(llmAdapter.includes('DEGRADED = "DEGRADED"'), "safety adapter should expose degraded safety state");
   assert(!llmAdapter.includes("defaulting to SAFE"), "safety failures should not fail open as SAFE");
   assert(llmAdapter.includes("classification in {SafetyResult.SAFE, SafetyResult.CONTROVERSIAL}"), "safety helper should fail closed on degraded checks");
-  assert(llmService.includes("def check_output_safety"), "streaming service should have a final output safety check");
-  assert(llmService.includes("check_output_safety(final_output, user_id, \"/llm/stream\", request.task)"), "streaming service should check short final output before completion");
-  assert(llmService.includes("output_classification in EXPLICIT_BLOCKED_CLASSIFICATIONS"), "streaming service should block explicit unsafe output");
-  assert(llmService.includes("safety.output.timeout.degraded"), "streaming service should degrade gracefully on output safety timeout");
-  assert(llmService.indexOf("check_output_safety(final_output") < llmService.indexOf('yield "data: [DONE]'), "final stream safety should run before DONE");
+  assert(llmService.includes("def check_output_safety"), "retained safety helper should keep check_output_safety definition");
+  assert(!llmService.includes("check_output_safety(final_output"), "streaming service should not invoke output safety check");
+  assert(!llmService.includes("StreamingSafetyMonitor(user_id"), "streaming service should not instantiate StreamingSafetyMonitor");
 }
 
 {
