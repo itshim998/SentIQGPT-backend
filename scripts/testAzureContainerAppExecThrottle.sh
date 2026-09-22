@@ -39,6 +39,50 @@ for index in "${!args[@]}"; do
   fi
 done
 
+if [[ "${command_value}" == *"runtime-success-session-exit-4"* ]]; then
+  echo 'INFO: Connecting to the container...'
+  echo 'INFO: Successfully connected to container:'
+  echo '{"checks":{"DATABASE_CONFIGURATION_AVAILABLE":true,"SUPABASE_URL_1_PRESENT":true},"compatibilityExceptions":[],"event":"azure_runtime_environment","failedChecks":[],"ok":true}'
+  echo 'INFO: received success status from cluster'
+  echo 'Disconnecting...'
+  exit 4
+fi
+
+if [[ "${command_value}" == *"runtime-failure-session-exit-4"* ]]; then
+  echo 'INFO: Connecting to the container...'
+  echo 'INFO: Successfully connected to container:'
+  echo '{"checks":{"DATABASE_CONFIGURATION_AVAILABLE":false,"SUPABASE_URL_1_PRESENT":false},"compatibilityExceptions":[],"event":"azure_runtime_environment","failedChecks":["DATABASE_CONFIGURATION_AVAILABLE","SUPABASE_URL_1_PRESENT"],"ok":false}'
+  echo 'INFO: received success status from cluster'
+  echo 'Disconnecting...'
+  exit 4
+fi
+
+if [[ "${command_value}" == *"runtime-failure-exit-0"* ]]; then
+  echo 'INFO: Connecting to the container...'
+  echo 'INFO: Successfully connected to container:'
+  echo '{"checks":{"DATABASE_CONFIGURATION_AVAILABLE":false,"SUPABASE_URL_1_PRESENT":false},"compatibilityExceptions":[],"event":"azure_runtime_environment","failedChecks":["DATABASE_CONFIGURATION_AVAILABLE","SUPABASE_URL_1_PRESENT"],"ok":false}'
+  echo 'INFO: received success status from cluster'
+  echo 'Disconnecting...'
+  exit 0
+fi
+
+if [[ "${command_value}" == *"runtime-transient-then-success-exit-4"* ]]; then
+  current=0
+  [[ -f "${FAKE_AZ_RETRY_STATE}" ]] && current="$(cat "${FAKE_AZ_RETRY_STATE}")"
+  current=$((current + 1))
+  printf '%s\n' "${current}" > "${FAKE_AZ_RETRY_STATE}"
+  if [[ "${current}" == "1" ]]; then
+    echo 'websocket._exceptions.WebSocketBadStatusException: Handshake status 429 Too Many Requests - Retry-After: 600'
+    exit 1
+  fi
+  echo 'INFO: Connecting to the container...'
+  echo 'INFO: Successfully connected to container:'
+  echo '{"checks":{"DATABASE_CONFIGURATION_AVAILABLE":true,"SUPABASE_URL_1_PRESENT":true},"compatibilityExceptions":[],"event":"azure_runtime_environment","failedChecks":[],"ok":true}'
+  echo 'INFO: received success status from cluster'
+  echo 'Disconnecting...'
+  exit 4
+fi
+
 if [[ "${command_value}" == *"remote-failure"* ]]; then
   echo '{"event":"remote_verification","status":"fail"}'
   exit 7
@@ -108,6 +152,50 @@ grep -Eq '__import__.*base64.*b64decode' "${FAKE_AZ_CALL_LOG}"
 grep -Eq '"event":"summary","failures":0' "${temp_root}/nvidia.out"
 [[ "$(grep -Ec '"event":"independent_slot".*"status":"pass"' "${temp_root}/nvidia.out")" == "6" ]]
 grep -Eq '"event":"pollinations_intuitive_verification","status":"pass"' "${temp_root}/pollinations.out"
+
+: > "${FAKE_AZ_CALL_LOG}"
+bash "${wrapper}" \
+  "${common_args[@]}" \
+  --command runtime-success-session-exit-4 \
+  > "${temp_root}/runtime-success.out" 2>&1
+grep -Eq '"event":"azure_runtime_environment",.*"ok":true' "${temp_root}/runtime-success.out"
+[[ "$(wc -l < "${FAKE_AZ_CALL_LOG}" | tr -d ' ')" == "1" ]]
+
+: > "${FAKE_AZ_CALL_LOG}"
+set +e
+bash "${wrapper}" \
+  "${common_args[@]}" \
+  --command runtime-failure-session-exit-4 \
+  > "${temp_root}/runtime-failure-4.out" 2>&1
+status_failure_4="$?"
+set -e
+[[ "${status_failure_4}" == "4" ]]
+[[ "$(wc -l < "${FAKE_AZ_CALL_LOG}" | tr -d ' ')" == "1" ]]
+
+: > "${FAKE_AZ_CALL_LOG}"
+set +e
+bash "${wrapper}" \
+  "${common_args[@]}" \
+  --command runtime-failure-exit-0 \
+  > "${temp_root}/runtime-failure-0.out" 2>&1
+status_failure_0="$?"
+set -e
+[[ "${status_failure_0}" != "0" ]]
+[[ "$(wc -l < "${FAKE_AZ_CALL_LOG}" | tr -d ' ')" == "1" ]]
+
+: > "${FAKE_AZ_CALL_LOG}"
+rm -f "${FAKE_AZ_RETRY_STATE}"
+SENTIQ_AZURE_EXEC_MAX_ATTEMPTS=2 \
+SENTIQ_AZURE_EXEC_BASE_RETRY_DELAY_SECONDS=0 \
+SENTIQ_AZURE_EXEC_MAX_RETRY_DELAY_SECONDS=0 \
+  bash "${wrapper}" \
+    "${common_args[@]}" \
+    --command runtime-transient-then-success-exit-4 \
+    > "${temp_root}/runtime-transient.out" 2>&1
+
+[[ "$(wc -l < "${FAKE_AZ_CALL_LOG}" | tr -d ' ')" == "2" ]]
+grep -Eq 'transient control-plane failure; retrying attempt 2/2' "${temp_root}/runtime-transient.out"
+grep -Eq '"event":"azure_runtime_environment",.*"ok":true' "${temp_root}/runtime-transient.out"
 
 : > "${FAKE_AZ_CALL_LOG}"
 set +e

@@ -171,7 +171,7 @@ jobs:
               --replica "${replica}" \
               --container "${IMAGE_REPOSITORY}" \
               --command "${runtime_command}" | tee "${runtime_log}"
-            grep -a '"event": "azure_runtime_environment"' "${runtime_log}" \
+            grep -aE '"event"[[:space:]]*:[[:space:]]*"azure_runtime_environment"' "${runtime_log}" \
               | tail -1 \
               | jq -e '.ok == true' >/dev/null
           elif [[ "${mode,,}" == "single" ]]; then

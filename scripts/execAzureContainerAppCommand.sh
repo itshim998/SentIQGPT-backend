@@ -133,6 +133,23 @@ is_transient_control_plane_failure() {
     "${path}"
 }
 
+has_runtime_environment_report() {
+  local path="$1"
+  grep -aEq '"event"[[:space:]]*:[[:space:]]*"azure_runtime_environment"' "${path}" 2>/dev/null
+}
+
+is_runtime_environment_report_successful() {
+  local path="$1"
+  local report
+  report="$(grep -aE '"event"[[:space:]]*:[[:space:]]*"azure_runtime_environment"' "${path}" 2>/dev/null | tail -1 || true)"
+  [[ -n "${report}" ]] || return 1
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s\n' "${report}" | jq -e '.event == "azure_runtime_environment" and .ok == true' >/dev/null 2>&1
+  else
+    printf '%s\n' "${report}" | grep -aEq '"ok"[[:space:]]*:[[:space:]]*true'
+  fi
+}
+
 resolve_retry_delay_seconds() {
   local path="$1"
   local attempt="$2"
@@ -163,6 +180,20 @@ while true; do
     | tee "${attempt_log}"
   exec_status="${PIPESTATUS[0]}"
   set -e
+
+  if has_runtime_environment_report "${attempt_log}"; then
+    if is_runtime_environment_report_successful "${attempt_log}" \
+      && [[ "${exec_status}" -eq 0 || "${exec_status}" -eq 4 ]]; then
+      rm -f "${attempt_log}"
+      exit 0
+    fi
+    failure_status="${exec_status}"
+    if [[ "${failure_status}" -eq 0 ]]; then
+      failure_status=1
+    fi
+    rm -f "${attempt_log}"
+    exit "${failure_status}"
+  fi
 
   if [[ "${exec_status}" -eq 0 ]]; then
     if [[ "${provider_bundle_mode}" == "providers" ]]; then
