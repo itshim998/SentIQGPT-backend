@@ -1,11 +1,8 @@
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
-import pg from "pg";
-
 dotenv.config();
 
-const { Client } = pg;
 const ROOT_DIR = path.resolve(process.cwd());
 const DATA_TRACK_DIR = path.join(ROOT_DIR, "supabase", "tracks", "data", "migrations");
 
@@ -30,6 +27,14 @@ async function bootstrapShard() {
     return;
   }
 
+  let pg;
+  try {
+    pg = await import("pg");
+  } catch {
+    console.error("Error: 'pg' package is required for direct connection. Run 'npm install pg' or apply migrations using Supabase CLI (supabase db push) or Supabase SQL Editor.");
+    process.exit(1);
+  }
+  const { Client } = pg.default || pg;
   const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
   await client.connect();
   console.log(`Connected to target PostgreSQL instance for DB${targetDbNumber}.`);

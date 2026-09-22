@@ -93,4 +93,27 @@ test("Migration Scope Separation & Manifest Validation", async (t) => {
     assert.equal(db4Retire.scope, "CONTROL_ONLY");
     assert.deepEqual(db4Retire.targetTracks, ["control"]);
   });
+
+  await t.test("Fail-closed classification: Unclassified migration throws error rather than defaulting to DATA_ONLY", async () => {
+    // @ts-ignore
+    const { classifyMigrationVersion } = await import("../scripts/generateMigrationTracks.mjs");
+    assert.throws(
+      () => classifyMigrationVersion("20269999999999", "20269999999999_unclassified_feature.sql"),
+      /Unclassified migration detected.*Failing closed/i,
+      "Must throw error on unclassified migration",
+    );
+  });
+
+  await t.test("Classification sets are strictly disjoint", async () => {
+    // @ts-ignore
+    const { BOTH_VERSIONS, CONTROL_ONLY_VERSIONS, DATA_ONLY_VERSIONS } = await import("../scripts/generateMigrationTracks.mjs");
+    for (const v of BOTH_VERSIONS) {
+      assert.ok(!CONTROL_ONLY_VERSIONS.has(v), `Version ${v} is in both BOTH and CONTROL_ONLY`);
+      assert.ok(!DATA_ONLY_VERSIONS.has(v), `Version ${v} is in both BOTH and DATA_ONLY`);
+    }
+    for (const v of CONTROL_ONLY_VERSIONS) {
+      assert.ok(!DATA_ONLY_VERSIONS.has(v), `Version ${v} is in both CONTROL_ONLY and DATA_ONLY`);
+    }
+  });
 });
+
