@@ -1,3 +1,5 @@
+"""Safety timeout policy test suite."""
+
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager

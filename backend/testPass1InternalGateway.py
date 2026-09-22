@@ -1,3 +1,5 @@
+"""Pass 1 internal gateway unit test suite."""
+
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager
