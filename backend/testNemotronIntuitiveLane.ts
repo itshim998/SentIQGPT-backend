@@ -1,5 +1,5 @@
 import assert from "assert";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import {
   buildIntuitiveToolSelectionPrompt,
@@ -191,7 +191,9 @@ function main(): void {
       "shared text-only tool-decision turns must tolerate degraded safety-provider availability",
     );
 
-    const serverSource = readFileSync(join(__dirname, "server.ts"), "utf8");
+    const serverSource = existsSync(join(__dirname, "serverLegacy.ts"))
+      ? readFileSync(join(__dirname, "serverLegacy.ts"), "utf8")
+      : readFileSync(join(__dirname, "server.ts"), "utf8");
     assert(serverSource.includes("const intuitiveToolSelectionActive = intuitiveLaneActive && automaticTools.length > 0"));
     const selectorConfigs = [...serverSource.matchAll(
       /prompt:\s*buildIntuitiveToolSelectionPrompt\([^)]*\)[\s\S]{0,240}?execution_mode:\s*"([^"]+)"[\s\S]{0,120}?reasoning_effort:\s*"([^"]+)"[\s\S]{0,120}?safety_mode:\s*"([^"]+)"/g,

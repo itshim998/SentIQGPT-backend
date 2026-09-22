@@ -1,11 +1,13 @@
 import { strict as assert } from "assert";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
 const root = process.cwd();
 const promptBuilders = readFileSync(join(root, "backend", "ai", "PromptBuilders.ts"), "utf8");
 const chatHandler = readFileSync(join(root, "backend", "ai", "ChatHandler.ts"), "utf8");
-const server = readFileSync(join(root, "backend", "server.ts"), "utf8");
+const server = existsSync(join(root, "backend", "serverLegacy.ts"))
+  ? readFileSync(join(root, "backend", "serverLegacy.ts"), "utf8")
+  : readFileSync(join(root, "backend", "server.ts"), "utf8");
 const llmService = readFileSync(join(root, "backend", "llm_service.py"), "utf8");
 const fileGenerator = readFileSync(join(root, "backend", "tools", "fileGeneration", "fileGenerator.ts"), "utf8");
 const webSearchPipeline = readFileSync(join(root, "backend", "tools", "webSearch", "tavilySearchPipeline.ts"), "utf8");
