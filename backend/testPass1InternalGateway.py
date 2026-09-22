@@ -1,10 +1,16 @@
+import sys
 from collections.abc import Generator
 from contextlib import contextmanager
+from pathlib import Path
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-import llm_service
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from backend import llm_service
 
 
 TEST_TOKEN = "pass1-test-token"
