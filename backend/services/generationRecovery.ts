@@ -7,7 +7,7 @@ import {
 } from "./chatGenerationService";
 import { runGeneration } from "./generationRunner";
 
-const DATA_DATABASE_IDS = [2, 3, 4] as const;
+const DATA_DATABASE_IDS = [2, 3] as const;
 const STALE_EXECUTION_MS = 75_000;
 const RECOVERY_START_DELAY_MS = 1_500;
 const MAX_RECOVERY_ATTEMPTS = 5;

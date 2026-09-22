@@ -7,6 +7,8 @@
     "start": "node dist/backend/verifyNemotronDeploymentReadiness.js && node dist/backend/server.js",
     "dev": "ts-node --project tsconfig.backend.json backend/verifyNemotronDeploymentReadiness.ts && ts-node --project tsconfig.backend.json backend/server.ts",
     "check:migrations": "ts-node --project tsconfig.backend.json backend/checkShardMigrations.ts",
+    "test:migrations": "ts-node --project tsconfig.backend.json backend/testMigrationScopeSeparation.ts",
+    "test:shards": "ts-node --project tsconfig.backend.json backend/testTwoDataShardTopology.ts",
     "llm-service": "python backend/llm_service.py",
     "dev:all": "concurrently \"npm run dev\" \"npm run llm-service\"",
     "test:pass1": "ts-node --project tsconfig.backend.json backend/testPass1ShardRouter.ts && ts-node --project tsconfig.backend.json backend/testPass1HttpErrors.ts",

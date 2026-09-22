@@ -1,0 +1,813 @@
+{
+  "generatedAt": "2026-09-22T15:29:54.662Z",
+  "totalCanonicalMigrations": 78,
+  "topology": {
+    "controlDatabases": [
+      1
+    ],
+    "dataShards": [
+      2,
+      3
+    ],
+    "retiredDatabases": [
+      4
+    ]
+  },
+  "counts": {
+    "both": 8,
+    "controlOnly": 14,
+    "dataOnly": 56,
+    "controlTrackTotal": 22,
+    "dataTrackTotal": 64
+  },
+  "migrations": [
+    {
+      "version": "20260325210100",
+      "name": "ai_saas_schema",
+      "filename": "20260325210100_ai_saas_schema.sql",
+      "scope": "BOTH",
+      "targetTracks": [
+        "control",
+        "data"
+      ],
+      "checksum": "2e0af3d74503f03bbd74f36c5598e59e176aa220eaf0332452bf34d164cd89ba"
+    },
+    {
+      "version": "20260325211000",
+      "name": "session_initialization_functions",
+      "filename": "20260325211000_session_initialization_functions.sql",
+      "scope": "BOTH",
+      "targetTracks": [
+        "control",
+        "data"
+      ],
+      "checksum": "b02f3ecda1f322c3f89aafcc423b27f9dcce9c9eb2f0c635a51ca00d4fb3ad55"
+    },
+    {
+      "version": "20260325214500",
+      "name": "user_db_map",
+      "filename": "20260325214500_user_db_map.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "901dbc45c69280578727b044c62286d7c69e8dedbfae5f960b4cf599e64c20e0"
+    },
+    {
+      "version": "20260326190000",
+      "name": "atomic_llm_request_quota",
+      "filename": "20260326190000_atomic_llm_request_quota.sql",
+      "scope": "BOTH",
+      "targetTracks": [
+        "control",
+        "data"
+      ],
+      "checksum": "ef1ea3e84ad1d594b822e5a72d9f951b51e491d1dc275b11f4378950d3e06343"
+    },
+    {
+      "version": "20260326213000",
+      "name": "fix_multi_db_session_bootstrap",
+      "filename": "20260326213000_fix_multi_db_session_bootstrap.sql",
+      "scope": "BOTH",
+      "targetTracks": [
+        "control",
+        "data"
+      ],
+      "checksum": "f3fde022e36ada684e6326f9ecf8aeeef53e069a7dfa5292a8c1d1fe59521e74"
+    },
+    {
+      "version": "20260330194000",
+      "name": "add_memory_scope_and_chat_id",
+      "filename": "20260330194000_add_memory_scope_and_chat_id.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "6cad8995058265ad58fc5bd710234b5e130f8ff5bb30068efead8cbd40e3fdf4"
+    },
+    {
+      "version": "20260406160000",
+      "name": "capacity_limits",
+      "filename": "20260406160000_capacity_limits.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "4a95e3c013f2b86ef6b697864e3fd95664d2547bba468abd4f7f9d473119657a"
+    },
+    {
+      "version": "20260407030000",
+      "name": "chat_images_table",
+      "filename": "20260407030000_chat_images_table.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "55aae38bac0af81d9482eeef07113dc98831f52b7b80c39c35512f5f2ce336d7"
+    },
+    {
+      "version": "20260412090000",
+      "name": "incremental_memory_usage_tracking",
+      "filename": "20260412090000_incremental_memory_usage_tracking.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "5c4bcd2fdb516c09727b8da35701c245c26cbf6336dc4736116add8ed6d60557"
+    },
+    {
+      "version": "20260412101000",
+      "name": "fix_memory_limit_concurrency",
+      "filename": "20260412101000_fix_memory_limit_concurrency.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "4a04024bffc8828b40a6f3750ef8b6b3a588de2686b1fec7dae3a8fdca1290cf"
+    },
+    {
+      "version": "20260412102000",
+      "name": "restrict_user_db_map_assigned_db",
+      "filename": "20260412102000_restrict_user_db_map_assigned_db.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "de62d7841f7d238cd6da5ec8c822a3e5a212d1be3e51e09a7b562aa2e5e29913"
+    },
+    {
+      "version": "20260428120000",
+      "name": "add_user_display_name",
+      "filename": "20260428120000_add_user_display_name.sql",
+      "scope": "BOTH",
+      "targetTracks": [
+        "control",
+        "data"
+      ],
+      "checksum": "7975aef6c76f6bd6d59f5b413190b32fbe964aeb6d8a11bab302b0ed94b25255"
+    },
+    {
+      "version": "20260428153000",
+      "name": "add_message_client_request_id",
+      "filename": "20260428153000_add_message_client_request_id.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "ef586c425aa80a55429314c2f3a58a4260e1a423c40a6629ccc8b555623d5545"
+    },
+    {
+      "version": "20260502113000",
+      "name": "add_image_message_metadata_columns",
+      "filename": "20260502113000_add_image_message_metadata_columns.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "1b2fa6070aac3b7fdfd125f71e9f3db7499aec871fbda209c4ed582c59e0df51"
+    },
+    {
+      "version": "20260504120000",
+      "name": "add_memory_embeddings",
+      "filename": "20260504120000_add_memory_embeddings.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "c7f25abdb092f993d9a16cd2e3b29b747646c180053698190e6e7509e8aabd4f"
+    },
+    {
+      "version": "20260506120000",
+      "name": "serialize_conversation_limit",
+      "filename": "20260506120000_serialize_conversation_limit.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "c8b7046739bcde8f81a6f05d52d3b63e211a94e5d4aff9bd7ff6fc8186edd8c3"
+    },
+    {
+      "version": "20260512120000",
+      "name": "add_generated_files",
+      "filename": "20260512120000_add_generated_files.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "8bb174c7883867bff1d412b1ef58a6490f8b0012e7bd1928d464e86184a49eed"
+    },
+    {
+      "version": "20260513120000",
+      "name": "private_generated_files",
+      "filename": "20260513120000_private_generated_files.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "66921242d9e025e091b3eafa35209cd6e58dafe6224bc0c4a2ebaba530f72f69"
+    },
+    {
+      "version": "20260517120000",
+      "name": "add_assistant_text_client_request_id_unique",
+      "filename": "20260517120000_add_assistant_text_client_request_id_unique.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "493077300a0dc99a8a3d4e576b53eb92b94c11bb8a78057852e39991bf34dfac"
+    },
+    {
+      "version": "20260519120000",
+      "name": "conversation_canonicalization",
+      "filename": "20260519120000_conversation_canonicalization.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "8d622ac5ad5a717c779f934b4a3cc1add88d76cb696824b73062ca7cea2c5239"
+    },
+    {
+      "version": "20260522120000",
+      "name": "atomic_image_generation_quota",
+      "filename": "20260522120000_atomic_image_generation_quota.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "09d6fbd62ac7cde67ab9360d6e381240da1e029d4abd526e93e5c9002aa2a01c"
+    },
+    {
+      "version": "20260522130000",
+      "name": "memory_maintenance",
+      "filename": "20260522130000_memory_maintenance.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "7ea0f58d22f83fe395e0f7269ae62871def98f8d5696606474dd117a2d205dbd"
+    },
+    {
+      "version": "20260522140000",
+      "name": "list_user_conversations",
+      "filename": "20260522140000_list_user_conversations.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "34eebbe4839a3c1aee7d9b720077d142147f2100876dd4a6d9c8c3c9183ab119"
+    },
+    {
+      "version": "20260528120000",
+      "name": "conversation_last_activity",
+      "filename": "20260528120000_conversation_last_activity.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "3e6318eb76914b590422bb82b7ac03c776cbf83479326cf39355ed43dc95d097"
+    },
+    {
+      "version": "20260604120000",
+      "name": "billing_plans_usage_and_subscriptions",
+      "filename": "20260604120000_billing_plans_usage_and_subscriptions.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "cc8b0b5e94c3c14e5e3496fa5dca45e50d1e41d469d17e39bf82b2f2b353228a"
+    },
+    {
+      "version": "20260628140000",
+      "name": "add_deep_research_reports",
+      "filename": "20260628140000_add_deep_research_reports.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "4e4c8b285e9cc0af4a25c676ee0bc29c8da5e9cdf89d27f87a7ed359e0418276"
+    },
+    {
+      "version": "20260629120000",
+      "name": "fix_deep_research_control_scope",
+      "filename": "20260629120000_fix_deep_research_control_scope.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "61fac14cb83da86019a5dc8799308ae1f22967e948884b9e86f4298915717a82"
+    },
+    {
+      "version": "20260702120000",
+      "name": "add_context_capsules",
+      "filename": "20260702120000_add_context_capsules.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "283b3e2fa31af0c91d7ace68ed4f953aa36e64b5b4ab348c8e791e75db5e1b0d"
+    },
+    {
+      "version": "20260702160000",
+      "name": "add_source_document_retrieval",
+      "filename": "20260702160000_add_source_document_retrieval.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "293bea1984b802b1790784df6579d0c363c6681828cd112aba90d87c28719bbc"
+    },
+    {
+      "version": "20260703120000",
+      "name": "add_live_usage_policy",
+      "filename": "20260703120000_add_live_usage_policy.sql",
+      "scope": "BOTH",
+      "targetTracks": [
+        "control",
+        "data"
+      ],
+      "checksum": "8f28c6ffeb46200c1c1e8d7922d27c909a7f7c65777303e753183c76fbfe5f84"
+    },
+    {
+      "version": "20260704120000",
+      "name": "harden_live_session_lifecycle",
+      "filename": "20260704120000_harden_live_session_lifecycle.sql",
+      "scope": "BOTH",
+      "targetTracks": [
+        "control",
+        "data"
+      ],
+      "checksum": "4f7fab7cfed8573aa0569b0334a05814bf3f6b47cf0ffabfcc3f1dc8e0d51af1"
+    },
+    {
+      "version": "20260709130000",
+      "name": "control_startup_verification_rpc",
+      "filename": "20260709130000_control_startup_verification_rpc.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "6411a121f541d0ed7d7582d90d474a15d51eb5dd6946aad6cfb02d575a056b2a"
+    },
+    {
+      "version": "20260709131000",
+      "name": "data_shard_startup_verification_rpc",
+      "filename": "20260709131000_data_shard_startup_verification_rpc.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "2c2da1fdaa5fd91863d87da5487db3576605d666db6f163f9a689ba3d75135b3"
+    },
+    {
+      "version": "20260710190000",
+      "name": "refund_failed_live_startups",
+      "filename": "20260710190000_refund_failed_live_startups.sql",
+      "scope": "BOTH",
+      "targetTracks": [
+        "control",
+        "data"
+      ],
+      "checksum": "d1dbbf3da4cf87bf653aedf5874be211a86cd1552df3ea1fcd673987bb059116"
+    },
+    {
+      "version": "20260715120000",
+      "name": "automatic_memory_idempotency",
+      "filename": "20260715120000_automatic_memory_idempotency.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "666ed3a4b920d7353a88d0afccad6992e9f29ad3eb58bf14726127a22e4ded29"
+    },
+    {
+      "version": "20260718120000",
+      "name": "standard_lite_token_allowances",
+      "filename": "20260718120000_standard_lite_token_allowances.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "6bd1ab5ad36694a956e20f7e6698e4d960147408bd9a815da7e11148cba3417a"
+    },
+    {
+      "version": "20260727120000",
+      "name": "unified_text_tokens_v2",
+      "filename": "20260727120000_unified_text_tokens_v2.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "04ee8838d8b123c5c19f6b1a460bc5d7512ae9e6b47f8f7468781cc379a02048"
+    },
+    {
+      "version": "20260727180000",
+      "name": "unified_text_tokens_v2_integrity",
+      "filename": "20260727180000_unified_text_tokens_v2_integrity.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "fddd3fe7ac2cf8274809970ab7f042deaef4ca2e8b9dabfc062a72604e65d81b"
+    },
+    {
+      "version": "20260727183000",
+      "name": "unified_text_tokens_v2_schema_compat",
+      "filename": "20260727183000_unified_text_tokens_v2_schema_compat.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "aee1829b841daa55830e419ae349310789cf7bfe83b92d42c77518f3217e92d3"
+    },
+    {
+      "version": "20260728100000",
+      "name": "unified_text_tokens_v2_full_rollout_gate",
+      "filename": "20260728100000_unified_text_tokens_v2_full_rollout_gate.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "f9bfa4a0e8a6d6912f16fcd7607a9a2409a49bbbd992384b02bdee7a19516961"
+    },
+    {
+      "version": "20260728180000",
+      "name": "unified_text_tokens_v2_pgcrypto_resolution",
+      "filename": "20260728180000_unified_text_tokens_v2_pgcrypto_resolution.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "73c7e8eec4e87d81ce535ece9f87a6dbab8a1f88d8b66327283570f032d4cff1"
+    },
+    {
+      "version": "20260801091500",
+      "name": "plan_tier_image_policy",
+      "filename": "20260801091500_plan_tier_image_policy.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "58e3bebd6ec41239735ec0c1992d0acbe660036765492670764ca58d6e90ecfd"
+    },
+    {
+      "version": "20260804180700",
+      "name": "add_fast_context_snapshot",
+      "filename": "20260804180700_add_fast_context_snapshot.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "a28c71d4876741db9974c004cddec8aeefc9daee520d1834a58c7305bb150646"
+    },
+    {
+      "version": "20260805043000",
+      "name": "harden_long_pdf_ingestion",
+      "filename": "20260805043000_harden_long_pdf_ingestion.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "cf62b648bceee6f7207b7b3e6b42d7a8b8934733f72aed294b22cc962beb6854"
+    },
+    {
+      "version": "20260805095900",
+      "name": "defer_phase5_document_map_backfill",
+      "filename": "20260805095900_defer_phase5_document_map_backfill.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "ff5ed127d430e00b36aa6369b60af6c910ff1731723fff8bd8650b34dac64397"
+    },
+    {
+      "version": "20260805100000",
+      "name": "strengthen_source_fts_retrieval",
+      "filename": "20260805100000_strengthen_source_fts_retrieval.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "c561452a2003533aafeb14cfc22e194930f741e7e5b0bb826c9fa46d74124ce8"
+    },
+    {
+      "version": "20260805100100",
+      "name": "harden_phase5_document_maps",
+      "filename": "20260805100100_harden_phase5_document_maps.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "86e087227f2a8be310eedefab306a7bc0a582773b7b0cc95ec6465c2e7353fd8"
+    },
+    {
+      "version": "20260805100200",
+      "name": "fix_phase5_ready_trigger",
+      "filename": "20260805100200_fix_phase5_ready_trigger.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "8612a339ce264440534b455d7ab9d66c080df89896d8e5b294f867dca6740abb"
+    },
+    {
+      "version": "20260805100250",
+      "name": "prepare_phase5_safe_backfill",
+      "filename": "20260805100250_prepare_phase5_safe_backfill.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "09ffbdaacab9813297741976cf94547010cea6fdac35b782f15655595b778e33"
+    },
+    {
+      "version": "20260805100300",
+      "name": "fix_phase5_map_ambiguity",
+      "filename": "20260805100300_fix_phase5_map_ambiguity.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "02c55fe1a1459c07e1f5d17c57cdc22aa65e9a3f68225fade15e58b300f33822"
+    },
+    {
+      "version": "20260805100400",
+      "name": "fix_phase5_search_rpc_ambiguity",
+      "filename": "20260805100400_fix_phase5_search_rpc_ambiguity.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "2b1846bee1ad18c18c96d01c30ed1e48a840aeb83f7653028e4ec3a21ba9b876"
+    },
+    {
+      "version": "20260805100500",
+      "name": "fix_phase5_ready_trigger_recursion",
+      "filename": "20260805100500_fix_phase5_ready_trigger_recursion.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "329522bab8acb77a85769775a34db7c3a4eb112122def4ab25e8e1bc41070cc6"
+    },
+    {
+      "version": "20260805100600",
+      "name": "fix_phase5_sentence_regex",
+      "filename": "20260805100600_fix_phase5_sentence_regex.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "1e69e908866917b9a1f89f5235177dd58a2ba6cc4118d89d959b33b298211aaa"
+    },
+    {
+      "version": "20260805145950",
+      "name": "prepare_memory_pgcrypto_resolution",
+      "filename": "20260805145950_prepare_memory_pgcrypto_resolution.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "5fc1085c987fe0a490bb100597a0df073fb0e3d1531ffca44b4502e3a3749130"
+    },
+    {
+      "version": "20260805150000",
+      "name": "improve_memory_hybrid_retrieval",
+      "filename": "20260805150000_improve_memory_hybrid_retrieval.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "069865b055f89ffc1cdfff1b5bdabac7f9bdfdde351317bea6f920595e3b7323"
+    },
+    {
+      "version": "20260805150025",
+      "name": "infer_memory_project_scope",
+      "filename": "20260805150025_infer_memory_project_scope.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "ad1fdd6c30196273dbcf617c2528ac2302db41d238dc90f56a1b2d971249a211"
+    },
+    {
+      "version": "20260805150050",
+      "name": "guard_direct_memory_writes",
+      "filename": "20260805150050_guard_direct_memory_writes.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "8e5cc71688981ebfc604f68ba304a619223f25a004f4ef2224ab75da4a1ff2f1"
+    },
+    {
+      "version": "20260805150100",
+      "name": "upgrade_fast_memory_snapshot",
+      "filename": "20260805150100_upgrade_fast_memory_snapshot.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "194c135a613bb9408c7cda391cee7f00cf08eed7850a3d82c9d8c2a876bf5dfe"
+    },
+    {
+      "version": "20260805215950",
+      "name": "prepare_continuity_search_vector",
+      "filename": "20260805215950_prepare_continuity_search_vector.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "f56a2a3ca8f63e134f88bce68c9ff1de4ff9465aa11b09b89773436833b7588d"
+    },
+    {
+      "version": "20260805220000",
+      "name": "add_cross_conversation_continuity",
+      "filename": "20260805220000_add_cross_conversation_continuity.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "ee8b92f6d4bad0d0b39a559bf56085c848d569f49df0ed745f21f53647d56952"
+    },
+    {
+      "version": "20260805220050",
+      "name": "maintain_continuity_search_vector",
+      "filename": "20260805220050_maintain_continuity_search_vector.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "25e09e4720094b496e3c7bc8c52e5722d6d0c8007e582a38bf136be6f5fd4ffc"
+    },
+    {
+      "version": "20260805220100",
+      "name": "upgrade_fast_cross_conversation_snapshot",
+      "filename": "20260805220100_upgrade_fast_cross_conversation_snapshot.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "5a9a73351dd83f7e8f7823fa979ef2454311478cbe1c4347937e68fc830fdcf3"
+    },
+    {
+      "version": "20260805220150",
+      "name": "preserve_fast_snapshot_contract",
+      "filename": "20260805220150_preserve_fast_snapshot_contract.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "ac799fd02817ba0d2cf7d48090a1eb1e0814f4a98605afd05cdb7c7033c0ae47"
+    },
+    {
+      "version": "20260809123000",
+      "name": "conversation_user_activity_ordering",
+      "filename": "20260809123000_conversation_user_activity_ordering.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "cfb791e2e540b44d6b3b4759efe03a0d209e1c952e25e37bef10e697a496ccbf"
+    },
+    {
+      "version": "20260809133000",
+      "name": "guest_text_trial_quota",
+      "filename": "20260809133000_guest_text_trial_quota.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "7db74a2ecfef3f2262806738c4e7725440bdc03b46b0ec181146458e89d1b60e"
+    },
+    {
+      "version": "20260816150000",
+      "name": "add_chat_generations",
+      "filename": "20260816150000_add_chat_generations.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "d78dda13aa44d337febed7aaaa3e816707bfd99d84083325fffc5d7bf89057da"
+    },
+    {
+      "version": "20260816162000",
+      "name": "add_generation_execution_snapshot",
+      "filename": "20260816162000_add_generation_execution_snapshot.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "982038315e95037b9430c78b269844d8a96b7d633c59cd01a17c37903220f5fd"
+    },
+    {
+      "version": "20260817080000",
+      "name": "add_generation_sessions",
+      "filename": "20260817080000_add_generation_sessions.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "087a54f0ed55f60b26cd8be7dafdc213aea0d8df47d65d3f8b9b31ec280725f1"
+    },
+    {
+      "version": "20260817090000",
+      "name": "add_generation_execution_leases",
+      "filename": "20260817090000_add_generation_execution_leases.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "7f066cdc126f608833545f9feb9bb731955919f152961ab8794c73822743bfef"
+    },
+    {
+      "version": "20260817092000",
+      "name": "add_generation_session_reload_grace",
+      "filename": "20260817092000_add_generation_session_reload_grace.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "28aef0e811a0ef296d4c94044577a7fe55237f86a526d74ae125541b5171851f"
+    },
+    {
+      "version": "20260817093000",
+      "name": "add_generation_session_request_claims",
+      "filename": "20260817093000_add_generation_session_request_claims.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "2b5fa8a641f1f2027519df6051670ed8639ab3384fb08150f0893cac1e734ac9"
+    },
+    {
+      "version": "20260817094000",
+      "name": "reuse_generation_session_on_reload",
+      "filename": "20260817094000_reuse_generation_session_on_reload.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "05eea7934aab73593afd1497892ed74cdb89b603d6622513d8c063ea6d203af3"
+    },
+    {
+      "version": "20260817095000",
+      "name": "fix_generation_session_reload_reuse_scope",
+      "filename": "20260817095000_fix_generation_session_reload_reuse_scope.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "f4e894ca1159f2febcb38e1d88b35f677bd5cbfb589419a65b7aa3b15b085656"
+    },
+    {
+      "version": "20260817101000",
+      "name": "add_generation_event_types_and_concurrency",
+      "filename": "20260817101000_add_generation_event_types_and_concurrency.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "cefbeccd7ba4e7943fec03c23a710488c37a14f6decedabd9a878b5ef6aa9f77"
+    },
+    {
+      "version": "20260817113000",
+      "name": "harden_generation_p0_controls",
+      "filename": "20260817113000_harden_generation_p0_controls.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "3b9b05a9b6229f3cbd2c559244bd70150d4b8be22cc4f05fa317c8c9127d8f3f"
+    },
+    {
+      "version": "20260817123000",
+      "name": "durable_generation_event_log",
+      "filename": "20260817123000_durable_generation_event_log.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "aef08aecbd4d811405c3cb8f308ddae31fa4f7fc7c44064d556d066aa23f1a53"
+    },
+    {
+      "version": "20260817140000",
+      "name": "durable_guest_generations",
+      "filename": "20260817140000_durable_guest_generations.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "38406399f3eed9a6d0d081109459e42f87cdec570355d7deba8f257a105b5a38"
+    },
+    {
+      "version": "20260922120000",
+      "name": "retire_db4_assigned_db",
+      "filename": "20260922120000_retire_db4_assigned_db.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "f825ec91fe67c0e46c6f9d32f9ba0d3b462c5ccc6277708ce59f23731ea773b2"
+    }
+  ]
+}

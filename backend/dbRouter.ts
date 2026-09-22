@@ -3,8 +3,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { bootProfiler } from "./bootProfiler";
 import { getNemotronRolloutSnapshot } from "./nemotronRolloutFlags";
 
-export type DatabaseId = 1 | 2 | 3 | 4;
-export type AssignableDatabaseId = 2 | 3 | 4;
+export type DatabaseId = 1 | 2 | 3;
+export type AssignableDatabaseId = 2 | 3;
 
 type UserDbMapRow = {
   assigned_db: number;
@@ -45,8 +45,8 @@ const MAX_USERS_PER_DATABASE = 3400;
 const DB_FULL_THRESHOLD_RATIO = 0.90;
 
 const CONTROL_DATABASE_ID: DatabaseId = 1;
-const ALL_DATABASE_IDS: readonly DatabaseId[] = [1, 2, 3, 4];
-const ASSIGNABLE_DATABASE_IDS: readonly AssignableDatabaseId[] = [2, 3, 4];
+const ALL_DATABASE_IDS: readonly DatabaseId[] = [1, 2, 3];
+export const ASSIGNABLE_DATABASE_IDS: readonly AssignableDatabaseId[] = [2, 3];
 const USER_ASSIGNMENT_THRESHOLD = Math.floor(MAX_USERS_PER_DATABASE * DB_FULL_THRESHOLD_RATIO);
 export const SHARD_CAPACITY_RETRY_AFTER_SECONDS = 60;
 
@@ -175,7 +175,6 @@ const clientByDatabaseId: Readonly<Record<DatabaseId, SupabaseClient>> = {
   1: controlDbClient,
   2: createServiceRoleClient(2),
   3: createServiceRoleClient(3),
-  4: createServiceRoleClient(4),
 };
 bootProfiler.mark("supabase.router.clients.ready");
 
@@ -187,8 +186,6 @@ function formatDatabaseBootLabel(databaseId: DatabaseId): string {
       return "data-shard-1";
     case 3:
       return "data-shard-2";
-    case 4:
-      return "data-shard-3";
   }
 }
 
@@ -264,7 +261,7 @@ async function fetchAssignedDatabase(userId: string): Promise<DatabaseId | null>
 
   if (data.assigned_db === CONTROL_DATABASE_ID) {
     throw new Error(
-      `[dbRouter] Invalid routing: user ${normalizedUserId} assigned to control DB (assigned_db=1). Only data shards (2-4) are valid. Remediate user_db_map and retry.`,
+      `[dbRouter] Invalid routing: user ${normalizedUserId} assigned to control DB (assigned_db=1). Only data shards (2-3) are valid. Remediate user_db_map and retry.`,
     );
   }
 
@@ -500,7 +497,7 @@ export async function getOrAssignUserDatabase(userId: string): Promise<SupabaseC
 async function verifyShardMigrationsLegacy(): Promise<void> {
   const dummyId = randomUUID();
   console.log(`[SentIQ Chat] Running startup migration verification checks...`);
-  const shardIds: DatabaseId[] = [2, 3, 4];
+  const shardIds = ASSIGNABLE_DATABASE_IDS;
   const verifyLiveSchema = process.env.SENTIQ_LIVE_ENABLED?.trim().toLowerCase() === "true";
   let failed = false;
 
@@ -911,7 +908,7 @@ async function verifyShardMigrationsLegacy(): Promise<void> {
 
   const healthyShards = getHealthyDataShardIds();
   if (healthyShards.length === 0) {
-    throw new Error("[SentIQ Chat] All data shards (DB2, DB3, DB4) failed migration verification. At least one operational data shard is required.");
+    throw new Error(`[SentIQ Chat] All data shards (${ASSIGNABLE_DATABASE_IDS.map((id) => `DB${id}`).join(", ")}) failed migration verification. At least one operational data shard is required.`);
   }
   if (healthyShards.length < shardIds.length) {
     console.warn(
@@ -1104,7 +1101,7 @@ function reportStartupVerifierRpcFailures(
 async function verifyShardMigrationsRpc(): Promise<void> {
   const dummyId = randomUUID();
   console.log(`[SentIQ Chat] Running startup migration verification RPC checks...`);
-  const shardIds: DatabaseId[] = [2, 3, 4];
+  const shardIds = ASSIGNABLE_DATABASE_IDS;
   const verifyLiveSchema = process.env.SENTIQ_LIVE_ENABLED?.trim().toLowerCase() === "true";
   let failed = false;
 
@@ -1190,7 +1187,7 @@ async function verifyShardMigrationsRpc(): Promise<void> {
 
   const healthyShards = getHealthyDataShardIds();
   if (healthyShards.length === 0) {
-    throw new Error("[SentIQ Chat] All data shards (DB2, DB3, DB4) failed RPC verification. At least one operational data shard is required.");
+    throw new Error(`[SentIQ Chat] All data shards (${ASSIGNABLE_DATABASE_IDS.map((id) => `DB${id}`).join(", ")}) failed RPC verification. At least one operational data shard is required.`);
   }
   if (healthyShards.length < shardIds.length) {
     console.warn(
@@ -1202,7 +1199,7 @@ async function verifyShardMigrationsRpc(): Promise<void> {
 
 export async function verifyAutomaticMemoryIdempotencyMigration(): Promise<void> {
   const expectedVersion = "20260715120000";
-  const shardIds: DatabaseId[] = [2, 3, 4];
+  const shardIds = ASSIGNABLE_DATABASE_IDS;
   await Promise.all(shardIds.map(async (id) => {
     if (isShardDegraded(id)) return;
     try {

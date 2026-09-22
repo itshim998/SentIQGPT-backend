@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import dotenv from "dotenv";
 
 dotenv.config();
-for (const id of [1, 2, 3, 4]) {
+for (const id of [1, 2, 3]) {
   process.env[`SUPABASE_URL_${id}`] ??= `https://shard-${id}-test.supabase.co`;
   process.env[`SUPABASE_SERVICE_ROLE_KEY_${id}`] ??= `test-key-${id}`;
 }
@@ -498,7 +498,6 @@ async function main() {
         [1, true],  // DB1 control healthy
         [2, true],  // DB2 healthy
         [3, false], // DB3 offline / degraded
-        [4, true],  // DB4 healthy
       ]);
 
       for (const [id, isHealthy] of shardHealthMap.entries()) {
@@ -509,15 +508,13 @@ async function main() {
 
       assert.equal(isShardDegraded(3), true);
       assert.equal(isShardDegraded(2), false);
-      assert.equal(isShardDegraded(4), false);
 
       const healthyShards = getHealthyDataShardIds();
-      assert.deepEqual(healthyShards, [2, 4], "Healthy shards must be [2, 4]");
+      assert.deepEqual(healthyShards, [2], "Healthy shards must be [2]");
 
       const counts = new Map<any, number>([
         [2, 50],
         [3, 10],
-        [4, 60],
       ]);
 
       const assigned = selectLeastLoadedDatabaseFromCounts(counts, () => 0);
@@ -548,7 +545,6 @@ async function main() {
       // Test A: All shards healthy: same anonymous ID always maps to same shard
       assert.equal(isShardDegraded(2), false);
       assert.equal(isShardDegraded(3), false);
-      assert.equal(isShardDegraded(4), false);
       assert.equal(getGuestAssignedShardId(ownerKeyShard3), 3);
       assert.equal(getGuestAssignedShardId(ownerKeyShard3), 3);
       const dbInstanceA = getGuestGenerationDatabase(ownerKeyShard3);
@@ -571,10 +567,9 @@ async function main() {
       assert.equal(thrownError.shardId, 3);
       assert.equal(thrownError.headers["Retry-After"], "30");
 
-      // Test C: Another shard is healthy (Shard 2 and Shard 4 are healthy): guest is NOT remapped to Shard 2 or 4
+      // Test C: Another shard is healthy (Shard 2 is healthy): guest is NOT remapped to Shard 2
       assert.equal(isShardDegraded(2), false);
-      assert.equal(isShardDegraded(4), false);
-      assert.equal(getGuestAssignedShardId(ownerKeyShard3), 3, "Must NOT remap to Shard 2 or 4");
+      assert.equal(getGuestAssignedShardId(ownerKeyShard3), 3, "Must NOT remap to Shard 2");
 
       // Test D: Original shard becomes healthy again: guest resolves back to the exact original shard
       markShardHealthy(3);
@@ -603,11 +598,10 @@ async function main() {
         }
       }
 
-      // Emulate 3 shards: 2, 3, 4
+      // Emulate 2 shards: 2, 3
       const shards = new Map<number, ShardEmulator>([
         [2, new ShardEmulator(2)],
         [3, new ShardEmulator(3)],
-        [4, new ShardEmulator(4)],
       ]);
 
       const genId = randomUUID();
@@ -626,13 +620,12 @@ async function main() {
 
       assert.equal(shard3.generations.size, 1);
       assert.equal(shards.get(2)!.generations.size, 0);
-      assert.equal(shards.get(4)!.generations.size, 0);
 
       // DB3 later degrades
       markShardDegraded(3, "Simulation: DB3 degraded during generation");
       assert.equal(isShardDegraded(3), true);
 
-      // Rehydration / resolution attempt during degradation must fail with 503, NEVER touch DB2 or DB4
+      // Rehydration / resolution attempt during degradation must fail with 503, NEVER touch DB2
       assert.throws(
         () => getGuestGenerationDatabase(ownerKey),
         (err: any) => {
@@ -643,11 +636,9 @@ async function main() {
         },
       );
 
-      // Verify that NO operation was silently routed to DB2 or DB4
+      // Verify that NO operation was silently routed to DB2
       assert.equal(shards.get(2)!.generations.size, 0, "DB2 must remain untouched");
-      assert.equal(shards.get(4)!.generations.size, 0, "DB4 must remain untouched");
       assert.equal(shards.get(2)!.events.size, 0, "DB2 must have 0 events");
-      assert.equal(shards.get(4)!.events.size, 0, "DB4 must have 0 events");
 
       // DB3 recovers
       markShardHealthy(3);
@@ -661,7 +652,6 @@ async function main() {
       assert.equal(restoredGen.partial_text, "Hello from DB3");
       assert.equal(restoredGen.last_event_sequence, 1);
       assert.equal(shards.get(2)!.generations.size, 0);
-      assert.equal(shards.get(4)!.generations.size, 0);
     } finally {
       resetShardHealth();
     }

@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getDataShardDatabases, isShardDegraded, ShardUnavailableError, type AssignableDatabaseId } from "../dbRouter";
+import { ASSIGNABLE_DATABASE_IDS, getDataShardDatabases, isShardDegraded, ShardUnavailableError, type AssignableDatabaseId } from "../dbRouter";
 
 const DATA_SHARDS = getDataShardDatabases();
 const GUEST_OWNER_KEY_VERSION = "sentiq-guest-generation-v1|";
@@ -14,15 +14,15 @@ export function normalizeGuestOwnerKey(value: unknown): string {
 export function getGuestAssignedShardId(ownerKey: string): AssignableDatabaseId {
   const normalized = normalizeGuestOwnerKey(ownerKey);
   const digest = createHash("sha256").update(normalized).digest();
-  const index = digest.readUInt32BE(0) % DATA_SHARDS.length;
-  return (index + 2) as AssignableDatabaseId;
+  const index = digest.readUInt32BE(0) % ASSIGNABLE_DATABASE_IDS.length;
+  return ASSIGNABLE_DATABASE_IDS[index];
 }
 
 function shardIndex(ownerKey: string): number {
   const normalized = normalizeGuestOwnerKey(ownerKey);
   const digest = createHash("sha256").update(normalized).digest();
-  const index = digest.readUInt32BE(0) % DATA_SHARDS.length;
-  const shardId = (index + 2) as AssignableDatabaseId;
+  const index = digest.readUInt32BE(0) % ASSIGNABLE_DATABASE_IDS.length;
+  const shardId = ASSIGNABLE_DATABASE_IDS[index];
   if (isShardDegraded(shardId)) {
     throw new ShardUnavailableError(shardId, `Data shard DB ${shardId} assigned to guest is currently degraded`);
   }

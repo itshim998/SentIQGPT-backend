@@ -7776,7 +7776,7 @@ app.get(
     const requestUser = getRequestUser(req);
     const userId = requestUser.sub;
     const userDb = await resolveUserDatabaseOrThrow(userId, "deep-research.status");
-    let report = await deepResearchService.getReport({ userDb, userId, reportId: req.params.reportId })
+    let report = await deepResearchService.getReport({ userDb, userId, reportId: String(req.params.reportId) })
       .catch(() => { throw new HttpError(404, "Report not found.", { code: "report_not_found" }); });
     report = await recoverInterruptedDeepResearch(userDb, userId, report);
     res.json(buildDeepResearchStatusSnapshot(report));
@@ -7790,7 +7790,7 @@ app.get(
     const requestUser = getRequestUser(req);
     const userId = requestUser.sub;
     const userDb = await resolveUserDatabaseOrThrow(userId, "deep-research.events");
-    const report = await deepResearchService.getReport({ userDb, userId, reportId: req.params.reportId })
+    const report = await deepResearchService.getReport({ userDb, userId, reportId: String(req.params.reportId) })
       .catch(() => { throw new HttpError(404, "Report not found.", { code: "report_not_found" }); });
     await openDeepResearchEventStream({ req, res, userDb, userId, report });
   }),
@@ -7803,7 +7803,7 @@ app.post(
     const requestUser = getRequestUser(req);
     const userId = requestUser.sub;
     const userDb = await resolveUserDatabaseOrThrow(userId, "deep-research.cancel");
-    let report = await deepResearchService.getReport({ userDb, userId, reportId: req.params.reportId })
+    let report = await deepResearchService.getReport({ userDb, userId, reportId: String(req.params.reportId) })
       .catch(() => { throw new HttpError(404, "Report not found.", { code: "report_not_found" }); });
     if (report.status !== "running") {
       res.json(buildDeepResearchStatusSnapshot(report));
@@ -7861,7 +7861,7 @@ app.get(
       let report = await deepResearchService.getReport({
         userDb,
         userId,
-        reportId,
+        reportId: String(reportId),
       });
       report = await recoverInterruptedDeepResearch(userDb, userId, report);
       res.json(buildDeepResearchStatusSnapshot(report));
@@ -7895,7 +7895,7 @@ app.get(
       report = await deepResearchService.getReport({
         userDb,
         userId,
-        reportId,
+        reportId: String(reportId),
       });
     } catch (err: any) {
       throw new HttpError(404, "Report not found.", { code: "report_not_found" });

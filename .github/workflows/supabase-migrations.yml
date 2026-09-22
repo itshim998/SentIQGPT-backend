@@ -1,0 +1,93 @@
+name: Supabase Multi-Track Migrations
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'supabase/**'
+      - 'scripts/generateMigrationTracks.mjs'
+  pull_request:
+    paths:
+      - 'supabase/**'
+      - 'scripts/generateMigrationTracks.mjs'
+  workflow_dispatch:
+
+jobs:
+  validate-and-test:
+    name: Validate Migration Manifest & Scope
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate and regenerate migration tracks
+        run: node scripts/generateMigrationTracks.mjs
+
+      - name: Run migration separation automated tests
+        run: npm run test:migrations
+
+  deploy-migrations:
+    name: Deploy Migration Tracks
+    needs: validate-and-test
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate migration tracks
+        run: node scripts/generateMigrationTracks.mjs
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy Control Track to DB1 (Control DB)
+        if: env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_DB_PASSWORD_1 != ''
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD_1: ${{ secrets.SUPABASE_DB_PASSWORD_1 }}
+          PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID_1 }}
+        run: |
+          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD_1"
+          supabase db push --include-all --workdir supabase/tracks/control
+
+      - name: Deploy Data Track to DB2 (Data Shard 1)
+        if: env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_DB_PASSWORD_2 != ''
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD_2: ${{ secrets.SUPABASE_DB_PASSWORD_2 }}
+          PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID_2 }}
+        run: |
+          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD_2"
+          supabase db push --include-all --workdir supabase/tracks/data
+
+      - name: Deploy Data Track to DB3 (Data Shard 2)
+        if: env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_DB_PASSWORD_3 != ''
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD_3: ${{ secrets.SUPABASE_DB_PASSWORD_3 }}
+          PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID_3 }}
+        run: |
+          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD_3"
+          supabase db push --include-all --workdir supabase/tracks/data

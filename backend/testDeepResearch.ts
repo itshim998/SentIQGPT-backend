@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import express from "express";
 
@@ -8,7 +8,7 @@ const read = (relativePath: string) => readFileSync(resolve(root, relativePath),
 
 function ensureIsolatedEnvironment(): void {
   process.env.TAVILY_KEYS = "offline-test-key";
-  for (const id of [1, 2, 3, 4]) {
+  for (const id of [1, 2, 3]) {
     process.env[`SUPABASE_URL_${id}`] = "https://offline-test.invalid";
     process.env[`SUPABASE_SERVICE_ROLE_KEY_${id}`] = "offline-test-service-role";
   }
@@ -639,7 +639,7 @@ async function testExportRenderers(): Promise<void> {
 }
 
 function testStaticContracts(): void {
-  const server = read("backend/server.ts");
+  const server = existsSync("backend/serverLegacy.ts") ? read("backend/serverLegacy.ts") : read("backend/server.ts");
   const client = read("backend/tools/deepResearch/tavilyDeepResearchClient.ts");
   const reportService = read("backend/tools/deepResearch/deepResearchService.ts");
   const scaleGuard = read("backend/tools/deepResearch/deepResearchScaleGuard.ts");

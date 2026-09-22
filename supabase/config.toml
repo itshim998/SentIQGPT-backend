@@ -1,0 +1,54 @@
+# SentIQ Chat - Supabase Configuration as Code
+# Control Database (DB1) Storage & Auth Configuration
+
+project_id = "sentiq-chat"
+
+[api]
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 15
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+# Storage Bucket: SentIQ Public Images
+# Used for uploaded chat attachments, generated visuals, and inline reference images
+[storage.buckets.sentiq-images]
+public = true
+file_size_limit = "10MiB"
+allowed_mime_types = [
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/gif"
+]
+
+# Storage Bucket: SentIQ Private Generated Files
+# Used for sandbox code artifacts, generated PDFs, DOCX, datasets, and charts
+[storage.buckets.sentiq-generated-files-private]
+public = false
+file_size_limit = "25MiB"
+allowed_mime_types = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/markdown",
+  "text/plain",
+  "text/csv",
+  "application/json",
+  "image/png",
+  "image/svg+xml"
+]
+
+[auth]
+enabled = true
+site_url = "https://sentiqchat.sentiqlabs.com"
+additional_redirect_urls = ["http://localhost:5500", "http://127.0.0.1:5500"]
+jwt_expiry = 3600
+enable_signup = true

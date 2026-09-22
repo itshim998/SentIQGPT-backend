@@ -86,7 +86,7 @@ export async function recoverStaleGuestGenerations(): Promise<void> {
   if (started) return;
   started = true;
   const nowMs = Date.now();
-  const shardDatabases = [2, 3, 4];
+  const shardDatabases = [2, 3];
   for (const databaseId of shardDatabases) {
     try {
       const { getDataShardDatabases } = await import("../dbRouter");

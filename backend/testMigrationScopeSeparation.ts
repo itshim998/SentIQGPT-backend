@@ -1,0 +1,96 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+
+const ROOT_DIR = path.resolve(__dirname, "..");
+const MIGRATIONS_DIR = path.join(ROOT_DIR, "supabase", "migrations");
+const MANIFEST_FILE = path.join(ROOT_DIR, "supabase", "migration-manifest.json");
+const CONTROL_TRACK_DIR = path.join(ROOT_DIR, "supabase", "tracks", "control", "migrations");
+const DATA_TRACK_DIR = path.join(ROOT_DIR, "supabase", "tracks", "data", "migrations");
+
+function hashFile(filePath: string): string {
+  const content = fs.readFileSync(filePath);
+  return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+test("Migration Scope Separation & Manifest Validation", async (t) => {
+  assert.ok(fs.existsSync(MANIFEST_FILE), "Manifest file must exist");
+  const manifest = JSON.parse(fs.readFileSync(MANIFEST_FILE, "utf8"));
+
+  const canonicalFiles = fs
+    .readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+
+  await t.test("Manifest accounts for all canonical migrations", () => {
+    assert.equal(manifest.totalCanonicalMigrations, canonicalFiles.length);
+    assert.equal(manifest.migrations.length, canonicalFiles.length);
+    assert.equal(canonicalFiles.length, 78, "Must have exactly 78 canonical migrations");
+
+    const manifestFiles = manifest.migrations.map((m: any) => m.filename);
+    assert.deepEqual(manifestFiles, canonicalFiles, "Manifest filenames must match filesystem exactly");
+  });
+
+  await t.test("Checksum integrity across all migrations", () => {
+    for (const item of manifest.migrations) {
+      const fullPath = path.join(MIGRATIONS_DIR, item.filename);
+      const computedHash = hashFile(fullPath);
+      assert.equal(item.checksum, computedHash, `Checksum mismatch on ${item.filename}`);
+    }
+  });
+
+  await t.test("Migration classification counts match architecture specification", () => {
+    assert.equal(manifest.counts.both, 8, "Expected exactly 8 BOTH migrations");
+    assert.equal(manifest.counts.controlOnly, 14, "Expected exactly 14 CONTROL_ONLY migrations");
+    assert.equal(manifest.counts.dataOnly, 56, "Expected exactly 56 DATA_ONLY migrations");
+    assert.equal(manifest.counts.controlTrackTotal, 22, "Expected 22 control track migrations");
+    assert.equal(manifest.counts.dataTrackTotal, 64, "Expected 64 data track migrations");
+  });
+
+  await t.test("Control track files match manifest exactly", () => {
+    const controlFiles = fs.readdirSync(CONTROL_TRACK_DIR).filter((f) => f.endsWith(".sql")).sort();
+    assert.equal(controlFiles.length, 22);
+
+    const expectedControlFiles = manifest.migrations
+      .filter((m: any) => m.targetTracks.includes("control"))
+      .map((m: any) => m.filename)
+      .sort();
+
+    assert.deepEqual(controlFiles, expectedControlFiles);
+  });
+
+  await t.test("Data track files match manifest exactly", () => {
+    const dataFiles = fs.readdirSync(DATA_TRACK_DIR).filter((f) => f.endsWith(".sql")).sort();
+    assert.equal(dataFiles.length, 64);
+
+    const expectedDataFiles = manifest.migrations
+      .filter((m: any) => m.targetTracks.includes("data"))
+      .map((m: any) => m.filename)
+      .sort();
+
+    assert.deepEqual(dataFiles, expectedDataFiles);
+  });
+
+  await t.test("Strict isolation: Control-only migrations never in data track", () => {
+    const dataFiles = new Set(fs.readdirSync(DATA_TRACK_DIR));
+    for (const item of manifest.migrations.filter((m: any) => m.scope === "CONTROL_ONLY")) {
+      assert.ok(!dataFiles.has(item.filename), `Control-only migration ${item.filename} found in data track`);
+    }
+  });
+
+  await t.test("Strict isolation: Data-only migrations never in control track", () => {
+    const controlFiles = new Set(fs.readdirSync(CONTROL_TRACK_DIR));
+    for (const item of manifest.migrations.filter((m: any) => m.scope === "DATA_ONLY")) {
+      assert.ok(!controlFiles.has(item.filename), `Data-only migration ${item.filename} found in control track`);
+    }
+  });
+
+  await t.test("DB4 retirement migration is control-only", () => {
+    const db4Retire = manifest.migrations.find((m: any) => m.version === "20260922120000");
+    assert.ok(db4Retire, "DB4 retirement migration must exist");
+    assert.equal(db4Retire.scope, "CONTROL_ONLY");
+    assert.deepEqual(db4Retire.targetTracks, ["control"]);
+  });
+});

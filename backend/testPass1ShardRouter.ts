@@ -2,7 +2,7 @@ import assert from "assert/strict";
 import type { AssignableDatabaseId } from "./dbRouter";
 
 function setSupabaseTestEnv(): void {
-  for (const id of [1, 2, 3, 4]) {
+  for (const id of [1, 2, 3]) {
     process.env[`SUPABASE_URL_${id}`] ??= "https://test-project.supabase.co";
     process.env[`SUPABASE_SERVICE_ROLE_KEY_${id}`] ??= "test-service-role-key";
   }
@@ -19,7 +19,6 @@ async function main(): Promise<void> {
   const uniqueLeastLoadedCounts = new Map<AssignableDatabaseId, number>([
     [2, 12],
     [3, 4],
-    [4, 9],
   ]);
   assert.equal(
     selectLeastLoadedDatabaseFromCounts(uniqueLeastLoadedCounts, () => 0),
@@ -29,8 +28,7 @@ async function main(): Promise<void> {
 
   const tiedCounts = new Map<AssignableDatabaseId, number>([
     [2, 5],
-    [3, 7],
-    [4, 5],
+    [3, 5],
   ]);
   let observedTieCandidateCount = 0;
   const selectedTie = selectLeastLoadedDatabaseFromCounts(tiedCounts, (candidateCount) => {
@@ -38,12 +36,11 @@ async function main(): Promise<void> {
     return 1;
   });
   assert.equal(observedTieCandidateCount, 2, "only equally least-loaded shards are tie candidates");
-  assert.equal(selectedTie, 4, "tie selector can choose among equally least-loaded shards");
+  assert.equal(selectedTie, 3, "tie selector can choose among equally least-loaded shards");
 
   const fullCounts = new Map<AssignableDatabaseId, number>([
     [2, SHARD_USER_CAPACITY.assignmentThreshold],
     [3, SHARD_USER_CAPACITY.assignmentThreshold + 1],
-    [4, SHARD_USER_CAPACITY.assignmentThreshold],
   ]);
   assert.throws(
     () => selectLeastLoadedDatabaseFromCounts(fullCounts, () => 0),
@@ -52,7 +49,7 @@ async function main(): Promise<void> {
       assert.equal(error.code, "shard_capacity_exhausted");
       assert.equal(error.retryAfterSeconds, 60);
       assert.equal(error.threshold, SHARD_USER_CAPACITY.assignmentThreshold);
-      assert.equal(error.totalUsers, SHARD_USER_CAPACITY.assignmentThreshold * 3 + 1);
+      assert.equal(error.totalUsers, SHARD_USER_CAPACITY.assignmentThreshold * 2 + 1);
       return true;
     },
   );

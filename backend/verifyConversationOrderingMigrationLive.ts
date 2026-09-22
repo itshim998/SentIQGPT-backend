@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 // before the frontend rollout is promoted. This is intentionally read-only.
 
 const EXPECTED_VERSION = "20260809123000";
-const DATA_SHARDS = [2, 3, 4] as const;
+const DATA_SHARDS = [2, 3] as const;
 
 dotenv.config();
 
