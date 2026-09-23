@@ -36,8 +36,8 @@ jobs:
       - name: Run migration separation automated tests
         run: npm run test:migrations
 
-  deploy-migrations:
-    name: Deploy Migration Tracks
+  deploy-db1:
+    name: Deploy Control Track to DB1 (Control DB)
     needs: validate-and-test
     if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
@@ -62,32 +62,118 @@ jobs:
         with:
           version: latest
 
-      - name: Deploy Control Track to DB1 (Control DB)
-        if: env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_DB_PASSWORD_1 != ''
+      - name: Deploy Control Track to DB1
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD_1: ${{ secrets.SUPABASE_DB_PASSWORD_1 }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN_1 }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD_1 }}
           PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID_1 }}
         run: |
-          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD_1"
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::error::Missing required secret SUPABASE_ACCESS_TOKEN_1 for DB1 deployment"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_DB_PASSWORD" ]; then
+            echo "::error::Missing required secret SUPABASE_DB_PASSWORD_1 for DB1 deployment"
+            exit 1
+          fi
+          if [ -z "$PROJECT_ID" ]; then
+            echo "::error::Missing required secret SUPABASE_PROJECT_ID_1 for DB1 deployment"
+            exit 1
+          fi
+          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
           supabase db push --include-all --workdir supabase/tracks/control
 
+  deploy-db2:
+    name: Deploy Data Track to DB2 (Data Shard 1)
+    needs: validate-and-test
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate migration tracks
+        run: node scripts/generateMigrationTracks.mjs
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
       - name: Deploy Data Track to DB2 (Data Shard 1)
-        if: env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_DB_PASSWORD_2 != ''
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD_2: ${{ secrets.SUPABASE_DB_PASSWORD_2 }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN_2 }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD_2 }}
           PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID_2 }}
         run: |
-          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD_2"
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::error::Missing required secret SUPABASE_ACCESS_TOKEN_2 for DB2 deployment"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_DB_PASSWORD" ]; then
+            echo "::error::Missing required secret SUPABASE_DB_PASSWORD_2 for DB2 deployment"
+            exit 1
+          fi
+          if [ -z "$PROJECT_ID" ]; then
+            echo "::error::Missing required secret SUPABASE_PROJECT_ID_2 for DB2 deployment"
+            exit 1
+          fi
+          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
           supabase db push --include-all --workdir supabase/tracks/data
 
+  deploy-db3:
+    name: Deploy Data Track to DB3 (Data Shard 2)
+    needs: validate-and-test
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate migration tracks
+        run: node scripts/generateMigrationTracks.mjs
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
       - name: Deploy Data Track to DB3 (Data Shard 2)
-        if: env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_DB_PASSWORD_3 != ''
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD_3: ${{ secrets.SUPABASE_DB_PASSWORD_3 }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN_3 }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD_3 }}
           PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID_3 }}
         run: |
-          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD_3"
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::error::Missing required secret SUPABASE_ACCESS_TOKEN_3 for DB3 deployment"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_DB_PASSWORD" ]; then
+            echo "::error::Missing required secret SUPABASE_DB_PASSWORD_3 for DB3 deployment"
+            exit 1
+          fi
+          if [ -z "$PROJECT_ID" ]; then
+            echo "::error::Missing required secret SUPABASE_PROJECT_ID_3 for DB3 deployment"
+            exit 1
+          fi
+          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
           supabase db push --include-all --workdir supabase/tracks/data
+

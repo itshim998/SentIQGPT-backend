@@ -115,5 +115,54 @@ test("Migration Scope Separation & Manifest Validation", async (t) => {
       assert.ok(!DATA_ONLY_VERSIONS.has(v), `Version ${v} is in both CONTROL_ONLY and DATA_ONLY`);
     }
   });
+
+  await t.test("CI/CD workflow decouples Supabase credentials across accounts", () => {
+    const workflowPath = path.join(ROOT_DIR, ".github", "workflows", "supabase-migrations.yml");
+    assert.ok(fs.existsSync(workflowPath), "supabase-migrations.yml workflow must exist");
+    const workflowContent = fs.readFileSync(workflowPath, "utf8");
+
+    // Must NOT use old shared SUPABASE_ACCESS_TOKEN
+    assert.ok(
+      !workflowContent.includes("secrets.SUPABASE_ACCESS_TOKEN "),
+      "Workflow must not use old shared secrets.SUPABASE_ACCESS_TOKEN",
+    );
+    assert.ok(
+      !workflowContent.includes("secrets.SUPABASE_ACCESS_TOKEN}"),
+      "Workflow must not use old shared secrets.SUPABASE_ACCESS_TOKEN",
+    );
+
+    // Must have account-specific tokens for DB1, DB2, and DB3
+    assert.ok(
+      workflowContent.includes("secrets.SUPABASE_ACCESS_TOKEN_1"),
+      "Workflow must use secrets.SUPABASE_ACCESS_TOKEN_1 for DB1",
+    );
+    assert.ok(
+      workflowContent.includes("secrets.SUPABASE_ACCESS_TOKEN_2"),
+      "Workflow must use secrets.SUPABASE_ACCESS_TOKEN_2 for DB2",
+    );
+    assert.ok(
+      workflowContent.includes("secrets.SUPABASE_ACCESS_TOKEN_3"),
+      "Workflow must use secrets.SUPABASE_ACCESS_TOKEN_3 for DB3",
+    );
+
+    // Must have separate decoupled deployment jobs
+    assert.ok(workflowContent.includes("deploy-db1:"), "Workflow must have deploy-db1 job");
+    assert.ok(workflowContent.includes("deploy-db2:"), "Workflow must have deploy-db2 job");
+    assert.ok(workflowContent.includes("deploy-db3:"), "Workflow must have deploy-db3 job");
+
+    // Track separation
+    assert.ok(
+      workflowContent.includes("--workdir supabase/tracks/control"),
+      "DB1 must target control track",
+    );
+    assert.ok(
+      workflowContent.includes("--workdir supabase/tracks/data"),
+      "DB2/DB3 must target data track",
+    );
+
+    // Must NOT contain active DB4 deployment
+    assert.ok(!workflowContent.includes("deploy-db4"), "Must not have DB4 deployment job");
+    assert.ok(!workflowContent.includes("SUPABASE_ACCESS_TOKEN_4"), "Must not have DB4 access token");
+  });
 });
 
