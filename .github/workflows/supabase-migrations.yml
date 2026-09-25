@@ -80,7 +80,9 @@ jobs:
             echo "::error::Missing required secret SUPABASE_PROJECT_ID_1 for DB1 deployment"
             exit 1
           fi
-          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD" --workdir supabase/tracks/control
+          mkdir -p supabase/tracks/control/supabase/.temp
+          [ -d supabase/.temp ] && cp -rf supabase/.temp/* supabase/tracks/control/supabase/.temp/ 2>/dev/null || true
           supabase db push --include-all --workdir supabase/tracks/control
 
   deploy-db2:
@@ -127,7 +129,9 @@ jobs:
             echo "::error::Missing required secret SUPABASE_PROJECT_ID_2 for DB2 deployment"
             exit 1
           fi
-          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD" --workdir supabase/tracks/data
+          mkdir -p supabase/tracks/data/supabase/.temp
+          [ -d supabase/.temp ] && cp -rf supabase/.temp/* supabase/tracks/data/supabase/.temp/ 2>/dev/null || true
           supabase db push --include-all --workdir supabase/tracks/data
 
   deploy-db3:
@@ -174,6 +178,8 @@ jobs:
             echo "::error::Missing required secret SUPABASE_PROJECT_ID_3 for DB3 deployment"
             exit 1
           fi
-          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD" --workdir supabase/tracks/data
+          mkdir -p supabase/tracks/data/supabase/.temp
+          [ -d supabase/.temp ] && cp -rf supabase/.temp/* supabase/tracks/data/supabase/.temp/ 2>/dev/null || true
           supabase db push --include-all --workdir supabase/tracks/data
 
