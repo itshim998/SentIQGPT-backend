@@ -3,6 +3,10 @@
 alter table public.users
 drop constraint if exists users_id_fkey;
 
+drop function if exists public.initialize_user_session(uuid);
+drop function if exists public.ensure_daily_usage_row(uuid);
+drop function if exists public.ensure_user_exists(uuid);
+
 create or replace function public.ensure_user_exists(p_user_id uuid)
 returns void
 language plpgsql
@@ -42,3 +46,19 @@ begin
     perform public.ensure_daily_usage_row(p_user_id);
 end;
 $$;
+
+revoke all on function public.ensure_user_exists(uuid) from public;
+revoke all on function public.ensure_user_exists(uuid) from anon;
+revoke all on function public.ensure_user_exists(uuid) from authenticated;
+grant execute on function public.ensure_user_exists(uuid) to service_role;
+
+revoke all on function public.ensure_daily_usage_row(uuid) from public;
+revoke all on function public.ensure_daily_usage_row(uuid) from anon;
+revoke all on function public.ensure_daily_usage_row(uuid) from authenticated;
+grant execute on function public.ensure_daily_usage_row(uuid) to service_role;
+
+revoke all on function public.initialize_user_session(uuid) from public;
+revoke all on function public.initialize_user_session(uuid) from anon;
+revoke all on function public.initialize_user_session(uuid) from authenticated;
+grant execute on function public.initialize_user_session(uuid) to service_role;
+
