@@ -167,11 +167,31 @@ export function generateManifestAndTracks(options = {}) {
   fs.mkdirSync(controlTrackDir, { recursive: true });
   fs.mkdirSync(dataTrackDir, { recursive: true });
 
+  const controlSbMigrationsDir = path.join(TRACKS_DIR, "control", "supabase", "migrations");
+  const dataSbMigrationsDir = path.join(TRACKS_DIR, "data", "supabase", "migrations");
+  fs.mkdirSync(controlSbMigrationsDir, { recursive: true });
+  fs.mkdirSync(dataSbMigrationsDir, { recursive: true });
+
+  fs.writeFileSync(
+    path.join(TRACKS_DIR, "control", "supabase", "config.toml"),
+    'project_id = "sentiq-control"\n[db]\nmajor_version = 15\n'
+  );
+  fs.writeFileSync(
+    path.join(TRACKS_DIR, "data", "supabase", "config.toml"),
+    'project_id = "sentiq-data-shard"\n[db]\nmajor_version = 15\n'
+  );
+
   for (const existing of fs.readdirSync(controlTrackDir)) {
     fs.unlinkSync(path.join(controlTrackDir, existing));
   }
   for (const existing of fs.readdirSync(dataTrackDir)) {
     fs.unlinkSync(path.join(dataTrackDir, existing));
+  }
+  for (const existing of fs.readdirSync(controlSbMigrationsDir)) {
+    fs.unlinkSync(path.join(controlSbMigrationsDir, existing));
+  }
+  for (const existing of fs.readdirSync(dataSbMigrationsDir)) {
+    fs.unlinkSync(path.join(dataSbMigrationsDir, existing));
   }
 
   for (const file of migrationFiles) {
@@ -208,10 +228,12 @@ export function generateManifestAndTracks(options = {}) {
     const content = fs.readFileSync(filePath);
     if (targetTracks.includes("control")) {
       fs.writeFileSync(path.join(controlTrackDir, file), content);
+      fs.writeFileSync(path.join(controlSbMigrationsDir, file), content);
       manifest.counts.controlTrackTotal++;
     }
     if (targetTracks.includes("data")) {
       fs.writeFileSync(path.join(dataTrackDir, file), content);
+      fs.writeFileSync(path.join(dataSbMigrationsDir, file), content);
       manifest.counts.dataTrackTotal++;
     }
   }
