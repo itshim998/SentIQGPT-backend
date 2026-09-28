@@ -39,6 +39,8 @@ export function extractSafeConversationTitle(rawValue) {
 
   if (INVALID_TITLE_SHELL_PATTERNS.some((pattern) => pattern.test(raw))) return "";
   if (/^\s*[`{\[]/.test(raw)) return "";
+  if (/[}\]]$/.test(raw)) return "";
+  if (/"[a-zA-Z0-9_-]+"\s*:/.test(raw)) return "";
 
   const normalized = raw.replace(/\s+/g, " ").trim();
   if (!normalized || normalized.length > 120) return normalized.slice(0, 120).trim();

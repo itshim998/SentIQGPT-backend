@@ -23,6 +23,7 @@
     "test:websurf-presentation": "node backend/testWebSurfPresentation.mjs",
     "test:websurf-v2-persistence": "ts-node --project tsconfig.backend.json backend/testWebSurfV2Persistence.ts",
     "test:deep-research": "ts-node --project tsconfig.backend.json backend/testDeepResearch.ts",
+    "test:title-regression": "ts-node --project tsconfig.backend.json backend/testTitleGenerationBug.ts",
     "test:improvements": "ts-node --project tsconfig.backend.json backend/testImprovementPlan.ts",
     "test:pass2-reliability": "ts-node --project tsconfig.backend.json backend/testPass2Reliability.ts",
     "test:pass3-memory": "ts-node --project tsconfig.backend.json backend/testPass3MemoryReliability.ts",

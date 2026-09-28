@@ -209,7 +209,12 @@ GENERAL_CHAT_MODEL = os.getenv("SMART_MODEL_GENERAL_CHAT", "gemini-2.5-flash-lit
 SEARCH_MODEL = os.getenv("SMART_MODEL_SEARCH", "gemini-2.5-flash-lite")
 POLLINATIONS_LITE_MODEL = os.getenv("POLLINATIONS_LITE_MODEL", "llama-scout")
 
-GPT_OSS_LOGICAL_MODELS = {"gpt-oss-120b", "openai/gpt-oss-120b"}
+GPT_OSS_LOGICAL_MODELS = {
+    "gpt-oss-120b",
+    "openai/gpt-oss-120b",
+    "gpt-oss-20b",
+    "openai/gpt-oss-20b",
+}
 PRODUCT_NAME = "SentIQ Chat"
 GPT_OSS_SYSTEM_PROMPT = (
     f"You are {PRODUCT_NAME}, a grounded AI assistant. "
@@ -2044,7 +2049,7 @@ def _is_gpt_oss_model(model: Optional[str]) -> bool:
     normalized = (model or "").strip().lower()
     if normalized.startswith("groq:"):
         normalized = normalized[len("groq:"):]
-    return normalized in GPT_OSS_LOGICAL_MODELS
+    return normalized in GPT_OSS_LOGICAL_MODELS or "gpt-oss" in normalized
 
 
 logger.info("[ModelToolCapability] %s", json.dumps({
@@ -2096,18 +2101,21 @@ def _call_groq(
     client = _get_groq_client(api_key)
     resolved_model = model or GROQ_MODEL
     if response_format_json:
-        raw_response = client.chat.completions.with_raw_response.create(
-            model=resolved_model,
-            messages=[
+        request_kwargs: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": [
                 {"role": "system", "content": GPT_OSS_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.5,
-            max_completion_tokens=max_output_tokens or 200,
-            top_p=0.9,
-            stream=False,
-            response_format={"type": "json_object"},
-        )
+            "temperature": 0.5,
+            "max_completion_tokens": max_output_tokens or 200,
+            "top_p": 0.9,
+            "stream": False,
+            "response_format": {"type": "json_object"},
+        }
+        if _is_gpt_oss_model(resolved_model):
+            request_kwargs["reasoning_effort"] = _normalize_gpt_oss_reasoning_effort(reasoning_effort or "low")
+        raw_response = client.chat.completions.with_raw_response.create(**request_kwargs)
         response = raw_response.parse()
         _capture_groq_telemetry(raw_response.headers, response)
         return response.choices[0].message.content or ""
@@ -2923,6 +2931,23 @@ def _call_pollinations_stream(
         )
 
 
+def _is_title_generation_request(
+    task: str,
+    budget_policy: Optional[dict[str, Any]] = None,
+    prompt: Optional[str] = None,
+) -> bool:
+    if isinstance(budget_policy, dict):
+        if budget_policy.get("auxiliary_kind") == "title":
+            return True
+        if budget_policy.get("budget_class") == "auxiliary" and budget_policy.get("auxiliary_budget") == "title":
+            return True
+    if task == "title":
+        return True
+    if prompt and ("TASK: Generate Chat Title" in prompt or prompt.startswith("TASK: Generate Chat Title")):
+        return True
+    return False
+
+
 # ==============================
 # Unified Router
 # ==============================
@@ -3200,12 +3225,19 @@ def call_llm_router(
                 groq_sentiq_tool_request = _sentiq_tool_request_for_route(
                     sentiq_tool_request, "groq", resolved_override or model
                 )
+                is_title_call = _is_title_generation_request(
+                    task=task,
+                    budget_policy=budget_policy,
+                    prompt=effective_prompt,
+                )
+                groq_json_mode = is_title_call and not groq_sentiq_tool_request
+                groq_reasoning_effort = "low" if is_title_call else effective_reasoning_effort
                 result = _invoke_groq(
                     effective_prompt,
                     resolved_override,
                     max_output_tokens,
-                    effective_reasoning_effort,
-                    response_format_json=False,
+                    groq_reasoning_effort,
+                    response_format_json=groq_json_mode,
                     execution_mode=execution_mode,
                     sentiq_tool_request=groq_sentiq_tool_request,
                 )

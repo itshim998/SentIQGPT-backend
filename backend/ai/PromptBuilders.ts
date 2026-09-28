@@ -1763,6 +1763,7 @@ export function buildTitleGeneratePrompt(args: {
     user_id: args.userId || args.conversationId,
     safety_mode: "low_risk_text",
     max_output_tokens: 80,
+    reasoning_effort: "low",
     budget_class: "auxiliary",
     auxiliary_budget: "title",
     skip_wrappers: true,

@@ -6,6 +6,7 @@ import "./services/storage.js";
 import "./services/auth.js";
 import "./services/api.js";
 import "./features/chat-controller.js";
+import "./features/chat/title-sanitizer.js";
 import "./features/live/live-controller.js";
 import "./panels/memory-panel.js";
 import "./panels/file-panel.js";

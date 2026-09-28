@@ -1136,24 +1136,89 @@ function titleLooksLikeFirstMessageFallback(title: unknown, firstUserMessage: un
     || normalizedTitle.startsWith(normalizedFirstUserMessage.slice(0, Math.min(normalizedFirstUserMessage.length, normalizedTitle.length)));
 }
 
+function sanitizeAndValidateTitleCandidate(candidate: string): string {
+  let cleaned = (candidate || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+
+  // Strip wrapping quotation marks if model included them
+  if (
+    (cleaned.startsWith('"') && cleaned.endsWith('"') && cleaned.length >= 2) ||
+    (cleaned.startsWith("'") && cleaned.endsWith("'") && cleaned.length >= 2)
+  ) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+
+  // Reject malformed code block / fence fragments or backticks
+  if (/`/.test(cleaned)) return "";
+
+  // Reject structural JSON shells or remnants
+  if (/^\s*[{}\[\]]/.test(cleaned) || /[{}]$/.test(cleaned)) return "";
+  if (/"[a-zA-Z0-9_-]+"\s*:/.test(cleaned)) return "";
+
+  // Reject provider error payloads or system keywords
+  const lower = cleaned.toLowerCase();
+  if (
+    lower.startsWith("error:") ||
+    lower === "error" ||
+    lower === "null" ||
+    lower === "undefined" ||
+    lower === "[object object]" ||
+    lower.includes("rate limit") ||
+    lower.includes("failed to validate json") ||
+    lower.startsWith("status:")
+  ) {
+    return "";
+  }
+
+  // Reject if too short or lacking alphanumeric characters
+  if (cleaned.length < 2 || !/[a-zA-Z0-9]/.test(cleaned)) {
+    return "";
+  }
+
+  // Reject if oversized (exceeds TITLE_MAX_CHARS of 120)
+  if (cleaned.length > TITLE_MAX_CHARS) {
+    return "";
+  }
+
+  return cleaned;
+}
+
 function extractTitleFromRaw(raw: string): string {
   const trimmed = (raw || "").trim();
   if (!trimmed) return "";
+
+  let candidate = "";
+
+  // 1. Try strictParseJsonObject (tolerant to markdown fences around complete JSON)
   try {
     const parsed = strictParseJsonObject(trimmed);
-    if (typeof parsed.title === "string") {
-      return normalizeTitleCandidate(parsed.title);
+    if (parsed && typeof parsed.title === "string") {
+      candidate = parsed.title;
     }
   } catch {
-    // Fallback to regex or plain text.
+    // Tolerant regex fallback below
   }
 
-  const match = trimmed.match(/"title"\s*:\s*"([^\"]+)"/i);
-  if (match && match[1]) {
-    return normalizeTitleCandidate(match[1]);
+  // 2. If JSON parse did not yield a title string, try regex for "title": "..."
+  if (!candidate) {
+    const match = trimmed.match(/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+    if (match && match[1]) {
+      try {
+        candidate = JSON.parse(`"${match[1]}"`);
+      } catch {
+        candidate = match[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+      }
+    }
   }
 
-  return normalizeTitleCandidate(trimmed);
+  // 3. FAIL CLOSED: if no "title" property was found in JSON or regex,
+  // NEVER fall back to returning trimmed raw model output.
+  if (!candidate) {
+    return "";
+  }
+
+  // 4. Validate and normalize the candidate
+  return sanitizeAndValidateTitleCandidate(candidate);
 }
 
 type TitleGenerationResult = {
@@ -1192,8 +1257,10 @@ async function generateTitleWithFallback(options: {
     call.model_override = options.modelOverride;
   }
 
+  const startedAt = Date.now();
   logDbEvent(`${options.scope}.title-generate.start`, options.userId, {
     conversationId: options.conversationId,
+    model: call.model_override || call.prefer || "groq",
   });
 
   try {
@@ -1201,11 +1268,15 @@ async function generateTitleWithFallback(options: {
     const candidate = extractTitleFromRaw(result.text || "");
     const title = candidate || fallbackTitle;
     const source = candidate ? "llm" : "fallback";
+    const durationMs = Date.now() - startedAt;
     logDbEvent(`${options.scope}.title-generate.ok`, options.userId, {
       conversationId: options.conversationId,
       source,
+      extracted: candidate ? "valid" : "none",
+      candidate_title: candidate || undefined,
       model_used: result.model_used || undefined,
       fallback: result.fallback ? "true" : "false",
+      duration_ms: durationMs,
     });
     return {
       title,
@@ -1215,11 +1286,12 @@ async function generateTitleWithFallback(options: {
       error: result.error ?? null,
     };
   } catch (error) {
+    const durationMs = Date.now() - startedAt;
     logDbFailure(
       `${options.scope}.title-generate`,
       options.userId,
       error instanceof Error ? error : new Error(String(error)),
-      { conversationId: options.conversationId },
+      { conversationId: options.conversationId, duration_ms: durationMs },
     );
     return {
       title: fallbackTitle,
@@ -1269,6 +1341,14 @@ async function persistConversationTitleIfEligible(options: {
 }): Promise<boolean> {
   const normalizedTitle = normalizeTitleCandidate(options.title);
   if (!normalizedTitle) return false;
+
+  if (options.titleSource === "llm" && sanitizeAndValidateTitleCandidate(normalizedTitle) !== normalizedTitle) {
+    logDbEvent(`${options.scope}.title-persist.reject-malformed`, options.userId, {
+      conversationId: options.conversationId,
+      raw_title: normalizedTitle.slice(0, 50),
+    });
+    return false;
+  }
 
   const currentTitle = typeof options.currentTitle === "string"
     ? options.currentTitle
@@ -8153,3 +8233,11 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (reason) => {
   shutdownProcess("FATAL unhandled rejection", 1, reason);
 });
+
+export {
+  extractTitleFromRaw,
+  sanitizeAndValidateTitleCandidate,
+  normalizeTitleCandidate,
+  isGenericConversationTitle,
+  titleLooksLikeFirstMessageFallback,
+};
