@@ -35,24 +35,43 @@ export async function appendChatGenerationEventFenced(
     errorCode?: string | null;
   },
 ) {
-  try {
-    const result = await withDbTimeout(userDb.rpc("append_chat_generation_event_fenced", {
-      p_user_id: args.userId,
-      p_generation_id: args.generationId,
-      p_lease_id: args.leaseId,
-      p_sequence: Math.max(1, Math.floor(Number(args.event.sequence))),
-      p_event_type: String(args.event.type),
-      p_event_payload: args.event,
-      p_partial_text: args.partialText,
-      p_tokens_generated: Math.max(0, Math.floor(args.tokensGenerated)),
-      p_status: args.status,
-      p_error_code: args.errorCode ?? null,
-    }), DB_TIMEOUT_MS, "append_chat_generation_event_fenced");
-    const row = rowsFromResult(result)[0] ?? null;
-    return { data: row, error: result?.error ?? null };
-  } catch (error) {
-    return { data: null, error };
+  const maxAttempts = 2;
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await withDbTimeout(userDb.rpc("append_chat_generation_event_fenced", {
+        p_user_id: args.userId,
+        p_generation_id: args.generationId,
+        p_lease_id: args.leaseId,
+        p_sequence: Math.max(1, Math.floor(Number(args.event.sequence))),
+        p_event_type: String(args.event.type),
+        p_event_payload: args.event,
+        p_partial_text: args.partialText,
+        p_tokens_generated: Math.max(0, Math.floor(args.tokensGenerated)),
+        p_status: args.status,
+        p_error_code: args.errorCode ?? null,
+      }), DB_TIMEOUT_MS, "append_chat_generation_event_fenced");
+      const row = rowsFromResult(result)[0] ?? null;
+      if (result?.error) {
+        lastError = result.error;
+        if (result.error?.code === "40001") {
+          return { data: null, error: result.error };
+        }
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          continue;
+        }
+      }
+      return { data: row, error: result?.error ?? null };
+    } catch (error: any) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        continue;
+      }
+    }
   }
+  return { data: null, error: lastError };
 }
 
 export async function listChatGenerationEvents(

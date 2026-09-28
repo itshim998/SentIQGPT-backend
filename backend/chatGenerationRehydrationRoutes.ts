@@ -15,6 +15,10 @@ export async function handleConversationGenerations(req: Request, res: Response)
     if (!conversationId) {
       return res.status(400).json({ error: "conversationId is required", code: "conversation_id_required" });
     }
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!UUID_REGEX.test(conversationId)) {
+      return res.json({ conversation_id: conversationId, generations: [] });
+    }
     const userDb = await getOrAssignUserDatabase(userId);
     if (!userDb) {
       return res.status(503).json({ error: "User database unavailable", code: "user_database_unavailable" });
@@ -29,7 +33,8 @@ export async function handleConversationGenerations(req: Request, res: Response)
     if (result.error) throw result.error;
     return res.json({ conversation_id: conversationId, generations: Array.isArray(result.data) ? result.data : [] });
   } catch (error) {
-    console.warn(`[GenerationRehydration] Failed conversation generation lookup: ${error instanceof Error ? error.message : String(error)}`);
+    const errMessage = (error as any)?.message || (error as any)?.code || (error instanceof Error ? error.message : JSON.stringify(error));
+    console.warn(`[GenerationRehydration] Failed conversation generation lookup conversation=${req.params.conversationId}: ${errMessage}`);
     return res.status(500).json({ error: "Unable to load generation state.", code: "generation_rehydration_failed" });
   }
 }

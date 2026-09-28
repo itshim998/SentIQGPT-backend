@@ -32,7 +32,31 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
   }
   async function openSession() { if (closed) return null; const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions`, { method: "POST", headers: await headers(), body: "{}", cache: "no-store" }); if (!response.ok) throw new Error(`Generation session open failed: ${response.status}`); const data = await response.json().catch(() => ({})); sessionId = typeof data.generation_session_id === "string" && data.generation_session_id !== "undefined" ? data.generation_session_id : (data.session?.id || null); startHeartbeat(); return sessionId; }
   async function ensure() { if (sessionId && sessionId !== "undefined" && !closed) return sessionId; if (!openPromise) openPromise = openSession().finally(() => { openPromise = null; }); return openPromise; }
-  async function claim(clientRequestId) { if (!clientRequestId) return true; const id = await ensure(); if (!id || id === "undefined") return true; const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(id)}/claim-request`, { method: "POST", headers: await headers(), body: JSON.stringify({ client_request_id: clientRequestId }), keepalive: true, cache: "no-store" }); return response.ok; }
+  async function claim(clientRequestId) {
+    if (!clientRequestId) return true;
+    let id = await ensure();
+    if (!id || id === "undefined") return true;
+    let response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(id)}/claim-request`, {
+      method: "POST",
+      headers: await headers(),
+      body: JSON.stringify({ client_request_id: clientRequestId }),
+      keepalive: true,
+      cache: "no-store",
+    });
+    if (!response.ok && (response.status === 409 || response.status === 404 || response.status === 410)) {
+      sessionId = null;
+      id = await openSession();
+      if (!id || id === "undefined") return true;
+      response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(id)}/claim-request`, {
+        method: "POST",
+        headers: await headers(),
+        body: JSON.stringify({ client_request_id: clientRequestId }),
+        keepalive: true,
+        cache: "no-store",
+      });
+    }
+    return response.ok;
+  }
   async function heartbeat() { if (!sessionId || sessionId === "undefined" || closed) return; try { const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(sessionId)}/heartbeat`, { method: "POST", headers: await headers(), body: "{}", keepalive: true, cache: "no-store" }); if (!response.ok) { sessionId = null; await ensure(); } } catch {} }
   async function close() { if (!sessionId || sessionId === "undefined" || closed) return; closed = true; if (heartbeatTimer) window.clearInterval(heartbeatTimer); heartbeatTimer = null; const id = sessionId; sessionId = null; try { await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(id)}/close`, { method: "POST", headers: await headers(), body: "{}", keepalive: true, cache: "no-store" }); } catch {} }
   function reopenAfterRestore() { if (!closed) return; closed = false; sessionId = null; void ensure(); }

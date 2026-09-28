@@ -1,8 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
-import { jwtVerify } from "jose";
+import { jwtVerify, createRemoteJWKSet, decodeProtectedHeader } from "jose";
 
 const GUEST_USER_ID = "guest";
-const DEFAULT_JWT_TIMEOUT_MS = 1500;
+const DEFAULT_JWT_TIMEOUT_MS = 4000;
 const JWT_TIMEOUT_MS = (() => {
   const raw = process.env.JWT_TIMEOUT_MS?.trim();
   if (!raw) {
@@ -152,6 +152,30 @@ function getLocalJwtSecret(): Uint8Array | null {
   return new TextEncoder().encode(jwtSecret);
 }
 
+let cachedRemoteJWKS: ReturnType<typeof createRemoteJWKSet> | null = null;
+let cachedRemoteJWKSUrl: string | null = null;
+
+function getRemoteJWKS(): ReturnType<typeof createRemoteJWKSet> | null {
+  const supabaseUrl = process.env.SUPABASE_URL_1?.trim();
+  if (!supabaseUrl) {
+    return null;
+  }
+  const jwksUrl = `${supabaseUrl.replace(/\/$/, "")}/auth/v1/.well-known/jwks.json`;
+  if (cachedRemoteJWKS && cachedRemoteJWKSUrl === jwksUrl) {
+    return cachedRemoteJWKS;
+  }
+  try {
+    cachedRemoteJWKS = createRemoteJWKSet(new URL(jwksUrl), {
+      cacheMaxAge: 10 * 60 * 1000,
+      cooldownDuration: 30 * 1000,
+    });
+    cachedRemoteJWKSUrl = jwksUrl;
+    return cachedRemoteJWKS;
+  } catch {
+    return null;
+  }
+}
+
 function classifyJwtFailure(error: unknown): AuthError {
   if (error instanceof AuthError) {
     return error;
@@ -169,17 +193,36 @@ function classifyJwtFailure(error: unknown): AuthError {
 }
 
 async function verifyLocally(token: string): Promise<VerifiedRequestUser> {
-  const secret = getLocalJwtSecret();
-  if (!secret) {
-    throw new AuthError("Invalid token.", "invalid_token");
+  let header: { alg?: string; kid?: string } | null = null;
+  try {
+    header = decodeProtectedHeader(token);
+  } catch (error) {
+    throw classifyJwtFailure(error);
   }
 
-  const { payload } = await jwtVerify(token, secret);
-  const sub = typeof payload.sub === "string" ? payload.sub.trim() : "";
+  let verifiedPayload: any = null;
+
+  if (header?.alg === "HS256") {
+    const secret = getLocalJwtSecret();
+    if (!secret) {
+      throw new AuthError("Invalid token.", "invalid_token");
+    }
+    const { payload } = await jwtVerify(token, secret);
+    verifiedPayload = payload;
+  } else {
+    const jwks = getRemoteJWKS();
+    if (!jwks) {
+      throw new AuthError("Invalid token.", "invalid_token");
+    }
+    const { payload } = await jwtVerify(token, jwks);
+    verifiedPayload = payload;
+  }
+
+  const sub = typeof verifiedPayload.sub === "string" ? verifiedPayload.sub.trim() : "";
   if (!sub) {
     throw new AuthError("Invalid token.", "invalid_token");
   }
-  const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : null;
+  const email = typeof verifiedPayload.email === "string" ? verifiedPayload.email.trim().toLowerCase() : null;
 
   return {
     sub,

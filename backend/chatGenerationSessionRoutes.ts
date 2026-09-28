@@ -60,7 +60,18 @@ export function installSessionRoutes(app: any) {
       const result = await claimChatGenerationRequest(userDb, sessionId, String(userId), clientRequestId);
       if (result.error || !result.data) throw result.error || new Error("Generation request claim failed");
       return res.json({ generation_session_id: sessionId, client_request_id: clientRequestId, claimed: true });
-    } catch {
+    } catch (err: any) {
+      const errorMessage = err?.message || err?.code || String(err);
+      console.warn("[generation_sessions] claim-request error:", {
+        sessionId: req.params.sessionId,
+        error: errorMessage,
+      });
+      const isDbError = err?.code === "db_timeout" || err?.code === "PGRST003" || err?.code === "57P01" ||
+        String(errorMessage).includes("timed out") ||
+        String(errorMessage).includes("connection");
+      if (isDbError) {
+        return res.status(503).json({ error: "Database temporarily unavailable", code: "database_unavailable" });
+      }
       return res.status(409).json({ error: "Generation session is no longer active", code: "generation_session_inactive" });
     }
   });
@@ -78,7 +89,11 @@ export function installSessionRoutes(app: any) {
       const result = await heartbeatChatGenerationSession(userDb, sessionId, userId, anon);
       if (result.error || !result.data) throw result.error || new Error("Generation session heartbeat failed");
       return res.json({ generation_session_id: result.data.id, session: result.data });
-    } catch {
+    } catch (err: any) {
+      console.warn("[generation_sessions] heartbeat error:", {
+        sessionId: req.params.sessionId,
+        error: err?.message || err?.code || String(err),
+      });
       return res.status(409).json({ error: "Generation session is no longer active", code: "generation_session_inactive" });
     }
   });
@@ -96,7 +111,11 @@ export function installSessionRoutes(app: any) {
       const result = await closeChatGenerationSession(userDb, sessionId, userId, anon);
       if (result.error || !result.data) throw result.error || new Error("Generation session close failed");
       return res.json({ generation_session_id: result.data.id, session: result.data, close_pending: true });
-    } catch {
+    } catch (err: any) {
+      console.warn("[generation_sessions] close error:", {
+        sessionId: req.params.sessionId,
+        error: err?.message || err?.code || String(err),
+      });
       return res.status(409).json({ error: "Generation session is no longer active", code: "generation_session_inactive" });
     }
   });

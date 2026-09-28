@@ -147,11 +147,13 @@ class ChatGenerationTaskCoordinator {
     const eventState = { partialText: task.partialText, tokensGenerated: task.tokensGenerated, status: task.status, errorCode: task.lastErrorCode };
     await this.notify(task, event);
     if (task.userDb && task.executionLeaseId) {
-      try {
-        await this.persistEvent(task, event, eventState);
-      } catch (err) {
-        console.warn(`[GenerationEvents] persistEvent error generation=${generationId}:`, err instanceof Error ? err.message : String(err));
-      }
+      await this.enqueue(task, async () => {
+        try {
+          await this.persistEvent(task, event, eventState);
+        } catch (err) {
+          console.warn(`[GenerationEvents] persistEvent error generation=${generationId} seq=${event.sequence}:`, err instanceof Error ? err.message : String(err));
+        }
+      });
     }
     return event;
   }
@@ -186,7 +188,9 @@ class ChatGenerationTaskCoordinator {
     task.status = "completed"; const event = this.appendEvent(task, { type: "generation_completed", status: "completed", partial_text: task.partialText }); const eventState = { partialText: task.partialText, tokensGenerated: task.tokensGenerated, status: "completed", errorCode: task.lastErrorCode }; task.terminal = true;
     await this.notify(task, event);
     if (task.userDb && task.executionLeaseId) {
-      try { await this.persistEvent(task, event, eventState); } catch (error) { console.warn(`[GenerationEvents] complete persistEvent failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`); }
+      await this.enqueue(task, async () => {
+        try { await this.persistEvent(task, event, eventState); } catch (error) { console.warn(`[GenerationEvents] complete persistEvent failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`); }
+      });
     }
     this.stopPolling(task); task.subscribers.clear(); this.scheduleCleanup(task);
   }
@@ -196,7 +200,9 @@ class ChatGenerationTaskCoordinator {
     task.status = "failed"; task.lastErrorCode = errorCode || "generation_failed"; const event = this.appendEvent(task, { type: "generation_failed", status: "failed", partial_text: task.partialText, error_code: task.lastErrorCode }); const eventState = { partialText: task.partialText, tokensGenerated: task.tokensGenerated, status: "failed", errorCode: task.lastErrorCode }; task.terminal = true;
     await this.notify(task, event);
     if (task.userDb && task.executionLeaseId) {
-      try { await this.persistEvent(task, event, eventState); } catch (error) { console.warn(`[GenerationEvents] failed persistEvent failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`); }
+      await this.enqueue(task, async () => {
+        try { await this.persistEvent(task, event, eventState); } catch (error) { console.warn(`[GenerationEvents] failed persistEvent failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`); }
+      });
     }
     this.stopPolling(task); task.subscribers.clear(); this.scheduleCleanup(task);
   }
@@ -206,7 +212,9 @@ class ChatGenerationTaskCoordinator {
     task.status = "cancelled"; task.explicitCancelRequested = true; const event = this.appendEvent(task, { type: "generation_cancelled", status: "cancelled", partial_text: task.partialText }); const eventState = { partialText: task.partialText, tokensGenerated: task.tokensGenerated, status: "cancelled", errorCode: task.lastErrorCode }; task.terminal = true;
     await this.notify(task, event);
     if (task.userDb && task.executionLeaseId) {
-      try { await this.persistEvent(task, event, eventState); } catch (error) { console.warn(`[GenerationEvents] cancelled persistEvent failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`); }
+      await this.enqueue(task, async () => {
+        try { await this.persistEvent(task, event, eventState); } catch (error) { console.warn(`[GenerationEvents] cancelled persistEvent failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`); }
+      });
     } else if (task.userDb) {
       await cancelChatGeneration(task.userDb, task.userId, task.generationId).catch(() => undefined);
     }

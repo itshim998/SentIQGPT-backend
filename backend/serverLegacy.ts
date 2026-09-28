@@ -7033,16 +7033,20 @@ app.post(
     });
 
     if (!isGuest && userDb && titleConversationId) {
-      await persistConversationTitleIfEligible({
-        userDb,
-        userId,
-        conversationId: titleConversationId,
-        title: generation.title,
-        scope: "chat.title",
-        allowFallbackReplacement: true,
-        replacementBasisMessage: userMessage,
-        titleSource: generation.source,
-      });
+      try {
+        await persistConversationTitleIfEligible({
+          userDb,
+          userId,
+          conversationId: titleConversationId,
+          title: generation.title,
+          scope: "chat.title",
+          allowFallbackReplacement: true,
+          replacementBasisMessage: userMessage,
+          titleSource: generation.source,
+        });
+      } catch (titlePersistErr) {
+        console.warn(`[chat.title] Failed to persist title for conversation=${titleConversationId}:`, titlePersistErr instanceof Error ? titlePersistErr.message : String(titlePersistErr));
+      }
     }
 
     res.json({
