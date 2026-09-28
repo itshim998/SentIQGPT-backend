@@ -147,7 +147,7 @@ class ChatGenerationTaskCoordinator {
     const eventState = { partialText: task.partialText, tokensGenerated: task.tokensGenerated, status: task.status, errorCode: task.lastErrorCode };
     await this.notify(task, event);
     if (task.userDb && task.executionLeaseId) {
-      await this.enqueue(task, async () => {
+      void this.enqueue(task, async () => {
         try {
           await this.persistEvent(task, event, eventState);
         } catch (err) {

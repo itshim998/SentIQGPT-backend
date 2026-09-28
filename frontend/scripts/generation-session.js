@@ -81,7 +81,18 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       return true;
     }
   }
-  async function heartbeat() { if (!sessionId || sessionId === "undefined" || closed) return; try { const response = await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(sessionId)}/heartbeat`, { method: "POST", headers: await headers(), body: "{}", keepalive: true, cache: "no-store" }); if (!response.ok) { sessionId = null; await ensure(); } } catch {} }
+  async function heartbeat() {
+    if (!sessionId || sessionId === "undefined" || closed) return;
+    try {
+      await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(sessionId)}/heartbeat`, {
+        method: "POST",
+        headers: await headers(),
+        body: "{}",
+        keepalive: true,
+        cache: "no-store"
+      });
+    } catch {}
+  }
   async function close() { if (!sessionId || sessionId === "undefined" || closed) return; closed = true; if (heartbeatTimer) window.clearInterval(heartbeatTimer); heartbeatTimer = null; const id = sessionId; sessionId = null; try { await fetch(`${SENTIQ_API_BASE}/api/chat/generation-sessions/${encodeURIComponent(id)}/close`, { method: "POST", headers: await headers(), body: "{}", keepalive: true, cache: "no-store" }); } catch {} }
   function reopenAfterRestore() { if (!closed) return; closed = false; sessionId = null; void ensure(); }
 

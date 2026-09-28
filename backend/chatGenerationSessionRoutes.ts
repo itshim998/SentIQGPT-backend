@@ -85,11 +85,11 @@ export function installSessionRoutes(app: any) {
       if (result.error || !result.data) throw result.error || new Error("Generation session heartbeat failed");
       return res.json({ generation_session_id: result.data.id, session: result.data });
     } catch (err: any) {
-      console.warn("[generation_sessions] heartbeat error:", {
+      console.warn("[generation_sessions] heartbeat error (graceful fallback):", {
         sessionId: req.params.sessionId,
         error: err?.message || err?.code || String(err),
       });
-      return res.status(409).json({ error: "Generation session is no longer active", code: "generation_session_inactive" });
+      return res.status(200).json({ generation_session_id: req.params.sessionId, status: "open", client_only: true, degraded: true });
     }
   });
 
@@ -107,11 +107,11 @@ export function installSessionRoutes(app: any) {
       if (result.error || !result.data) throw result.error || new Error("Generation session close failed");
       return res.json({ generation_session_id: result.data.id, session: result.data, close_pending: true });
     } catch (err: any) {
-      console.warn("[generation_sessions] close error:", {
+      console.warn("[generation_sessions] close error (graceful fallback):", {
         sessionId: req.params.sessionId,
         error: err?.message || err?.code || String(err),
       });
-      return res.status(409).json({ error: "Generation session is no longer active", code: "generation_session_inactive" });
+      return res.status(200).json({ generation_session_id: req.params.sessionId, status: "closed", client_only: true, degraded: true });
     }
   });
 }
