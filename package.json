@@ -83,7 +83,8 @@
     "test:unified-text-routing": "ts-node --project tsconfig.backend.json backend/billing/testUnifiedTextRoutePolicy.ts",
     "billing:verify-razorpay-config": "ts-node --project tsconfig.backend.json backend/billing/verifyRazorpayConfig.ts",
     "test:generation-distributed": "ts-node --project tsconfig.backend.json backend/testGenerationDistributedIntegration.ts",
-    "test:production-closure": "ts-node --project tsconfig.backend.json backend/testProductionRuntimeClosure.ts"
+    "test:production-closure": "ts-node --project tsconfig.backend.json backend/testProductionRuntimeClosure.ts",
+    "test:sse-http2-regression": "ts-node --project tsconfig.backend.json backend/testHttp2SseHeadersRegression.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0",

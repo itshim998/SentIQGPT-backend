@@ -3452,7 +3452,6 @@ app.post(
       if (sseStarted || res.headersSent) return;
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders();
       sseStarted = true;
@@ -3941,7 +3940,6 @@ app.post(
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders();
 
@@ -4328,7 +4326,6 @@ app.post(
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders();
       sseStarted = true;
@@ -5079,7 +5076,6 @@ app.post(
       console.log(`[Stream] buffered reasoning query detected - streaming SSE response`);
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders();
 
@@ -5489,7 +5485,6 @@ app.post(
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
 
@@ -5928,7 +5923,6 @@ app.get(
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
 
@@ -7668,7 +7662,6 @@ async function openDeepResearchEventStream(args: {
   args.res.status(200);
   args.res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   args.res.setHeader("Cache-Control", "no-cache, no-transform");
-  args.res.setHeader("Connection", "keep-alive");
   args.res.setHeader("X-Accel-Buffering", "no");
   args.res.flushHeaders();
   const writer = createSseWriter(args.res, { maxBufferedBytes: 512 * 1024 });

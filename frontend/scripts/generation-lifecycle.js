@@ -519,6 +519,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         const error = new Error(body?.error || `Generation subscription failed: HTTP ${response.status}`);
         error.status = response.status;
         error.code = body?.code || "generation_subscription_failed";
+        console.warn(`[GenerationLifecycle] Subscription HTTP error generation=${entry.generationId} endpoint=/api/chat/generations/${entry.generationId}/events status=HTTP ${response.status} code=${error.code}`);
         throw error;
       }
       if (!response.body?.getReader) throw new Error("Generation event stream is unavailable.");
@@ -592,6 +593,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         }
         if (signal?.aborted) return { detached: true };
         entry.subscription.reconnectAttempts += 1;
+        console.warn(`[GenerationLifecycle] Stream closed before terminal state; reconnecting generation=${entry.generationId} endpoint=/api/chat/generations/${entry.generationId}/events attempt=${entry.subscription.reconnectAttempts}`);
         if (entry.subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
           throw new Error("Generation event stream disconnected repeatedly.");
         }
@@ -605,6 +607,8 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           break;
         }
         entry.subscription.reconnectAttempts += 1;
+        const statusOrErr = error?.status ? `HTTP ${error.status}` : (error?.message || "stream_error");
+        console.warn(`[GenerationLifecycle] Subscription error generation=${entry.generationId} endpoint=/api/chat/generations/${entry.generationId}/events status=${statusOrErr} attempt=${entry.subscription.reconnectAttempts}`);
         if (entry.subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) throw error;
         await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, entry.subscription.reconnectAttempts - 1)), signal);
       }

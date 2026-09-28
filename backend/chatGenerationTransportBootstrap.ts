@@ -113,8 +113,8 @@ async function startGeneration(_legacyFinalHandler: GenerationExecutorHandler, c
   if (task.runPromise) return task.runPromise; return runGeneration(context.generationId);
 }
 function formatGenerationEvent(event: Record<string, unknown>): string { return `data: ${JSON.stringify(event)}\n\n`; }
-function openGenerationSubscription(response: Response, generationId: string, context: any, afterSequence = 0) {
-  response.status(200); response.setHeader("Content-Type", "text/event-stream; charset=utf-8"); response.setHeader("Cache-Control", "no-cache, no-transform"); response.setHeader("Connection", "keep-alive"); response.setHeader("X-Accel-Buffering", "no"); response.flushHeaders?.();
+export function openGenerationSubscription(response: Response, generationId: string, context: any, afterSequence = 0) {
+  response.status(200); response.setHeader("Content-Type", "text/event-stream; charset=utf-8"); response.setHeader("Cache-Control", "no-cache, no-transform"); response.setHeader("X-Accel-Buffering", "no"); response.flushHeaders?.();
   const emit = (event: Record<string, unknown>) => { if (!(response as any).writableEnded) { try { response.write(formatGenerationEvent(event)); } catch {} } };
   const emitDoneAndClose = () => { if (!(response as any).writableEnded) { try { response.write("data: [DONE]\n\n"); response.end(); } catch {} } };
   let closed = false; let unsubscribe: (() => void) | null = null;
