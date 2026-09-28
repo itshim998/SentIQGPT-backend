@@ -2614,7 +2614,11 @@ app.post(
 
     const firstUserMessage = messages.find((message) => message.role === "user")?.content || "";
     const assistantReply = [...messages].reverse().find((message) => message.role === "assistant")?.content || "";
-    if (createdConversation && firstUserMessage && assistantReply) {
+    if (
+      (createdConversation || isGenericConversationTitle(requestedTitle) || titleLooksLikeFirstMessageFallback(requestedTitle, firstUserMessage)) &&
+      firstUserMessage &&
+      assistantReply
+    ) {
       scheduleAutoTitleConversation({
         userDb,
         userId,
@@ -3256,7 +3260,7 @@ app.post(
         userDb &&
         activeConversationId &&
         userMessagePersisted &&
-        (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat")
+        (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat" || titleLooksLikeFirstMessageFallback(activeConversationTitle, parsed.data.message))
       ) {
         scheduleAutoTitleConversation({
           userDb,
@@ -3455,7 +3459,7 @@ app.post(
       userDb &&
       activeConversationId &&
       userMessagePersisted &&
-      (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat")
+      (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat" || titleLooksLikeFirstMessageFallback(activeConversationTitle, parsed.data.message))
     ) {
       scheduleAutoTitleConversation({
         userDb,
@@ -4577,7 +4581,10 @@ app.post(
           bootstrap.userDb &&
           bootstrap.activeConversationId &&
           bootstrap.userMessagePersisted &&
-          (bootstrap.createdConversation || !bootstrap.activeConversationTitle || bootstrap.activeConversationTitle === "New Chat")
+          (bootstrap.createdConversation ||
+            !bootstrap.activeConversationTitle ||
+            bootstrap.activeConversationTitle === "New Chat" ||
+            titleLooksLikeFirstMessageFallback(bootstrap.activeConversationTitle, parsed.data.message))
         ) {
           scheduleAutoTitleConversation({
             userDb: bootstrap.userDb,
@@ -4861,7 +4868,10 @@ app.post(
         assistantMessagePersisted = true;
         if (
           userMessagePersisted &&
-          (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat")
+          (createdConversation ||
+            !activeConversationTitle ||
+            activeConversationTitle === "New Chat" ||
+            titleLooksLikeFirstMessageFallback(activeConversationTitle, parsed.data.message))
         ) {
           scheduleAutoTitleConversation({
             userDb,
@@ -5024,7 +5034,10 @@ app.post(
         assistantMessagePersisted = true;
         if (
           userMessagePersisted &&
-          (createdConversation || !activeConversationTitle || activeConversationTitle === "New Chat")
+          (createdConversation ||
+            !activeConversationTitle ||
+            activeConversationTitle === "New Chat" ||
+            titleLooksLikeFirstMessageFallback(activeConversationTitle, parsed.data.message))
         ) {
           scheduleAutoTitleConversation({
             userDb,
