@@ -35,7 +35,7 @@ export async function handleConversationGenerations(req: Request, res: Response)
   } catch (error) {
     const errMessage = (error as any)?.message || (error as any)?.code || (error instanceof Error ? error.message : JSON.stringify(error));
     console.warn(`[GenerationRehydration] Failed conversation generation lookup conversation=${req.params.conversationId}: ${errMessage}`);
-    return res.status(500).json({ error: "Unable to load generation state.", code: "generation_rehydration_failed" });
+    return res.status(200).json({ conversation_id: String(req.params.conversationId || ""), generations: [], degraded: true });
   }
 }
 

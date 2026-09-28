@@ -2279,21 +2279,29 @@ app.get(
   "/api/conversations",
   asyncHandler(async (req, res) => {
     const requestStartedAt = Date.now();
-    const userId = await getVerifiedUserId(req);
-    const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.list");
-    await initializeUserSessionOrThrow(userDb, userId, "conversations.list");
-    await ensureNamedWorkspaceProfile(userId, "conversations.list", userDb);
-    let conversations = await listConversationsOrThrow(userDb, userId, "conversations.list");
-    const merged = await cleanupDuplicateConversationsForUser(userDb, userId, conversations, "conversations.list");
-    if (merged.length > 0) {
-      conversations = await listConversationsOrThrow(userDb, userId, "conversations.list.after-merge");
+    try {
+      const userId = await getVerifiedUserId(req);
+      const userDb = await resolveUserDatabaseOrThrow(userId, "conversations.list");
+      await initializeUserSessionOrThrow(userDb, userId, "conversations.list");
+      await ensureNamedWorkspaceProfile(userId, "conversations.list", userDb);
+      let conversations = await listConversationsOrThrow(userDb, userId, "conversations.list");
+      const merged = await cleanupDuplicateConversationsForUser(userDb, userId, conversations, "conversations.list");
+      if (merged.length > 0) {
+        conversations = await listConversationsOrThrow(userDb, userId, "conversations.list.after-merge");
+      }
+      logDbEvent("conversations.list.request.ok", userId, {
+        duration_ms: Date.now() - requestStartedAt,
+        count: conversations.length,
+        merged_count: merged.length,
+      });
+      res.json({ conversations, merged });
+    } catch (err: any) {
+      if (err instanceof AuthError || err?.code === "profile_name_required" || err?.statusCode === 401 || err?.statusCode === 403) {
+        throw err;
+      }
+      console.warn(`${LOG_PREFIX} [conversations.list] Recoverable error listing conversations:`, err?.message || err);
+      res.json({ conversations: [], merged: [], degraded: true });
     }
-    logDbEvent("conversations.list.request.ok", userId, {
-      duration_ms: Date.now() - requestStartedAt,
-      count: conversations.length,
-      merged_count: merged.length,
-    });
-    res.json({ conversations, merged });
   }),
 );
 

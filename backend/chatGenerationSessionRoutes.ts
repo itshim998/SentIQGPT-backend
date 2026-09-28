@@ -34,8 +34,9 @@ export function installSessionRoutes(app: any) {
       const result = await openChatGenerationSession(userDb, userId, anon);
       if (result.error || !result.data) throw result.error || new Error("Unable to open generation session");
       return res.status(201).json({ generation_session_id: result.data.id, session: result.data });
-    } catch {
-      return res.status(409).json({ error: "Generation session open failed", code: "generation_session_open_failed" });
+    } catch (err: any) {
+      console.warn("[generation_sessions] open error (falling back to client_only):", err?.message || err);
+      return res.status(200).json({ generation_session_id: null, status: "open", client_only: true, degraded: true });
     }
   });
 
@@ -62,17 +63,11 @@ export function installSessionRoutes(app: any) {
       return res.json({ generation_session_id: sessionId, client_request_id: clientRequestId, claimed: true });
     } catch (err: any) {
       const errorMessage = err?.message || err?.code || String(err);
-      console.warn("[generation_sessions] claim-request error:", {
+      console.warn("[generation_sessions] claim-request error (falling back to client_only):", {
         sessionId: req.params.sessionId,
         error: errorMessage,
       });
-      const isDbError = err?.code === "db_timeout" || err?.code === "PGRST003" || err?.code === "57P01" ||
-        String(errorMessage).includes("timed out") ||
-        String(errorMessage).includes("connection");
-      if (isDbError) {
-        return res.status(503).json({ error: "Database temporarily unavailable", code: "database_unavailable" });
-      }
-      return res.status(409).json({ error: "Generation session is no longer active", code: "generation_session_inactive" });
+      return res.status(200).json({ generation_session_id: req.params.sessionId, status: "claimed", client_only: true, degraded: true });
     }
   });
 
