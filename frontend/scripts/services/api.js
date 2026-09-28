@@ -128,6 +128,12 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
     typeof context.clientRequestId === "string" && context.clientRequestId.trim()
       ? context.clientRequestId.trim()
       : undefined;
+  const generationSessionId =
+    typeof context.generation_session_id === "string" && context.generation_session_id.trim()
+      ? context.generation_session_id.trim()
+      : typeof context.generationSessionId === "string" && context.generationSessionId.trim()
+        ? context.generationSessionId.trim()
+        : undefined;
   const executionMode = normalizeExecutionMode(context.executionMode || context.execution_mode);
   const response = await fetch(url, {
     method: "POST",
@@ -136,6 +142,7 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
       message,
       ...(conversationId ? { conversationId } : {}),
       ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
+      ...(generationSessionId ? { generation_session_id: generationSessionId } : {}),
       execution_mode: executionMode,
       context: buildChatRequestContext(context),
     }),
@@ -268,6 +275,12 @@ async function sendMessage(message, context = {}) {
     typeof context.clientRequestId === "string" && context.clientRequestId.trim()
       ? context.clientRequestId.trim()
       : undefined;
+  const generationSessionId =
+    typeof context.generation_session_id === "string" && context.generation_session_id.trim()
+      ? context.generation_session_id.trim()
+      : typeof context.generationSessionId === "string" && context.generationSessionId.trim()
+        ? context.generationSessionId.trim()
+        : undefined;
   const executionMode = normalizeExecutionMode(context.executionMode || context.execution_mode);
   const result = await apiRequest("/api/chat", {
     method: "POST",
@@ -275,6 +288,7 @@ async function sendMessage(message, context = {}) {
       message,
       ...(conversationId ? { conversationId } : {}),
       ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
+      ...(generationSessionId ? { generation_session_id: generationSessionId } : {}),
       execution_mode: executionMode,
       context: buildChatRequestContext(context),
     }),

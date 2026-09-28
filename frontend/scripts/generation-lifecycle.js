@@ -406,11 +406,17 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         if (event.text) entry.callbacks.onThinking?.(event.text);
         break;
       case "structured_response":
-        entry.status = "running";
+        entry.status = "completed";
         if (event.response) {
           entry.structuredReceived = true;
           entry.callbacks.onStructuredResponse?.(event.response);
         }
+        entry.terminal = true;
+        entry.completedAt = new Date().toISOString();
+        activeGenerations.delete(entry.generationId);
+        entry.callbacks.onDone?.();
+        if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+        pruneTerminalEntryCallbacks(entry);
         break;
       case "route":
         entry.status = "running";

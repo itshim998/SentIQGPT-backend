@@ -25,6 +25,7 @@ import express, { type Response } from "express";
 import { EventEmitter } from "node:events";
 import { chatGenerationTaskCoordinator } from "./services/chatGenerationTaskCoordinator";
 import { openGenerationSubscription } from "./chatGenerationTransportBootstrap";
+import { registerChatGenerationExecutor } from "./services/chatGenerationExecutor";
 
 const root = path.resolve(__dirname, "..");
 const read = (relative: string) => fs.readFileSync(path.join(root, relative), "utf8");
@@ -685,6 +686,215 @@ async function testEndToEndExplicitStopCancels() {
   }
 }
 
+async function testAuthenticatedDataShardGenerationLifecycle() {
+  const generationId = "gen-auth-shard-e2e";
+  const userId = "auth-user-096864d9";
+  const conversationId = "conv-auth-shard-1";
+  const clientRequestId = "client-req-auth-1";
+
+  const durableEvents: any[] = [];
+  let generationRow: any = {
+    id: generationId,
+    conversation_id: conversationId,
+    user_id: userId,
+    client_request_id: clientRequestId,
+    generation_session_id: "session-auth-1",
+    status: "running",
+    execution_mode: "fast",
+    model_route: "fast-routed",
+    started_at: new Date().toISOString(),
+    completed_at: null,
+    failed_at: null,
+    cancelled_at: null,
+    error_code: null,
+    partial_text: "Gritty is the mascot of the Philadelphia Flyers.",
+    tokens_generated: 12,
+    last_event_sequence: 1,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    execution_snapshot: { body: { message: "what is gritty?" } },
+    execution_lease_id: "lease-auth-1",
+    execution_lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+    recovery_attempts: 0,
+    last_execution_error: null,
+  };
+
+  const mockUserDb = {
+    from: (table: string) => ({
+      select: () => ({
+        eq: (_field: string, _val: any) => ({
+          eq: (_field2: string, _val2: any) => ({
+            maybeSingle: async () => ({ data: generationRow, error: null }),
+            gt: (_seqField: string, _after: any) => ({
+              order: () => ({
+                limit: async () => ({ data: durableEvents, error: null }),
+              }),
+            }),
+          }),
+        }),
+      }),
+      update: (patch: any) => ({
+        eq: () => ({
+          eq: () => ({
+            select: () => ({
+              maybeSingle: async () => {
+                generationRow = { ...generationRow, ...patch };
+                return { data: generationRow, error: null };
+              },
+            }),
+          }),
+        }),
+      }),
+    }),
+    rpc: async (fn: string, params: any) => {
+      if (fn === "initialize_user_session") return { data: true, error: null };
+      if (fn === "claim_chat_generation_execution") {
+        generationRow.execution_lease_id = params.p_lease_id;
+        return { data: generationRow, error: null };
+      }
+      if (fn === "renew_chat_generation_execution_lease") {
+        return { data: generationRow, error: null };
+      }
+      if (fn === "release_chat_generation_execution_lease") {
+        generationRow.execution_lease_id = null;
+        return { data: generationRow, error: null };
+      }
+      if (fn === "append_chat_generation_event_fenced") {
+        durableEvents.push({
+          generation_id: params.p_generation_id,
+          sequence: params.p_sequence,
+          event_type: params.p_event_type,
+          event_payload: params.p_event_payload,
+        });
+        generationRow.last_event_sequence = params.p_sequence;
+        return { data: durableEvents[durableEvents.length - 1], error: null };
+      }
+      return { data: null, error: null };
+    },
+  };
+
+  registerChatGenerationExecutor((_req: any, sink: any) => {
+    sink.json({
+      reply: "Gritty is the mascot of the Philadelphia Flyers.",
+      conversationId,
+    });
+  });
+
+  const context = {
+    requestUser: { sub: userId, isGuest: false },
+    userId,
+    userDb: mockUserDb,
+    generationId,
+    clientRequestId,
+    conversationId,
+    generation: generationRow,
+  };
+
+  chatGenerationTaskCoordinator.start({
+    generationId,
+    userId,
+    userDb: mockUserDb,
+    conversationId,
+    generation: generationRow,
+  });
+
+  const app = express();
+  app.get("/api/chat/generations/:generationId/events", (req, res) => {
+    openGenerationSubscription(res, generationId, context, 0);
+  });
+
+  const server = http.createServer(app);
+  server.keepAliveTimeout = 0;
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as any).port;
+
+  try {
+    const eventsReceived: Array<Record<string, unknown> | string> = [];
+    let streamClosedCleanly = false;
+
+    const streamPromise = new Promise<void>((resolve, reject) => {
+      const req = http.get(`http://127.0.0.1:${port}/api/chat/generations/${generationId}/events`, (res) => {
+        let buffer = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          buffer += chunk;
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const payload = line.slice(6).trim();
+              if (payload === "[DONE]") {
+                eventsReceived.push("[DONE]");
+              } else {
+                try {
+                  eventsReceived.push(JSON.parse(payload));
+                } catch {}
+              }
+            }
+          }
+        });
+        res.on("end", () => {
+          streamClosedCleanly = true;
+          resolve();
+        });
+        res.on("error", reject);
+      });
+      req.on("error", reject);
+    });
+
+    await streamPromise;
+
+    assert.equal(streamClosedCleanly, true, "Authenticated data-shard stream must close cleanly without Stop");
+    assert.ok(eventsReceived.includes("[DONE]"), "Authenticated stream must receive [DONE]");
+
+    const hasStructured = eventsReceived.some(
+      (e) => typeof e === "object" && e !== null && (e as any).type === "structured_response",
+    );
+    assert.ok(hasStructured, "structured_response must be delivered to authenticated subscriber");
+
+    const hasCompleted = eventsReceived.some(
+      (e) => typeof e === "object" && e !== null && (e as any).type === "generation_completed",
+    );
+    assert.ok(hasCompleted, "generation_completed must be delivered to authenticated subscriber");
+
+    console.log("PASS | Authenticated data-shard generation lifecycle completes automatically without Stop.");
+
+    // TEST B: Reconnecting to an already-terminal generation must snapshot and close cleanly with [DONE]
+    generationRow.status = "completed";
+    let terminalStreamClosed = false;
+    const terminalEvents: string[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const req = http.get(`http://127.0.0.1:${port}/api/chat/generations/${generationId}/events`, (res) => {
+        let buffer = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          buffer += chunk;
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const payload = line.slice(6).trim();
+              terminalEvents.push(payload);
+            }
+          }
+        });
+        res.on("end", () => {
+          terminalStreamClosed = true;
+          resolve();
+        });
+        res.on("error", reject);
+      });
+      req.on("error", reject);
+    });
+
+    assert.equal(terminalStreamClosed, true, "Already-terminal generation subscription must close cleanly");
+    assert.ok(terminalEvents.includes("[DONE]"), "Already-terminal generation subscription must emit [DONE]");
+    console.log("PASS | Already-terminal persisted generation emits snapshot and [DONE] without hanging.");
+  } finally {
+    server.close();
+  }
+}
+
 async function main() {
   testStaticSseHeadersContracts();
   await testGenerationSubscriptionUnitLifecycle();
@@ -694,6 +904,7 @@ async function main() {
   await testNativeHttp2SafeHeaders();
   await testEndToEndFastChatWithoutStop();
   await testEndToEndExplicitStopCancels();
+  await testAuthenticatedDataShardGenerationLifecycle();
   console.log("\nALL SSE HTTP/2 REGRESSION TESTS PASSED SUCCESSFULLY.\n");
 }
 

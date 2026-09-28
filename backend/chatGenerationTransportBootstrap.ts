@@ -57,21 +57,43 @@ function buildRequestSnapshot(request: Request) {
   };
 }
 async function resolveUserDatabase(requestUser: any): Promise<any | null> { if (!requestUser?.sub || requestUser.isGuest) return null; return getOrAssignUserDatabase(requestUser.sub); }
+const DB_TIMEOUT_MS = 8000;
+async function withDbTimeout<T = any>(promise: Promise<T>, timeoutMs = DB_TIMEOUT_MS, opName = "DB operation"): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`${opName} timed out after ${timeoutMs}ms`);
+      (err as any).code = "db_timeout";
+      reject(err);
+    }, timeoutMs);
+    timer?.unref?.();
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 function requireConversationId(value: unknown, source: string): string { const normalized = typeof value === "string" ? value.trim() : ""; if (!normalized) throw new Error(`${source} conversationId is required`); return normalized; }
 async function prepareGeneration(request: Request) {
   const parsed = ChatRequestSchema.safeParse(request.body); if (!parsed.success) { const error = new Error("Invalid chat request"); (error as any).statusCode = 400; (error as any).details = parsed.error.flatten(); throw error; }
   const requestUser = getRequestUser(request); const authenticatedUser = Boolean(requestUser && !requestUser.isGuest); const clientRequestId = normalizeRequestId(parsed.data.clientRequestId); const requestedGenerationId = normalizeGenerationId(parsed.data.generationId); let conversationId = typeof parsed.data.conversationId === "string" ? parsed.data.conversationId.trim() || null : null; const executionMode = parsed.data.executionMode; const snapshot = buildRequestSnapshot(request);
+  const generationSessionId = (typeof (request.body as any)?.generation_session_id === "string" && (request.body as any).generation_session_id.trim())
+    ? (request.body as any).generation_session_id.trim()
+    : (typeof (request.body as any)?.generationSessionId === "string" && (request.body as any).generationSessionId.trim())
+      ? (request.body as any).generationSessionId.trim()
+      : null;
   if (authenticatedUser) {
-    const userId = String(requestUser!.sub); const userDb = await resolveUserDatabase(requestUser); if (!userDb) throw new Error("User database unavailable");
-    const initialized = await userDb.rpc("initialize_user_session", { p_user_id: userId }); if (initialized.error) throw initialized.error;
-    const resolved = await resolveConversationForTurn(userDb, { userId, clientRequestId, conversationId, title: "New Chat" }); if (resolved.error || !resolved.data?.conversation_id) throw resolved.error || new Error("Unable to resolve conversation"); conversationId = requireConversationId(resolved.data.conversation_id, "Resolved");
-    const existing = await getChatGenerationByClientRequestId(userDb, userId, clientRequestId); if (existing.error) throw existing.error;
+    const userId = String(requestUser!.sub); const userDb = await withDbTimeout(resolveUserDatabase(requestUser), DB_TIMEOUT_MS, "resolveUserDatabase"); if (!userDb) throw new Error("User database unavailable");
+    const initialized = await withDbTimeout(userDb.rpc("initialize_user_session", { p_user_id: userId }), DB_TIMEOUT_MS, "initialize_user_session"); if (initialized.error) throw initialized.error;
+    const resolved = await withDbTimeout(resolveConversationForTurn(userDb, { userId, clientRequestId, conversationId, title: "New Chat" }), DB_TIMEOUT_MS, "resolveConversationForTurn"); if (resolved.error || !resolved.data?.conversation_id) throw resolved.error || new Error("Unable to resolve conversation"); conversationId = requireConversationId(resolved.data.conversation_id, "Resolved");
+    const existing = await withDbTimeout(getChatGenerationByClientRequestId(userDb, userId, clientRequestId), DB_TIMEOUT_MS, "getChatGenerationByClientRequestId"); if (existing.error) throw existing.error;
     let generation: ChatGenerationRow;
     if (existing.data) {
       generation = existing.data;
-      if (Object.keys(generation.execution_snapshot || {}).length === 0) { const updated = await updateChatGenerationExecutionSnapshot(userDb, { userId, generationId: generation.id, executionSnapshot: snapshot.persisted }); if (updated.error) throw updated.error; if (updated.data) generation = updated.data; }
+      if (Object.keys(generation.execution_snapshot || {}).length === 0) { const updated = await withDbTimeout(updateChatGenerationExecutionSnapshot(userDb, { userId, generationId: generation.id, executionSnapshot: snapshot.persisted }), DB_TIMEOUT_MS, "updateChatGenerationExecutionSnapshot"); if (updated.error) throw updated.error; if (updated.data) generation = updated.data; }
     } else {
-      const created = await createChatGeneration(userDb, { conversationId, userId, clientRequestId, generationId: requestedGenerationId, executionMode, executionSnapshot: snapshot.persisted }); if (created.error || !created.data) throw created.error || new Error("Unable to create chat generation"); generation = created.data;
+      const created = await withDbTimeout(createChatGeneration(userDb, { conversationId, userId, clientRequestId, generationId: requestedGenerationId, generationSessionId, executionMode, executionSnapshot: snapshot.persisted }), DB_TIMEOUT_MS, "createChatGeneration"); if (created.error || !created.data) throw created.error || new Error("Unable to create chat generation"); generation = created.data;
     }
     conversationId = requireConversationId(generation.conversation_id, "Generation");
     request.body = { ...request.body, conversationId, conversation_id: conversationId, clientRequestId: generation.client_request_id, client_request_id: generation.client_request_id, generationId: generation.id, generation_id: generation.id, executionMode: generation.execution_mode ?? executionMode, execution_mode: generation.execution_mode ?? executionMode };
@@ -89,7 +111,7 @@ async function prepareGeneration(request: Request) {
     generation = existing.data;
     if (Object.keys(generation.execution_snapshot || {}).length === 0) { const updated = await updateChatGenerationExecutionSnapshot(userDb, { userId, generationId: generation.id, executionSnapshot: snapshot.persisted }); if (updated.error) throw updated.error; if (updated.data) generation = updated.data; }
   } else {
-    const created = await createChatGeneration(userDb, { conversationId, userId, clientRequestId, generationId: requestedGenerationId, executionMode, executionSnapshot: snapshot.persisted }); if (created.error || !created.data) throw created.error || new Error("Unable to create guest chat generation"); generation = created.data;
+    const created = await createChatGeneration(userDb, { conversationId, userId, clientRequestId, generationId: requestedGenerationId, generationSessionId, executionMode, executionSnapshot: snapshot.persisted }); if (created.error || !created.data) throw created.error || new Error("Unable to create guest chat generation"); generation = created.data;
   }
   conversationId = requireConversationId(generation.conversation_id, "Generation");
   request.body = { ...request.body, conversationId, conversation_id: conversationId, clientRequestId: generation.client_request_id, client_request_id: generation.client_request_id, generationId: generation.id, generation_id: generation.id, executionMode: generation.execution_mode ?? executionMode, execution_mode: generation.execution_mode ?? executionMode };
@@ -99,12 +121,12 @@ async function resolveOwnedGeneration(request: Request, generationId: string) {
   const requestUser = getRequestUser(request);
   if (requestUser?.isGuest) {
     const userId = getGuestGenerationOwnerKeyForRequest(request); const userDb = getGuestGenerationDatabase(userId);
-    const result = await getChatGenerationById(userDb, userId, generationId); if (result.error) throw result.error;
+    const result = await withDbTimeout(getChatGenerationById(userDb, userId, generationId), DB_TIMEOUT_MS, "getChatGenerationById"); if (result.error) throw result.error;
     return { requestUser, userId, userDb, generationId, generation: result.data, task: chatGenerationTaskCoordinator.get(generationId) };
   }
   const userId = String(requestUser?.sub || "guest");
   if (!requestUser) { const task = chatGenerationTaskCoordinator.get(generationId); if (!task) return { requestUser, userId, userDb: null, generationId, generation: null, task: null }; return { requestUser, userId, userDb: null, generationId, generation: task.generation ?? null, task }; }
-  const userDb = await resolveUserDatabase(requestUser); if (!userDb) throw new Error("User database unavailable"); const initialized = await userDb.rpc("initialize_user_session", { p_user_id: userId }); if (initialized.error) throw initialized.error; const result = await getChatGenerationById(userDb, userId, generationId); if (result.error) throw result.error; return { requestUser, userId, userDb, generationId, generation: result.data, task: chatGenerationTaskCoordinator.get(generationId) };
+  const userDb = await withDbTimeout(resolveUserDatabase(requestUser), DB_TIMEOUT_MS, "resolveUserDatabase"); if (!userDb) throw new Error("User database unavailable"); const initialized = await withDbTimeout(userDb.rpc("initialize_user_session", { p_user_id: userId }), DB_TIMEOUT_MS, "initialize_user_session"); if (initialized.error) throw initialized.error; const result = await withDbTimeout(getChatGenerationById(userDb, userId, generationId), DB_TIMEOUT_MS, "getChatGenerationById"); if (result.error) throw result.error; return { requestUser, userId, userDb, generationId, generation: result.data, task: chatGenerationTaskCoordinator.get(generationId) };
 }
 async function startGeneration(_legacyFinalHandler: GenerationExecutorHandler, context: Awaited<ReturnType<typeof prepareGeneration>>): Promise<void> {
   const existing = chatGenerationTaskCoordinator.get(context.generationId); if (existing?.runPromise) return existing.runPromise; if (["completed", "failed", "cancelled"].includes(context.status)) return;
@@ -131,7 +153,7 @@ export function openGenerationSubscription(response: Response, generationId: str
   void (async () => {
     let persisted = context.generation;
     if (context.userDb) {
-      const result = await getChatGenerationById(context.userDb, context.userId, generationId).catch(() => ({ data: context.generation, error: null }));
+      const result = await withDbTimeout(getChatGenerationById(context.userDb, context.userId, generationId), DB_TIMEOUT_MS, "getChatGenerationById").catch(() => ({ data: context.generation, error: null }));
       if (result?.data) persisted = result.data;
     }
     const task = chatGenerationTaskCoordinator.get(generationId);
@@ -142,7 +164,8 @@ export function openGenerationSubscription(response: Response, generationId: str
     if (cursor === 0 && (task || persisted)) {
       emit(await chatGenerationTaskCoordinator.snapshot(generationId, persisted));
     }
-    if (task?.terminal && cursor >= Number(persisted?.last_event_sequence ?? task.sequence)) {
+    const isTerminal = Boolean(task?.terminal) || ["completed", "failed", "cancelled"].includes(String(persisted?.status || ""));
+    if (isTerminal) {
       emitDoneAndClose();
     }
   })().catch((error) => { emit({ type: "error", code: String((error as any)?.code || "generation_subscription_failed"), error: "Generation subscription failed." }); emitDoneAndClose(); });

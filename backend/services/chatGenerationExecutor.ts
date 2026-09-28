@@ -36,6 +36,8 @@ export async function executeChatGeneration(
       if (error) reject(error);
       else resolve();
     };
+    sink.once("finish", () => finish());
+    sink.once("close", () => finish());
     try {
       const result = executor(request, sink, finish);
       if (result && typeof (result as any).then === "function") {

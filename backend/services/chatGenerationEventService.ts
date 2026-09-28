@@ -4,6 +4,24 @@ function rowsFromResult(result: any): any[] {
   return Array.isArray(result?.data) ? result.data : result?.data ? [result.data] : [];
 }
 
+const DB_TIMEOUT_MS = 8000;
+async function withDbTimeout<T = any>(promise: Promise<T>, timeoutMs = DB_TIMEOUT_MS, opName = "DB operation"): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`${opName} timed out after ${timeoutMs}ms`);
+      (err as any).code = "db_timeout";
+      reject(err);
+    }, timeoutMs);
+    timer?.unref?.();
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function appendChatGenerationEventFenced(
   userDb: any,
   args: {
@@ -17,36 +35,44 @@ export async function appendChatGenerationEventFenced(
     errorCode?: string | null;
   },
 ) {
-  const result = await userDb.rpc("append_chat_generation_event_fenced", {
-    p_user_id: args.userId,
-    p_generation_id: args.generationId,
-    p_lease_id: args.leaseId,
-    p_sequence: Math.max(1, Math.floor(Number(args.event.sequence))),
-    p_event_type: String(args.event.type),
-    p_event_payload: args.event,
-    p_partial_text: args.partialText,
-    p_tokens_generated: Math.max(0, Math.floor(args.tokensGenerated)),
-    p_status: args.status,
-    p_error_code: args.errorCode ?? null,
-  });
-  const row = rowsFromResult(result)[0] ?? null;
-  return { data: row, error: result?.error ?? null };
+  try {
+    const result = await withDbTimeout(userDb.rpc("append_chat_generation_event_fenced", {
+      p_user_id: args.userId,
+      p_generation_id: args.generationId,
+      p_lease_id: args.leaseId,
+      p_sequence: Math.max(1, Math.floor(Number(args.event.sequence))),
+      p_event_type: String(args.event.type),
+      p_event_payload: args.event,
+      p_partial_text: args.partialText,
+      p_tokens_generated: Math.max(0, Math.floor(args.tokensGenerated)),
+      p_status: args.status,
+      p_error_code: args.errorCode ?? null,
+    }), DB_TIMEOUT_MS, "append_chat_generation_event_fenced");
+    const row = rowsFromResult(result)[0] ?? null;
+    return { data: row, error: result?.error ?? null };
+  } catch (error) {
+    return { data: null, error };
+  }
 }
 
 export async function listChatGenerationEvents(
   userDb: any,
   args: { userId: string; generationId: string; afterSequence?: number; limit?: number },
 ): Promise<{ data: any[]; error: any }> {
-  const result = await userDb
-    .from("chat_generation_events")
-    .select("generation_id, sequence, event_type, event_payload, created_at")
-    .eq("user_id", args.userId)
-    .eq("generation_id", args.generationId)
-    .gt("sequence", Math.max(0, Math.floor(Number(args.afterSequence ?? 0))))
-    .order("sequence", { ascending: true })
-    .limit(Math.min(2000, Math.max(1, Math.floor(Number(args.limit ?? 500)))));
+  try {
+    const result = await withDbTimeout(userDb
+      .from("chat_generation_events")
+      .select("generation_id, sequence, event_type, event_payload, created_at")
+      .eq("user_id", args.userId)
+      .eq("generation_id", args.generationId)
+      .gt("sequence", Math.max(0, Math.floor(Number(args.afterSequence ?? 0))))
+      .order("sequence", { ascending: true })
+      .limit(Math.min(2000, Math.max(1, Math.floor(Number(args.limit ?? 500))))), DB_TIMEOUT_MS, "list_chat_generation_events");
 
-  return { data: rowsFromResult(result), error: result?.error ?? null };
+    return { data: rowsFromResult(result), error: result?.error ?? null };
+  } catch (error) {
+    return { data: [], error };
+  }
 }
 
 export function normalizeStoredGenerationEvent(row: any): ChatGenerationEvent | null {

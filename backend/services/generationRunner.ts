@@ -183,13 +183,47 @@ export async function runGeneration(generationId: string): Promise<void> {
         task.status = "running";
         await executeChatGeneration(request, sink);
         await sink.flush();
-        if (executionOwnershipLost) return;
+        if (executionOwnershipLost) {
+          if (userDb) {
+            const latest = await getChatGenerationById(userDb, generation!.user_id, generation!.id).catch(() => ({ data: null }));
+            if (latest?.data && ["completed", "failed", "cancelled"].includes(latest.data.status)) {
+              if (latest.data.status === "completed") {
+                await chatGenerationTaskCoordinator.complete(generation!.id);
+                return;
+              } else if (latest.data.status === "cancelled") {
+                await chatGenerationTaskCoordinator.cancelled(generation!.id);
+                return;
+              } else {
+                await chatGenerationTaskCoordinator.failed(generation!.id, latest.data.error_code || "generation_failed");
+                return;
+              }
+            }
+          }
+          return;
+        }
         if (task.explicitCancelRequested || request.signal.aborted) await chatGenerationTaskCoordinator.cancelled(generation!.id);
         else if (runnerError) await chatGenerationTaskCoordinator.failed(generation!.id, String((runnerError as any)?.code || (runnerError as any)?.name || "generation_failed"));
         else await chatGenerationTaskCoordinator.complete(generation!.id);
       } catch (error) {
         runnerError = error;
-        if (executionOwnershipLost) return;
+        if (executionOwnershipLost) {
+          if (userDb) {
+            const latest = await getChatGenerationById(userDb, generation!.user_id, generation!.id).catch(() => ({ data: null }));
+            if (latest?.data && ["completed", "failed", "cancelled"].includes(latest.data.status)) {
+              if (latest.data.status === "completed") {
+                await chatGenerationTaskCoordinator.complete(generation!.id);
+                return;
+              } else if (latest.data.status === "cancelled") {
+                await chatGenerationTaskCoordinator.cancelled(generation!.id);
+                return;
+              } else {
+                await chatGenerationTaskCoordinator.failed(generation!.id, latest.data.error_code || "generation_failed");
+                return;
+              }
+            }
+          }
+          return;
+        }
         if (task.explicitCancelRequested || request.signal.aborted) await chatGenerationTaskCoordinator.cancelled(generation!.id);
         else await chatGenerationTaskCoordinator.failed(generation!.id, String((error as any)?.code || (error as any)?.name || "generation_failed"));
       } finally {
