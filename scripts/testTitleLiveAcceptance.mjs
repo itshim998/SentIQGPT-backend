@@ -27,6 +27,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isFallbackTitle(title, prompt) {
+  if (!title || title === "New Chat") return false;
+  const normTitle = String(title).toLowerCase().replace(/[^a-z0-9]/g, "");
+  const normPrompt = String(prompt).toLowerCase().replace(/[^a-z0-9]/g, "");
+  return normPrompt.startsWith(normTitle) || (normTitle.length >= 8 && normTitle.startsWith(normPrompt.slice(0, 15)));
+}
+
 async function runLiveTest() {
   const credentials = getCredentials();
   console.log(`Starting live title acceptance test on ${TARGET_URL}...`);
@@ -190,16 +197,16 @@ async function runLiveTest() {
         return activeItem ? activeItem.textContent.trim() : "";
       });
 
-      // Check if it's different from the initial fallback and not empty and not "New Chat"
-      if (finalTitle1 && finalTitle1 !== fallbackTitle1 && finalTitle1 !== "New Chat") {
-        console.log(`Detected title update: "${finalTitle1}"`);
+      // Check if it's replaced by a summarized title (not fallback, not "New Chat")
+      if (finalTitle1 && finalTitle1 !== "New Chat" && !isFallbackTitle(finalTitle1, testPrompt1)) {
+        console.log(`Detected summarized title update: "${finalTitle1}"`);
         break;
       }
       await sleep(1500);
     }
 
     // If DOM hasn't updated yet, reload page to fetch latest persisted server chats
-    if (!finalTitle1 || finalTitle1 === fallbackTitle1) {
+    if (!finalTitle1 || isFallbackTitle(finalTitle1, testPrompt1)) {
       console.log("Reloading to check server-persisted title...");
       await page.reload({ waitUntil: "networkidle2" });
       await sleep(3000);
@@ -315,14 +322,14 @@ async function runLiveTest() {
         return activeItem ? activeItem.textContent.trim() : "";
       });
 
-      if (finalTitle2 && finalTitle2 !== fallbackTitle2 && finalTitle2 !== "New Chat") {
-        console.log(`Detected Chat 2 title update: "${finalTitle2}"`);
+      if (finalTitle2 && finalTitle2 !== "New Chat" && !isFallbackTitle(finalTitle2, testPrompt2)) {
+        console.log(`Detected Chat 2 summarized title update: "${finalTitle2}"`);
         break;
       }
       await sleep(1500);
     }
 
-    if (!finalTitle2 || finalTitle2 === fallbackTitle2) {
+    if (!finalTitle2 || isFallbackTitle(finalTitle2, testPrompt2)) {
       console.log("Reloading to check server-persisted Chat 2 title...");
       await page.reload({ waitUntil: "networkidle2" });
       await sleep(3000);

@@ -1762,7 +1762,7 @@ export function buildTitleGeneratePrompt(args: {
     prefer: "groq",
     user_id: args.userId || args.conversationId,
     safety_mode: "low_risk_text",
-    max_output_tokens: 80,
+    max_output_tokens: 160,
     reasoning_effort: "low",
     budget_class: "auxiliary",
     auxiliary_budget: "title",

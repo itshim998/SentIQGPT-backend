@@ -2108,7 +2108,7 @@ def _call_groq(
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.5,
-            "max_completion_tokens": max_output_tokens or 200,
+            "max_completion_tokens": max(max_output_tokens or 200, 160) if _is_gpt_oss_model(resolved_model) else (max_output_tokens or 200),
             "top_p": 0.9,
             "stream": False,
             "response_format": {"type": "json_object"},
