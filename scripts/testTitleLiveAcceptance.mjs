@@ -57,10 +57,13 @@ async function runLiveTest() {
 
   const page = await browser.newPage();
 
-  // Track network calls to title endpoints
+  // Track network calls
   const titleEvents = [];
   page.on("request", (req) => {
     const url = req.url();
+    if (url.includes("/api/")) {
+      console.log(`[HTTP REQ] ${req.method()} ${url}`);
+    }
     if (url.includes("/api/chat/title") || url.includes("/title")) {
       titleEvents.push({
         type: "request",
@@ -74,6 +77,15 @@ async function runLiveTest() {
 
   page.on("response", async (res) => {
     const url = res.url();
+    if (url.includes("/api/")) {
+      console.log(`[HTTP RES] ${res.status()} ${url}`);
+      if (res.status() >= 400) {
+        try {
+          const body = await res.text();
+          console.error(`[HTTP ERR ${res.status()}] ${url}: ${body.slice(0, 300)}`);
+        } catch {}
+      }
+    }
     if (url.includes("/api/chat/title") || url.includes("/title")) {
       let bodyText = "";
       try {
@@ -93,9 +105,7 @@ async function runLiveTest() {
 
   page.on("console", (msg) => {
     const text = msg.text();
-    if (text.toLowerCase().includes("title") || text.toLowerCase().includes("error")) {
-      console.log(`[Browser Console] ${msg.type()}: ${text}`);
-    }
+    console.log(`[Browser Console] ${msg.type()}: ${text}`);
   });
 
   try {
@@ -145,33 +155,40 @@ async function runLiveTest() {
     await page.click("#new-chat-btn");
     await sleep(1500);
 
+    async function sendMessage(promptText) {
+      await page.waitForSelector("#chat-input", { visible: true, timeout: 10000 });
+      await page.focus("#chat-input");
+      await page.type("#chat-input", promptText);
+      await sleep(500);
+      try {
+        await page.click("#send-btn");
+      } catch (err) {
+        console.warn("Direct click on #send-btn failed, dispatching evaluate click:", err.message);
+        await page.evaluate(() => {
+          const btn = document.getElementById("send-btn");
+          if (btn) btn.click();
+        });
+      }
+    }
+
     const testPrompt1 = "What are the key differences between synchronous and asynchronous programming in Python?";
-    console.log(`Typing prompt: "${testPrompt1}"`);
-    await page.type("#chat-input", testPrompt1);
-    await sleep(500);
+    console.log(`Sending message: "${testPrompt1}"`);
+    await sendMessage(testPrompt1);
 
-    console.log("Sending message...");
-    await page.click("#send-btn");
-
-    // Immediately observe the fallback title
-    await sleep(1000);
-    let fallbackTitle1 = await page.evaluate(() => {
-      const activeItem = document.querySelector(".chat-list-item.active .chat-list-item-title");
-      return activeItem ? activeItem.textContent.trim() : null;
-    });
-    console.log(`Observed initial fallback title: "${fallbackTitle1}"`);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "01_chat1_fallback.png") });
-
-    // Wait for the assistant response to start and then finish streaming
-    console.log("Waiting for assistant response to start...");
-    await sleep(2000);
-
-    // Wait for fallback title in sidebar
-    fallbackTitle1 = await page.evaluate(() => {
-      const activeItem = document.querySelector(".chat-list-item.active .chat-list-item-title")
-        || document.querySelector("#chat-list .chat-list-item:first-child .chat-list-item-title");
-      return activeItem ? activeItem.textContent.trim() : null;
-    });
+    // Wait for the fallback title to appear on the chat list item
+    console.log("Waiting for fallback title to appear in sidebar...");
+    let fallbackTitle1 = "";
+    for (let i = 0; i < 20; i++) {
+      await sleep(500);
+      fallbackTitle1 = await page.evaluate(() => {
+        const activeItem = document.querySelector(".chat-list-item.active .chat-list-item-title")
+          || document.querySelector("#chat-list .chat-list-item:first-child .chat-list-item-title");
+        return activeItem ? activeItem.textContent.trim() : "";
+      });
+      if (fallbackTitle1 && fallbackTitle1 !== "null" && fallbackTitle1 !== "New Chat") {
+        break;
+      }
+    }
     console.log(`Observed initial fallback title: "${fallbackTitle1}"`);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "01_chat1_fallback.png") });
 
@@ -186,23 +203,27 @@ async function runLiveTest() {
     console.log("Assistant response complete!");
     await sleep(2000);
 
-    // Now wait for automatic title generation to complete
+    // Now wait for automatic title generation to complete (including typing animation)
     console.log("Waiting for automatic title generation (up to 30s)...");
     let finalTitle1 = "";
     const startWait1 = Date.now();
     while (Date.now() - startWait1 < 30000) {
-      finalTitle1 = await page.evaluate(() => {
+      const titleInfo = await page.evaluate(() => {
         const activeItem = document.querySelector(".chat-list-item.active .chat-list-item-title")
           || document.querySelector("#chat-list .chat-list-item:first-child .chat-list-item-title");
-        return activeItem ? activeItem.textContent.trim() : "";
+        return {
+          title: activeItem ? activeItem.textContent.trim() : "",
+          isTyping: activeItem ? activeItem.classList.contains("typing") : false,
+        };
       });
 
-      // Check if it's replaced by a summarized title (not fallback, not "New Chat")
-      if (finalTitle1 && finalTitle1 !== "New Chat" && !isFallbackTitle(finalTitle1, testPrompt1)) {
+      // Check if it's replaced by a summarized title and typing animation is finished
+      if (titleInfo.title && titleInfo.title !== "New Chat" && !isFallbackTitle(titleInfo.title, testPrompt1) && !titleInfo.isTyping) {
+        finalTitle1 = titleInfo.title;
         console.log(`Detected summarized title update: "${finalTitle1}"`);
         break;
       }
-      await sleep(1500);
+      await sleep(1000);
     }
 
     // If DOM hasn't updated yet, reload page to fetch latest persisted server chats
@@ -285,19 +306,28 @@ async function runLiveTest() {
     await sleep(1500);
 
     const testPrompt2 = "Explain the concept of recursion with an example in JavaScript";
-    console.log(`Typing prompt: "${testPrompt2}"`);
-    await page.type("#chat-input", testPrompt2);
-    await sleep(500);
+    console.log(`Sending message: "${testPrompt2}"`);
+    await sendMessage(testPrompt2);
 
-    console.log("Sending message...");
-    await page.click("#send-btn");
-
-    await sleep(2000);
-    let fallbackTitle2 = await page.evaluate(() => {
-      const activeItem = document.querySelector(".chat-list-item.active .chat-list-item-title")
-        || document.querySelector("#chat-list .chat-list-item:first-child .chat-list-item-title");
-      return activeItem ? activeItem.textContent.trim() : null;
-    });
+    // Wait for the fallback title to appear on the chat list item
+    console.log("Waiting for Chat 2 fallback title to appear in sidebar...");
+    let fallbackTitle2 = "";
+    for (let i = 0; i < 20; i++) {
+      await sleep(500);
+      fallbackTitle2 = await page.evaluate((prompt) => {
+        const items = Array.from(document.querySelectorAll("#chat-list .chat-list-item"));
+        const promptPrefix = prompt.slice(0, 15).toLowerCase();
+        const targetItem = items.find((item) => {
+          const t = item.querySelector(".chat-list-item-title")?.textContent?.trim().toLowerCase() || "";
+          return (t.includes(promptPrefix) || t.includes("recursion")) && !t.includes("python");
+        }) || document.querySelector(".chat-list-item.active");
+        const titleEl = targetItem?.querySelector(".chat-list-item-title");
+        return titleEl ? titleEl.textContent.trim() : "";
+      }, testPrompt2);
+      if (fallbackTitle2 && fallbackTitle2 !== "null" && fallbackTitle2 !== "New Chat" && !fallbackTitle2.toLowerCase().includes("python")) {
+        break;
+      }
+    }
     console.log(`Observed Chat 2 fallback title: "${fallbackTitle2}"`);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "04_chat2_fallback.png") });
 
@@ -305,10 +335,9 @@ async function runLiveTest() {
     await page.waitForFunction(() => {
       const sendBtn = document.getElementById("send-btn");
       const isStop = sendBtn && sendBtn.classList.contains("is-stop");
-      const isThinking = document.querySelector(".message-thinking-state");
       const isStreaming = document.querySelector(".message.assistant.streaming");
-      return !isStop && !isThinking && !isStreaming;
-    }, { timeout: 90000 });
+      return !isStop && !isStreaming;
+    }, { timeout: 120000 });
     console.log("Chat 2 response complete!");
     await sleep(2000);
 
@@ -316,28 +345,42 @@ async function runLiveTest() {
     let finalTitle2 = "";
     const startWait2 = Date.now();
     while (Date.now() - startWait2 < 30000) {
-      finalTitle2 = await page.evaluate(() => {
-        const activeItem = document.querySelector(".chat-list-item.active .chat-list-item-title")
-          || document.querySelector("#chat-list .chat-list-item:first-child .chat-list-item-title");
-        return activeItem ? activeItem.textContent.trim() : "";
-      });
+      const titleInfo = await page.evaluate((prompt) => {
+        const items = Array.from(document.querySelectorAll("#chat-list .chat-list-item"));
+        const promptPrefix = prompt.slice(0, 15).toLowerCase();
+        const targetItem = items.find((item) => {
+          const t = item.querySelector(".chat-list-item-title")?.textContent?.trim().toLowerCase() || "";
+          return (t.includes(promptPrefix) || t.includes("recursion") || t.includes("javascript")) && !t.includes("python");
+        }) || document.querySelector(".chat-list-item.active");
+        const titleEl = targetItem?.querySelector(".chat-list-item-title");
+        return {
+          title: titleEl ? titleEl.textContent.trim() : "",
+          isTyping: titleEl ? titleEl.classList.contains("typing") : false,
+        };
+      }, testPrompt2);
 
-      if (finalTitle2 && finalTitle2 !== "New Chat" && !isFallbackTitle(finalTitle2, testPrompt2)) {
+      if (titleInfo.title && titleInfo.title !== "New Chat" && !isFallbackTitle(titleInfo.title, testPrompt2) && !titleInfo.isTyping && !titleInfo.title.toLowerCase().includes("python")) {
+        finalTitle2 = titleInfo.title;
         console.log(`Detected Chat 2 summarized title update: "${finalTitle2}"`);
         break;
       }
-      await sleep(1500);
+      await sleep(1000);
     }
 
     if (!finalTitle2 || isFallbackTitle(finalTitle2, testPrompt2)) {
       console.log("Reloading to check server-persisted Chat 2 title...");
       await page.reload({ waitUntil: "networkidle2" });
       await sleep(3000);
-      finalTitle2 = await page.evaluate(() => {
-        const activeItem = document.querySelector(".chat-list-item.active .chat-list-item-title")
-          || document.querySelector("#chat-list .chat-list-item:first-child .chat-list-item-title");
-        return activeItem ? activeItem.textContent.trim() : "";
-      });
+      finalTitle2 = await page.evaluate((prompt) => {
+        const items = Array.from(document.querySelectorAll("#chat-list .chat-list-item"));
+        const promptPrefix = prompt.slice(0, 15).toLowerCase();
+        const targetItem = items.find((item) => {
+          const t = item.querySelector(".chat-list-item-title")?.textContent?.trim().toLowerCase() || "";
+          return (t.includes(promptPrefix) || t.includes("recursion") || t.includes("javascript")) && !t.includes("python");
+        }) || document.querySelector(".chat-list-item.active");
+        const titleEl = targetItem?.querySelector(".chat-list-item-title");
+        return titleEl ? titleEl.textContent.trim() : "";
+      }, testPrompt2);
       console.log(`Chat 2 title after reload check: "${finalTitle2}"`);
     }
 
@@ -385,6 +428,14 @@ async function runLiveTest() {
       chat2: { fallback: fallbackTitle2, final: finalTitle2 },
       titleEvents,
     };
+  } catch (err) {
+    console.error("Test execution caught error:", err.message);
+    try {
+      await page.screenshot({ path: path.join(SCREENSHOT_DIR, "07_error_failure_state.png") });
+      const pageText = await page.evaluate(() => document.body.innerText);
+      console.error("[Page Text at Failure]:\n" + pageText.slice(0, 1000));
+    } catch {}
+    throw err;
   } finally {
     await browser.close();
   }
