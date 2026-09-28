@@ -146,7 +146,7 @@ class ChatGenerationTaskCoordinator {
     const event = this.appendEvent(task, payload);
     const eventState = { partialText: task.partialText, tokensGenerated: task.tokensGenerated, status: task.status, errorCode: task.lastErrorCode };
     await this.notify(task, event);
-    if (task.userDb && task.executionLeaseId) {
+    if (task.userDb && task.executionLeaseId && payload.type !== "token" && event.type !== "token") {
       void this.enqueue(task, async () => {
         try {
           await this.persistEvent(task, event, eventState);
