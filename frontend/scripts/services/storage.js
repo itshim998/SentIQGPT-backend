@@ -457,6 +457,19 @@ function getClientRequestId(message) {
     || "";
 }
 
+function isTemporaryMessageId(id) {
+  if (!id || typeof id !== "string") return true;
+  return /^(user-|assistant-|assistant-img-|pending-|local-|temp-)/i.test(id);
+}
+
+function resolveCanonicalMessageId(existingId, incomingId) {
+  const existingIsTemp = isTemporaryMessageId(existingId);
+  const incomingIsTemp = isTemporaryMessageId(incomingId);
+  if (existingIsTemp && !incomingIsTemp) return incomingId;
+  if (!existingIsTemp && incomingIsTemp) return existingId;
+  return incomingId || existingId || generateId();
+}
+
 function normalizeStoredMessage(message) {
   const safeMessage = sanitizeMessage(message || {});
   const clientRequestId = getClientRequestId(safeMessage);
@@ -468,6 +481,17 @@ function normalizeStoredMessage(message) {
     ...(safeMessage?.meta ? { meta: safeMessage.meta } : {}),
   };
   if (clientRequestId) normalized.clientRequestId = String(clientRequestId);
+  const messageType = safeMessage?.meta?.type || safeMessage?.message_type || safeMessage?.messageType;
+  const imageUrl = safeMessage?.meta?.imageUrl || safeMessage?.meta?.image_url || safeMessage?.image_url || safeMessage?.imageUrl;
+  const storagePath = safeMessage?.meta?.storagePath || safeMessage?.meta?.storage_path || safeMessage?.storage_path || safeMessage?.storagePath;
+  if ((messageType === "image" || imageUrl) && (!normalized.meta || normalized.meta.type !== "image")) {
+    normalized.meta = {
+      ...(normalized.meta || {}),
+      type: "image",
+      ...(imageUrl ? { imageUrl } : {}),
+      ...(storagePath ? { storagePath } : {}),
+    };
+  }
   return normalized;
 }
 
@@ -478,11 +502,13 @@ export function getMessageMergeKey(message) {
     if (imageIdentity) return `image:${imageIdentity}`;
   }
   const clientRequestId = getClientRequestId(message);
-  if (clientRequestId) return `request:${message.role}:${messageType}:${clientRequestId}`;
+  if (clientRequestId) {
+    return `request:${message?.role || "user"}:${messageType}:${clientRequestId}`;
+  }
   if (message?.id) return `id:${message.id}`;
   const contentFingerprint = normalizeMessageContentForDedup(message?.content);
   const metaFingerprint = [
-    message?.meta?.type || "",
+    messageType,
     message?.meta?.imageUrl || message?.meta?.image_url || "",
     message?.meta?.file_id || message?.meta?.generated_file_id || "",
     message?.meta?.storagePath || message?.meta?.storage_path || "",
@@ -492,11 +518,39 @@ export function getMessageMergeKey(message) {
 
 export function mergeStoredMessage(existing, incoming) {
   if (!existing) return incoming;
+  if (!incoming) return existing;
   const clientRequestId = getClientRequestId(incoming) || getClientRequestId(existing);
+  const resolvedId = resolveCanonicalMessageId(existing.id, incoming.id);
+  const mergedMeta = {
+    ...(existing.meta ? sanitizeMessageMeta(existing.meta) : {}),
+    ...(incoming.meta ? sanitizeMessageMeta(incoming.meta) : {}),
+  };
+  if (!mergedMeta.imageUrl && (existing.meta?.imageUrl || existing.meta?.image_url)) {
+    mergedMeta.imageUrl = existing.meta.imageUrl || existing.meta.image_url;
+  }
+  if (!mergedMeta.storagePath && (existing.meta?.storagePath || existing.meta?.storage_path)) {
+    mergedMeta.storagePath = existing.meta.storagePath || existing.meta.storage_path;
+  }
+  const content = (typeof incoming.content === "string" && incoming.content.trim())
+    ? incoming.content
+    : (typeof existing.content === "string" && existing.content.trim() ? existing.content : (incoming.content || existing.content || ""));
+
+  const existingTime = getMessageTimestampMs(existing);
+  const incomingTime = getMessageTimestampMs(incoming);
+  let timestamp = incoming.timestamp || incoming.created_at || existing.timestamp || existing.created_at;
+  if (existingTime !== null && incomingTime !== null) {
+    timestamp = existingTime <= incomingTime
+      ? (existing.timestamp || existing.created_at)
+      : (incoming.timestamp || incoming.created_at);
+  }
+
   return {
     ...existing,
     ...incoming,
-    meta: incoming.meta ? sanitizeMessageMeta(incoming.meta) : existing.meta,
+    id: resolvedId,
+    content,
+    timestamp,
+    meta: Object.keys(mergedMeta).length > 0 ? mergedMeta : (incoming.meta || existing.meta),
     ...(clientRequestId ? { clientRequestId } : {}),
   };
 }
@@ -516,10 +570,129 @@ function getMessageTimestampMs(message) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+export function canonicalizeChatMessages(messages, options = {}) {
+  if (!Array.isArray(messages) || messages.length === 0) return [];
+  const canonicalList = [];
+  const byId = new Map();
+  const byRequest = new Map();
+  const byImage = new Map();
+
+  for (const rawMessage of messages) {
+    if (!rawMessage) continue;
+    const message = normalizeStoredMessage(rawMessage);
+    const messageType = message.meta?.type || message.message_type || "text";
+    const clientRequestId = getClientRequestId(message);
+    const imageIdentity = (message.role === "assistant" && messageType === "image")
+      ? (message.meta?.storagePath || message.meta?.storage_path || message.meta?.imageUrl || message.meta?.image_url || "")
+      : "";
+    const requestKey = clientRequestId ? `${message.role}:${messageType}:${clientRequestId}` : "";
+
+    let matchIndex = -1;
+
+    // 1. Exact ID match
+    if (message.id && byId.has(message.id)) {
+      matchIndex = byId.get(message.id);
+    }
+
+    // 2. Request Key match (exact clientRequestId + role + messageType)
+    if (matchIndex === -1 && requestKey && byRequest.has(requestKey)) {
+      matchIndex = byRequest.get(requestKey);
+    }
+
+    // 3. Image Identity match (storagePath or imageUrl for completed image)
+    if (matchIndex === -1 && imageIdentity && byImage.has(imageIdentity)) {
+      matchIndex = byImage.get(imageIdentity);
+    }
+
+    // 4. Optimistic User Turn match fallback (matching normalized prompt within turn window)
+    if (matchIndex === -1 && message.role === "user") {
+      const normContent = normalizeMessageContentForDedup(message.content);
+      if (normContent) {
+        const msgTime = getMessageTimestampMs(message);
+        for (let i = canonicalList.length - 1; i >= 0; i--) {
+          const existing = canonicalList[i];
+          if (existing.role !== "user") continue;
+          const existingRequestId = getClientRequestId(existing);
+          // If BOTH have request IDs and they differ, they are distinct user turns!
+          if (clientRequestId && existingRequestId && clientRequestId !== existingRequestId) {
+            continue;
+          }
+          if (normalizeMessageContentForDedup(existing.content) === normContent) {
+            const existTime = getMessageTimestampMs(existing);
+            if (msgTime === null || existTime === null || Math.abs(msgTime - existTime) <= 120 * 1000) {
+              matchIndex = i;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // 5. Assistant Image Placeholder correlation fallback
+    if (matchIndex === -1 && message.role === "assistant" && messageType === "image") {
+      const msgTime = getMessageTimestampMs(message);
+      for (let i = canonicalList.length - 1; i >= 0; i--) {
+        const existing = canonicalList[i];
+        if (existing.role !== "assistant") continue;
+        const existType = existing.meta?.type || existing.message_type || "text";
+        if (existType !== "image") continue;
+        const existingRequestId = getClientRequestId(existing);
+        if (clientRequestId && existingRequestId && clientRequestId !== existingRequestId) {
+          continue;
+        }
+        const existImage = existing.meta?.storagePath || existing.meta?.storage_path || existing.meta?.imageUrl || existing.meta?.image_url;
+        const candImage = imageIdentity;
+        // If at least one is placeholder (no image resolved yet), they correlate within turn window
+        if (!existImage || !candImage) {
+          const existTime = getMessageTimestampMs(existing);
+          if (msgTime === null || existTime === null || Math.abs(msgTime - existTime) <= 120 * 1000) {
+            matchIndex = i;
+            break;
+          }
+        }
+      }
+    }
+
+    if (matchIndex >= 0) {
+      const merged = mergeStoredMessage(canonicalList[matchIndex], message);
+      canonicalList[matchIndex] = merged;
+      if (merged.id) byId.set(merged.id, matchIndex);
+      if (message.id) byId.set(message.id, matchIndex);
+      const mergedReq = getClientRequestId(merged);
+      if (mergedReq) {
+        const mergedKey = `${merged.role}:${messageType}:${mergedReq}`;
+        byRequest.set(mergedKey, matchIndex);
+      }
+      const mergedImg = (merged.role === "assistant" && messageType === "image")
+        ? (merged.meta?.storagePath || merged.meta?.storage_path || merged.meta?.imageUrl || merged.meta?.image_url)
+        : null;
+      if (mergedImg) byImage.set(mergedImg, matchIndex);
+    } else {
+      const newIndex = canonicalList.length;
+      canonicalList.push(message);
+      if (message.id) byId.set(message.id, newIndex);
+      if (requestKey) byRequest.set(requestKey, newIndex);
+      if (imageIdentity) byImage.set(imageIdentity, newIndex);
+    }
+  }
+
+  if (options.sort) {
+    return canonicalList.sort((a, b) => {
+      const left = getMessageTimestampMs(a) ?? 0;
+      const right = getMessageTimestampMs(b) ?? 0;
+      if (left !== right) return left - right;
+      return String(a.id).localeCompare(String(b.id));
+    });
+  }
+  return canonicalList;
+}
+
 export function collapseAdjacentDuplicateChatMessages(messages, duplicateWindowMs = 90 * 1000) {
   if (!Array.isArray(messages) || messages.length === 0) return [];
+  // First run deterministic multi-index canonicalization to resolve interleaved/non-adjacent copies
+  const canonical = canonicalizeChatMessages(messages);
   const collapsed = [];
-  for (const message of messages) {
+  for (const message of canonical) {
     if (!message) continue;
     const previous = collapsed[collapsed.length - 1];
     const sameRole = previous?.role === message.role;
@@ -814,23 +987,10 @@ async function mergeChatMessages(chatId, messages, options = {}) {
     return chat;
   }
 
-  const mergedByKey = new Map();
   const baseMessages = options.replaceExisting ? [] : existingMessages;
-  for (const message of baseMessages) {
-    mergedByKey.set(getMessageMergeKey(message), message);
-  }
-  for (const message of incomingMessages) {
-    const key = getMessageMergeKey(message);
-    mergedByKey.set(key, mergeStoredMessage(mergedByKey.get(key), message));
-  }
-  const normalizedMessages = collapseAdjacentDuplicateChatMessages(
-    [...mergedByKey.values()].sort((a, b) => {
-      const left = getMessageTimestampMs(a) ?? 0;
-      const right = getMessageTimestampMs(b) ?? 0;
-      if (left !== right) return left - right;
-      return String(a.id).localeCompare(String(b.id));
-    }),
-  );
+  const combined = [...baseMessages, ...incomingMessages];
+  const canonical = canonicalizeChatMessages(combined);
+  const normalizedMessages = collapseAdjacentDuplicateChatMessages(canonical);
   chat.messages = normalizedMessages;
   const lastMessageTimestamp = chat.messages.length > 0
     ? chat.messages[chat.messages.length - 1].timestamp
@@ -1159,5 +1319,6 @@ window.SentIQStorage = {
   getStorageStats, getStorageStatus, clearLocalData, generateId,
   normalizeMemoryScope, normalizeMemoryChatId,
   collapseAdjacentDuplicateChatMessages,
+  canonicalizeChatMessages,
   getMessageMergeKey, normalizeMessageContentForDedup, mergeStoredMessage,
 };

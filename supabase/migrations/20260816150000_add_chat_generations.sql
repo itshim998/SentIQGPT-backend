@@ -138,7 +138,7 @@ begin
     'running',
     now()
   )
-  on conflict (user_id, client_request_id) do update
+  on conflict (user_id, client_request_id) where client_request_id is not null do update
     set status = case
       when public.chat_generations.status = 'queued' then 'running'
       else public.chat_generations.status
@@ -215,7 +215,7 @@ begin
       now(),
       coalesce(new.content, '')
     )
-    on conflict (user_id, client_request_id) do nothing
+    on conflict (user_id, client_request_id) where client_request_id is not null do nothing
     returning id into v_generation_id;
 
     if v_generation_id is null then
