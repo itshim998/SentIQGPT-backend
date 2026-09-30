@@ -10220,11 +10220,15 @@ import {
             }
           }
 
+          if (result.message_id) {
+            pendingMeta.messageId = result.message_id;
+          }
+
           // Refresh copy button action bar
           pendingBubbleResult.bubble?._assistantActionBar?.refresh();
 
           await safelyAddImageMessage(targetChatId, "assistant", "", pendingMeta, "generated image", {
-            id: `assistant-${requestId}`,
+            id: result.message_id || `assistant-${requestId}`,
             clientRequestId: requestId,
           });
         } else if (imageUrl) {
@@ -10236,10 +10240,11 @@ import {
             provider: result.provider_used || "",
             storagePath: result.storage_path || "",
             fileSizeBytes: result.file_size_bytes || null,
+            ...(result.message_id ? { messageId: result.message_id } : {}),
           };
           appendMessageBubble("assistant", "", meta, {}, { animateReveal: true });
           await safelyAddImageMessage(targetChatId, "assistant", "", meta, "generated image", {
-            id: `assistant-${requestId}`,
+            id: result.message_id || `assistant-${requestId}`,
             clientRequestId: requestId,
           });
         }

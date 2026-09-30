@@ -6704,6 +6704,7 @@ app.post(
     let imageId: string | undefined;
     let storagePath: string | undefined;
     let fileSizeBytes: number | undefined;
+    let persistedAssistantMessageId: string | undefined;
 
     if (!imageUrl && !imageBase64) {
       await releaseBillingReservation(committedImageReservation);
@@ -6736,8 +6737,10 @@ app.post(
           provider: result.provider_used,
           clientRequestId,
           storageDb: getImageStorageDatabase(),
+          persistPromptMessage: false,
         });
 
+        persistedAssistantMessageId = persisted.assistantMessage.id;
         imageUrl = persisted.assistantMessage.image_url || persisted.storedImage.imageUrl;
         imageBase64 = undefined;
         imageId = persisted.storedImage.imageId;
@@ -6804,6 +6807,8 @@ app.post(
       image_url: imageUrl,
       image_base64: imageBase64,
       image_id: imageId,
+      message_id: persistedAssistantMessageId,
+      client_request_id: clientRequestId || undefined,
       storage_path: storagePath,
       file_size_bytes: fileSizeBytes,
       conversation_id: conversationId || undefined,

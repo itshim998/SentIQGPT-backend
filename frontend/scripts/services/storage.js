@@ -471,9 +471,13 @@ function normalizeStoredMessage(message) {
   return normalized;
 }
 
-function getMessageMergeKey(message) {
-  const clientRequestId = getClientRequestId(message);
+export function getMessageMergeKey(message) {
   const messageType = message?.meta?.type || message?.message_type || "text";
+  if (message?.role === "assistant" && (messageType === "image" || message?.meta?.type === "image")) {
+    const imageIdentity = message?.meta?.storagePath || message?.meta?.storage_path || message?.meta?.imageUrl || message?.meta?.image_url;
+    if (imageIdentity) return `image:${imageIdentity}`;
+  }
+  const clientRequestId = getClientRequestId(message);
   if (clientRequestId) return `request:${message.role}:${messageType}:${clientRequestId}`;
   if (message?.id) return `id:${message.id}`;
   const contentFingerprint = normalizeMessageContentForDedup(message?.content);
@@ -486,7 +490,7 @@ function getMessageMergeKey(message) {
   return `content:${message?.role || "user"}:${contentFingerprint}:${metaFingerprint}`;
 }
 
-function mergeStoredMessage(existing, incoming) {
+export function mergeStoredMessage(existing, incoming) {
   if (!existing) return incoming;
   const clientRequestId = getClientRequestId(incoming) || getClientRequestId(existing);
   return {
@@ -497,8 +501,12 @@ function mergeStoredMessage(existing, incoming) {
   };
 }
 
-function normalizeMessageContentForDedup(value) {
-  return String(value || "").replace(/\s+/g, " ").trim();
+export function normalizeMessageContentForDedup(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^generate\s+image:\s*/i, "")
+    .trim();
 }
 
 function getMessageTimestampMs(message) {
@@ -531,11 +539,27 @@ export function collapseAdjacentDuplicateChatMessages(messages, duplicateWindowM
       collapsed[collapsed.length - 1] = currentIsDeepResearch ? message : previous;
       continue;
     }
-    const isImage = previous?.meta?.type === "image" || message?.meta?.type === "image";
-    if (isImage) {
+
+    const previousIsImage = previous?.meta?.type === "image" || previous?.message_type === "image";
+    const currentIsImage = message?.meta?.type === "image" || message?.message_type === "image";
+    if (previous && sameRole && previous.role === "assistant" && previousIsImage && currentIsImage) {
+      const previousImageId = previous?.meta?.storagePath || previous?.meta?.storage_path || previous?.meta?.imageUrl || previous?.meta?.image_url;
+      const currentImageId = message?.meta?.storagePath || message?.meta?.storage_path || message?.meta?.imageUrl || message?.meta?.image_url;
+      const isSameImage = Boolean(
+        sameRequest ||
+        (previousImageId && currentImageId && previousImageId === currentImageId) ||
+        (previous.id && message.id && previous.id === message.id)
+      );
+      if (isSameImage) {
+        collapsed[collapsed.length - 1] = mergeStoredMessage(previous, message);
+        continue;
+      }
+    }
+    if (previousIsImage || currentIsImage) {
       collapsed.push(message);
       continue;
     }
+
     if (previous && sameRole && sameContent) {
       const previousTimestampMs = getMessageTimestampMs(previous);
       const currentTimestampMs = getMessageTimestampMs(message);
@@ -544,6 +568,7 @@ export function collapseAdjacentDuplicateChatMessages(messages, duplicateWindowM
         currentTimestampMs === null ||
         Math.abs(currentTimestampMs - previousTimestampMs) <= duplicateWindowMs
       ) {
+        collapsed[collapsed.length - 1] = mergeStoredMessage(previous, message);
         continue;
       }
     }
@@ -615,7 +640,15 @@ async function upsertMessageInChat(chatId, message) {
   const messageId = typeof message?.id === "string" && message.id.trim()
     ? message.id.trim()
     : generateId();
-  const existingIndex = chat.messages.findIndex((item) => item.id === messageId);
+  const clientRequestId = getClientRequestId(safeMessage);
+  const targetRole = safeMessage?.role === "assistant" ? "assistant" : "user";
+  const existingIndex = chat.messages.findIndex((item) => {
+    if (item.id === messageId) return true;
+    if (clientRequestId && getClientRequestId(item) === clientRequestId && item.role === targetRole) {
+      return true;
+    }
+    return false;
+  });
   const nextMessage = {
     ...(existingIndex >= 0 ? chat.messages[existingIndex] : {}),
     id: messageId,
@@ -1126,4 +1159,5 @@ window.SentIQStorage = {
   getStorageStats, getStorageStatus, clearLocalData, generateId,
   normalizeMemoryScope, normalizeMemoryChatId,
   collapseAdjacentDuplicateChatMessages,
+  getMessageMergeKey, normalizeMessageContentForDedup, mergeStoredMessage,
 };

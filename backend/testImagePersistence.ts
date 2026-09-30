@@ -135,10 +135,10 @@ async function testFindExistingAssistantImageMessage(): Promise<void> {
 }
 
 function testImageRouteSourceGuards(): void {
-  const server = readFileSync(resolve(__dirname, "server.ts"), "utf8");
+  const server = readFileSync(resolve(__dirname, "serverLegacy.ts"), "utf8");
   const routeStart = server.indexOf('"/api/images/generate"');
   assert(routeStart >= 0, "image generation route exists");
-  const routeBlock = server.slice(routeStart, routeStart + 12_000);
+  const routeBlock = server.slice(routeStart, routeStart + 18_000);
   assert(routeBlock.includes('feature: "image_generation"'), "image route reserves billing image quota before provider generation");
   assert(routeBlock.includes("releaseBillingReservation(committedImageReservation)"), "image route releases billing quota when provider generation fails");
   assert(routeBlock.includes("billingQuotaService.commit(committedImageReservation"), "image route commits billing quota after provider success");
@@ -146,6 +146,9 @@ function testImageRouteSourceGuards(): void {
   assert(routeBlock.includes('persisted: false'), "image route returns recoverable unpersisted image results");
   assert(routeBlock.includes('code: "image_persistence_failed"'), "image route labels persistence-only failures");
   assert(routeBlock.includes("image_base64: imageBase64"), "image route returns generated payload when persistence fails");
+  assert(routeBlock.includes("persistPromptMessage: false"), "image route does not duplicate already-inserted user prompt message");
+  assert(routeBlock.includes("message_id: persistedAssistantMessageId"), "image route returns canonical persisted assistant message id");
+  assert(routeBlock.includes("client_request_id: clientRequestId || undefined"), "image route returns client_request_id");
 }
 
 async function main(): Promise<void> {

@@ -8,7 +8,7 @@ const read = (relativePath: string) => fs.readFileSync(path.join(root, relativeP
 const chatController = read("frontend/scripts/features/chat-controller.js");
 const storageService = read("frontend/scripts/services/storage.js");
 const apiClient = read("frontend/scripts/services/api.js");
-const server = read("backend/server.ts");
+const server = read("backend/serverLegacy.ts");
 const conversationService = read("backend/services/conversationService.ts");
 
 function functionBlock(source: string, signature: string, nextSignature: string): string {
