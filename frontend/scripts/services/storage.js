@@ -594,9 +594,46 @@ export function canonicalizeChatMessages(messages, options = {}) {
       matchIndex = byId.get(message.id);
     }
 
-    // 2. Request Key match (exact clientRequestId + role + messageType)
-    if (matchIndex === -1 && requestKey && byRequest.has(requestKey)) {
-      matchIndex = byRequest.get(requestKey);
+    // 2. Request Key match
+    if (matchIndex === -1 && clientRequestId) {
+      if (message.role === "user") {
+        const userKey = `user:${clientRequestId}`;
+        if (byRequest.has(userKey)) {
+          matchIndex = byRequest.get(userKey);
+        }
+      } else if (message.role === "assistant") {
+        if (messageType === "image") {
+          const imageKey = `assistant:image:${clientRequestId}`;
+          if (byRequest.has(imageKey)) {
+            matchIndex = byRequest.get(imageKey);
+          }
+        } else if (messageType === "deep-research") {
+          const deepKey = `assistant:deep-research:${clientRequestId}`;
+          const anyAssistantKey = `assistant:${clientRequestId}`;
+          if (byRequest.has(deepKey)) {
+            matchIndex = byRequest.get(deepKey);
+          } else if (byRequest.has(anyAssistantKey)) {
+            matchIndex = byRequest.get(anyAssistantKey);
+          }
+        } else {
+          // Assistant text
+          const anyAssistantKey = `assistant:${clientRequestId}`;
+          if (byRequest.has(anyAssistantKey)) {
+            const candIndex = byRequest.get(anyAssistantKey);
+            const existing = canonicalList[candIndex];
+            const existType = existing?.meta?.type || existing?.message_type || "text";
+            if (existType === "deep-research") {
+              matchIndex = candIndex;
+            } else if (existType === "text") {
+              const existNorm = normalizeMessageContentForDedup(existing?.content);
+              const candNorm = normalizeMessageContentForDedup(message.content);
+              if (!existNorm || !candNorm || existNorm === candNorm) {
+                matchIndex = candIndex;
+              }
+            }
+          }
+        }
+      }
     }
 
     // 3. Image Identity match (storagePath or imageUrl for completed image)
@@ -619,7 +656,7 @@ export function canonicalizeChatMessages(messages, options = {}) {
           }
           if (normalizeMessageContentForDedup(existing.content) === normContent) {
             const existTime = getMessageTimestampMs(existing);
-            if (msgTime === null || existTime === null || Math.abs(msgTime - existTime) <= 120 * 1000) {
+            if (msgTime === null || existTime === null || Math.abs(msgTime - existTime) <= 90 * 1000) {
               matchIndex = i;
               break;
             }
@@ -630,6 +667,7 @@ export function canonicalizeChatMessages(messages, options = {}) {
 
     // 5. Assistant Image Placeholder correlation fallback
     if (matchIndex === -1 && message.role === "assistant" && messageType === "image") {
+      const candImage = imageIdentity;
       const msgTime = getMessageTimestampMs(message);
       for (let i = canonicalList.length - 1; i >= 0; i--) {
         const existing = canonicalList[i];
@@ -641,11 +679,11 @@ export function canonicalizeChatMessages(messages, options = {}) {
           continue;
         }
         const existImage = existing.meta?.storagePath || existing.meta?.storage_path || existing.meta?.imageUrl || existing.meta?.image_url;
-        const candImage = imageIdentity;
-        // If at least one is placeholder (no image resolved yet), they correlate within turn window
-        if (!existImage || !candImage) {
+        // Exactly one must have an image and the other is a placeholder (NOT both empty!)
+        const oneHasImageAndOneIsPlaceholder = Boolean((candImage && !existImage) || (!candImage && existImage));
+        if (oneHasImageAndOneIsPlaceholder) {
           const existTime = getMessageTimestampMs(existing);
-          if (msgTime === null || existTime === null || Math.abs(msgTime - existTime) <= 120 * 1000) {
+          if (msgTime === null || existTime === null || Math.abs(msgTime - existTime) <= 90 * 1000) {
             matchIndex = i;
             break;
           }
@@ -653,26 +691,37 @@ export function canonicalizeChatMessages(messages, options = {}) {
       }
     }
 
+    function indexMessageKeys(entry, idx) {
+      if (entry.id) byId.set(entry.id, idx);
+      const reqId = getClientRequestId(entry);
+      const type = entry.meta?.type || entry.message_type || "text";
+      if (entry.role === "user" && reqId) {
+        byRequest.set(`user:${reqId}`, idx);
+      } else if (entry.role === "assistant" && reqId) {
+        if (type === "image") {
+          byRequest.set(`assistant:image:${reqId}`, idx);
+        } else if (type === "deep-research") {
+          byRequest.set(`assistant:deep-research:${reqId}`, idx);
+          byRequest.set(`assistant:${reqId}`, idx);
+        } else {
+          byRequest.set(`assistant:${reqId}`, idx);
+        }
+      }
+      const img = (entry.role === "assistant" && type === "image")
+        ? (entry.meta?.storagePath || entry.meta?.storage_path || entry.meta?.imageUrl || entry.meta?.image_url)
+        : null;
+      if (img) byImage.set(img, idx);
+    }
+
     if (matchIndex >= 0) {
       const merged = mergeStoredMessage(canonicalList[matchIndex], message);
       canonicalList[matchIndex] = merged;
-      if (merged.id) byId.set(merged.id, matchIndex);
+      indexMessageKeys(merged, matchIndex);
       if (message.id) byId.set(message.id, matchIndex);
-      const mergedReq = getClientRequestId(merged);
-      if (mergedReq) {
-        const mergedKey = `${merged.role}:${messageType}:${mergedReq}`;
-        byRequest.set(mergedKey, matchIndex);
-      }
-      const mergedImg = (merged.role === "assistant" && messageType === "image")
-        ? (merged.meta?.storagePath || merged.meta?.storage_path || merged.meta?.imageUrl || merged.meta?.image_url)
-        : null;
-      if (mergedImg) byImage.set(mergedImg, matchIndex);
     } else {
       const newIndex = canonicalList.length;
       canonicalList.push(message);
-      if (message.id) byId.set(message.id, newIndex);
-      if (requestKey) byRequest.set(requestKey, newIndex);
-      if (imageIdentity) byImage.set(imageIdentity, newIndex);
+      indexMessageKeys(message, newIndex);
     }
   }
 
