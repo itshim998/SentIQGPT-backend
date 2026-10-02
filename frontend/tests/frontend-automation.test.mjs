@@ -66,7 +66,6 @@ assert.ok(stateRunnerSource.includes("failures.push"));
 assert.ok(stateRunnerSource.includes("No focused frontend UI-state tests were discovered"));
 
 for (const token of [
-  'process.platform === "win32" ? "ts-node.cmd" : "ts-node"',
   "scripts/frontendBootstrapDomAliases.cjs",
   "--require=",
   "domReadyListeners[0]();",
@@ -74,6 +73,11 @@ for (const token of [
   "occurrences !== 1",
   "unlinkSync(generatedPath)",
 ]) assert.ok(bootstrapRunnerSource.includes(token), `Bootstrap runner missing ${token}`);
+assert.ok(
+  bootstrapRunnerSource.includes("tsNodeBin") ||
+  bootstrapRunnerSource.includes('process.platform === "win32" ? "ts-node.cmd" : "ts-node"'),
+  'Bootstrap runner missing ts-node resolution token',
+);
 assert.equal(bootstrapRunnerSource.includes("--import="), false);
 
 for (const token of [
