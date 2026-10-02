@@ -106,7 +106,11 @@ try {
     )).join("\n");
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await new Promise((resolvePromise) => setTimeout(resolvePromise, 350));
+  await page.waitForFunction(() => {
+    const composer = document.querySelector(".chat-input-area");
+    return composer && composer.getBoundingClientRect().height > 100;
+  }, { timeout: 3000 }).catch(() => {});
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
 
   const report = await page.evaluate(async () => {
     const wait = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
