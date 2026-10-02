@@ -4,12 +4,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const tsNodeExecutable = resolve(
-  repositoryRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "ts-node.cmd" : "ts-node",
-);
+const tsNodeBin = resolve(repositoryRoot, "node_modules", "ts-node", "dist", "bin.js");
 const preloadPath = resolve(repositoryRoot, "scripts/frontendBootstrapDomAliases.cjs");
 const sourcePath = resolve(repositoryRoot, "backend/testFrontendBootstrap.ts");
 const generatedPath = resolve(repositoryRoot, "backend/.testFrontendBootstrap.pass12.generated.ts");
@@ -28,7 +23,8 @@ writeFileSync(generatedPath, originalSource.replace(singleListenerCall, allListe
 
 let result;
 try {
-  result = spawnSync(tsNodeExecutable, [
+  result = spawnSync(process.execPath, [
+    tsNodeBin,
     "--project",
     resolve(repositoryRoot, "tsconfig.backend.json"),
     generatedPath,
