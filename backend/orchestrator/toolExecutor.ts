@@ -418,27 +418,30 @@ async function execConversation(
   let result: Awaited<ReturnType<typeof handleChat>>;
   let intuitiveFutureProtected = intuitiveLaneActive && reusesActiveRequestBudget;
   try {
-    if (intuitiveLaneActive && automaticTools.length > 0) {
-      protectIntuitiveFinalSynthesis({
-        userMessage: input,
-        complexity: hasFiles ? "heavy" : "normal",
-        knownContext: [
-          ctx.conversationSummary,
-          ctx.conversationCapsule,
-          ctx.workspaceCapsule,
-          ...(ctx.recentMessages ?? []).map((message) => message.content),
-          ...(ctx.memories ?? []).map((memory) => memory.summary),
-          ...(ctx.fileReferences ?? []).map((file) => file.extractedText.slice(0, 200_000)),
-        ].filter((value): value is string => Boolean(value)),
-        messageCount: (ctx.recentMessages?.length ?? 0) + 1,
-      });
-      intuitiveFutureProtected = true;
+    const shouldSelectTools = (intuitiveLaneActive || (visualNeeded && automaticTools.includes("image_input"))) && automaticTools.length > 0;
+    if (shouldSelectTools) {
+      if (intuitiveLaneActive) {
+        protectIntuitiveFinalSynthesis({
+          userMessage: input,
+          complexity: hasFiles ? "heavy" : "normal",
+          knownContext: [
+            ctx.conversationSummary,
+            ctx.conversationCapsule,
+            ctx.workspaceCapsule,
+            ...(ctx.recentMessages ?? []).map((message) => message.content),
+            ...(ctx.memories ?? []).map((memory) => memory.summary),
+            ...(ctx.fileReferences ?? []).map((file) => file.extractedText.slice(0, 200_000)),
+          ].filter((value): value is string => Boolean(value)),
+          messageCount: (ctx.recentMessages?.length ?? 0) + 1,
+        });
+        intuitiveFutureProtected = true;
+      }
       const selectedToolCalls = await selectChatToolCalls({
         userMessage: input,
         modelOverride,
         userId: ctx.userId,
         modelToolContext,
-        allowedModelTools: automaticTools,
+        allowedModelTools: intuitiveLaneActive ? automaticTools : ["image_input"],
         executionMode: profile.mode,
         signal,
         visualAssets: ctx.currentVisualAssets,
@@ -550,7 +553,7 @@ export async function synthesizeIntuitiveToolResult(
     executionMode: profile.mode === "intuitive" ? "intuitive" : "fast",
     allowedModelTools: [],
     requiredCapabilities: [],
-    consumeFutureObligationId: profile.mode === "intuitive" ? INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID : undefined,
+    consumeFutureObligationId: INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID,
   });
 
   return {
@@ -573,9 +576,16 @@ export async function executeAutomaticModelToolCalls(
   onLifecycleEvent?: (event: ToolLifecycleEvent) => void | Promise<void>,
   onFileToken?: (token: string) => void | Promise<void>,
 ): Promise<StepResult> {
+  const hasVisualCall = calls.some((c) => c.name === "image_input");
+  const visualNeeded = hasVisualCall
+    || Boolean(ctx.imageAttachments?.length)
+    || Boolean(ctx.currentVisualAssets?.length)
+    || hasVisualAssetsRequiringAnalysis(ctx.fileReferences as any, ctx.currentVisualAssets, ctx.imageAttachments);
   const allowedTools = getEnabledAutomaticSentIQTools({
+    hasVisualAssetsNeedingAnalysis: visualNeeded,
     fileReferences: ctx.fileReferences as any,
     visualAssets: ctx.currentVisualAssets,
+    imageAttachments: ctx.imageAttachments,
   });
   try {
     const dispatched = await dispatchAutomaticModelToolCall<StepResult>({
@@ -676,6 +686,19 @@ export async function execImageInput(
         visual_required: f.visual_required,
         visual_analysis_status: f.visual_analysis_status,
         source_document_id: f.source_document_id || f.document_id,
+      });
+    }
+  }
+  for (const img of (ctx.imageAttachments ?? []) as readonly any[]) {
+    const id = img.asset_id || img.visual_asset_id;
+    if (!candidatePool.some((c) => (id && c.asset_id === id) || (c.filename && c.filename === img.filename))) {
+      candidatePool.push({
+        asset_id: id,
+        filename: img.filename || "image",
+        mime_type: img.mime_type,
+        visual_required: true,
+        visual_analysis_status: img.visual_analysis_status || "required",
+        source_document_id: img.source_document_id,
       });
     }
   }

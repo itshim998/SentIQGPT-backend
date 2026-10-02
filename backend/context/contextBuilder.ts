@@ -100,6 +100,10 @@ export interface ImageAttachmentContext {
   readonly mime_type: "image/png" | "image/jpeg" | "image/webp" | "image/heic" | "image/heif";
   readonly base64: string;
   readonly size_bytes: number;
+  readonly asset_id?: string;
+  readonly visual_asset_id?: string;
+  readonly visual_analysis_status?: "not_required" | "required" | "processing" | "ready" | "failed" | string;
+  readonly source_document_id?: string;
 }
 
 export interface BuiltContext {
@@ -348,11 +352,16 @@ function continuityEvidence(continuity: CrossConversationContinuity): readonly C
 }
 
 function imageAttachments(raw: RawMessageContext): readonly ImageAttachmentContext[] {
-  return (raw.image_attachments ?? []).map((image) => ({
+  const list = (raw.image_attachments ?? (raw as any).imageAttachments ?? []) as readonly any[];
+  return list.map((image) => ({
     filename: image.filename,
     mime_type: image.mime_type,
     base64: image.base64,
     size_bytes: image.size_bytes,
+    asset_id: image.asset_id || image.visual_asset_id || image.assetId || image.visualAssetId,
+    visual_asset_id: image.visual_asset_id || image.asset_id || image.visualAssetId || image.assetId,
+    visual_analysis_status: image.visual_analysis_status,
+    source_document_id: image.source_document_id || image.sourceDocumentId,
   }));
 }
 
@@ -366,31 +375,34 @@ export function extractCurrentVisualAssets(raw: RawMessageContext): readonly Vis
     }
   }
 
-  for (const file of raw.file_references ?? []) {
+  const rawFileRefs = (raw.file_references ?? (raw as any).fileReferences ?? []) as readonly any[];
+  for (const file of rawFileRefs) {
     if (!file) continue;
-    const assetId = file.asset_id || file.visual_asset_id;
-    const isPdf = file.filename.toLowerCase().endsWith(".pdf") || file.mime_type === "application/pdf";
-    const isImage = file.mime_type?.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.filename);
-    const isVisual = file.visual_required === true || file.visual_analysis_status === "required" || Boolean(assetId) || isImage;
+    const assetId = file.asset_id || file.visual_asset_id || file.assetId || file.visualAssetId;
+    const filename = file.filename || "";
+    const mimeType = file.mime_type || file.mimeType;
+    const isPdf = filename.toLowerCase().endsWith(".pdf") || mimeType === "application/pdf";
+    const isImage = mimeType?.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(filename);
     if (assetId) {
       if (!map.has(assetId)) {
         map.set(assetId, {
           asset_id: assetId,
-          filename: file.filename,
-          mime_type: file.mime_type || (isPdf ? "application/pdf" : "image/png"),
+          filename: filename,
+          mime_type: mimeType || (isPdf ? "application/pdf" : "image/png"),
           asset_type: isPdf ? "scanned_pdf" : "image",
           conversation_id: raw.conversationId ?? null,
           visual_required: file.visual_required !== false,
           visual_analysis_status: (file.visual_analysis_status as any) || "required",
-          canonical_source_document_id: file.source_document_id || file.document_id || (file as any).sourceDocumentId || null,
+          canonical_source_document_id: file.source_document_id || file.document_id || file.sourceDocumentId || null,
         });
       }
     }
   }
 
-  for (const img of (raw.image_attachments as readonly any[]) ?? []) {
+  const rawImageAttachments = (raw.image_attachments ?? (raw as any).imageAttachments ?? []) as readonly any[];
+  for (const img of rawImageAttachments) {
     if (!img) continue;
-    const assetId = img.asset_id || img.visual_asset_id;
+    const assetId = img.asset_id || img.visual_asset_id || img.assetId || img.visualAssetId;
     if (assetId && !map.has(assetId)) {
       map.set(assetId, {
         asset_id: assetId,
@@ -399,8 +411,8 @@ export function extractCurrentVisualAssets(raw: RawMessageContext): readonly Vis
         asset_type: "image",
         conversation_id: raw.conversationId ?? null,
         visual_required: true,
-        visual_analysis_status: img.visual_analysis_status || "required",
-        canonical_source_document_id: null,
+        visual_analysis_status: (img.visual_analysis_status as any) || "required",
+        canonical_source_document_id: img.source_document_id || img.sourceDocumentId || null,
       });
     }
   }

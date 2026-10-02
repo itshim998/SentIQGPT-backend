@@ -9291,7 +9291,7 @@ import {
       .filter((attachment) => attachment.kind === "image" && attachment.imageAttachment)
       .map((attachment) => attachment.imageAttachment);
     const composerFileReferences = requestComposerAttachments
-      .filter((attachment) => attachment.kind === "file" && attachment.fileReference)
+      .filter((attachment) => attachment.fileReference)
       .map((attachment) => attachment.fileReference);
     const imageAttachmentsForRequest = suppliedImageAttachments.length > 0
       ? suppliedImageAttachments
@@ -9428,6 +9428,7 @@ import {
       let finalAssistantMeta = null;
       let webSurfV2Sources = null;
       let webSurfV2Completion = null;
+      let imageInputResult = null;
       let lastSyncDraftAt = 0;
       const streamDraft = createStreamingDraftPersister(targetChatId, requestId);
 
@@ -9541,6 +9542,7 @@ import {
                 }
               },
               onImageInput(imageInputPayload) {
+                imageInputResult = imageInputPayload;
                 const evidenceText = imageInputPayload?.evidence?.relevant_text || imageInputPayload?.relevant_text;
                 if (!isRequestStale(targetChatId, requestId) && evidenceText) {
                   const activeState = getChatState(targetChatId);
@@ -9658,6 +9660,7 @@ import {
               finalAssistantMeta = extractResponseMetaForSync(structuredResponse, targetChatId);
               memoryResult = structuredResponse.memory;
               responseSync = structuredResponse.sync || null;
+              if (structuredResponse?.image_input) imageInputResult = structuredResponse.image_input;
               assistantPersisted = true;
             } else {
               await streamBubble.finish();
@@ -9791,6 +9794,7 @@ import {
         finalAssistantMeta = extractResponseMetaForSync(response, targetChatId);
         memoryResult = response.memory;
         responseSync = response.sync || null;
+        imageInputResult = response?.image_input || null;
         assistantPersisted = true;
       }
 
@@ -9838,7 +9842,8 @@ import {
           await storeMemoryForContext(scopedMemory);
         }
       }
-      if (response?.image_input?.success && response.image_input.evidence?.relevant_text) {
+      const effectiveImageEvidence = imageInputResult?.evidence?.relevant_text || imageInputResult?.relevant_text;
+      if (imageInputResult?.success && effectiveImageEvidence) {
         const state = getChatState(targetChatId);
         const files = Array.isArray(state?.sessionFiles) ? state.sessionFiles : [];
         let updatedAny = false;
@@ -9846,7 +9851,7 @@ import {
           if (file.visual_required || file.asset_id || file.visual_asset_id) {
             file.visual_analysis_status = "ready";
             if (!file.extracted_text) {
-              file.extracted_text = response.image_input.evidence.relevant_text;
+              file.extracted_text = effectiveImageEvidence;
               updatedAny = true;
             }
           }
@@ -10792,6 +10797,12 @@ import {
             };
             attachment.analysisId = analysisId;
             attachment.fileReference = fileReference;
+            if (attachment.imageAttachment) {
+              attachment.imageAttachment.asset_id = fileReference.asset_id;
+              attachment.imageAttachment.visual_asset_id = fileReference.visual_asset_id;
+              attachment.imageAttachment.source_document_id = fileReference.source_document_id;
+              attachment.imageAttachment.visual_analysis_status = fileReference.visual_analysis_status;
+            }
             attachmentIdByAnalysisId.set(analysisId, attachment.id);
           }
         } catch (uploadErr) {

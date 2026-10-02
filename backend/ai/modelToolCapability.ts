@@ -324,6 +324,7 @@ export function isModelImageInputSelectionEnabled(
 export function hasVisualAssetsRequiringAnalysis(
   fileReferences?: readonly Record<string, unknown>[] | readonly any[],
   visualAssets?: readonly Record<string, unknown>[] | readonly any[],
+  imageAttachments?: readonly Record<string, unknown>[] | readonly any[],
 ): boolean {
   const checkItem = (ref: any): boolean => {
     if (!ref || typeof ref !== "object") return false;
@@ -338,6 +339,7 @@ export function hasVisualAssetsRequiringAnalysis(
   };
   if (Array.isArray(fileReferences) && fileReferences.some(checkItem)) return true;
   if (Array.isArray(visualAssets) && visualAssets.some(checkItem)) return true;
+  if (Array.isArray(imageAttachments) && imageAttachments.length > 0) return true;
   return false;
 }
 
@@ -345,6 +347,7 @@ export function getEnabledAutomaticSentIQTools(options?: {
   readonly hasVisualAssetsNeedingAnalysis?: boolean;
   readonly fileReferences?: readonly unknown[];
   readonly visualAssets?: readonly unknown[];
+  readonly imageAttachments?: readonly unknown[];
 }): readonly SentIQToolName[] {
   const flags = getModelToolRuntimeSnapshot();
   if (!flags.registryEnabled) return [];
@@ -355,7 +358,11 @@ export function getEnabledAutomaticSentIQTools(options?: {
     && !flags.nvidiaTransportEnabled
   ) return [];
   const visualNeeded = options?.hasVisualAssetsNeedingAnalysis
-    ?? hasVisualAssetsRequiringAnalysis(options?.fileReferences, options?.visualAssets);
+    ?? (
+      Boolean(options?.imageAttachments?.length) ||
+      Boolean(options?.visualAssets?.length) ||
+      hasVisualAssetsRequiringAnalysis(options?.fileReferences, options?.visualAssets, options?.imageAttachments)
+    );
   return [
     ...(flags.webSurfSelectionEnabled ? ["web_surf" as const] : []),
     ...(flags.imageSelectionEnabled ? ["image_gen" as const] : []),
@@ -373,6 +380,7 @@ export function getAutomaticSentIQToolsForRoute(
     readonly hasVisualAssetsNeedingAnalysis?: boolean;
     readonly fileReferences?: readonly unknown[];
     readonly visualAssets?: readonly unknown[];
+    readonly imageAttachments?: readonly unknown[];
   },
 ): readonly SentIQToolName[] {
   const tools = getEnabledAutomaticSentIQTools(options);
