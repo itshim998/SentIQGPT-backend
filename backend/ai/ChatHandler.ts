@@ -17,6 +17,7 @@ import { GenerationBudgetError } from "../orchestrator/contextBudgetManager";
 import type { ExecutionMode } from "../orchestrator/executionProfile";
 import { detectExplicitTextRenderingRequirement } from "../tools/imageGeneration/imageTextRenderingDecision";
 import { releaseFutureTokenObligation } from "../context/requestBudgetContext";
+import type { VisualAssetContext } from "../context/contextBuilder";
 
 const REASONING_MAX_OUTPUT_TOKENS = 2600;
 const CONTINUATION_MAX_OUTPUT_TOKENS = 1800;
@@ -91,11 +92,12 @@ export async function selectChatToolCalls(args: {
   readonly allowedModelTools: readonly SentIQToolName[];
   readonly executionMode?: ExecutionMode;
   readonly signal?: AbortSignal;
+  readonly visualAssets?: readonly VisualAssetContext[];
 }): Promise<readonly ValidatedToolCall[]> {
   if (args.allowedModelTools.length === 0) return [];
   const result = await callLLMAdapterDetailed({
     task: "chat",
-    prompt: buildIntuitiveToolSelectionPrompt(args.userMessage, args.allowedModelTools),
+    prompt: buildIntuitiveToolSelectionPrompt(args.userMessage, args.allowedModelTools, args.visualAssets),
     model_override: args.modelOverride,
     user_id: args.userId,
     safety_mode: "low_risk_text",

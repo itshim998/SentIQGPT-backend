@@ -103,6 +103,7 @@ export async function uploadVisualAssetBuffer(args: {
   fallbackLocalStore.set(fullKey, args.buffer);
 
   if (args.supabaseClient && typeof args.supabaseClient.storage?.from === "function") {
+    let lastError: Error | null = null;
     try {
       await ensureVisualAssetBucket(args.supabaseClient);
       let uploaded = false;
@@ -118,12 +119,14 @@ export async function uploadVisualAssetBuffer(args: {
           uploaded = true;
           break;
         }
+        lastError = error instanceof Error ? error : new Error(String(error.message || error));
       }
       if (!uploaded) {
-        console.warn(`[Visual Storage] live upload failed for ${storagePath}, preserved in local fallback`);
+        throw lastError || new Error(`Live Supabase storage upload failed for ${storagePath}`);
       }
     } catch (error) {
-      console.warn(`[Visual Storage] error uploading to Supabase: ${error instanceof Error ? error.message : error}`);
+      console.error(`[Visual Storage] error uploading to Supabase: ${error instanceof Error ? error.message : error}`);
+      throw error;
     }
   }
 

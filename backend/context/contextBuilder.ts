@@ -16,7 +16,11 @@ import { collapseAdjacentDuplicateMessages } from "./messageDeduper";
 import { FAST_PROFILE, INTUITIVE_PROFILE, type ExecutionProfile } from "../orchestrator/executionProfile";
 import type { BillingIdentity } from "../billing/entitlementTypes";
 import { contextCapsuleService, type ContextCapsulePair } from "../services/contextCapsuleService";
-import { sourceRetrievalService, type PromptSourceReference } from "../services/sourceRetrievalService";
+import {
+  sourceRetrievalService,
+  isQueryTargetingVisualAsset,
+  type PromptSourceReference,
+} from "../services/sourceRetrievalService";
 import {
   collectSourceDocumentIds,
   fetchFastContextSnapshot,
@@ -62,6 +66,8 @@ export interface RawMessageContext {
     visual_analysis_status?: string;
   }[];
   readonly image_attachments?: readonly ImageAttachmentContext[];
+  readonly current_visual_assets?: readonly VisualAssetContext[];
+  readonly currentVisualAssets?: readonly VisualAssetContext[];
   readonly trustedProfile?: { displayName: string };
   readonly web_search_mode?: WebSearchMode;
   readonly web_search_trigger?: "manual" | "auto";
@@ -73,6 +79,20 @@ export interface RawMessageContext {
   readonly billingRequestId?: string;
   readonly clientRequestId?: string;
   readonly imageQuotaKey?: string;
+}
+
+export interface VisualAssetContext {
+  readonly asset_id: string;
+  readonly filename: string;
+  readonly mime_type: string;
+  readonly asset_type: "scanned_pdf" | "image" | "pdf";
+  readonly conversation_id?: string | null;
+  readonly visual_required: boolean;
+  readonly visual_analysis_status: "not_required" | "required" | "processing" | "ready" | "failed";
+  readonly canonical_source_document_id?: string | null;
+  readonly page_count?: number | null;
+  readonly visual_analysis_required?: boolean;
+  readonly canonical_text_available?: boolean;
 }
 
 export interface ImageAttachmentContext {
@@ -94,6 +114,7 @@ export interface BuiltContext {
   }[];
   readonly fileReferences: readonly PromptSourceReference[];
   readonly imageAttachments: readonly ImageAttachmentContext[];
+  readonly currentVisualAssets: readonly VisualAssetContext[];
   readonly memoryPromptBlock: string;
   readonly conversationSummary?: string;
   readonly conversationCapsule?: string;
@@ -335,6 +356,58 @@ function imageAttachments(raw: RawMessageContext): readonly ImageAttachmentConte
   }));
 }
 
+export function extractCurrentVisualAssets(raw: RawMessageContext): readonly VisualAssetContext[] {
+  const explicit = (raw.current_visual_assets ?? (raw as any).currentVisualAssets ?? []) as readonly VisualAssetContext[];
+  const map = new Map<string, VisualAssetContext>();
+
+  for (const item of explicit) {
+    if (item && item.asset_id) {
+      map.set(item.asset_id, item);
+    }
+  }
+
+  for (const file of raw.file_references ?? []) {
+    if (!file) continue;
+    const assetId = file.asset_id || file.visual_asset_id;
+    const isPdf = file.filename.toLowerCase().endsWith(".pdf") || file.mime_type === "application/pdf";
+    const isImage = file.mime_type?.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.filename);
+    const isVisual = file.visual_required === true || file.visual_analysis_status === "required" || Boolean(assetId) || isImage;
+    if (assetId) {
+      if (!map.has(assetId)) {
+        map.set(assetId, {
+          asset_id: assetId,
+          filename: file.filename,
+          mime_type: file.mime_type || (isPdf ? "application/pdf" : "image/png"),
+          asset_type: isPdf ? "scanned_pdf" : "image",
+          conversation_id: raw.conversationId ?? null,
+          visual_required: file.visual_required !== false,
+          visual_analysis_status: (file.visual_analysis_status as any) || "required",
+          canonical_source_document_id: file.source_document_id || file.document_id || (file as any).sourceDocumentId || null,
+        });
+      }
+    }
+  }
+
+  for (const img of (raw.image_attachments as readonly any[]) ?? []) {
+    if (!img) continue;
+    const assetId = img.asset_id || img.visual_asset_id;
+    if (assetId && !map.has(assetId)) {
+      map.set(assetId, {
+        asset_id: assetId,
+        filename: img.filename,
+        mime_type: img.mime_type || "image/png",
+        asset_type: "image",
+        conversation_id: raw.conversationId ?? null,
+        visual_required: true,
+        visual_analysis_status: img.visual_analysis_status || "required",
+        canonical_source_document_id: null,
+      });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
 export async function buildContext(
   raw: RawMessageContext,
   userDb?: SupabaseClient,
@@ -350,10 +423,16 @@ export async function buildContext(
   const effectiveUserDb = userDb ?? raw.userDb;
   const localMemories = rawMemoryCandidates(raw);
 
+  const visualAssets = extractCurrentVisualAssets(raw);
+  const pendingVisualTarget = visualAssets.some((v) =>
+    (v.visual_required && v.visual_analysis_status !== "ready") &&
+    isQueryTargetingVisualAsset(query, { filename: v.filename } as any, visualAssets as any)
+  );
+
   const cloudMemoryPromise = profile.context.cloudMemories && effectiveUserDb && normalizedUserId
     ? fetchCloudMemories(effectiveUserDb, normalizedUserId, query, raw.conversationId)
     : Promise.resolve([] as readonly ContextMemory[]);
-  const continuityPromise = profile.context.priorConversationRecall && effectiveUserDb && normalizedUserId
+  const continuityPromise = profile.context.priorConversationRecall && effectiveUserDb && normalizedUserId && !pendingVisualTarget
     ? fetchCrossConversationContinuity({
         userDb: effectiveUserDb,
         ownerUserId: normalizedUserId,
@@ -370,13 +449,13 @@ export async function buildContext(
           sourceEvidence: [],
         },
       });
-  const capsulePromise: Promise<ContextCapsulePair> = normalizedUserId && effectiveUserDb
+  const capsulePromise: Promise<ContextCapsulePair> = normalizedUserId && effectiveUserDb && !pendingVisualTarget
     ? contextCapsuleService.readCapsules({
         userDb: effectiveUserDb,
         ownerUserId: normalizedUserId,
         conversationId: raw.conversationId,
       })
-    : Promise.resolve(normalizedUserId
+    : Promise.resolve(normalizedUserId && !pendingVisualTarget
         ? contextCapsuleService.peekCachedCapsules(normalizedUserId, raw.conversationId)
         : {});
   const sourceRetrievalPromise = sourceRetrievalService.retrieveForPrompt({
@@ -397,8 +476,10 @@ export async function buildContext(
     sourceRetrievalPromise,
   ]);
 
-  let priorConversationEvidence = continuityEvidence(continuityResult.continuity);
-  if (isExplicitRecallQuery && priorConversationEvidence.length === 0) {
+  let priorConversationEvidence = pendingVisualTarget
+    ? []
+    : continuityEvidence(continuityResult.continuity);
+  if (!pendingVisualTarget && isExplicitRecallQuery && priorConversationEvidence.length === 0) {
     priorConversationEvidence = await fetchPriorConversationRecallEvidence({
       query,
       userDb: effectiveUserDb,
@@ -418,9 +499,11 @@ export async function buildContext(
     conversationId: raw.conversationId,
     limit: isExplicitRecallQuery ? 6 : 5,
   }) as readonly ContextMemory[];
-  const continuityBlock = formatCrossConversationContinuityForPrompt(continuityResult.continuity);
+  const continuityBlock = pendingVisualTarget ? undefined : formatCrossConversationContinuityForPrompt(continuityResult.continuity);
   const files = sourceRetrieval.fileReferences;
   const images = imageAttachments(raw);
+  const conversationCapsule = pendingVisualTarget ? undefined : capsules.conversation?.content;
+  const workspaceCapsule = pendingVisualTarget ? undefined : (continuityBlock ?? capsules.workspace?.content);
 
   console.log(
     `[CONTEXT] memory candidates=${memoryCandidates.length} semantic=${semanticResults?.length ?? 0} selected=${memories.length}`,
@@ -436,11 +519,12 @@ export async function buildContext(
     memories,
     fileReferences: files,
     imageAttachments: images,
+    currentVisualAssets: visualAssets,
     memoryPromptBlock: formatMemoriesForPrompt(memories),
-    conversationSummary: compressionResult.summary,
-    conversationCapsule: capsules.conversation?.content,
-    workspaceCapsule: continuityBlock ?? capsules.workspace?.content,
-    hasFileContext: files.length > 0 || images.length > 0,
+    conversationSummary: pendingVisualTarget ? undefined : compressionResult.summary,
+    conversationCapsule,
+    workspaceCapsule,
+    hasFileContext: files.length > 0 || images.length > 0 || visualAssets.length > 0,
     webSearchMode: raw.web_search_mode,
     webSearchTrigger: raw.web_search_trigger,
     userId: normalizedUserId,
@@ -469,7 +553,13 @@ export async function buildContextFast(
   const isExplicitRecallQuery = isExplicitPriorConversationRecallQuery(query);
   const normalizedUserId = userId?.trim();
   const effectiveUserDb = userDb ?? raw.userDb;
-  const cachedCapsules = normalizedUserId
+  const visualAssets = extractCurrentVisualAssets(raw);
+  const pendingVisualTarget = visualAssets.some((v) =>
+    (v.visual_required && v.visual_analysis_status !== "ready") &&
+    isQueryTargetingVisualAsset(query, { filename: v.filename } as any, visualAssets as any)
+  );
+
+  const cachedCapsules = (normalizedUserId && !pendingVisualTarget)
     ? contextCapsuleService.peekCachedCapsules(normalizedUserId, raw.conversationId)
     : {};
   const sourceDocumentIds = collectSourceDocumentIds(
@@ -532,8 +622,8 @@ export async function buildContextFast(
   }) as readonly ContextMemory[];
   const files = sourceRetrieval.fileReferences;
   const images = imageAttachments(raw);
-  const conversationCapsule = snapshot?.conversationCapsule?.content ?? cachedCapsules.conversation?.content;
-  const workspaceCapsule = snapshot?.workspaceCapsule?.content ?? cachedCapsules.workspace?.content;
+  const conversationCapsule = pendingVisualTarget ? undefined : (snapshot?.conversationCapsule?.content ?? cachedCapsules.conversation?.content);
+  const workspaceCapsule = pendingVisualTarget ? undefined : (snapshot?.workspaceCapsule?.content ?? cachedCapsules.workspace?.content);
 
   console.log(`[CONTEXT-FAST] snapshot status=${snapshotResult.status} elapsed=${snapshotResult.elapsedMs}ms`);
   console.log(`[CONTEXT-FAST] profile=${profile.mode} completed in ${Date.now() - ctxStart}ms`);
@@ -543,6 +633,7 @@ export async function buildContextFast(
     memories,
     fileReferences: files,
     imageAttachments: images,
+    currentVisualAssets: visualAssets,
     memoryPromptBlock: formatMemoriesForPrompt(memories),
     conversationSummary: undefined,
     conversationCapsule,
@@ -557,7 +648,7 @@ export async function buildContextFast(
       conversationCapsuleVersion: snapshot?.cursors.conversationCapsuleVersion,
       workspaceCapsuleVersion: snapshot?.cursors.workspaceCapsuleVersion,
     },
-    hasFileContext: files.length > 0 || images.length > 0,
+    hasFileContext: files.length > 0 || images.length > 0 || visualAssets.length > 0,
     webSearchMode: raw.web_search_mode,
     webSearchTrigger: raw.web_search_trigger,
     userId: normalizedUserId,

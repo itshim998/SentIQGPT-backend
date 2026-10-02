@@ -32,9 +32,12 @@ import { partitionVisualBatches, type BatchItem } from "./tools/imageInput/visua
 import { execImageInput } from "./orchestrator/toolExecutor";
 import { dispatchAutomaticModelToolCall } from "./ai/modelToolExecution";
 import {
+  buildIntuitiveToolSelectionPrompt,
   buildIntuitiveToolSynthesisEvidence,
   shouldRunIntuitiveFinalSynthesis,
 } from "./orchestrator/intuitiveTextLane";
+import { selectModelForCapabilities } from "./orchestrator/capabilityModelSelector";
+import { buildContextFast } from "./context/contextBuilder";
 
 const USER_ID = "00000000-0000-4000-8000-000000000001";
 const CONVERSATION_ID = "00000000-0000-4000-8000-000000000002";
@@ -910,6 +913,72 @@ function createMockUserDatabase() {
   };
 }
 
+async function testScenarioR_ArchitecturalVerification(): Promise<void> {
+  console.log("Testing Scenario R: Architectural Verification (Neutrality, Manifest, Context Isolation)...");
+
+  // 1. Provider neutrality: presence of visual assets must NEVER force Gemini on conversation route
+  const modelSelection = await selectModelForCapabilities({
+    query: "Explain this diagram",
+    options: { hasImage: true },
+  });
+  assert.equal(modelSelection.provider, "groq", "Main text model must remain provider-neutral on Groq");
+  assert.equal(modelSelection.model, "gpt-oss-120b", "Main text model should be gpt-oss-120b");
+
+  // 2. Compact visual manifest for tool selection
+  const toolSelectionPrompt = buildIntuitiveToolSelectionPrompt(
+    "What does this diagram show?",
+    ["image_input", "web_surf"],
+    [
+      {
+        asset_id: "asset-12345-uuid",
+        filename: "XOR_using_MLFFN.pdf",
+        mime_type: "application/pdf",
+        asset_type: "scanned_pdf",
+        visual_required: true,
+        visual_analysis_status: "required",
+      },
+    ],
+  );
+  assert.ok(toolSelectionPrompt.includes("AVAILABLE VISUAL INPUTS:"), "Prompt must include visual inputs block");
+  assert.ok(toolSelectionPrompt.includes("asset-12345-uuid"), "Prompt must list stable immutable asset_id");
+  assert.ok(toolSelectionPrompt.includes("XOR_using_MLFFN.pdf"), "Prompt must list filename");
+  assert.ok(toolSelectionPrompt.includes("call image_input with the target asset_id"), "Prompt must instruct tool caller");
+
+  // 3. Tool enablement: image_input must be present in automatic tools when visual assets need analysis
+  const automaticTools = getEnabledAutomaticSentIQTools({
+    hasVisualAssetsNeedingAnalysis: true,
+  });
+  assert.ok(automaticTools.includes("image_input"), "Automatic tools must include image_input when visual needed");
+
+  // 4. Strict context isolation: prior evidence must not leak when unanalyzed visual target is queried
+  const built = await buildContextFast({
+    userMessage: "Explain the XOR problem in the attached document",
+    currentVisualAssets: [
+      {
+        asset_id: "asset-xor-999",
+        filename: "XOR_scanned.pdf",
+        mime_type: "application/pdf",
+        asset_type: "scanned_pdf",
+        visual_required: true,
+        visual_analysis_status: "required",
+      },
+    ],
+    file_references: [
+      {
+        filename: "XOR_scanned.pdf",
+        extractedText: "",
+        visual_required: true,
+        visual_analysis_status: "required",
+        asset_id: "asset-xor-999",
+      },
+    ],
+  });
+  assert.equal(built.priorConversationEvidence.length, 0, "Prior conversation evidence must be quarantined");
+  assert.equal(built.workspaceCapsule, undefined, "Workspace capsule must be quarantined");
+  assert.equal(built.currentVisualAssets.length, 1, "currentVisualAssets must be preserved on BuiltContext");
+  assert.equal(built.currentVisualAssets[0].asset_id, "asset-xor-999");
+}
+
 async function main(): Promise<void> {
   console.log("=== Running SentIQ Layer 1 Image Input Test Suite ===");
   await testScenarioA_SelectablePdf();
@@ -928,6 +997,7 @@ async function main(): Promise<void> {
   await testScenarioO_ToolSchemaAliasingAndTargetIsolation();
   await testScenarioP_MultiDocumentContamination();
   await testScenarioQ_TwoTierCacheBaseOcrReuse();
+  await testScenarioR_ArchitecturalVerification();
   console.log("=== All Layer 1 Tests Passed Successfully! ===");
 }
 

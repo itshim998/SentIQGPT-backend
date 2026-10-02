@@ -14,6 +14,7 @@ import {
 import type { ExecutionMode } from "./executionProfile";
 import type { RouteEvidenceItem } from "./contextComposer";
 import type { SentIQToolName } from "./toolContract";
+import type { VisualAssetContext } from "../context/contextBuilder";
 
 export const INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID = "intuitive-final-synthesis";
 
@@ -58,17 +59,36 @@ export function releaseIntuitiveFinalSynthesisProtection(): boolean {
 export function buildIntuitiveToolSelectionPrompt(
   userMessage: string,
   allowedTools: readonly SentIQToolName[],
+  visualAssets?: readonly VisualAssetContext[],
 ): string {
-  return [
+  const parts: string[] = [
     "SYSTEM: Decide only whether one available SentIQ tool must run before the final answer.",
     "Do not answer the user's question and do not draft an answer.",
     "If a tool is required, call exactly one available tool with the smallest sufficient arguments.",
     "If no tool is required, output exactly NO_TOOL.",
     `Available SentIQ tools: ${allowedTools.join(", ") || "none"}`,
-    "",
-    "User request:",
-    userMessage,
-  ].join("\n");
+  ];
+
+  if (visualAssets && visualAssets.length > 0) {
+    parts.push("");
+    parts.push("AVAILABLE VISUAL INPUTS:");
+    for (const asset of visualAssets) {
+      const isRequired = asset.visual_analysis_required ?? (asset.visual_analysis_status === "required" || asset.visual_required);
+      const isAvailable = asset.canonical_text_available ?? Boolean(asset.canonical_source_document_id || asset.visual_analysis_status === "ready");
+      const analysisStatus = isRequired ? "required" : "ready";
+      const textStatus = isAvailable ? "available" : "none";
+      parts.push(
+        `- Asset ID: ${asset.asset_id} | File: ${asset.filename} | Type: ${asset.mime_type} | Visual Analysis: ${analysisStatus} | Canonical Text: ${textStatus}`,
+      );
+    }
+    parts.push("When visual analysis is required for an attached visual input or image, call image_input with the target asset_id.");
+  }
+
+  parts.push("");
+  parts.push("User request:");
+  parts.push(userMessage);
+
+  return parts.join("\n");
 }
 
 interface SynthesisStep {

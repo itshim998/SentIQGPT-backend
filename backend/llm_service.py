@@ -1178,9 +1178,12 @@ class ImageInputRequest(BaseModel):
 @app.post("/llm/image-input")
 async def image_input_llm(request: ImageInputRequest):
     """Visual analysis and OCR engine using Gemini 3.5 Flash-Lite and 6-key rotation."""
-    user_id = require_user_id(request.user_id)
-    if is_guest_user(user_id):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    if is_guest_user(request.user_id):
+        user_id = GUEST_USER_ID
+        assigned_db = None
+    else:
+        user_id = require_user_id(request.user_id)
+        assigned_db = reserve_llm_request_slot(user_id) if PYTHON_LLM_QUOTA_ENFORCEMENT else None
     if not request.items:
         raise HTTPException(status_code=400, detail="items must be non-empty")
     if len(request.items) > 16:
@@ -1191,10 +1194,9 @@ async def image_input_llm(request: ImageInputRequest):
         raise HTTPException(status_code=400, detail="Batch payload too large (max ~50MB)")
 
     try:
-        assigned_db = reserve_llm_request_slot(user_id) if PYTHON_LLM_QUOTA_ENFORCEMENT else None
         logger.info(
             "[image_input] quota_%s user_id=%s db=%s items_count=%d",
-            "reserved" if PYTHON_LLM_QUOTA_ENFORCEMENT else "delegated_to_billing",
+            "reserved" if (PYTHON_LLM_QUOTA_ENFORCEMENT and assigned_db is not None) else "delegated_to_billing",
             user_id,
             assigned_db,
             len(request.items),

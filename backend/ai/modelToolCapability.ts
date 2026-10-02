@@ -323,24 +323,28 @@ export function isModelImageInputSelectionEnabled(
 
 export function hasVisualAssetsRequiringAnalysis(
   fileReferences?: readonly Record<string, unknown>[] | readonly any[],
+  visualAssets?: readonly Record<string, unknown>[] | readonly any[],
 ): boolean {
-  if (!Array.isArray(fileReferences) || fileReferences.length === 0) return false;
-  return fileReferences.some((ref) => {
+  const checkItem = (ref: any): boolean => {
     if (!ref || typeof ref !== "object") return false;
     if (ref.visual_required === true || ref.visualRequired === true) return true;
     if (ref.visual_analysis_status === "required" || ref.visualAnalysisStatus === "required") return true;
-    const type = String(ref.type || "").toLowerCase();
-    const mime = String(ref.mime_type || ref.mimeType || "").toLowerCase();
+    const type = String(ref.type || ref.asset_type || "").toLowerCase();
+    const mime = String(ref.mime_type || ref.mimeType || ref.original_mime_type || "").toLowerCase();
     if (type === "image" || mime.startsWith("image/")) return true;
-    const hasAsset = Boolean(ref.asset_id || ref.assetId || ref.visual_asset_id || ref.visualAssetId);
+    const hasAsset = Boolean(ref.asset_id || ref.assetId || ref.visual_asset_id || ref.visualAssetId || ref.id);
     const notReady = ref.visual_analysis_status !== "ready" && ref.visualAnalysisStatus !== "ready";
     return hasAsset && notReady;
-  });
+  };
+  if (Array.isArray(fileReferences) && fileReferences.some(checkItem)) return true;
+  if (Array.isArray(visualAssets) && visualAssets.some(checkItem)) return true;
+  return false;
 }
 
 export function getEnabledAutomaticSentIQTools(options?: {
   readonly hasVisualAssetsNeedingAnalysis?: boolean;
-  readonly fileReferences?: readonly Record<string, unknown>[];
+  readonly fileReferences?: readonly unknown[];
+  readonly visualAssets?: readonly unknown[];
 }): readonly SentIQToolName[] {
   const flags = getModelToolRuntimeSnapshot();
   if (!flags.registryEnabled) return [];
@@ -350,7 +354,8 @@ export function getEnabledAutomaticSentIQTools(options?: {
     && !flags.pollinationsTransportEnabled
     && !flags.nvidiaTransportEnabled
   ) return [];
-  const visualNeeded = options?.hasVisualAssetsNeedingAnalysis ?? hasVisualAssetsRequiringAnalysis(options?.fileReferences);
+  const visualNeeded = options?.hasVisualAssetsNeedingAnalysis
+    ?? hasVisualAssetsRequiringAnalysis(options?.fileReferences, options?.visualAssets);
   return [
     ...(flags.webSurfSelectionEnabled ? ["web_surf" as const] : []),
     ...(flags.imageSelectionEnabled ? ["image_gen" as const] : []),
@@ -366,7 +371,8 @@ export function getAutomaticSentIQToolsForRoute(
   streaming: boolean,
   options?: {
     readonly hasVisualAssetsNeedingAnalysis?: boolean;
-    readonly fileReferences?: readonly Record<string, unknown>[];
+    readonly fileReferences?: readonly unknown[];
+    readonly visualAssets?: readonly unknown[];
   },
 ): readonly SentIQToolName[] {
   const tools = getEnabledAutomaticSentIQTools(options);

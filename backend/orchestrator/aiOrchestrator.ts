@@ -133,6 +133,7 @@ export interface OrchestratorResponse {
   /** True when the response used live web search */
   readonly searched?: boolean;
   readonly tool_events?: readonly ToolLifecycleEvent[];
+  readonly image_input?: StepResult["image_input"];
 }
 
 type InternalMergedResponse = Omit<OrchestratorResponse, "confidence"> & {
@@ -281,6 +282,7 @@ export function mergeResults(
   let image: OrchestratorResponse["image"] | undefined;
   let chart: OrchestratorResponse["chart"] | undefined;
   let file: OrchestratorResponse["file"] | undefined;
+  let image_input: StepResult["image_input"] | undefined;
   let memory = memoryPayload;
   let web_search: OrchestratorResponse["web_search"] | undefined;
   let route: DetectedTool = "normal_chat";
@@ -358,6 +360,9 @@ export function mergeResults(
     if (step.web_search) {
       web_search = step.web_search;
     }
+    if (step.image_input) {
+      image_input = step.image_input;
+    }
     if (step.tool_events) tool_events.push(...step.tool_events);
   }
 
@@ -382,6 +387,7 @@ export function mergeResults(
     file,
     memory,
     web_search,
+    image_input,
     tool_events: tool_events.length > 0 ? tool_events : undefined,
     _isMathResult,
     _model_used,

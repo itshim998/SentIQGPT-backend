@@ -207,6 +207,12 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
         else if (parsed.type === "route" && parsed.route) { if (callbacks.onRoute) callbacks.onRoute(parsed.route, parsed); }
         else if (["tool_selected", "tool_started", "tool_result", "tool_error"].includes(parsed.type) && parsed.tool) {
           if (callbacks.onToolLifecycle) callbacks.onToolLifecycle(parsed);
+          if (parsed.type === "tool_result" && parsed.tool === "image_input") {
+            if (callbacks.onImageInput) callbacks.onImageInput(parsed.result || parsed);
+          }
+        }
+        else if (parsed.type === "image_input") {
+          if (callbacks.onImageInput) callbacks.onImageInput(parsed.image_input || parsed);
         }
         else if (parsed.type === "websurf_sources" && parsed.web_search) {
           if (callbacks.onWebSurfSources) callbacks.onWebSurfSources(parsed.web_search, parsed);

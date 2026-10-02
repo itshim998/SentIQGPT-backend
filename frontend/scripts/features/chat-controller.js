@@ -97,10 +97,20 @@ import {
       : [];
   }
 
+  function isEligibleSessionFile(file) {
+    if (!file || typeof file !== "object") return false;
+    if (file.extracted_text) return true;
+    if (file.visual_required || file.asset_id || file.visual_asset_id) return true;
+    const type = String(file.type || "").toLowerCase();
+    const mime = String(file.mime_type || "").toLowerCase();
+    if (type === "image" || mime.startsWith("image/")) return true;
+    return false;
+  }
+
   function setCurrentSessionFiles(files, chatId = currentChatId) {
     const state = getChatState(chatId);
     const normalizedFiles = Array.isArray(files)
-      ? files.filter((file) => file && file.extracted_text)
+      ? files.filter(isEligibleSessionFile)
       : [];
     if (state) {
       state.sessionFiles = normalizedFiles.slice(-10);
@@ -116,10 +126,12 @@ import {
       : (state?.sessionFile ? [state.sessionFile] : []);
     const next = [...existing];
     for (const file of Array.isArray(files) ? files : [files]) {
-      if (!file || !file.extracted_text) continue;
-      const key = file.analysis_id || `${file.filename}:${file.timestamp || ""}`;
+      if (!isEligibleSessionFile(file)) continue;
+      const key = file.asset_id || file.visual_asset_id || file.analysis_id || `${file.filename}:${file.timestamp || ""}`;
       const existingIndex = next.findIndex((item) => (
-        (item.analysis_id && file.analysis_id && item.analysis_id === file.analysis_id)
+        (item.asset_id && file.asset_id && item.asset_id === file.asset_id)
+        || (item.visual_asset_id && file.visual_asset_id && item.visual_asset_id === file.visual_asset_id)
+        || (item.analysis_id && file.analysis_id && item.analysis_id === file.analysis_id)
         || `${item.filename}:${item.timestamp || ""}` === key
       ));
       if (existingIndex >= 0) next.splice(existingIndex, 1);
@@ -4497,8 +4509,7 @@ import {
 
   function shouldReuseCurrentSessionImages(message) {
     const attachments = getChatState(currentChatId)?.sessionImageAttachments || currentSessionImageAttachments;
-    if (!attachments.length) return false;
-    return /\b(this|that|it|image|photo|picture|screenshot|attached|above|shown)\b/i.test(String(message || ""));
+    return Boolean(attachments && attachments.length > 0);
   }
 
   function getCurrentImageAttachments(message) {
@@ -9529,6 +9540,26 @@ import {
                   updateActivityIndicator("thinking", { chatId: targetChatId });
                 }
               },
+              onImageInput(imageInputPayload) {
+                const evidenceText = imageInputPayload?.evidence?.relevant_text || imageInputPayload?.relevant_text;
+                if (!isRequestStale(targetChatId, requestId) && evidenceText) {
+                  const activeState = getChatState(targetChatId);
+                  const files = Array.isArray(activeState?.sessionFiles) ? activeState.sessionFiles : [];
+                  let updatedAny = false;
+                  for (const file of files) {
+                    if (file.visual_required || file.asset_id || file.visual_asset_id) {
+                      file.visual_analysis_status = "ready";
+                      if (!file.extracted_text) {
+                        file.extracted_text = evidenceText;
+                        updatedAny = true;
+                      }
+                    }
+                  }
+                  if (updatedAny) {
+                    setCurrentSessionFiles(files, targetChatId);
+                  }
+                }
+              },
               onRoute(route, routeMeta = {}) {
                 state.activityMode = route === "web_search"
                   ? "web_search"
@@ -9805,6 +9836,23 @@ import {
         const scopedMemory = buildScopedMemoryPayload(memoryResult, targetChatId, responseSync);
         if (scopedMemory) {
           await storeMemoryForContext(scopedMemory);
+        }
+      }
+      if (response?.image_input?.success && response.image_input.evidence?.relevant_text) {
+        const state = getChatState(targetChatId);
+        const files = Array.isArray(state?.sessionFiles) ? state.sessionFiles : [];
+        let updatedAny = false;
+        for (const file of files) {
+          if (file.visual_required || file.asset_id || file.visual_asset_id) {
+            file.visual_analysis_status = "ready";
+            if (!file.extracted_text) {
+              file.extracted_text = response.image_input.evidence.relevant_text;
+              updatedAny = true;
+            }
+          }
+        }
+        if (updatedAny) {
+          setCurrentSessionFiles(files, targetChatId);
         }
       }
       maybeGenerateTitle(visibleUserMessage || apiMessage, fullReply, targetChatId);
@@ -10682,6 +10730,9 @@ import {
       mime_type: attachment.fileReference?.mime_type || attachment.imageAttachment?.mime_type || attachment.file?.type || "",
       size_bytes: attachment.fileReference?.size_bytes || attachment.imageAttachment?.size_bytes || attachment.file?.size || null,
       ...(attachment.analysisId ? { analysis_id: attachment.analysisId } : {}),
+      ...(attachment.fileReference?.asset_id ? { asset_id: attachment.fileReference.asset_id } : {}),
+      ...(attachment.fileReference?.visual_asset_id ? { visual_asset_id: attachment.fileReference.visual_asset_id } : {}),
+      ...(attachment.fileReference?.visual_required !== undefined ? { visual_required: Boolean(attachment.fileReference.visual_required) } : {}),
     };
   }
 
@@ -10694,6 +10745,9 @@ import {
         mime_type: String(attachment.mime_type || "").slice(0, 160),
         size_bytes: Number.isFinite(Number(attachment.size_bytes)) ? Number(attachment.size_bytes) : null,
         ...(typeof attachment.analysis_id === "string" && attachment.analysis_id ? { analysis_id: attachment.analysis_id } : {}),
+        ...(typeof attachment.asset_id === "string" && attachment.asset_id ? { asset_id: attachment.asset_id } : {}),
+        ...(typeof attachment.visual_asset_id === "string" && attachment.visual_asset_id ? { visual_asset_id: attachment.visual_asset_id } : {}),
+        ...(attachment.visual_required !== undefined ? { visual_required: Boolean(attachment.visual_required) } : {}),
       }));
     return normalized.length ? { type: "message-attachments", attachments: normalized } : null;
   }
@@ -10718,6 +10772,32 @@ import {
         const imageAttachment = await buildImageAttachment(attachment.file);
         if (!isActiveComposerAttachment(attachment, attempt)) return;
         attachment.imageAttachment = imageAttachment;
+
+        try {
+          const result = await API.uploadFile(attachment.file);
+          if (isActiveComposerAttachment(attachment, attempt)) {
+            const analysisId = result.analysis_id || `file-${attachment.id}`;
+            const fileReference = {
+              filename: result.filename || attachment.file.name,
+              type: "image",
+              size_bytes: result.size_bytes || attachment.file.size,
+              extracted_text: result.extracted_text || "",
+              analysis_id: analysisId,
+              mime_type: attachment.file.type || result.mime_type || "image/png",
+              asset_id: result.asset_id || result.visual_asset_id || undefined,
+              visual_asset_id: result.visual_asset_id || result.asset_id || undefined,
+              visual_required: true,
+              visual_analysis_status: result.visual_analysis_status || "required",
+              source_document_id: result.source_document_id || result.document_id || undefined,
+            };
+            attachment.analysisId = analysisId;
+            attachment.fileReference = fileReference;
+            attachmentIdByAnalysisId.set(analysisId, attachment.id);
+          }
+        } catch (uploadErr) {
+          debugWarn(`[UI] Durable image upload warning: ${getSafeErrorMessage(uploadErr)}`);
+        }
+
         setComposerAttachmentState(attachment, "ready");
         return;
       }

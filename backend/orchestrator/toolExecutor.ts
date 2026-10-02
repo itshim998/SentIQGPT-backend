@@ -31,6 +31,7 @@ import {
   deriveRequiredModelCapabilities,
   getAutomaticSentIQToolsForRoute,
   getEnabledAutomaticSentIQTools,
+  hasVisualAssetsRequiringAnalysis,
   routeSupportsCapabilities,
 } from "../ai/modelToolCapability";
 import type { ToolAvailabilityContext, ToolLifecycleEvent, ValidatedToolCall } from "./toolContract";
@@ -269,6 +270,8 @@ async function execConversation(
   // Provider choice is based only on required input capabilities.
   const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
   const hasImages = ctx.imageAttachments && ctx.imageAttachments.length > 0;
+  const visualNeeded = hasVisualAssetsRequiringAnalysis(ctx.fileReferences, ctx.currentVisualAssets)
+    || Boolean(hasImages);
   const fileNames = hasFiles ? ctx.fileReferences.map((f) => f.filename) : undefined;
   const fileContent = hasFiles ? ctx.fileReferences.map((f) => f.extractedText).join("\n") : undefined;
   
@@ -286,10 +289,14 @@ async function execConversation(
     signal,
   });
   const requestedAutomaticTools = !priorContext && !webSurfEvidence && !ctx.webSearchMode
-    ? getEnabledAutomaticSentIQTools()
+    ? getEnabledAutomaticSentIQTools({
+        hasVisualAssetsNeedingAnalysis: Boolean(visualNeeded),
+        fileReferences: ctx.fileReferences,
+        visualAssets: ctx.currentVisualAssets,
+      })
     : [];
   const requiredCapabilities = deriveRequiredModelCapabilities({
-    hasImageInput: hasImages,
+    hasImageInput: false,
     automaticToolsRequested: requestedAutomaticTools.length > 0,
     streaming: false,
   });
@@ -323,9 +330,13 @@ async function execConversation(
   }
   
   const automaticTools = requestedAutomaticTools.length > 0
-    ? getAutomaticSentIQToolsForRoute(finalRoute, false)
+    ? getAutomaticSentIQToolsForRoute(finalRoute, false, {
+        hasVisualAssetsNeedingAnalysis: Boolean(visualNeeded),
+        fileReferences: ctx.fileReferences,
+        visualAssets: ctx.currentVisualAssets,
+      })
     : [];
-  const intuitiveLaneActive = isNemotronIntuitiveLaneEnabled(profile.mode) && !hasImages;
+  const intuitiveLaneActive = isNemotronIntuitiveLaneEnabled(profile.mode);
   const modelToolContext: ToolAvailabilityContext = {
     authenticated: Boolean(ctx.userId && ctx.userId !== "guest"),
     executionMode: profile.mode,
@@ -430,6 +441,7 @@ async function execConversation(
         allowedModelTools: automaticTools,
         executionMode: profile.mode,
         signal,
+        visualAssets: ctx.currentVisualAssets,
       });
       if (selectedToolCalls.length > 0) {
         return await executeSelectedToolCalls(selectedToolCalls);
@@ -561,7 +573,10 @@ export async function executeAutomaticModelToolCalls(
   onLifecycleEvent?: (event: ToolLifecycleEvent) => void | Promise<void>,
   onFileToken?: (token: string) => void | Promise<void>,
 ): Promise<StepResult> {
-  const allowedTools = getEnabledAutomaticSentIQTools({ fileReferences: ctx.fileReferences as any });
+  const allowedTools = getEnabledAutomaticSentIQTools({
+    fileReferences: ctx.fileReferences as any,
+    visualAssets: ctx.currentVisualAssets,
+  });
   try {
     const dispatched = await dispatchAutomaticModelToolCall<StepResult>({
       calls,
@@ -625,17 +640,50 @@ export async function execImageInput(
 ): Promise<StepResult> {
   if (signal?.aborted) throwIfAborted(signal);
 
+  const visualAssets = ctx.currentVisualAssets ?? [];
   const fileRefs = (ctx.fileReferences ?? []) as readonly any[];
   const requestedTargets = [
     ...(args.targetAsset ? [args.targetAsset.trim().toLowerCase()] : []),
     ...(args.targetAssets ? args.targetAssets.map((t) => String(t).trim().toLowerCase()) : []),
   ].filter(Boolean);
 
-  let targetRefs = fileRefs.filter((ref) => {
-    if (!ref) return false;
+  interface CandidateVisualRef {
+    asset_id?: string;
+    filename: string;
+    mime_type?: string;
+    visual_required?: boolean;
+    visual_analysis_status?: string;
+    source_document_id?: string;
+  }
+  const candidatePool: CandidateVisualRef[] = [];
+
+  for (const v of visualAssets) {
+    candidatePool.push({
+      asset_id: v.asset_id,
+      filename: v.filename,
+      mime_type: v.mime_type,
+      visual_required: v.visual_required,
+      visual_analysis_status: v.visual_analysis_status,
+    });
+  }
+  for (const f of fileRefs) {
+    const id = f.asset_id || f.visual_asset_id;
+    if (!candidatePool.some((c) => (id && c.asset_id === id) || (c.filename && c.filename === f.filename))) {
+      candidatePool.push({
+        asset_id: id,
+        filename: f.filename || "file",
+        mime_type: f.mime_type || f.type,
+        visual_required: f.visual_required,
+        visual_analysis_status: f.visual_analysis_status,
+        source_document_id: f.source_document_id || f.document_id,
+      });
+    }
+  }
+
+  let matchedCandidates = candidatePool.filter((ref) => {
     const filename = String(ref.filename || "").toLowerCase();
     const nameBase = filename.replace(/\.[^/.]+$/, "");
-    const assetId = String(ref.asset_id || ref.visual_asset_id || ref.source_document_id || ref.document_id || "").toLowerCase();
+    const assetId = String(ref.asset_id || ref.source_document_id || "").toLowerCase();
     if (requestedTargets.length > 0) {
       return requestedTargets.some((target) => {
         if (assetId && assetId === target) return true;
@@ -647,16 +695,16 @@ export async function execImageInput(
     }
     return ref.visual_required === true ||
            ref.visual_analysis_status === "required" ||
-           Boolean(ref.asset_id || ref.visual_asset_id);
+           Boolean(ref.asset_id);
   });
 
-  if (targetRefs.length === 0 && fileRefs.length > 0) {
-    targetRefs = fileRefs.filter((ref) => Boolean(ref.asset_id || ref.visual_asset_id || ref.visual_required));
+  if (matchedCandidates.length === 0 && candidatePool.length > 0) {
+    matchedCandidates = candidatePool;
   }
 
   const assetRows: VisualAssetRow[] = [];
-  for (const ref of targetRefs) {
-    const assetId = ref.asset_id || ref.visual_asset_id;
+  for (const ref of matchedCandidates) {
+    const assetId = ref.asset_id;
     if (assetId) {
       const asset = await getVisualAssetById({
         userDb: ctx.userDb,
@@ -665,41 +713,20 @@ export async function execImageInput(
       });
       if (asset) {
         assetRows.push(asset);
-        continue;
       }
     }
-    const sha = createHash("sha256").update(ref.filename || "visual").digest("hex");
-    assetRows.push({
-      id: assetId || `asset-${sha.slice(0, 12)}`,
-      owner_user_id: ctx.userId || "guest",
-      conversation_id: ctx.conversationId ?? null,
-      filename: ref.filename || "visual_asset",
-      original_mime_type: ref.mime_type || (ref.filename?.endsWith(".pdf") ? "application/pdf" : "image/png"),
-      asset_type: ref.filename?.endsWith(".pdf") ? "pdf" : "image",
-      storage_bucket: "sentiq-visual-assets-private",
-      storage_path: `${ctx.userId || "guest"}/${ref.filename || "visual"}`,
-      size_bytes: ref.size_bytes || 0,
-      sha256: sha,
-      page_count: null,
-      status: "ready",
-      visual_required: true,
-      visual_analysis_status: "required",
-      canonical_source_document_id: null,
-      visual_analysis_version: 1,
-      metadata: {},
-    });
   }
 
   if (assetRows.length === 0) {
     return {
       step: 0,
       tool: "conversation",
-      reply: "No visual assets found to analyze.",
-      error: "No visual assets found to analyze.",
+      reply: "The visual asset could not be loaded from storage to analyze. Please re-upload the file.",
+      error: "No visual assets found in storage.",
       image_input: {
         success: false,
         evidence: {
-          relevant_text: "No visual assets found.",
+          relevant_text: "Visual asset could not be loaded from storage.",
         },
       },
     };

@@ -29,12 +29,14 @@ export async function selectModelForCapabilities(args: {
   void args.isGuest;
   void args.signal;
 
-  const requiresMultimodalContext = Boolean(args.options?.hasImage);
+  // The main conversation text model remains provider-neutral (Groq / gpt-oss-120b).
+  // Visual understanding is executed via the `image_input` tool calling into Gemini Flash-Lite,
+  // allowing the main model to receive structured visual evidence and continue synthesis.
   return {
-    provider: requiresMultimodalContext ? "gemini" : "groq",
-    model: requiresMultimodalContext ? "gemini-standard" : "gpt-oss-120b",
+    provider: "groq",
+    model: "gpt-oss-120b",
     source: "capability",
-    fallback_reason: requiresMultimodalContext ? "input_capability" : "default_text_model",
+    fallback_reason: "default_text_model",
   };
 }
 
