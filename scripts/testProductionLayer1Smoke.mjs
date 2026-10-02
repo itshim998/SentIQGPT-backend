@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import PDFDocument from "pdfkit";
 import sharp from "sharp";
 
 const PROD_URL = "https://sentiqgpt-backend.ashygrass-913d190e.centralindia.azurecontainerapps.io";
+
+function makeHeaders(custom = {}) {
+  return {
+    "Content-Type": "application/json",
+    "x-sentiq-anonymous-id": `smoke-${randomUUID()}`,
+    ...custom,
+  };
+}
 
 async function createTestPdf(options = {}) {
   return new Promise((resolve) => {
@@ -118,7 +127,7 @@ async function main() {
   console.log("\n[5/9] Test: Previous PDF Isolation Guard...");
   const isolationRes = await fetch(`${PROD_URL}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: makeHeaders(),
     body: JSON.stringify({
       message: "Explain the XOR problem in the scanned document.",
       execution_mode: "fast",
@@ -148,7 +157,7 @@ async function main() {
   console.log("\n[6/9] Test: OCR Reuse / Secondary Turn Cost Control...");
   const ocrReuseRes = await fetch(`${PROD_URL}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: makeHeaders(),
     body: JSON.stringify({
       message: "Summarize the findings from the scanned notes.",
       execution_mode: "fast",
@@ -172,7 +181,7 @@ async function main() {
   console.log("\n[7/9] Test: Visual Question Query...");
   const visualQueryRes = await fetch(`${PROD_URL}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: makeHeaders(),
     body: JSON.stringify({
       message: "What is the background color and layout geometry of the diagram?",
       execution_mode: "fast",
@@ -196,7 +205,7 @@ async function main() {
   console.log("\n[8/9] Test: Fast Mode vs Intuitive Mode Execution...");
   const fastRes = await fetch(`${PROD_URL}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: makeHeaders(),
     body: JSON.stringify({
       message: "Hello from Fast mode smoke test.",
       execution_mode: "fast",
@@ -209,7 +218,7 @@ async function main() {
 
   const intuitiveRes = await fetch(`${PROD_URL}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: makeHeaders(),
     body: JSON.stringify({
       message: "Hello from Intuitive mode smoke test.",
       execution_mode: "intuitive",
@@ -225,10 +234,7 @@ async function main() {
   console.log("\n[9/9] Test: Guest Mode (Anonymous Generation)...");
   const guestRes = await fetch(`${PROD_URL}/api/chat`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // Explicitly NO Authorization header
-    },
+    headers: makeHeaders(),
     body: JSON.stringify({
       message: "What is SentIQ? (Guest session test)",
       execution_mode: "fast",
@@ -240,8 +246,49 @@ async function main() {
   assert.ok(guestData.generation_id, "Guest mode must return generation_id without auth error");
   console.log("✓ Guest mode verified: unauthenticated user handled cleanly via guest session store");
 
+  // Step 10: Live SSE Streaming Chat Turn
+  console.log("\n[10/10] Test: Live SSE Streaming Chat Turn...");
+  const streamAbort = new AbortController();
+  const streamTimeout = setTimeout(() => streamAbort.abort(), 20000);
+  try {
+    const sseRes = await fetch(`${PROD_URL}/api/chat/stream`, {
+      method: "POST",
+      headers: makeHeaders(),
+      body: JSON.stringify({
+        message: "Reply in one short sentence confirming Layer 1 is operational.",
+        execution_mode: "fast",
+      }),
+      signal: streamAbort.signal,
+    });
+    assert.equal(sseRes.status, 200, `SSE stream failed with status ${sseRes.status}`);
+    const reader = sseRes.body.getReader();
+    const decoder = new TextDecoder();
+    let ssePayload = "";
+    let receivedEvents = 0;
+    let completedNormally = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      ssePayload += chunk;
+      if (chunk.includes("data:")) {
+        receivedEvents++;
+      }
+      if (ssePayload.includes("[DONE]")) {
+        completedNormally = true;
+        break;
+      }
+    }
+    assert.ok(receivedEvents > 0, "SSE stream must yield streaming events");
+    assert.ok(completedNormally, "SSE stream must complete normally with [DONE]");
+    console.log(`✓ Live SSE streaming verified: ${receivedEvents} event chunks received to [DONE] completion`);
+  } finally {
+    clearTimeout(streamTimeout);
+  }
+
   console.log("\n================================================================================");
-  console.log("ALL 9 PRODUCTION SMOKE TESTS COMPLETED AND VERIFIED SUCCESSFULLY!");
+  console.log("ALL 10 PRODUCTION SMOKE TESTS COMPLETED AND VERIFIED SUCCESSFULLY!");
   console.log("================================================================================");
 }
 
