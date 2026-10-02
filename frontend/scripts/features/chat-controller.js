@@ -4478,14 +4478,20 @@ import {
       ? state.sessionFiles
       : (state?.sessionFile ? [state.sessionFile] : currentSessionFiles);
     return sessionFiles
-      .filter((file) => file && file.extracted_text)
+      .filter((file) => file && (file.extracted_text || file.visual_required || file.asset_id || file.visual_asset_id))
       .slice(-10)
       .map((file) => ({
         filename: file.filename,
-        extractedText: file.extracted_text,
+        extractedText: file.extracted_text || "",
         analysis_id: file.analysis_id || undefined,
         size_bytes: file.size_bytes || undefined,
         mime_type: file.mime_type || file.type || undefined,
+        asset_id: file.asset_id || file.visual_asset_id || undefined,
+        visual_asset_id: file.visual_asset_id || file.asset_id || undefined,
+        visual_required: file.visual_required !== undefined ? Boolean(file.visual_required) : undefined,
+        visual_analysis_status: file.visual_analysis_status || undefined,
+        source_document_id: file.source_document_id || file.document_id || undefined,
+        sourceDocumentId: file.source_document_id || file.document_id || undefined,
       }));
   }
 
@@ -10726,6 +10732,11 @@ import {
         extracted_text: result.extracted_text || "",
         analysis_id: analysisId,
         mime_type: attachment.file.type || result.mime_type || "application/octet-stream",
+        asset_id: result.asset_id || result.visual_asset_id || undefined,
+        visual_asset_id: result.visual_asset_id || result.asset_id || undefined,
+        visual_required: Boolean(result.visual_required),
+        visual_analysis_status: result.visual_analysis_status || undefined,
+        source_document_id: result.source_document_id || result.document_id || undefined,
       };
       attachment.analysisId = analysisId;
       attachment.fileReference = fileReference;
@@ -10744,7 +10755,7 @@ import {
         });
       }
 
-      if (!fileReference.extracted_text) {
+      if (!fileReference.extracted_text && !fileReference.visual_required) {
         setComposerAttachmentState(attachment, "failed", getAttachmentFailureMessage("read", attachment.file));
         return;
       }
@@ -10752,7 +10763,7 @@ import {
         setComposerAttachmentState(attachment, "failed", getAttachmentFailureMessage(result.error, attachment.file));
         return;
       }
-      if ((result.analysis_status || "complete") === "complete") {
+      if (result.visual_required || (result.analysis_status || "complete") === "complete") {
         setComposerAttachmentState(attachment, "ready");
         return;
       }

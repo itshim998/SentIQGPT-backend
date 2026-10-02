@@ -204,6 +204,7 @@ GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", "openai/gpt-oss-120b")
 GEMINI_FAST_MODEL = os.getenv("SMART_MODEL_GEMINI_FAST", GEMINI_STANDARD_MODEL)
 GEMINI_SEARCH_MODEL = os.getenv("SMART_MODEL_GEMINI_SEARCH", GEMINI_FAST_MODEL)
 GEMINI_VISION_MODEL = os.getenv("SMART_MODEL_GEMINI_VISION", "gemini-2.5-flash")
+GEMINI_IMAGE_INPUT_MODEL = os.getenv("GEMINI_IMAGE_INPUT_MODEL", "gemini-3.5-flash-lite")
 CODING_MODEL = os.getenv("SMART_MODEL_CODING", "qwen-coder")
 GENERAL_CHAT_MODEL = os.getenv("SMART_MODEL_GENERAL_CHAT", "gemini-2.5-flash-lite")
 SEARCH_MODEL = os.getenv("SMART_MODEL_SEARCH", "gemini-2.5-flash-lite")
@@ -1838,6 +1839,179 @@ def _invoke_gemini_vision(prompt: str, image_base64: str, mime_type: str, model_
             _record_gemini_failure(record, model, e)
 
     raise RuntimeError(f"All Gemini Vision keys failed: {_redact_secrets(last_error)}")
+
+
+def _parse_image_input_json_response(raw_text: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+    text = (raw_text or "").strip()
+    cleaned = text
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+        cleaned = cleaned.strip()
+
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict) and "pages" in data:
+            return data
+    except Exception:
+        pass
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            data = json.loads(cleaned[start:end+1])
+            if isinstance(data, dict) and "pages" in data:
+                return data
+        except Exception:
+            pass
+
+    fallback_pages = []
+    for item in items:
+        p_num = item.get("page_number", 1)
+        fallback_pages.append({
+            "page_number": p_num,
+            "extracted_text": text,
+            "visual_summary": "Extracted visual content",
+            "uncertainty": None,
+            "confidence": "medium",
+            "needs_refinement": False,
+        })
+    return {
+        "pages": fallback_pages,
+        "request_evidence": {
+            "relevant_text": text[:2000],
+            "relevant_pages": [item.get("page_number", 1) for item in items],
+            "visual_findings": "Visual analysis completed.",
+        },
+    }
+
+
+def _call_gemini_image_input(
+    items: list[dict[str, Any]],
+    query: str,
+    media_resolution: str,
+    api_key: str,
+    model: str,
+) -> dict[str, Any]:
+    if not GOOGLE_GENAI_MODULE or not GOOGLE_GENAI_TYPES_MODULE:
+        raise RuntimeError("Google GenAI SDK not installed")
+    if not api_key:
+        raise RuntimeError("Gemini API key is empty")
+    if not gemini_bucket.consume():
+        raise RuntimeError("Gemini rate limit exceeded")
+
+    import base64 as b64mod
+    client = _get_google_genai_client(api_key)
+
+    instructions = [
+        "You are an expert visual document analysis and OCR engine for SentIQ.",
+        "Your task is to analyze the provided page images thoroughly and accurately.",
+        "Mandatory guidelines:",
+        "1. Extract ALL visible text (printed, typed, and handwritten) exactly as written, preserving reading order.",
+        "2. For handwritten text: NEVER hallucinate unreadable characters. If a word or character is uncertain or ambiguous, mark it explicitly with brackets and note the uncertainty (e.g. 'Adal[ine]').",
+        "3. Preserve all mathematical notation, formulas, equations, subscripts, superscripts, and symbols exactly.",
+        "4. Separate literal OCR text from visual observations (diagrams, layout, charts, tables, arrows, colors).",
+        "5. Respond in valid JSON format matching this schema:",
+        "{",
+        '  "pages": [',
+        '    {',
+        '      "page_number": <int>,',
+        '      "extracted_text": "<complete exact OCR text of this page>",',
+        '      "visual_summary": "<concise description of diagrams, graphs, colors, layout>",',
+        '      "uncertainty": "<any ambiguous or hard-to-read segments, or null>",',
+        '      "confidence": "high" | "medium" | "low",',
+        '      "needs_refinement": false',
+        '    }',
+        '  ],',
+        '  "request_evidence": {',
+        '    "relevant_text": "<text directly relevant to the user request>",',
+        '    "relevant_pages": [<page numbers>],',
+        '    "visual_findings": "<visual observations directly relevant to the user request>"',
+        '  }',
+        "}",
+        "IMPORTANT: Return ONLY the JSON object. Do not add conversational filler outside the JSON."
+    ]
+    if query:
+        instructions.append(f"User Request Focus: {query}")
+
+    contents: list[Any] = ["\n".join(instructions)]
+
+    for item in items:
+        raw_b64 = item.get("image_base64") or ""
+        mime_type = item.get("mime_type") or "image/jpeg"
+        page_num = item.get("page_number", 1)
+        filename = item.get("filename", "image")
+        try:
+            raw_bytes = b64mod.b64decode(raw_b64)
+        except Exception:
+            raise RuntimeError(f"Invalid base64 image data for page {page_num}")
+        contents.append(f"--- Document: {filename}, Page {page_num} ---")
+        contents.append(GOOGLE_GENAI_TYPES_MODULE.Part.from_bytes(data=raw_bytes, mime_type=mime_type))
+
+    config = None
+    try:
+        res_map = {
+            "low": GOOGLE_GENAI_TYPES_MODULE.MediaResolution.MEDIA_RESOLUTION_LOW,
+            "medium": GOOGLE_GENAI_TYPES_MODULE.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+            "high": GOOGLE_GENAI_TYPES_MODULE.MediaResolution.MEDIA_RESOLUTION_HIGH,
+        }
+        res_enum = res_map.get((media_resolution or "medium").lower(), GOOGLE_GENAI_TYPES_MODULE.MediaResolution.MEDIA_RESOLUTION_MEDIUM)
+        config = GOOGLE_GENAI_TYPES_MODULE.GenerateContentConfig(media_resolution=res_enum)
+    except Exception:
+        config = None
+
+    kwargs: dict[str, Any] = {"model": model, "contents": contents}
+    if config is not None:
+        kwargs["config"] = config
+
+    resp = _run_gemini_with_timeout(
+        lambda: client.models.generate_content(**kwargs),
+        f"Gemini image_input generate_content model={model}",
+    )
+
+    text_resp = getattr(resp, "text", "") or ""
+
+    input_tokens = 0
+    output_tokens = 0
+    if hasattr(resp, "usage_metadata") and resp.usage_metadata:
+        input_tokens = getattr(resp.usage_metadata, "prompt_token_count", 0) or 0
+        output_tokens = getattr(resp.usage_metadata, "candidates_token_count", 0) or 0
+
+    parsed = _parse_image_input_json_response(text_resp, items)
+    return {
+        "result": parsed,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "raw_text": text_resp,
+    }
+
+
+def _invoke_gemini_image_input(
+    items: list[dict[str, Any]],
+    query: str = "",
+    media_resolution: str = "medium",
+    model_override: Optional[str] = None,
+) -> dict[str, Any]:
+    """Try all Gemini keys with round-robin rotation for an image_input visual understanding request."""
+    if not GEMINI_KEY_RECORDS:
+        raise RuntimeError("No Gemini API keys configured")
+
+    last_error = None
+    model = model_override or GEMINI_IMAGE_INPUT_MODEL
+    for record in _get_round_robin_gemini_records(model):
+        try:
+            data = _call_gemini_image_input(items, query, media_resolution, record.key, model)
+            _record_gemini_success(record, model)
+            logger.info("Gemini image_input key #%d succeeded", record.index)
+            data["key_slot"] = record.index
+            data["model_used"] = model
+            return data
+        except Exception as e:
+            last_error = e
+            _record_gemini_failure(record, model, e)
+
+    raise RuntimeError(f"All Gemini keys failed for image_input: {_redact_secrets(last_error)}")
 
 # ==============================
 # Groq invocation (key rotation with client pooling)

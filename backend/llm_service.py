@@ -1160,6 +1160,66 @@ async def vision_llm(request: VisionRequest):
         raise HTTPException(status_code=500, detail="Vision invocation failed")
 
 
+class ImageInputItem(BaseModel):
+    filename: str = "image"
+    mime_type: str = "image/jpeg"
+    image_base64: str
+    page_number: int = 1
+
+
+class ImageInputRequest(BaseModel):
+    items: list[ImageInputItem]
+    query: Optional[str] = ""
+    media_resolution: Optional[str] = "medium"
+    model_override: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+@app.post("/llm/image-input")
+async def image_input_llm(request: ImageInputRequest):
+    """Visual analysis and OCR engine using Gemini 3.5 Flash-Lite and 6-key rotation."""
+    user_id = require_user_id(request.user_id)
+    if is_guest_user(user_id):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not request.items:
+        raise HTTPException(status_code=400, detail="items must be non-empty")
+    if len(request.items) > 16:
+        raise HTTPException(status_code=400, detail="Too many visual items in batch (max 16)")
+
+    total_bytes = sum(len(item.image_base64) for item in request.items)
+    if total_bytes > 50_000_000:
+        raise HTTPException(status_code=400, detail="Batch payload too large (max ~50MB)")
+
+    try:
+        assigned_db = reserve_llm_request_slot(user_id) if PYTHON_LLM_QUOTA_ENFORCEMENT else None
+        logger.info(
+            "[image_input] quota_%s user_id=%s db=%s items_count=%d",
+            "reserved" if PYTHON_LLM_QUOTA_ENFORCEMENT else "delegated_to_billing",
+            user_id,
+            assigned_db,
+            len(request.items),
+        )
+        from llm_adapter import _invoke_gemini_image_input
+        items_payload = [item.model_dump() for item in request.items]
+        data = _invoke_gemini_image_input(
+            items=items_payload,
+            query=request.query or "",
+            media_resolution=request.media_resolution or "medium",
+            model_override=request.model_override,
+        )
+        return {
+            "result": data.get("result", {}),
+            "input_tokens": data.get("input_tokens", 0),
+            "output_tokens": data.get("output_tokens", 0),
+            "key_slot": data.get("key_slot"),
+            "model_used": data.get("model_used"),
+            "provider": "gemini-image-input",
+        }
+    except Exception as e:
+        logger.error("image_input invocation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Visual analysis failed: {str(e)}")
+
+
 # ============================
 # Embedding endpoint
 # ============================

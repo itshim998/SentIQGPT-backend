@@ -183,7 +183,7 @@ interface PreparedAdapterCall {
 
 export interface ImageAttachment {
   readonly filename: string;
-  readonly mime_type: "image/png" | "image/jpeg" | "image/webp";
+  readonly mime_type: "image/png" | "image/jpeg" | "image/webp" | "image/heic" | "image/heif";
   readonly base64: string;
   readonly size_bytes: number;
 }

@@ -56,6 +56,10 @@ export interface RawMessageContext {
     document_id?: string;
     source_document_id?: string;
     mime_type?: string;
+    asset_id?: string;
+    visual_asset_id?: string;
+    visual_required?: boolean;
+    visual_analysis_status?: string;
   }[];
   readonly image_attachments?: readonly ImageAttachmentContext[];
   readonly trustedProfile?: { displayName: string };
@@ -73,7 +77,7 @@ export interface RawMessageContext {
 
 export interface ImageAttachmentContext {
   readonly filename: string;
-  readonly mime_type: "image/png" | "image/jpeg" | "image/webp";
+  readonly mime_type: "image/png" | "image/jpeg" | "image/webp" | "image/heic" | "image/heif";
   readonly base64: string;
   readonly size_bytes: number;
 }

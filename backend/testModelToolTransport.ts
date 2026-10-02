@@ -188,7 +188,7 @@ assert.equal(buildSentIQToolTransportRequest({ prompt: "hello", task: "chat" }, 
 assert.equal(buildSentIQToolTransportRequest({ prompt: "classify", task: "memory_classify" }, true), undefined);
 assert.deepEqual(
   buildSentIQToolTransportRequest({ prompt: "hello", task: "chat", user_id: "guest" }, true)?.allowed_tool_names,
-  ["web_surf", "image_gen"],
+  ["web_surf", "image_gen", "image_input"],
 );
 assert.equal(buildSentIQToolTransportRequest({ prompt: "title", task: "general", user_id: "user-1" }, true), undefined);
 assert.deepEqual(
@@ -198,7 +198,7 @@ assert.deepEqual(
     user_id: "user-1",
     sentiq_tool_context: authenticated,
   }, true)?.allowed_tool_names,
-  ["web_surf", "image_gen", "chart_gen", "file_gen", "memory_update"],
+  ["web_surf", "image_gen", "chart_gen", "file_gen", "memory_update", "image_input"],
 );
 
 assert.deepEqual(normalizeBufferedProviderResult({ kind: "assistant_text", text: "ordinary" }, guest), {

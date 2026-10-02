@@ -48,6 +48,7 @@
     "test:model-tool-configuration": "ts-node --project tsconfig.backend.json backend/testModelToolConfiguration.ts",
     "test:model-memory-safety": "ts-node --project tsconfig.backend.json backend/testModelMemorySafety.ts",
     "test:image-routing-safety": "ts-node --project tsconfig.backend.json backend/testImageRoutingSafety.ts",
+    "test:image-input": "ts-node --project tsconfig.backend.json backend/testImageInputLayer1.ts && python backend/testImageInputRotation.py",
     "test:context-budget": "ts-node --project tsconfig.backend.json backend/testContextBudgetManager.ts && ts-node --project tsconfig.backend.json backend/testContextComposition.ts",
     "test:request-budget-lifecycle": "ts-node --project tsconfig.backend.json backend/testRequestBudgetLifecycle.ts",
     "test:stream-lifecycle": "ts-node --project tsconfig.backend.json backend/testStreamDisconnectLifecycle.ts",

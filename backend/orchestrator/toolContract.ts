@@ -28,7 +28,8 @@ export type SentIQToolName =
   | "image_gen"
   | "chart_gen"
   | "file_gen"
-  | "memory_update";
+  | "memory_update"
+  | "image_input";
 
 export type ToolAuthorization = "guest" | "authenticated" | "entitled";
 export type ToolHandoff = "assistant_continue" | "terminal_structured";
@@ -107,6 +108,13 @@ const schemas = {
     content: boundedText,
     type: z.enum(["identity", "preference", "project"]).optional(),
     scope: z.enum(["global", "chat"]).optional(),
+  }).strict(),
+  image_input: z.object({
+    query: boundedText.optional(),
+    target_assets: z.array(z.string()).optional(),
+    target_asset: z.string().optional(),
+    page_range: z.string().optional(),
+    detail_level: z.enum(["low", "medium", "high"]).optional(),
   }).strict(),
 } as const;
 
@@ -212,6 +220,26 @@ export const SENTIQ_TOOL_REGISTRY: readonly ToolDefinition[] = [
     handoff: "terminal_structured",
     sideEffect: "stateful",
     isAvailable: authenticated,
+  }),
+  definition({
+    name: "image_input",
+    description: "Analyze uploaded visual assets (scanned PDFs, documents, handwritten notes, images) to extract OCR text, visual diagrams, equations, or layout findings. This is an intermediate analysis tool; return findings to synthesize the final answer.",
+    inputSchema: objectSchema({
+      query: stringProperty("The visual inspection or OCR question."),
+      target_assets: {
+        type: "array",
+        items: { type: "string" },
+        description: "Optional list of asset filenames or asset IDs to inspect.",
+      },
+      target_asset: stringProperty("Optional single asset filename or asset ID to inspect."),
+      page_range: stringProperty("Optional page numbers or ranges to inspect (e.g. '1-3', '5')."),
+      detail_level: stringProperty("Optional visual resolution / detail level.", { enum: ["low", "medium", "high"] }),
+    }, []),
+    resultSchema: objectSchema({ evidence: { type: "object" } }, ["evidence"]),
+    authorization: "guest",
+    handoff: "assistant_continue",
+    sideEffect: "idempotent",
+    isAvailable: () => true,
   }),
 ] as const;
 

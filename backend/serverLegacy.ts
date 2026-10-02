@@ -43,6 +43,8 @@ import {
 } from "./tools/fileGeneration/fileStorageService";
 import type { GeneratedFileFormat, GeneratedFilePreview } from "./tools/fileGeneration/types";
 import { deleteChatImage, uploadChatImage, getChatImages } from "./tools/imageGeneration/imageStorageService";
+import { uploadVisualAssetBuffer } from "./tools/imageInput/assetStorage";
+import { createVisualAssetRecord } from "./tools/imageInput/assetService";
 import {
   buildChatPrompt,
   callLLMAdapter,
@@ -2187,7 +2189,7 @@ async function deleteConversationIfOwned(
   logDbEvent(`${scope}.conversation-delete.ok`, userId, { conversationId });
 }
 
-type FileAnalysisStatus = "processing" | "complete" | "error";
+type FileAnalysisStatus = "processing" | "complete" | "error" | "required";
 
 type FileAnalysisEvent = {
   type: "file_analysis";
@@ -2240,6 +2242,9 @@ interface FileSession {
   extractedText: string;
   uploadTime: number;
   analysisId?: string;
+  assetId?: string;
+  visualRequired?: boolean;
+  visualAnalysisStatus?: string;
 }
 const fileSessionMap: Map<string, FileSession> = new Map();
 
@@ -4113,7 +4118,7 @@ app.post(
         guestGeneralCallForRecovery = call;
         const automaticTools = guestWebSurfV2
           ? []
-          : getAutomaticSentIQToolsForRoute(guestGeneralReservation, true);
+          : getAutomaticSentIQToolsForRoute(guestGeneralReservation, true, { fileReferences: guestCtx.fileReferences as any });
         const toolTransport = automaticTools.length > 0
           ? resolveModelToolTransport(guestGeneralReservation, "streaming")
           : null;
@@ -4237,7 +4242,7 @@ app.post(
             requestAbortController.signal,
             async (event) => writeSseJson(event),
           );
-          if (intuitiveLaneActive) {
+          if (toolResult.image_input?.success === true || intuitiveLaneActive) {
             toolResult = await synthesizeIntuitiveToolResult(
               toolResult,
               effectiveUserMessage,
@@ -4251,7 +4256,8 @@ app.post(
             || toolResult.image?.success === true
             || toolResult.chart?.success === true
             || (toolResult.tool === "web_search" && Boolean(toolResult.reply?.trim()))
-            || (toolResult.tool === "memory_update" && toolResult.memory?.stored === true);
+            || (toolResult.tool === "memory_update" && toolResult.memory?.stored === true)
+            || toolResult.image_input?.success === true;
           if (deliveredUsableResult && !clientDisconnected) {
             await commitTextBilling(guestGeneralReservation, `guest.general.stream.${toolResult.tool}`);
           } else {
@@ -5612,7 +5618,7 @@ app.post(
         ? startStreamHeartbeat(10_000, "openai-large")
         : () => {};
       const automaticTools = requestedAutomaticTools.length > 0
-        ? getAutomaticSentIQToolsForRoute(directReservation, true)
+        ? getAutomaticSentIQToolsForRoute(directReservation, true, { fileReferences: ctx.fileReferences as any })
         : [];
       const intuitiveLaneActive = isNemotronIntuitiveLaneEnabled(executionProfile.mode) && !hasImage;
       if (requestedAutomaticTools.length > 0 && automaticTools.length === 0) {
@@ -5726,7 +5732,7 @@ app.post(
           async (event) => writeSseJson(event),
           async (token) => writeSseJson({ type: "file_token", format: "html", text: token }),
         );
-        if (intuitiveLaneActive) {
+        if (toolResult.image_input?.success === true || intuitiveLaneActive) {
           toolResult = await synthesizeIntuitiveToolResult(
             toolResult,
             effectiveUserMessage,
@@ -5735,9 +5741,11 @@ app.post(
             modelOverride,
             requestAbortController.signal,
           );
-          intuitiveFutureProtected = false;
-          await commitTextBilling(directReservation, "stream.tool-final-synthesis");
-          automaticToolReservationCompleted = true;
+          if (intuitiveLaneActive) {
+            intuitiveFutureProtected = false;
+            await commitTextBilling(directReservation, "stream.tool-final-synthesis");
+            automaticToolReservationCompleted = true;
+          }
         }
         if (toolResult.reply && toolResult.web_search?.v2) {
           await streamBufferedAnswer(toolResult.reply, undefined, false, streamMetrics);
@@ -5779,7 +5787,7 @@ app.post(
           await persistAssistantMessage(toolResult.reply);
         }
         const streamSync = getStreamSyncPayload(Boolean(
-          toolResult.reply || toolResult.image || toolResult.chart || toolResult.file || toolResult.memory,
+          toolResult.reply || toolResult.image || toolResult.chart || toolResult.file || toolResult.memory || toolResult.image_input,
         ));
         await writeSseJson({ type: "sync", sync: streamSync, degraded: buildDegradedStatusFromStreamSync(streamSync) });
         await writeSseEvent("[DONE]");
@@ -6111,20 +6119,60 @@ app.post(
     }
 
     let persistedSource: Awaited<ReturnType<typeof sourceRetrievalService.persistUploadedSource>> | undefined;
-    if (!isGuest && (result.type === "pdf" || result.type === "txt")) {
+    let visualAssetRecord: Awaited<ReturnType<typeof createVisualAssetRecord>> | undefined;
+
+    const requestedConversationId = typeof req.body?.conversationId === "string"
+      ? req.body.conversationId.trim()
+      : typeof req.body?.conversation_id === "string"
+        ? req.body.conversation_id.trim()
+        : "";
+    const validConvId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedConversationId)
+      ? requestedConversationId
+      : undefined;
+
+    if (result.visual_required) {
+      try {
+        let userDb: any = undefined;
+        if (!isGuest && userId) {
+          userDb = await resolveUserDatabaseOrThrow(userId, "files.upload.visual_asset").catch(() => undefined);
+        }
+        const uploaded = await uploadVisualAssetBuffer({
+          supabaseClient: userDb,
+          userId: userId || "guest",
+          conversationId: validConvId,
+          filename: file.originalname,
+          mimeType: file.mimetype || (result.type === "pdf" ? "application/pdf" : "image/png"),
+          buffer: file.buffer,
+        });
+
+        visualAssetRecord = await createVisualAssetRecord({
+          userDb,
+          params: {
+            ownerUserId: userId || "guest",
+            conversationId: validConvId,
+            filename: file.originalname,
+            originalMimeType: file.mimetype || "application/octet-stream",
+            assetType: result.type === "pdf" ? "pdf" : "image",
+            storageBucket: uploaded.storageBucket,
+            storagePath: uploaded.storagePath,
+            sizeBytes: uploaded.sizeBytes,
+            sha256: uploaded.sha256,
+            pageCount: result.page_count ?? null,
+            visualRequired: true,
+            visualAnalysisStatus: "required",
+          },
+        });
+        console.log(`[Visual Asset] created: id=${visualAssetRecord.id}, filename=${file.originalname}, assetType=${visualAssetRecord.asset_type}`);
+      } catch (err) {
+        console.warn(`[File Upload] Visual asset storage failed: ${err instanceof Error ? err.message : err}`);
+      }
+    } else if (!isGuest && (result.type === "pdf" || result.type === "txt")) {
       try {
         const userDb = await resolveUserDatabaseOrThrow(userId, "files.upload.source");
-        const requestedConversationId = typeof req.body?.conversationId === "string"
-          ? req.body.conversationId.trim()
-          : typeof req.body?.conversation_id === "string"
-            ? req.body.conversation_id.trim()
-            : "";
         persistedSource = await sourceRetrievalService.persistUploadedSource({
           userDb,
           ownerUserId: userId,
-          conversationId: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedConversationId)
-            ? requestedConversationId
-            : undefined,
+          conversationId: validConvId,
           filename: result.filename,
           mimeType: file.mimetype || "application/octet-stream",
           extractionType: result.type,
@@ -6145,12 +6193,12 @@ app.post(
     emitFileAnalysisEvent(isGuest ? undefined : userId, {
       ...baseEvent,
       event: "update",
-      status: "complete",
+      status: result.visual_required ? "required" : "complete",
       updated_at: Date.now(),
     });
 
-    console.log(`[File Upload] ${result.filename} → type=${result.type}, extracted=${result.extracted_text.length} chars, size=${result.size_bytes}B`);
-    if (result.type === "pdf") {
+    console.log(`[File Upload] ${result.filename} → type=${result.type}, visualRequired=${Boolean(result.visual_required)}, extracted=${result.extracted_text.length} chars, size=${result.size_bytes}B`);
+    if (result.type === "pdf" && !result.visual_required) {
       const createdChunks = persistedSource
         ? persistedSource.parentChunksCreated + persistedSource.childChunksCreated
         : 0;
@@ -6165,8 +6213,29 @@ app.post(
       extractedText: result.extracted_text,
       uploadTime: Date.now(),
       analysisId,
+      assetId: visualAssetRecord?.id,
+      visualRequired: Boolean(result.visual_required),
+      visualAnalysisStatus: result.visual_required ? "required" : "not_required",
     });
     console.log(`[FileSession] stored for ${fileSessionKey}: ${result.filename}`);
+
+    if (result.visual_required) {
+      res.json({
+        filename: result.filename,
+        type: result.type,
+        extracted_text: result.extracted_text,
+        size_bytes: result.size_bytes,
+        analysis_id: analysisId,
+        analysis_status: "pending_visual",
+        visual_required: true,
+        visual_analysis_status: "required",
+        asset_id: visualAssetRecord?.id,
+        visual_asset_id: visualAssetRecord?.id,
+        update_protocol: "sse",
+        update_endpoint: "/api/files/updates",
+      });
+      return;
+    }
 
     res.json({
       filename: result.filename,
@@ -6175,6 +6244,8 @@ app.post(
       size_bytes: result.size_bytes,
       analysis_id: analysisId,
       analysis_status: "complete",
+      visual_required: false,
+      visual_analysis_status: "not_required",
       update_protocol: "sse",
       update_endpoint: "/api/files/updates",
       document_id: persistedSource?.document?.id,

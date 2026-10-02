@@ -47,6 +47,10 @@ import {
   releaseIntuitiveFinalSynthesisProtection,
   shouldRunIntuitiveFinalSynthesis,
 } from "./intuitiveTextLane";
+import { analyzeVisualAssets } from "../tools/imageInput/visualAnalyzer";
+import { getVisualAssetById } from "../tools/imageInput/assetService";
+import { sourceRetrievalService } from "../services/sourceRetrievalService";
+import type { VisualAssetRow } from "../tools/imageInput/types";
 
 // ==============================
 // Types
@@ -143,6 +147,23 @@ export interface StepResult {
     provider?: string;
     v2?: WebSurfV2Payload;
   };
+  /** Visual understanding / image input output (image_input) */
+  readonly image_input?: {
+    success: boolean;
+    evidence: {
+      relevant_text: string;
+      relevant_pages?: readonly number[];
+      visual_findings?: readonly string[];
+      canonical_sources?: readonly {
+        attachment_id: string;
+        source_document_id?: string;
+        status: string;
+      }[];
+    };
+    assets_processed?: number;
+    pages_processed?: number;
+    error?: string;
+  };
   readonly error?: string;
   readonly tool_events?: readonly ToolLifecycleEvent[];
   /** Internal marker preventing a trusted tool result from being synthesized twice. */
@@ -192,6 +213,10 @@ function safeAutomaticToolFailure(call: ValidatedToolCall): Pick<StepResult, "to
     case "memory_update": return {
       tool: "memory_update",
       reply: "I couldn't store that memory. Please phrase it as something to remember about your identity, preferences, or project.",
+    };
+    case "image_input": return {
+      tool: "conversation",
+      reply: "Visual analysis was unavailable for the requested file. Please try again.",
     };
   }
 }
@@ -345,7 +370,7 @@ async function execConversation(
       );
     }
     let toolResult = await executeAutomaticModelToolCalls(calls, input, ctx, profile, signal);
-    if (intuitiveLaneActive) {
+    if (toolResult.image_input?.success === true || intuitiveLaneActive) {
       toolResult = await synthesizeIntuitiveToolResult(
         toolResult,
         input,
@@ -359,7 +384,8 @@ async function execConversation(
       || toolResult.image?.success === true
       || toolResult.chart?.success === true
       || (toolResult.tool === "web_search" && Boolean(toolResult.reply?.trim()))
-      || (toolResult.tool === "memory_update" && toolResult.memory?.stored === true);
+      || (toolResult.tool === "memory_update" && toolResult.memory?.stored === true)
+      || toolResult.image_input?.success === true;
     if (reservation && deliveredUsableResult) {
       await billingQuotaService.commit(reservation, {
         endpoint: "orchestrator",
@@ -527,7 +553,7 @@ export async function executeAutomaticModelToolCalls(
   onLifecycleEvent?: (event: ToolLifecycleEvent) => void | Promise<void>,
   onFileToken?: (token: string) => void | Promise<void>,
 ): Promise<StepResult> {
-  const allowedTools = getEnabledAutomaticSentIQTools();
+  const allowedTools = getEnabledAutomaticSentIQTools({ fileReferences: ctx.fileReferences as any });
   try {
     const dispatched = await dispatchAutomaticModelToolCall<StepResult>({
       calls,
@@ -553,12 +579,14 @@ export async function executeAutomaticModelToolCalls(
         onFileToken,
       ),
       executeMemory: (_content, type, scope) => execAutomaticMemoryUpdate(originalUserRequest, type, scope, ctx, profile, signal),
+      executeImageInput: (args) => execImageInput(args, ctx, profile, signal),
       isFailure: (result, call) => Boolean(result.error)
         || result.image?.success === false
         || result.chart?.success === false
         || result.file?.success === false
         || result.memory?.stored === false
-        || (call.name === "web_surf" && !result.web_search),
+        || (call.name === "web_surf" && !result.web_search)
+        || (call.name === "image_input" && (!result.image_input || result.image_input.success === false)),
       onLifecycleEvent,
     });
     return { ...dispatched.result, tool_events: dispatched.events };
@@ -573,6 +601,153 @@ export async function executeAutomaticModelToolCalls(
       tool_events: error.events,
     };
   }
+}
+
+export async function execImageInput(
+  args: {
+    query?: string;
+    targetAssets?: readonly string[];
+    targetAsset?: string;
+    pageRange?: string;
+    detailLevel?: "low" | "medium" | "high";
+  },
+  ctx: BuiltContext,
+  profile: ExecutionProfile,
+  signal?: AbortSignal,
+): Promise<StepResult> {
+  if (signal?.aborted) throwIfAborted(signal);
+
+  const fileRefs = (ctx.fileReferences ?? []) as readonly any[];
+  const requestedTargets = [
+    ...(args.targetAsset ? [args.targetAsset.trim().toLowerCase()] : []),
+    ...(args.targetAssets ? args.targetAssets.map((t) => String(t).trim().toLowerCase()) : []),
+  ];
+
+  let targetRefs = fileRefs.filter((ref) => {
+    if (!ref) return false;
+    const filename = String(ref.filename || "").toLowerCase();
+    const assetId = String(ref.asset_id || ref.visual_asset_id || ref.source_document_id || ref.document_id || "").toLowerCase();
+    if (requestedTargets.length > 0) {
+      return requestedTargets.some((target) =>
+        filename.includes(target) || target.includes(filename) || (assetId && assetId === target)
+      );
+    }
+    return ref.visual_required === true ||
+           ref.visual_analysis_status === "required" ||
+           Boolean(ref.asset_id || ref.visual_asset_id);
+  });
+
+  if (targetRefs.length === 0 && fileRefs.length > 0) {
+    targetRefs = fileRefs.filter((ref) => Boolean(ref.asset_id || ref.visual_asset_id || ref.visual_required));
+  }
+
+  const assetRows: VisualAssetRow[] = [];
+  for (const ref of targetRefs) {
+    const assetId = ref.asset_id || ref.visual_asset_id;
+    if (assetId) {
+      const asset = await getVisualAssetById({
+        userDb: ctx.userDb,
+        assetId,
+        ownerUserId: ctx.userId || "guest",
+      });
+      if (asset) {
+        assetRows.push(asset);
+        continue;
+      }
+    }
+    const sha = createHash("sha256").update(ref.filename || "visual").digest("hex");
+    assetRows.push({
+      id: assetId || `asset-${sha.slice(0, 12)}`,
+      owner_user_id: ctx.userId || "guest",
+      conversation_id: ctx.conversationId ?? null,
+      filename: ref.filename || "visual_asset",
+      original_mime_type: ref.mime_type || (ref.filename?.endsWith(".pdf") ? "application/pdf" : "image/png"),
+      asset_type: ref.filename?.endsWith(".pdf") ? "pdf" : "image",
+      storage_bucket: "sentiq-visual-assets-private",
+      storage_path: `${ctx.userId || "guest"}/${ref.filename || "visual"}`,
+      size_bytes: ref.size_bytes || 0,
+      sha256: sha,
+      page_count: null,
+      status: "ready",
+      visual_required: true,
+      visual_analysis_status: "required",
+      canonical_source_document_id: null,
+      visual_analysis_version: 1,
+      metadata: {},
+    });
+  }
+
+  if (assetRows.length === 0) {
+    return {
+      step: 0,
+      tool: "conversation",
+      reply: "No visual assets found to analyze.",
+      error: "No visual assets found to analyze.",
+      image_input: {
+        success: false,
+        evidence: {
+          relevant_text: "No visual assets found.",
+        },
+      },
+    };
+  }
+
+  const analysisResult = await analyzeVisualAssets({
+    assets: assetRows,
+    query: args.query,
+    userId: ctx.userId,
+    userDb: ctx.userDb,
+    forcedResolution: args.detailLevel,
+  });
+
+  for (const asset of assetRows) {
+    const assetPages = analysisResult.pages.filter((p) => p.page_number !== undefined);
+    const fullExtractedText = assetPages.map((p) => `[PAGE ${p.page_number}]\n${p.extracted_text}`).join("\n\n").trim()
+      || analysisResult.request_evidence.relevant_text;
+    if (fullExtractedText.trim() && ctx.userDb && ctx.userId && ctx.userId !== "guest") {
+      try {
+        await sourceRetrievalService.persistCanonicalVisualOcrSource({
+          userDb: ctx.userDb,
+          ownerUserId: ctx.userId,
+          conversationId: ctx.conversationId,
+          assetId: asset.id,
+          filename: asset.filename,
+          mimeType: asset.original_mime_type,
+          extractedText: fullExtractedText,
+          assetType: asset.asset_type === "pdf" ? "scanned_pdf" : "image",
+          sizeBytes: asset.size_bytes,
+          visualModel: "gemini-3.5-flash-lite",
+          pagesProcessed: assetPages.length || 1,
+          pageTexts: assetPages.map((p) => ({ pageNumber: p.page_number, text: p.extracted_text })),
+        });
+      } catch (persistErr) {
+        console.warn(`[Image Input] Canonical OCR persistence warning: ${persistErr instanceof Error ? persistErr.message : persistErr}`);
+      }
+    }
+  }
+
+  const evidenceSummary = [
+    `VISUAL ANALYSIS EVIDENCE:`,
+    analysisResult.request_evidence.relevant_text,
+    analysisResult.request_evidence.visual_findings ? `VISUAL FINDINGS: ${analysisResult.request_evidence.visual_findings}` : "",
+  ].filter(Boolean).join("\n\n");
+
+  return {
+    step: 0,
+    tool: "conversation",
+    reply: evidenceSummary,
+    image_input: {
+      success: true,
+      evidence: {
+        relevant_text: analysisResult.request_evidence.relevant_text,
+        relevant_pages: analysisResult.request_evidence.relevant_pages,
+        visual_findings: [analysisResult.request_evidence.visual_findings].filter(Boolean),
+        canonical_sources: analysisResult.canonical_sources,
+      },
+      assets_processed: analysisResult.assets.length,
+      pages_processed: analysisResult.pages.length,
+    },
+  };
 }
 
 async function execImageGeneration(

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { planTask } from "./orchestrator/planner";
 
@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   const manualWeb = await planTask({ userMessage: "Find the source", explicitWebSearchMode: "basic" });
   assert.equal(manualWeb.steps[0]?.tool, "web_search");
 
-  const server = readFileSync(resolve(__dirname, "server.ts"), "utf8");
+  const server = readFileSync(resolve(__dirname, existsSync(resolve(__dirname, "serverLegacy.ts")) ? "serverLegacy.ts" : "server.ts"), "utf8");
   const planner = readFileSync(resolve(__dirname, "orchestrator", "planner.ts"), "utf8");
   const frontend = readFileSync(resolve(__dirname, "..", "frontend", "scripts", "features", "chat-controller.js"), "utf8");
   const executor = readFileSync(resolve(__dirname, "orchestrator", "toolExecutor.ts"), "utf8");
@@ -35,6 +35,9 @@ async function main(): Promise<void> {
   const contextCapsules = readFileSync(resolve(__dirname, "services", "contextCapsuleService.ts"), "utf8");
   const fileGenerator = readFileSync(resolve(__dirname, "tools", "fileGeneration", "fileGenerator.ts"), "utf8");
   const llmService = readFileSync(resolve(__dirname, "llm_service.py"), "utf8");
+  const fastSafety = existsSync(resolve(__dirname, "fast_speculative_input_safety.py"))
+    ? readFileSync(resolve(__dirname, "fast_speculative_input_safety.py"), "utf8")
+    : "";
   assert.doesNotMatch(server, /\/api\/chat\/intent|clarification_response|shouldAutoUseWebSurf|isFileGenerationRequest|isChartRequest|isImageRequest/);
   assert.doesNotMatch(planner, /route_classify|keyword|regex|classifyQueryType/);
   assert.doesNotMatch(frontend, /getChatIntent|intent-detection|isLikelyFileGenerationRequest|isImageRequest\(|isChartRequest\(/);
@@ -71,8 +74,8 @@ async function main(): Promise<void> {
       && contextCapsules.includes("this.dependencies.generateSummary(prompt)"),
     inputSafetyModel: llmService.includes("check_input_safety")
       && llmService.includes("call_safety_model(prompt, check_type=\"input\")"),
-    streamingOutputSafetyModels: llmService.includes("StreamingSafetyMonitor")
-      && llmService.includes("check_output_safety(final_output"),
+    streamingOutputSafetyModels: (llmService.includes("StreamingSafetyMonitor") || fastSafety.includes("StreamingSafetyMonitor"))
+      && (llmService.includes("check_output_safety(final_output") || fastSafety.includes("check_output_safety(")),
     webSurfV2ConfigurationBranch: executor.includes("if (isWebSurfV2Enabled())")
       && executor.includes("skipLLMSynthesis: true"),
   } as const;

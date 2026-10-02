@@ -88,6 +88,13 @@ export async function dispatchAutomaticModelToolCall<T>(args: {
   executeChart: (request: string, call: ValidatedToolCall) => Promise<T>;
   executeFile: (request: string, format: string | undefined, call: ValidatedToolCall) => Promise<T>;
   executeMemory: (content: string, type: "identity" | "preference" | "project" | undefined, scope: "global" | "chat" | undefined, call: ValidatedToolCall) => Promise<T>;
+  executeImageInput?: (args: {
+    query?: string;
+    targetAssets?: readonly string[];
+    targetAsset?: string;
+    pageRange?: string;
+    detailLevel?: "low" | "medium" | "high";
+  }, call: ValidatedToolCall) => Promise<T>;
   isFailure?: (result: T, call: ValidatedToolCall) => boolean;
   onLifecycleEvent?: (event: ToolLifecycleEvent) => void | Promise<void>;
 }): Promise<{ call: ValidatedToolCall; result: T; events: readonly ToolLifecycleEvent[] }> {
@@ -140,6 +147,18 @@ export async function dispatchAutomaticModelToolCall<T>(args: {
             : undefined,
           call,
         );
+        break;
+      case "image_input":
+        if (!args.executeImageInput) {
+          throw new Error("image_input tool is not implemented in this dispatcher.");
+        }
+        result = await args.executeImageInput({
+          query: typeof call.arguments.query === "string" ? call.arguments.query : undefined,
+          targetAssets: Array.isArray(call.arguments.target_assets) ? call.arguments.target_assets.map(String) : undefined,
+          targetAsset: typeof call.arguments.target_asset === "string" ? call.arguments.target_asset : undefined,
+          pageRange: typeof call.arguments.page_range === "string" ? call.arguments.page_range : undefined,
+          detailLevel: typeof call.arguments.detail_level === "string" ? (call.arguments.detail_level as "low" | "medium" | "high") : undefined,
+        }, call);
         break;
     }
     const terminalEvent: ToolLifecycleEvent = args.isFailure?.(result, call)

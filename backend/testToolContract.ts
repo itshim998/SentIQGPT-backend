@@ -16,7 +16,7 @@ const authenticated = { authenticated: true } as const;
 assert.match(SENTIQ_TOOL_REGISTRY_VERSION, /^2026-08-paid-image-text-routing-v\d+$/);
 assert.deepEqual(
   SENTIQ_TOOL_REGISTRY.map((tool) => tool.name),
-  ["web_surf", "image_gen", "chart_gen", "file_gen", "memory_update"],
+  ["web_surf", "image_gen", "chart_gen", "file_gen", "memory_update", "image_input"],
   "registry exposes only canonical product tools",
 );
 assert.doesNotMatch(SENTIQ_TOOL_CHOICE_POLICY, /route\s+by\s+(keyword|regex)/i, "policy must not instruct heuristic routing");
@@ -32,12 +32,12 @@ assert.match(SENTIQ_TOOL_CHOICE_POLICY, /only a successful tool result confirms 
 
 assert.deepEqual(
   getAvailableToolDefinitions(guest).map((tool) => tool.name),
-  ["web_surf", "image_gen"],
+  ["web_surf", "image_gen", "image_input"],
   "guest availability matches existing executable capabilities",
 );
 assert.deepEqual(
   getAvailableToolDefinitions(authenticated).map((tool) => tool.name),
-  ["web_surf", "image_gen", "chart_gen", "file_gen", "memory_update"],
+  ["web_surf", "image_gen", "chart_gen", "file_gen", "memory_update", "image_input"],
 );
 assert.deepEqual(
   getAvailableToolDefinitions({ authenticated: true, executionMode: "fast" }).map((tool) => tool.name),
@@ -128,6 +128,15 @@ assert.throws(() => validateModelToolCalls([
 assert.throws(() => validateModelToolCalls([
   { id: "oversized", name: "web_surf", arguments: { query: "x".repeat(17_000) } },
 ], authenticated), /allowed size/);
+
+const imageInputCalls = validateModelToolCalls([
+  { id: "call_image_input", name: "image_input", arguments: { query: "What is on page 2?", target_asset: "scan.pdf", page_range: "2", detail_level: "high" } },
+], guest);
+assert.equal(imageInputCalls[0].name, "image_input");
+assert.equal((imageInputCalls[0].arguments as any).query, "What is on page 2?");
+assert.throws(() => validateModelToolCalls([
+  { id: "call_image_bad_detail", name: "image_input", arguments: { query: "test", detail_level: "ultra" } },
+], guest), /Invalid enum value/);
 
 assert.deepEqual(normalizeAssistantTurn({ kind: "assistant_text", text: "Hello" }, guest), {
   kind: "assistant_text",

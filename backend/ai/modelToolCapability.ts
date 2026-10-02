@@ -3,8 +3,11 @@ import { getNemotronRolloutSnapshot } from "../nemotronRolloutFlags";
 
 export type LLMProviderKind = "groq" | "gemini" | "gemma" | "pollinations" | "nvidia" | "unknown";
 
+export const DIRECT_MODEL_IMAGE_INPUT = "image_input" as const;
+export const SENTIQ_IMAGE_INPUT_TOOL: SentIQToolName = "image_input";
+
 export type RequiredModelCapability =
-  | "image_input"
+  | typeof DIRECT_MODEL_IMAGE_INPUT
   | "sentiq_tools_buffered"
   | "sentiq_tools_streaming";
 
@@ -312,7 +315,33 @@ export function getModelToolRuntimeSnapshot(): ModelToolRuntimeSnapshot {
   };
 }
 
-export function getEnabledAutomaticSentIQTools(): readonly SentIQToolName[] {
+export function isModelImageInputSelectionEnabled(
+  value = process.env.SENTIQ_MODEL_IMAGE_INPUT_SELECTION_ENABLED,
+): boolean {
+  return value === undefined ? true : value.trim().toLowerCase() === "true";
+}
+
+export function hasVisualAssetsRequiringAnalysis(
+  fileReferences?: readonly Record<string, unknown>[] | readonly any[],
+): boolean {
+  if (!Array.isArray(fileReferences) || fileReferences.length === 0) return false;
+  return fileReferences.some((ref) => {
+    if (!ref || typeof ref !== "object") return false;
+    if (ref.visual_required === true || ref.visualRequired === true) return true;
+    if (ref.visual_analysis_status === "required" || ref.visualAnalysisStatus === "required") return true;
+    const type = String(ref.type || "").toLowerCase();
+    const mime = String(ref.mime_type || ref.mimeType || "").toLowerCase();
+    if (type === "image" || mime.startsWith("image/")) return true;
+    const hasAsset = Boolean(ref.asset_id || ref.assetId || ref.visual_asset_id || ref.visualAssetId);
+    const notReady = ref.visual_analysis_status !== "ready" && ref.visualAnalysisStatus !== "ready";
+    return hasAsset && notReady;
+  });
+}
+
+export function getEnabledAutomaticSentIQTools(options?: {
+  readonly hasVisualAssetsNeedingAnalysis?: boolean;
+  readonly fileReferences?: readonly Record<string, unknown>[];
+}): readonly SentIQToolName[] {
   const flags = getModelToolRuntimeSnapshot();
   if (!flags.registryEnabled) return [];
   if (
@@ -321,20 +350,26 @@ export function getEnabledAutomaticSentIQTools(): readonly SentIQToolName[] {
     && !flags.pollinationsTransportEnabled
     && !flags.nvidiaTransportEnabled
   ) return [];
+  const visualNeeded = options?.hasVisualAssetsNeedingAnalysis ?? hasVisualAssetsRequiringAnalysis(options?.fileReferences);
   return [
     ...(flags.webSurfSelectionEnabled ? ["web_surf" as const] : []),
     ...(flags.imageSelectionEnabled ? ["image_gen" as const] : []),
     ...(flags.chartSelectionEnabled ? ["chart_gen" as const] : []),
     ...(flags.fileSelectionEnabled ? ["file_gen" as const] : []),
     ...(flags.memorySelectionEnabled ? ["memory_update" as const] : []),
+    ...(visualNeeded && isModelImageInputSelectionEnabled() ? ["image_input" as const] : []),
   ];
 }
 
 export function getAutomaticSentIQToolsForRoute(
   route: ModelCapabilityRoute,
   streaming: boolean,
+  options?: {
+    readonly hasVisualAssetsNeedingAnalysis?: boolean;
+    readonly fileReferences?: readonly Record<string, unknown>[];
+  },
 ): readonly SentIQToolName[] {
-  const tools = getEnabledAutomaticSentIQTools();
+  const tools = getEnabledAutomaticSentIQTools(options);
   if (tools.length === 0) return [];
   const decision = resolveModelToolTransport(route, streaming ? "streaming" : "buffered");
   return decision.supported ? tools : [];

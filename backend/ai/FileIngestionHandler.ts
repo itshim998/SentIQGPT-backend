@@ -28,6 +28,8 @@ export interface FileExtractionResult {
   readonly indexed_page_count?: number;
   readonly extraction_status?: "text" | "partial" | "ocr_required" | "failed";
   readonly ocr_required?: boolean;
+  readonly visual_required?: boolean;
+  readonly visual_analysis_status?: "not_required" | "required" | "processing" | "ready" | "failed";
   readonly preview_truncated?: boolean;
   readonly preview_character_count?: number;
 }
@@ -64,6 +66,8 @@ const ALLOWED_TYPES: Record<string, "pdf" | "txt" | "image"> = {
   "image/png": "image",
   "image/jpeg": "image",
   "image/webp": "image",
+  "image/heic": "image",
+  "image/heif": "image",
 };
 
 const GENERIC_MIME_TYPES = new Set(["", "application/octet-stream", "binary/octet-stream"]);
@@ -73,6 +77,8 @@ const EXTENSION_TYPES: Record<string, "pdf" | "image"> = {
   ".jpg": "image",
   ".jpeg": "image",
   ".webp": "image",
+  ".heic": "image",
+  ".heif": "image",
 };
 
 function normalizeMimeType(mimetype: string): string {
@@ -233,6 +239,10 @@ export async function extractTextFromFile(args: {
         extractedText = raw;
         console.log(`[File Parser] text file: ${args.filename} (${raw.length} chars)`);
       }
+      pdfMetadata = {
+        visual_required: false,
+        visual_analysis_status: "not_required",
+      };
       break;
     }
 
@@ -244,24 +254,29 @@ export async function extractTextFromFile(args: {
           userId: args.userId,
         });
         extractedText = result.previewText;
+        const isVisual = result.ocrRequired;
         pdfMetadata = {
           page_count: result.declaredPageCount,
           indexed_page_count: result.pageCount,
           extraction_status: result.extractionStatus,
           ocr_required: result.ocrRequired,
+          visual_required: isVisual,
+          visual_analysis_status: isVisual ? "required" : "not_required",
           preview_truncated: result.previewTruncated,
           preview_character_count: result.previewText.length,
         };
         console.log(
           `[File Parser] PDF preview extracted: ${args.filename} ` +
-          `(${result.previewText.length} chars, ${result.declaredPageCount} page(s))`,
+          `(${result.previewText.length} chars, ${result.declaredPageCount} page(s), visualRequired=${isVisual})`,
         );
       } catch (err) {
         console.log(`[File Parser] PDF extraction failed: ${args.filename} — ${err instanceof Error ? err.message : err}`);
         extractedText = "[PDF text extraction failed. File stored for reference.]";
         pdfMetadata = {
           extraction_status: "failed",
-          ocr_required: false,
+          ocr_required: true,
+          visual_required: true,
+          visual_analysis_status: "required",
           preview_truncated: false,
           preview_character_count: extractedText.length,
         };
@@ -269,19 +284,14 @@ export async function extractTextFromFile(args: {
       break;
 
     case "image":
-      // Process images with vision analysis to extract text/content
-      try {
-        extractedText = await analyzeImageWithVision(
-          args.buffer,
-          args.filename,
-          args.mimetype,
-          args.userId,
-        );
-        console.log(`[File Parser] image analyzed: ${args.filename} (${extractedText.length} chars)`);
-      } catch (err) {
-        console.log(`[File Parser] image analysis failed: ${args.filename} — ${err instanceof Error ? err.message : err}`);
-        extractedText = `[Image file: ${args.filename}. Vision analysis was unavailable. The image was uploaded but could not be described.]`;
-      }
+      // Layer 1: Native images do not trigger eager vision analysis during upload.
+      // They are stored as durable visual assets and analyzed on-demand via the image_input tool.
+      extractedText = "";
+      pdfMetadata = {
+        visual_required: true,
+        visual_analysis_status: "required",
+      };
+      console.log(`[File Parser] image registered for on-demand visual analysis: ${args.filename} (${args.buffer.length} bytes)`);
       break;
   }
 
@@ -290,6 +300,8 @@ export async function extractTextFromFile(args: {
     type: validation.type,
     extracted_text: extractedText,
     size_bytes: args.buffer.length,
+    visual_required: false,
+    visual_analysis_status: "not_required",
     ...pdfMetadata,
   };
 }

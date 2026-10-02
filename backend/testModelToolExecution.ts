@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { buildSentIQToolTransportRequest } from "./ai/PromptBuilders";
 import {
@@ -303,7 +303,7 @@ async function main(): Promise<void> {
       explicitWebSearchMode: "basic",
     })).steps[0]?.tool, "web_search");
 
-    const serverSource = readFileSync(resolve(__dirname, "server.ts"), "utf8");
+    const serverSource = readFileSync(resolve(__dirname, existsSync(resolve(__dirname, "serverLegacy.ts")) ? "serverLegacy.ts" : "server.ts"), "utf8");
     const executorSource = readFileSync(resolve(__dirname, "orchestrator", "toolExecutor.ts"), "utf8");
     const executionSource = readFileSync(resolve(__dirname, "ai", "modelToolExecution.ts"), "utf8");
     const frontendSource = readFileSync(resolve(__dirname, "..", "frontend", "scripts", "features", "chat-controller.js"), "utf8");

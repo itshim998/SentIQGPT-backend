@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { insertAutomaticMemoryOnce } from "./services/memoryService";
 
 async function main(): Promise<void> {
@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   assert.match(executor, /resolveAutomaticMemoryUpdate/, "scope and missing category defaults stay server-controlled");
   assert.match(executor, /Object\.defineProperty\(memory, "automatic_idempotency_key"/);
   assert.match(executor, /enumerable: false/);
-  const server = readFileSync("backend/server.ts", "utf8");
+  const server = readFileSync(existsSync("backend/serverLegacy.ts") ? "backend/serverLegacy.ts" : "backend/server.ts", "utf8");
   assert.ok((server.match(/insertAutomaticMemoryOrThrow/g) ?? []).length >= 3, "buffered and streaming writes use the automatic RPC helper");
 
   console.log("Automatic memory authorization and idempotency checks passed.");

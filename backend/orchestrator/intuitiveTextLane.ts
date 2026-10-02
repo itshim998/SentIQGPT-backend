@@ -107,6 +107,21 @@ interface SynthesisStep {
     readonly persisted?: boolean;
     readonly deduplicated?: boolean;
   };
+  readonly image_input?: {
+    readonly success: boolean;
+    readonly evidence: {
+      readonly relevant_text: string;
+      readonly relevant_pages?: readonly number[];
+      readonly visual_findings?: readonly string[];
+      readonly canonical_sources?: readonly {
+        readonly attachment_id: string;
+        readonly source_document_id?: string;
+        readonly status: string;
+      }[];
+    };
+    readonly assets_processed?: number;
+    readonly pages_processed?: number;
+  };
 }
 
 function truncate(value: string | undefined, maximum = 8_000): string | undefined {
@@ -116,7 +131,16 @@ function truncate(value: string | undefined, maximum = 8_000): string | undefine
 
 export function buildIntuitiveToolSynthesisEvidence(step: SynthesisStep): readonly RouteEvidenceItem[] {
   let trustedResult: Record<string, unknown>;
-  if (step.web_search) {
+  if (step.image_input) {
+    trustedResult = {
+      tool: "image_input",
+      success: step.image_input.success,
+      relevant_text: truncate(step.image_input.evidence.relevant_text, 6_000),
+      visual_findings: step.image_input.evidence.visual_findings?.slice(0, 5),
+      relevant_pages: step.image_input.evidence.relevant_pages,
+      canonical_sources: step.image_input.evidence.canonical_sources,
+    };
+  } else if (step.web_search) {
     trustedResult = {
       tool: "web_search",
       query: step.web_search.query,
@@ -174,6 +198,7 @@ export function buildIntuitiveToolSynthesisEvidence(step: SynthesisStep): readon
 }
 
 export function shouldRunIntuitiveFinalSynthesis(step: SynthesisStep): boolean {
+  if (step.image_input?.success) return true;
   if (step.web_search) return true;
   if (step.image?.success) return true;
   if (step.chart?.success) return true;

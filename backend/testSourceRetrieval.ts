@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { chunkSourceText } from "./context/sourceChunker";
@@ -276,7 +277,8 @@ async function testUploadAndValidationIntegration(): Promise<void> {
   assert.equal(parsed.context?.file_references?.[0].sourceDocumentId, DOCUMENT_ID);
   assert.equal(parsed.context?.file_references?.[0].extractedText, "");
 
-  const server = await readFile(path.resolve("backend/server.ts"), "utf8");
+  const serverPath = path.resolve(existsSync("backend/serverLegacy.ts") ? "backend/serverLegacy.ts" : "backend/server.ts");
+  const server = await readFile(serverPath, "utf8");
   const uploadStart = server.indexOf('"/api/files/upload"');
   const uploadEnd = server.indexOf('"/api/files/session"', uploadStart);
   const uploadRoute = server.slice(uploadStart, uploadEnd);

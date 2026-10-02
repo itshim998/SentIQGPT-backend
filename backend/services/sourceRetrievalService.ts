@@ -4,6 +4,24 @@ import { chunkSourceText } from "../context/sourceChunker";
 import { estimateTextTokens, trimTextToTokenBudget } from "../orchestrator/contextBudgetManager";
 import { consumePendingPdfCanonicalSource } from "../ai/pdfCanonicalSourceRegistry";
 import { persistCanonicalPdfSource } from "./longPdfPersistenceService";
+import { updateVisualAssetAnalysis } from "../tools/imageInput/assetService";
+
+export interface PersistVisualOcrSourceArgs {
+  readonly userDb?: SupabaseClient | any;
+  readonly ownerUserId?: string;
+  readonly conversationId?: string;
+  readonly assetId: string;
+  readonly filename: string;
+  readonly mimeType: string;
+  readonly extractedText: string;
+  readonly assetType: "scanned_pdf" | "image";
+  readonly sizeBytes?: number;
+  readonly visualModel?: string;
+  readonly visualAnalysisVersion?: number;
+  readonly pagesProcessed?: number;
+  readonly ocrMode?: string;
+  readonly pageTexts?: readonly { pageNumber: number; text: string }[];
+}
 
 export interface UploadedSourceReference {
   readonly filename: string;
@@ -13,6 +31,10 @@ export interface UploadedSourceReference {
   readonly document_id?: string;
   readonly source_document_id?: string;
   readonly mime_type?: string;
+  readonly asset_id?: string;
+  readonly visual_asset_id?: string;
+  readonly visual_required?: boolean;
+  readonly visual_analysis_status?: string;
 }
 
 export interface PromptSourceReference {
@@ -30,7 +52,7 @@ export interface SourceDocumentRow {
   readonly title: string;
   readonly original_filename: string;
   readonly mime_type: string;
-  readonly source_type: "pdf" | "text" | "code";
+  readonly source_type: "pdf" | "text" | "code" | "image";
   readonly content_hash: string;
   readonly status: "processing" | "ready" | "failed";
   readonly metadata: Record<string, unknown>;
@@ -100,7 +122,7 @@ interface SourceDocumentInsert {
   readonly title: string;
   readonly original_filename: string;
   readonly mime_type: string;
-  readonly source_type: "pdf" | "text" | "code";
+  readonly source_type: "pdf" | "text" | "code" | "image";
   readonly content_hash: string;
   readonly status: "processing";
   readonly metadata: Record<string, unknown>;
@@ -194,7 +216,7 @@ function normalizeDocument(value: unknown): SourceDocumentRow | undefined {
     typeof row.original_filename !== "string" ||
     typeof row.mime_type !== "string" ||
     typeof row.content_hash !== "string" ||
-    !["pdf", "text", "code"].includes(String(row.source_type)) ||
+    !["pdf", "text", "code", "image"].includes(String(row.source_type)) ||
     !["processing", "ready", "failed"].includes(String(row.status))
   ) return undefined;
   return {
@@ -343,7 +365,31 @@ async function defaultResolveDocuments(args: {
   const analysisIds = [...new Set(args.fileReferences
     .map((reference) => reference.analysis_id)
     .filter((value): value is string => typeof value === "string" && value.length > 0))];
+  const assetIds = [...new Set(args.fileReferences
+    .map((reference) => reference.asset_id ?? reference.visual_asset_id)
+    .filter((value): value is string => typeof value === "string" && (UUID_PATTERN.test(value) || value.startsWith("asset-"))))];
   const rows: unknown[] = [];
+  const assetToDocMap = new Map<string, string>();
+
+  if (assetIds.length > 0 && typeof args.userDb?.from === "function") {
+    try {
+      const visualRes = await args.userDb
+        .from("visual_assets")
+        .select("id,canonical_source_document_id")
+        .eq("owner_user_id", args.ownerUserId)
+        .in("id", assetIds);
+      if (!visualRes.error && Array.isArray(visualRes.data)) {
+        for (const row of visualRes.data) {
+          if (typeof row.canonical_source_document_id === "string" && UUID_PATTERN.test(row.canonical_source_document_id)) {
+            assetToDocMap.set(row.id, row.canonical_source_document_id);
+            explicitIds.push(row.canonical_source_document_id);
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   if (explicitIds.length > 0) {
     const result = await args.userDb
@@ -369,12 +415,35 @@ async function defaultResolveDocuments(args: {
     analysisResults.forEach((result) => rows.push(...(result.data ?? [])));
   }
 
+  if (assetIds.length > 0) {
+    const assetDocResults = await Promise.all(assetIds.map(async (assetId) => args.userDb
+      .from("source_documents")
+      .select(DOCUMENT_COLUMNS)
+      .eq("owner_user_id", args.ownerUserId)
+      .eq("status", "ready")
+      .contains("metadata", { visual_asset_id: assetId })
+      .limit(1)));
+    assetDocResults.forEach((result) => {
+      if (!result.error && Array.isArray(result.data)) {
+        rows.push(...result.data);
+      }
+    });
+  }
+
   const byId = new Map<string, SourceDocumentRow>();
   rows.map(normalizeDocument).filter((row): row is SourceDocumentRow => Boolean(row)).forEach((document) => {
     const referenceIndexes = args.fileReferences.flatMap((reference, index) => {
       const explicitId = reference.sourceDocumentId ?? reference.source_document_id ?? reference.document_id;
       const analysisId = typeof document.metadata.analysis_id === "string" ? document.metadata.analysis_id : undefined;
-      return explicitId === document.id || (analysisId && reference.analysis_id === analysisId) ? [index] : [];
+      const visualAssetId = typeof document.metadata.visual_asset_id === "string" ? document.metadata.visual_asset_id : undefined;
+      const refAssetId = reference.asset_id ?? reference.visual_asset_id;
+      const refCanonicalId = refAssetId ? assetToDocMap.get(refAssetId) : undefined;
+      return explicitId === document.id ||
+             (analysisId && reference.analysis_id === analysisId) ||
+             (visualAssetId && refAssetId === visualAssetId) ||
+             (refCanonicalId && refCanonicalId === document.id)
+        ? [index]
+        : [];
     });
     byId.set(document.id, { ...document, referenceIndexes });
   });
@@ -560,6 +629,39 @@ function looksLikePdfExtractionFailure(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   return normalized.startsWith("[could not extract text from this pdf")
     || normalized.startsWith("[pdf text extraction failed");
+}
+
+export function isQueryTargetingVisualAsset(
+  query: string,
+  visualRef: UploadedSourceReference,
+  allRefs: readonly UploadedSourceReference[],
+): boolean {
+  if (allRefs.length === 1) return true;
+  const qLower = query.toLowerCase().trim();
+  if (!qLower) return true;
+
+  const filename = visualRef.filename.toLowerCase();
+  const nameBase = filename.replace(/\.[^/.]+$/, "");
+  if (qLower.includes(filename) || (nameBase.length >= 3 && qLower.includes(nameBase))) {
+    return true;
+  }
+
+  const visualIndicators = [
+    "this pdf", "the pdf", "this document", "the document", "this file", "the file",
+    "this image", "the image", "this picture", "the picture", "this photo", "the photo",
+    "this diagram", "the diagram", "this chart", "the chart", "this scan", "the scan",
+    "attached", "uploaded", "what is this", "summarize this", "explain this", "read this",
+  ];
+  for (const ind of visualIndicators) {
+    if (qLower.includes(ind)) return true;
+  }
+
+  const isLatest = allRefs[allRefs.length - 1] === visualRef;
+  if (isLatest && (qLower.includes("this") || qLower.includes("it") || qLower.includes("here"))) {
+    return true;
+  }
+
+  return false;
 }
 
 export class SourceRetrievalService {
@@ -788,6 +890,178 @@ export class SourceRetrievalService {
     }
   }
 
+  async persistCanonicalVisualOcrSource(args: PersistVisualOcrSourceArgs): Promise<PersistSourceResult> {
+    if (isGuestIdentity(args.ownerUserId) || !args.userDb) {
+      logSource("document_skipped", { reason: "guest_or_missing_context" });
+      return { status: "skipped", parentChunksCreated: 0, childChunksCreated: 0, reason: "guest_or_missing_context" };
+    }
+    if (!args.extractedText.trim()) {
+      logSource("document_skipped", { reason: "empty_extracted_text" });
+      return { status: "skipped", parentChunksCreated: 0, childChunksCreated: 0, reason: "empty_extracted_text" };
+    }
+
+    const contentHash = createHash("sha256").update(args.extractedText, "utf8").digest("hex");
+    const existingDocuments = await this.dependencies.findExistingDocuments(
+      args.userDb,
+      args.ownerUserId!,
+      contentHash,
+    ).catch(() => [] as readonly SourceDocumentRow[]);
+    const readyDocument = existingDocuments.find((document) => document.status === "ready");
+
+    if (readyDocument) {
+      logSource("document_reused", { source_type: readyDocument.source_type, reason: "content_hash_reused" });
+      await updateVisualAssetAnalysis({
+        userDb: args.userDb,
+        assetId: args.assetId,
+        ownerUserId: args.ownerUserId!,
+        visualAnalysisStatus: "ready",
+        canonicalSourceDocumentId: readyDocument.id,
+      }).catch(() => undefined);
+
+      return {
+        status: "persisted",
+        document: readyDocument,
+        parentChunksCreated: metadataCount(readyDocument, "parent_chunk_count"),
+        childChunksCreated: metadataCount(readyDocument, "child_chunk_count"),
+        reason: "content_hash_reused",
+      };
+    }
+
+    const chunks = chunkSourceText({ text: args.extractedText, title: args.filename, path: args.filename });
+    if (chunks.parents.length === 0 || chunks.children.length === 0) {
+      logSource("document_skipped", { reason: "no_chunks" });
+      return { status: "skipped", parentChunksCreated: 0, childChunksCreated: 0, reason: "no_chunks" };
+    }
+
+    const baseMetadata: Record<string, unknown> = {
+      visual_asset_id: args.assetId,
+      asset_id: args.assetId,
+      visual_model: args.visualModel ?? "gemini-3.5-flash-lite",
+      visual_analysis_version: args.visualAnalysisVersion ?? 1,
+      pages_processed: args.pagesProcessed ?? 1,
+      ocr_mode: args.ocrMode ?? (args.assetType === "scanned_pdf" ? "visual_ocr" : "image_ocr"),
+      extraction_mode: args.assetType === "scanned_pdf" ? "visual_ocr" : "image_ocr",
+      size_bytes: args.sizeBytes ?? 0,
+      embedding_status: "pending_embedding",
+      ingestion_status: "processing",
+      ingestion_version: 2,
+    };
+
+    const document = await this.dependencies.insertDocument(args.userDb, {
+      owner_user_id: args.ownerUserId!,
+      conversation_id: args.conversationId ?? null,
+      title: args.filename,
+      original_filename: args.filename,
+      mime_type: args.mimeType,
+      source_type: args.assetType === "scanned_pdf" ? "pdf" : "image",
+      content_hash: contentHash,
+      status: "processing",
+      metadata: baseMetadata,
+    });
+
+    try {
+      const insertInBatches = async (inputs: readonly SourceChunkInsert[]): Promise<SourceChunkIdentity[]> => {
+        const inserted: SourceChunkIdentity[] = [];
+        for (let start = 0; start < inputs.length; start += SOURCE_INSERT_BATCH_SIZE) {
+          const batch = inputs.slice(start, start + SOURCE_INSERT_BATCH_SIZE);
+          inserted.push(...await this.dependencies.insertChunks(args.userDb, batch));
+        }
+        return inserted;
+      };
+
+      const childCountByParent = new Map<number, number>();
+      chunks.children.forEach((child) => {
+        childCountByParent.set(child.parentIndex, (childCountByParent.get(child.parentIndex) ?? 0) + 1);
+      });
+
+      const parentRows = await insertInBatches(chunks.parents.map((parent) => ({
+        document_id: document.id,
+        owner_user_id: args.ownerUserId!,
+        conversation_id: args.conversationId ?? null,
+        parent_chunk_id: null,
+        chunk_role: "parent" as const,
+        chunk_index: parent.index,
+        heading: parent.heading ?? null,
+        path: parent.path ?? null,
+        page_number: parent.pageNumber ?? null,
+        content: parent.content,
+        context_prefix: parent.contextPrefix ?? null,
+        token_estimate: Math.max(1, parent.tokenEstimate),
+        embedding_status: "pending_embedding" as const,
+        metadata: { child_count: childCountByParent.get(parent.index) ?? 0 },
+      })));
+
+      const parentIds = new Map(parentRows.map((parent) => [parent.chunk_index, parent.id]));
+      const childInputs = chunks.children.flatMap((child): SourceChunkInsert[] => {
+        const parentId = parentIds.get(child.parentIndex);
+        if (!parentId) return [];
+        return [{
+          document_id: document.id,
+          owner_user_id: args.ownerUserId!,
+          conversation_id: args.conversationId ?? null,
+          parent_chunk_id: parentId,
+          chunk_role: "child",
+          chunk_index: child.index,
+          heading: child.heading ?? null,
+          path: child.path ?? null,
+          page_number: child.pageNumber ?? null,
+          content: child.content,
+          context_prefix: child.contextPrefix ?? null,
+          token_estimate: Math.max(1, child.tokenEstimate),
+          embedding_status: "pending_embedding",
+          metadata: { parent_index: child.parentIndex },
+        }];
+      });
+
+      const childRows = await insertInBatches(childInputs);
+      const readyMetadata = {
+        ...baseMetadata,
+        ingestion_status: "ready",
+        parent_chunk_count: parentRows.length,
+        child_chunk_count: childRows.length,
+        canonical_character_count: args.extractedText.length,
+        estimated_source_tokens: estimateTextTokens(args.extractedText),
+        completed_at: new Date().toISOString(),
+      };
+
+      await this.dependencies.updateDocumentStatus(args.userDb, document.id, args.ownerUserId!, "ready", readyMetadata);
+      const readyDocument: SourceDocumentRow = { ...document, status: "ready", metadata: readyMetadata };
+
+      await updateVisualAssetAnalysis({
+        userDb: args.userDb,
+        assetId: args.assetId,
+        ownerUserId: args.ownerUserId!,
+        visualAnalysisStatus: "ready",
+        canonicalSourceDocumentId: document.id,
+        metadataUpdates: {
+          canonical_character_count: args.extractedText.length,
+          pages_processed: args.pagesProcessed ?? 1,
+        },
+      }).catch(() => undefined);
+
+      logSource("document_persisted", {
+        source_type: readyDocument.source_type,
+        parent_chunks_created: parentRows.length,
+        child_chunks_created: childRows.length,
+        embedding_status: "pending_embedding",
+      });
+
+      return {
+        status: "persisted",
+        document: readyDocument,
+        parentChunksCreated: parentRows.length,
+        childChunksCreated: childRows.length,
+      };
+    } catch (error) {
+      await this.dependencies.updateDocumentStatus(args.userDb, document.id, args.ownerUserId!, "failed", {
+        ...baseMetadata,
+        ingestion_status: "failed",
+        failure_type: error instanceof Error ? error.name : "unknown",
+      }).catch(() => undefined);
+      throw error;
+    }
+  }
+
   async retrieveForPrompt(args: {
     userDb?: SupabaseClient | any;
     ownerUserId?: string;
@@ -829,6 +1103,42 @@ export class SourceRetrievalService {
         error_type: error instanceof Error ? error.name : "unknown",
       });
     }
+
+    const pendingVisualRefs = args.fileReferences.filter((ref) =>
+      ref.visual_required === true ||
+      ref.visual_analysis_status === "required" ||
+      (Boolean(ref.asset_id || ref.visual_asset_id) && ref.visual_analysis_status !== "ready")
+    );
+
+    const hasPendingTarget = pendingVisualRefs.some((ref) =>
+      isQueryTargetingVisualAsset(args.query, ref, args.fileReferences)
+    );
+
+    if (hasPendingTarget) {
+      // Critical Invariant (Section 42): If user asks about an unanalyzed visual asset,
+      // the system must NEVER silently substitute an older unrelated document (e.g. Resume.pdf vs XOR.pdf).
+      documents = documents.filter((doc) => {
+        const docAssetId = doc.metadata?.visual_asset_id ?? doc.metadata?.asset_id;
+        return pendingVisualRefs.some((ref) =>
+          (ref.asset_id && ref.asset_id === docAssetId) ||
+          (ref.visual_asset_id && ref.visual_asset_id === docAssetId)
+        );
+      });
+      if (documents.length === 0) {
+        logSource("retrieval_isolated_for_visual_asset", {
+          reason: "pending_visual_asset_isolated",
+          pending_count: pendingVisualRefs.length,
+        });
+        return {
+          mode: "none",
+          fileReferences: [],
+          resolvedDocuments: 0,
+          selectedChunks: 0,
+          droppedChunks: 0,
+        };
+      }
+    }
+
     if (documents.length === 0) {
       return {
         mode: legacyReferences.length > 0 ? "legacy" : "none",
