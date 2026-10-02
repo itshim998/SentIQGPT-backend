@@ -54,17 +54,19 @@ export async function analyzeVisualAssets(
     };
   }
 
+  const DEFAULT_VISUAL_MODEL = process.env.GEMINI_VISUAL_MODEL || process.env.GEMINI_IMAGE_INPUT_MODEL || "gemini-3.5-flash-lite";
+
   // Idempotent cache check: 1. Full query-specific cache
   const combinedSha = args.assets.map((a) => a.sha256).sort().join(":");
   const cacheKey = computeVisualAnalysisCacheKey({
     sha256: combinedSha,
-    model: "gemini-3.5-flash-lite",
+    model: DEFAULT_VISUAL_MODEL,
     requestSpecificQuery: args.query,
   });
 
   const baseKey = computeAssetBaseCacheKey({
     sha256: combinedSha,
-    model: "gemini-3.5-flash-lite",
+    model: DEFAULT_VISUAL_MODEL,
   });
 
   if (!args.bypassCache) {
@@ -76,7 +78,7 @@ export async function analyzeVisualAssets(
           input_tokens: 0,
           output_tokens: 0,
           cached: true,
-          model: "gemini-3.5-flash-lite",
+          model: DEFAULT_VISUAL_MODEL,
         },
       };
     }
@@ -108,7 +110,7 @@ export async function analyzeVisualAssets(
           input_tokens: 0,
           output_tokens: 0,
           cached: true,
-          model: "gemini-3.5-flash-lite",
+          model: DEFAULT_VISUAL_MODEL,
         },
       };
       return cachedResult;
@@ -385,7 +387,7 @@ export async function analyzeVisualAssets(
       output_tokens: totalOutputTokens,
       cached: false,
       key_slot: lastKeySlot,
-      model: "gemini-3.5-flash-lite",
+      model: DEFAULT_VISUAL_MODEL,
     },
   };
 
