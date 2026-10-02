@@ -6,6 +6,9 @@ export interface BatchItem {
   readonly buffer: Buffer;
   readonly mimeType: string;
   readonly filename: string;
+  readonly width?: number;
+  readonly height?: number;
+  readonly preprocessingVariant?: string;
 }
 
 export interface VisualBatch {

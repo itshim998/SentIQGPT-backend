@@ -14,8 +14,11 @@ import {
 } from "./resolutionPolicy";
 import { partitionVisualBatches, type BatchItem } from "./visualBatcher";
 import {
+  computeAssetBaseCacheKey,
   computeVisualAnalysisCacheKey,
+  getCachedAssetBase,
   getCachedVisualAnalysis,
+  setCachedAssetBase,
   setCachedVisualAnalysis,
   VISUAL_ANALYSIS_VERSION,
 } from "./visualCache";
@@ -51,12 +54,17 @@ export async function analyzeVisualAssets(
     };
   }
 
-  // Idempotent cache check
+  // Idempotent cache check: 1. Full query-specific cache
   const combinedSha = args.assets.map((a) => a.sha256).sort().join(":");
   const cacheKey = computeVisualAnalysisCacheKey({
     sha256: combinedSha,
     model: "gemini-3.5-flash-lite",
     requestSpecificQuery: args.query,
+  });
+
+  const baseKey = computeAssetBaseCacheKey({
+    sha256: combinedSha,
+    model: "gemini-3.5-flash-lite",
   });
 
   if (!args.bypassCache) {
@@ -71,6 +79,39 @@ export async function analyzeVisualAssets(
           model: "gemini-3.5-flash-lite",
         },
       };
+    }
+
+    // 2. Asset base cache: if general text extraction or no query, reuse previous OCR
+    const baseCached = getCachedAssetBase(baseKey);
+    const isGeneralOcrQuery = !args.query ||
+      /^(read|transcribe|ocr|extract|explain this|what is this|summarize)/i.test(args.query.trim());
+    if (baseCached && isGeneralOcrQuery) {
+      const cachedResult: ImageInputResult = {
+        assets: args.assets.map((a) => ({
+          attachment_id: a.id,
+          filename: a.filename,
+          asset_type: a.asset_type,
+          pages_processed: baseCached.pages.length,
+        })),
+        pages: baseCached.pages,
+        canonical_sources: args.assets.map((a) => ({
+          attachment_id: a.id,
+          status: baseCached.pages.length > 0 ? "ready" : "failed",
+        })),
+        request_evidence: {
+          relevant_text: baseCached.relevant_text,
+          relevant_pages: baseCached.pages.map((p) => p.page_number),
+          visual_findings: baseCached.visual_findings,
+        },
+        warnings: [],
+        token_usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cached: true,
+          model: "gemini-3.5-flash-lite",
+        },
+      };
+      return cachedResult;
     }
   }
 
@@ -103,8 +144,14 @@ export async function analyzeVisualAssets(
         }
       }
 
-      const MAX_PAGES_TO_ANALYZE = 20; // Bounded protection
+      const MAX_PAGES_TO_ANALYZE = Number(process.env.SENTIQ_MAX_VISUAL_PAGES) || 24;
       const boundedPages = Math.min(pageCount, MAX_PAGES_TO_ANALYZE);
+
+      if (pageCount > MAX_PAGES_TO_ANALYZE) {
+        warnings.push(
+          `Document ${asset.filename} has ${pageCount} pages; visual processing is capped at the first ${boundedPages} pages. Pages ${boundedPages + 1} to ${pageCount} were not analyzed.`
+        );
+      }
 
       for (let p = 1; p <= boundedPages; p += 1) {
         try {
@@ -124,6 +171,9 @@ export async function analyzeVisualAssets(
             buffer: preprocessed.buffer,
             mimeType: preprocessed.mimeType,
             filename: asset.filename,
+            width: preprocessed.width,
+            height: preprocessed.height,
+            preprocessingVariant: `${initialResolution.level}-jpeg`,
           });
         } catch (pageErr) {
           warnings.push(`Page ${p} of ${asset.filename} failed to render`);
@@ -143,6 +193,9 @@ export async function analyzeVisualAssets(
         buffer: preprocessed.buffer,
         mimeType: preprocessed.mimeType,
         filename: asset.filename,
+        width: preprocessed.width,
+        height: preprocessed.height,
+        preprocessingVariant: `${initialResolution.level}-jpeg`,
       });
     }
   }
@@ -226,7 +279,14 @@ export async function analyzeVisualAssets(
 
     const resultPages = data.result?.pages || [];
     for (const page of resultPages) {
-      pages.push(page);
+      const matchingItem = batch.items.find((b) => b.pageNumber === page.page_number);
+      pages.push({
+        ...page,
+        render_dimensions: matchingItem?.width && matchingItem?.height
+          ? { width: matchingItem.width, height: matchingItem.height }
+          : undefined,
+        preprocessing_variant: matchingItem?.preprocessingVariant,
+      });
     }
 
     if (data.result?.request_evidence?.relevant_text) {
@@ -330,5 +390,10 @@ export async function analyzeVisualAssets(
   };
 
   setCachedVisualAnalysis(cacheKey, finalResult);
+  setCachedAssetBase(baseKey, {
+    pages,
+    relevant_text: finalResult.request_evidence.relevant_text,
+    visual_findings: finalResult.request_evidence.visual_findings,
+  });
   return finalResult;
 }

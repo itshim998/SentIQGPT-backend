@@ -51,7 +51,12 @@ export interface CreateVisualAssetParams {
 export interface ImageInputToolArgs {
   readonly attachment_ids?: readonly string[];
   readonly asset_ids?: readonly string[];
+  readonly target_assets?: readonly string[];
+  readonly target_asset?: string;
+  readonly query?: string;
   readonly request?: string;
+  readonly page_range?: string;
+  readonly detail_level?: "low" | "medium" | "high";
 }
 
 export interface PageVisualEvidence {
@@ -61,6 +66,22 @@ export interface PageVisualEvidence {
   readonly uncertainty?: string;
   readonly needs_refinement?: boolean;
   readonly confidence?: "high" | "medium" | "low";
+  readonly render_dimensions?: { readonly width: number; readonly height: number };
+  readonly preprocessing_variant?: string;
+}
+
+export interface VisualAssetPageRecord {
+  readonly page_number: number;
+  readonly render_dimensions: { readonly width: number; readonly height: number };
+  readonly preprocessing_variant: string;
+  readonly analysis_status: "ready" | "failed";
+  readonly ocr_text: string;
+  readonly visual_summary: string;
+  readonly uncertainty?: string;
+  readonly confidence?: "high" | "medium" | "low";
+  readonly gemini_model: string;
+  readonly processing_version: number;
+  readonly updated_at: string;
 }
 
 export interface CanonicalSourceReference {
@@ -75,6 +96,14 @@ export interface RequestEvidence {
   readonly visual_findings: string;
 }
 
+export interface ImageInputTokenUsage {
+  readonly input_tokens: number;
+  readonly output_tokens: number;
+  readonly cached?: boolean;
+  readonly key_slot?: number;
+  readonly model?: string;
+}
+
 export interface ImageInputResult {
   readonly assets: readonly {
     readonly attachment_id: string;
@@ -86,11 +115,5 @@ export interface ImageInputResult {
   readonly canonical_sources: readonly CanonicalSourceReference[];
   readonly request_evidence: RequestEvidence;
   readonly warnings: readonly string[];
-  readonly token_usage?: {
-    readonly input_tokens: number;
-    readonly output_tokens: number;
-    readonly cached?: boolean;
-    readonly key_slot?: number;
-    readonly model?: string;
-  };
+  readonly token_usage?: ImageInputTokenUsage;
 }

@@ -4024,7 +4024,7 @@ app.post(
         complexity: guestCtx.hasFileContext ? "heavy" : "normal",
         requiredCapabilities: deriveRequiredModelCapabilities({
           hasImageInput: guestCtx.imageAttachments.length > 0,
-          automaticToolsRequested: !hasEffectiveWebSearchMode && getEnabledAutomaticSentIQTools().length > 0,
+          automaticToolsRequested: !hasEffectiveWebSearchMode && getEnabledAutomaticSentIQTools({ fileReferences: fileRefs }).length > 0,
           streaming: false,
         }),
       });
@@ -4251,6 +4251,21 @@ app.post(
               guestGeneralModelOverride,
               requestAbortController.signal,
             );
+          }
+          if (toolResult.image_input?.success === true) {
+            const vUsage = toolResult.image_input.token_usage;
+            console.log(JSON.stringify({
+              event: "visual_tool_usage",
+              tool: "image_input",
+              provider: "gemini",
+              model: vUsage?.model ?? "gemini-3.5-flash-lite",
+              input_tokens: vUsage?.input_tokens ?? 0,
+              output_tokens: vUsage?.output_tokens ?? 0,
+              cached: Boolean(vUsage?.cached),
+              key_slot: vUsage?.key_slot,
+              userId: "guest",
+              conversationId: requestedConversationId,
+            }));
           }
           const deliveredUsableResult = toolResult.file?.success === true
             || toolResult.image?.success === true
@@ -5499,7 +5514,7 @@ app.post(
       isGuest,
       signal: requestAbortController.signal,
     });
-    const requestedAutomaticTools = webSurfV2 ? [] : getEnabledAutomaticSentIQTools();
+    const requestedAutomaticTools = webSurfV2 ? [] : getEnabledAutomaticSentIQTools({ fileReferences: fileRefs });
     const billingRequiredCapabilities = deriveRequiredModelCapabilities({
       hasImageInput: hasImage,
       automaticToolsRequested: requestedAutomaticTools.length > 0,
@@ -5746,6 +5761,21 @@ app.post(
             await commitTextBilling(directReservation, "stream.tool-final-synthesis");
             automaticToolReservationCompleted = true;
           }
+        }
+        if (toolResult.image_input?.success === true) {
+          const vUsage = toolResult.image_input.token_usage;
+          console.log(JSON.stringify({
+            event: "visual_tool_usage",
+            tool: "image_input",
+            provider: "gemini",
+            model: vUsage?.model ?? "gemini-3.5-flash-lite",
+            input_tokens: vUsage?.input_tokens ?? 0,
+            output_tokens: vUsage?.output_tokens ?? 0,
+            cached: Boolean(vUsage?.cached),
+            key_slot: vUsage?.key_slot,
+            userId,
+            conversationId: activeConversationId,
+          }));
         }
         if (toolResult.reply && toolResult.web_search?.v2) {
           await streamBufferedAnswer(toolResult.reply, undefined, false, streamMetrics);
@@ -6220,6 +6250,16 @@ app.post(
     console.log(`[FileSession] stored for ${fileSessionKey}: ${result.filename}`);
 
     if (result.visual_required) {
+      if (!visualAssetRecord) {
+        res.status(500).json({
+          error: "Visual asset storage failed. Please try again.",
+          code: "visual_asset_storage_failed",
+          analysis_id: analysisId,
+          analysis_status: "error",
+          visual_analysis_status: "failed",
+        });
+        return;
+      }
       res.json({
         filename: result.filename,
         type: result.type,
@@ -6229,8 +6269,8 @@ app.post(
         analysis_status: "pending_visual",
         visual_required: true,
         visual_analysis_status: "required",
-        asset_id: visualAssetRecord?.id,
-        visual_asset_id: visualAssetRecord?.id,
+        asset_id: visualAssetRecord.id,
+        visual_asset_id: visualAssetRecord.id,
         update_protocol: "sse",
         update_endpoint: "/api/files/updates",
       });

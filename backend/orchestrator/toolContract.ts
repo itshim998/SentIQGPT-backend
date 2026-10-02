@@ -111,7 +111,10 @@ const schemas = {
   }).strict(),
   image_input: z.object({
     query: boundedText.optional(),
+    request: boundedText.optional(),
     target_assets: z.array(z.string()).optional(),
+    attachment_ids: z.array(z.string()).optional(),
+    asset_ids: z.array(z.string()).optional(),
     target_asset: z.string().optional(),
     page_range: z.string().optional(),
     detail_level: z.enum(["low", "medium", "high"]).optional(),
@@ -226,10 +229,21 @@ export const SENTIQ_TOOL_REGISTRY: readonly ToolDefinition[] = [
     description: "Analyze uploaded visual assets (scanned PDFs, documents, handwritten notes, images) to extract OCR text, visual diagrams, equations, or layout findings. This is an intermediate analysis tool; return findings to synthesize the final answer.",
     inputSchema: objectSchema({
       query: stringProperty("The visual inspection or OCR question."),
+      request: stringProperty("Optional alias for query: the visual inspection or OCR request."),
       target_assets: {
         type: "array",
         items: { type: "string" },
         description: "Optional list of asset filenames or asset IDs to inspect.",
+      },
+      attachment_ids: {
+        type: "array",
+        items: { type: "string" },
+        description: "Optional alias for target_assets: list of visual asset IDs to inspect.",
+      },
+      asset_ids: {
+        type: "array",
+        items: { type: "string" },
+        description: "Optional alias for target_assets: list of visual asset IDs to inspect.",
       },
       target_asset: stringProperty("Optional single asset filename or asset ID to inspect."),
       page_range: stringProperty("Optional page numbers or ranges to inspect (e.g. '1-3', '5')."),

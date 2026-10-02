@@ -152,9 +152,21 @@ export async function dispatchAutomaticModelToolCall<T>(args: {
         if (!args.executeImageInput) {
           throw new Error("image_input tool is not implemented in this dispatcher.");
         }
+        const effectiveQuery = typeof call.arguments.query === "string" && call.arguments.query.trim().length > 0
+          ? call.arguments.query
+          : typeof call.arguments.request === "string"
+            ? call.arguments.request
+            : undefined;
+        const targetList = Array.isArray(call.arguments.target_assets)
+          ? call.arguments.target_assets.map(String)
+          : Array.isArray(call.arguments.attachment_ids)
+            ? call.arguments.attachment_ids.map(String)
+            : Array.isArray(call.arguments.asset_ids)
+              ? call.arguments.asset_ids.map(String)
+              : undefined;
         result = await args.executeImageInput({
-          query: typeof call.arguments.query === "string" ? call.arguments.query : undefined,
-          targetAssets: Array.isArray(call.arguments.target_assets) ? call.arguments.target_assets.map(String) : undefined,
+          query: effectiveQuery,
+          targetAssets: targetList,
           targetAsset: typeof call.arguments.target_asset === "string" ? call.arguments.target_asset : undefined,
           pageRange: typeof call.arguments.page_range === "string" ? call.arguments.page_range : undefined,
           detailLevel: typeof call.arguments.detail_level === "string" ? (call.arguments.detail_level as "low" | "medium" | "high") : undefined,

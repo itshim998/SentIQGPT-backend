@@ -21,6 +21,7 @@ export interface PersistVisualOcrSourceArgs {
   readonly pagesProcessed?: number;
   readonly ocrMode?: string;
   readonly pageTexts?: readonly { pageNumber: number; text: string }[];
+  readonly pages?: readonly import("../tools/imageInput/types").PageVisualEvidence[];
 }
 
 export interface UploadedSourceReference {
@@ -908,6 +909,20 @@ export class SourceRetrievalService {
     ).catch(() => [] as readonly SourceDocumentRow[]);
     const readyDocument = existingDocuments.find((document) => document.status === "ready");
 
+    const pageRecords = (args.pages ?? []).map((p) => ({
+      page_number: p.page_number,
+      render_dimensions: p.render_dimensions ?? { width: 0, height: 0 },
+      preprocessing_variant: p.preprocessing_variant ?? "default",
+      analysis_status: "ready" as const,
+      ocr_text: p.extracted_text,
+      visual_summary: p.visual_summary,
+      uncertainty: p.uncertainty ?? null,
+      confidence: p.confidence ?? ("high" as const),
+      gemini_model: args.visualModel ?? "gemini-3.5-flash-lite",
+      processing_version: args.visualAnalysisVersion ?? 1,
+      updated_at: new Date().toISOString(),
+    }));
+
     if (readyDocument) {
       logSource("document_reused", { source_type: readyDocument.source_type, reason: "content_hash_reused" });
       await updateVisualAssetAnalysis({
@@ -916,6 +931,11 @@ export class SourceRetrievalService {
         ownerUserId: args.ownerUserId!,
         visualAnalysisStatus: "ready",
         canonicalSourceDocumentId: readyDocument.id,
+        metadataUpdates: {
+          canonical_character_count: args.extractedText.length,
+          pages_processed: args.pagesProcessed ?? 1,
+          pages: pageRecords,
+        },
       }).catch(() => undefined);
 
       return {
@@ -927,7 +947,42 @@ export class SourceRetrievalService {
       };
     }
 
-    const chunks = chunkSourceText({ text: args.extractedText, title: args.filename, path: args.filename });
+    let chunks: ReturnType<typeof chunkSourceText>;
+    if (args.pageTexts && args.pageTexts.length > 0) {
+      const allParents: any[] = [];
+      const allChildren: any[] = [];
+      let parentOffset = 0;
+      let childOffset = 0;
+      for (const pt of args.pageTexts) {
+        if (!pt.text.trim()) continue;
+        const pageChunks = chunkSourceText({
+          text: pt.text,
+          title: args.filename,
+          path: args.filename,
+          pageNumber: pt.pageNumber,
+        });
+        const currentParentOffset = parentOffset;
+        allParents.push(...pageChunks.parents.map((p) => ({
+          ...p,
+          index: p.index + currentParentOffset,
+          pageNumber: pt.pageNumber,
+        })));
+        allChildren.push(...pageChunks.children.map((c) => ({
+          ...c,
+          index: c.index + childOffset,
+          parentIndex: c.parentIndex + currentParentOffset,
+          pageNumber: pt.pageNumber,
+        })));
+        parentOffset += pageChunks.parents.length;
+        childOffset += pageChunks.children.length;
+      }
+      chunks = allParents.length > 0
+        ? { parents: allParents, children: allChildren }
+        : chunkSourceText({ text: args.extractedText, title: args.filename, path: args.filename });
+    } else {
+      chunks = chunkSourceText({ text: args.extractedText, title: args.filename, path: args.filename });
+    }
+
     if (chunks.parents.length === 0 || chunks.children.length === 0) {
       logSource("document_skipped", { reason: "no_chunks" });
       return { status: "skipped", parentChunksCreated: 0, childChunksCreated: 0, reason: "no_chunks" };
@@ -1036,6 +1091,7 @@ export class SourceRetrievalService {
         metadataUpdates: {
           canonical_character_count: args.extractedText.length,
           pages_processed: args.pagesProcessed ?? 1,
+          pages: pageRecords,
         },
       }).catch(() => undefined);
 

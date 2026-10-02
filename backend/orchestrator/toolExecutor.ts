@@ -163,6 +163,13 @@ export interface StepResult {
     assets_processed?: number;
     pages_processed?: number;
     error?: string;
+    token_usage?: {
+      readonly input_tokens: number;
+      readonly output_tokens: number;
+      readonly cached?: boolean;
+      readonly key_slot?: number;
+      readonly model?: string;
+    };
   };
   readonly error?: string;
   readonly tool_events?: readonly ToolLifecycleEvent[];
@@ -501,13 +508,14 @@ export async function synthesizeIntuitiveToolResult(
   modelOverride: string,
   signal?: AbortSignal,
 ): Promise<StepResult> {
+  const isImageInputContinuation = step.image_input?.success === true;
   if (
-    !isNemotronIntuitiveLaneEnabled(profile.mode)
+    (!isNemotronIntuitiveLaneEnabled(profile.mode) && !isImageInputContinuation)
     || step.final_synthesis_completed
   ) {
     return step;
   }
-  if (!shouldRunIntuitiveFinalSynthesis(step)) {
+  if (!isImageInputContinuation && !shouldRunIntuitiveFinalSynthesis(step)) {
     releaseIntuitiveFinalSynthesisProtection();
     return step;
   }
@@ -527,10 +535,10 @@ export async function synthesizeIntuitiveToolResult(
     userId: ctx.userId,
     reasoningEffort: profile.model.reasoningEffort,
     signal,
-    executionMode: "intuitive",
+    executionMode: profile.mode === "intuitive" ? "intuitive" : "fast",
     allowedModelTools: [],
     requiredCapabilities: [],
-    consumeFutureObligationId: INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID,
+    consumeFutureObligationId: profile.mode === "intuitive" ? INTUITIVE_FINAL_SYNTHESIS_OBLIGATION_ID : undefined,
   });
 
   return {
@@ -621,16 +629,21 @@ export async function execImageInput(
   const requestedTargets = [
     ...(args.targetAsset ? [args.targetAsset.trim().toLowerCase()] : []),
     ...(args.targetAssets ? args.targetAssets.map((t) => String(t).trim().toLowerCase()) : []),
-  ];
+  ].filter(Boolean);
 
   let targetRefs = fileRefs.filter((ref) => {
     if (!ref) return false;
     const filename = String(ref.filename || "").toLowerCase();
+    const nameBase = filename.replace(/\.[^/.]+$/, "");
     const assetId = String(ref.asset_id || ref.visual_asset_id || ref.source_document_id || ref.document_id || "").toLowerCase();
     if (requestedTargets.length > 0) {
-      return requestedTargets.some((target) =>
-        filename.includes(target) || target.includes(filename) || (assetId && assetId === target)
-      );
+      return requestedTargets.some((target) => {
+        if (assetId && assetId === target) return true;
+        if (filename === target) return true;
+        const targetBase = target.replace(/\.[^/.]+$/, "");
+        if (nameBase.length >= 3 && targetBase.length >= 3 && (nameBase === targetBase || target.includes(filename))) return true;
+        return false;
+      });
     }
     return ref.visual_required === true ||
            ref.visual_analysis_status === "required" ||
@@ -692,13 +705,32 @@ export async function execImageInput(
     };
   }
 
-  const analysisResult = await analyzeVisualAssets({
-    assets: assetRows,
-    query: args.query,
-    userId: ctx.userId,
-    userDb: ctx.userDb,
-    forcedResolution: args.detailLevel,
-  });
+  let analysisResult: Awaited<ReturnType<typeof analyzeVisualAssets>>;
+  try {
+    analysisResult = await analyzeVisualAssets({
+      assets: assetRows,
+      query: args.query,
+      userId: ctx.userId,
+      userDb: ctx.userDb,
+      forcedResolution: args.detailLevel,
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[Image Input] analysis error: ${errorMsg}`);
+    return {
+      step: 0,
+      tool: "conversation",
+      reply: "Visual analysis is currently unavailable.",
+      error: errorMsg,
+      image_input: {
+        success: false,
+        error: errorMsg,
+        evidence: {
+          relevant_text: "Visual analysis is unavailable.",
+        },
+      },
+    };
+  }
 
   for (const asset of assetRows) {
     const assetPages = analysisResult.pages.filter((p) => p.page_number !== undefined);
@@ -719,6 +751,7 @@ export async function execImageInput(
           visualModel: "gemini-3.5-flash-lite",
           pagesProcessed: assetPages.length || 1,
           pageTexts: assetPages.map((p) => ({ pageNumber: p.page_number, text: p.extracted_text })),
+          pages: assetPages,
         });
       } catch (persistErr) {
         console.warn(`[Image Input] Canonical OCR persistence warning: ${persistErr instanceof Error ? persistErr.message : persistErr}`);
@@ -746,6 +779,7 @@ export async function execImageInput(
       },
       assets_processed: analysisResult.assets.length,
       pages_processed: analysisResult.pages.length,
+      token_usage: analysisResult.token_usage,
     },
   };
 }
