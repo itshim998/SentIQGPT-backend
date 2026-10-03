@@ -149,7 +149,7 @@ export class SentIqTestHarness {
   }
 
   async startFreshChat() {
-    console.log("\n[TestHarness] Starting fresh chat...");
+    console.log("\n[TestHarness] Preparing clean turn...");
     this.networkEvents = [];
     this.sseEvents = [];
     this.runtimeExceptions = [];
@@ -157,15 +157,14 @@ export class SentIqTestHarness {
 
     await this.client.send("Runtime.evaluate", {
       expression: `(() => {
-        document.querySelectorAll(".composer-attachment-remove").forEach(b => b.click());
+        const newBtn = document.getElementById("new-chat-btn");
+        if (newBtn) newBtn.click();
         const chatInput = document.getElementById("chat-input");
         if (chatInput) chatInput.value = "";
-        const newChatBtn = document.getElementById("new-chat-btn") || Array.from(document.querySelectorAll("button")).find(b => b.innerText.includes("New Chat"));
-        if (newChatBtn) newChatBtn.click();
       })()`,
     });
 
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 3000));
   }
 
   async uploadFiles(filePaths) {
@@ -175,19 +174,48 @@ export class SentIqTestHarness {
     this.uploadPromise = new Promise((resolve) => { resolveFn = resolve; });
     this.uploadResolve = resolveFn;
 
+    const alreadyReady = await this.client.send("Runtime.evaluate", {
+      expression: `(() => {
+        const items = Array.from(document.querySelectorAll(".composer-attachment"));
+        return items.length === ${filePaths.length} && items.every(i => i.classList.contains("is-ready") || i.dataset.attachmentState === "ready" || i.querySelector(".composer-attachment-status")?.innerText === "Ready");
+      })()`,
+      returnByValue: true,
+    });
+    if (alreadyReady.result.value) {
+      console.log("[TestHarness] Attachments already mounted and ready.");
+      const evalRes = await this.client.send("Runtime.evaluate", {
+        expression: `(() => {
+          const items = Array.from(document.querySelectorAll(".composer-attachment"));
+          return items.map(item => ({
+            id: item.dataset.attachmentId || item.getAttribute("data-attachment-id"),
+            state: "ready",
+            name: item.querySelector(".composer-attachment-name")?.innerText || "",
+            statusText: "Ready",
+            isReady: true
+          }));
+        })()`,
+        returnByValue: true,
+      });
+      return evalRes.result.value || [];
+    }
+
     const doc = await this.client.send("DOM.getDocument");
     const nodeRes = await this.client.send("DOM.querySelector", {
       nodeId: doc.root.nodeId,
       selector: "#file-input",
     });
 
+    // Clear any existing composer attachments first
+    await this.client.send("Runtime.evaluate", {
+      expression: `(() => {
+        document.querySelectorAll(".composer-attachment-remove").forEach(b => b.click());
+      })()`,
+    });
+    await new Promise((r) => setTimeout(r, 1800));
+
     await this.client.send("DOM.setFileInputFiles", {
       nodeId: nodeRes.nodeId,
       files: filePaths,
-    });
-
-    await this.client.send("Runtime.evaluate", {
-      expression: `document.getElementById("file-input").dispatchEvent(new Event("change", { bubbles: true }));`,
     });
 
     console.log("[TestHarness] Waiting for upload responses and chip ready state...");
