@@ -1,23 +1,23 @@
 import { CdpClient, getSentIqTabDebuggerUrl } from "./cdpClient.mjs";
 
 async function main() {
-  const wsUrl = await getSentIqTabDebuggerUrl();
-  const client = new CdpClient(wsUrl);
-  await client.connect();
-  const res = await client.send("Runtime.evaluate", {
+  const ws = await getSentIqTabDebuggerUrl();
+  const c = new CdpClient(ws);
+  await c.connect();
+  const res = await c.send("Runtime.evaluate", {
     expression: `(() => {
-      const el = document.getElementById("chat-messages");
-      const messages = Array.from(document.querySelectorAll("#chat-messages > *"));
-      return {
-        text: el ? el.innerText : "none",
-        childrenCount: messages.length,
-        classes: messages.map(m => m.className)
-      };
+      const messages = Array.from(document.querySelectorAll("#chat-messages .message"));
+      return messages.map((m, idx) => ({
+        idx,
+        role: m.classList.contains("user") ? "user" : "assistant",
+        text: (m.querySelector(".message-content, .message-body")?.innerText || m.innerText || "").slice(0, 200)
+      }));
     })()`,
-    returnByValue: true
+    returnByValue: true,
   });
-  console.log("Chat Messages State:\n", JSON.stringify(res.result.value, null, 2));
-  client.close();
+  console.log("Current DOM messages count:", res.result.value?.length);
+  console.log(JSON.stringify(res.result.value, null, 2));
+  c.close();
 }
 
 main().catch(console.error);

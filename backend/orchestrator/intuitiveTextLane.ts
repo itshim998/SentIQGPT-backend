@@ -81,7 +81,9 @@ export function buildIntuitiveToolSelectionPrompt(
         `- Asset ID: ${asset.asset_id} | File: ${asset.filename} | Type: ${asset.mime_type} | Visual Analysis: ${analysisStatus} | Canonical Text: ${textStatus}`,
       );
     }
-    parts.push("When visual analysis is required for an attached visual input or image, call image_input with the target asset_id.");
+    parts.push(
+      "Only call image_input if the user's request specifically asks about, targets, or requires inspecting one of these visual inputs. If the user's request asks about a text document (e.g. resume, text report) or does not require visual inspection, output NO_TOOL.",
+    );
   }
 
   parts.push("");

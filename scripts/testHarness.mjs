@@ -5,23 +5,34 @@ export function getAzureLogs(tail = 100) {
   try {
     const raw = execSync(`az containerapp logs show -n sentiqgpt-backend -g rg-sentiqgpt-prod --tail ${tail} --format json --follow false`, {
       encoding: "utf8",
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
       maxBuffer: 20 * 1024 * 1024,
       timeout: 60000,
     });
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed.map((item) => (typeof item === "string" ? item : (item.Log || item.message || JSON.stringify(item)))).join("\n");
-    }
-    return raw;
+    const lines = String(raw).split(/\r?\n/).filter((l) => l.trim().length > 0);
+    return lines
+      .map((line) => {
+        try {
+          const item = JSON.parse(line);
+          return typeof item === "string" ? item : (item.Log || item.message || JSON.stringify(item));
+        } catch {
+          return line;
+        }
+      })
+      .join("\n");
   } catch (err) {
     if (err.stdout) {
-      try {
-        const parsed = JSON.parse(err.stdout);
-        if (Array.isArray(parsed)) {
-          return parsed.map((item) => (typeof item === "string" ? item : (item.Log || item.message || JSON.stringify(item)))).join("\n");
-        }
-      } catch {}
-      return String(err.stdout);
+      const lines = String(err.stdout).split(/\r?\n/).filter((l) => l.trim().length > 0);
+      return lines
+        .map((line) => {
+          try {
+            const item = JSON.parse(line);
+            return typeof item === "string" ? item : (item.Log || item.message || JSON.stringify(item));
+          } catch {
+            return line;
+          }
+        })
+        .join("\n");
     }
     return `[Azure Log Fetch Error]: ${err.message}`;
   }
@@ -47,6 +58,7 @@ export class SentIqTestHarness {
     await this.client.send("DOM.enable");
     await this.client.send("Runtime.enable");
     await this.client.send("Network.enable");
+    await this.client.send("Network.setCacheDisabled", { cacheDisabled: true });
 
     this.client.on("Runtime.consoleAPICalled", (params) => {
       const text = params.args.map((a) => a.value ?? a.description ?? "").join(" ");
@@ -76,10 +88,11 @@ export class SentIqTestHarness {
           time: new Date().toISOString(),
         };
         this.networkEvents.push(entry);
-        console.log(`[Browser Network ->] ${params.request.method} ${params.request.url}`);
-        if (params.request.url.includes("/api/chat/stream") && postData) {
+        if ((params.request.url.endsWith("/api/chat") || params.request.url.includes("/api/chat/stream")) && postData) {
           try {
             const parsed = JSON.parse(postData);
+            this.lastChatPayload = parsed;
+            this.lastChatRequestId = parsed.client_request_id;
             console.log(`  -> chat payload summary: message="${parsed.message?.slice(0, 60)}", mode=${parsed.execution_mode}, contextKeys=${Object.keys(parsed.context || {})}`);
             if (parsed.context?.visual_assets) {
               console.log(`  -> visual_assets in context:`, JSON.stringify(parsed.context.visual_assets));
@@ -117,6 +130,10 @@ export class SentIqTestHarness {
         eventName: params.eventName,
         time: new Date().toISOString(),
       });
+      try {
+        const parsed = JSON.parse(params.data);
+        if (parsed.generation_id) this.lastGenerationId = parsed.generation_id;
+      } catch {}
       if (
         params.data.includes("tool_") ||
         params.data.includes("image_input") ||
@@ -178,23 +195,24 @@ export class SentIqTestHarness {
     let chipStates = [];
 
     const startTime = Date.now();
-    while (Date.now() - startTime < 40000) {
+    while (Date.now() - startTime < 75000) {
       await new Promise((r) => setTimeout(r, 600));
       const evalRes = await this.client.send("Runtime.evaluate", {
         expression: `(() => {
           const items = Array.from(document.querySelectorAll(".composer-attachment"));
           return items.map(item => ({
             id: item.dataset.attachmentId || item.getAttribute("data-attachment-id"),
-            state: item.dataset.attachmentState || item.getAttribute("data-attachment-state"),
+            state: item.dataset.attachmentState || item.getAttribute("data-attachment-state") || (item.classList.contains("is-ready") ? "ready" : "processing"),
             name: item.querySelector(".composer-attachment-name")?.innerText || "",
-            statusText: item.querySelector(".composer-attachment-status")?.innerText || ""
+            statusText: item.querySelector(".composer-attachment-status")?.innerText || "",
+            isReady: item.classList.contains("is-ready") || item.dataset.attachmentState === "ready" || item.querySelector(".composer-attachment-status")?.innerText === "Ready"
           }));
         })()`,
         returnByValue: true,
       });
 
       chipStates = evalRes.result.value || [];
-      if (chipStates.length >= filePaths.length && chipStates.every((c) => c.state === "ready")) {
+      if (chipStates.length >= filePaths.length && chipStates.every((c) => c.isReady)) {
         allReady = true;
         break;
       }
@@ -212,6 +230,9 @@ export class SentIqTestHarness {
     this.sseEvents = []; // reset turn SSE
     this.runtimeExceptions = [];
 
+    // Ensure previous UI state has settled
+    await new Promise((r) => setTimeout(r, 800));
+
     await this.client.send("Runtime.evaluate", {
       expression: `(() => {
         const chatInput = document.getElementById("chat-input");
@@ -220,24 +241,25 @@ export class SentIqTestHarness {
       })()`,
     });
 
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 500));
 
     await this.client.send("Runtime.evaluate", {
       expression: `(() => {
         const sendBtn = document.getElementById("send-btn");
-        sendBtn.click();
+        if (sendBtn) sendBtn.click();
       })()`,
     });
   }
 
-  async waitForStreamingCompletion(timeoutSeconds = 90) {
-    console.log(`[TestHarness] Waiting for streaming completion (max ${timeoutSeconds}s)...`);
+  async waitForStreamingCompletion(timeoutSeconds = 90, expectedMinAssistantCount = 1) {
+    console.log(`[TestHarness] Waiting for streaming completion (max ${timeoutSeconds}s, minAssistant=${expectedMinAssistantCount})...`);
     const start = Date.now();
     let completed = false;
     let lastMsgData = null;
+    let sawStreaming = false;
 
     while (Date.now() - start < timeoutSeconds * 1000) {
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 800));
 
       const statusRes = await this.client.send("Runtime.evaluate", {
         expression: `(() => {
@@ -272,9 +294,19 @@ export class SentIqTestHarness {
       });
 
       lastMsgData = statusRes.result.value;
-      if (!lastMsgData.isStreaming && lastMsgData.assistantCount > 0 && lastMsgData.lastAssistantText.length > 5) {
-        completed = true;
-        break;
+      if (lastMsgData.isStreaming) {
+        sawStreaming = true;
+      }
+
+      if (lastMsgData.assistantCount >= expectedMinAssistantCount) {
+        if (sawStreaming && !lastMsgData.isStreaming && lastMsgData.lastAssistantText.length > 5) {
+          completed = true;
+          break;
+        }
+        if (!lastMsgData.isStreaming && lastMsgData.lastAssistantText.length > 5 && (Date.now() - start > 4000)) {
+          completed = true;
+          break;
+        }
       }
     }
 

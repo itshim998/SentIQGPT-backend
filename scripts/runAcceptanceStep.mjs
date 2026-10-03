@@ -174,25 +174,49 @@ async function runTest4(harness) {
 async function runTest5(harness) {
   console.log("\n================================================================================");
   console.log("RUNNING TEST 5: Cross-Context Contamination");
-  console.log("Uploading Resume, XOR PDF, and Image");
+  console.log("Uploading Resume, XOR PDF, and StudentOS Image");
   console.log("================================================================================");
 
   await harness.startFreshChat();
-  await harness.uploadFiles([FILES.resume, FILES.xor, FILES.imgStudentOs]);
+  const chips = await harness.uploadFiles([FILES.resume, FILES.xor, FILES.imgStudentOs]);
 
   console.log("\n--- TEST 5 TURN 1: 'Explain the XOR problem from XOR_using_MLFFN.pdf. Ignore the other files.' ---");
+  const beforeLogs1 = getAzureLogs(30);
   await harness.askQuestion("Explain the XOR problem from XOR_using_MLFFN.pdf. Ignore the other files.");
-  let res1 = await harness.waitForStreamingCompletion(90);
-  console.log("Turn 1 Answer:\n", res1.lastAssistantText.slice(0, 400));
+  let res1 = await harness.waitForStreamingCompletion(90, 1);
+  console.log("Turn 1 Answer:\n", res1.lastAssistantText);
+
+  await new Promise((r) => setTimeout(r, 3000));
+  const logsTurn1 = getAzureLogs(120);
+  const turn1ImageInput = logsTurn1.includes("image_input") || harness.sseEvents.some(e => e.data.includes("image_input"));
+  const turn1ExplainsXor = /linear|separable|non-linear|hidden|truth table|perceptron|MLFFN/i.test(res1.lastAssistantText);
+  const turn1Contaminated = /GPA|8\.04|CGPA/i.test(res1.lastAssistantText);
+  const turn1HasError = res1.finalDomMessages.some(m => m.hasError);
+
+  console.log("\n--- TEST 5 TURN 1 DIAGNOSTICS ---");
+  console.log(`1. Visual tool 'image_input' executed for XOR PDF: ${turn1ImageInput}`);
+  console.log(`2. Answer accurately explains XOR problem: ${turn1ExplainsXor}`);
+  console.log(`3. Cross-contamination from Resume (GPA mentioned): ${turn1Contaminated} (Expected: false)`);
+  console.log(`4. Post-stream Error Bubble present: ${turn1HasError} (Expected: false)`);
 
   console.log("\n--- TEST 5 TURN 2: 'What is my GPA from the Resume?' ---");
   await harness.askQuestion("What is my GPA from the Resume?");
-  let res2 = await harness.waitForStreamingCompletion(60);
-  console.log("Turn 2 Answer:\n", res2.lastAssistantText.slice(0, 400));
+  let res2 = await harness.waitForStreamingCompletion(60, 2);
+  console.log("Turn 2 Answer:\n", res2.lastAssistantText);
 
-  const logs = getAzureLogs(60);
+  await new Promise((r) => setTimeout(r, 3000));
+  const logsTurn2 = getAzureLogs(120);
+  const turn2HasGpa = /8\.04/i.test(res2.lastAssistantText);
+  const turn2Contaminated = /truth table|linear separability|hyperplane/i.test(res2.lastAssistantText);
+  const turn2HasError = res2.finalDomMessages.some(m => m.hasError);
+
+  console.log("\n--- TEST 5 TURN 2 DIAGNOSTICS ---");
+  console.log(`1. Correct GPA (8.04) retrieved from Resume: ${turn2HasGpa}`);
+  console.log(`2. Cross-contamination from XOR: ${turn2Contaminated} (Expected: false)`);
+  console.log(`3. Post-stream Error Bubble present: ${turn2HasError} (Expected: false)`);
+
   console.log("\n--- CORRELATED AZURE BACKEND LOGS ---");
-  console.log(logs.split("\n").filter(l => l.includes("sentiq") || l.includes("image_input") || l.includes("source_retrieval") || l.includes("generation")).slice(-30).join("\n"));
+  console.log(logsTurn2.split("\n").filter(l => l.includes("sentiq") || l.includes("image_input") || l.includes("source_retrieval") || l.includes("generation") || l.includes("Gemini")).slice(-40).join("\n"));
 }
 
 async function main() {

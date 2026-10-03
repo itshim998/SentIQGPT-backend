@@ -251,6 +251,141 @@ function throwIfAborted(signal?: AbortSignal): void {
     : new Error("Execution aborted");
 }
 
+export function isVisualTargetRequiredForQuery(
+  query: string,
+  ctx: {
+    fileReferences?: readonly any[];
+    currentVisualAssets?: readonly any[];
+    imageAttachments?: readonly any[];
+    sourceDocumentIdentities?: readonly any[];
+  },
+): boolean {
+  const visualAssets = ctx.currentVisualAssets ?? [];
+  const imageAttachments = ctx.imageAttachments ?? [];
+  const fileRefs = ctx.fileReferences ?? [];
+  const sourceDocs = ctx.sourceDocumentIdentities ?? [];
+
+  const hasAnyVisualAssets = visualAssets.length > 0 ||
+    imageAttachments.length > 0 ||
+    fileRefs.some((f) => f.visual_required || f.visual_analysis_status === "required" || f.asset_id || f.visual_asset_id);
+  if (!hasAnyVisualAssets) return false;
+
+  const visualAssetIdSet = new Set<string>();
+  for (const v of visualAssets) {
+    if (v.asset_id) visualAssetIdSet.add(v.asset_id.toLowerCase());
+  }
+  for (const img of imageAttachments) {
+    if (img.asset_id) visualAssetIdSet.add(img.asset_id.toLowerCase());
+  }
+
+  // Identify pure text documents (from fileReferences or sourceDocumentIdentities)
+  const textDocsFromRefs = fileRefs.filter((f) =>
+    !f.visual_required &&
+    f.visual_analysis_status !== "required" &&
+    !f.asset_id &&
+    !f.visual_asset_id &&
+    !String(f.mime_type || f.type || "").startsWith("image/")
+  );
+  const textDocsFromIdentities = sourceDocs.filter((doc) => {
+    const fn = (doc.originalFilename || doc.title || "").toLowerCase();
+    const id = (doc.id || "").toLowerCase();
+    return !visualAssetIdSet.has(id) && !visualAssets.some((v) => v.filename && v.filename.toLowerCase() === fn);
+  });
+
+  const hasTextDocs = textDocsFromRefs.length > 0 || textDocsFromIdentities.length > 0;
+
+  // If there are NO pure text documents in the conversation, check if any visual asset requires analysis or image attachments exist
+  if (!hasTextDocs) {
+    return hasVisualAssetsRequiringAnalysis(ctx.fileReferences as any, ctx.currentVisualAssets, ctx.imageAttachments as any)
+      || Boolean(imageAttachments.length);
+  }
+
+  // Mixed conversation containing both text documents and visual assets:
+  const qLower = query.toLowerCase().trim();
+  if (!qLower) return false;
+
+  const extractSignificantTerms = (name: string): string[] => {
+    const terms: string[] = [];
+    const lower = name.toLowerCase();
+    terms.push(lower);
+    const base = lower.replace(/\.[^/.]+$/, "");
+    if (base.length >= 3) terms.push(base);
+    const segments = base.split(/[^a-z0-9]+/);
+    for (const seg of segments) {
+      if (seg.length >= 3 && !["pdf", "png", "jpg", "jpeg", "file", "document", "using"].includes(seg)) {
+        terms.push(seg);
+      }
+    }
+    return terms;
+  };
+
+  const visualTerms = new Set<string>();
+  for (const v of visualAssets) {
+    if (v.filename) extractSignificantTerms(v.filename).forEach((t) => visualTerms.add(t));
+    if (v.asset_id) visualTerms.add(v.asset_id.toLowerCase());
+  }
+  for (const img of imageAttachments) {
+    if (img.filename) extractSignificantTerms(img.filename).forEach((t) => visualTerms.add(t));
+    if (img.asset_id) visualTerms.add(img.asset_id.toLowerCase());
+  }
+  for (const f of fileRefs) {
+    if (f.visual_required || f.visual_analysis_status === "required" || f.asset_id || f.visual_asset_id || String(f.mime_type || f.type || "").startsWith("image/")) {
+      if (f.filename) extractSignificantTerms(f.filename).forEach((t) => visualTerms.add(t));
+      const id = f.asset_id || f.visual_asset_id;
+      if (id) visualTerms.add(String(id).toLowerCase());
+    }
+  }
+
+  const textTerms = new Set<string>();
+  for (const doc of textDocsFromRefs) {
+    if (doc.filename) extractSignificantTerms(doc.filename).forEach((t) => textTerms.add(t));
+  }
+  for (const doc of textDocsFromIdentities) {
+    const fn = doc.originalFilename || doc.title;
+    if (fn) extractSignificantTerms(fn).forEach((t) => textTerms.add(t));
+  }
+
+  const queryWords = new Set((qLower.match(/[a-z0-9_-]+/g) ?? []).filter((w) => w.length >= 3));
+
+  const matchesTextDoc = [...textTerms].some((term) =>
+    term.includes(" ") ? qLower.includes(term) : queryWords.has(term) || qLower.includes(term)
+  );
+  const matchesVisualAsset = [...visualTerms].some((term) =>
+    term.includes(" ") ? qLower.includes(term) : queryWords.has(term) || qLower.includes(term)
+  );
+
+  // If query explicitly names a text document and does NOT name any visual asset, do NOT invoke visual tool
+  if (matchesTextDoc && !matchesVisualAsset) {
+    return false;
+  }
+
+  // If query explicitly names a visual asset, invoke visual tool
+  if (matchesVisualAsset) {
+    return true;
+  }
+
+  // Check explicit visual terms
+  const visualKeywords = [
+    "image", "images", "picture", "pictures", "photo", "photos",
+    "diagram", "diagrams", "chart", "charts", "figure", "figures",
+    "scan", "scanned", "drawing", "drawings", "screenshot", "screenshots",
+    "ocr", "visual", "handwritten", "second image", "third image", "first image",
+  ];
+  if (visualKeywords.some((kw) => kw.includes(" ") ? qLower.includes(kw) : queryWords.has(kw))) {
+    return true;
+  }
+
+  // Check generic visual references when visual assets exist
+  const hasVisualPdf = visualAssets.some((v) => v.mime_type === "application/pdf" || v.filename?.endsWith(".pdf")) ||
+    fileRefs.some((f) => (f.visual_required || f.asset_id) && f.filename?.endsWith(".pdf"));
+  if (hasVisualPdf && (qLower.includes("this pdf") || qLower.includes("the pdf"))) {
+    return true;
+  }
+
+  // Mixed conversation default: text document request remains on normal retrieval path
+  return false;
+}
+
 // ==============================
 // Per-tool executors
 // ==============================
@@ -270,8 +405,7 @@ async function execConversation(
   // Provider choice is based only on required input capabilities.
   const hasFiles = ctx.fileReferences && ctx.fileReferences.length > 0;
   const hasImages = ctx.imageAttachments && ctx.imageAttachments.length > 0;
-  const visualNeeded = hasVisualAssetsRequiringAnalysis(ctx.fileReferences, ctx.currentVisualAssets)
-    || Boolean(hasImages);
+  const visualNeeded = isVisualTargetRequiredForQuery(input, ctx);
   const fileNames = hasFiles ? ctx.fileReferences.map((f) => f.filename) : undefined;
   const fileContent = hasFiles ? ctx.fileReferences.map((f) => f.extractedText).join("\n") : undefined;
   
@@ -578,9 +712,7 @@ export async function executeAutomaticModelToolCalls(
 ): Promise<StepResult> {
   const hasVisualCall = calls.some((c) => c.name === "image_input");
   const visualNeeded = hasVisualCall
-    || Boolean(ctx.imageAttachments?.length)
-    || Boolean(ctx.currentVisualAssets?.length)
-    || hasVisualAssetsRequiringAnalysis(ctx.fileReferences as any, ctx.currentVisualAssets, ctx.imageAttachments);
+    || isVisualTargetRequiredForQuery(originalUserRequest, ctx);
   const allowedTools = getEnabledAutomaticSentIQTools({
     hasVisualAssetsNeedingAnalysis: visualNeeded,
     fileReferences: ctx.fileReferences as any,
@@ -678,7 +810,8 @@ export async function execImageInput(
   }
   for (const f of fileRefs) {
     const id = f.asset_id || f.visual_asset_id;
-    if (!candidatePool.some((c) => (id && c.asset_id === id) || (c.filename && c.filename === f.filename))) {
+    const isVisual = Boolean(id) || f.visual_required === true || f.visual_analysis_status === "required" || String(f.mime_type || f.type || "").startsWith("image/");
+    if (isVisual && !candidatePool.some((c) => (id && c.asset_id === id) || (c.filename && c.filename === f.filename))) {
       candidatePool.push({
         asset_id: id,
         filename: f.filename || "file",
@@ -703,26 +836,77 @@ export async function execImageInput(
     }
   }
 
-  let matchedCandidates = candidatePool.filter((ref) => {
-    const filename = String(ref.filename || "").toLowerCase();
-    const nameBase = filename.replace(/\.[^/.]+$/, "");
-    const assetId = String(ref.asset_id || ref.source_document_id || "").toLowerCase();
-    if (requestedTargets.length > 0) {
+  let matchedCandidates: CandidateVisualRef[] = [];
+  if (requestedTargets.length > 0) {
+    matchedCandidates = candidatePool.filter((ref) => {
+      const filename = String(ref.filename || "").toLowerCase();
+      const nameBase = filename.replace(/\.[^/.]+$/, "");
+      const assetId = String(ref.asset_id || ref.source_document_id || "").toLowerCase();
       return requestedTargets.some((target) => {
         if (assetId && assetId === target) return true;
         if (filename === target) return true;
         const targetBase = target.replace(/\.[^/.]+$/, "");
-        if (nameBase.length >= 3 && targetBase.length >= 3 && (nameBase === targetBase || target.includes(filename))) return true;
+        if (nameBase.length >= 3 && targetBase.length >= 3 && (nameBase === targetBase || target.includes(filename) || filename.includes(targetBase))) return true;
         return false;
       });
-    }
-    return ref.visual_required === true ||
-           ref.visual_analysis_status === "required" ||
-           Boolean(ref.asset_id);
-  });
-
-  if (matchedCandidates.length === 0 && candidatePool.length > 0) {
+    });
+  } else if (candidatePool.length === 1) {
     matchedCandidates = candidatePool;
+  } else if (candidatePool.length > 1) {
+    const queryLower = String(args.query || "").toLowerCase();
+    const querySpecificMatches = candidatePool.filter((ref) => {
+      const filename = String(ref.filename || "").toLowerCase();
+      const nameBase = filename.replace(/\.[^/.]+$/, "");
+      const assetId = String(ref.asset_id || "").toLowerCase();
+      if (assetId && queryLower.includes(assetId)) return true;
+      if (filename && queryLower.includes(filename)) return true;
+      if (nameBase.length >= 3 && queryLower.includes(nameBase)) return true;
+      return false;
+    });
+
+    if (querySpecificMatches.length > 0) {
+      matchedCandidates = querySpecificMatches;
+    } else {
+      const ordinals = [
+        { pattern: /\b(first|1st)\b/i, index: 0 },
+        { pattern: /\b(second|2nd)\b/i, index: 1 },
+        { pattern: /\b(third|3rd)\b/i, index: 2 },
+        { pattern: /\b(fourth|4th)\b/i, index: 3 },
+      ];
+      const matchedOrdinal = ordinals.find((o) => o.pattern.test(queryLower));
+      if (matchedOrdinal && candidatePool[matchedOrdinal.index]) {
+        matchedCandidates = [candidatePool[matchedOrdinal.index]];
+      } else if (
+        queryLower.includes("images") ||
+        queryLower.includes("attached images") ||
+        queryLower.includes("all images") ||
+        queryLower.includes("both images") ||
+        queryLower.includes("these images") ||
+        queryLower.includes("the images")
+      ) {
+        matchedCandidates = candidatePool;
+      } else {
+        matchedCandidates = [];
+      }
+    }
+  }
+
+  // Critical Invariant: No resolved visual target -> fail closed.
+  // NEVER fall back to candidatePool.
+  if (matchedCandidates.length === 0) {
+    return {
+      step: 0,
+      tool: "conversation",
+      reply: "No matching visual target could be resolved for this request.",
+      error: "No matching visual target could be resolved.",
+      image_input: {
+        success: false,
+        error: "No matching visual target could be resolved.",
+        evidence: {
+          relevant_text: "No matching visual target resolved.",
+        },
+      },
+    };
   }
 
   const assetRows: VisualAssetRow[] = [];
