@@ -66,7 +66,7 @@ import {
   let preferredExecutionMode = "fast";
   let effectiveExecutionMode = "fast";
   let activeToolExecutionLock = null;
-  let cachedUserPlanCode = "free";
+  let cachedUserPlanCode = null;
   const externalScriptPromises = new Map();
   const conversationAliasCache = new Map();
   let imageLightbox = null;
@@ -10058,26 +10058,54 @@ import {
     executionModeMenu.setAttribute("aria-hidden", open ? "false" : "true");
   }
 
-  function getCurrentUserPlanCode() {
-    if (!isAuthenticatedSession()) return "guest";
-    const capPlan = window.SentIQCapabilities?.getSnapshot?.()?.facts?.planCode;
-    if (capPlan) {
-      cachedUserPlanCode = capPlan;
-      return capPlan;
+  function getCurrentBillingState() {
+    if (!isAuthenticatedSession()) {
+      return { authenticated: false, planCode: "guest", planKnown: true, planError: false };
     }
-    const quotaPlan = window.SentIQTextQuota?.getState?.()?.allowance?.plan_code
-      || window.SentIQTextQuota?.getState?.()?.payload?.summary?.plan_code;
+    const capFacts = window.SentIQCapabilities?.getSnapshot?.()?.facts;
+    if (capFacts) {
+      if (capFacts.planError) {
+        return { authenticated: true, planCode: null, planKnown: false, planError: true };
+      }
+      if (capFacts.planKnown && capFacts.planCode) {
+        cachedUserPlanCode = capFacts.planCode;
+        return {
+          authenticated: true,
+          planCode: capFacts.planCode,
+          planKnown: true,
+          planError: false,
+        };
+      }
+      if (capFacts.planKnown === false) {
+        return { authenticated: true, planCode: null, planKnown: false, planError: false };
+      }
+    }
+    const quotaState = window.SentIQTextQuota?.getState?.();
+    const quotaPlan = quotaState?.allowance?.plan_code
+      || quotaState?.payload?.summary?.plan_code;
     if (quotaPlan) {
       cachedUserPlanCode = quotaPlan;
-      return quotaPlan;
+      return { authenticated: true, planCode: quotaPlan, planKnown: true, planError: false };
     }
-    return cachedUserPlanCode || "free";
+    return {
+      authenticated: true,
+      planCode: cachedUserPlanCode,
+      planKnown: Boolean(cachedUserPlanCode),
+      planError: false,
+    };
+  }
+
+  function getCurrentUserPlanCode() {
+    return getCurrentBillingState().planCode;
   }
 
   function syncToolExecutionPolicy() {
+    const billing = getCurrentBillingState();
     const isFree = isAuthenticatedFreeAccount({
-      authenticated: isAuthenticatedSession(),
-      planCode: getCurrentUserPlanCode(),
+      authenticated: billing.authenticated,
+      planCode: billing.planCode,
+      planKnown: billing.planKnown,
+      planError: billing.planError,
     });
     const activeTool = isFree
       ? resolveActiveRestrictedTool({
@@ -11227,7 +11255,20 @@ import {
     if (plan) cachedUserPlanCode = plan;
     syncToolExecutionPolicy();
   });
+  window.addEventListener("sentiq-billing-refresh", () => {
+    syncToolExecutionPolicy();
+  });
   document.addEventListener("sentiq-auth-changed", () => {
+    cachedUserPlanCode = null;
+    syncToolExecutionPolicy();
+  });
+  window.SentIQCapabilities?.subscribe?.((snapshot) => {
+    const facts = snapshot?.facts;
+    if (facts?.planKnown && facts?.planCode) {
+      cachedUserPlanCode = facts.planCode;
+    } else if (facts?.planError) {
+      cachedUserPlanCode = null;
+    }
     syncToolExecutionPolicy();
   });
 

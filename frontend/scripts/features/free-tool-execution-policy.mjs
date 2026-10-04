@@ -4,7 +4,7 @@
    when tools (Visualize, WebSurf, Attach Files, Deep Research) are active.
    ============================================================ */
 
-export const FREE_TOOL_POLICY_VERSION = "1.0";
+export const FREE_TOOL_POLICY_VERSION = "2.0";
 
 export const RESTRICTED_TOOLS = Object.freeze({
   VISUALIZE: "visualize",
@@ -26,6 +26,13 @@ export const PAID_PLAN_CODES = Object.freeze(new Set([
   "pro",
 ]));
 
+export const PLAN_DISPLAY_NAMES = Object.freeze({
+  free: "Free",
+  student_core: "Essential",
+  premium: "Plus",
+  pro: "Pro",
+});
+
 export function normalizePlanCode(planCode) {
   return String(planCode || "").trim().toLowerCase();
 }
@@ -34,11 +41,34 @@ export function isPaidPlan(planCode) {
   return PAID_PLAN_CODES.has(normalizePlanCode(planCode));
 }
 
-export function isAuthenticatedFreeAccount({ authenticated = false, planCode = "" } = {}) {
-  if (!authenticated) return false;
+export function isExplicitFreePlan(planCode) {
+  return normalizePlanCode(planCode) === "free";
+}
+
+export function getPlanDisplayName(planCode, fallback = "") {
   const normalized = normalizePlanCode(planCode);
-  if (normalized === "guest") return false;
-  return !isPaidPlan(normalized);
+  return PLAN_DISPLAY_NAMES[normalized] || fallback || (normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : "");
+}
+
+export function isAuthenticatedFreeAccount({
+  authenticated = false,
+  planCode = "",
+  planKnown = true,
+  planError = false,
+  billingLoading = false,
+} = {}) {
+  if (!authenticated) return false;
+  if (planError === true || billingLoading === true || planKnown === false) {
+    return false;
+  }
+  const normalized = normalizePlanCode(planCode);
+  if (!normalized || normalized === "unknown" || normalized === "loading" || normalized === "error" || normalized === "guest") {
+    return false;
+  }
+  if (isPaidPlan(normalized)) {
+    return false;
+  }
+  return isExplicitFreePlan(normalized);
 }
 
 export function resolveActiveRestrictedTool({
@@ -61,9 +91,12 @@ export function getToolUpsellCopy(tool) {
 export function isIntuitiveLockedForTools({
   authenticated = false,
   planCode = "free",
+  planKnown = true,
+  planError = false,
+  billingLoading = false,
   activeTool = null,
 } = {}) {
-  if (!isAuthenticatedFreeAccount({ authenticated, planCode })) {
+  if (!isAuthenticatedFreeAccount({ authenticated, planCode, planKnown, planError, billingLoading })) {
     return false;
   }
   return Boolean(activeTool);
@@ -78,7 +111,6 @@ export function deriveEffectiveExecutionMode({
   if (toolLocked) return "fast";
   if (toolJustRemoved) return "fast";
   const normalizedPreferred = preferredMode === "intuitive" ? "intuitive" : "fast";
-  // If no tool is active and no transition occurred, return previous or preferred
   return previousEffectiveMode === "fast" && normalizedPreferred !== "intuitive"
     ? "fast"
     : normalizedPreferred;
@@ -87,6 +119,9 @@ export function deriveEffectiveExecutionMode({
 export function resolveFreeToolPolicyState({
   authenticated = false,
   planCode = "free",
+  planKnown = true,
+  planError = false,
+  billingLoading = false,
   imageMode = false,
   webSearchActive = false,
   deepResearchActive = false,
@@ -94,7 +129,13 @@ export function resolveFreeToolPolicyState({
   preferredMode = "fast",
   currentEffectiveMode = "fast",
 } = {}) {
-  const isFree = isAuthenticatedFreeAccount({ authenticated, planCode });
+  const isFree = isAuthenticatedFreeAccount({
+    authenticated,
+    planCode,
+    planKnown,
+    planError,
+    billingLoading,
+  });
   const activeTool = isFree
     ? resolveActiveRestrictedTool({ imageMode, webSearchActive, deepResearchActive, attachmentCount })
     : null;

@@ -5,6 +5,7 @@ import { PRODUCT_NAME } from "../shared/brand.js";
 import { calculateUsagePercent, formatCompactTokenNumber } from "./billing-usage-format.js";
 import { formatRecoveryCountdown, normalizeTextAllowance } from "../features/text-quota-state.mjs";
 import "../features/text-quota-controller.js";
+import { getPlanDisplayName, PLAN_DISPLAY_NAMES } from "../features/free-tool-execution-policy.mjs";
 
 (function () {
   const API = window.SentIQAPI;
@@ -43,7 +44,7 @@ import "../features/text-quota-controller.js";
 
   function planName(planCode) {
     const plan = plansState?.plans?.find((item) => item.code === planCode);
-    return plan?.name || "Free";
+    return plan?.name || getPlanDisplayName(planCode, "Free");
   }
 
   function usageText(quota) {
@@ -144,7 +145,7 @@ import "../features/text-quota-controller.js";
         ${(plansState.plans || []).map((plan) => `
           <article class="billing-plan-card ${plan.code === summary.plan_code ? "active" : ""}">
             <div>
-              <h4>${escapeHtml(plan.name)}</h4>
+              <h4>${escapeHtml(plan.name || getPlanDisplayName(plan.code, plan.code))}</h4>
               <p>${escapeHtml(plan.description || "")}</p>
             </div>
             <div class="billing-plan-price">${escapeHtml(formatPrice(plan))}</div>

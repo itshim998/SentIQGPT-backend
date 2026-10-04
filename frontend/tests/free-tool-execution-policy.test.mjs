@@ -7,6 +7,9 @@ import {
   RESTRICTED_TOOLS,
   TOOL_UPSELL_COPY,
   PAID_PLAN_CODES,
+  PLAN_DISPLAY_NAMES,
+  getPlanDisplayName,
+  isExplicitFreePlan,
   isPaidPlan,
   isAuthenticatedFreeAccount,
   resolveActiveRestrictedTool,
@@ -21,9 +24,21 @@ const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 console.log("[test] 1. Policy Unit Tests");
 
 // 1.1 Version
-assert.equal(FREE_TOOL_POLICY_VERSION, "1.0");
+assert.equal(FREE_TOOL_POLICY_VERSION, "2.0");
 
-// 1.2 Paid plan identification
+// 1.2 Customer-facing Plan Naming (Essential for student_core)
+assert.equal(PLAN_DISPLAY_NAMES.student_core, "Essential");
+assert.equal(PLAN_DISPLAY_NAMES.free, "Free");
+assert.equal(PLAN_DISPLAY_NAMES.premium, "Plus");
+assert.equal(PLAN_DISPLAY_NAMES.pro, "Pro");
+assert.equal(getPlanDisplayName("student_core"), "Essential");
+assert.equal(getPlanDisplayName("STUDENT_CORE"), "Essential");
+assert.equal(getPlanDisplayName("free"), "Free");
+assert.equal(getPlanDisplayName("premium"), "Plus");
+assert.equal(getPlanDisplayName("pro"), "Pro");
+assert.equal(getPlanDisplayName("unknown", "DefaultPlan"), "DefaultPlan");
+
+// 1.3 Internal Paid plan identification (retains student_core as internal code)
 assert.equal(isPaidPlan("student_core"), true);
 assert.equal(isPaidPlan("premium"), true);
 assert.equal(isPaidPlan("pro"), true);
@@ -32,19 +47,42 @@ assert.equal(isPaidPlan("free"), false);
 assert.equal(isPaidPlan("guest"), false);
 assert.equal(isPaidPlan(""), false);
 assert.equal(isPaidPlan(null), false);
+assert.equal(isPaidPlan("unknown"), false);
 
-// 1.3 Authenticated Free Account classification
+// 1.4 Explicit Free plan validation
+assert.equal(isExplicitFreePlan("free"), true);
+assert.equal(isExplicitFreePlan("FREE"), true);
+assert.equal(isExplicitFreePlan("student_core"), false);
+assert.equal(isExplicitFreePlan(""), false);
+assert.equal(isExplicitFreePlan(null), false);
+assert.equal(isExplicitFreePlan("unknown"), false);
+
+// 1.5 Authenticated Free Account classification & Billing Uncertainty Guards
+// A. Authenticated + Explicitly Free
 assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: "free" }), true);
-assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: "" }), true);
 assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: "FREE" }), true);
+
+// B. Authenticated + Paid Plans (must NEVER be classified as Free)
 assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: "student_core" }), false);
 assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: "premium" }), false);
 assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: "pro" }), false);
+
+// C. Authenticated + Billing State Uncertainty / Loading / Error / Malformed (DO NOT assume Free)
+assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: "" }), false, "Missing planCode must not be assumed Free");
+assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: null }), false, "Null planCode must not be assumed Free");
+assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: undefined }), false, "Undefined planCode must not be assumed Free");
+assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: "unknown" }), false, "Unknown planCode must not be assumed Free");
+assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: "loading" }), false, "Loading planCode must not be assumed Free");
+assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: "free", planError: true }), false, "Billing error must not impose Free restriction");
+assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: "free", billingLoading: true }), false, "Billing loading must not impose Free restriction");
+assert.equal(isAuthenticatedFreeAccount({ authenticated: true, planCode: "free", planKnown: false }), false, "Unresolved plan must not impose Free restriction");
+
+// D. Unauthenticated / Guest
 assert.equal(isAuthenticatedFreeAccount({ authenticated: false, planCode: "guest" }), false);
 assert.equal(isAuthenticatedFreeAccount({ authenticated: false, planCode: "free" }), false);
 assert.equal(isAuthenticatedFreeAccount({ authenticated: false }), false);
 
-// 1.4 Active Restricted Tool resolution
+// 1.6 Active Restricted Tool resolution
 assert.equal(resolveActiveRestrictedTool({}), null);
 assert.equal(resolveActiveRestrictedTool({ imageMode: true }), RESTRICTED_TOOLS.VISUALIZE);
 assert.equal(resolveActiveRestrictedTool({ webSearchActive: true }), RESTRICTED_TOOLS.WEBSURF);
@@ -53,7 +91,7 @@ assert.equal(resolveActiveRestrictedTool({ attachmentCount: 1 }), RESTRICTED_TOO
 assert.equal(resolveActiveRestrictedTool({ attachmentCount: 3 }), RESTRICTED_TOOLS.ATTACH_FILES);
 assert.equal(resolveActiveRestrictedTool({ attachmentCount: 0 }), null);
 
-// 1.5 Tool-specific marketing copy
+// 1.7 Tool-specific marketing copy (Strict Essential Plan Copy)
 assert.equal(
   getToolUpsellCopy(RESTRICTED_TOOLS.VISUALIZE),
   "Upgrade to Essential to unlock access to more advanced visualization models.",
@@ -71,7 +109,7 @@ assert.equal(
   "Upgrade to Essential to unlock Intuitive mode for deeper file understanding.",
 );
 
-// 1.6 Intuitive lock policy
+// 1.8 Intuitive lock policy with uncertainty safety
 assert.equal(
   isIntuitiveLockedForTools({ authenticated: true, planCode: "free", activeTool: null }),
   false,
@@ -111,6 +149,16 @@ assert.equal(
   isIntuitiveLockedForTools({ authenticated: true, planCode: "pro", activeTool: RESTRICTED_TOOLS.DEEP_RESEARCH }),
   false,
   "Paid pro is unrestricted by tool policy",
+);
+assert.equal(
+  isIntuitiveLockedForTools({ authenticated: true, planCode: "unknown", activeTool: RESTRICTED_TOOLS.VISUALIZE }),
+  false,
+  "Unknown plan is not locked",
+);
+assert.equal(
+  isIntuitiveLockedForTools({ authenticated: true, planCode: "free", planError: true, activeTool: RESTRICTED_TOOLS.VISUALIZE }),
+  false,
+  "Billing error state is not locked",
 );
 assert.equal(
   isIntuitiveLockedForTools({ authenticated: false, planCode: "guest", activeTool: RESTRICTED_TOOLS.VISUALIZE }),
@@ -182,6 +230,18 @@ assert.equal(state.isLocked, true);
 assert.equal(state.effectiveMode, "fast");
 assert.equal(state.preferredMode, "fast");
 
+// 2.3 Uncertainty state transitions: Billing error should not lock
+state = resolveFreeToolPolicyState({
+  authenticated: true,
+  planCode: "free",
+  planError: true,
+  imageMode: true,
+  preferredMode: "intuitive",
+  currentEffectiveMode: "intuitive",
+});
+assert.equal(state.isLocked, false, "Billing error must not lock Intuitive");
+assert.equal(state.effectiveMode, "intuitive");
+
 console.log("[test] 3. Contract & Static Integrity Checks");
 
 const chatControllerCode = readFileSync(resolve(root, "frontend/scripts/features/chat-controller.js"), "utf8");
@@ -189,12 +249,15 @@ const textQuotaControllerCode = readFileSync(resolve(root, "frontend/scripts/fea
 const continuityCode = readFileSync(resolve(root, "frontend/scripts/features/conversation-continuity.js"), "utf8");
 const selectorCssCode = readFileSync(resolve(root, "frontend/styles/modules/29-execution-mode-selector.css"), "utf8");
 const indexHtmlCode = readFileSync(resolve(root, "frontend/index.html"), "utf8");
+const billingPanelCode = readFileSync(resolve(root, "frontend/scripts/panels/billing-panel.js"), "utf8");
+const capabilityAwarenessCode = readFileSync(resolve(root, "frontend/scripts/features/capability-awareness.js"), "utf8");
 
 // chat-controller.js contract
 assert.match(chatControllerCode, /preferredExecutionMode/);
 assert.match(chatControllerCode, /effectiveExecutionMode/);
 assert.match(chatControllerCode, /activeToolExecutionLock/);
 assert.match(chatControllerCode, /syncToolExecutionPolicy/);
+assert.match(chatControllerCode, /getCurrentBillingState/);
 assert.match(chatControllerCode, /tool-fast-locked/);
 assert.match(chatControllerCode, /is-tool-locked/);
 assert.match(chatControllerCode, /execution-mode-upgrade-btn/);
@@ -221,6 +284,10 @@ assert.match(selectorCssCode, /\.execution-mode-upgrade-btn/);
 assert.match(indexHtmlCode, /id="execution-mode-upsell"/);
 assert.match(indexHtmlCode, /id="execution-mode-upsell-text"/);
 assert.match(indexHtmlCode, /id="execution-mode-upgrade-btn"/);
+
+// Plan display naming contract (Essential)
+assert.match(billingPanelCode, /getPlanDisplayName/);
+assert.match(capabilityAwarenessCode, /getPlanDisplayName/);
 
 console.log("[test] 4. DOM and Interaction Behavioral Tests");
 

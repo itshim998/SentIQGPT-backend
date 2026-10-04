@@ -2,6 +2,7 @@
 
 import { CAPABILITY_MODEL_VERSION, DEFAULT_CAPABILITY_FACTS, deriveCapabilitySnapshot } from "./capability-model.mjs";
 import { createCapabilityExplainer } from "./capability-explanation.js";
+import { getPlanDisplayName } from "./free-tool-execution-policy.mjs";
 
 const CAPABILITY_AWARENESS_VERSION = "9.3";
 const REFRESH_STALE_MS = 60_000;
@@ -222,7 +223,7 @@ function initializeCapabilityAwareness() {
         planKnown: true,
         planError: billingResult.status === "rejected",
         planCode,
-        planName: plans.find((plan) => plan?.code === planCode)?.name || "",
+        planName: plans.find((plan) => plan?.code === planCode)?.name || getPlanDisplayName(planCode, ""),
         imageBillingQuota: extractQuota(billing, "image_generation"),
         imageQuotaKnown: true,
         imageQuotaError: imageResult.status === "rejected",

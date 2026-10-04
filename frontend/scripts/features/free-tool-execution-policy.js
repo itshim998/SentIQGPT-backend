@@ -8,6 +8,9 @@ import {
   RESTRICTED_TOOLS,
   TOOL_UPSELL_COPY,
   PAID_PLAN_CODES,
+  PLAN_DISPLAY_NAMES,
+  getPlanDisplayName,
+  isExplicitFreePlan,
   isPaidPlan,
   isAuthenticatedFreeAccount,
   resolveActiveRestrictedTool,
@@ -35,19 +38,25 @@ export function isFreeToolLocked() {
   );
 }
 
+export function triggerUpgradeCTA(reason = "execution_mode_upsell") {
+  if (typeof window.SentIQBilling?.open === "function") {
+    window.SentIQBilling.open();
+  } else {
+    window.dispatchEvent(new CustomEvent("sentiq:open-billing", { detail: { reason } }));
+  }
+  const control = getControlElement();
+  if (control?.classList.contains("open")) {
+    document.getElementById("execution-mode-toggle")?.click();
+  }
+}
+
 function handleUpgradeClick(event) {
   const btn = event.target instanceof Element
     ? event.target.closest("#execution-mode-upgrade-btn")
     : null;
   if (!btn) return;
   event.preventDefault();
-  if (typeof window.SentIQBilling?.open === "function") {
-    window.SentIQBilling.open();
-  }
-  const control = getControlElement();
-  if (control?.classList.contains("open")) {
-    document.getElementById("execution-mode-toggle")?.click();
-  }
+  triggerUpgradeCTA("execution_mode_upgrade_btn");
 }
 
 if (typeof document !== "undefined") {
@@ -59,6 +68,9 @@ export const SentIQFreeToolPolicy = Object.freeze({
   RESTRICTED_TOOLS,
   TOOL_UPSELL_COPY,
   PAID_PLAN_CODES,
+  PLAN_DISPLAY_NAMES,
+  getPlanDisplayName,
+  isExplicitFreePlan,
   isPaidPlan,
   isAuthenticatedFreeAccount,
   resolveActiveRestrictedTool,
@@ -67,6 +79,7 @@ export const SentIQFreeToolPolicy = Object.freeze({
   deriveEffectiveExecutionMode,
   resolveFreeToolPolicyState,
   isLocked: isFreeToolLocked,
+  triggerUpgradeCTA,
 });
 
 if (typeof window !== "undefined") {
