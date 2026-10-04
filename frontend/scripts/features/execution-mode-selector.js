@@ -168,12 +168,18 @@ function initializeExecutionModeSelector() {
   });
 
   menu.addEventListener("keydown", (event) => {
-    const activeIndex = Math.max(0, options.indexOf(document.activeElement));
+    const focusable = options.slice();
+    const upgradeBtn = menu.querySelector("#execution-mode-upgrade-btn");
+    const upsell = menu.querySelector("#execution-mode-upsell");
+    if (upgradeBtn && upsell && !upsell.hidden) {
+      focusable.push(upgradeBtn);
+    }
+    const activeIndex = Math.max(0, focusable.indexOf(document.activeElement));
     let targetIndex = activeIndex;
-    if (event.key === "ArrowDown") targetIndex = (activeIndex + 1) % options.length;
-    else if (event.key === "ArrowUp") targetIndex = (activeIndex - 1 + options.length) % options.length;
+    if (event.key === "ArrowDown") targetIndex = (activeIndex + 1) % focusable.length;
+    else if (event.key === "ArrowUp") targetIndex = (activeIndex - 1 + focusable.length) % focusable.length;
     else if (event.key === "Home") targetIndex = 0;
-    else if (event.key === "End") targetIndex = options.length - 1;
+    else if (event.key === "End") targetIndex = focusable.length - 1;
     else if (event.key === "Escape" && control.classList.contains("open")) {
       event.preventDefault();
       toggle.click();
@@ -183,7 +189,7 @@ function initializeExecutionModeSelector() {
       return;
     }
     event.preventDefault();
-    options[targetIndex]?.focus();
+    focusable[targetIndex]?.focus();
   });
 
   syncSelection();

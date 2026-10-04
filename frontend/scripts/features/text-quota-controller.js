@@ -104,7 +104,9 @@ const NOTICE_DURATION_MS = 7_000;
     const option = document.querySelector('[data-execution-mode="intuitive"]');
     if (!option) return;
     const isGuestFastOnly = document.getElementById("execution-mode-control")?.classList.contains("guest-fast-only");
-    const allowed = selectable && !isGuestFastOnly;
+    const isToolLocked = document.getElementById("execution-mode-control")?.classList.contains("tool-fast-locked")
+      || option.classList.contains("is-tool-locked");
+    const allowed = selectable && !isGuestFastOnly && !isToolLocked;
     if (option.classList.contains("is-quota-unavailable") !== !allowed) {
       option.classList.toggle("is-quota-unavailable", !allowed);
     }
@@ -112,7 +114,7 @@ const NOTICE_DURATION_MS = 7_000;
     if (option.getAttribute("aria-disabled") !== ariaVal) {
       option.setAttribute("aria-disabled", ariaVal);
     }
-    if (!isGuestFastOnly) {
+    if (!isGuestFastOnly && !isToolLocked) {
       const nextTitle = allowed ? "Intuitive" : "Intuitive will return as tokens refresh";
       if (option.title !== nextTitle) option.title = nextTitle;
     }
@@ -286,6 +288,14 @@ const NOTICE_DURATION_MS = 7_000;
       || (event.type === "keydown" && target?.id === "chat-input" && event.key === "Enter" && !event.shiftKey);
     const isModeAction = target?.closest("[data-execution-mode]");
     if (!isSendAction && !isModeAction) return;
+
+    const isToolLocked = document.getElementById("execution-mode-control")?.classList.contains("tool-fast-locked")
+      || document.querySelector('[data-execution-mode="intuitive"]')?.classList.contains("is-tool-locked");
+    if (isModeAction?.getAttribute("data-execution-mode") === "intuitive" && isToolLocked) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
 
     const view = render();
     if (view.blockComposer) {

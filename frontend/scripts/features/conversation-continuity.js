@@ -142,6 +142,11 @@ function initializeConversationContinuity() {
   }
 
   function readExecutionMode() {
+    const isToolLocked = document.getElementById("execution-mode-control")?.classList.contains("tool-fast-locked")
+      || document.querySelector('[data-execution-mode="intuitive"]')?.classList.contains("is-tool-locked");
+    if (isToolLocked && typeof window.SentIQChat?.getPreferredExecutionMode === "function") {
+      return window.SentIQChat.getPreferredExecutionMode();
+    }
     const active = executionModeMenu?.querySelector(
       "[data-execution-mode].active, [data-execution-mode][aria-checked='true'], [data-execution-mode][aria-selected='true']",
     );
@@ -305,8 +310,16 @@ function initializeConversationContinuity() {
 
   function restoreExecutionMode(executionMode) {
     const target = executionMode === "intuitive" ? "intuitive" : "fast";
+    if (typeof window.SentIQChat?.setStoredPreferenceExecutionMode === "function") {
+      window.SentIQChat.setStoredPreferenceExecutionMode(target);
+    }
+    const isToolLocked = document.getElementById("execution-mode-control")?.classList.contains("tool-fast-locked")
+      || document.querySelector('[data-execution-mode="intuitive"]')?.classList.contains("is-tool-locked");
+    if (isToolLocked && target === "intuitive") {
+      return;
+    }
     const option = executionModeMenu?.querySelector(`[data-execution-mode="${target}"]`);
-    if (option instanceof HTMLButtonElement && !option.disabled && readExecutionMode() !== target) option.click();
+    if (option instanceof HTMLButtonElement && !option.disabled && option.getAttribute("aria-disabled") !== "true" && readExecutionMode() !== target) option.click();
   }
 
   function restoreReadingPosition(conversationId, sequence) {

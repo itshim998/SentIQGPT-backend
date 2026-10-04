@@ -34,6 +34,13 @@ import {
   selectFeaturedWebSurfSources,
   truncateWebSurfExcerpt,
 } from "./websurf-presentation.mjs";
+import {
+  RESTRICTED_TOOLS,
+  TOOL_UPSELL_COPY,
+  getToolUpsellCopy,
+  isAuthenticatedFreeAccount,
+  resolveActiveRestrictedTool,
+} from "./free-tool-execution-policy.mjs";
 
 // ================================================================
 // 3. Chat UI Controller
@@ -56,6 +63,10 @@ import {
   let webSearchModeOverride = null;
   let deepResearchMode = false;
   let currentExecutionMode = "fast";
+  let preferredExecutionMode = "fast";
+  let effectiveExecutionMode = "fast";
+  let activeToolExecutionLock = null;
+  let cachedUserPlanCode = "free";
   const externalScriptPromises = new Map();
   const conversationAliasCache = new Map();
   let imageLightbox = null;
@@ -5220,11 +5231,24 @@ import {
       toggleDeepResearchMode();
     });
     executionModeMenu?.addEventListener("click", (event) => {
+      const upgradeBtn = event.target instanceof Element
+        ? event.target.closest("#execution-mode-upgrade-btn")
+        : null;
+      if (upgradeBtn) {
+        if (typeof window.SentIQBilling?.open === "function") {
+          window.SentIQBilling.open();
+        }
+        setExecutionModeMenuOpen(false);
+        return;
+      }
       const option = event.target instanceof Element
         ? event.target.closest("[data-execution-mode]")
         : null;
       const mode = option?.getAttribute("data-execution-mode");
       if (!mode) return;
+      if (option.getAttribute("aria-disabled") === "true" || option.classList.contains("is-tool-locked")) {
+        return;
+      }
       setExecutionMode(mode).catch((error) => {
         debugWarn("[UI] Execution mode save failed:", getSafeErrorMessage(error));
       });
@@ -5241,6 +5265,19 @@ import {
         return;
       }
       if (event.key === "Enter" || event.key === " ") {
+        if (document.activeElement?.id === "execution-mode-upgrade-btn") {
+          event.preventDefault();
+          if (typeof window.SentIQBilling?.open === "function") {
+            window.SentIQBilling.open();
+          }
+          setExecutionModeMenuOpen(false);
+          return;
+        }
+        if (document.activeElement?.getAttribute("aria-disabled") === "true"
+            || document.activeElement?.classList.contains("is-tool-locked")) {
+          event.preventDefault();
+          return;
+        }
         event.preventDefault();
         document.activeElement?.click?.();
         return;
@@ -9320,7 +9357,7 @@ import {
       );
     }
 
-    const requestExecutionMode = normalizeExecutionMode(currentExecutionMode);
+    const requestExecutionMode = normalizeExecutionMode(effectiveExecutionMode || currentExecutionMode);
     const preliminaryWebSearchMode = getEffectiveWebSearchMode();
     const requestedFileFormat = null;
     const authenticatedFileGenerationRequired = false;
@@ -9958,6 +9995,7 @@ import {
     deepResearchBtn?.classList.toggle("active", Boolean(deepResearchMode));
     deepResearchBtn?.setAttribute("aria-pressed", Boolean(deepResearchMode).toString());
     syncComposerInteractivity();
+    syncToolExecutionPolicy();
   }
 
   function clearPendingFiles() {
@@ -9971,6 +10009,7 @@ import {
     pendingFileAnalysisEvents.clear();
     renderFilePreview();
     syncComposerHint();
+    updateComposerActionSelection();
   }
 
   function syncComposerExpandedState() {
@@ -10008,7 +10047,7 @@ import {
     return mode === "intuitive" ? "intuitive" : "fast";
   }
 
-  function getExecutionModeLabel(mode = currentExecutionMode) {
+  function getExecutionModeLabel(mode = effectiveExecutionMode || currentExecutionMode) {
     return normalizeExecutionMode(mode) === "intuitive" ? "Intuitive" : "Fast";
   }
 
@@ -10019,13 +10058,93 @@ import {
     executionModeMenu.setAttribute("aria-hidden", open ? "false" : "true");
   }
 
+  function getCurrentUserPlanCode() {
+    if (!isAuthenticatedSession()) return "guest";
+    const capPlan = window.SentIQCapabilities?.getSnapshot?.()?.facts?.planCode;
+    if (capPlan) {
+      cachedUserPlanCode = capPlan;
+      return capPlan;
+    }
+    const quotaPlan = window.SentIQTextQuota?.getState?.()?.allowance?.plan_code
+      || window.SentIQTextQuota?.getState?.()?.payload?.summary?.plan_code;
+    if (quotaPlan) {
+      cachedUserPlanCode = quotaPlan;
+      return quotaPlan;
+    }
+    return cachedUserPlanCode || "free";
+  }
+
+  function syncToolExecutionPolicy() {
+    const isFree = isAuthenticatedFreeAccount({
+      authenticated: isAuthenticatedSession(),
+      planCode: getCurrentUserPlanCode(),
+    });
+    const activeTool = isFree
+      ? resolveActiveRestrictedTool({
+          imageMode: Boolean(imageMode),
+          webSearchActive: webSearchModeOverride === "basic",
+          deepResearchActive: Boolean(deepResearchMode),
+          attachmentCount: composerAttachments.length,
+        })
+      : null;
+
+    const wasLocked = Boolean(activeToolExecutionLock);
+    activeToolExecutionLock = activeTool;
+
+    if (activeTool) {
+      effectiveExecutionMode = "fast";
+      currentExecutionMode = "fast";
+    } else if (wasLocked) {
+      // Tool removed: effective mode remains Fast. Do not restore Intuitive automatically.
+      effectiveExecutionMode = "fast";
+      currentExecutionMode = "fast";
+    }
+
+    syncExecutionModeUi();
+  }
+
   function syncExecutionModeUi() {
-    if (executionModeLabel) executionModeLabel.textContent = getExecutionModeLabel();
+    if (executionModeLabel) executionModeLabel.textContent = getExecutionModeLabel(effectiveExecutionMode);
     executionModeMenu?.querySelectorAll("[data-execution-mode]").forEach((option) => {
-      const active = option.getAttribute("data-execution-mode") === currentExecutionMode;
+      const mode = option.getAttribute("data-execution-mode");
+      const active = mode === effectiveExecutionMode;
       option.classList.toggle("active", active);
       option.setAttribute("aria-selected", active ? "true" : "false");
     });
+
+    const intuitiveOption = executionModeMenu?.querySelector('[data-execution-mode="intuitive"]');
+    const upsellNode = document.getElementById("execution-mode-upsell");
+    const upsellText = document.getElementById("execution-mode-upsell-text");
+    const isLocked = Boolean(activeToolExecutionLock);
+
+    if (executionModeControl) {
+      executionModeControl.classList.toggle("tool-fast-locked", isLocked);
+      executionModeControl.dataset.toolLocked = isLocked ? "true" : "false";
+    }
+
+    if (intuitiveOption) {
+      intuitiveOption.classList.toggle("is-tool-locked", isLocked);
+      if (isLocked) {
+        intuitiveOption.setAttribute("aria-disabled", "true");
+        intuitiveOption.title = "Intuitive execution is unavailable while this tool is active on the Free plan.";
+        intuitiveOption.setAttribute("aria-describedby", "execution-mode-upsell-text");
+      } else {
+        intuitiveOption.removeAttribute("aria-describedby");
+        const isQuotaUnavailable = intuitiveOption.classList.contains("is-quota-unavailable");
+        const isGuest = executionModeControl?.classList.contains("guest-fast-only");
+        if (!isQuotaUnavailable && !isGuest) {
+          intuitiveOption.setAttribute("aria-disabled", "false");
+          intuitiveOption.title = "Intuitive";
+        }
+      }
+    }
+
+    if (upsellNode) {
+      upsellNode.hidden = !isLocked;
+      if (isLocked && upsellText) {
+        upsellText.textContent = getToolUpsellCopy(activeToolExecutionLock);
+      }
+    }
   }
 
   function syncExecutionModeDomPlacement() {
@@ -10043,10 +10162,16 @@ import {
   }
 
   async function setExecutionMode(mode, options = {}) {
-    currentExecutionMode = normalizeExecutionMode(mode);
+    const normalized = normalizeExecutionMode(mode);
+    if (normalized === "intuitive" && activeToolExecutionLock) {
+      return;
+    }
+    preferredExecutionMode = normalized;
+    effectiveExecutionMode = normalized;
+    currentExecutionMode = normalized;
     syncExecutionModeUi();
     if (!options.skipPersist) {
-      await Storage.setConfig("execution_mode", currentExecutionMode).catch((error) => {
+      await Storage.setConfig("execution_mode", preferredExecutionMode).catch((error) => {
         debugWarn("[UI] Failed to persist execution mode:", getSafeErrorMessage(error));
       });
     }
@@ -10054,7 +10179,16 @@ import {
 
   async function loadExecutionModePreference() {
     const storedMode = await Storage.getConfig("execution_mode").catch(() => null);
-    await setExecutionMode(storedMode, { skipPersist: true });
+    const normalized = normalizeExecutionMode(storedMode);
+    preferredExecutionMode = normalized;
+    if (activeToolExecutionLock) {
+      effectiveExecutionMode = "fast";
+      currentExecutionMode = "fast";
+    } else {
+      effectiveExecutionMode = normalized;
+      currentExecutionMode = normalized;
+    }
+    syncExecutionModeUi();
   }
 
   function updateWebSearchButtons() {
@@ -10576,6 +10710,7 @@ import {
     composerAttachments = composerAttachments.filter((item) => item.id !== attachmentId);
     renderFilePreview();
     syncComposerHint();
+    updateComposerActionSelection();
   }
 
   function removeComposerAttachmentsById(attachmentIds) {
@@ -10588,6 +10723,7 @@ import {
     composerAttachments = composerAttachments.filter((attachment) => !ids.has(attachment.id));
     renderFilePreview();
     syncComposerHint();
+    updateComposerActionSelection();
   }
 
   function reassignComposerAttachmentsToChat(fromChatId, toChatId) {
@@ -11085,6 +11221,16 @@ import {
   // Render the empty-composer affordance immediately; the async status refresh
   // will then update its availability and safe message without swapping in Send.
   syncComposerInteractivity();
+  window.addEventListener("sentiq-billing-summary", (event) => {
+    const summary = event.detail?.summary || event.detail?.billing?.summary || event.detail || {};
+    const plan = summary.plan_code || summary.planCode;
+    if (plan) cachedUserPlanCode = plan;
+    syncToolExecutionPolicy();
+  });
+  document.addEventListener("sentiq-auth-changed", () => {
+    syncToolExecutionPolicy();
+  });
+
   window.SentIQChat = {
     copyCode,
     appendMessageBubble,
@@ -11100,6 +11246,15 @@ import {
     debugLog,
     debugWarn,
     refreshAuthUI,
+    getExecutionMode: () => effectiveExecutionMode,
+    getPreferredExecutionMode: () => preferredExecutionMode,
+    setExecutionMode: (mode, options) => setExecutionMode(mode, options),
+    setStoredPreferenceExecutionMode: (mode) => {
+      preferredExecutionMode = normalizeExecutionMode(mode);
+    },
+    isToolExecutionLocked: () => Boolean(activeToolExecutionLock),
+    getActiveRestrictedTool: () => activeToolExecutionLock,
+    syncToolExecutionPolicy,
     requestLiveAuth() {
       openAuthModal("login");
       setAuthStatus("Sign in to use Live voice.");

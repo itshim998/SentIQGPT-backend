@@ -6,6 +6,7 @@ import "../context-aware-composer.js";
 import "../tool-action-sheet.js";
 import "../attachment-context-surface.js";
 import "../execution-mode-selector.js";
+import "../free-tool-execution-policy.js";
 import "../ui-stability.js";
 import "../streaming-polish.js";
 import "../controlled-response-polish.js";
