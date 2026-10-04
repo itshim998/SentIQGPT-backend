@@ -58,10 +58,10 @@ export const ADAPTIVE_PANEL_CONFIGS = Object.freeze([
     surfaceSelector: ".live-beta-surface",
     headerSelector: ".live-beta-header",
     titleSelector: "#live-beta-title",
-    closeActionSelector: "#live-beta-end",
+    closeActionSelector: "#live-beta-close-btn",
     desktopPlacement: "center",
     mobileMode: "full",
-    generatedClose: true,
+    generatedClose: false,
     dismissible: true,
   }),
   Object.freeze({

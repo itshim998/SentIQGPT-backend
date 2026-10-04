@@ -49,6 +49,10 @@ export type LiveStoredSession = {
   reservedSeconds: number;
   usedSeconds: number;
   keySlot: number | null;
+  sourceConversationId?: string | null;
+  liveConversationId?: string | null;
+  transcriptCommitted?: boolean;
+  transcriptCommittedAt?: string | null;
   metadata: Record<string, unknown>;
 };
 
@@ -74,6 +78,12 @@ export interface LiveUsageStore {
     projectMaxActive: number | null;
     keySlots: number[];
   }): Promise<boolean>;
+  checkCapacityDetailed?(args: {
+    globalMaxActive: number | null;
+    projectMaxActive: number | null;
+    keySlots: number[];
+  }): Promise<{ allowed: boolean; reason?: "global_capacity" | "per_key_capacity" }>;
+  getActiveKeySlotCounts(slots: number[]): Promise<Map<number, number>>;
   reserveSession(args: {
     userId: string;
     sessionId: string;
@@ -87,6 +97,8 @@ export interface LiveUsageStore {
     userId: string;
     sessionId: string;
     keySlot: number;
+    sourceConversationId?: string;
+    liveConversationId?: string;
     metadata?: Record<string, unknown>;
   }): Promise<boolean>;
   cancelReservation(args: { userId: string; sessionId: string; reason: string }): Promise<boolean>;
@@ -97,6 +109,13 @@ export interface LiveUsageStore {
     status: "ended" | "timeout";
     metadata?: Record<string, unknown>;
   }): Promise<LiveFinalizeResult>;
+  commitLiveSessionTranscript(args: {
+    userId: string;
+    sessionId: string;
+    conversationId: string;
+    segments: Array<{ sequence: number; role: string; text: string }>;
+    summary?: string;
+  }): Promise<{ success: boolean; alreadyCommitted: boolean; conversationId: string }>;
   cleanupStaleSessions(userId: string): Promise<number>;
   cleanupAllStaleSessions(): Promise<number>;
   reserveCapacity(args: {
@@ -165,7 +184,7 @@ export class SupabaseLiveUsageStore implements LiveUsageStore {
     const userDb = await this.userDatabase(args.userId, args.sessionId);
     const { data, error } = await userDb
       .from("live_sessions")
-      .select("session_id,plan,status,started_at,audio_started_at,ended_at,expires_at,reserved_seconds,used_seconds,key_slot,metadata")
+      .select("session_id,plan,status,started_at,audio_started_at,ended_at,expires_at,reserved_seconds,used_seconds,key_slot,source_conversation_id,live_conversation_id,transcript_committed,transcript_committed_at,metadata")
       .eq("session_id", args.sessionId)
       .eq("owner_user_id", args.userId)
       .maybeSingle();
@@ -182,6 +201,10 @@ export class SupabaseLiveUsageStore implements LiveUsageStore {
       reservedSeconds: numberValue(data.reserved_seconds),
       usedSeconds: numberValue(data.used_seconds),
       keySlot: data.key_slot === null || data.key_slot === undefined ? null : numberValue(data.key_slot),
+      sourceConversationId: typeof data.source_conversation_id === "string" ? data.source_conversation_id : null,
+      liveConversationId: typeof data.live_conversation_id === "string" ? data.live_conversation_id : null,
+      transcriptCommitted: Boolean(data.transcript_committed),
+      transcriptCommittedAt: typeof data.transcript_committed_at === "string" ? data.transcript_committed_at : null,
       metadata: objectValue(data.metadata),
     };
   }
@@ -209,12 +232,12 @@ export class SupabaseLiveUsageStore implements LiveUsageStore {
     };
   }
 
-  async hasCapacity(args: {
+  async checkCapacityDetailed(args: {
     globalMaxActive: number | null;
     projectMaxActive: number | null;
     keySlots: number[];
-  }): Promise<boolean> {
-    if (!args.globalMaxActive && !args.projectMaxActive) return true;
+  }): Promise<{ allowed: boolean; reason?: "global_capacity" | "per_key_capacity" }> {
+    if (!args.globalMaxActive && !args.projectMaxActive) return { allowed: true };
     const database = getControlDatabase();
     const activeAfter = new Date().toISOString();
     if (args.globalMaxActive) {
@@ -223,9 +246,11 @@ export class SupabaseLiveUsageStore implements LiveUsageStore {
         .select("session_id", { count: "exact", head: true })
         .gt("expires_at", activeAfter);
       if (error) throw rpcError("Live global capacity status", error);
-      if (numberValue(count) >= args.globalMaxActive) return false;
+      if (numberValue(count) >= args.globalMaxActive) {
+        return { allowed: false, reason: "global_capacity" };
+      }
     }
-    if (!args.projectMaxActive) return true;
+    if (!args.projectMaxActive) return { allowed: true };
     const counts = await Promise.all(args.keySlots.map(async (slot) => {
       const { count, error } = await database
         .from("live_capacity_leases")
@@ -235,7 +260,40 @@ export class SupabaseLiveUsageStore implements LiveUsageStore {
       if (error) throw rpcError("Live project capacity status", error);
       return numberValue(count);
     }));
-    return counts.some((count) => count < args.projectMaxActive!);
+    const hasPerKeySlot = counts.some((count) => count < args.projectMaxActive!);
+    if (!hasPerKeySlot) {
+      return { allowed: false, reason: "per_key_capacity" };
+    }
+    return { allowed: true };
+  }
+
+  async hasCapacity(args: {
+    globalMaxActive: number | null;
+    projectMaxActive: number | null;
+    keySlots: number[];
+  }): Promise<boolean> {
+    const result = await this.checkCapacityDetailed(args);
+    return result.allowed;
+  }
+
+  async getActiveKeySlotCounts(slots: number[]): Promise<Map<number, number>> {
+    const database = getControlDatabase();
+    const activeAfter = new Date().toISOString();
+    const counts = new Map<number, number>();
+    for (const slot of slots) counts.set(slot, 0);
+    const { data, error } = await database
+      .from("live_capacity_leases")
+      .select("key_slot")
+      .gt("expires_at", activeAfter);
+    if (!error && Array.isArray(data)) {
+      for (const row of data) {
+        const slot = numberValue(row.key_slot);
+        if (counts.has(slot)) {
+          counts.set(slot, (counts.get(slot) ?? 0) + 1);
+        }
+      }
+    }
+    return counts;
   }
 
   async reserveSession(args: {
@@ -280,6 +338,8 @@ export class SupabaseLiveUsageStore implements LiveUsageStore {
     userId: string;
     sessionId: string;
     keySlot: number;
+    sourceConversationId?: string;
+    liveConversationId?: string;
     metadata?: Record<string, unknown>;
   }): Promise<boolean> {
     const userDb = await this.userDatabase(args.userId, args.sessionId);
@@ -290,6 +350,12 @@ export class SupabaseLiveUsageStore implements LiveUsageStore {
       p_metadata: args.metadata ?? {},
     });
     if (error) throw rpcError("Live session activation", error);
+    if (args.sourceConversationId || args.liveConversationId) {
+      const updates: Record<string, any> = {};
+      if (args.sourceConversationId) updates.source_conversation_id = args.sourceConversationId;
+      if (args.liveConversationId) updates.live_conversation_id = args.liveConversationId;
+      await userDb.from("live_sessions").update(updates).eq("session_id", args.sessionId);
+    }
     return data === true;
   }
 
@@ -329,6 +395,30 @@ export class SupabaseLiveUsageStore implements LiveUsageStore {
       status: typeof row.status === "string" ? row.status : "unknown",
       usedSeconds: numberValue(row.used_seconds),
       reservedSeconds: numberValue(row.reserved_seconds),
+    };
+  }
+
+  async commitLiveSessionTranscript(args: {
+    userId: string;
+    sessionId: string;
+    conversationId: string;
+    segments: Array<{ sequence: number; role: string; text: string }>;
+    summary?: string;
+  }): Promise<{ success: boolean; alreadyCommitted: boolean; conversationId: string }> {
+    const userDb = await this.userDatabase(args.userId, args.sessionId);
+    const { data, error } = await userDb.rpc("commit_live_session_transcript", {
+      p_session_id: args.sessionId,
+      p_owner_user_id: args.userId,
+      p_conversation_id: args.conversationId,
+      p_segments: args.segments,
+      p_summary: args.summary ?? null,
+    });
+    if (error) throw rpcError("Live transcript commit", error);
+    const row = objectValue(data);
+    return {
+      success: row.success === true,
+      alreadyCommitted: row.already_committed === true,
+      conversationId: String(row.conversation_id || args.conversationId),
     };
   }
 

@@ -328,7 +328,7 @@ function deriveLiveCapability(facts) {
   if (status.reason === "browser_unsupported") {
     return record(key, "unavailable", "This browser cannot start Live voice. Use a supported browser with microphone access.", { label });
   }
-  if (["busy", "capacity", "global_capacity", "project_capacity"].includes(status.reason)) {
+  if (["busy", "capacity", "global_capacity", "project_capacity", "per_key_capacity"].includes(status.reason)) {
     return record(key, "busy", "Live voice is temporarily busy. Try again shortly.", { label });
   }
   return record(key, "unavailable", "Live voice is unavailable right now. Text chat remains available.", { label });

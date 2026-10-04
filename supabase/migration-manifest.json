@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-02T08:44:31.811Z",
-  "totalCanonicalMigrations": 79,
+  "generatedAt": "2026-10-03T06:13:53.049Z",
+  "totalCanonicalMigrations": 80,
   "topology": {
     "controlDatabases": [
       1
@@ -14,11 +14,11 @@
     ]
   },
   "counts": {
-    "both": 8,
+    "both": 9,
     "controlOnly": 14,
     "dataOnly": 57,
-    "controlTrackTotal": 22,
-    "dataTrackTotal": 65
+    "controlTrackTotal": 23,
+    "dataTrackTotal": 66
   },
   "migrations": [
     {
@@ -818,6 +818,17 @@
         "data"
       ],
       "checksum": "1ee513976a2ca0d95c18c5859d0d2f4cf20fdcca0efccb895eed350102d916ad"
+    },
+    {
+      "version": "20261003120000",
+      "name": "production_live_voice_architecture",
+      "filename": "20261003120000_production_live_voice_architecture.sql",
+      "scope": "BOTH",
+      "targetTracks": [
+        "control",
+        "data"
+      ],
+      "checksum": "984b6af0da205f1b78be065927a133e62950db395d34700cb1107db60866cd82"
     }
   ]
 }

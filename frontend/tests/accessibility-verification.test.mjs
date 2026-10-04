@@ -139,7 +139,7 @@ assert.ok(index.includes('id="chat-messages" class="chat-messages" aria-live="po
 assert.ok(index.includes('role="status" aria-live="polite"'));
 assert.ok(index.includes('role="dialog" aria-modal="true"'));
 assert.ok(index.includes('aria-label="Mute microphone"'));
-assert.ok(index.includes('aria-label="End Live voice"'));
+assert.ok(index.includes('aria-label="Close Live voice"') || index.includes('aria-label="End Live voice"'));
 assert.ok(index.includes('name="viewport" content="width=device-width, initial-scale=1.0'));
 assert.equal(index.includes("maximum-scale=1"), false, "Zoom must not be disabled");
 assert.equal(index.includes("user-scalable=no"), false, "Pinch zoom must remain available");

@@ -86,9 +86,16 @@ export function registerLiveRoutes(app: Express, dependencies: {
     asyncRoute(async (req, res) => {
       try {
         const requestUser = getRequestUser(req);
+        const sourceConversationId = normalizeOptionalUuid(
+          req.body?.sourceConversationId
+          ?? req.body?.source_conversation_id
+          ?? req.body?.conversationId
+          ?? req.body?.conversation_id,
+        );
         const response = await dependencies.service.createSession({
           userId: requestUser.sub,
-          conversationId: normalizeOptionalUuid(req.body?.conversationId ?? req.body?.conversation_id),
+          sourceConversationId,
+          conversationId: sourceConversationId,
         });
         res.status(201).json(response);
       } catch (error) {
@@ -143,6 +150,42 @@ export function registerLiveRoutes(app: Express, dependencies: {
           userId: requestUser.sub,
           sessionId: normalizeOptionalUuid(req.params.sessionId) || "",
           reason: typeof req.body?.reason === "string" ? req.body.reason : undefined,
+        });
+        res.json({ success: true, ...result });
+      } catch (error) {
+        if (!sendRouteError(error, res)) throw error;
+      }
+    }),
+  );
+
+  app.post(
+    "/api/live/session/:sessionId/report-error",
+    dependencies.requireAuth,
+    asyncRoute(async (req, res) => {
+      try {
+        const requestUser = getRequestUser(req);
+        dependencies.service.reportClientError({
+          userId: requestUser.sub,
+          sessionId: normalizeOptionalUuid(req.params.sessionId) || "",
+          errorType: typeof req.body?.errorType === "string" ? req.body.errorType : "unknown",
+          code: typeof req.body?.code === "number" ? req.body.code : undefined,
+          reason: typeof req.body?.reason === "string" ? req.body.reason : undefined,
+        });
+        res.json({ success: true });
+      } catch (error) {
+        if (!sendRouteError(error, res)) throw error;
+      }
+    }),
+  );
+  app.post(
+    "/api/live/session/:sessionId/resume-token",
+    dependencies.requireAuth,
+    asyncRoute(async (req, res) => {
+      try {
+        const requestUser = getRequestUser(req);
+        const result = await dependencies.service.getResumeToken({
+          userId: requestUser.sub,
+          sessionId: normalizeOptionalUuid(req.params.sessionId) || "",
         });
         res.json({ success: true, ...result });
       } catch (error) {

@@ -1,8 +1,8 @@
-export const DEFAULT_GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview";
+export const DEFAULT_GEMINI_LIVE_MODEL = "gemini-3.8-live";
 export const DEFAULT_GEMINI_LIVE_VOICE = "Kore";
-export const GEMINI_LIVE_TOKEN_URL = "https://generativelanguage.googleapis.com/v1alpha/auth_tokens";
+export const GEMINI_LIVE_TOKEN_URL = "https://generativelanguage.googleapis.com/v1beta/auth_tokens";
 export const GEMINI_LIVE_WEBSOCKET_URL =
-  "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained";
+  "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained";
 
 const DEFAULT_SESSION_MAX_SECONDS = 600;
 const MIN_SESSION_MAX_SECONDS = 60;

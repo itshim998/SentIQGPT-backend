@@ -3,8 +3,17 @@ const SAFE_LIVE_COPY = Object.freeze({
   not_available: "Live voice is not available right now.",
   not_available_on_plan: "Live voice is not available on your current plan.",
   daily_limit_reached: "You’ve used today’s Live voice time.",
-  active_session_limit: "Live voice is busy. Try again soon.",
+  active_session_limit: "You already have an active Live voice session. Please close it first.",
   browser_unsupported: "Live voice is not supported in this browser.",
+  global_capacity: "Live voice is temporarily at capacity. Try again shortly.",
+  per_key_capacity: "Live voice is temporarily at capacity. Try again shortly.",
+  provider_capacity: "Live voice is temporarily rate limited. Try again shortly.",
+  provider_rate_limited: "Live voice is temporarily rate limited. Try again shortly.",
+  provider_unavailable: "Live voice provider is currently unavailable. Try again shortly.",
+  provider_auth: "Live voice service is temporarily misconfigured.",
+  provider_configuration: "Live voice service is temporarily misconfigured.",
+  network_error: "Live voice is temporarily unreachable. Check your connection.",
+  internal_error: "Live voice is temporarily unavailable due to a server error.",
   busy: "Live voice is busy. Try again soon.",
 });
 

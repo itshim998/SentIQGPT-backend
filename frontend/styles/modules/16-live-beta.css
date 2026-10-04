@@ -107,6 +107,44 @@ body.live-beta-open {
   white-space: nowrap;
 }
 
+.live-beta-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.live-beta-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(166, 152, 235, 0.18);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(225, 222, 240, 0.8);
+  cursor: pointer;
+  transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+
+.live-beta-close-btn:hover {
+  border-color: rgba(171, 151, 244, 0.4);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.live-beta-close-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
 .live-beta-visual {
   position: relative;
   display: grid;

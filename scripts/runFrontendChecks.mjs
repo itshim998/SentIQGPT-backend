@@ -24,7 +24,10 @@ export const FRONTEND_ACTIVITY_LOGO_CHECKS = Object.freeze([
 ]);
 
 function runCommand(command, args, label) {
-  const result = spawnSync(command, args, {
+  const isNpm = command === npmCommand;
+  const actualCommand = isNpm && process.env.npm_execpath ? nodeCommand : command;
+  const actualArgs = isNpm && process.env.npm_execpath ? [process.env.npm_execpath, ...args] : args;
+  const result = spawnSync(actualCommand, actualArgs, {
     cwd: repositoryRoot,
     env: { ...process.env, SENTIQ_FRONTEND_QA: "1" },
     shell: false,

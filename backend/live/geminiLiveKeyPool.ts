@@ -1,9 +1,10 @@
-const LIVE_KEY_ENV_NAMES = [
+export const LIVE_KEY_ENV_NAMES = [
   "GEMINI_API_KEY_1",
   "GEMINI_API_KEY_2",
   "GEMINI_API_KEY_3",
   "GEMINI_API_KEY_4",
   "GEMINI_API_KEY_5",
+  "GEMINI_API_KEY_6",
 ] as const;
 
 export type GeminiLiveFailureClass =
@@ -27,6 +28,7 @@ type KeyState = {
   cooldownUntil: number;
   consecutiveFailures: number;
   activeSessions: number;
+  lastFailureClass?: GeminiLiveFailureClass;
 };
 
 export class GeminiLiveCapacityError extends Error {
@@ -47,7 +49,22 @@ export class GeminiLiveKeyPool {
   constructor(args: { env?: NodeJS.ProcessEnv; now?: () => number; keys?: string[] } = {}) {
     this.now = args.now ?? Date.now;
     const env = args.env ?? process.env;
-    const configuredKeys = args.keys ?? LIVE_KEY_ENV_NAMES.map((name) => env[name]);
+    let configuredKeys: Array<string | undefined>;
+    if (args.keys) {
+      configuredKeys = args.keys;
+    } else {
+      // Collect standard keys 1..6, plus any additional indexed keys
+      const scannedKeys: Array<string | undefined> = [];
+      for (const name of LIVE_KEY_ENV_NAMES) {
+        scannedKeys.push(env[name]);
+      }
+      let extraIndex = LIVE_KEY_ENV_NAMES.length + 1;
+      while (typeof env[`GEMINI_API_KEY_${extraIndex}`] === "string" && env[`GEMINI_API_KEY_${extraIndex}`]!.trim()) {
+        scannedKeys.push(env[`GEMINI_API_KEY_${extraIndex}`]);
+        extraIndex += 1;
+      }
+      configuredKeys = scannedKeys;
+    }
     this.states = configuredKeys
       .map((apiKey, index) => ({ apiKey: apiKey?.trim() || "", slot: index + 1 }))
       .filter((entry) => Boolean(entry.apiKey))
@@ -122,6 +139,15 @@ export class GeminiLiveKeyPool {
     if (state) state.activeSessions = Math.max(0, state.activeSessions - 1);
   }
 
+  syncActiveCounts(counts: Map<number, number> | Record<number, number>): void {
+    for (const state of this.states) {
+      const count = counts instanceof Map ? counts.get(state.slot) : counts[state.slot];
+      if (typeof count === "number") {
+        state.activeSessions = Math.max(0, count);
+      }
+    }
+  }
+
   getActiveCount(slot: number): number {
     return this.states.find((entry) => entry.slot === slot)?.activeSessions ?? 0;
   }
@@ -130,6 +156,7 @@ export class GeminiLiveKeyPool {
     const state = this.states.find((entry) => entry.slot === slot);
     if (!state) return;
     state.consecutiveFailures += 1;
+    state.lastFailureClass = failureClass;
     const baseCooldownMs = failureClass === "auth" || failureClass === "configuration"
       ? 15 * 60_000
       : failureClass === "capacity"
@@ -139,5 +166,22 @@ export class GeminiLiveKeyPool {
           : 10_000;
     const multiplier = Math.min(8, 2 ** Math.max(0, state.consecutiveFailures - 1));
     state.cooldownUntil = this.now() + baseCooldownMs * multiplier;
+  }
+
+  getKeyBySlot(slot: number): GeminiLiveKeyLease | undefined {
+    const state = this.states.find((entry) => entry.slot === slot);
+    if (!state) return undefined;
+    return { slot: state.slot, apiKey: state.apiKey };
+  }
+
+  getDominantCooldownFailureClass(): GeminiLiveFailureClass | undefined {
+    const now = this.now();
+    const cooling = this.states.filter((state) => state.cooldownUntil > now);
+    if (cooling.length === 0 || cooling.length < this.states.length) return undefined;
+    if (cooling.every((state) => state.lastFailureClass === "auth")) return "auth";
+    if (cooling.every((state) => state.lastFailureClass === "capacity")) return "capacity";
+    if (cooling.every((state) => state.lastFailureClass === "configuration")) return "configuration";
+    if (cooling.every((state) => state.lastFailureClass === "unavailable")) return "unavailable";
+    return cooling[0].lastFailureClass;
   }
 }

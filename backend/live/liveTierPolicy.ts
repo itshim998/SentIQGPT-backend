@@ -11,6 +11,7 @@ export type LiveTierPolicy = {
   plans: Record<BillingPlanCode, LiveTierLimit>;
   globalMaxActive: number | null;
   projectMaxActive: number | null;
+  perKeyMaxActive: number | null;
   staleGraceSeconds: number;
 };
 
@@ -88,7 +89,10 @@ export function loadLiveTierPolicy(env: NodeJS.ProcessEnv = process.env): LiveTi
       }),
     },
     globalMaxActive: readOptionalPositiveInteger(env, "SENTIQ_LIVE_GLOBAL_MAX_ACTIVE", 100_000),
-    projectMaxActive: readOptionalPositiveInteger(env, "SENTIQ_LIVE_PROJECT_MAX_ACTIVE", 100_000),
+    projectMaxActive: readOptionalPositiveInteger(env, "SENTIQ_LIVE_PER_KEY_MAX_ACTIVE", 100_000)
+      ?? readOptionalPositiveInteger(env, "SENTIQ_LIVE_PROJECT_MAX_ACTIVE", 100_000),
+    perKeyMaxActive: readOptionalPositiveInteger(env, "SENTIQ_LIVE_PER_KEY_MAX_ACTIVE", 100_000)
+      ?? readOptionalPositiveInteger(env, "SENTIQ_LIVE_PROJECT_MAX_ACTIVE", 100_000),
     staleGraceSeconds: readInteger(env, "SENTIQ_LIVE_STALE_GRACE_SECONDS", 30, 5, 300),
   };
 }

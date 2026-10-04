@@ -16,6 +16,7 @@ import {
   LiveSessionError,
   type LivePreparedContext,
   type LiveSessionPersistence,
+  type LiveTranscriptTurn,
 } from "./liveSessionService";
 
 const CONTEXT_MESSAGE_TYPES = new Set(["text", "live_transcript", "live_summary"]);
@@ -53,49 +54,64 @@ async function prepareUserWorkspace(userId: string) {
 }
 
 export class SentIQLivePersistence implements LiveSessionPersistence {
-  async prepareContext(args: { userId: string; conversationId?: string }): Promise<LivePreparedContext> {
+  async prepareContext(args: {
+    userId: string;
+    sourceConversationId?: string;
+    conversationId?: string;
+  }): Promise<LivePreparedContext> {
     const { userDb, displayName } = await prepareUserWorkspace(args.userId);
-    let conversationId = args.conversationId;
-    if (conversationId) {
-      await getOwnedConversation(userDb, args.userId, conversationId);
-    } else {
-      conversationId = randomUUID();
-      const created = await createConversation(userDb, {
-        id: conversationId,
-        userId: args.userId,
-        title: "New Chat",
-      });
-      if (created.error || !created.data) {
-        throw new Error(created.error?.message || "Live conversation creation failed.");
+    const sourceConversationId = args.sourceConversationId || args.conversationId;
+
+    let recentTurns: LiveTranscriptTurn[] = [];
+    let workspaceCapsule: string | undefined;
+    let conversationCapsule: string | undefined;
+
+    if (sourceConversationId) {
+      try {
+        await getOwnedConversation(userDb, args.userId, sourceConversationId);
+        const [capsules, messageResult] = await Promise.all([
+          contextCapsuleService.readCapsules({
+            userDb,
+            ownerUserId: args.userId,
+            conversationId: sourceConversationId,
+          }),
+          getConversationMessages(userDb, sourceConversationId),
+        ]);
+        if (!messageResult.error && Array.isArray(messageResult.data)) {
+          recentTurns = messageResult.data
+            .filter((message) => CONTEXT_MESSAGE_TYPES.has(message.message_type || "text"))
+            .filter((message) => typeof message.content === "string" && message.content.trim())
+            .slice(-6)
+            .map((message) => ({
+              role: (message.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
+              text: message.content,
+            }));
+        }
+        workspaceCapsule = capsules.workspace?.content;
+        conversationCapsule = capsules.conversation?.content;
+      } catch {
+        // If source conversation cannot be read or is invalid, proceed with fresh context
       }
     }
 
-    const [capsules, messageResult] = await Promise.all([
-      contextCapsuleService.readCapsules({
-        userDb,
-        ownerUserId: args.userId,
-        conversationId,
-      }),
-      getConversationMessages(userDb, conversationId),
-    ]);
-    if (messageResult.error) {
-      throw new Error(messageResult.error.message || "Conversation messages could not be loaded.");
+    // Every Live session creates and owns a fresh destination conversation
+    const liveConversationId = randomUUID();
+    const created = await createConversation(userDb, {
+      id: liveConversationId,
+      userId: args.userId,
+      title: "New Chat",
+    });
+    if (created.error || !created.data) {
+      throw new Error(created.error?.message || "Live destination conversation creation failed.");
     }
 
-    const recentTurns = messageResult.data
-      .filter((message) => CONTEXT_MESSAGE_TYPES.has(message.message_type || "text"))
-      .filter((message) => typeof message.content === "string" && message.content.trim())
-      .slice(-6)
-      .map((message) => ({
-        role: message.role,
-        text: message.content,
-      }));
-
     return {
-      conversationId,
+      conversationId: liveConversationId,
+      liveConversationId,
+      sourceConversationId: sourceConversationId || undefined,
       displayName,
-      workspaceCapsule: capsules.workspace?.content,
-      conversationCapsule: capsules.conversation?.content,
+      workspaceCapsule,
+      conversationCapsule,
       recentTurns,
     };
   }
@@ -128,6 +144,24 @@ export class SentIQLivePersistence implements LiveSessionPersistence {
     if (inserted.error || !inserted.data) {
       throw new Error(inserted.error?.message || "Live transcript could not be committed.");
     }
+
+    try {
+      const segments = args.transcript.map((turn, index) => ({
+        sequence: index,
+        role: turn.role,
+        text: turn.text,
+      }));
+      await userDb.rpc("commit_live_session_transcript", {
+        p_session_id: args.sessionId,
+        p_owner_user_id: args.userId,
+        p_conversation_id: args.conversationId,
+        p_segments: segments,
+        p_summary: args.summary ?? null,
+      });
+    } catch {
+      // Message insertion in conversations is primary; RPC records durable segments
+    }
+
     return 1;
   }
 }

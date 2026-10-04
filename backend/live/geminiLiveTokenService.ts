@@ -53,7 +53,6 @@ function buildLockedSetup(config: GeminiLiveConfig, systemInstruction: string): 
           prebuiltVoiceConfig: { voiceName: config.defaultVoice },
         },
       },
-      thinkingConfig: { thinkingLevel: "minimal" },
     },
     systemInstruction: {
       parts: [{ text: systemInstruction }],
@@ -113,6 +112,10 @@ export class GeminiLiveTokenService {
           uses: 1,
           expireTime: expiresAt,
           newSessionExpireTime: newSessionExpiresAt,
+          liveConnectConstraints: {
+            model: `models/${args.config.model}`,
+            config: buildLockedSetup(args.config, args.systemInstruction),
+          },
           bidiGenerateContentSetup: buildLockedSetup(args.config, args.systemInstruction),
         }),
         signal: controller.signal,

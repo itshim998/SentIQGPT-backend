@@ -42,8 +42,7 @@ function initializeLiveSurface() {
   const visual = panel?.querySelector(".live-beta-visual");
   const controls = panel?.querySelector(".live-beta-controls");
   const muteButton = document.getElementById("live-beta-mute");
-  const transcriptToggle = document.getElementById("live-beta-transcript-toggle");
-  const endButton = document.getElementById("live-beta-end");
+  const closeButton = document.getElementById("live-beta-close-btn");
   const retryButton = document.getElementById("live-beta-retry");
   const transcriptWrap = document.getElementById("live-beta-transcript-wrap");
   const transcript = document.getElementById("live-beta-transcript");
@@ -74,8 +73,6 @@ function initializeLiveSurface() {
   controls.setAttribute("role", "group");
   controls.setAttribute("aria-label", "Live voice controls");
   muteButton?.setAttribute("data-live-control", "mute");
-  transcriptToggle?.setAttribute("data-live-control", "transcript");
-  endButton?.setAttribute("data-live-control", "end");
 
   let connection = surface.querySelector(".live-workspace-connection");
   if (!connection) {
@@ -89,6 +86,7 @@ function initializeLiveSurface() {
   let transcriptSheet = transcriptWrap.querySelector(".live-workspace-transcript-sheet");
   let transcriptClose = document.getElementById("live-beta-transcript-close");
   let transcriptEmpty = document.getElementById("live-beta-transcript-empty");
+  const transcriptToggle = document.getElementById("live-beta-transcript-toggle");
   if (!transcriptSheet) {
     transcriptSheet = document.createElement("div");
     transcriptSheet.className = "live-workspace-transcript-sheet";
@@ -260,7 +258,9 @@ function initializeLiveSurface() {
   chatFallback?.addEventListener("click", () => {
     pendingComposerFocus = true;
     closeTranscript();
-    endButton?.click();
+    const closeBtn = document.getElementById("live-beta-close-btn");
+    if (closeBtn) closeBtn.click();
+    else window.SentIQLive?.terminate?.({ reason: "fallback_chat" });
     window.SentIQPanels?.sync?.();
   });
 

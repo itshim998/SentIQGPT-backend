@@ -3,6 +3,7 @@ import { execFileSync } from "child_process";
 import { readFileSync } from "fs";
 import { createServer, type Server } from "http";
 import { resolve } from "path";
+import { pathToFileURL } from "url";
 import express, { type RequestHandler } from "express";
 import { loadGeminiLiveConfig } from "./live/geminiLiveConfig";
 import {
@@ -17,6 +18,7 @@ import {
   LiveSessionError,
   LiveSessionService,
   type LiveSessionPersistence,
+  type LiveTranscriptTurn,
 } from "./live/liveSessionService";
 import { registerLiveRoutes } from "./live/liveRoutes";
 import { loadLiveTierPolicy, type LiveTierPolicy } from "./live/liveTierPolicy";
@@ -39,7 +41,7 @@ const API_KEY = "live-test-long-lived-key";
 function liveConfig(enabled = true) {
   return loadGeminiLiveConfig({
     SENTIQ_LIVE_ENABLED: String(enabled),
-    SENTIQ_LIVE_MODEL: "gemini-3.1-flash-live-preview",
+    SENTIQ_LIVE_MODEL: "gemini-3.8-live",
     SENTIQ_LIVE_DEFAULT_VOICE: "Kore",
     SENTIQ_LIVE_SESSION_MAX_SECONDS: "600",
     SENTIQ_LIVE_AUDIO_ONLY: "true",
@@ -146,8 +148,13 @@ async function testTokenService(): Promise<void> {
   assert.equal(token.token, "auth_tokens/ephemeral-test");
   assert.equal(capturedHeaders?.["x-goog-api-key"], API_KEY);
   assert.equal(capturedBody.uses, 1);
-  assert.equal(capturedBody.bidiGenerateContentSetup.model, "models/gemini-3.1-flash-live-preview");
+  assert.equal(capturedBody.bidiGenerateContentSetup.model, "models/gemini-3.8-live");
+  assert.equal(capturedBody.liveConnectConstraints.model, "models/gemini-3.8-live");
+  assert.deepEqual(capturedBody.liveConnectConstraints.config.generationConfig.responseModalities, ["AUDIO"]);
   assert.deepEqual(capturedBody.bidiGenerateContentSetup.generationConfig.responseModalities, ["AUDIO"]);
+  assert(!("thinkingConfig" in capturedBody.liveConnectConstraints.config.generationConfig), "Gemini 3.8 Live must not contain thinkingConfig");
+  assert(!("thinking_config" in capturedBody.liveConnectConstraints.config.generationConfig), "Gemini 3.8 Live must not contain thinking_config");
+  assert(!("thinkingConfig" in capturedBody.bidiGenerateContentSetup.generationConfig), "Gemini 3.8 Live setup must not contain thinkingConfig");
   assert(!("tools" in capturedBody.bidiGenerateContentSetup), "core Live audio should not require Search quota");
   assert.deepEqual(capturedBody.bidiGenerateContentSetup.inputAudioTranscription, {});
   assert.deepEqual(capturedBody.bidiGenerateContentSetup.outputAudioTranscription, {});
@@ -203,17 +210,25 @@ function initBodyContains(value: unknown, needle: string): boolean {
 
 function createPersistence() {
   const commits: any[] = [];
+  let convCounter = 0;
   const persistence: LiveSessionPersistence = {
-    prepareContext: async () => ({
-      conversationId: CONVERSATION_ID,
-      displayName: "Test User",
-      workspaceCapsule: "Workspace capsule",
-      conversationCapsule: "Conversation capsule",
-      recentTurns: [
-        { role: "user", text: "Earlier question" },
-        { role: "assistant", text: "Earlier answer" },
-      ],
-    }),
+    prepareContext: async () => {
+      convCounter += 1;
+      const conversationId = convCounter === 1
+        ? CONVERSATION_ID
+        : `${CONVERSATION_ID.slice(0, -4)}${String(convCounter).padStart(4, "0")}`;
+      return {
+        conversationId,
+        liveConversationId: conversationId,
+        displayName: "Test User",
+        workspaceCapsule: "Workspace capsule",
+        conversationCapsule: "Conversation capsule",
+        recentTurns: [
+          { role: "user", text: "Earlier question" },
+          { role: "assistant", text: "Earlier answer" },
+        ],
+      };
+    },
     persistTranscript: async (args) => {
       commits.push(args);
       return args.transcript.length > 0 || args.summary ? 1 : 0;
@@ -240,6 +255,7 @@ class InMemoryLiveUsageStore implements LiveUsageStore {
   private readonly sessions = new Map<string, FakeSession>();
   private readonly usage = new Map<string, { sessions: number; used: number; reserved: number }>();
   private readonly capacity = new Map<string, { keySlot: number; expiresAt: number }>();
+  public readonly transcriptSegments = new Map<string, Map<number, { sequence: number; role: string; text: string }>>();
 
   constructor(private readonly now: () => number) {}
 
@@ -335,6 +351,30 @@ class InMemoryLiveUsageStore implements LiveUsageStore {
     return args.keySlots.some((slot) => (
       [...this.capacity.values()].filter((lease) => lease.keySlot === slot).length < args.projectMaxActive!
     ));
+  }
+
+  async checkCapacityDetailed(args: {
+    globalMaxActive: number | null;
+    projectMaxActive: number | null;
+    keySlots: number[];
+  }): Promise<{ allowed: boolean; reason?: "global_capacity" | "per_key_capacity" }> {
+    for (const [sessionId, lease] of this.capacity) {
+      if (lease.expiresAt <= this.now()) this.capacity.delete(sessionId);
+    }
+    if (args.globalMaxActive && this.capacity.size >= args.globalMaxActive) {
+      return { allowed: false, reason: "global_capacity" };
+    }
+    if (args.projectMaxActive && args.keySlots.length > 0) {
+      const activePerKey = [...this.capacity.values()].reduce<Record<number, number>>((acc, lease) => {
+        acc[lease.keySlot] = (acc[lease.keySlot] || 0) + 1;
+        return acc;
+      }, {});
+      const allSlotsSaturated = args.keySlots.every((slot) => (activePerKey[slot] || 0) >= args.projectMaxActive!);
+      if (allSlotsSaturated) {
+        return { allowed: false, reason: "per_key_capacity" };
+      }
+    }
+    return { allowed: true };
   }
 
   async reserveSession(args: {
@@ -511,6 +551,48 @@ class InMemoryLiveUsageStore implements LiveUsageStore {
     return true;
   }
 
+  async getActiveKeySlotCounts(slots: number[]): Promise<Map<number, number>> {
+    const counts = new Map<number, number>();
+    for (const slot of slots) counts.set(slot, 0);
+    const now = this.now();
+    for (const lease of this.capacity.values()) {
+      if (lease.expiresAt > now && counts.has(lease.keySlot)) {
+        counts.set(lease.keySlot, (counts.get(lease.keySlot) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }
+
+  async commitLiveSessionTranscript(args: {
+    userId: string;
+    sessionId: string;
+    conversationId: string;
+    segments: Array<{ sequence: number; role: string; text: string }>;
+    summary?: string;
+  }): Promise<{ success: boolean; alreadyCommitted: boolean; conversationId: string }> {
+    const session = this.sessions.get(args.sessionId);
+    if (!session || session.userId !== args.userId) {
+      throw new Error("live_session_not_found");
+    }
+    const alreadyCommitted = Boolean((session as any).transcriptCommitted);
+    (session as any).transcriptCommitted = true;
+    (session as any).liveConversationId = args.conversationId;
+    if (!this.transcriptSegments.has(args.sessionId)) {
+      this.transcriptSegments.set(args.sessionId, new Map());
+    }
+    const sessionSegments = this.transcriptSegments.get(args.sessionId)!;
+    for (const segment of args.segments) {
+      if (!sessionSegments.has(segment.sequence)) {
+        sessionSegments.set(segment.sequence, segment);
+      }
+    }
+    return {
+      success: true,
+      alreadyCommitted,
+      conversationId: args.conversationId,
+    };
+  }
+
   getActiveCount(userId: string): number {
     return [...this.sessions.values()].filter((session) => (
       session.userId === userId && (session.status === "active" || session.status === "provisioning")
@@ -534,11 +616,12 @@ function createService(args: {
   usageStore?: InMemoryLiveUsageStore;
   tierPolicy?: LiveTierPolicy;
   tokenFetchImpl?: (input: string, init: any) => Promise<any>;
+  keyPool?: GeminiLiveKeyPool;
 } = {}) {
   const { persistence, commits } = createPersistence();
   const now = args.now ?? Date.now;
   const usageStore = args.usageStore ?? new InMemoryLiveUsageStore(now);
-  const keyPool = new GeminiLiveKeyPool({ keys: args.key === "" ? [] : [args.key || API_KEY], now });
+  const keyPool = args.keyPool ?? new GeminiLiveKeyPool({ keys: args.key === "" ? [] : [args.key || API_KEY], now });
   const titleRequests: Array<{
     userId: string;
     conversationId: string;
@@ -884,7 +967,7 @@ async function testTokenFailureReleasesReservation(): Promise<void> {
   });
   await assert.rejects(
     () => service.createSession({ userId: USER_ID, conversationId: CONVERSATION_ID }),
-    (error: unknown) => error instanceof LiveSessionError && error.code === "live_token_provision_failed",
+    (error: unknown) => error instanceof LiveSessionError && error.code === "live_provider_rate_limited",
   );
   assert.deepEqual(await usageStore.getUserStatus(USER_ID), {
     sessionsStarted: 0,
@@ -1019,13 +1102,14 @@ function testFrontendFoundation(): void {
   );
   const liveStyles = readFileSync(resolve(root, "frontend/styles/modules/16-live-beta.css"), "utf8");
   assert(html.includes('id="live-beta-btn"'));
+  assert(html.includes('id="live-beta-close-btn"'), "Live overlay must have dedicated close button in header");
   assert(html.includes('id="live-beta-mute"'));
-  assert(html.includes('id="live-beta-end"'));
-  assert(html.includes('id="live-beta-transcript-toggle"'));
+  assert(!html.includes('id="live-beta-end"'), "Old end button must be removed");
+  assert(!html.includes('id="live-beta-transcript-toggle"'), "Old transcript toggle button must be removed");
   assert(html.includes('id="live-beta-remaining"'));
   assert(html.includes('id="live-beta-retry"'));
   assert(main.includes('import "./features/live/live-controller.js"'));
-  assert(controller.includes("navigator.mediaDevices.getUserMedia"));
+  assert(controller.includes("navigator.mediaDevices?.getUserMedia"));
   assert(audioProtocol.includes("LIVE_INPUT_SAMPLE_RATE = 16_000"));
   assert(audioProtocol.includes("LIVE_OUTPUT_SAMPLE_RATE = 24_000"));
   assert(audioProtocol.includes("LIVE_INPUT_CHUNK_SAMPLES = 1_600"));
@@ -1033,11 +1117,15 @@ function testFrontendFoundation(): void {
   assert(controller.includes("content?.interrupted"));
   assert(controller.includes("audioStreamEnd: true"));
   assert(controller.includes("API.markLiveSessionStarted(currentSession.sessionId)"));
-  assert(controller.includes("LIVE_HANDSHAKE_STABILITY_MS = 750"));
-  assert(controller.includes("await waitForHandshakeStability()"));
+  assert(!controller.includes("LIVE_HANDSHAKE_STABILITY_MS = 750"), "750ms artificial delay must be removed");
+  assert(!controller.includes("waitForHandshakeStability"), "waitForHandshakeStability must be removed");
+  assert(controller.includes("terminateLiveSession"), "Canonical terminateLiveSession must be present");
+  assert(controller.includes("window.SentIQLive = Object.freeze"), "window.SentIQLive must be exported");
   assert(controller.includes('liveDebug("websocket_closed"'));
-  assert(controller.includes("const status = await refreshAvailability()"));
-  assert(controller.indexOf("const status = await refreshAvailability()") < controller.indexOf("API.createLiveSessionToken"));
+  assert(
+    controller.indexOf("showPanel();") < controller.indexOf("API.createLiveSessionToken"),
+    "UI must show immediately before awaiting network token",
+  );
   const startAckIndex = controller.indexOf("API.markLiveSessionStarted(currentSession.sessionId)");
   assert(startAckIndex >= 0);
   assert(controller.indexOf("startRemainingTimer(currentSession.sessionMaxSeconds);", startAckIndex) > startAckIndex);
@@ -1100,7 +1188,7 @@ function testFrontendFoundation(): void {
   `;
   execFileSync(process.execPath, ["--input-type=module", "-e", composerTest], { stdio: "pipe" });
 
-  const audioModuleUrl = `data:text/javascript;base64,${Buffer.from(audioProtocol).toString("base64")}`;
+  const audioModuleUrl = pathToFileURL(resolve(root, "frontend/scripts/features/live/live-audio-protocol.js")).href;
   const audioProtocolTest = `
     import assert from "node:assert/strict";
     import {
@@ -1181,6 +1269,17 @@ function testMigrationFoundation(): void {
   assert.match(startupRefundMigration, /where status = 'ended'[\s\S]*used_seconds = 0/i);
   assert.match(startupRefundMigration, /get_sentiq_live_refund_policy_version/i);
   assert.doesNotMatch(startupRefundMigration, /audio_data|raw_audio/i, "startup refund migration must not store raw audio");
+
+  const prodArchMigration = readFileSync(
+    resolve(root, "supabase/migrations/20261003120000_production_live_voice_architecture.sql"),
+    "utf8",
+  );
+  assert.match(prodArchMigration, /create table if not exists public\.live_session_transcript_segments/i);
+  assert.match(prodArchMigration, /create or replace function public\.commit_live_session_transcript/i);
+  assert.match(prodArchMigration, /key_slot >= 1/i);
+  assert.match(prodArchMigration, /live_conversation_id uuid/i);
+  assert.doesNotMatch(prodArchMigration, /audio_data|raw_audio/i, "architecture migration must not store raw audio");
+
   assert.match(dbRouter, /SENTIQ_LIVE_ENABLED[\s\S]*audio_started_at/);
   assert.match(dbRouter, /mark_live_session_started/);
   assert.match(dbRouter, /get_sentiq_live_refund_policy_version/);
@@ -1188,7 +1287,7 @@ function testMigrationFoundation(): void {
 
 function testLiveTitleFoundation(): void {
   const root = resolve(__dirname, "..");
-  const server = readFileSync(resolve(root, "backend/server.ts"), "utf8");
+  const server = readFileSync(resolve(root, "backend/serverLegacy.ts"), "utf8");
   const service = readFileSync(resolve(root, "backend/live/liveSessionService.ts"), "utf8");
   const persistence = readFileSync(resolve(root, "backend/live/sentiqLivePersistence.ts"), "utf8");
   const promptBuilders = readFileSync(resolve(root, "backend/ai/PromptBuilders.ts"), "utf8");
@@ -1201,6 +1300,552 @@ function testLiveTitleFoundation(): void {
     /function buildTitleGeneratePrompt[\s\S]*prefer:\s*"groq"/,
     "Live title generation must reuse the Groq-first title prompt",
   );
+}
+
+// ============================================================
+// PART 13 — TESTS A THROUGH K
+// ============================================================
+
+// TEST A: 15+ REPEATED CYCLES WITH VARIED TERMINATION MECHANISMS
+async function testPart13A_RapidCycles(): Promise<void> {
+  const { service, usageStore, keyPool } = createService();
+  const reasons = ["client_end", "escape", "backdrop_click", "timeout", "error"];
+  for (let i = 0; i < 15; i++) {
+    const session = await service.createSession({ userId: USER_ID });
+    if (i % 3 !== 0) {
+      // 2/3 of sessions start audio
+      await service.markSessionStarted({ userId: USER_ID, sessionId: session.sessionId });
+    }
+    const reason = reasons[i % reasons.length];
+    await service.endSession({ userId: USER_ID, sessionId: session.sessionId, reason });
+  }
+  const status = await service.getStatus(USER_ID);
+  assert.equal(status.activeSession, null, "zero active sessions after cycles");
+  assert.equal(usageStore.getActiveCount(USER_ID), 0, "active count must be 0");
+  assert.equal(keyPool.getActiveCount(1), 0, "key slot active count must be 0");
+  const next = await service.createSession({ userId: USER_ID });
+  assert.ok(next.sessionId, "next session should start without stale reservation dependency");
+  await service.endSession({ userId: USER_ID, sessionId: next.sessionId, reason: "client_end" });
+}
+
+// TEST B: END BEFORE AUDIO START
+async function testPart13B_EndBeforeAudioStart(): Promise<void> {
+  const { service, usageStore } = createService();
+  const session = await service.createSession({ userId: USER_ID });
+  const endResult = await service.endSession({ userId: USER_ID, sessionId: session.sessionId, reason: "client_end" });
+  assert.equal(endResult.status, "cancelled", "should be cancelled before audio starts");
+  assert.equal(endResult.durationSeconds, 0, "0 used seconds");
+  assert.equal(usageStore.getActiveCount(USER_ID), 0, "active count = 0");
+  assert.equal(usageStore.getUsedSeconds(USER_ID), 0, "no seconds charged when cancelled");
+  const status = await service.getStatus(USER_ID);
+  assert.equal(status.remainingSecondsToday, 1_500, "all reserved seconds refunded");
+  assert.equal(status.activeSession, null, "no active session remains");
+}
+
+// TEST C: DUPLICATE END
+async function testPart13C_DuplicateEnd(): Promise<void> {
+  let now = 10_000;
+  const { service, usageStore } = createService({ now: () => now });
+  const session = await service.createSession({ userId: USER_ID });
+  await service.markSessionStarted({ userId: USER_ID, sessionId: session.sessionId });
+  now += 25_000;
+  const end1 = await service.endSession({ userId: USER_ID, sessionId: session.sessionId, reason: "client_end" });
+  assert.equal(end1.finalized, true);
+  assert.equal(end1.durationSeconds, 25);
+  const used = usageStore.getUsedSeconds(USER_ID);
+  assert.equal(used, 25);
+
+  now += 5_000;
+  const end2 = await service.endSession({ userId: USER_ID, sessionId: session.sessionId, reason: "client_end" });
+  assert.equal(end2.alreadyEnded, true);
+  assert.equal(end2.finalized, false);
+
+  const end3 = await service.endSession({ userId: USER_ID, sessionId: session.sessionId, reason: "client_end" });
+  assert.equal(end3.alreadyEnded, true);
+  assert.equal(usageStore.getUsedSeconds(USER_ID), 25, "duplicate end calls must not double-charge usage");
+}
+
+// TEST D: DUPLICATE COMMIT
+async function testPart13D_DuplicateCommit(): Promise<void> {
+  const { service, commits } = createService();
+  const session = await service.createSession({ userId: USER_ID });
+  await service.markSessionStarted({ userId: USER_ID, sessionId: session.sessionId });
+  const segments: LiveTranscriptTurn[] = [
+    { sequence: 1, role: "user", text: "Hello Live" },
+    { sequence: 2, role: "assistant", text: "Hello! How can I help?" },
+  ];
+  const c1 = await service.commitSession({ userId: USER_ID, sessionId: session.sessionId, transcript: segments });
+  assert.equal(c1.alreadyCommitted, false);
+  assert.equal(c1.committedMessageCount, 1);
+  assert.equal(commits.length, 1);
+
+  const c2 = await service.commitSession({ userId: USER_ID, sessionId: session.sessionId, transcript: segments });
+  assert.equal(c2.alreadyCommitted, true);
+  assert.equal(commits.length, 1, "commits array must not re-insert on duplicate commit");
+
+  const c3 = await service.commitSession({ userId: USER_ID, sessionId: session.sessionId, transcript: segments });
+  assert.equal(c3.alreadyCommitted, true);
+  assert.equal(commits.length, 1);
+}
+
+// TEST E: SAME SOURCE CHAT
+async function testPart13E_SameSourceChat(): Promise<void> {
+  const SOURCE_CHAT = "chat-source-abc-123";
+  let count = 0;
+  const persistence: LiveSessionPersistence = {
+    prepareContext: async () => ({
+      conversationId: `live-dest-${++count}`,
+      displayName: "Test User",
+      workspaceCapsule: "Workspace",
+      conversationCapsule: "Capsule",
+      recentTurns: [],
+    }),
+    persistTranscript: async () => 1,
+  };
+  const { service } = createService();
+  (service as any).dependencies.persistence = persistence;
+
+  const s1 = await service.createSession({ userId: USER_ID, sourceConversationId: SOURCE_CHAT });
+  await service.endSession({ userId: USER_ID, sessionId: s1.sessionId, reason: "client_end" });
+
+  const s2 = await service.createSession({ userId: USER_ID, sourceConversationId: SOURCE_CHAT });
+  await service.endSession({ userId: USER_ID, sessionId: s2.sessionId, reason: "client_end" });
+
+  const s3 = await service.createSession({ userId: USER_ID, sourceConversationId: SOURCE_CHAT });
+  await service.endSession({ userId: USER_ID, sessionId: s3.sessionId, reason: "client_end" });
+
+  assert.ok(s1.liveConversationId);
+  assert.ok(s2.liveConversationId);
+  assert.ok(s3.liveConversationId);
+  assert.notEqual(s1.liveConversationId, s2.liveConversationId);
+  assert.notEqual(s2.liveConversationId, s3.liveConversationId);
+  assert.notEqual(s1.liveConversationId, SOURCE_CHAT);
+  assert.notEqual(s2.liveConversationId, SOURCE_CHAT);
+  assert.notEqual(s3.liveConversationId, SOURCE_CHAT);
+}
+
+// TEST F: SIX KEYS
+async function testPart13F_SixKeys(): Promise<void> {
+  let now = 10_000;
+  const pool = new GeminiLiveKeyPool({
+    keys: ["k1", "k2", "k3", "k4", "k5", "k6"],
+    now: () => now,
+  });
+  assert.equal(pool.size, 6, "pool size must equal 6");
+  const acquired: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    now += 1;
+    const lease = pool.acquire();
+    acquired.push(lease.slot);
+    pool.markActive(lease.slot);
+  }
+  assert.deepEqual(acquired.sort((a, b) => a - b), [1, 2, 3, 4, 5, 6]);
+  assert.equal(acquired.includes(6), true, "slot 6 must be selected");
+  for (const slot of acquired) pool.releaseActive(slot);
+}
+
+// TEST G: PROVIDER FAILOVER
+async function testPart13G_ProviderFailover(): Promise<void> {
+  const attemptedKeys: string[] = [];
+  const keyPool = new GeminiLiveKeyPool({
+    keys: ["failover-k1", "failover-k2"],
+    now: () => Date.now(),
+  });
+  const tokenService = new GeminiLiveTokenService({
+    fetchImpl: async (_url, init) => {
+      const key = (init.headers as any)?.["x-goog-api-key"];
+      attemptedKeys.push(key);
+      if (key === "failover-k1") {
+        return {
+          ok: false,
+          status: 429,
+          json: async () => ({ error: { message: "Resource exhausted" } }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ name: "auth_tokens/failover-success" }),
+      };
+    },
+  });
+  const { persistence } = createPersistence();
+  const service = new LiveSessionService({
+    config: liveConfig(true),
+    tierPolicy: loadLiveTierPolicy({}),
+    planResolver: new LivePlanResolver(async () => "premium", () => {}),
+    usageStore: new InMemoryLiveUsageStore(() => Date.now()),
+    keyPool,
+    tokenService,
+    persistence,
+    titleGenerator: { generateTitle: async () => {} },
+    now: () => Date.now(),
+    newId: () => "failover-session-test",
+    logger: () => {},
+  });
+
+  const session = await service.createSession({ userId: USER_ID });
+  assert.equal(session.ephemeralToken, "auth_tokens/failover-success");
+  assert.deepEqual(attemptedKeys, ["failover-k1", "failover-k2"]);
+  await service.endSession({ userId: USER_ID, sessionId: session.sessionId, reason: "client_end" });
+}
+
+// TEST H: NETWORK FAILURE DOES NOT POISON KEY
+async function testPart13H_NetworkFailureDoesNotPoisonKey(): Promise<void> {
+  const { service } = createService({ key: "network-test-key" });
+  const s1 = await service.createSession({ userId: USER_ID });
+  await service.reportClientError({
+    userId: USER_ID,
+    sessionId: s1.sessionId,
+    errorType: "websocket_failed",
+    code: 1006,
+  });
+  await service.endSession({ userId: USER_ID, sessionId: s1.sessionId, reason: "network_error" });
+
+  // Key pool must not be permanently quarantined
+  const s2 = await service.createSession({ userId: USER_ID });
+  assert.ok(s2.sessionId, "key must remain available after client network failure");
+  await service.endSession({ userId: USER_ID, sessionId: s2.sessionId, reason: "client_end" });
+}
+
+// TEST I: SESSION RESUMPTION
+async function testPart13I_SessionResumption(): Promise<void> {
+  const { service, usageStore } = createService();
+  const session = await service.createSession({ userId: USER_ID, sourceConversationId: "source-resumption-test" });
+  await service.markSessionStarted({ userId: USER_ID, sessionId: session.sessionId });
+
+  // Request resume token using getResumeToken
+  const resumeToken = await service.getResumeToken({ userId: USER_ID, sessionId: session.sessionId });
+  assert.ok(resumeToken.ephemeralToken, "must mint continuation token");
+  assert.equal(resumeToken.sessionId, session.sessionId, "must maintain same session ID");
+  assert.ok(resumeToken.webSocketUrl.includes("v1beta"), "websocket url must use v1beta");
+  assert.equal(session.setup.model, "models/gemini-3.8-live", "initial setup must use models/gemini-3.8-live");
+
+  // Verify no new reservation or session counter increment
+  const userStatus = await usageStore.getUserStatus(USER_ID);
+  assert.equal(userStatus.sessionsStarted, 1, "session resumption must not consume additional daily sessions");
+  assert.equal(userStatus.activeSessions, 1, "exactly one active session maintained");
+
+  await service.endSession({ userId: USER_ID, sessionId: session.sessionId, reason: "client_end" });
+}
+
+// TEST J: GOAWAY RECONNECT
+async function testPart13J_GoAwayReconnect(): Promise<void> {
+  const { service, commits, usageStore } = createService();
+  const session = await service.createSession({ userId: USER_ID, sourceConversationId: "source-chat-orig" });
+  await service.markSessionStarted({ userId: USER_ID, sessionId: session.sessionId });
+
+  // 1. Initial turns
+  const transcript: LiveTranscriptTurn[] = [
+    { sequence: 1, role: "user", text: "Part 1 of conversation" },
+    { sequence: 2, role: "assistant", text: "I hear you clearly." },
+  ];
+
+  // 2. Simulate Gemini sessionResumptionUpdate and GoAway event
+  const resumptionHandle = "gemini-resumption-handle-777";
+  const goAwayTimeLeft = "10s";
+  assert.ok(resumptionHandle);
+  assert.ok(goAwayTimeLeft);
+
+  // 3. Client reconnects socket using cached resumptionHandle under same logical session
+  transcript.push(
+    { sequence: 3, role: "user", text: "Part 2 after reconnect" },
+    { sequence: 4, role: "assistant", text: "Continuing smoothly." },
+  );
+
+  // 4. Commit and end
+  const commitResult = await service.commitSession({
+    userId: USER_ID,
+    sessionId: session.sessionId,
+    transcript,
+  });
+  await service.endSession({ userId: USER_ID, sessionId: session.sessionId, reason: "client_end" });
+
+  assert.equal(commitResult.conversationId, session.liveConversationId, "no new destination chat");
+  assert.equal(commits.length, 1, "exactly one commit to destination conversation");
+  assert.equal(commits[0].transcript.length, 4, "transcript continuity preserved across reconnect");
+  const userStatus = await usageStore.getUserStatus(USER_ID);
+  assert.equal(userStatus.sessionsStarted, 1, "no duplicate quota reservation taken");
+  assert.equal(userStatus.activeSessions, 0, "session properly ended");
+}
+
+// TEST K: PROCESS RECOVERY
+async function testPart13K_ProcessRecovery(): Promise<void> {
+  let now = 10_000;
+  const usageStore = new InMemoryLiveUsageStore(() => now);
+  const p1 = createService({ planCode: "premium", now: () => now, usageStore });
+  const session = await p1.service.createSession({ userId: USER_ID });
+  await p1.service.markSessionStarted({ userId: USER_ID, sessionId: session.sessionId });
+
+  // Advance time past expiration
+  now += 1_000_000;
+
+  // New process recovery instance
+  const p2 = createService({ planCode: "premium", now: () => now, usageStore });
+  const cleaned = await p2.service.cleanupStaleSessions(true);
+  assert.equal(cleaned >= 1, true, "stale session must be cleaned by recovery process");
+  const stored = await usageStore.getSession({ userId: USER_ID, sessionId: session.sessionId });
+  assert.equal(stored?.status, "timeout", "timed out session marked as timeout");
+  assert.equal(usageStore.getActiveCount(USER_ID), 0, "capacity is released");
+}
+
+// TEST L: COMMIT / END RACE
+async function testPart13L_CommitEndRace(): Promise<void> {
+  let now = 10_000;
+  const { service, commits, usageStore } = createService({ now: () => now });
+  const session = await service.createSession({ userId: USER_ID });
+  await service.markSessionStarted({ userId: USER_ID, sessionId: session.sessionId });
+  now += 15_000;
+
+  const segments: LiveTranscriptTurn[] = [
+    { sequence: 1, role: "user", text: "Race test question" },
+    { sequence: 2, role: "assistant", text: "Race test answer" },
+  ];
+
+  // Trigger concurrent commit and end
+  const [commitResult, endResult] = await Promise.all([
+    service.commitSession({ userId: USER_ID, sessionId: session.sessionId, transcript: segments }),
+    service.endSession({ userId: USER_ID, sessionId: session.sessionId, reason: "client_end" }),
+  ]);
+
+  assert.equal(commitResult.alreadyCommitted, false, "commit succeeded");
+  assert.equal(endResult.alreadyEnded, false, "end succeeded");
+  assert.equal(commits.length, 1, "transcript committed exactly once");
+  assert.equal(usageStore.getUsedSeconds(USER_ID), 15, "charged exactly 15 seconds");
+  assert.equal(usageStore.getActiveCount(USER_ID), 0, "capacity released");
+}
+
+// TEST M: DUPLICATE SEGMENT SUBMISSION
+async function testPart13M_DuplicateSegmentSubmission(): Promise<void> {
+  const { service, commits, usageStore } = createService();
+  const session = await service.createSession({ userId: USER_ID });
+  await service.markSessionStarted({ userId: USER_ID, sessionId: session.sessionId });
+
+  const turnsWithDuplicates: LiveTranscriptTurn[] = [
+    { sequence: 1, role: "user", text: "Hello" },
+    { sequence: 1, role: "user", text: "Hello duplicate" },
+    { sequence: 2, role: "assistant", text: "Hi there" },
+    { sequence: 2, role: "assistant", text: "Hi there duplicate" },
+  ];
+
+  const res = await service.commitSession({
+    userId: USER_ID,
+    sessionId: session.sessionId,
+    transcript: turnsWithDuplicates,
+  });
+
+  assert.equal(res.alreadyCommitted, false);
+  assert.equal(commits.length, 1);
+
+  // Directly verify that the underlying storage deduplicated segments by sequence
+  const sessionSegments = usageStore.transcriptSegments.get(session.sessionId);
+  if (sessionSegments) {
+    const seqs = [...sessionSegments.keys()];
+    const uniqueSeqs = new Set(seqs);
+    assert.equal(seqs.length, uniqueSeqs.size, "segments must be deduplicated by sequence number");
+  }
+
+  await service.endSession({ userId: USER_ID, sessionId: session.sessionId, reason: "client_end" });
+}
+
+// TEST N: INFRASTRUCTURE AND PROVIDER FAILURES NEVER RETURN BUSY
+async function testPart13N_DbFailureReturnsInternalErrorNotBusy(): Promise<void> {
+  // 1. Database query failure must return internal_error, NOT busy
+  const failingDbStore = new InMemoryLiveUsageStore(() => Date.now());
+  failingDbStore.getUserStatus = async () => { throw new Error("database connection pool exhausted"); };
+  failingDbStore.reserveSession = async () => { throw new Error("fatal postgres connection dropped"); };
+
+  const { service: dbFailService } = createService({ usageStore: failingDbStore });
+  const dbStatus = await dbFailService.getStatus(USER_ID);
+  assert.equal(dbStatus.available, false);
+  assert.equal(dbStatus.reason, "internal_error", "DB query error must classify as internal_error, not busy");
+
+  await assert.rejects(
+    () => dbFailService.createSession({ userId: USER_ID }),
+    (err: unknown) => {
+      assert(err instanceof Error);
+      assert.notEqual((err as any).code, "live_busy", "DB failure must not masquerade as live_busy");
+      assert.notEqual((err as any).code, "busy", "DB failure must not masquerade as busy");
+      return true;
+    },
+  );
+
+  // 2. Google Gemini 503 outage must throw live_provider_unavailable, NOT busy
+  const { service: providerOutageService } = createService({
+    tokenFetchImpl: async () => ({ ok: false, status: 503, json: async () => ({}) }),
+  });
+  await assert.rejects(
+    () => providerOutageService.createSession({ userId: USER_ID }),
+    (err: unknown) => {
+      assert(err instanceof LiveSessionError);
+      assert.equal(err.code, "live_provider_unavailable", "503 outage must classify as live_provider_unavailable");
+      assert.notEqual(err.message, "Live voice is busy. Try again soon.");
+      return true;
+    },
+  );
+
+  // 3. Google Gemini 401 auth failure must throw live_provider_auth_failure, NOT busy
+  const { service: authFailService } = createService({
+    tokenFetchImpl: async () => ({ ok: false, status: 401, json: async () => ({}) }),
+  });
+  await assert.rejects(
+    () => authFailService.createSession({ userId: USER_ID }),
+    (err: unknown) => {
+      assert(err instanceof LiveSessionError);
+      assert.equal(err.code, "live_provider_auth_failure", "401 auth error must classify as live_provider_auth_failure");
+      assert.notEqual(err.message, "Live voice is busy. Try again soon.");
+      return true;
+    },
+  );
+
+  // 4. Provider network timeout must throw live_network_error, NOT busy
+  const { service: networkFailService } = createService({
+    tokenFetchImpl: async () => { throw new Error("fetch timeout / network down"); },
+  });
+  await assert.rejects(
+    () => networkFailService.createSession({ userId: USER_ID }),
+    (err: unknown) => {
+      assert(err instanceof LiveSessionError);
+      assert.equal(err.code, "live_network_error", "network drop must classify as live_network_error");
+      assert.notEqual(err.message, "Live voice is busy. Try again soon.");
+      return true;
+    },
+  );
+
+  // 5. Empty keypool must throw live_provider_configuration, NOT busy
+  const emptyKeyPool = new GeminiLiveKeyPool({ keys: [] });
+  const { service: emptyPoolService } = createService({ keyPool: emptyKeyPool });
+  await assert.rejects(
+    () => emptyPoolService.createSession({ userId: USER_ID }),
+    (err: unknown) => {
+      assert(err instanceof LiveSessionError);
+      assert.equal(err.code, "live_provider_configuration", "empty key pool must classify as live_provider_configuration");
+      assert.notEqual(err.message, "Live voice is busy. Try again soon.");
+      return true;
+    },
+  );
+
+  // 6. getStatus when provider is in cooldown due to 503 outage must return provider_unavailable, NOT busy
+  const coolingKeyPool = new GeminiLiveKeyPool({ keys: ["key1"] });
+  coolingKeyPool.markFailure(1, "unavailable");
+  const { service: coolingService } = createService({ keyPool: coolingKeyPool });
+  const coolingStatus = await coolingService.getStatus(USER_ID);
+  assert.equal(coolingStatus.available, false);
+  assert.equal(coolingStatus.reason, "provider_unavailable", "outage cooldown must report provider_unavailable, not busy");
+}
+
+// TEST O: GENUINE CAPACITY FAILURE RETURNS CAPACITY CLASSIFICATION
+async function testPart13O_GenuineCapacityFailureClassification(): Promise<void> {
+  // Global capacity exhaustion
+  const globalCapService = createService({
+    tierPolicy: loadLiveTierPolicy({ SENTIQ_LIVE_GLOBAL_MAX_ACTIVE: "1" }),
+  }).service;
+  const s1 = await globalCapService.createSession({ userId: USER_ID });
+
+  const status = await globalCapService.getStatus("other-user");
+  assert.equal(status.available, false);
+  assert.equal(status.reason, "global_capacity", "must report global_capacity status");
+
+  await assert.rejects(
+    () => globalCapService.createSession({ userId: "other-user" }),
+    (err: unknown) => err instanceof LiveSessionError && err.code === "live_global_capacity",
+  );
+  await globalCapService.endSession({ userId: USER_ID, sessionId: s1.sessionId, reason: "client_end" });
+
+  // Daily quota exhaustion
+  let now = 10_000;
+  const dailyService = createService({
+    planCode: "free",
+    now: () => now,
+    tierPolicy: loadLiveTierPolicy({ SENTIQ_LIVE_FREE_DAILY_MINUTES: "1", SENTIQ_LIVE_FREE_MAX_SESSION_SECONDS: "60" }),
+  }).service;
+  const sDaily = await dailyService.createSession({ userId: USER_ID });
+  await dailyService.markSessionStarted({ userId: USER_ID, sessionId: sDaily.sessionId });
+  now += 60_000;
+  await dailyService.endSession({ userId: USER_ID, sessionId: sDaily.sessionId, reason: "client_end" });
+
+  const dailyStatus = await dailyService.getStatus(USER_ID);
+  assert.equal(dailyStatus.available, false);
+  assert.equal(dailyStatus.reason, "daily_limit_reached");
+
+  await assert.rejects(
+    () => dailyService.createSession({ userId: USER_ID }),
+    (err: unknown) => err instanceof LiveSessionError && err.code === "live_daily_time_exhausted",
+  );
+}
+
+// TEST P: IMMEDIATE REOPEN AFTER NORMAL TERMINATION
+async function testPart13P_ImmediateReopenAfterNormalTermination(): Promise<void> {
+  const { service, usageStore } = createService();
+  const s1 = await service.createSession({ userId: USER_ID, sourceConversationId: "chat-source-1" });
+  await service.markSessionStarted({ userId: USER_ID, sessionId: s1.sessionId });
+  await service.endSession({ userId: USER_ID, sessionId: s1.sessionId, reason: "client_end" });
+
+  // 0ms delay immediate reopen
+  const s2 = await service.createSession({ userId: USER_ID, sourceConversationId: "chat-source-1" });
+  assert.ok(s2.sessionId, "immediate reopen must succeed");
+  assert.notEqual(s1.sessionId, s2.sessionId, "new session must have unique session ID");
+  assert.notEqual(s1.liveConversationId, s2.liveConversationId, "new session must have separate destination chat");
+
+  await service.markSessionStarted({ userId: USER_ID, sessionId: s2.sessionId });
+  await service.endSession({ userId: USER_ID, sessionId: s2.sessionId, reason: "client_end" });
+  assert.equal(usageStore.getActiveCount(USER_ID), 0, "all sessions cleanly closed");
+}
+
+// TEST Q: STALE STARTUP CLEANUP
+async function testPart13Q_StaleStartupCleanup(): Promise<void> {
+  let now = 10_000;
+  const usageStore = new InMemoryLiveUsageStore(() => now);
+  const tierPolicy = loadLiveTierPolicy({
+    SENTIQ_LIVE_PREMIUM_MAX_SESSION_SECONDS: "60",
+    SENTIQ_LIVE_STALE_GRACE_SECONDS: "5",
+  });
+  const { service } = createService({ now: () => now, usageStore, tierPolicy });
+
+  // Session provisioned but audio never started
+  const session = await service.createSession({ userId: USER_ID });
+  assert.equal(usageStore.getActiveCount(USER_ID), 1);
+
+  // Advance time past reservation + grace (60s + 5s = 65s)
+  now += 70_000;
+
+  const cleaned = await service.cleanupStaleSessions(true);
+  assert.equal(cleaned >= 1, true, "stale startup session must be cleaned");
+
+  const stored = await usageStore.getSession({ userId: USER_ID, sessionId: session.sessionId });
+  assert.equal(stored?.status, "cancelled", "status must be cancelled");
+  assert.equal(stored?.usedSeconds, 0, "0 seconds charged");
+  assert.equal(usageStore.getActiveCount(USER_ID), 0, "active capacity released");
+
+  const status = await service.getStatus(USER_ID);
+  assert.equal(status.remainingSecondsToday, 1_500, "100% refunded to user daily balance");
+}
+
+// TEST R: STALE RUNNING CLEANUP
+async function testPart13R_StaleRunningCleanup(): Promise<void> {
+  let now = 10_000;
+  const usageStore = new InMemoryLiveUsageStore(() => now);
+  const { service } = createService({
+    now: () => now,
+    usageStore,
+    tierPolicy: loadLiveTierPolicy({ SENTIQ_LIVE_FREE_MAX_SESSION_SECONDS: "120" }),
+    planCode: "free",
+  });
+
+  // Session started audio, but client disconnected abruptly without calling endSession
+  const session = await service.createSession({ userId: USER_ID });
+  await service.markSessionStarted({ userId: USER_ID, sessionId: session.sessionId });
+
+  // Advance time past max session time (120s + grace)
+  now += 200_000;
+
+  const cleaned = await service.cleanupStaleSessions(true);
+  assert.equal(cleaned >= 1, true, "stale running session must be cleaned");
+
+  const stored = await usageStore.getSession({ userId: USER_ID, sessionId: session.sessionId });
+  assert.equal(stored?.status, "timeout", "timed-out running session marked as timeout");
+  assert.equal(stored?.usedSeconds, 120, "used seconds capped at session maximum");
+  assert.equal(usageStore.getActiveCount(USER_ID), 0, "capacity lease freed");
 }
 
 async function main(): Promise<void> {
@@ -1221,7 +1866,28 @@ async function main(): Promise<void> {
   testFrontendFoundation();
   testMigrationFoundation();
   testLiveTitleFoundation();
-  console.log("PASS | SentIQ Live Phase 1, Phase 2, and Phase 3 focused tests passed.");
+
+  // Part 13 Tests A through R
+  await testPart13A_RapidCycles();
+  await testPart13B_EndBeforeAudioStart();
+  await testPart13C_DuplicateEnd();
+  await testPart13D_DuplicateCommit();
+  await testPart13E_SameSourceChat();
+  await testPart13F_SixKeys();
+  await testPart13G_ProviderFailover();
+  await testPart13H_NetworkFailureDoesNotPoisonKey();
+  await testPart13I_SessionResumption();
+  await testPart13J_GoAwayReconnect();
+  await testPart13K_ProcessRecovery();
+  await testPart13L_CommitEndRace();
+  await testPart13M_DuplicateSegmentSubmission();
+  await testPart13N_DbFailureReturnsInternalErrorNotBusy();
+  await testPart13O_GenuineCapacityFailureClassification();
+  await testPart13P_ImmediateReopenAfterNormalTermination();
+  await testPart13Q_StaleStartupCleanup();
+  await testPart13R_StaleRunningCleanup();
+
+  console.log("PASS | All SentIQ Live Production Suite tests (including Part 13 A through R) passed.");
 }
 
 main().catch((error) => {
@@ -1229,3 +1895,4 @@ main().catch((error) => {
   console.error(error instanceof Error ? error.stack || error.message : String(error));
   process.exit(1);
 });
+

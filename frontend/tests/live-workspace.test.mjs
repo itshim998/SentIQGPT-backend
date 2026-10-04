@@ -59,8 +59,7 @@ for (const token of [
   'setPanelState("speaking"',
   'muted ? "muted" : "listening"',
   'setAttribute("aria-pressed", muted ? "true" : "false")',
-  'setAttribute("aria-expanded", transcriptWrap.open ? "true" : "false")',
-  "finishSession(\"client_end\")",
+  "terminateLiveSession",
 ]) assert.ok(liveController.includes(token), `Live controller state/control contract missing ${token}`);
 
 assert.ok(domRefs.includes('import "../panel-focus-recovery.js";'));

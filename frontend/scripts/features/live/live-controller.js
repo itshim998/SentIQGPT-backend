@@ -8,8 +8,6 @@ import {
   buildLiveAudioInputMessage,
 } from "./live-audio-protocol.js";
 
-const LIVE_HANDSHAKE_STABILITY_MS = 750;
-
 (function initializeSentIQLive() {
   const API = window.SentIQAPI;
   const liveButton = document.getElementById("live-beta-btn");
@@ -18,15 +16,14 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
   const messageLabel = document.getElementById("live-beta-message");
   const transcriptElement = document.getElementById("live-beta-transcript");
   const transcriptWrap = document.getElementById("live-beta-transcript-wrap");
-  const transcriptToggle = document.getElementById("live-beta-transcript-toggle");
   const remainingLabel = document.getElementById("live-beta-remaining");
   const muteButton = document.getElementById("live-beta-mute");
-  const endButton = document.getElementById("live-beta-end");
+  const closeButton = document.getElementById("live-beta-close-btn");
   const retryButton = document.getElementById("live-beta-retry");
 
   if (
     !API || !liveButton || !panel || !stateLabel || !messageLabel
-    || !muteButton || !endButton || !retryButton || !remainingLabel
+    || !muteButton || !retryButton || !remainingLabel
   ) return;
 
   let currentSession = null;
@@ -36,6 +33,7 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
   let playback = null;
   let audioContext = null;
   let audioInputReady = false;
+  let bufferedInputChunks = [];
   let loggedFirstInputChunk = false;
   let loggedFirstOutputChunk = false;
   let maxDurationTimer = 0;
@@ -45,10 +43,14 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
   let muted = false;
   let transcript = [];
   let previousFocus = null;
+  let terminationPromise = null;
+  let reconnecting = false;
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_ATTEMPTS = 3;
   let lastStatus = {
     enabled: false,
     available: false,
-    reason: "busy",
+    reason: "not_available",
     remainingSecondsToday: 0,
     remainingSessionsToday: 0,
     maxSessionSeconds: 0,
@@ -57,10 +59,6 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
 
   function liveDebug(event, details = {}) {
     window.SentIQChat?.debugLog?.("[Live]", { event, ...details });
-  }
-
-  function waitForHandshakeStability() {
-    return new Promise((resolve) => window.setTimeout(resolve, LIVE_HANDSHAKE_STABILITY_MS));
   }
 
   function classifySocketClose(event) {
@@ -227,12 +225,6 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
     remainingTimer = window.setInterval(updateSessionTime, 1_000);
   }
 
-  function setEndButtonLabel(label) {
-    const text = endButton.querySelector("span");
-    if (text) text.textContent = label;
-    endButton.setAttribute("aria-label", label === "Close" ? "Close Live voice" : "End Live voice");
-  }
-
   function supportsLiveAudio() {
     return Boolean(
       typeof WebSocket === "function"
@@ -251,14 +243,29 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
     if (error?.code === "live_daily_time_exhausted") {
       return { label: "Daily limit reached", message: getLiveUnavailableCopy("daily_limit_reached") };
     }
-    if ([
-      "live_active_limit",
-      "live_global_capacity",
-      "live_project_capacity",
-      "live_capacity_unavailable",
-      "live_token_provision_failed",
-    ].includes(error?.code)) {
-      return { label: "Busy", message: getLiveUnavailableCopy("busy") };
+    if (error?.code === "live_active_limit") {
+      return { label: "Session active", message: "You already have an active Live voice session. Please close it first." };
+    }
+    if (error?.code === "live_provider_rate_limited") {
+      return { label: "Rate limited", message: "Live voice is temporarily rate limited. Try again shortly." };
+    }
+    if (error?.code === "live_global_capacity" || error?.code === "live_project_capacity" || error?.code === "live_capacity_unavailable") {
+      return { label: "At capacity", message: "Live voice is temporarily at capacity. Try again shortly." };
+    }
+    if (error?.code === "live_provider_unavailable") {
+      return { label: "Provider unavailable", message: "Live voice provider is currently unavailable. Try again shortly." };
+    }
+    if (error?.code === "live_provider_auth_failure") {
+      return { label: "Provider error", message: "Live voice authentication failed. Check server configuration." };
+    }
+    if (error?.code === "live_provider_configuration") {
+      return { label: "Configuration error", message: "Live voice provider is not properly configured." };
+    }
+    if (error?.code === "live_network_error") {
+      return { label: "Network error", message: "Could not connect to Live voice. Check your internet connection." };
+    }
+    if (error?.code === "live_internal_error") {
+      return { label: "Server error", message: "An internal server error occurred while starting Live voice." };
     }
     return { label: "Could not start", message: "Check microphone access and try Live voice again." };
   }
@@ -270,7 +277,7 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
     panel.hidden = false;
     panel.setAttribute("aria-hidden", "false");
     document.body.classList.add("live-beta-open");
-    window.requestAnimationFrame(() => endButton.focus());
+    window.requestAnimationFrame(() => (closeButton || muteButton)?.focus());
   }
 
   function hidePanel() {
@@ -278,10 +285,9 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
     panel.setAttribute("aria-hidden", "true");
     document.body.classList.remove("live-beta-open");
     if (transcriptWrap) transcriptWrap.open = false;
-    transcriptToggle?.setAttribute("aria-expanded", "false");
-    transcriptToggle?.setAttribute("aria-label", "Show transcript");
     previousFocus?.focus?.();
     previousFocus = null;
+    window.SentIQPanels?.sync?.();
   }
 
   function renderTranscript() {
@@ -327,93 +333,126 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
     remainingTimer = 0;
     sessionEndAt = 0;
     audioInputReady = false;
+    bufferedInputChunks = [];
     playback?.clear();
-    const capture = inputCapture;
-    inputCapture = null;
-    if (capture) await capture.stop().catch(() => {});
+
+    // 1. Immediately and synchronously stop all media stream tracks
     if (mediaStream) {
       for (const track of mediaStream.getTracks()) track.stop();
       mediaStream = null;
     }
+
+    // 2. Immediately close WebSocket
+    const activeSocket = socket;
+    socket = null;
+    if (activeSocket && activeSocket.readyState < WebSocket.CLOSING) {
+      try { activeSocket.close(1000, "session ended"); } catch {}
+    }
+
+    // 3. Immediately close AudioContext
+    const context = audioContext;
+    audioContext = null;
+    if (context && context.state !== "closed") {
+      await context.close().catch(() => {});
+    }
+
+    const capture = inputCapture;
+    inputCapture = null;
+    if (capture) await capture.stop().catch(() => {});
+
     const player = playback;
     playback = null;
     if (player) await player.close().catch(() => {});
-    const context = audioContext;
-    audioContext = null;
-    if (context) await context.close().catch(() => {});
-    const activeSocket = socket;
-    socket = null;
-    if (activeSocket && activeSocket.readyState < WebSocket.CLOSING) activeSocket.close(1000, "session ended");
+
     muteButton.disabled = true;
     liveDebug("local_resources_released");
   }
 
-  async function finishSession(reason = "client_end", options = {}) {
-    if (ending) return;
+  function terminateLiveSession(options = {}) {
+    const reason = options.reason || "client_end";
+    const source = options.source || "user";
+    liveDebug("terminate_session", { reason, source });
+
+    if (terminationPromise) return terminationPromise;
+
     const session = currentSession;
-    if (!session) {
-      if (options.failure) {
-        setPanelState(options.failure.state || "error", options.failure.label, options.failure.message);
-        setEndButtonLabel("Close");
-      } else {
-        hidePanel();
-      }
-      return;
+    const hasSession = Boolean(session);
+    const wasAudioStarted = Boolean(session?.audioStarted);
+    const currentTranscript = [...transcript];
+    const liveChatId = session?.liveConversationId || session?.conversationId;
+
+    // 1. Immediately and synchronously tear down hardware & socket handles
+    if (mediaStream) {
+      for (const track of mediaStream.getTracks()) track.stop();
+      mediaStream = null;
     }
-    ending = true;
-    endButton.disabled = true;
-    setPanelState("ended", "Ending", "Closing the Live conversation.");
-    await releaseLocalResources();
-    let commitSucceeded = true;
-    try {
-      if (!options.skipCommit && session.audioStarted && transcript.length > 0) {
-        await API.commitLiveSession(session.sessionId, { transcript });
-      }
-    } catch {
-      commitSucceeded = false;
+    if (socket && socket.readyState < WebSocket.CLOSING) {
+      try { socket.close(1000, "session ended"); } catch {}
+      socket = null;
     }
-    const endResult = await API.endLiveSession(
-      session.sessionId,
-      reason,
-      { keepalive: Boolean(options.keepalive) },
-    ).catch(() => null);
+    if (audioContext && audioContext.state !== "closed") {
+      try { audioContext.close(); } catch {}
+      audioContext = null;
+    }
+    reconnecting = false;
+    reconnectAttempts = 0;
+    void releaseLocalResources();
+
+    // 2. Immediately and synchronously hide UI & clear flags
+    setPanelState("ended", "Ending", "Live session ended.");
+    hidePanel();
     currentSession = null;
+    ending = false;
     muted = false;
     const muteLabel = muteButton.querySelector("span");
     if (muteLabel) muteLabel.textContent = "Mute";
     muteButton.setAttribute("aria-label", "Mute microphone");
     muteButton.setAttribute("aria-pressed", "false");
-    endButton.disabled = false;
-    setEndButtonLabel("Close");
-    ending = false;
-    if (options.failure) {
-      setPanelState(options.failure.state || "error", options.failure.label, options.failure.message);
-    } else if (!endResult) {
-      setPanelState("error", "Cleanup pending", "Live voice ended here. Try again after the status refresh completes.");
-    } else {
-      setPanelState(
-        commitSucceeded ? "ended" : "error",
-        commitSucceeded ? "Ended" : "Transcript not saved",
-        commitSucceeded ? "The Live conversation has ended." : "The conversation ended, but its transcript could not be saved.",
-      );
-    }
-    liveDebug("session_finished", {
-      reason,
-      cleanup_succeeded: Boolean(endResult),
-      transcript_saved: commitSucceeded,
-      audio_started: Boolean(session.audioStarted),
-    });
-    if (commitSucceeded && session.audioStarted) {
-      await window.SentIQChat?.refreshLiveConversation?.(session.conversationId).catch(() => {});
-    }
-    await refreshAvailability();
+    muteButton.disabled = true;
+
+    // 3. Background asynchronous cleanup (non-blocking for UI)
+    terminationPromise = (async () => {
+      try {
+        if (hasSession && session.sessionId) {
+          if (!options.skipCommit && wasAudioStarted && currentTranscript.length > 0) {
+            try {
+              await API.commitLiveSession(
+                session.sessionId,
+                { transcript: currentTranscript },
+                { keepalive: Boolean(options.keepalive) },
+              );
+              liveDebug("background_commit_success", { sessionId: session.sessionId });
+            } catch (err) {
+              liveDebug("background_commit_error", { error: String(err) });
+            }
+          }
+          await API.endLiveSession(session.sessionId, reason, {
+            keepalive: Boolean(options.keepalive),
+          }).catch(() => null);
+
+          if (liveChatId && wasAudioStarted) {
+            window.SentIQChat?.refreshLiveConversation?.(liveChatId).catch(() => {});
+          }
+        }
+      } finally {
+        terminationPromise = null;
+        void refreshAvailability();
+      }
+    })();
+
+    return terminationPromise;
   }
 
-  function failSession(reason, state, label, message) {
-    return finishSession(reason, {
-      skipCommit: true,
-      failure: { state, label, message },
-    });
+  async function failSession(reason, state, label, message) {
+    liveDebug("fail_session", { reason, state });
+    await releaseLocalResources();
+    setPanelState(state, label, message);
+    if (currentSession?.sessionId) {
+      await API.endLiveSession(currentSession.sessionId, reason).catch(() => null);
+      currentSession = null;
+    }
+    ending = false;
+    await refreshAvailability();
   }
 
   async function handleServerMessage(event) {
@@ -421,6 +460,7 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
     try {
       raw = typeof event.data === "string" ? event.data : await event.data.text();
       const message = JSON.parse(raw);
+
       if (Object.prototype.hasOwnProperty.call(message, "setupComplete")) {
         if (inputCapture) return;
         const historySent = sendSocketMessage({
@@ -431,13 +471,15 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
         });
         if (!historySent) throw new Error("Live setup could not be completed.");
         liveDebug("setup_complete");
-        // Some provider-side policy/quota failures arrive immediately after
-        // setupComplete. Do not start metering or audio capture until the
-        // socket has survived that setup window.
-        await waitForHandshakeStability();
+
         if (ending || !currentSession || socket?.readyState !== WebSocket.OPEN) return;
+
         inputCapture = new PcmInputCapture(mediaStream, (pcm) => {
-          if (!audioInputReady || muted || socket?.readyState !== WebSocket.OPEN) return;
+          if (muted || socket?.readyState !== WebSocket.OPEN) return;
+          if (!audioInputReady) {
+            if (bufferedInputChunks.length < 5) bufferedInputChunks.push(pcm);
+            return;
+          }
           if (!loggedFirstInputChunk) {
             loggedFirstInputChunk = true;
             liveDebug("input_audio_started", {
@@ -447,18 +489,38 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
           }
           sendSocketMessage(buildLiveAudioInputMessage(pcm));
         }, audioContext);
+
         await inputCapture.start();
         await API.markLiveSessionStarted(currentSession.sessionId);
         currentSession.audioStarted = true;
         audioInputReady = true;
+
+        if (bufferedInputChunks.length > 0) {
+          for (const chunk of bufferedInputChunks) {
+            sendSocketMessage(buildLiveAudioInputMessage(chunk));
+          }
+          bufferedInputChunks = [];
+        }
+
         startRemainingTimer(currentSession.sessionMaxSeconds);
         maxDurationTimer = window.setTimeout(
-          () => finishSession("max_duration"),
+          () => terminateLiveSession({ reason: "max_duration", source: "timer" }),
           currentSession.sessionMaxSeconds * 1_000,
         );
         muteButton.disabled = false;
         setPanelState("listening", "Listening", "Speak naturally. You can interrupt while SentIQ is responding.");
         return;
+      }
+
+      if (message.sessionResumptionUpdate?.newHandle) {
+        if (currentSession) {
+          currentSession.resumptionHandle = message.sessionResumptionUpdate.newHandle;
+          currentSession.resumable = message.sessionResumptionUpdate.resumable !== false;
+        }
+        liveDebug("resume_update", {
+          handle: "present",
+          resumable: currentSession?.resumable,
+        });
       }
 
       const content = message.serverContent;
@@ -497,7 +559,15 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
       if (content?.turnComplete) {
         setPanelState(muted ? "muted" : "listening", muted ? "Muted" : "Listening", muted ? "Unmute when you are ready." : "Speak when you are ready.");
       }
-      if (message.goAway) await finishSession("socket_closed");
+      if (message.goAway) {
+        const timeLeft = message.goAway.timeLeft;
+        liveDebug("goaway_received", { timeLeft });
+        if (!ending && currentSession?.resumptionHandle && (sessionEndAt > Date.now()) && !reconnecting) {
+          void attemptSessionResumption("goaway");
+        } else {
+          await terminateLiveSession({ reason: "socket_closed", source: "go_away" });
+        }
+      }
     } catch {
       await failSession(
         "audio_start_failed",
@@ -512,102 +582,105 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
     if (currentSession || ending) return;
     loggedFirstInputChunk = false;
     loggedFirstOutputChunk = false;
-    const audioUnlockPromise = supportsLiveAudio()
-      ? unlockAudioContext().then(() => null).catch((error) => error)
-      : Promise.resolve(null);
-    const status = await refreshAvailability();
-    liveDebug("start_status", {
-      available: status.available,
-      reason: status.reason,
-      remaining_seconds: status.remainingSecondsToday,
-      remaining_sessions: status.remainingSessionsToday,
-    });
-    if (status.reason === "sign_in_required") {
-      await releaseLocalResources();
-      window.SentIQChat?.requestLiveAuth?.();
-      return;
-    }
+    bufferedInputChunks = [];
+
+    // Step 1: Immediately show UI in connecting state!
     showPanel();
+    setPanelState("connecting", "Connecting", "Getting Live voice ready.");
     transcript = [];
     renderTranscript();
     if (transcriptWrap) transcriptWrap.open = false;
-    transcriptToggle?.setAttribute("aria-expanded", "false");
-    setEndButtonLabel("End");
-    endButton.disabled = false;
     muteButton.disabled = true;
-    setAvailableStatus(status);
 
-    if (!status.available) {
-      await releaseLocalResources();
-      const label = status.reason === "daily_limit_reached"
-        ? "Daily limit reached"
-        : ["not_available", "not_available_on_plan", "browser_unsupported"].includes(status.reason)
-          ? "Unavailable"
-          : "Busy";
-      const state = status.reason === "daily_limit_reached"
-        ? "quota_denied"
-        : ["not_available", "not_available_on_plan", "browser_unsupported"].includes(status.reason)
-          ? "unavailable"
-          : "error";
-      setPanelState(state, label, getLiveUnavailableCopy(status.reason));
-      setEndButtonLabel("Close");
-      return;
-    }
+    // Step 2: Parallelize audio unlock, mic permission, and destination token preparation
+    const audioUnlockPromise = supportsLiveAudio()
+      ? unlockAudioContext().then(() => null).catch((error) => error)
+      : Promise.resolve(new Error("Audio is not supported in this browser."));
 
-    setPanelState("connecting", "Connecting", "Getting Live voice ready.");
+    const micStreamPromise = navigator.mediaDevices?.getUserMedia
+      ? navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        }).catch((err) => err)
+      : Promise.resolve(new Error("Microphone unavailable"));
 
-    if (!supportsLiveAudio()) {
-      setPanelState("unavailable", "Unavailable", getLiveUnavailableCopy("browser_unsupported"));
-      setEndButtonLabel("Close");
-      return;
-    }
-
+    let sourceConversationId = null;
     try {
-      const audioUnlockError = await audioUnlockPromise;
+      sourceConversationId = await window.SentIQChat?.prepareLiveConversation?.();
+    } catch {
+      // Non-fatal
+    }
+
+    // Step 3: Request session token from backend
+    try {
+      const [tokenResult, audioUnlockError, micResult] = await Promise.all([
+        API.createLiveSessionToken(sourceConversationId ? { sourceConversationId } : {}),
+        audioUnlockPromise,
+        micStreamPromise,
+      ]);
+
       if (audioUnlockError) throw audioUnlockError;
-      const conversationId = await window.SentIQChat?.prepareLiveConversation?.();
-      if (!conversationId) throw new Error("A signed-in conversation is required.");
-      currentSession = await API.createLiveSessionToken(conversationId);
+      if (micResult instanceof Error) throw micResult;
+
+      mediaStream = micResult;
+      currentSession = tokenResult;
       currentSession.audioStarted = false;
-      liveDebug("token_ready", { max_seconds: currentSession.sessionMaxSeconds });
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-        video: false,
-      });
+      liveDebug("token_ready", { sessionId: currentSession.sessionId, max_seconds: currentSession.sessionMaxSeconds });
+
       playback = new PcmPlaybackQueue(
         currentSession?.audio?.outputSampleRate || LIVE_OUTPUT_SAMPLE_RATE,
         audioContext,
       );
+
       const separator = currentSession.webSocketUrl.includes("?") ? "&" : "?";
       socket = new WebSocket(
         `${currentSession.webSocketUrl}${separator}access_token=${encodeURIComponent(currentSession.ephemeralToken)}`,
       );
+
       socket.onopen = () => {
         liveDebug("websocket_open");
         if (!sendSocketMessage({ setup: currentSession.setup })) {
           void failSession("websocket_failed", "websocket_failed", "Connection failed", "Live voice could not connect. Try again.");
         }
       };
+
       socket.onmessage = (event) => { void handleServerMessage(event); };
       socket.onerror = () => {
         liveDebug("failure", { stage: "websocket" });
+        if (currentSession?.sessionId) {
+          API.reportLiveSessionError?.(currentSession.sessionId, { errorType: "websocket_failed" }).catch(() => {});
+        }
         void failSession("websocket_failed", "websocket_failed", "Connection failed", "Live voice could not connect. Try again.");
       };
+
       socket.onclose = (event) => {
+        const failureClass = classifySocketClose(event);
         liveDebug("websocket_closed", {
           code: Number(event?.code) || 0,
           clean: Boolean(event?.wasClean),
-          failure_class: classifySocketClose(event),
+          failure_class: failureClass,
         });
+        if (currentSession?.sessionId && (event?.code === 1008 || event?.code === 1011 || !event?.wasClean)) {
+          API.reportLiveSessionError?.(currentSession.sessionId, {
+            errorType: "websocket_failed",
+            code: event.code,
+            reason: event.reason,
+          }).catch(() => {});
+        }
         if (!ending && currentSession) {
-          void failSession("websocket_failed", "websocket_failed", "Connection closed", "Live voice disconnected. Try again.");
+          if (currentSession.resumptionHandle && (sessionEndAt > Date.now()) && reconnectAttempts < MAX_RECONNECT_ATTEMPTS && !reconnecting) {
+            void attemptSessionResumption("socket_close");
+          } else if (!reconnecting) {
+            void failSession("websocket_failed", "websocket_failed", "Connection closed", "Live voice disconnected. Try again.");
+          }
         }
       };
+
       currentSession.ephemeralToken = "";
     } catch (error) {
       const micBlocked = error?.name === "NotAllowedError" || error?.name === "SecurityError";
@@ -616,12 +689,12 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
         ? { label: "Microphone blocked", message: "Allow microphone access to use Live voice." }
         : liveStartFailure(error);
       liveDebug("failure", { stage: micBlocked ? "microphone" : "startup", reason });
+
       if (currentSession) {
         await failSession(reason, micBlocked ? "mic_blocked" : "audio_failed", failure.label, failure.message);
       } else {
         await releaseLocalResources();
         setPanelState(micBlocked ? "mic_blocked" : "error", failure.label, failure.message);
-        setEndButtonLabel("Close");
         await refreshAvailability();
       }
     }
@@ -636,7 +709,7 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
         available: browserUnsupported ? false : Boolean(status?.available),
         reason: browserUnsupported
           ? "browser_unsupported"
-          : typeof status?.reason === "string" ? status.reason : "busy",
+          : typeof status?.reason === "string" ? status.reason : "internal_error",
         remainingSecondsToday: Math.max(0, Number(status?.remainingSecondsToday) || 0),
         remainingSessionsToday: Math.max(0, Number(status?.remainingSessionsToday) || 0),
         maxSessionSeconds: Math.max(0, Number(status?.maxSessionSeconds) || 0),
@@ -646,7 +719,7 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
       lastStatus = {
         enabled: false,
         available: false,
-        reason: "busy",
+        reason: "network_error",
         remainingSecondsToday: 0,
         remainingSessionsToday: 0,
         maxSessionSeconds: 0,
@@ -665,6 +738,21 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
   }
 
   liveButton.addEventListener("click", () => { void startSession(); });
+  closeButton?.addEventListener("click", () => {
+    void terminateLiveSession({ reason: "client_end", source: "close_btn" });
+  });
+
+  panel.addEventListener("click", (event) => {
+    if (event.target === panel) {
+      void terminateLiveSession({ reason: "client_end", source: "backdrop_click" });
+    }
+  });
+  panel.addEventListener("pointerdown", (event) => {
+    if (event.target === panel) {
+      void terminateLiveSession({ reason: "client_end", source: "backdrop_click" });
+    }
+  });
+
   muteButton.addEventListener("click", () => {
     if (!inputCapture || !currentSession) return;
     muted = !muted;
@@ -676,22 +764,14 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
     if (muted) sendSocketMessage({ realtimeInput: { audioStreamEnd: true } });
     setPanelState(muted ? "muted" : "listening", muted ? "Muted" : "Listening", muted ? "Unmute when you are ready." : "Speak when you are ready.");
   });
-  endButton.addEventListener("click", () => {
-    if (currentSession) void finishSession("client_end");
-    else hidePanel();
-  });
-  transcriptToggle?.addEventListener("click", () => {
-    if (!transcriptWrap) return;
-    transcriptWrap.open = !transcriptWrap.open;
-    transcriptToggle.setAttribute("aria-expanded", transcriptWrap.open ? "true" : "false");
-    transcriptToggle.setAttribute("aria-label", transcriptWrap.open ? "Hide transcript" : "Show transcript");
-  });
+
   retryButton.addEventListener("click", () => { void startSession(); });
+
   panel.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
-      if (currentSession) void finishSession("client_end");
-      else hidePanel();
+      event.stopImmediatePropagation();
+      void terminateLiveSession({ reason: "client_end", source: "escape" });
       return;
     }
     if (event.key !== "Tab") return;
@@ -709,20 +789,111 @@ const LIVE_HANDSHAKE_STABILITY_MS = 750;
     }
   });
 
+  // Global document capture for Escape while Live panel is active
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !panel.hidden && panel.getAttribute("aria-hidden") !== "true") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void terminateLiveSession({ reason: "client_end", source: "escape" });
+    }
+  }, true);
+
+  // Close Live canonical lifecycle if panel is closed externally
+  panel.addEventListener("sentiq-panel-closed", () => {
+    if (currentSession && !terminationPromise) {
+      void terminateLiveSession({ reason: "client_end", source: "panel_closed" });
+    }
+  });
+
+  async function attemptSessionResumption(trigger) {
+    if (ending || !currentSession || reconnecting) return;
+    if (!currentSession.resumptionHandle) {
+      void failSession("websocket_failed", "websocket_failed", "Connection closed", "Live voice disconnected. Try again.");
+      return;
+    }
+    reconnecting = true;
+    reconnectAttempts += 1;
+    liveDebug("reconnect_started", { attempt: reconnectAttempts, trigger });
+    setPanelState("connecting", "Reconnecting", "Reconnecting Live voice…");
+
+    try {
+      if (socket && socket.readyState < WebSocket.CLOSING) {
+        try { socket.close(1000, "resuming"); } catch {}
+      }
+      socket = null;
+
+      let resumeAuth = null;
+      try {
+        resumeAuth = await API.getLiveResumeToken(currentSession.sessionId);
+      } catch (err) {
+        liveDebug("resume_token_fetch_failed", { error: String(err) });
+      }
+
+      const token = resumeAuth?.ephemeralToken || currentSession.ephemeralToken;
+      const wsUrl = resumeAuth?.webSocketUrl || currentSession.webSocketUrl;
+      if (!token || !wsUrl) {
+        throw new Error("No token available for session resumption.");
+      }
+
+      const separator = wsUrl.includes("?") ? "&" : "?";
+      const newSocket = new WebSocket(`${wsUrl}${separator}access_token=${encodeURIComponent(token)}`);
+      socket = newSocket;
+
+      newSocket.onopen = () => {
+        liveDebug("websocket_open", { mode: "resumption" });
+        const resumeSetup = {
+          setup: {
+            model: currentSession.setup?.model || "models/gemini-3.8-live",
+            sessionResumption: {
+              handle: currentSession.resumptionHandle,
+            },
+          },
+        };
+        if (!sendSocketMessage(resumeSetup)) {
+          throw new Error("Resumption setup could not be sent.");
+        }
+        reconnecting = false;
+        reconnectAttempts = 0;
+        liveDebug("reconnect_succeeded");
+        setPanelState(muted ? "muted" : "listening", muted ? "Muted" : "Listening", muted ? "Unmute when you are ready." : "Speak when you are ready.");
+      };
+
+      newSocket.onmessage = (event) => { void handleServerMessage(event); };
+      newSocket.onerror = () => {
+        liveDebug("failure", { stage: "websocket_resume" });
+        if (!ending && currentSession) {
+          void failSession("websocket_failed", "websocket_failed", "Connection failed", "Live voice could not connect. Try again.");
+        }
+      };
+      newSocket.onclose = (event) => {
+        liveDebug("websocket_closed", { code: event?.code, mode: "resumption" });
+        if (!ending && currentSession && !reconnecting) {
+          void failSession("websocket_failed", "websocket_failed", "Connection closed", "Live voice disconnected. Try again.");
+        }
+      };
+    } catch (err) {
+      reconnecting = false;
+      liveDebug("reconnect_failed", { error: String(err) });
+      void failSession("websocket_failed", "websocket_failed", "Connection closed", "Live voice disconnected. Try again.");
+    }
+  }
+
   document.addEventListener("sentiq-auth-changed", (event) => {
-    if (!event.detail?.session?.user && currentSession) void finishSession("navigation");
+    if (!event.detail?.session?.user && currentSession) {
+      void terminateLiveSession({ reason: "navigation", source: "auth_changed" });
+    }
     void refreshAvailability();
   });
+
   window.addEventListener("pagehide", () => {
-    if (!currentSession || ending) return;
-    const sessionId = currentSession.sessionId;
-    ending = true;
-    if (currentSession.audioStarted && transcript.length > 0) {
-      void API.commitLiveSession(sessionId, { transcript }, { keepalive: true }).catch(() => {});
-    }
-    void releaseLocalResources();
-    void API.endLiveSession(sessionId, "navigation", { keepalive: true }).catch(() => {});
-    currentSession = null;
+    if (!currentSession) return;
+    void terminateLiveSession({ reason: "navigation", source: "pagehide", keepalive: true });
+  });
+
+  window.SentIQLive = Object.freeze({
+    start: startSession,
+    terminate: terminateLiveSession,
+    isAvailable: () => lastStatus.available,
   });
 
   void refreshAvailability();

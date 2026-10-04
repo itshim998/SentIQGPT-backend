@@ -19,6 +19,7 @@ export const BOTH_VERSIONS = new Set([
   "20260703120000", // add_live_usage_policy.sql
   "20260704120000", // harden_live_session_lifecycle.sql
   "20260710190000", // refund_failed_live_startups.sql
+  "20261003120000", // production_live_voice_architecture.sql
 ]);
 
 export const CONTROL_ONLY_VERSIONS = new Set([

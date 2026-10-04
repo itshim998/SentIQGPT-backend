@@ -770,10 +770,19 @@ async function getLiveStatus() {
   return apiRequest("/api/live/status", { method: "GET" });
 }
 
-async function createLiveSessionToken(conversationId) {
+async function createLiveSessionToken(optionsOrId) {
+  let body = {};
+  if (typeof optionsOrId === "string") {
+    body = { sourceConversationId: optionsOrId, conversationId: optionsOrId };
+  } else if (optionsOrId && typeof optionsOrId === "object") {
+    body = {
+      sourceConversationId: optionsOrId.sourceConversationId || optionsOrId.conversationId,
+      conversationId: optionsOrId.conversationId || optionsOrId.sourceConversationId,
+    };
+  }
   return apiRequest("/api/live/session-token", {
     method: "POST",
-    body: JSON.stringify(conversationId ? { conversationId } : {}),
+    body: JSON.stringify(body),
   });
 }
 
@@ -800,6 +809,20 @@ async function endLiveSession(sessionId, reason = "client_end", options = {}) {
   });
 }
 
+async function reportLiveSessionError(sessionId, payload = {}) {
+  return apiRequest(`/api/live/session/${encodeURIComponent(sessionId)}/report-error`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function getLiveResumeToken(sessionId) {
+  return apiRequest(`/api/live/session/${encodeURIComponent(sessionId)}/resume-token`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
 window.SentIQAPI = {
   sendMessage, sendMessageStream, canStreamResponses, classifyMemory, compressMemories,
   sendSelectionMessage, uploadFile, subscribeFileUpdates, clearFileSession, generateImage, storeImage, getChatImages, getImageQuota, deleteImage, generateTitle,
@@ -810,5 +833,5 @@ window.SentIQAPI = {
   getHealth, getConfig: getConfigAPI,
   sendDeepResearchStream, startDeepResearch, getDeepResearchStatus, subscribeDeepResearchEvents,
   cancelDeepResearchReport, getDeepResearchQuota, getDeepResearchReport, exportDeepResearchReport,
-  getLiveStatus, createLiveSessionToken, markLiveSessionStarted, commitLiveSession, endLiveSession,
+  getLiveStatus, createLiveSessionToken, getLiveResumeToken, markLiveSessionStarted, commitLiveSession, endLiveSession, reportLiveSessionError,
 };

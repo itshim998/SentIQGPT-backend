@@ -23,6 +23,14 @@ export type LiveStatusReason =
   | "not_available_on_plan"
   | "daily_limit_reached"
   | "active_session_limit"
+  | "global_capacity"
+  | "per_key_capacity"
+  | "provider_auth"
+  | "provider_capacity"
+  | "provider_configuration"
+  | "provider_unavailable"
+  | "network"
+  | "internal_error"
   | "busy";
 
 export type LiveStatusResponse = {
@@ -36,6 +44,7 @@ export type LiveStatusResponse = {
 };
 
 export type LiveTranscriptTurn = {
+  sequence?: number;
   role: "user" | "assistant";
   text: string;
 };
@@ -51,10 +60,16 @@ export type LivePreparedContext = {
   workspaceCapsule?: string;
   conversationCapsule?: string;
   recentTurns: LiveTranscriptTurn[];
+  sourceConversationId?: string;
+  liveConversationId?: string;
 };
 
 export interface LiveSessionPersistence {
-  prepareContext(args: { userId: string; conversationId?: string }): Promise<LivePreparedContext>;
+  prepareContext(args: {
+    userId: string;
+    sourceConversationId?: string;
+    conversationId?: string;
+  }): Promise<LivePreparedContext>;
   persistTranscript(args: {
     userId: string;
     conversationId: string;
@@ -76,6 +91,8 @@ export interface LiveSessionTitleGenerator {
 export type LiveSessionTokenResponse = {
   sessionId: string;
   conversationId: string;
+  liveConversationId: string;
+  sourceConversationId?: string;
   ephemeralToken: string;
   webSocketUrl: string;
   expiresAt: string;
@@ -96,6 +113,8 @@ type LiveSessionRecord = {
   id: string;
   userId: string;
   conversationId: string;
+  sourceConversationId?: string;
+  liveConversationId?: string;
   planCode: BillingPlanCode;
   selectedSlot: number;
   reservedSeconds: number;
@@ -196,7 +215,7 @@ function denialError(reason: LiveUsageDenialReason | undefined): LiveSessionErro
     return new LiveSessionError("You've used today's Live voice time.", "live_daily_time_exhausted", 403);
   }
   if (reason === "active_limit") {
-    return new LiveSessionError("Live voice is busy. Try again soon.", "live_active_limit", 429, 30);
+    return new LiveSessionError("You already have an active Live voice session. Please close it before starting another.", "live_active_limit", 429, 10);
   }
   return new LiveSessionError("Live voice could not start.", "live_reservation_failed", 409);
 }
@@ -258,7 +277,7 @@ export class LiveSessionService {
     });
     if (!enabled) return unavailable("not_available");
     if (!this.dependencies.config.audioOnly || this.dependencies.keyPool.size === 0) {
-      return unavailable("busy");
+      return unavailable("provider_configuration");
     }
     if (!userId) return unavailable("sign_in_required");
 
@@ -299,17 +318,50 @@ export class LiveSessionService {
           usage.activeSessions,
         );
       }
+      try {
+        const slotCounts = await this.dependencies.usageStore.getActiveKeySlotCounts(
+          this.dependencies.keyPool.slots,
+        );
+        this.dependencies.keyPool.syncActiveCounts(slotCounts);
+      } catch {
+        // Non-fatal if durable lease count query fails
+      }
       const localCapacity = this.dependencies.keyPool.hasAvailableSlot(
         this.dependencies.tierPolicy.projectMaxActive,
       );
-      const durableCapacity = localCapacity && await this.dependencies.usageStore.hasCapacity({
-        globalMaxActive: this.dependencies.tierPolicy.globalMaxActive,
-        projectMaxActive: this.dependencies.tierPolicy.projectMaxActive,
-        keySlots: this.dependencies.keyPool.slots,
-      });
-      if (!durableCapacity) {
+      const capacityCheck = typeof this.dependencies.usageStore.checkCapacityDetailed === "function"
+        ? await this.dependencies.usageStore.checkCapacityDetailed({
+            globalMaxActive: this.dependencies.tierPolicy.globalMaxActive,
+            projectMaxActive: this.dependencies.tierPolicy.projectMaxActive,
+            keySlots: this.dependencies.keyPool.slots,
+          })
+        : {
+            allowed: await this.dependencies.usageStore.hasCapacity({
+              globalMaxActive: this.dependencies.tierPolicy.globalMaxActive,
+              projectMaxActive: this.dependencies.tierPolicy.projectMaxActive,
+              keySlots: this.dependencies.keyPool.slots,
+            }),
+          };
+
+      if (!localCapacity || !capacityCheck.allowed) {
+        let reason: LiveStatusReason = "global_capacity";
+        if (this.dependencies.keyPool.size === 0) {
+          reason = "provider_configuration";
+        } else if (capacityCheck.reason === "global_capacity") {
+          reason = "global_capacity";
+        } else if (capacityCheck.reason === "per_key_capacity") {
+          reason = "per_key_capacity";
+        } else {
+          const coolingClass = this.dependencies.keyPool.getDominantCooldownFailureClass?.();
+          if (coolingClass === "auth") reason = "provider_auth";
+          else if (coolingClass === "capacity") reason = "provider_capacity";
+          else if (coolingClass === "configuration") reason = "provider_configuration";
+          else if (coolingClass === "unavailable") reason = "provider_unavailable";
+          else if (coolingClass === "network" || coolingClass === "timeout") reason = "network";
+          else if (!localCapacity) reason = "per_key_capacity";
+        }
         return unavailable(
-          "busy",
+          reason,
           remainingSecondsToday,
           remainingSessionsToday,
           maxSessionSeconds,
@@ -330,7 +382,7 @@ export class LiveSessionService {
         plan: planCode,
         denial_reason: "status_read_failed",
       });
-      return unavailable("busy");
+      return unavailable("internal_error");
     }
   }
 
@@ -342,7 +394,7 @@ export class LiveSessionService {
       throw new LiveSessionError("Live beta configuration is unavailable.", "live_configuration_invalid", 503);
     }
     if (this.dependencies.keyPool.size === 0) {
-      throw new LiveSessionError("Live voice is busy. Try again soon.", "live_capacity_unavailable", 503, 30);
+      throw new LiveSessionError("Live voice provider is not configured.", "live_provider_configuration", 503);
     }
   }
 
@@ -471,7 +523,11 @@ export class LiveSessionService {
     return cleaned;
   }
 
-  async createSession(args: { userId: string; conversationId?: string }): Promise<LiveSessionTokenResponse> {
+  async createSession(args: {
+    userId: string;
+    sourceConversationId?: string;
+    conversationId?: string;
+  }): Promise<LiveSessionTokenResponse> {
     this.assertAvailable();
     await this.cleanupStaleSessions();
     const planCode = await this.dependencies.planResolver.resolve(args.userId);
@@ -510,9 +566,23 @@ export class LiveSessionService {
       session_status: "provisioning",
     });
 
+    try {
+      const slotCounts = await this.dependencies.usageStore.getActiveKeySlotCounts(
+        this.dependencies.keyPool.slots,
+      );
+      this.dependencies.keyPool.syncActiveCounts(slotCounts);
+    } catch {
+      // Non-fatal
+    }
+
     let capacitySession: LiveSessionRecord | null = null;
     try {
-      const context = await this.dependencies.persistence.prepareContext(args);
+      const sourceConversationId = args.sourceConversationId || args.conversationId;
+      const context = await this.dependencies.persistence.prepareContext({
+        userId: args.userId,
+        sourceConversationId,
+        conversationId: sourceConversationId,
+      });
       const attemptedSlots = new Set<number>();
       let lastFailureClass: GeminiLiveFailureClass = "unknown";
       let capacityDenial: "global_capacity" | "project_capacity" | undefined;
@@ -549,6 +619,8 @@ export class LiveSessionService {
           id: sessionId,
           userId: args.userId,
           conversationId: context.conversationId,
+          liveConversationId: context.liveConversationId || context.conversationId,
+          sourceConversationId: context.sourceConversationId,
           planCode,
           selectedSlot: lease.slot,
           reservedSeconds: reservation.reservedSeconds,
@@ -571,8 +643,12 @@ export class LiveSessionService {
             userId: args.userId,
             sessionId,
             keySlot: lease.slot,
+            sourceConversationId: context.sourceConversationId,
+            liveConversationId: context.liveConversationId || context.conversationId,
             metadata: {
+              source_conversation_id: context.sourceConversationId,
               conversation_id: context.conversationId,
+              live_conversation_id: context.liveConversationId || context.conversationId,
               search_grounding: !this.dependencies.config.disableSearchGrounding,
             },
           });
@@ -592,6 +668,8 @@ export class LiveSessionService {
           return {
             sessionId,
             conversationId: context.conversationId,
+            liveConversationId: context.liveConversationId || context.conversationId,
+            sourceConversationId: context.sourceConversationId,
             ephemeralToken: token.token,
             webSocketUrl: this.dependencies.config.webSocketUrl,
             expiresAt: token.expiresAt,
@@ -621,17 +699,54 @@ export class LiveSessionService {
 
       if (capacityDenial) {
         throw new LiveSessionError(
-          "Live voice is busy. Try again soon.",
+          "Live voice is temporarily at capacity. Try again soon.",
           capacityDenial === "global_capacity" ? "live_global_capacity" : "live_project_capacity",
           503,
           30,
         );
       }
+      if (lastFailureClass === "capacity") {
+        throw new LiveSessionError(
+          "Live voice is temporarily rate limited. Try again soon.",
+          "live_provider_rate_limited",
+          503,
+          60,
+        );
+      }
+      if (lastFailureClass === "auth") {
+        throw new LiveSessionError(
+          "Live voice provider authentication failed.",
+          "live_provider_auth_failure",
+          503,
+        );
+      }
+      if (lastFailureClass === "unavailable") {
+        throw new LiveSessionError(
+          "Live voice provider is currently unavailable. Try again soon.",
+          "live_provider_unavailable",
+          503,
+          30,
+        );
+      }
+      if (lastFailureClass === "timeout" || lastFailureClass === "network") {
+        throw new LiveSessionError(
+          "Could not reach Live voice provider.",
+          "live_network_error",
+          504,
+          10,
+        );
+      }
+      if (lastFailureClass === "configuration") {
+        throw new LiveSessionError(
+          "Live voice provider configuration error.",
+          "live_provider_configuration",
+          503,
+        );
+      }
       throw new LiveSessionError(
-        "Live voice is busy. Try again soon.",
-        "live_token_provision_failed",
-        503,
-        lastFailureClass === "capacity" ? 60 : 30,
+        "Live voice could not be initialized.",
+        "live_internal_error",
+        500,
       );
     } catch (error) {
       if (capacitySession) await this.releaseCapacity(capacitySession);
@@ -652,13 +767,17 @@ export class LiveSessionService {
   }
 
   private recordFromStoredSession(userId: string, stored: LiveStoredSession): LiveSessionRecord {
-    const conversationId = typeof stored.metadata.conversation_id === "string"
-      ? stored.metadata.conversation_id
-      : "";
+    const conversationId = stored.liveConversationId
+      || (typeof stored.metadata.live_conversation_id === "string" ? stored.metadata.live_conversation_id : "")
+      || (typeof stored.metadata.conversation_id === "string" ? stored.metadata.conversation_id : "");
+    const sourceConversationId = stored.sourceConversationId
+      || (typeof stored.metadata.source_conversation_id === "string" ? stored.metadata.source_conversation_id : undefined);
     return {
       id: stored.sessionId,
       userId,
       conversationId,
+      liveConversationId: conversationId,
+      sourceConversationId,
       planCode: stored.planCode,
       selectedSlot: stored.keySlot ?? 0,
       reservedSeconds: stored.reservedSeconds,
@@ -708,7 +827,7 @@ export class LiveSessionService {
     ).toISOString();
     const extended = await this.dependencies.usageStore.extendCapacity(session.id, expiresAt);
     if (!extended) {
-      throw new LiveSessionError("Live voice is busy. Try again soon.", "live_capacity_unavailable", 409);
+      throw new LiveSessionError("Live session capacity lease expired.", "live_capacity_unavailable", 409);
     }
     const started = await this.dependencies.usageStore.markSessionStarted({
       userId: session.userId,
@@ -760,24 +879,24 @@ export class LiveSessionService {
       const firstUserMessage = args.transcript.find((turn) => turn.role === "user" && turn.text.trim())?.text.trim();
       const firstAssistantReply = args.transcript.find((turn) => turn.role === "assistant" && turn.text.trim())?.text.trim();
       if (firstUserMessage && firstAssistantReply && this.dependencies.titleGenerator) {
-        try {
-          await this.dependencies.titleGenerator.generateTitle({
-            userId: args.userId,
-            conversationId: session.conversationId,
-            userMessage: firstUserMessage,
-            assistantReply: firstAssistantReply,
-          });
+        // Decoupled asynchronous auto-title: do not await on the critical path of commit response!
+        void this.dependencies.titleGenerator.generateTitle({
+          userId: args.userId,
+          conversationId: session.conversationId,
+          userMessage: firstUserMessage,
+          assistantReply: firstAssistantReply,
+        }).then(() => {
           this.logger("title_generated", {
             plan: session.planCode,
             key_slot: session.selectedSlot,
           });
-        } catch (error) {
+        }).catch((error) => {
           this.logger("title_generation_failed", {
             plan: session.planCode,
             key_slot: session.selectedSlot,
             error_type: error instanceof Error ? error.name : "unknown",
           });
-        }
+        });
       }
       session.committedAt = this.now();
       this.logger("session_committed", {
@@ -799,6 +918,8 @@ export class LiveSessionService {
     durationSeconds: number;
     alreadyEnded: boolean;
     cancelled: boolean;
+    status: string;
+    finalized: boolean;
   }> {
     const session = await this.getOwnedSession(args.userId, args.sessionId);
     let alreadyEnded = typeof session.endedAt === "number";
@@ -821,6 +942,8 @@ export class LiveSessionService {
           durationSeconds: 0,
           alreadyEnded: false,
           cancelled: true,
+          status: "cancelled",
+          finalized: true,
         };
       }
       alreadyEnded = typeof session.endedAt === "number";
@@ -835,6 +958,65 @@ export class LiveSessionService {
       durationSeconds: result.usedSeconds,
       alreadyEnded,
       cancelled: result.status === "cancelled",
+      status: result.status,
+      finalized: !alreadyEnded,
+    };
+  }
+
+  reportClientError(args: {
+    userId: string;
+    sessionId: string;
+    errorType: string;
+    code?: number;
+    reason?: string;
+  }): void {
+    const session = this.sessions.get(args.sessionId);
+    const slot = session?.selectedSlot;
+    if (slot) {
+      if (args.code === 1008 || /permission|policy|auth/i.test(args.reason || "")) {
+        this.dependencies.keyPool.markFailure(slot, "auth");
+      } else if (args.code === 1011 || /quota|capacity|resource/i.test(args.reason || "")) {
+        this.dependencies.keyPool.markFailure(slot, "capacity");
+      }
+      // Note: Client network drops / 1006 / wifi disconnects must NOT poison key pool!
+    }
+  }
+
+  async getResumeToken(args: {
+    userId: string;
+    sessionId: string;
+  }): Promise<{
+    sessionId: string;
+    ephemeralToken: string;
+    webSocketUrl: string;
+    expiresAt: string;
+    newSessionExpiresAt: string;
+  }> {
+    this.assertAvailable();
+    const session = await this.getOwnedSession(args.userId, args.sessionId);
+    if (session.endedAt || session.status !== "active") {
+      throw new LiveSessionError("Live session is no longer active.", "live_session_inactive", 409);
+    }
+    const remainingSeconds = Math.max(1, Math.floor((session.expiresAt - this.now()) / 1_000));
+    const lease = (session.selectedSlot ? this.dependencies.keyPool.getKeyBySlot(session.selectedSlot) : undefined)
+      ?? this.dependencies.keyPool.acquire();
+    const token = await this.dependencies.tokenService.createToken({
+      apiKey: lease.apiKey,
+      config: this.dependencies.config,
+      systemInstruction: buildLiveInstruction(!this.dependencies.config.disableSearchGrounding),
+      sessionMaxSeconds: remainingSeconds,
+    });
+    this.logger("resume_token_created", {
+      plan: session.planCode,
+      key_slot: lease.slot,
+      session_id: session.id,
+    });
+    return {
+      sessionId: session.id,
+      ephemeralToken: token.token,
+      webSocketUrl: this.dependencies.config.webSocketUrl,
+      expiresAt: token.expiresAt,
+      newSessionExpiresAt: token.newSessionExpiresAt,
     };
   }
 }
