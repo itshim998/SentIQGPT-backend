@@ -148,13 +148,13 @@ async function testTokenService(): Promise<void> {
   assert.equal(token.token, "auth_tokens/ephemeral-test");
   assert.equal(capturedHeaders?.["x-goog-api-key"], API_KEY);
   assert.equal(capturedBody.uses, 1);
+  assert.equal(capturedBody.liveConnectConstraints, undefined, "liveConnectConstraints must be absent from auth_tokens payload");
+  assert(!("liveConnectConstraints" in capturedBody), "liveConnectConstraints must be absent from auth_tokens payload");
   assert.equal(capturedBody.bidiGenerateContentSetup.model, "models/gemini-3.8-live");
-  assert.equal(capturedBody.liveConnectConstraints.model, "models/gemini-3.8-live");
-  assert.deepEqual(capturedBody.liveConnectConstraints.config.generationConfig.responseModalities, ["AUDIO"]);
   assert.deepEqual(capturedBody.bidiGenerateContentSetup.generationConfig.responseModalities, ["AUDIO"]);
-  assert(!("thinkingConfig" in capturedBody.liveConnectConstraints.config.generationConfig), "Gemini 3.8 Live must not contain thinkingConfig");
-  assert(!("thinking_config" in capturedBody.liveConnectConstraints.config.generationConfig), "Gemini 3.8 Live must not contain thinking_config");
   assert(!("thinkingConfig" in capturedBody.bidiGenerateContentSetup.generationConfig), "Gemini 3.8 Live setup must not contain thinkingConfig");
+  assert(!("thinking_config" in capturedBody.bidiGenerateContentSetup.generationConfig), "Gemini 3.8 Live setup must not contain thinking_config");
+  assert(!("thinkingLevel" in capturedBody.bidiGenerateContentSetup.generationConfig), "Gemini 3.8 Live setup must not contain thinkingLevel");
   assert(!("tools" in capturedBody.bidiGenerateContentSetup), "core Live audio should not require Search quota");
   assert.deepEqual(capturedBody.bidiGenerateContentSetup.inputAudioTranscription, {});
   assert.deepEqual(capturedBody.bidiGenerateContentSetup.outputAudioTranscription, {});
