@@ -193,7 +193,7 @@ import {
   buildQuotaErrorPayload,
 } from "./billing/quotaService";
 import type { BillingIdentity, UsageReservation } from "./billing/entitlementTypes";
-import { getImageModelForPlan } from "./billing/modelEntitlementRouter";
+import { getImageModelForPlan, resolveImageRoute } from "./billing/modelEntitlementRouter";
 import {
   CANONICAL_FRONTEND_ORIGIN,
   LOG_PREFIX,
@@ -6756,10 +6756,11 @@ app.post(
           userId,
           authenticated: !isGuest,
         });
-    const entitledImageRoute = getImageModelForPlan(
-      imageReservation.planCode,
-      textRenderingDecision.requiresTextRendering,
-    );
+    const entitledImageRoute = resolveImageRoute({
+      planCode: imageReservation.planCode,
+      executionMode: parsed.data.executionMode,
+      requiresTextRendering: textRenderingDecision.requiresTextRendering,
+    });
     const committedImageReservation: UsageReservation = {
       ...imageReservation,
       provider: entitledImageRoute.provider,

@@ -1,5 +1,6 @@
 import type { BillingPlanCode, BillableFeature } from "./entitlementTypes";
 import type { ImageModelPreference } from "../tools/imageGeneration/types";
+import { normalizeExecutionMode, type ExecutionMode } from "../orchestrator/executionProfile";
 
 export interface ModelRoute {
   readonly feature: BillableFeature;
@@ -108,10 +109,11 @@ export function getGeminiAdvancedReasoningCapabilityRoute(): ModelRoute {
 
 export function getImageModelPreferenceForPlan(
   planCode: BillingPlanCode,
-  requiresTextRendering: boolean,
+  requiresTextRendering = false,
 ): ImageModelPreference {
+  void requiresTextRendering;
   if (planCode === "free") return "dreamshaper";
-  return requiresTextRendering ? "gpt-image-2" : "zimage";
+  return "zimage";
 }
 
 /**
@@ -121,7 +123,7 @@ export function getImageModelPreferenceForPlan(
  */
 export function getImageModelForPlan(
   planCode: BillingPlanCode,
-  requiresTextRendering: boolean,
+  requiresTextRendering = false,
 ): ImageModelRoute {
   const model = getImageModelPreferenceForPlan(planCode, requiresTextRendering);
   return {
@@ -132,6 +134,42 @@ export function getImageModelForPlan(
     safeModelLabel: planCode === "free" ? "Image" : "Precision Image",
     route: "image",
   };
+}
+
+export interface ResolveImageRouteArgs {
+  readonly planCode: BillingPlanCode;
+  readonly executionMode?: ExecutionMode | string;
+  readonly requiresTextRendering?: boolean;
+}
+
+/**
+ * Resolve the image route accounting for billing plan entitlement, execution mode,
+ * and text-rendering decision.
+ *
+ * Policy matrix:
+ * - Fast mode (free or paid) retains existing plan-based image routes (dreamshaper for free, zimage for paid).
+ * - Free + Intuitive retains existing Free image route (dreamshaper).
+ * - Paid + Intuitive (Essential, Plus, Pro) routes to tongyi-mai/z-image-turbo
+ *   (with black-forest-labs/flux.2-klein-4b as immediate fallback in the image router),
+ *   completely overriding any legacy text-rendering switch to GPT-Image-2.
+ */
+export function resolveImageRoute(args: ResolveImageRouteArgs): ImageModelRoute {
+  const mode = normalizeExecutionMode(args.executionMode);
+  const isPaid = args.planCode !== "free";
+
+  if (mode === "intuitive" && isPaid) {
+    const model: ImageModelPreference = "tongyi-mai/z-image-turbo";
+    return {
+      feature: "image_generation",
+      provider: "pollinations",
+      model,
+      adapterModelOverride: model,
+      safeModelLabel: "Precision Image",
+      route: "image",
+    };
+  }
+
+  return getImageModelForPlan(args.planCode, args.requiresTextRendering ?? false);
 }
 
 export function getDeepResearchRoute(): ModelRoute {

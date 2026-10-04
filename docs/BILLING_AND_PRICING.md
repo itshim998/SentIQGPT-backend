@@ -36,15 +36,16 @@ Provider support does not grant model-side authority over billing, quotas, plan 
 
 Free retains its existing route regardless of the text-rendering decision:
 
-| Public plan | Internal code | Text rendering required | Primary model | Immediate fallback |
-|---|---|---:|---|---|
-| Free | `free` | Either | `dreamshaper` | `flux` |
-| Essential | `student_core` | No | `zimage` | `klein` |
-| Essential | `student_core` | Yes | `gpt-image-2` | `kontext` |
-| Plus | `premium` | No | `zimage` | `klein` |
-| Plus | `premium` | Yes | `gpt-image-2` | `kontext` |
-| Pro | `pro` | No | `zimage` | `klein` |
-| Pro | `pro` | Yes | `gpt-image-2` | `kontext` |
+| Public plan | Internal code | Mode | Primary model | Immediate fallback |
+|---|---|---|---|---|
+| Free | `free` | Fast | `dreamshaper` | `flux` |
+| Free | `free` | Intuitive | `dreamshaper` | `flux` |
+| Essential | `student_core` | Fast | `zimage` | `klein` |
+| Essential | `student_core` | Intuitive | `tongyi-mai/z-image-turbo` | `black-forest-labs/flux.2-klein-4b` |
+| Plus | `premium` | Fast | `zimage` | `klein` |
+| Plus | `premium` | Intuitive | `tongyi-mai/z-image-turbo` | `black-forest-labs/flux.2-klein-4b` |
+| Pro | `pro` | Fast | `zimage` | `klein` |
+| Pro | `pro` | Intuitive | `tongyi-mai/z-image-turbo` | `black-forest-labs/flux.2-klein-4b` |
 
 Essential, Plus, and Pro therefore have identical model access. Their image-generation difference is quota only.
 

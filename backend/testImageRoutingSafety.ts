@@ -3,7 +3,7 @@ import {
   executeImageGenerationWithProviders,
   getImageProviderOrder,
 } from "./tools/imageGeneration/imageRouter";
-import { getImageModelForPlan } from "./billing/modelEntitlementRouter";
+import { getImageModelForPlan, resolveImageRoute } from "./billing/modelEntitlementRouter";
 import { getPlanCatalog } from "./billing/planCatalog";
 import {
   buildPollinationsUrl,
@@ -47,20 +47,31 @@ async function main(): Promise<void> {
   assert.equal(getImageModelForPlan("free", false).model, "dreamshaper");
   assert.equal(getImageModelForPlan("free", true).model, "dreamshaper");
   assert.equal(getImageModelForPlan("student_core", false).model, "zimage");
-  assert.equal(getImageModelForPlan("student_core", true).model, "gpt-image-2");
+  assert.equal(getImageModelForPlan("student_core", true).model, "zimage");
   assert.equal(getImageModelForPlan("premium", false).model, "zimage");
-  assert.equal(getImageModelForPlan("premium", true).model, "gpt-image-2");
+  assert.equal(getImageModelForPlan("premium", true).model, "zimage");
   assert.equal(getImageModelForPlan("pro", false).model, "zimage");
-  assert.equal(getImageModelForPlan("pro", true).model, "gpt-image-2");
+  assert.equal(getImageModelForPlan("pro", true).model, "zimage");
 
   assert.deepEqual(routeOrder("free", "a puppy in snow").slice(0, 2), ["dreamshaper", "flux"]);
   assert.deepEqual(routeOrder("free", "a detailed poster with text").slice(0, 2), ["dreamshaper", "flux"]);
   assert.deepEqual(routeOrder("student_core", "a puppy in snow", false).slice(0, 2), ["zimage", "klein"]);
-  assert.deepEqual(routeOrder("student_core", "a poster reading Welcome", true).slice(0, 2), ["gpt-image-2", "kontext"]);
+  assert.deepEqual(routeOrder("student_core", "a poster reading Welcome", true).slice(0, 2), ["zimage", "klein"]);
   assert.deepEqual(routeOrder("premium", "a puppy in snow", false).slice(0, 2), ["zimage", "klein"]);
-  assert.deepEqual(routeOrder("premium", "a detailed poster with text", true).slice(0, 2), ["gpt-image-2", "kontext"]);
+  assert.deepEqual(routeOrder("premium", "a detailed poster with text", true).slice(0, 2), ["zimage", "klein"]);
   assert.deepEqual(routeOrder("pro", "a puppy in snow", false).slice(0, 2), ["zimage", "klein"]);
-  assert.deepEqual(routeOrder("pro", "a detailed poster with text", true).slice(0, 2), ["gpt-image-2", "kontext"]);
+  assert.deepEqual(routeOrder("pro", "a detailed poster with text", true).slice(0, 2), ["zimage", "klein"]);
+
+  // Intuitive mode routing assertions
+  assert.equal(resolveImageRoute({ planCode: "free", executionMode: "intuitive" }).model, "dreamshaper");
+  assert.equal(resolveImageRoute({ planCode: "student_core", executionMode: "intuitive" }).model, "tongyi-mai/z-image-turbo");
+  assert.equal(resolveImageRoute({ planCode: "premium", executionMode: "intuitive" }).model, "tongyi-mai/z-image-turbo");
+  assert.equal(resolveImageRoute({ planCode: "pro", executionMode: "intuitive" }).model, "tongyi-mai/z-image-turbo");
+  assert.equal(resolveImageRoute({ planCode: "pro", executionMode: "intuitive", requiresTextRendering: true }).model, "tongyi-mai/z-image-turbo");
+  assert.deepEqual(
+    getImageProviderOrder("a poster", "tongyi-mai/z-image-turbo").slice(0, 2),
+    ["tongyi-mai/z-image-turbo", "black-forest-labs/flux.2-klein-4b"],
+  );
   assert.equal(getImageProviderOrder("a puppy in snow", "flux")[0], "flux");
   assert.deepEqual(
     getImageProviderOrder("a puppy in snow", "unexpected-model" as ImageModelPreference).slice(0, 2),
@@ -70,9 +81,13 @@ async function main(): Promise<void> {
   assert.deepEqual(getImageProviderOrder("a poster", "gptimage").slice(0, 2), ["gptimage", "flux"]);
 
   assert.equal(requireImageModelPreference("GPT-IMAGE-2"), "gpt-image-2");
+  assert.equal(requireImageModelPreference("tongyi-mai/z-image-turbo"), "tongyi-mai/z-image-turbo");
+  assert.equal(requireImageModelPreference("black-forest-labs/flux.2-klein-4b"), "black-forest-labs/flux.2-klein-4b");
   assert.throws(() => requireImageModelPreference("unknown-image-model"), /Unsupported image model preference/);
   assert.equal(new PollinationsImageModelProvider("klein").name, "klein");
   assert.equal(new PollinationsImageModelProvider("kontext").name, "kontext");
+  assert.equal(new PollinationsImageModelProvider("tongyi-mai/z-image-turbo").name, "tongyi-mai/z-image-turbo");
+  assert.equal(new PollinationsImageModelProvider("black-forest-labs/flux.2-klein-4b").name, "black-forest-labs/flux.2-klein-4b");
 
   assert.equal(failureOutcomeForHttpStatus(400), "definitive");
   assert.equal(failureOutcomeForHttpStatus(429), "definitive");
@@ -85,6 +100,13 @@ async function main(): Promise<void> {
   assert.equal(new URL(urlOne).searchParams.get("model"), "dreamshaper");
   assert.equal(new URL(urlOne).searchParams.get("seed"), new URL(urlReplay).searchParams.get("seed"));
   assert.notEqual(new URL(urlOne).searchParams.get("seed"), new URL(urlOther).searchParams.get("seed"));
+
+  const zTurboUrl = buildPollinationsUrl("a poster reading SENTIQ", "tongyi-mai/z-image-turbo");
+  const kleinUrl = buildPollinationsUrl("a poster reading SENTIQ", "black-forest-labs/flux.2-klein-4b");
+  assert.equal(new URL(zTurboUrl).searchParams.get("model"), "tongyi-mai/z-image-turbo");
+  assert.equal(new URL(kleinUrl).searchParams.get("model"), "black-forest-labs/flux.2-klein-4b");
+  assert(zTurboUrl.includes("model=tongyi-mai%2Fz-image-turbo"), "z-image-turbo must be properly URL encoded");
+  assert(kleinUrl.includes("model=black-forest-labs%2Fflux.2-klein-4b"), "flux.2-klein-4b must be properly URL encoded");
 
   const secretBearingUrl = `${urlOne}&key=do-not-log-this-secret`;
   const safeDiagnostic = describePollinationsRequest(secretBearingUrl, true);

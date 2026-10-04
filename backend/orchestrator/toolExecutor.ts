@@ -18,7 +18,7 @@ import { selectImageModelForCapabilities, selectModelForCapabilities } from "./c
 import type { SearchResult } from "../tools/webSearch/types";
 import { INTUITIVE_PROFILE, type ExecutionProfile } from "./executionProfile";
 import { BillingQuotaError, BillingQuotaService } from "../billing/quotaService";
-import { getGeminiStandardCapabilityRoute, getImageModelForPlan } from "../billing/modelEntitlementRouter";
+import { getGeminiStandardCapabilityRoute, getImageModelForPlan, resolveImageRoute } from "../billing/modelEntitlementRouter";
 import type { UsageReservation } from "../billing/entitlementTypes";
 import { UNIFIED_TEXT_POLICY_VERSION } from "../billing/planCatalog";
 import {
@@ -1018,7 +1018,7 @@ export async function execImageInput(
   };
 }
 
-async function execImageGeneration(
+export async function execImageGeneration(
   input: string,
   ctx: BuiltContext,
   profile: ExecutionProfile,
@@ -1067,7 +1067,11 @@ async function execImageGeneration(
       clientRequestId: ctx.billingRequestId,
       metadata: { endpoint: "orchestrator", tool: "image_generation" },
     });
-    const entitledRoute = getImageModelForPlan(reservation.planCode, requiresTextRendering);
+    const entitledRoute = resolveImageRoute({
+      planCode: reservation.planCode,
+      executionMode: profile.mode,
+      requiresTextRendering,
+    });
     preferredModel = entitledRoute.adapterModelOverride;
     committedReservation = {
       ...reservation,

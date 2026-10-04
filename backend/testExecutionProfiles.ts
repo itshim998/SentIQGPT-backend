@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   FAST_PROFILE,
@@ -111,7 +111,10 @@ assert.doesNotMatch(
   "execution planning must not infer prompt semantics",
 );
 
-const serverSource = readFileSync(resolve(process.cwd(), "backend/server.ts"), "utf8");
+const serverPath = existsSync(resolve(process.cwd(), "backend/serverLegacy.ts"))
+  ? resolve(process.cwd(), "backend/serverLegacy.ts")
+  : resolve(process.cwd(), "backend/server.ts");
+const serverSource = readFileSync(serverPath, "utf8");
 assert.match(serverSource, /FAST_STREAM_SYNC_GRACE_MS/, "fast streaming sync grace window should be explicit");
 assert.match(serverSource, /chat\.stream\.fast/, "signed-in fast stream should use a distinct persistence path");
 assert.match(serverSource, /waitForFastStreamSync/, "fast stream persistence should be allowed to defer");

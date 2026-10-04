@@ -13,6 +13,8 @@ export const IMAGE_MODEL_PREFERENCES = Object.freeze([
   "wan-image",
   "gptimage",
   "gptimage-large",
+  "tongyi-mai/z-image-turbo",
+  "black-forest-labs/flux.2-klein-4b",
 ] as const);
 
 export type ImageModelPreference = (typeof IMAGE_MODEL_PREFERENCES)[number];

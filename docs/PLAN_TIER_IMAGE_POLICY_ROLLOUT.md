@@ -22,15 +22,16 @@ The auth/control database owns `public.billing_plans`, `public.usage_events`, `p
 
 ### Runtime model selection
 
-| Plan | Readable text required inside image | Primary | Immediate fallback |
-|---|---:|---|---|
-| Free | Either | `dreamshaper` | `flux` |
-| Essential | No | `zimage` | `klein` |
-| Essential | Yes | `gpt-image-2` | `kontext` |
-| Plus | No | `zimage` | `klein` |
-| Plus | Yes | `gpt-image-2` | `kontext` |
-| Pro | No | `zimage` | `klein` |
-| Pro | Yes | `gpt-image-2` | `kontext` |
+| Plan | Mode | Primary | Immediate fallback |
+|---|---|---|---|
+| Free | Fast | `dreamshaper` | `flux` |
+| Free | Intuitive | `dreamshaper` | `flux` |
+| Essential | Fast | `zimage` | `klein` |
+| Essential | Intuitive | `tongyi-mai/z-image-turbo` | `black-forest-labs/flux.2-klein-4b` |
+| Plus | Fast | `zimage` | `klein` |
+| Plus | Intuitive | `tongyi-mai/z-image-turbo` | `black-forest-labs/flux.2-klein-4b` |
+| Pro | Fast | `zimage` | `klein` |
+| Pro | Intuitive | `tongyi-mai/z-image-turbo` | `black-forest-labs/flux.2-klein-4b` |
 
 Essential, Plus, and Pro have identical image-model access. Their difference is quota only.
 
@@ -101,7 +102,7 @@ pro          | 16 | 43200 | Images | count
 3. Deploy the backend revision containing the typed plan-tier router and expanded tool transports.
 4. Confirm `/api/billing/plans` exposes the new Pro quota.
 5. For each paid plan, generate one purely visual image and confirm `zimage` is primary with `klein` as immediate fallback.
-6. For each paid plan, generate one image requiring exact readable text and confirm `gpt-image-2` is primary with `kontext` as immediate fallback.
+6. For each paid plan in Intuitive mode, generate an image and confirm `tongyi-mai/z-image-turbo` is primary with `black-forest-labs/flux.2-klein-4b` as immediate fallback.
 7. Test one Fast request through each available text-provider route and one Intuitive request through Nvidia, confirming that structured tool arguments are validated before image execution.
 8. Confirm provider lifecycle logs contain model/outcome diagnostics without prompt text, request URLs, seeds, or credentials.
 

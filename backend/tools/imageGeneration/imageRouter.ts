@@ -4,9 +4,9 @@
 // Tries each provider in priority order; returns as soon as one succeeds.
 //
 // Plan-primary chains:
-//   Free:       dreamshaper -> flux -> zimage -> HuggingFace -> Z-Image Turbo
-//   Paid visual: zimage -> klein -> flux -> HuggingFace -> Z-Image Turbo
-//   Paid text:   gpt-image-2 -> kontext -> dreamshaper -> flux -> zimage -> HuggingFace -> Z-Image Turbo
+//   Free:           dreamshaper -> flux -> zimage -> HuggingFace -> Z-Image Turbo
+//   Paid Fast:      zimage -> klein -> flux -> HuggingFace -> Z-Image Turbo
+//   Paid Intuitive: tongyi-mai/z-image-turbo -> black-forest-labs/flux.2-klein-4b -> flux -> zimage -> HuggingFace -> Z-Image Turbo
 //
 // Features:
 //   - Fair in-process queue with per-user limits and bounded concurrency
@@ -97,7 +97,8 @@ export function selectImageProviderMode(
   return preferredModel === "wan-image"
     || preferredModel === "gptimage"
     || preferredModel === "gptimage-large"
-    || preferredModel === "gpt-image-2"
+    || preferredModel === "tongyi-mai/z-image-turbo"
+    || preferredModel === "black-forest-labs/flux.2-klein-4b"
     || preferredModel === "kontext"
     ? "complex"
     : "standard";
@@ -134,13 +135,29 @@ function getProvidersForMode(
         new HuggingFaceProvider(),
         new PollinationsProvider(),
       ];
-    case "gpt-image-2":
+    case "tongyi-mai/z-image-turbo":
       return [
-        new PollinationsImageModelProvider("gpt-image-2"),
-        new PollinationsImageModelProvider("kontext"),
-        new DreamshaperProvider(),
+        new PollinationsImageModelProvider("tongyi-mai/z-image-turbo"),
+        new PollinationsImageModelProvider("black-forest-labs/flux.2-klein-4b"),
         new FluxSchnellProvider(),
         new ZimageProvider(),
+        new HuggingFaceProvider(),
+        new PollinationsProvider(),
+      ];
+    case "black-forest-labs/flux.2-klein-4b":
+      return [
+        new PollinationsImageModelProvider("black-forest-labs/flux.2-klein-4b"),
+        new FluxSchnellProvider(),
+        new ZimageProvider(),
+        new HuggingFaceProvider(),
+        new PollinationsProvider(),
+      ];
+    case "gpt-image-2":
+      // Obsolete preference compatibility branch; never routes to GPT-Image-2.
+      return [
+        new ZimageProvider(),
+        new PollinationsImageModelProvider("klein", { enhance: true }),
+        new FluxSchnellProvider(),
         new HuggingFaceProvider(),
         new PollinationsProvider(),
       ];
