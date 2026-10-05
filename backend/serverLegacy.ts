@@ -4469,7 +4469,11 @@ app.post(
         let fastUserMessagePersisted = false;
 
         const canonicalUserDb = (req as any).userDb;
-        const canonicalConversationId = (req as any).canonicalConversationId;
+        const rawCanonicalConversationId = (req as any).canonicalConversationId;
+        const canonicalConversationId: string | null =
+          typeof rawCanonicalConversationId === "string" && rawCanonicalConversationId.trim()
+            ? rawCanonicalConversationId.trim()
+            : null;
 
         if (canonicalUserDb) {
           fastUserDb = canonicalUserDb;
@@ -4502,7 +4506,7 @@ app.post(
 
         if (canonicalConversationId) {
           fastConversationId = canonicalConversationId;
-          sync.conversationId = fastConversationId;
+          sync.conversationId = canonicalConversationId;
         } else {
           try {
             const resolvedConversation = await resolveOrCreateConversationForRequest(
