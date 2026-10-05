@@ -4468,54 +4468,67 @@ app.post(
         let fastCreatedConversation = false;
         let fastUserMessagePersisted = false;
 
-        try {
-          fastUserDb = await resolveUserDatabaseOrThrow(userId, "chat.stream.fast");
-          await initializeUserSessionOrThrow(fastUserDb, userId, "chat.stream.fast");
-          await ensureNamedWorkspaceProfile(userId, "chat.stream.fast", fastUserDb);
-        } catch (dbBootstrapError) {
-          sync.persisted = false;
-          sync.deferred = true;
-          sync.reason = "persistence_deferred";
-          logDbFailure(
-            "chat.stream.fast.bootstrap",
-            userId,
-            dbBootstrapError instanceof Error ? dbBootstrapError : new Error(String(dbBootstrapError)),
-            { conversationId: fastConversationId },
-          );
-          return {
-            sync,
-            userDb: null,
-            activeConversationId: fastConversationId,
-            activeConversationTitle: null,
-            createdConversation: false,
-            userMessagePersisted: false,
-          };
+        const canonicalUserDb = (req as any).userDb;
+        const canonicalConversationId = (req as any).canonicalConversationId;
+
+        if (canonicalUserDb) {
+          fastUserDb = canonicalUserDb;
+          await ensureNamedWorkspaceProfile(userId, "chat.stream.fast", fastUserDb).catch(() => undefined);
+        } else {
+          try {
+            fastUserDb = await resolveUserDatabaseOrThrow(userId, "chat.stream.fast");
+            await initializeUserSessionOrThrow(fastUserDb, userId, "chat.stream.fast");
+            await ensureNamedWorkspaceProfile(userId, "chat.stream.fast", fastUserDb);
+          } catch (dbBootstrapError) {
+            sync.persisted = false;
+            sync.deferred = true;
+            sync.reason = "persistence_deferred";
+            logDbFailure(
+              "chat.stream.fast.bootstrap",
+              userId,
+              dbBootstrapError instanceof Error ? dbBootstrapError : new Error(String(dbBootstrapError)),
+              { conversationId: fastConversationId },
+            );
+            return {
+              sync,
+              userDb: null,
+              activeConversationId: fastConversationId,
+              activeConversationTitle: null,
+              createdConversation: false,
+              userMessagePersisted: false,
+            };
+          }
         }
 
-        try {
-          const resolvedConversation = await resolveOrCreateConversationForRequest(
-            fastUserDb,
-            userId,
-            "chat.stream.fast",
-            fastConversationId,
-            "New Chat",
-            { clientRequestId: parsed.data.clientRequestId },
-          );
-          fastConversationId = resolvedConversation.conversation.id;
+        if (canonicalConversationId) {
+          fastConversationId = canonicalConversationId;
           sync.conversationId = fastConversationId;
-          fastConversationTitle = resolvedConversation.conversation.title || null;
-          fastCreatedConversation = resolvedConversation.created;
-        } catch (conversationCreateError) {
-          sync.persisted = false;
-          sync.deferred = true;
-          sync.reason = "persistence_deferred";
-          logDbFailure(
-            "chat.stream.fast.conversation-resolve-or-create",
-            userId,
-            conversationCreateError instanceof Error ? conversationCreateError : new Error(String(conversationCreateError)),
-            { conversationId: fastConversationId },
-          );
-          fastConversationId = null;
+        } else {
+          try {
+            const resolvedConversation = await resolveOrCreateConversationForRequest(
+              fastUserDb,
+              userId,
+              "chat.stream.fast",
+              fastConversationId,
+              "New Chat",
+              { clientRequestId: parsed.data.clientRequestId },
+            );
+            fastConversationId = resolvedConversation.conversation.id;
+            sync.conversationId = fastConversationId;
+            fastConversationTitle = resolvedConversation.conversation.title || null;
+            fastCreatedConversation = resolvedConversation.created;
+          } catch (conversationCreateError) {
+            sync.persisted = false;
+            sync.deferred = true;
+            sync.reason = "persistence_deferred";
+            logDbFailure(
+              "chat.stream.fast.conversation-resolve-or-create",
+              userId,
+              conversationCreateError instanceof Error ? conversationCreateError : new Error(String(conversationCreateError)),
+              { conversationId: fastConversationId },
+            );
+            fastConversationId = null;
+          }
         }
 
         if (fastUserDb && fastConversationId) {
@@ -4658,7 +4671,7 @@ app.post(
       let fastReservation: UsageReservation | null = null;
 
       try {
-        fastReservation = await reserveTextBilling({
+        const billingPromise = reserveTextBilling({
           identity: billingIdentity,
           requestId: `${billingRequestId}:fast-stream`,
           conversationId: requestedConversationId,
@@ -4667,17 +4680,18 @@ app.post(
           executionMode: executionProfile.mode,
           complexity: "normal",
         });
-        const [fastCtx, routedModel] = await Promise.all([
-          buildContextFast(fastRawContext, undefined, userId, { profile: executionProfile }),
-          selectModelForCapabilities({
-            query: effectiveUserMessage,
-            options: { hasImage: false, hasFile: false },
-            executionMode: executionProfile.mode,
-            userId,
-            isGuest,
-            signal: requestAbortController.signal,
-          }),
+        const contextPromise = buildContextFast(
+          fastRawContext,
+          undefined,
+          userId,
+          { profile: executionProfile },
+        );
+
+        const [resolvedReservation, fastCtx] = await Promise.all([
+          billingPromise,
+          contextPromise,
         ]);
+        fastReservation = resolvedReservation;
         const modelOverride = fastReservation.adapterModelOverride;
         fastModelForRecovery = modelOverride;
         const streamMetrics = createStreamMetrics(
@@ -4717,7 +4731,11 @@ app.post(
             if (!value) continue;
             fullReply += value;
             recordStreamChunk(streamMetrics, value);
-            await writeSseJson({ type: "token", text: value });
+            if (typeof (res as any).writeEvent === "function") {
+              (res as any).writeEvent({ type: "token", text: value });
+            } else {
+              await writeSseJson({ type: "token", text: value });
+            }
           }
         } finally {
           if (clientDisconnected) {

@@ -46,7 +46,7 @@ globalThis.SentIQAPI = {
   },
 };
 
-await import(pathToFileURL(new URL("../frontend/scripts/observability/fast-latency.js", import.meta.url).pathname).href);
+await import(new URL("../frontend/scripts/observability/fast-latency.js", import.meta.url).href);
 
 const traceId = "11111111-2222-4333-8444-555555555555";
 listeners.get("click")?.({ target: new FakeElement() });

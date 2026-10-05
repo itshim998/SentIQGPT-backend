@@ -824,7 +824,7 @@ async function getLiveResumeToken(sessionId) {
 }
 
 window.SentIQAPI = {
-  sendMessage, sendMessageStream, canStreamResponses, classifyMemory, compressMemories,
+  sendMessage, sendMessageStream, canStreamResponses, buildChatRequestContext, classifyMemory, compressMemories,
   sendSelectionMessage, uploadFile, subscribeFileUpdates, clearFileSession, generateImage, storeImage, getChatImages, getImageQuota, deleteImage, generateTitle,
   getBillingPlans, getBillingMe, getBillingUsage, startBillingCheckout, verifyBillingCheckout, cancelBillingSubscription,
   getGeneratedFileAccessUrl, updateGeneratedHtmlFile, deleteGeneratedFile,

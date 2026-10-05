@@ -205,16 +205,23 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     const originalSendMessage = API.sendMessage.bind(API);
     API.sendMessage = async (message, context = {}) => {
       const clientRequestId = context?.clientRequestId || context?.client_request_id || "";
+      const isFast = (context?.executionMode || context?.execution_mode || "fast") === "fast";
       if (clientRequestId) {
-        try {
-          await claim(clientRequestId);
-        } catch (claimErr) {
-          console.warn("[generation-session] claim error ignored:", claimErr);
+        if (isFast) {
+          void claim(clientRequestId).catch((claimErr) => {
+            console.warn("[generation-session] claim error ignored:", claimErr);
+          });
+        } else {
+          try {
+            await claim(clientRequestId);
+          } catch (claimErr) {
+            console.warn("[generation-session] claim error ignored:", claimErr);
+          }
         }
       }
       let id = null;
       try {
-        id = sessionId || await ensure();
+        id = sessionId || (isFast ? null : await ensure());
       } catch {}
       return originalSendMessage(message, id ? { ...(context || {}), generation_session_id: id } : context);
     };
@@ -223,5 +230,5 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
 
   window.addEventListener("pagehide", (event) => { if (!event.persisted) void close(); });
   window.addEventListener("pageshow", (event) => { if (event.persisted) reopenAfterRestore(); });
-  window.SentIQGenerationSession = Object.freeze({ ensure, heartbeat, close, getId: () => sessionId, isClosed: () => closed });
+  window.SentIQGenerationSession = Object.freeze({ ensure, claim, heartbeat, close, getId: () => sessionId, isClosed: () => closed });
 })();

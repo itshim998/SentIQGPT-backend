@@ -59,11 +59,46 @@ class ChatGenerationTaskCoordinator {
   private appendEvent(task: Task, payload: Record<string, unknown>, explicitSequence?: number): ChatGenerationEvent {
     const originalType = typeof payload.type === "string" ? payload.type : "";
     const canonicalType = normalizeGenerationEventType(originalType);
-    const event: ChatGenerationEvent = { ...payload, generation_id: task.generationId, conversation_id: task.conversationId ?? task.generation?.conversation_id ?? null, sequence: explicitSequence ?? ++task.sequence, type: canonicalType ?? (originalType || "generation_event") as ChatGenerationEvent["type"], ...(canonicalType && canonicalType !== originalType ? { original_type: originalType } : {}) } as ChatGenerationEvent;
+    const seq = explicitSequence ?? ++task.sequence;
+    const event: ChatGenerationEvent = { ...payload, generation_id: task.generationId, conversation_id: task.conversationId ?? task.generation?.conversation_id ?? null, sequence: seq, type: canonicalType ?? (originalType || "generation_event") as ChatGenerationEvent["type"], ...(canonicalType && canonicalType !== originalType ? { original_type: originalType } : {}) } as ChatGenerationEvent;
     task.sequence = Math.max(task.sequence, Number(event.sequence));
-    if (!task.events.some((candidate) => candidate.sequence === event.sequence)) task.events.push(event);
-    task.events.sort((left, right) => left.sequence - right.sequence);
+    const lastEvent = task.events.length > 0 ? task.events[task.events.length - 1] : null;
+    if (!lastEvent || event.sequence > lastEvent.sequence) {
+      task.events.push(event);
+    } else if (!task.events.some((candidate) => candidate.sequence === event.sequence)) {
+      task.events.push(event);
+      task.events.sort((left, right) => left.sequence - right.sequence);
+    }
     if (task.events.length > EVENT_BUFFER_LIMIT) task.events.splice(0, task.events.length - EVENT_BUFFER_LIMIT);
+    return event;
+  }
+
+  publishTokenFast(generationId: string, text: string): ChatGenerationEvent | null {
+    const task = this.tasks.get(generationId);
+    if (!task || task.terminal) return null;
+    task.partialText += text;
+    task.tokensGenerated += 1;
+    task.status = "running";
+    const seq = ++task.sequence;
+    const event: ChatGenerationEvent = {
+      type: "token",
+      text,
+      generation_id: task.generationId,
+      conversation_id: task.conversationId ?? task.generation?.conversation_id ?? null,
+      sequence: seq,
+    } as ChatGenerationEvent;
+    task.events.push(event);
+    if (task.events.length > EVENT_BUFFER_LIMIT) {
+      task.events.shift();
+    }
+    for (const state of task.subscribers) {
+      if (seq > state.nextSequence) {
+        try {
+          void state.callback(event);
+          state.nextSequence = seq;
+        } catch {}
+      }
+    }
     return event;
   }
 
@@ -71,7 +106,17 @@ class ChatGenerationTaskCoordinator {
 
   private async notify(task: Task, event: ChatGenerationEvent): Promise<void> {
     const states = Array.from(task.subscribers);
-    await Promise.allSettled(states.filter((state) => Number(event.sequence) > state.nextSequence).map(async (state) => { await state.callback(event); state.nextSequence = Number(event.sequence); }));
+    for (const state of states) {
+      if (Number(event.sequence) > state.nextSequence) {
+        try {
+          const res = state.callback(event);
+          state.nextSequence = Number(event.sequence);
+          if (res && typeof (res as any).then === "function") {
+            await res;
+          }
+        } catch {}
+      }
+    }
   }
 
   private async persistEvent(task: Task, event: ChatGenerationEvent, state?: { partialText?: string; tokensGenerated?: number; status?: string; errorCode?: string | null }): Promise<void> {
@@ -146,8 +191,8 @@ class ChatGenerationTaskCoordinator {
     const event = this.appendEvent(task, payload);
     const eventState = { partialText: task.partialText, tokensGenerated: task.tokensGenerated, status: task.status, errorCode: task.lastErrorCode };
     await this.notify(task, event);
-    if (task.userDb && task.executionLeaseId && payload.type !== "token" && event.type !== "token") {
-      void this.enqueue(task, async () => {
+    if (task.userDb && task.executionLeaseId) {
+      await this.enqueue(task, async () => {
         try {
           await this.persistEvent(task, event, eventState);
         } catch (err) {

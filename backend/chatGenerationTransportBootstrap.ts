@@ -136,7 +136,14 @@ async function startGeneration(_legacyFinalHandler: GenerationExecutorHandler, c
 }
 function formatGenerationEvent(event: Record<string, unknown>): string { return `data: ${JSON.stringify(event)}\n\n`; }
 export function openGenerationSubscription(response: Response, generationId: string, context: any, afterSequence = 0) {
-  response.status(200); response.setHeader("Content-Type", "text/event-stream; charset=utf-8"); response.setHeader("Cache-Control", "no-cache, no-transform"); response.setHeader("X-Accel-Buffering", "no"); response.flushHeaders?.();
+  response.status(200);
+  response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  response.setHeader("Cache-Control", "no-cache, no-transform");
+  response.setHeader("X-Accel-Buffering", "no");
+  response.setHeader("X-Generation-Id", generationId);
+  if (context?.conversationId) response.setHeader("X-Conversation-Id", String(context.conversationId));
+  if (context?.clientRequestId) response.setHeader("X-Client-Request-Id", String(context.clientRequestId));
+  response.flushHeaders?.();
   const emit = (event: Record<string, unknown>) => { if (!(response as any).writableEnded) { try { response.write(formatGenerationEvent(event)); } catch {} } };
   const emitDoneAndClose = () => { if (!(response as any).writableEnded) { try { response.write("data: [DONE]\n\n"); response.end(); } catch {} } };
   let closed = false; let unsubscribe: (() => void) | null = null;
@@ -152,7 +159,7 @@ export function openGenerationSubscription(response: Response, generationId: str
 
   void (async () => {
     let persisted = context.generation;
-    if (context.userDb) {
+    if (cursor > 0 && context.userDb) {
       const result = await withDbTimeout(getChatGenerationById(context.userDb, context.userId, generationId), DB_TIMEOUT_MS, "getChatGenerationById").catch(() => ({ data: context.generation, error: null }));
       if (result?.data) persisted = result.data;
     }

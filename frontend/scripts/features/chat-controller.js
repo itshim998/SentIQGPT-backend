@@ -4458,9 +4458,11 @@ import {
         })),
       };
     }
-    const chat = await Storage.getChat(chatId);
+    const [chat, memories] = await Promise.all([
+      Storage.getChat(chatId),
+      Storage.getTopMemories(10, chatId),
+    ]);
     const recentMessages = collapseAdjacentDuplicateChatMessages(chat?.messages || []);
-    const memories = await Storage.getTopMemories(10, chatId);
     return {
       recentMessages: recentMessages.slice(-recentLimit).map((msg) => ({ role: msg.role, content: msg.content })),
       memories: memories.map((memory) => ({
@@ -9395,7 +9397,7 @@ import {
     state.activityLoaderKind = requestLoaderKind;
     const ac = createAbortController();
     state.abortController = ac;
-    await upsertChatMessageSyncJob(requestId, {
+    const syncJobPromise = upsertChatMessageSyncJob(requestId, {
       localChatId: targetChatId,
       conversationId: conversationIdForRequest || null,
       title: visibleUserMessage ? visibleUserMessage.slice(0, 50) : "New Chat",
@@ -9407,17 +9409,37 @@ import {
           ...(userMessageMeta ? { meta: userMessageMeta } : {}),
         },
       ],
+    }).catch((error) => {
+      debugWarn("[UI] Initial chat message sync job failed:", getSafeErrorMessage(error));
     });
+    if (requestExecutionMode !== "fast") {
+      await syncJobPromise;
+    }
     setStopMode();
 
+    let persistUserPromise = null;
     if (!retryMessage) {
       appendMessageBubble("user", visibleUserMessage, userMessageMeta);
       if (chatMessages) chatMessages.classList.add("has-messages");
-      await persistChatMessage(targetChatId, "user", visibleUserMessage, userMessageMeta, {
+      persistUserPromise = persistChatMessage(targetChatId, "user", visibleUserMessage, userMessageMeta, {
         id: `user-${requestId}`,
         clientRequestId: requestId,
+      }).catch((error) => {
+        debugWarn("[UI] User message persistence failed:", getSafeErrorMessage(error));
       });
+      if (requestExecutionMode !== "fast") {
+        await persistUserPromise;
+      }
     }
+
+    const ensureUserPersistenceSettled = async () => {
+      try {
+        if (syncJobPromise) await syncJobPromise;
+      } catch {}
+      try {
+        if (persistUserPromise) await persistUserPromise;
+      } catch {}
+    };
     _userScrolledUp = false;
     if (scrollAnchorPill) scrollAnchorPill.classList.remove("visible");
     scrollToBottom();
@@ -9654,6 +9676,7 @@ import {
                 structuredResponse = response;
               },
             }, ac.signal);
+            await ensureUserPersistenceSettled();
             if (fileArtifactResponse) {
               const fileMeta = normalizeGeneratedFileMeta(fileArtifactResponse.file, { chatId: targetChatId });
               finalAssistantMeta = fileMeta;
@@ -9795,6 +9818,7 @@ import {
         }
       }
 
+      await ensureUserPersistenceSettled();
       if (isRequestStale(targetChatId, requestId) && !ac.signal?.aborted) {
         if (fullReply) {
           if (usedStreaming) await streamDraft.finalize(fullReply, responseRenderMode ? { renderMode: responseRenderMode } : {});

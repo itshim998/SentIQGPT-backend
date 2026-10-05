@@ -667,7 +667,262 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     return response.json().catch(() => null);
   }
 
-  async function patchedSendMessageStream(message, context = {}, callbacks = {}, signal = null) {
+  function buildRequestContextPayload(context = {}) {
+    if (window.SentIQAPI?.buildChatRequestContext) {
+      return window.SentIQAPI.buildChatRequestContext(context);
+    }
+    return {
+      recent_messages: Array.isArray(context.recentMessages) ? context.recentMessages : (Array.isArray(context.recent_messages) ? context.recent_messages : []),
+      memories: Array.isArray(context.memories) ? context.memories : [],
+      file_references: Array.isArray(context.fileReferences) ? context.fileReferences : (Array.isArray(context.file_references) ? context.file_references : []),
+      image_attachments: Array.isArray(context.imageAttachments) ? context.imageAttachments : (Array.isArray(context.image_attachments) ? context.image_attachments : []),
+      web_search_mode: context.webSearchMode || context.web_search_mode || "none",
+      trusted_profile: context.trustedProfile || context.trusted_profile || undefined,
+    };
+  }
+
+  async function streamFastGeneration(message, context = {}, callbacks = {}, signal = null) {
+    pendingGenerationStarts += 1;
+    let entry = null;
+    let generationId = "";
+    try {
+      const headers = await buildAuthHeaders();
+      const conversationId =
+        typeof context.conversationId === "string" && context.conversationId.trim()
+          ? context.conversationId.trim()
+          : typeof context.conversation_id === "string" && context.conversation_id.trim()
+            ? context.conversation_id.trim()
+            : undefined;
+      const clientRequestId =
+        typeof context.clientRequestId === "string" && context.clientRequestId.trim()
+          ? context.clientRequestId.trim()
+          : undefined;
+      const generationSessionId =
+        typeof context.generation_session_id === "string" && context.generation_session_id.trim()
+          ? context.generation_session_id.trim()
+          : typeof context.generationSessionId === "string" && context.generationSessionId.trim()
+            ? context.generationSessionId.trim()
+            : undefined;
+
+      if (window.SentIQGenerationSession?.claim && clientRequestId) {
+        void window.SentIQGenerationSession.claim(clientRequestId).catch(() => {});
+      }
+
+      const payload = {
+        message,
+        ...(conversationId ? { conversationId } : {}),
+        ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
+        ...(generationSessionId ? { generation_session_id: generationSessionId } : {}),
+        execution_mode: "fast",
+        context: buildRequestContextPayload(context),
+      };
+
+      const response = await fetch(`${SENTIQ_API_BASE}/api/chat/stream`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        signal,
+        cache: "no-store",
+      });
+
+      if (response.status === 404 || response.status === 405) {
+        return streamTwoRequestGeneration(message, context, callbacks, signal);
+      }
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        const error = new Error(errorBody?.error || `Generation request failed: HTTP ${response.status}`);
+        error.status = response.status;
+        error.code = errorBody?.code || "generation_request_failed";
+        callbacks.onError?.(error, { tokensReceived: false, interrupted: false });
+        throw error;
+      }
+
+      window.dispatchEvent?.(new CustomEvent("sentiq-billing-refresh"));
+
+      const headerGenId = response.headers.get("x-generation-id") || response.headers.get("X-Generation-Id");
+      const headerConvId = response.headers.get("x-conversation-id") || response.headers.get("X-Conversation-Id");
+      const headerReqId = response.headers.get("x-client-request-id") || response.headers.get("X-Client-Request-Id");
+
+      const localChatId = context.chatId
+        || context.localChatId
+        || document.querySelector(".chat-list-item.active")?.getAttribute("data-id")
+        || null;
+
+      const chatId = context.chatId
+        || context.localChatId
+        || context.conversationId
+        || context.conversation_id
+        || headerConvId
+        || localChatId
+        || "__unassigned__";
+
+      const canonicalConversationId = headerConvId
+        || context.conversationId
+        || context.conversation_id
+        || chatId;
+
+      const initEntry = (genId, convId) => {
+        if (entry) return entry;
+        generationId = genId;
+        entry = {
+          generationId: genId,
+          requestId: clientRequestId || headerReqId || null,
+          clientRequestId: clientRequestId || headerReqId || null,
+          chatId,
+          localChatId,
+          conversationId: convId || canonicalConversationId,
+          status: "running",
+          responseBuffer: "",
+          lastSequence: 0,
+          pendingReplayThrough: 0,
+          subscription: { active: true, reconnectAttempts: 0, signal },
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          callbacks,
+          pendingCallbacks: [],
+          readyAcknowledged: false,
+          startedDelivered: false,
+          rehydrated: false,
+          deliveredText: "",
+          tokensReceived: false,
+          structuredReceived: false,
+          interrupted: false,
+          cancelled: false,
+          cancelRequested: false,
+          terminal: false,
+          error: null,
+        };
+        activeGenerations.set(genId, entry);
+        registerGeneration(entry);
+        foregroundGenerationId = genId;
+        callbacks.onGenerationStarted?.(genId, {
+          generation_id: genId,
+          conversation_id: convId || canonicalConversationId,
+          client_request_id: clientRequestId || headerReqId || null,
+          status: "running",
+        });
+        dispatchGenerationEvent(entry, {
+          type: "generation_started",
+          generation_id: genId,
+          sequence: 0,
+          status: entry.status,
+        });
+        if (stopRequestedBeforeGeneration) {
+          stopRequestedBeforeGeneration = false;
+          entry.cancelRequested = true;
+          void cancelGeneration(genId).catch((err) => {
+            console.warn("[GenerationLifecycle] Stop raced generation creation:", err);
+          });
+        }
+        return entry;
+      };
+
+      if (headerGenId) {
+        initEntry(headerGenId, headerConvId);
+      }
+
+      if (!response.body?.getReader) {
+        throw new Error("Generation stream body is unavailable.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      const processLines = (lines) => {
+        for (const line of lines) {
+          const event = extractSsePayload(line);
+          if (!event) continue;
+          if (event === "[DONE]") {
+            if (entry) {
+              entry.terminal = true;
+              entry.status = "completed";
+              entry.completedAt = new Date().toISOString();
+              activeGenerations.delete(entry.generationId);
+              entry.callbacks.onDone?.();
+              if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+              pruneTerminalEntryCallbacks(entry);
+            }
+            return true;
+          }
+          if (!entry && event?.generation_id) {
+            initEntry(event.generation_id, event.conversation_id);
+          }
+          if (entry && emitEvent(entry, event)) return true;
+        }
+        return false;
+      };
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            if (buffer) {
+              const lines = buffer.split("\n");
+              buffer = "";
+              if (processLines(lines)) break;
+            }
+            if (entry && (entry.tokensReceived || entry.structuredReceived)) {
+              entry.terminal = true;
+              entry.status = "completed";
+              entry.completedAt = new Date().toISOString();
+              activeGenerations.delete(entry.generationId);
+              entry.callbacks.onDone?.();
+              if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+              pruneTerminalEntryCallbacks(entry);
+            }
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          if (processLines(lines) || (entry && entry.terminal)) break;
+        }
+      } finally {
+        try { await reader.cancel(); } catch {}
+        try { reader.releaseLock(); } catch {}
+        if (entry) entry.subscription.active = false;
+      }
+
+      if (entry && !entry.terminal && !entry.cancelled && !entry.cancelRequested && !signal?.aborted) {
+        await subscribeUntilTerminal(entry, signal);
+      }
+
+      if (entry?.cancelRequested || entry?.cancelled) {
+        return {
+          structured: Boolean(entry?.structuredReceived),
+          tokensReceived: Boolean(entry?.tokensReceived),
+          interrupted: false,
+          cancelled: true,
+          detached: false,
+          error: null,
+        };
+      }
+
+      if (entry?.error && !entry?.tokensReceived && !entry?.structuredReceived) {
+        throw entry.error;
+      }
+
+      return {
+        structured: Boolean(entry?.structuredReceived),
+        tokensReceived: Boolean(entry?.tokensReceived),
+        interrupted: Boolean(entry?.interrupted),
+        cancelled: false,
+        detached: false,
+        error: entry?.error || null,
+      };
+    } finally {
+      pendingGenerationStarts = Math.max(0, pendingGenerationStarts - 1);
+      if (entry) {
+        if (activeGenerations.get(generationId) === entry && entry.terminal) activeGenerations.delete(generationId);
+        if (foregroundGenerationId === generationId && entry.terminal) foregroundGenerationId = null;
+        if (entry.terminal) pruneTerminalEntryCallbacks(entry);
+      }
+    }
+  }
+
+  async function streamTwoRequestGeneration(message, context = {}, callbacks = {}, signal = null) {
     pendingGenerationStarts += 1;
     let started;
     try {
@@ -789,6 +1044,14 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       if (foregroundGenerationId === generationId && entry.terminal) foregroundGenerationId = null;
       if (entry.terminal) pruneTerminalEntryCallbacks(entry);
     }
+  }
+
+  async function patchedSendMessageStream(message, context = {}, callbacks = {}, signal = null) {
+    const isFast = (context.executionMode || context.execution_mode) === "fast";
+    if (isFast) {
+      return streamFastGeneration(message, context, callbacks, signal);
+    }
+    return streamTwoRequestGeneration(message, context, callbacks, signal);
   }
 
   function handleExplicitStop(event) {

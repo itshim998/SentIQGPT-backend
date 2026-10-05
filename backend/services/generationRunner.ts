@@ -16,6 +16,9 @@ const LEASE_RENEW_MS = 15000;
 export type GenerationExecutorHandler = (request: GenerationExecutionRequest, response: GenerationEventSink, next: (error?: unknown) => void) => unknown;
 export type GenerationRequestSnapshot = { body: Record<string, unknown>; headers?: Record<string, string>; originalUrl?: string; user?: Record<string, unknown> | null };
 export interface GenerationExecutionRequest {
+  userDb?: any;
+  generation?: ChatGenerationRow;
+  canonicalConversationId?: string | null;
   body: Record<string, unknown>;
   headers: Record<string, string>;
   ip: string;
@@ -58,6 +61,20 @@ export class GenerationEventSink {
   flushHeaders() { this.headersSent = true; }
   status(code: number) { this.statusCode = code; return this; }
   write(chunk: unknown) { if (this.writableEnded) return false; this.headersSent = true; this.ingest(chunk); return true; }
+  writeEvent(event: Record<string, unknown>): boolean {
+    if (this.writableEnded) return false;
+    this.headersSent = true;
+    if (event.type === "token") {
+      try {
+        void this.onFrame(event);
+      } catch (error) {
+        this.onError(error);
+      }
+      return true;
+    }
+    this.queueFrame(event);
+    return true;
+  }
   end(chunk?: unknown) { if (this.writableEnded) return this; if (typeof chunk !== "undefined") this.ingest(chunk); this.flushBufferedFrame(); this.writableEnded = true; void this.publishChain.finally(() => { this.emit("finish"); this.emit("close"); }); return this; }
   json(body: unknown) { this.headersSent = true; this.queueFrame({ type: "structured_response", response: body, generation_id: this.generationId }); return this.end(); }
   send(body: unknown) { return this.json(body); }
@@ -133,9 +150,20 @@ export async function runGeneration(generationId: string): Promise<void> {
     }
     await chatGenerationTaskCoordinator.publish(generation.id, { type: "generation_started", conversation_id: generation.conversation_id, status: "running" });
     const request = buildExecutionRequest(requestSnapshot, generation);
+    request.userDb = userDb;
+    request.generation = generation;
+    request.canonicalConversationId = generation.conversation_id;
     let runnerError: unknown = null;
     let executionOwnershipLost = false;
-    const sink = new GenerationEventSink(generation.id, async (frame) => { if (frame !== "[DONE]") await chatGenerationTaskCoordinator.publish(generation!.id, frame); }, (error) => {
+    const sink = new GenerationEventSink(generation.id, async (frame) => {
+      if (frame !== "[DONE]") {
+        if (frame.type === "token" && typeof frame.text === "string") {
+          chatGenerationTaskCoordinator.publishTokenFast(generation!.id, frame.text);
+          return;
+        }
+        await chatGenerationTaskCoordinator.publish(generation!.id, frame);
+      }
+    }, (error) => {
       runnerError = runnerError ?? error;
       if (String((error as any)?.message || "").includes("lease lost")) {
         executionOwnershipLost = true;

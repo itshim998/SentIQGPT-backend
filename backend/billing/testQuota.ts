@@ -1,7 +1,7 @@
 import { getPlanCatalog } from "./planCatalog";
 import { getImageModelForPlan, getLiteTextRoute, getPremiumTextRoute } from "./modelEntitlementRouter";
 import { createHmac } from "crypto";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -97,7 +97,9 @@ function testMigrationSafety() {
 
 function testRouteSafetySource() {
   const routes = readFileSync("backend/billing/billingRoutes.ts", "utf8");
-  const server = readFileSync("backend/server.ts", "utf8");
+  const server = existsSync("backend/serverLegacy.ts")
+    ? readFileSync("backend/serverLegacy.ts", "utf8")
+    : readFileSync("backend/server.ts", "utf8");
   assertIncludes(routes, "SENTIQ_BILLING_ALLOW_PERMANENT_MANUAL_GRANTS", "paid permanent manual grants must require explicit env opt-in");
   assertIncludes(routes, "manual_grant_expiry_required", "manual grant expiry failures should be explicit");
   assertIncludes(server, 'originalUrl.startsWith("/api/billing/webhook/razorpay")', "Razorpay raw body capture should survive query strings");
