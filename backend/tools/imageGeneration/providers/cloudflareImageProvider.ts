@@ -90,6 +90,10 @@ function isKleinModel(modelId: string): boolean {
   return normalized.includes("klein") || normalized.includes("flux-2-klein");
 }
 
+function isDreamShaperModel(modelId: string): boolean {
+  return modelId.toLowerCase().includes("dreamshaper");
+}
+
 function deriveSeed(requestKey?: string, prompt = ""): number | undefined {
   if (!requestKey) return undefined;
   const seedHex = createHash("sha256")
@@ -233,6 +237,7 @@ export class CloudflareImageProvider implements ImageProvider {
         try {
           const endpoint = `https://api.cloudflare.com/client/v4/accounts/${slot.accountId}/ai/run/${this.modelId}`;
           const isKlein = isKleinModel(this.modelId);
+          const isDreamShaper = isDreamShaperModel(this.modelId);
           const seed = deriveSeed(context?.requestKey, prompt);
           const { width, height } = parseSize(size);
 
@@ -254,16 +259,29 @@ export class CloudflareImageProvider implements ImageProvider {
               body: formData,
               signal: abortController.signal,
             };
+          } else if (isDreamShaper) {
+            // Dreamshaper uses prompt + num_steps + optional seed (no redundant steps)
+            const jsonBody: Record<string, unknown> = {
+              prompt,
+              num_steps: 4,
+            };
+            if (seed !== undefined) jsonBody.seed = seed;
+
+            requestInit = {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${slot.apiToken}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(jsonBody),
+              signal: abortController.signal,
+            };
           } else {
-            // Schnell and Dreamshaper use application/json
+            // Schnell and other standard models use prompt + steps (no seed)
             const jsonBody: Record<string, unknown> = {
               prompt,
               steps: 4,
             };
-            if (seed !== undefined) jsonBody.seed = seed;
-            if (this.modelId.includes("dreamshaper")) {
-              jsonBody.num_steps = 4;
-            }
 
             requestInit = {
               method: "POST",

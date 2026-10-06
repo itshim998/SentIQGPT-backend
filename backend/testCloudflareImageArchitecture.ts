@@ -207,8 +207,8 @@ async function runAllTests(): Promise<void> {
   assert.equal(typeof schnellCapturedBody, "string", "Schnell request body must be JSON string");
   const parsedSchnellBody = JSON.parse(schnellCapturedBody);
   assert.equal(parsedSchnellBody.prompt, "cyberpunk cat");
-  assert.equal(parsedSchnellBody.steps, 4);
-  assert.ok(parsedSchnellBody.seed, "Schnell must carry deterministic seed from requestKey");
+  assert.equal(parsedSchnellBody.steps, 4, "Schnell must send steps: 4");
+  assert.equal(parsedSchnellBody.seed, undefined, "Schnell request must NOT contain seed");
   assert.equal(schnellCapturedHeaders?.["Content-Type"], "application/json");
   assert.equal(schnellCapturedHeaders?.["Authorization"], "Bearer secret-token-1");
 
@@ -234,7 +234,7 @@ async function runAllTests(): Promise<void> {
   assert.equal(kleinCapturedHeaders?.["Content-Type"], undefined, "FormData must NOT manually set Content-Type header");
   assert.equal(kleinCapturedHeaders?.["Authorization"], "Bearer secret-token-1");
 
-  // Dreamshaper must use application/json with num_steps
+  // Dreamshaper must use application/json with num_steps and optional deterministic seed (no redundant steps)
   let dreamshaperCapturedBody: any = null;
   setCloudflareFetchForTesting(async (url, init) => {
     dreamshaperCapturedBody = init?.body;
@@ -245,10 +245,13 @@ async function runAllTests(): Promise<void> {
   });
 
   const dreamshaperProvider = new CloudflareImageProvider(CLOUDFLARE_MODEL_DREAMSHAPER);
-  await dreamshaperProvider.generate("fantasy landscape");
+  await dreamshaperProvider.generate("fantasy landscape", undefined, undefined, { requestKey: "dreamshaper-seed-key" });
   assert.equal(typeof dreamshaperCapturedBody, "string");
   const parsedDreamshaper = JSON.parse(dreamshaperCapturedBody);
-  assert.equal(parsedDreamshaper.num_steps, 4);
+  assert.equal(parsedDreamshaper.prompt, "fantasy landscape");
+  assert.equal(parsedDreamshaper.num_steps, 4, "DreamShaper must send num_steps: 4");
+  assert.equal(parsedDreamshaper.steps, undefined, "DreamShaper request must NOT contain redundant steps");
+  assert.ok(parsedDreamshaper.seed, "DreamShaper may send deterministic seed when available");
 
   console.log("PASS: Request formats strictly adhere to Cloudflare API contract (JSON for Schnell/Dreamshaper, FormData for Klein).");
 
