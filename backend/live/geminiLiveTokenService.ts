@@ -43,9 +43,14 @@ function classifyStatus(status: number): GeminiLiveFailureClass {
   return "unknown";
 }
 
-function buildLockedSetup(config: GeminiLiveConfig, systemInstruction: string): Record<string, unknown> {
+function buildLockedSetup(
+  config: GeminiLiveConfig,
+  systemInstruction: string,
+  modelOverride?: string,
+): Record<string, unknown> {
+  const effectiveModel = (modelOverride || config.model).replace(/^models\//, "");
   return {
-    model: `models/${config.model}`,
+    model: `models/${effectiveModel}`,
     generationConfig: {
       responseModalities: ["AUDIO"],
       speechConfig: {
@@ -87,6 +92,7 @@ export class GeminiLiveTokenService {
     config: GeminiLiveConfig;
     systemInstruction: string;
     sessionMaxSeconds?: number;
+    modelOverride?: string;
   }): Promise<GeminiLiveTokenResult> {
     const now = this.now();
     const sessionMaxSeconds = Math.min(
@@ -112,7 +118,7 @@ export class GeminiLiveTokenService {
           uses: 1,
           expireTime: expiresAt,
           newSessionExpireTime: newSessionExpiresAt,
-          bidiGenerateContentSetup: buildLockedSetup(args.config, args.systemInstruction),
+          bidiGenerateContentSetup: buildLockedSetup(args.config, args.systemInstruction, args.modelOverride),
         }),
         signal: controller.signal,
       });

@@ -1,4 +1,10 @@
 export const DEFAULT_GEMINI_LIVE_MODEL = "gemini-3.8-live";
+export const GEMINI_LIVE_FALLBACK_MODEL = "gemini-3-flash-live";
+export const ORDERED_GEMINI_LIVE_MODELS = [
+  DEFAULT_GEMINI_LIVE_MODEL,
+  GEMINI_LIVE_FALLBACK_MODEL,
+] as const;
+export type GeminiLiveModel = (typeof ORDERED_GEMINI_LIVE_MODELS)[number];
 export const DEFAULT_GEMINI_LIVE_VOICE = "Kore";
 export const GEMINI_LIVE_TOKEN_URL = "https://generativelanguage.googleapis.com/v1beta/auth_tokens";
 export const GEMINI_LIVE_WEBSOCKET_URL =

@@ -47,6 +47,7 @@ def reset_gemini_state(records=None):
     adapter.GEMINI_KEY_RECORDS = list(records)
     adapter.GEMINI_API_KEYS = [record.key for record in records]
     adapter._gemini_key_state.clear()
+    adapter._gemini_disabled_key_slots.clear()
     adapter._gemini_key_rotation_index = 0
     return records
 
@@ -264,7 +265,7 @@ def test_gemini_lite_falls_to_pollinations_after_gemma_failures():
             model_override="gemini:gemini-lite",
         )
 
-    assert_equal(gemini_models[:3], [adapter.GEMINI_LITE_MODEL, adapter.GEMMA_PRIMARY_MODEL, adapter.GEMMA_SECONDARY_MODEL], "lite then Gemma attempts")
+    assert_equal(gemini_models, adapter.ORDERED_LITE_MODELS, "lite 11-model pool attempts")
     assert_equal(pollinations_models, [adapter.POLLINATIONS_LITE_MODEL], "lite Pollinations last resort")
     assert_equal(result.get("text"), "pollinations-lite", "lite Pollinations text")
     assert_equal(result.get("model_used"), adapter.POLLINATIONS_LITE_MODEL, "lite Pollinations model")
@@ -281,7 +282,8 @@ def test_web_attempts_are_synthesis_only():
 
 
 def test_public_sanitizer_omits_internal_chain_fields():
-    server_source = Path(__file__).with_name("server.ts").read_text(encoding="utf-8")
+    legacy_file = Path(__file__).with_name("serverLegacy.ts")
+    server_source = legacy_file.read_text(encoding="utf-8") if legacy_file.exists() else Path(__file__).with_name("server.ts").read_text(encoding="utf-8")
     assert_true('"fallback_reason"' in server_source, "server sanitizer omits fallback_reason")
     assert_true('"error_detail"' in server_source, "server sanitizer omits error_detail")
     assert_true("sanitizePublicPayload" in server_source, "public payload sanitizer exists")

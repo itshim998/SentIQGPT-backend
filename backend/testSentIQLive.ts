@@ -960,7 +960,7 @@ async function testTokenFailureReleasesReservation(): Promise<void> {
     now: () => now,
     tokenFetchImpl: async () => {
       tokenAttempt += 1;
-      return tokenAttempt === 1
+      return tokenAttempt <= 2
         ? { ok: false, status: 429, json: async () => ({}) }
         : { ok: true, status: 200, json: async () => ({ name: "auth_tokens/retry-ephemeral" }) };
     },
@@ -1486,7 +1486,7 @@ async function testPart13G_ProviderFailover(): Promise<void> {
 
   const session = await service.createSession({ userId: USER_ID });
   assert.equal(session.ephemeralToken, "auth_tokens/failover-success");
-  assert.deepEqual(attemptedKeys, ["failover-k1", "failover-k2"]);
+  assert.deepEqual(attemptedKeys, ["failover-k1", "failover-k1", "failover-k2"]);
   await service.endSession({ userId: USER_ID, sessionId: session.sessionId, reason: "client_end" });
 }
 
@@ -1848,6 +1848,182 @@ async function testPart13R_StaleRunningCleanup(): Promise<void> {
   assert.equal(usageStore.getActiveCount(USER_ID), 0, "capacity lease freed");
 }
 
+// DEDICATED GEMINI LIVE QUOTA ROUTER TEST SUITE
+async function testGeminiLiveQuotaRouter(): Promise<void> {
+  const { ORDERED_GEMINI_LIVE_MODELS, DEFAULT_GEMINI_LIVE_MODEL, GEMINI_LIVE_FALLBACK_MODEL } = await import("./live/geminiLiveConfig");
+  assert.deepEqual(
+    ORDERED_GEMINI_LIVE_MODELS,
+    ["gemini-3.8-live", "gemini-3-flash-live"],
+    "Live pool must be exactly gemini-3.8-live followed by gemini-3-flash-live",
+  );
+  assert.equal(DEFAULT_GEMINI_LIVE_MODEL, "gemini-3.8-live");
+  assert.equal(GEMINI_LIVE_FALLBACK_MODEL, "gemini-3-flash-live");
+
+  // Key-major traversal: Key 1 + gemini-3.8-live (429) -> Key 1 + gemini-3-flash-live
+  const callLog: Array<{ key: string; model: string }> = [];
+  const keyPool = new GeminiLiveKeyPool({
+    keys: ["live-k1", "live-k2"],
+    now: () => 1_000,
+  });
+
+  let capturedRequestBody: any = null;
+  const tokenService = new GeminiLiveTokenService({
+    fetchImpl: async (_url, init) => {
+      const key = (init.headers as any)?.["x-goog-api-key"];
+      const body = JSON.parse(init.body as string);
+      capturedRequestBody = body;
+      const model = body.bidiGenerateContentSetup?.model?.replace(/^models\//, "");
+      callLog.push({ key, model });
+
+      // Fail 3.8-live on live-k1 with 429
+      if (key === "live-k1" && model === "gemini-3.8-live") {
+        return {
+          ok: false,
+          status: 429,
+          json: async () => ({ error: { message: "Resource exhausted" } }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ name: `auth_tokens/${key}-${model}` }),
+      };
+    },
+  });
+
+  const { persistence } = createPersistence();
+  const usageStore = new InMemoryLiveUsageStore(() => 1_000);
+  const service = new LiveSessionService({
+    config: liveConfig(true),
+    tierPolicy: loadLiveTierPolicy({}),
+    planResolver: new LivePlanResolver(async () => "premium", () => {}),
+    usageStore,
+    keyPool,
+    tokenService,
+    persistence,
+    titleGenerator: { generateTitle: async () => {} },
+    now: () => 1_000,
+    newId: () => "live-quota-session-1",
+    logger: () => {},
+  });
+
+  const session1 = await service.createSession({ userId: USER_ID });
+  assert.deepEqual(
+    callLog,
+    [
+      { key: "live-k1", model: "gemini-3.8-live" },
+      { key: "live-k1", model: "gemini-3-flash-live" },
+    ],
+    "429 on Key 1 model 1 must advance to Key 1 model 2 BEFORE moving to Key 2",
+  );
+
+  // setup.model reflection of selected model
+  assert.equal(session1.setup.model, "models/gemini-3-flash-live", "setup.model must reflect fallback model");
+
+  // Absence of liveConnectConstraints and thinkingConfig
+  assert.equal(capturedRequestBody.bidiGenerateContentSetup.liveConnectConstraints, undefined, "liveConnectConstraints must be absent");
+  assert.equal(capturedRequestBody.bidiGenerateContentSetup.generationConfig.thinkingConfig, undefined, "thinkingConfig must be absent");
+
+  // Session metadata persistence of live_model
+  const storedSession1 = await usageStore.getSession({ userId: USER_ID, sessionId: session1.sessionId });
+  assert.ok(storedSession1, "session record exists in store");
+  assert.equal(storedSession1.metadata?.live_model, "gemini-3-flash-live", "metadata.live_model must persist fallback model");
+
+  // Resume token using the session's original selected model
+  await service.markSessionStarted({ userId: USER_ID, sessionId: session1.sessionId });
+  callLog.length = 0;
+  await service.getResumeToken({ userId: USER_ID, sessionId: session1.sessionId });
+  assert.equal(callLog[0].model, "gemini-3-flash-live", "resume token must mint using original selected model");
+  await service.endSession({ userId: USER_ID, sessionId: session1.sessionId, reason: "client_end" });
+
+  // Both models failing on Key 1 -> moves to Key 2 + gemini-3.8-live
+  callLog.length = 0;
+  const keyPool2 = new GeminiLiveKeyPool({
+    keys: ["k1-exhaust", "k2-fresh"],
+    now: () => 2_000,
+  });
+  const tokenService2 = new GeminiLiveTokenService({
+    fetchImpl: async (_url, init) => {
+      const key = (init.headers as any)?.["x-goog-api-key"];
+      const body = JSON.parse(init.body as string);
+      const model = body.bidiGenerateContentSetup?.model?.replace(/^models\//, "");
+      callLog.push({ key, model });
+
+      if (key === "k1-exhaust") {
+        return {
+          ok: false,
+          status: 429,
+          json: async () => ({ error: { message: "Quota exceeded on k1" } }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ name: `auth_tokens/${key}-${model}` }),
+      };
+    },
+  });
+
+  const usageStore2 = new InMemoryLiveUsageStore(() => 2_000);
+  const service2 = new LiveSessionService({
+    config: liveConfig(true),
+    tierPolicy: loadLiveTierPolicy({}),
+    planResolver: new LivePlanResolver(async () => "premium", () => {}),
+    usageStore: usageStore2,
+    keyPool: keyPool2,
+    tokenService: tokenService2,
+    persistence,
+    titleGenerator: { generateTitle: async () => {} },
+    now: () => 2_000,
+    newId: () => "live-quota-session-2",
+    logger: () => {},
+  });
+
+  const session2 = await service2.createSession({ userId: USER_ID });
+  assert.deepEqual(
+    callLog,
+    [
+      { key: "k1-exhaust", model: "gemini-3.8-live" },
+      { key: "k1-exhaust", model: "gemini-3-flash-live" },
+      { key: "k2-fresh", model: "gemini-3.8-live" },
+    ],
+    "exhausting all models on Key 1 must advance to Key 2 starting with model 1 (gemini-3.8-live)",
+  );
+  assert.equal(session2.setup.model, "models/gemini-3.8-live", "setup.model reflects model 1 on Key 2");
+  await service2.endSession({ userId: USER_ID, sessionId: session2.sessionId, reason: "client_end" });
+
+  // Client network disconnects not poisoning the key/model state
+  const pool3 = new GeminiLiveKeyPool({ keys: ["stable-k1"], now: () => 3_000 });
+  const service3 = new LiveSessionService({
+    config: liveConfig(true),
+    tierPolicy: loadLiveTierPolicy({}),
+    planResolver: new LivePlanResolver(async () => "premium", () => {}),
+    usageStore: new InMemoryLiveUsageStore(() => 3_000),
+    keyPool: pool3,
+    tokenService: new GeminiLiveTokenService({
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ name: "auth_tokens/test" }),
+      }),
+    }),
+    persistence,
+    titleGenerator: { generateTitle: async () => {} },
+    now: () => 3_000,
+    newId: () => "live-quota-session-3",
+    logger: () => {},
+  });
+  const s3 = await service3.createSession({ userId: USER_ID });
+  await service3.reportClientError({
+    userId: USER_ID,
+    sessionId: s3.sessionId,
+    errorType: "websocket_failed",
+    code: 1006,
+  });
+  await service3.endSession({ userId: USER_ID, sessionId: s3.sessionId, reason: "network_error" });
+  assert.equal(pool3.hasAvailableSlot(), true, "client network disconnect does not poison slot");
+}
+
 async function main(): Promise<void> {
   testTierPolicy();
   await testPlanResolutionFallback();
@@ -1887,7 +2063,10 @@ async function main(): Promise<void> {
   await testPart13Q_StaleStartupCleanup();
   await testPart13R_StaleRunningCleanup();
 
-  console.log("PASS | All SentIQ Live Production Suite tests (including Part 13 A through R) passed.");
+  // Dedicated Quota Router Suite
+  await testGeminiLiveQuotaRouter();
+
+  console.log("PASS | All SentIQ Live Production Suite tests (including Part 13 A through R and Live Quota Router) passed.");
 }
 
 main().catch((error) => {

@@ -1,6 +1,10 @@
 import { randomUUID } from "crypto";
 import type { BillingPlanCode } from "../billing/entitlementTypes";
-import type { GeminiLiveConfig } from "./geminiLiveConfig";
+import {
+  DEFAULT_GEMINI_LIVE_MODEL,
+  ORDERED_GEMINI_LIVE_MODELS,
+  type GeminiLiveConfig,
+} from "./geminiLiveConfig";
 import {
   GeminiLiveCapacityError,
   GeminiLiveKeyPool,
@@ -117,6 +121,7 @@ type LiveSessionRecord = {
   liveConversationId?: string;
   planCode: BillingPlanCode;
   selectedSlot: number;
+  selectedModel: string;
   reservedSeconds: number;
   createdAt: number;
   expiresAt: number;
@@ -583,22 +588,24 @@ export class LiveSessionService {
         sourceConversationId,
         conversationId: sourceConversationId,
       });
-      const attemptedSlots = new Set<number>();
+      const attemptedResources = new Set<string>();
       let lastFailureClass: GeminiLiveFailureClass = "unknown";
       let capacityDenial: "global_capacity" | "project_capacity" | undefined;
+      const maxAttempts = this.dependencies.keyPool.size * ORDERED_GEMINI_LIVE_MODELS.length;
 
-      while (attemptedSlots.size < this.dependencies.keyPool.size) {
+      while (attemptedResources.size < maxAttempts) {
         let lease;
         try {
           lease = this.dependencies.keyPool.acquire(
-            attemptedSlots,
+            new Set(),
             this.dependencies.tierPolicy.projectMaxActive,
+            { excludedResources: attemptedResources },
           );
         } catch (error) {
           if (error instanceof GeminiLiveCapacityError) break;
           throw error;
         }
-        attemptedSlots.add(lease.slot);
+        attemptedResources.add(`${lease.slot}:${lease.model}`);
         const capacityExpiresAt = new Date(
           this.now() + (reservation.reservedSeconds + this.dependencies.tierPolicy.staleGraceSeconds) * 1_000,
         ).toISOString();
@@ -612,6 +619,7 @@ export class LiveSessionService {
         if (!capacity.allowed) {
           capacityDenial = capacity.denialReason;
           if (capacity.denialReason === "global_capacity") break;
+          for (const m of ORDERED_GEMINI_LIVE_MODELS) attemptedResources.add(`${lease.slot}:${m}`);
           continue;
         }
 
@@ -623,6 +631,7 @@ export class LiveSessionService {
           sourceConversationId: context.sourceConversationId,
           planCode,
           selectedSlot: lease.slot,
+          selectedModel: lease.model,
           reservedSeconds: reservation.reservedSeconds,
           createdAt: this.now(),
           expiresAt: Date.parse(capacityExpiresAt),
@@ -638,6 +647,7 @@ export class LiveSessionService {
             config: this.dependencies.config,
             systemInstruction: buildLiveInstruction(!this.dependencies.config.disableSearchGrounding),
             sessionMaxSeconds: reservation.reservedSeconds,
+            modelOverride: lease.model,
           });
           const activated = await this.dependencies.usageStore.activateSession({
             userId: args.userId,
@@ -650,11 +660,12 @@ export class LiveSessionService {
               conversation_id: context.conversationId,
               live_conversation_id: context.liveConversationId || context.conversationId,
               search_grounding: !this.dependencies.config.disableSearchGrounding,
+              live_model: lease.model,
             },
           });
           if (!activated) throw new Error("Live session activation failed.");
 
-          this.dependencies.keyPool.markSuccess(lease.slot);
+          this.dependencies.keyPool.markSuccess(lease.slot, lease.model);
           this.dependencies.keyPool.markActive(lease.slot);
           capacitySession.slotActive = true;
           capacitySession.status = "active";
@@ -662,6 +673,7 @@ export class LiveSessionService {
           this.logger("session_created", {
             plan: planCode,
             key_slot: lease.slot,
+            selected_model: lease.model,
             reserved_seconds: reservation.reservedSeconds,
             session_status: "active",
           });
@@ -680,7 +692,7 @@ export class LiveSessionService {
               outputSampleRate: 24_000,
               encoding: "pcm_s16le",
             },
-            setup: { model: `models/${this.dependencies.config.model}` },
+            setup: { model: `models/${lease.model}` },
             initialHistory: buildInitialHistory(context),
           };
         } catch (error) {
@@ -688,10 +700,14 @@ export class LiveSessionService {
           capacitySession = null;
           if (!(error instanceof GeminiLiveTokenError)) throw error;
           lastFailureClass = error.failureClass;
-          this.dependencies.keyPool.markFailure(lease.slot, error.failureClass);
+          this.dependencies.keyPool.markFailure(lease.slot, error.failureClass, lease.model);
+          if (error.failureClass === "auth" || error.failureClass === "configuration") {
+            for (const m of ORDERED_GEMINI_LIVE_MODELS) attemptedResources.add(`${lease.slot}:${m}`);
+          }
           this.logger("token_provision_failed", {
             plan: planCode,
             key_slot: lease.slot,
+            selected_model: lease.model,
             failure_class: error.failureClass,
           });
         }
@@ -772,6 +788,8 @@ export class LiveSessionService {
       || (typeof stored.metadata.conversation_id === "string" ? stored.metadata.conversation_id : "");
     const sourceConversationId = stored.sourceConversationId
       || (typeof stored.metadata.source_conversation_id === "string" ? stored.metadata.source_conversation_id : undefined);
+    const liveModel = (typeof stored.metadata?.live_model === "string" ? stored.metadata.live_model : "").trim()
+      || DEFAULT_GEMINI_LIVE_MODEL;
     return {
       id: stored.sessionId,
       userId,
@@ -780,6 +798,7 @@ export class LiveSessionService {
       sourceConversationId,
       planCode: stored.planCode,
       selectedSlot: stored.keySlot ?? 0,
+      selectedModel: liveModel,
       reservedSeconds: stored.reservedSeconds,
       createdAt: Date.parse(stored.startedAt) || this.now(),
       expiresAt: Date.parse(stored.expiresAt) || this.now(),
@@ -972,11 +991,12 @@ export class LiveSessionService {
   }): void {
     const session = this.sessions.get(args.sessionId);
     const slot = session?.selectedSlot;
+    const model = session?.selectedModel;
     if (slot) {
       if (args.code === 1008 || /permission|policy|auth/i.test(args.reason || "")) {
-        this.dependencies.keyPool.markFailure(slot, "auth");
+        this.dependencies.keyPool.markFailure(slot, "auth", model);
       } else if (args.code === 1011 || /quota|capacity|resource/i.test(args.reason || "")) {
-        this.dependencies.keyPool.markFailure(slot, "capacity");
+        this.dependencies.keyPool.markFailure(slot, "capacity", model);
       }
       // Note: Client network drops / 1006 / wifi disconnects must NOT poison key pool!
     }
@@ -1005,6 +1025,7 @@ export class LiveSessionService {
       config: this.dependencies.config,
       systemInstruction: buildLiveInstruction(!this.dependencies.config.disableSearchGrounding),
       sessionMaxSeconds: remainingSeconds,
+      modelOverride: session.selectedModel || DEFAULT_GEMINI_LIVE_MODEL,
     });
     this.logger("resume_token_created", {
       plan: session.planCode,

@@ -422,8 +422,23 @@ GEMINI_GROUNDED_ALIAS = "gemini-grounded"
 
 _gemini_key_state_lock = threading.Lock()
 _gemini_key_state: dict[tuple[int, str], dict[str, Any]] = {}
+_gemini_disabled_key_slots: set[int] = set()
 _gemini_key_rotation_lock = threading.Lock()
 _gemini_key_rotation_index = 0
+
+ORDERED_LITE_MODELS: list[str] = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash",
+    "gemini-2.5-flash-lite",
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
+    "gemini-2.5-flash",
+]
 
 
 def _normalize_model_id(model: Optional[str]) -> str:
@@ -484,6 +499,9 @@ def _get_round_robin_gemini_records(model: Optional[str]) -> list[GeminiKeyRecor
     available: list[GeminiKeyRecord] = []
     cooldown_records: list[GeminiKeyRecord] = []
     for record in GEMINI_KEY_RECORDS:
+        with _gemini_key_state_lock:
+            if record.index in _gemini_disabled_key_slots:
+                continue
         state = _gemini_state_snapshot(record, model)
         if state.get("disabled"):
             continue
@@ -521,7 +539,24 @@ def _status_code_from_error(error: Exception) -> Optional[int]:
 def _classify_gemini_error(error: Exception) -> str:
     status = _status_code_from_error(error)
     message = str(error).lower()
-    if status in {401, 403}:
+    if status == 401:
+        return "invalid_key"
+    if status == 403:
+        # Check if the 403 is model-specific permission/access denial vs general credential failure
+        model_restriction_indicators = (
+            "model access",
+            "model not allowed",
+            "model is not supported",
+            "permission denied for model",
+            "not permitted to access model",
+            "access to model",
+            "model restricted",
+            "model_permission_denied",
+        )
+        if any(ind in message for ind in model_restriction_indicators):
+            return "model_unavailable"
+        if "model" in message and ("permission" in message or "access" in message or "denied" in message or "not found" in message):
+            return "model_unavailable"
         return "invalid_key"
     if status == 429 or "quota" in message or "rate limit" in message or "resource exhausted" in message:
         return "rate_limited"
@@ -537,6 +572,44 @@ def _record_gemini_success(record: GeminiKeyRecord, model: Optional[str]) -> Non
         _gemini_key_state.pop(_gemini_state_key(record, model), None)
 
 
+def _extract_retry_after_seconds(error: Exception) -> Optional[float]:
+    raw_seconds: Optional[float] = None
+    retry_attr = getattr(error, "retry_after", None)
+    if isinstance(retry_attr, (int, float)) and retry_attr > 0:
+        raw_seconds = float(retry_attr)
+    if raw_seconds is None:
+        resp = getattr(error, "response", None)
+        headers = getattr(resp, "headers", None) or getattr(error, "headers", None)
+        if isinstance(headers, Mapping):
+            retry_header = headers.get("retry-after") or headers.get("Retry-After")
+            if retry_header:
+                try:
+                    val = float(str(retry_header).strip())
+                    if val > 0:
+                        raw_seconds = val
+                except Exception:
+                    pass
+    if raw_seconds is None:
+        msg = str(error)
+        m = re.search(r"retry[- ]after[:=\s]+([0-9]+(?:\.[0-9]+)?)\s*s?", msg, re.IGNORECASE)
+        if m:
+            try:
+                raw_seconds = float(m.group(1))
+            except Exception:
+                pass
+    if raw_seconds is None:
+        msg = str(error)
+        m = re.search(r"retryDelay['\":\s]+['\"]?([0-9]+(?:\.[0-9]+)?)s?", msg, re.IGNORECASE)
+        if m:
+            try:
+                raw_seconds = float(m.group(1))
+            except Exception:
+                pass
+    if raw_seconds is not None and raw_seconds > 0:
+        return min(300.0, max(1.0, raw_seconds))
+    return None
+
+
 def _record_gemini_failure(record: GeminiKeyRecord, model: Optional[str], error: Exception) -> str:
     classification = _classify_gemini_error(error)
     status = _status_code_from_error(error)
@@ -546,8 +619,16 @@ def _record_gemini_failure(record: GeminiKeyRecord, model: Optional[str], error:
 
     if classification == "invalid_key" and GEMINI_INVALID_KEY_DISABLE:
         disabled = True
+        with _gemini_key_state_lock:
+            _gemini_disabled_key_slots.add(record.index)
     elif classification == "rate_limited":
-        cooldown_ms = GEMINI_429_COOLDOWN_MS
+        retry_seconds = _extract_retry_after_seconds(error)
+        if retry_seconds is not None:
+            cooldown_ms = max(1_000, int(retry_seconds * 1000))
+        else:
+            cooldown_ms = GEMINI_429_COOLDOWN_MS
+    elif classification == "model_unavailable":
+        cooldown_ms = GEMINI_KEY_COOLDOWN_MS
     elif classification == "transient":
         cooldown_ms = GEMINI_KEY_COOLDOWN_MS
 
@@ -555,6 +636,8 @@ def _record_gemini_failure(record: GeminiKeyRecord, model: Optional[str], error:
         state = _gemini_key_state.setdefault(_gemini_state_key(record, model), {})
         state["last_status"] = classification
         state["last_error"] = _redact_secrets(error)
+        state["last_failure_at"] = now
+        state["consecutive_failures"] = int(state.get("consecutive_failures", 0)) + 1
         if status is not None:
             state["status_code"] = status
         if disabled:
@@ -1492,11 +1575,12 @@ def _call_gemini(
     execution_mode: Optional[str] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
     image_attachments: Optional[list[dict[str, Any]]] = None,
+    consume_bucket: bool = True,
 ) -> Any:
     resolved_model = model or GEMINI_STANDARD_MODEL
     if not api_key:
         raise RuntimeError("Gemini API key is empty")
-    if not gemini_bucket.consume():
+    if consume_bucket and not gemini_bucket.consume():
         raise RuntimeError("Gemini rate limit exceeded")
 
     if not GOOGLE_GENAI_MODULE or not GOOGLE_GENAI_TYPES_MODULE:
@@ -1551,12 +1635,13 @@ def _call_gemini_stream(
     execution_mode: Optional[str] = None,
     sentiq_tool_request: Optional[dict[str, Any]] = None,
     image_attachments: Optional[list[dict[str, Any]]] = None,
+    consume_bucket: bool = True,
 ):
     """Streaming variant - yields text chunks."""
     resolved_model = model or GEMINI_STANDARD_MODEL
     if not api_key:
         raise RuntimeError("Gemini API key is empty")
-    if not gemini_bucket.consume():
+    if consume_bucket and not gemini_bucket.consume():
         raise RuntimeError("Gemini rate limit exceeded")
 
     if sentiq_tool_request:
@@ -1750,11 +1835,7 @@ def _standard_gemini_attempts() -> list[GeminiAttempt]:
 
 
 def _lite_gemini_attempts() -> list[GeminiAttempt]:
-    return _dedupe_gemini_attempts([
-        GeminiAttempt(GEMINI_LITE_MODEL),
-        GeminiAttempt(GEMMA_PRIMARY_MODEL),
-        GeminiAttempt(GEMMA_SECONDARY_MODEL),
-    ])
+    return [GeminiAttempt(m) for m in ORDERED_LITE_MODELS]
 
 
 def _reasoning_gemini_attempts() -> list[GeminiAttempt]:
@@ -1781,11 +1862,194 @@ def _is_reasoning_request(task: str, provider: str, model: Optional[str], skip_w
 
 
 def _is_lite_model(model: Optional[str], model_override: Optional[str]) -> bool:
-    values = {
-        (model or "").strip().lower(),
-        (model_override or "").strip().lower(),
-    }
-    return GEMINI_LITE_ALIAS in values or GEMINI_LITE_MODEL.lower() in values
+    override_val = (model_override or "").strip().lower()
+    if override_val in {
+        GEMINI_STANDARD_ALIAS,
+        "gemini:gemini-standard",
+        GEMINI_REASONING_ALIAS,
+        "gemini:gemini-reasoning",
+        GEMINI_WEB_ALIAS,
+        "gemini:gemini-web",
+        GEMINI_VISION_MODEL.lower(),
+        "gemini:gemini-vision",
+    }:
+        return False
+    if override_val in {
+        GEMINI_LITE_ALIAS,
+        "gemini:gemini-lite",
+        f"gemini:{GEMINI_LITE_ALIAS}",
+    }:
+        return True
+    model_val = (model or "").strip().lower()
+    if model_val in {GEMINI_LITE_ALIAS, "gemini:gemini-lite"}:
+        return True
+    return False
+
+
+def _gemini_candidate_available(record: GeminiKeyRecord, model: str) -> bool:
+    with _gemini_key_state_lock:
+        if record.index in _gemini_disabled_key_slots:
+            return False
+        state = _gemini_key_state.get(_gemini_state_key(record, model), {})
+        if state.get("disabled"):
+            return False
+        cooldown_until = float(state.get("cooldown_until", 0) or 0)
+        if cooldown_until > time.time():
+            return False
+    return True
+
+
+def _get_lite_pool_candidates(
+    required_capabilities: Optional[list[str]] = None,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
+    streaming: bool = False,
+) -> list[tuple[GeminiKeyRecord, str]]:
+    if not GEMINI_KEY_RECORDS:
+        return []
+
+    candidates: list[tuple[GeminiKeyRecord, str]] = []
+
+    for record in GEMINI_KEY_RECORDS:
+        for model in ORDERED_LITE_MODELS:
+            if image_attachments and _is_gemma_model(model):
+                continue
+            if not _route_supports_required_capabilities("gemini", model, required_capabilities, streaming=streaming):
+                continue
+            if not _gemini_candidate_available(record, model):
+                continue
+            candidates.append((record, model))
+
+    return candidates
+
+
+def _invoke_gemini_lite_pool(
+    prompt: str,
+    *,
+    max_output_tokens: Optional[int] = None,
+    execution_mode: Optional[str] = None,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
+    required_capabilities: Optional[list[str]] = None,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
+) -> tuple[Any, str]:
+    if not GEMINI_KEY_RECORDS:
+        raise RuntimeError("No Gemini API keys configured")
+
+    last_error: Optional[Exception] = None
+
+    for record in GEMINI_KEY_RECORDS:
+        with _gemini_key_state_lock:
+            if record.index in _gemini_disabled_key_slots:
+                continue
+
+        for model_idx, model in enumerate(ORDERED_LITE_MODELS):
+            if image_attachments and _is_gemma_model(model):
+                continue
+            if not _route_supports_required_capabilities("gemini", model, required_capabilities, streaming=False):
+                continue
+            if not _gemini_candidate_available(record, model):
+                continue
+
+            try:
+                result = _call_gemini(
+                    prompt,
+                    record.key,
+                    model,
+                    high_thinking=False,
+                    max_output_tokens=max_output_tokens,
+                    execution_mode=execution_mode,
+                    sentiq_tool_request=_sentiq_tool_request_for_route(
+                        sentiq_tool_request, "gemini", model, streaming=False
+                    ),
+                    image_attachments=image_attachments,
+                    consume_bucket=False,
+                )
+                _record_gemini_success(record, model)
+                logger.info("Gemini Lite key #%d model=%s succeeded", record.index, model)
+                return result, model
+            except Exception as e:
+                last_error = e
+                classification = _record_gemini_failure(record, model, e)
+                next_model = ORDERED_LITE_MODELS[model_idx + 1] if model_idx + 1 < len(ORDERED_LITE_MODELS) else None
+                next_desc = next_model if next_model else "next_key_slot"
+                logger.warning(
+                    "[GeminiLiteRouter] key_slot=%d model=%s outcome=%s next=%s",
+                    record.index,
+                    model,
+                    classification,
+                    next_desc,
+                )
+                if classification == "invalid_key":
+                    break
+
+    raise RuntimeError(f"All Gemini Lite pool candidates failed: {_redact_secrets(last_error)}")
+
+
+def _stream_gemini_lite_pool(
+    prompt: str,
+    *,
+    max_output_tokens: Optional[int] = None,
+    execution_mode: Optional[str] = None,
+    sentiq_tool_request: Optional[dict[str, Any]] = None,
+    required_capabilities: Optional[list[str]] = None,
+    image_attachments: Optional[list[dict[str, Any]]] = None,
+):
+    if not GEMINI_KEY_RECORDS:
+        raise RuntimeError("No Gemini API keys configured")
+
+    last_error: Optional[Exception] = None
+
+    for record in GEMINI_KEY_RECORDS:
+        with _gemini_key_state_lock:
+            if record.index in _gemini_disabled_key_slots:
+                continue
+
+        for model_idx, model in enumerate(ORDERED_LITE_MODELS):
+            if image_attachments and _is_gemma_model(model):
+                continue
+            if not _route_supports_required_capabilities("gemini", model, required_capabilities, streaming=True):
+                continue
+            if not _gemini_candidate_available(record, model):
+                continue
+
+            emitted_text = False
+            try:
+                for chunk in _call_gemini_stream(
+                    prompt,
+                    record.key,
+                    model,
+                    high_thinking=False,
+                    max_output_tokens=max_output_tokens,
+                    execution_mode=execution_mode,
+                    sentiq_tool_request=_sentiq_tool_request_for_route(
+                        sentiq_tool_request, "gemini", model, streaming=True
+                    ),
+                    image_attachments=image_attachments,
+                    consume_bucket=False,
+                ):
+                    if chunk:
+                        emitted_text = True
+                    yield chunk
+                _record_gemini_success(record, model)
+                logger.info("Gemini Lite stream key #%d model=%s succeeded", record.index, model)
+                return
+            except Exception as e:
+                last_error = e
+                classification = _record_gemini_failure(record, model, e)
+                if emitted_text:
+                    raise
+                next_model = ORDERED_LITE_MODELS[model_idx + 1] if model_idx + 1 < len(ORDERED_LITE_MODELS) else None
+                next_desc = next_model if next_model else "next_key_slot"
+                logger.warning(
+                    "[GeminiLiteRouter] key_slot=%d model=%s outcome=%s next=%s",
+                    record.index,
+                    model,
+                    classification,
+                    next_desc,
+                )
+                if classification == "invalid_key":
+                    break
+
+    raise RuntimeError(f"All Gemini Lite stream candidates failed: {_redact_secrets(last_error)}")
 
 
 def _call_gemini_vision(prompt: str, image_base64: str, mime_type: str, api_key: str, model: Optional[str] = None) -> str:
@@ -3418,15 +3682,26 @@ def call_llm_router(
             finally:
                 _release_groq_capacity_reservation(reservation)
         else:
-            result = _invoke_gemini(
-                effective_prompt,
-                resolved_override,
-                high_thinking=_is_gemma_model(resolved_override or model) and skip_wrappers,
-                max_output_tokens=max_output_tokens,
-                execution_mode=execution_mode,
-                sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "gemini", resolved_override or model),
-                image_attachments=image_attachments,
-            )
+            if _is_lite_model(model, model_override):
+                result, used_model = _invoke_gemini_lite_pool(
+                    effective_prompt,
+                    max_output_tokens=max_output_tokens,
+                    execution_mode=execution_mode,
+                    sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "gemini", model),
+                    required_capabilities=required_capabilities,
+                    image_attachments=image_attachments,
+                )
+                actual_model_used = used_model
+            else:
+                result = _invoke_gemini(
+                    effective_prompt,
+                    resolved_override,
+                    high_thinking=_is_gemma_model(resolved_override or model) and skip_wrappers,
+                    max_output_tokens=max_output_tokens,
+                    execution_mode=execution_mode,
+                    sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "gemini", resolved_override or model),
+                    image_attachments=image_attachments,
+                )
 
         if _looks_like_provider_error_payload(result):
             raise RuntimeError("Provider returned an internal error payload instead of an answer")
@@ -3599,17 +3874,10 @@ def call_llm_router(
 
         if provider == "gemini" and _is_lite_model(model, model_override):
             try:
-                logger.info("[Fallback] Gemini lite failed - trying Gemma lite backups")
-                return _fallback_to_gemini_chain([
-                    GeminiAttempt(GEMMA_PRIMARY_MODEL),
-                    GeminiAttempt(GEMMA_SECONDARY_MODEL),
-                ], "gemini_lite_failed")
-            except Exception as fallback_error:
-                logger.error("Gemma lite backups failed: %s", _redact_secrets(fallback_error))
-                try:
-                    return _fallback_to_pollinations(POLLINATIONS_LITE_MODEL, "gemini_lite_and_gemma_failed")
-                except Exception as pollinations_error:
-                    logger.error("Pollinations lite fallback failed: %s", _redact_secrets(pollinations_error))
+                logger.info("[Fallback] Gemini Lite pool failed - falling back to Pollinations")
+                return _fallback_to_pollinations(POLLINATIONS_LITE_MODEL, "gemini_lite_and_gemma_failed")
+            except Exception as pollinations_error:
+                logger.error("Pollinations lite fallback failed: %s", _redact_secrets(pollinations_error))
 
         if provider == "gemini" and task == "web_search_synthesis":
             try:
@@ -3926,8 +4194,31 @@ def stream_llm_router(
     if sentiq_tool_request:
         if not GEMINI_KEY_RECORDS:
             raise ModelToolCapabilityUnavailableError("No capable buffered tool fallback route is available")
+        if _is_lite_model(model, model_override):
+            try:
+                buffered_turn, used_model = _invoke_gemini_lite_pool(
+                    prompt,
+                    max_output_tokens=max_output_tokens,
+                    execution_mode=execution_mode,
+                    sentiq_tool_request=sentiq_tool_request,
+                    required_capabilities=_buffered_tool_capabilities(required_capabilities),
+                    image_attachments=image_attachments,
+                )
+                logger.info(
+                    "[Fallback] capability-preserving Gemini Lite pool buffered tool turn succeeded model=%s",
+                    used_model,
+                )
+                yield from _assistant_turn_as_stream(buffered_turn)
+                return
+            except Exception as buffered_tool_error:
+                logger.warning(
+                    "Gemini Lite buffered tool fallback failed before output: %s",
+                    _redact_secrets(buffered_tool_error),
+                )
+                raise ModelToolCapabilityUnavailableError("No capable buffered tool fallback route is available") from buffered_tool_error
+
         if gemini_stream_attempts is None:
-            gemini_stream_attempts = _lite_gemini_attempts() if _is_lite_model(model, model_override) else [
+            gemini_stream_attempts = [
                 GeminiAttempt(model, high_thinking=False),
             ]
         try:
@@ -3954,10 +4245,23 @@ def stream_llm_router(
             raise ModelToolCapabilityUnavailableError("No capable buffered tool fallback route is available") from buffered_tool_error
 
     # --- Gemini text streaming path ---
-    if gemini_stream_attempts is None:
-        if _is_lite_model(model, model_override):
-            gemini_stream_attempts = _lite_gemini_attempts()
-        else:
+    if _is_lite_model(model, model_override):
+        try:
+            if not GEMINI_KEY_RECORDS:
+                raise RuntimeError("No Gemini API keys configured")
+            yield from _stream_gemini_lite_pool(
+                prompt,
+                max_output_tokens=max_output_tokens,
+                execution_mode=execution_mode,
+                sentiq_tool_request=sentiq_tool_request,
+                required_capabilities=required_capabilities,
+                image_attachments=image_attachments,
+            )
+            return
+        except Exception as gemini_stream_error:
+            logger.warning("Gemini Lite stream chain failed before first text: %s", _redact_secrets(gemini_stream_error))
+    else:
+        if gemini_stream_attempts is None:
             gemini_stream_attempts = [
                 GeminiAttempt(
                     model,
@@ -3965,21 +4269,21 @@ def stream_llm_router(
                 )
             ]
 
-    try:
-        if not GEMINI_KEY_RECORDS:
-            raise RuntimeError("No Gemini API keys configured")
-        yield from _stream_gemini_attempt_chain(
-            prompt,
-            gemini_stream_attempts,
-            max_output_tokens=max_output_tokens,
-            execution_mode=execution_mode,
-            sentiq_tool_request=sentiq_tool_request,
-            required_capabilities=required_capabilities,
-            image_attachments=image_attachments,
-        )
-        return
-    except Exception as gemini_stream_error:
-        logger.warning("Gemini/Gemma stream chain failed before first text: %s", _redact_secrets(gemini_stream_error))
+        try:
+            if not GEMINI_KEY_RECORDS:
+                raise RuntimeError("No Gemini API keys configured")
+            yield from _stream_gemini_attempt_chain(
+                prompt,
+                gemini_stream_attempts,
+                max_output_tokens=max_output_tokens,
+                execution_mode=execution_mode,
+                sentiq_tool_request=sentiq_tool_request,
+                required_capabilities=required_capabilities,
+                image_attachments=image_attachments,
+            )
+            return
+        except Exception as gemini_stream_error:
+            logger.warning("Gemini/Gemma stream chain failed before first text: %s", _redact_secrets(gemini_stream_error))
         if GROQ_API_KEYS and not image_attachments and not sentiq_tool_request:
             try:
                 logger.info("[Fallback] Attempting Groq GPT-OSS stream fallback after Gemini error")

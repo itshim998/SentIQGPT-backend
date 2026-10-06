@@ -1,3 +1,9 @@
+import {
+  DEFAULT_GEMINI_LIVE_MODEL,
+  ORDERED_GEMINI_LIVE_MODELS,
+  type GeminiLiveModel,
+} from "./geminiLiveConfig";
+
 export const LIVE_KEY_ENV_NAMES = [
   "GEMINI_API_KEY_1",
   "GEMINI_API_KEY_2",
@@ -19,6 +25,13 @@ export type GeminiLiveFailureClass =
 export type GeminiLiveKeyLease = {
   slot: number;
   apiKey: string;
+  model: string;
+};
+
+type ModelHealth = {
+  cooldownUntil: number;
+  consecutiveFailures: number;
+  lastFailureClass?: GeminiLiveFailureClass;
 };
 
 type KeyState = {
@@ -29,6 +42,7 @@ type KeyState = {
   consecutiveFailures: number;
   activeSessions: number;
   lastFailureClass?: GeminiLiveFailureClass;
+  modelHealth: Map<string, ModelHealth>;
 };
 
 export class GeminiLiveCapacityError extends Error {
@@ -74,7 +88,17 @@ export class GeminiLiveKeyPool {
         cooldownUntil: 0,
         consecutiveFailures: 0,
         activeSessions: 0,
+        modelHealth: new Map<string, ModelHealth>(),
       }));
+  }
+
+  private getModelHealth(state: KeyState, model: string): ModelHealth {
+    let health = state.modelHealth.get(model);
+    if (!health) {
+      health = { cooldownUntil: 0, consecutiveFailures: 0 };
+      state.modelHealth.set(model, health);
+    }
+    return health;
   }
 
   get size(): number {
@@ -87,18 +111,26 @@ export class GeminiLiveKeyPool {
 
   hasAvailableSlot(maxActivePerSlot: number | null = null): boolean {
     const now = this.now();
-    return this.states.some((state) => (
-      state.cooldownUntil <= now
-      && (!maxActivePerSlot || state.activeSessions < maxActivePerSlot)
-    ));
+    return this.states.some((state) => {
+      if (state.cooldownUntil > now) return false;
+      if (maxActivePerSlot && state.activeSessions >= maxActivePerSlot) return false;
+      return ORDERED_GEMINI_LIVE_MODELS.some((model) => {
+        const health = this.getModelHealth(state, model);
+        return health.cooldownUntil <= now;
+      });
+    });
   }
 
   acquire(
     excludedSlots: ReadonlySet<number> = new Set(),
     maxActivePerSlot: number | null = null,
+    options?: {
+      excludedResources?: ReadonlySet<string>;
+      preferredModel?: string;
+    },
   ): GeminiLiveKeyLease {
     const now = this.now();
-    const candidates = this.states
+    const candidateKeys = this.states
       .filter((state) => (
         !excludedSlots.has(state.slot)
         && state.cooldownUntil <= now
@@ -110,23 +142,77 @@ export class GeminiLiveKeyPool {
         || left.slot - right.slot
       ));
 
-    const selected = candidates[0];
-    if (!selected) {
-      const futureCooldowns = this.states
-        .filter((state) => !excludedSlots.has(state.slot) && state.cooldownUntil > now)
-        .map((state) => state.cooldownUntil - now);
-      throw new GeminiLiveCapacityError(futureCooldowns.length > 0 ? Math.min(...futureCooldowns) : 30_000);
+    const inFlightSlot = options?.excludedResources
+      ? [...options.excludedResources]
+          .map((r) => parseInt(r.split(":")[0], 10))
+          .find((slot) => {
+            const state = this.states.find((s) => s.slot === slot);
+            if (!state || state.cooldownUntil > now) return false;
+            return ORDERED_GEMINI_LIVE_MODELS.some((m) => {
+              if (options.excludedResources?.has(`${slot}:${m}`)) return false;
+              const h = this.getModelHealth(state, m);
+              return h.cooldownUntil <= now;
+            });
+          })
+      : undefined;
+
+    const orderedKeys = inFlightSlot
+      ? [
+          ...candidateKeys.filter((k) => k.slot === inFlightSlot),
+          ...candidateKeys.filter((k) => k.slot !== inFlightSlot),
+        ]
+      : candidateKeys;
+
+    // Key-major traversal: for each key, evaluate models in priority order
+    for (const key of orderedKeys) {
+      const modelsToTry = options?.preferredModel
+        ? [options.preferredModel, ...ORDERED_GEMINI_LIVE_MODELS.filter((m) => m !== options.preferredModel)]
+        : ORDERED_GEMINI_LIVE_MODELS;
+
+      for (const model of modelsToTry) {
+        const resourceId = `${key.slot}:${model}`;
+        if (options?.excludedResources?.has(resourceId)) {
+          continue;
+        }
+        const health = this.getModelHealth(key, model);
+        if (health.cooldownUntil > now) {
+          continue;
+        }
+        key.lastSelectedAt = now;
+        return { slot: key.slot, apiKey: key.apiKey, model };
+      }
     }
 
-    selected.lastSelectedAt = now;
-    return { slot: selected.slot, apiKey: selected.apiKey };
+    // If no candidate available, determine shortest retry cooldown
+    const futureCooldowns: number[] = [];
+    for (const state of this.states) {
+      if (excludedSlots.has(state.slot)) continue;
+      if (state.cooldownUntil > now) {
+        futureCooldowns.push(state.cooldownUntil - now);
+        continue;
+      }
+      for (const model of ORDERED_GEMINI_LIVE_MODELS) {
+        const resourceId = `${state.slot}:${model}`;
+        if (options?.excludedResources?.has(resourceId)) continue;
+        const health = this.getModelHealth(state, model);
+        if (health.cooldownUntil > now) {
+          futureCooldowns.push(health.cooldownUntil - now);
+        }
+      }
+    }
+    throw new GeminiLiveCapacityError(futureCooldowns.length > 0 ? Math.min(...futureCooldowns) : 30_000);
   }
 
-  markSuccess(slot: number): void {
+  markSuccess(slot: number, model?: string): void {
     const state = this.states.find((entry) => entry.slot === slot);
     if (!state) return;
     state.consecutiveFailures = 0;
     state.cooldownUntil = 0;
+    if (model) {
+      const health = this.getModelHealth(state, model);
+      health.consecutiveFailures = 0;
+      health.cooldownUntil = 0;
+    }
   }
 
   markActive(slot: number): void {
@@ -152,11 +238,10 @@ export class GeminiLiveKeyPool {
     return this.states.find((entry) => entry.slot === slot)?.activeSessions ?? 0;
   }
 
-  markFailure(slot: number, failureClass: GeminiLiveFailureClass): void {
+  markFailure(slot: number, failureClass: GeminiLiveFailureClass, model?: string): void {
     const state = this.states.find((entry) => entry.slot === slot);
     if (!state) return;
-    state.consecutiveFailures += 1;
-    state.lastFailureClass = failureClass;
+    const now = this.now();
     const baseCooldownMs = failureClass === "auth" || failureClass === "configuration"
       ? 15 * 60_000
       : failureClass === "capacity"
@@ -164,19 +249,45 @@ export class GeminiLiveKeyPool {
         : failureClass === "unavailable"
           ? 30_000
           : 10_000;
-    const multiplier = Math.min(8, 2 ** Math.max(0, state.consecutiveFailures - 1));
-    state.cooldownUntil = this.now() + baseCooldownMs * multiplier;
+
+    if (failureClass === "auth" || failureClass === "configuration" || !model) {
+      // Slot-level failure applies to key slot and all models
+      state.consecutiveFailures += 1;
+      state.lastFailureClass = failureClass;
+      const multiplier = Math.min(8, 2 ** Math.max(0, state.consecutiveFailures - 1));
+      state.cooldownUntil = now + baseCooldownMs * multiplier;
+      for (const m of ORDERED_GEMINI_LIVE_MODELS) {
+        const health = this.getModelHealth(state, m);
+        health.consecutiveFailures += 1;
+        health.lastFailureClass = failureClass;
+        health.cooldownUntil = state.cooldownUntil;
+      }
+    } else {
+      // Model-specific failure (e.g. 429/capacity on that specific model)
+      const health = this.getModelHealth(state, model);
+      health.consecutiveFailures += 1;
+      health.lastFailureClass = failureClass;
+      const multiplier = Math.min(8, 2 ** Math.max(0, health.consecutiveFailures - 1));
+      health.cooldownUntil = now + baseCooldownMs * multiplier;
+      state.lastFailureClass = failureClass;
+    }
   }
 
   getKeyBySlot(slot: number): GeminiLiveKeyLease | undefined {
     const state = this.states.find((entry) => entry.slot === slot);
     if (!state) return undefined;
-    return { slot: state.slot, apiKey: state.apiKey };
+    return { slot: state.slot, apiKey: state.apiKey, model: DEFAULT_GEMINI_LIVE_MODEL };
   }
 
   getDominantCooldownFailureClass(): GeminiLiveFailureClass | undefined {
     const now = this.now();
-    const cooling = this.states.filter((state) => state.cooldownUntil > now);
+    const cooling = this.states.filter((state) => {
+      if (state.cooldownUntil > now) return true;
+      return ORDERED_GEMINI_LIVE_MODELS.every((m) => {
+        const health = state.modelHealth.get(m);
+        return health && health.cooldownUntil > now;
+      });
+    });
     if (cooling.length === 0 || cooling.length < this.states.length) return undefined;
     if (cooling.every((state) => state.lastFailureClass === "auth")) return "auth";
     if (cooling.every((state) => state.lastFailureClass === "capacity")) return "capacity";
