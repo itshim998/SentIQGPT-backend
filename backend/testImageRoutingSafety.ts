@@ -32,7 +32,7 @@ function provider(
 
 function routeOrder(planCode: "free" | "student_core" | "premium" | "pro", prompt: string, requiresTextRendering = false): readonly string[] {
   const route = getImageModelForPlan(planCode, requiresTextRendering);
-  return getImageProviderOrder(prompt, route.adapterModelOverride);
+  return getImageProviderOrder(prompt, route.adapterModelOverride, planCode, "fast");
 }
 
 async function main(): Promise<void> {
@@ -44,45 +44,45 @@ async function main(): Promise<void> {
   assert.deepEqual(imageQuotas.premium, { limit: 8, windowSeconds: 43_200, label: "Images" });
   assert.deepEqual(imageQuotas.pro, { limit: 16, windowSeconds: 43_200, label: "Images" });
 
-  assert.equal(getImageModelForPlan("free", false).model, "dreamshaper");
-  assert.equal(getImageModelForPlan("free", true).model, "dreamshaper");
-  assert.equal(getImageModelForPlan("student_core", false).model, "zimage");
-  assert.equal(getImageModelForPlan("student_core", true).model, "zimage");
-  assert.equal(getImageModelForPlan("premium", false).model, "zimage");
-  assert.equal(getImageModelForPlan("premium", true).model, "zimage");
-  assert.equal(getImageModelForPlan("pro", false).model, "zimage");
-  assert.equal(getImageModelForPlan("pro", true).model, "zimage");
+  assert.equal(getImageModelForPlan("free", false).model, "@cf/black-forest-labs/flux-1-schnell");
+  assert.equal(getImageModelForPlan("free", true).model, "@cf/black-forest-labs/flux-1-schnell");
+  assert.equal(getImageModelForPlan("student_core", false).model, "@cf/black-forest-labs/flux-1-schnell");
+  assert.equal(getImageModelForPlan("student_core", true).model, "@cf/black-forest-labs/flux-1-schnell");
+  assert.equal(getImageModelForPlan("premium", false).model, "@cf/black-forest-labs/flux-2-klein-4b");
+  assert.equal(getImageModelForPlan("premium", true).model, "@cf/black-forest-labs/flux-2-klein-4b");
+  assert.equal(getImageModelForPlan("pro", false).model, "@cf/black-forest-labs/flux-2-klein-9b");
+  assert.equal(getImageModelForPlan("pro", true).model, "@cf/black-forest-labs/flux-2-klein-9b");
 
-  assert.deepEqual(routeOrder("free", "a puppy in snow").slice(0, 2), ["dreamshaper", "flux"]);
-  assert.deepEqual(routeOrder("free", "a detailed poster with text").slice(0, 2), ["dreamshaper", "flux"]);
-  assert.deepEqual(routeOrder("student_core", "a puppy in snow", false).slice(0, 2), ["zimage", "klein"]);
-  assert.deepEqual(routeOrder("student_core", "a poster reading Welcome", true).slice(0, 2), ["zimage", "klein"]);
-  assert.deepEqual(routeOrder("premium", "a puppy in snow", false).slice(0, 2), ["zimage", "klein"]);
-  assert.deepEqual(routeOrder("premium", "a detailed poster with text", true).slice(0, 2), ["zimage", "klein"]);
-  assert.deepEqual(routeOrder("pro", "a puppy in snow", false).slice(0, 2), ["zimage", "klein"]);
-  assert.deepEqual(routeOrder("pro", "a detailed poster with text", true).slice(0, 2), ["zimage", "klein"]);
+  assert.deepEqual(routeOrder("free", "a puppy in snow").slice(0, 2), ["@cf/black-forest-labs/flux-1-schnell", "@cf/lykon/dreamshaper-8-lcm"]);
+  assert.deepEqual(routeOrder("free", "a detailed poster with text").slice(0, 2), ["@cf/black-forest-labs/flux-1-schnell", "@cf/lykon/dreamshaper-8-lcm"]);
+  assert.deepEqual(routeOrder("student_core", "a puppy in snow", false).slice(0, 2), ["@cf/black-forest-labs/flux-1-schnell", "@cf/black-forest-labs/flux-2-klein-4b"]);
+  assert.deepEqual(routeOrder("student_core", "a poster reading Welcome", true).slice(0, 2), ["@cf/black-forest-labs/flux-1-schnell", "@cf/black-forest-labs/flux-2-klein-4b"]);
+  assert.deepEqual(routeOrder("premium", "a puppy in snow", false).slice(0, 2), ["@cf/black-forest-labs/flux-2-klein-4b", "@cf/black-forest-labs/flux-1-schnell"]);
+  assert.deepEqual(routeOrder("premium", "a detailed poster with text", true).slice(0, 2), ["@cf/black-forest-labs/flux-2-klein-4b", "@cf/black-forest-labs/flux-1-schnell"]);
+  assert.deepEqual(routeOrder("pro", "a puppy in snow", false).slice(0, 2), ["@cf/black-forest-labs/flux-2-klein-9b", "@cf/black-forest-labs/flux-2-klein-4b"]);
+  assert.deepEqual(routeOrder("pro", "a detailed poster with text", true).slice(0, 2), ["@cf/black-forest-labs/flux-2-klein-9b", "@cf/black-forest-labs/flux-2-klein-4b"]);
 
   // Intuitive mode routing assertions
-  assert.equal(resolveImageRoute({ planCode: "free", executionMode: "intuitive" }).model, "dreamshaper");
-  assert.equal(resolveImageRoute({ planCode: "student_core", executionMode: "intuitive" }).model, "tongyi-mai/z-image-turbo");
-  assert.equal(resolveImageRoute({ planCode: "premium", executionMode: "intuitive" }).model, "tongyi-mai/z-image-turbo");
-  assert.equal(resolveImageRoute({ planCode: "pro", executionMode: "intuitive" }).model, "tongyi-mai/z-image-turbo");
-  assert.equal(resolveImageRoute({ planCode: "pro", executionMode: "intuitive", requiresTextRendering: true }).model, "tongyi-mai/z-image-turbo");
+  assert.equal(resolveImageRoute({ planCode: "free", executionMode: "intuitive" }).model, "@cf/black-forest-labs/flux-1-schnell");
+  assert.equal(resolveImageRoute({ planCode: "student_core", executionMode: "intuitive" }).model, "@cf/black-forest-labs/flux-2-klein-4b");
+  assert.equal(resolveImageRoute({ planCode: "premium", executionMode: "intuitive" }).model, "@cf/black-forest-labs/flux-2-klein-9b");
+  assert.equal(resolveImageRoute({ planCode: "pro", executionMode: "intuitive" }).model, "openai/gpt-image-2");
+  assert.equal(resolveImageRoute({ planCode: "pro", executionMode: "intuitive", requiresTextRendering: true }).model, "openai/gpt-image-2");
   assert.deepEqual(
-    getImageProviderOrder("a poster", "tongyi-mai/z-image-turbo").slice(0, 2),
-    ["tongyi-mai/z-image-turbo", "black-forest-labs/flux.2-klein-4b"],
+    getImageProviderOrder("a poster", "openai/gpt-image-2").slice(0, 2),
+    ["openai/gpt-image-2", "microsoft/mai-image-2.6"],
   );
-  assert.equal(getImageProviderOrder("a puppy in snow", "flux")[0], "flux");
+  assert.equal(getImageProviderOrder("a puppy in snow", "@cf/black-forest-labs/flux-1-schnell")[0], "@cf/black-forest-labs/flux-1-schnell");
   assert.deepEqual(
     getImageProviderOrder("a puppy in snow", "unexpected-model" as ImageModelPreference).slice(0, 2),
-    ["dreamshaper", "flux"],
+    ["@cf/black-forest-labs/flux-1-schnell", "@cf/lykon/dreamshaper-8-lcm"],
     "an unexpected runtime preference degrades to the safe ordinary chain",
   );
-  assert.deepEqual(getImageProviderOrder("a poster", "gptimage").slice(0, 2), ["gptimage", "flux"]);
 
-  assert.equal(requireImageModelPreference("GPT-IMAGE-2"), "gpt-image-2");
-  assert.equal(requireImageModelPreference("tongyi-mai/z-image-turbo"), "tongyi-mai/z-image-turbo");
-  assert.equal(requireImageModelPreference("black-forest-labs/flux.2-klein-4b"), "black-forest-labs/flux.2-klein-4b");
+  assert.equal(requireImageModelPreference("@cf/black-forest-labs/flux-1-schnell"), "@cf/black-forest-labs/flux-1-schnell");
+  assert.equal(requireImageModelPreference("openai/gpt-image-2"), "openai/gpt-image-2");
+  assert.equal(requireImageModelPreference("microsoft/mai-image-2.6"), "microsoft/mai-image-2.6");
+  assert.equal(requireImageModelPreference("black-forest-labs/flux.1.1-pro"), "black-forest-labs/flux.1.1-pro");
   assert.throws(() => requireImageModelPreference("unknown-image-model"), /Unsupported image model preference/);
   assert.equal(new PollinationsImageModelProvider("klein").name, "klein");
   assert.equal(new PollinationsImageModelProvider("kontext").name, "kontext");

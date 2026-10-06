@@ -13,6 +13,7 @@
 import { randomUUID } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import sharp from "sharp";
+import { getDedicatedImageStorageClient } from "./imageStorageClient";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -464,7 +465,7 @@ export async function uploadChatImage(
   options: ImageStorageOptions = {},
 ): Promise<ImageUploadResult> {
   const { userId, chatId, imageData, prompt, provider } = params;
-  const storageDb = options.storageDb ?? userDb;
+  const storageDb = options.storageDb ?? getDedicatedImageStorageClient() ?? userDb;
   const imageId = randomUUID();
   let uploadedStoragePath: string | null = null;
   
@@ -575,6 +576,10 @@ export async function getChatImages(
 
 /**
  * Delete an image from storage and database.
+ * Strict deletion order:
+ * 1. Fetch metadata to resolve binary storage_path.
+ * 2. Delete the binary object from dedicated image storage FIRST.
+ * 3. Delete the chat_images metadata from user database ONLY after binary deletion succeeds.
  */
 export async function deleteChatImage(
   userDb: SupabaseClient,
@@ -582,9 +587,9 @@ export async function deleteChatImage(
   imageId: string,
   options: ImageStorageOptions = {},
 ): Promise<boolean> {
-  const storageDb = options.storageDb ?? userDb;
+  const storageDb = options.storageDb ?? getDedicatedImageStorageClient() ?? userDb;
   try {
-    // Get image metadata first
+    // Step 1: Resolve image storage path from metadata
     const { data: image, error: fetchError } = await userDb
       .from("chat_images")
       .select("storage_path")
@@ -592,12 +597,12 @@ export async function deleteChatImage(
       .eq("user_id", userId)
       .single();
     
-    if (fetchError || !image) {
+    if (fetchError || !image || !image.storage_path) {
       console.error(`[ImageStorage] delete.notfound imageId=${imageId}`);
       return false;
     }
     
-    // Delete from storage
+    // Step 2: Delete binary from dedicated image storage FIRST
     const { error: storageError } = await storageDb.storage
       .from(getStorageBucketName())
       .remove([image.storage_path]);
@@ -607,7 +612,7 @@ export async function deleteChatImage(
       return false;
     }
     
-    // Delete metadata
+    // Step 3: Delete metadata from chat_images ONLY after binary deletion succeeds
     const { error: dbError } = await userDb
       .from("chat_images")
       .delete()

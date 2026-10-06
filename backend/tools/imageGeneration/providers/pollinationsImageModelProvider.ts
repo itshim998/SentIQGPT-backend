@@ -26,12 +26,12 @@ export interface PollinationsImageModelProviderOptions {
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 export class PollinationsImageModelProvider implements ImageProvider {
-  readonly name: ImageModelPreference;
+  readonly name: string;
   private readonly timeoutMs: number;
   private readonly enhance: boolean;
 
   constructor(
-    modelName: ImageModelPreference,
+    modelName: ImageModelPreference | string,
     options: PollinationsImageModelProviderOptions = {},
   ) {
     this.name = modelName;

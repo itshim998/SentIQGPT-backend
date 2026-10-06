@@ -7,28 +7,28 @@ import { getProviderToolDefinitions, validateModelToolCalls } from "./orchestrat
 for (const plan of ["student_core", "premium", "pro"] as const) {
   const visual = getImageModelForPlan(plan, false);
   const text = getImageModelForPlan(plan, true);
-  assert.equal(visual.model, "zimage", plan + " Fast non-text image route");
-  assert.equal(text.model, "zimage", plan + " Fast text-rendering image route (gpt-image-2 removed)");
-  assert.deepEqual(getImageProviderOrder("visual", visual.model).slice(0, 2), ["zimage", "klein"]);
-  assert.deepEqual(getImageProviderOrder("text", text.model).slice(0, 2), ["zimage", "klein"]);
+  const expectedFastModel = plan === "student_core"
+    ? "@cf/black-forest-labs/flux-1-schnell"
+    : plan === "premium"
+      ? "@cf/black-forest-labs/flux-2-klein-4b"
+      : "@cf/black-forest-labs/flux-2-klein-9b";
+  assert.equal(visual.model, expectedFastModel, plan + " Fast non-text image route");
+  assert.equal(text.model, expectedFastModel, plan + " Fast text-rendering image route (policy-owned)");
 
-  // Intuitive mode: Paid plans route to tongyi-mai/z-image-turbo -> black-forest-labs/flux.2-klein-4b
+  // Intuitive mode:
   const intuitiveVisual = resolveImageRoute({ planCode: plan, executionMode: "intuitive", requiresTextRendering: false });
   const intuitiveText = resolveImageRoute({ planCode: plan, executionMode: "intuitive", requiresTextRendering: true });
-  assert.equal(intuitiveVisual.model, "tongyi-mai/z-image-turbo", plan + " Intuitive visual route");
-  assert.equal(intuitiveText.model, "tongyi-mai/z-image-turbo", plan + " Intuitive text-rendering route");
-  assert.deepEqual(
-    getImageProviderOrder("visual", intuitiveVisual.model).slice(0, 2),
-    ["tongyi-mai/z-image-turbo", "black-forest-labs/flux.2-klein-4b"],
-  );
-  assert.deepEqual(
-    getImageProviderOrder("A poster that says SENTIQ", intuitiveText.model).slice(0, 2),
-    ["tongyi-mai/z-image-turbo", "black-forest-labs/flux.2-klein-4b"],
-  );
+  const expectedIntuitiveModel = plan === "student_core"
+    ? "@cf/black-forest-labs/flux-2-klein-4b"
+    : plan === "premium"
+      ? "@cf/black-forest-labs/flux-2-klein-9b"
+      : "openai/gpt-image-2";
+  assert.equal(intuitiveVisual.model, expectedIntuitiveModel, plan + " Intuitive visual route");
+  assert.equal(intuitiveText.model, expectedIntuitiveModel, plan + " Intuitive text-rendering route");
 }
-assert.equal(getImageModelForPlan("free", false).model, "dreamshaper");
-assert.equal(getImageModelForPlan("free", true).model, "dreamshaper");
-assert.equal(resolveImageRoute({ planCode: "free", executionMode: "intuitive", requiresTextRendering: true }).model, "dreamshaper");
+assert.equal(getImageModelForPlan("free", false).model, "@cf/black-forest-labs/flux-1-schnell");
+assert.equal(getImageModelForPlan("free", true).model, "@cf/black-forest-labs/flux-1-schnell");
+assert.equal(resolveImageRoute({ planCode: "free", executionMode: "intuitive", requiresTextRendering: true }).model, "@cf/black-forest-labs/flux-1-schnell");
 
 const imageTool = getProviderToolDefinitions({ authenticated: true })
   .find((tool) => tool.name === "image_gen");

@@ -2,6 +2,7 @@ import { randomInt, randomUUID } from "crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { bootProfiler } from "./bootProfiler";
 import { getNemotronRolloutSnapshot } from "./nemotronRolloutFlags";
+import { getDedicatedImageStorageClient } from "./tools/imageGeneration/imageStorageClient";
 
 export type DatabaseId = 1 | 2 | 3;
 export type AssignableDatabaseId = 2 | 3;
@@ -422,6 +423,10 @@ export function getImageStorageDatabaseId(): DatabaseId {
 }
 
 export function getImageStorageDatabase(): SupabaseClient {
+  const dedicated = getDedicatedImageStorageClient();
+  if (dedicated) {
+    return dedicated;
+  }
   return getClientForDatabase(getImageStorageDatabaseId());
 }
 

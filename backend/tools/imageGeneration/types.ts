@@ -15,11 +15,22 @@ export const IMAGE_MODEL_PREFERENCES = Object.freeze([
   "gptimage-large",
   "tongyi-mai/z-image-turbo",
   "black-forest-labs/flux.2-klein-4b",
+  // Canonical Cloudflare Workers AI model IDs
+  "@cf/black-forest-labs/flux-1-schnell",
+  "@cf/black-forest-labs/flux-2-klein-4b",
+  "@cf/black-forest-labs/flux-2-klein-9b",
+  "@cf/lykon/dreamshaper-8-lcm",
+  // Canonical Pollinations Pro Intuitive model IDs
+  "openai/gpt-image-2",
+  "microsoft/mai-image-2.6",
+  "black-forest-labs/flux.1.1-pro",
 ] as const);
 
 export type ImageModelPreference = (typeof IMAGE_MODEL_PREFERENCES)[number];
 
-const IMAGE_MODEL_PREFERENCE_SET: ReadonlySet<string> = new Set(IMAGE_MODEL_PREFERENCES);
+const IMAGE_MODEL_PREFERENCE_SET: ReadonlySet<string> = new Set(
+  IMAGE_MODEL_PREFERENCES.map((m) => m.toLowerCase()),
+);
 
 export function isImageModelPreference(value: string): value is ImageModelPreference {
   return IMAGE_MODEL_PREFERENCE_SET.has(value.trim().toLowerCase());

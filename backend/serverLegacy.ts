@@ -6814,6 +6814,9 @@ app.post(
         size: parsed.data.size,
         userId,
         preferredModel,
+        provider: entitledImageRoute.provider,
+        planCode: imageReservation.planCode,
+        executionMode: parsed.data.executionMode,
         signal: imageAbortController.signal,
         requestKey: imageRequestKey,
       });

@@ -1,24 +1,24 @@
 // SentIQ Chat v3 - Image Router
 //
-// Sequential fallback router with per-provider cooldowns, retry, and queue.
-// Tries each provider in priority order; returns as soon as one succeeds.
+// Plan/mode-based image router with sequential fallback chains, fair in-process
+// queue, per-user limits, bounded concurrency, AbortSignal support, and retry logic.
 //
-// Plan-primary chains:
-//   Free:           dreamshaper -> flux -> zimage -> HuggingFace -> Z-Image Turbo
-//   Paid Fast:      zimage -> klein -> flux -> HuggingFace -> Z-Image Turbo
-//   Paid Intuitive: tongyi-mai/z-image-turbo -> black-forest-labs/flux.2-klein-4b -> flux -> zimage -> HuggingFace -> Z-Image Turbo
+// Exact Production Policy:
+//   Cloudflare Workers AI is the PRIMARY family for:
+//     - Free (Fast & Intuitive): Schnell -> Dreamshaper
+//     - Essential Fast:         Schnell -> Klein 4B
+//     - Essential Intuitive:    Klein 4B -> Klein 9B
+//     - Plus Fast:              Klein 4B -> Schnell
+//     - Plus Intuitive:         Klein 9B -> Klein 4B
+//     - Pro Fast:               Klein 9B -> Klein 4B -> Schnell
+//   Pollinations is used ONLY for:
+//     - Pro Intuitive:          GPT-Image-2 -> MAI-Image-2.6 -> FLUX 1.1 Pro
 //
-// Features:
-//   - Fair in-process queue with per-user limits and bounded concurrency
-//   - Strictly sequential provider fallback within each request
-//   - 30-second cooldown on HTTP 429
-//   - 30-60 second timeout per Pollinations attempt
-//   - 60-second timeout for HuggingFace (slow inference)
-//   - Single retry after 1-second wait on 429
-//   - Auth: &key= query parameter on Pollinations requests (gen.pollinations.ai API v2)
-//
-// Requires POLLINATIONS_API_KEY (or legacy FLUX_API_KEY) for Pollinations providers.
-// If ALL providers fail, returns a structured error - never crashes.
+// CRITICAL POLICY RULES:
+//   - Pollinations MUST NOT be used by: Free, Essential, Plus, Pro Fast.
+//   - Cloudflare MUST NOT be used by: Pro Intuitive.
+//   - Each Cloudflare model pool exhausts all healthy configured accounts before
+//     advancing to the next model in the fallback chain.
 
 import { createHash } from "node:crypto";
 import {
@@ -27,35 +27,155 @@ import {
   type ImageModelPreference,
   type ImageProvider,
   type ImageGenerationResult,
+  type ImageProviderRequestContext,
 } from "./types";
+import {
+  CloudflareImageProvider,
+  CLOUDFLARE_MODEL_SCHNELL,
+  CLOUDFLARE_MODEL_KLEIN_4B,
+  CLOUDFLARE_MODEL_KLEIN_9B,
+  CLOUDFLARE_MODEL_DREAMSHAPER,
+} from "./providers/cloudflareImageProvider";
+import { PollinationsImageModelProvider } from "./providers/pollinationsImageModelProvider";
 import { DreamshaperProvider } from "./providers/dreamshaperProvider";
 import { ZimageProvider } from "./providers/zimageProvider";
 import { FluxSchnellProvider } from "./providers/fluxSchnellProvider";
 import { PollinationsProvider } from "./providers/pollinationsProvider";
 import { HuggingFaceProvider } from "./providers/huggingfaceProvider";
-import { PollinationsImageModelProvider } from "./providers/pollinationsImageModelProvider";
+import type { BillingPlanCode } from "../../billing/entitlementTypes";
+import { normalizeExecutionMode, type ExecutionMode } from "../../orchestrator/executionProfile";
 
 export type { ImageModelPreference } from "./types";
 
 // ==============================
-// Provider registry (order = priority)
+// Provider chains per plan & mode
 // ==============================
 
-const standardProviders: readonly ImageProvider[] = [
-  new DreamshaperProvider(),
-  new FluxSchnellProvider(),
-  new ZimageProvider(),
-  new HuggingFaceProvider(),
-  new PollinationsProvider(),
-];
+/**
+ * Construct the canonical provider fallback chain for the given plan code and execution mode.
+ */
+export function getProvidersForPlanAndMode(
+  planCode: BillingPlanCode,
+  executionMode: ExecutionMode | string = "fast",
+): readonly ImageProvider[] {
+  const mode = normalizeExecutionMode(executionMode);
 
-const complexProviders: readonly ImageProvider[] = [
-  new DreamshaperProvider(),
-  new FluxSchnellProvider(),
-  new ZimageProvider(),
-  new HuggingFaceProvider(),
-  new PollinationsProvider(),
-];
+  if (planCode === "free") {
+    // Free (both Fast and Intuitive): Schnell pool -> DreamShaper pool
+    return [
+      new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
+      new CloudflareImageProvider(CLOUDFLARE_MODEL_DREAMSHAPER),
+    ];
+  }
+
+  if (planCode === "student_core") {
+    if (mode === "intuitive") {
+      // Essential Intuitive: Klein 4B pool -> Klein 9B pool
+      return [
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_9B),
+      ];
+    }
+    // Essential Fast: Schnell pool -> Klein 4B pool
+    return [
+      new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
+      new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
+    ];
+  }
+
+  if (planCode === "premium") {
+    if (mode === "intuitive") {
+      // Plus Intuitive: Klein 9B pool -> Klein 4B pool
+      return [
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_9B),
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
+      ];
+    }
+    // Plus Fast: Klein 4B pool -> Schnell pool
+    return [
+      new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
+      new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
+    ];
+  }
+
+  if (planCode === "pro") {
+    if (mode === "intuitive") {
+      // Pro Intuitive: Pollinations GPT-Image-2 -> MAI-Image-2.6 -> FLUX 1.1 Pro
+      return [
+        new PollinationsImageModelProvider("openai/gpt-image-2"),
+        new PollinationsImageModelProvider("microsoft/mai-image-2.6"),
+        new PollinationsImageModelProvider("black-forest-labs/flux.1.1-pro"),
+      ];
+    }
+    // Pro Fast: Klein 9B pool -> Klein 4B pool -> Schnell pool
+    return [
+      new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_9B),
+      new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
+      new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
+    ];
+  }
+
+  // Fallback safe default: Free Fast chain
+  return [
+    new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
+    new CloudflareImageProvider(CLOUDFLARE_MODEL_DREAMSHAPER),
+  ];
+}
+
+/**
+ * Resolve provider chain from preferred model when plan code is not explicitly supplied.
+ */
+export function getProvidersForModelPreference(
+  preferredModel?: ImageModelPreference,
+): readonly ImageProvider[] {
+  switch (preferredModel) {
+    case "openai/gpt-image-2":
+    case "microsoft/mai-image-2.6":
+    case "black-forest-labs/flux.1.1-pro":
+      return [
+        new PollinationsImageModelProvider("openai/gpt-image-2"),
+        new PollinationsImageModelProvider("microsoft/mai-image-2.6"),
+        new PollinationsImageModelProvider("black-forest-labs/flux.1.1-pro"),
+      ];
+
+    case CLOUDFLARE_MODEL_KLEIN_9B:
+      return [
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_9B),
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
+      ];
+
+    case CLOUDFLARE_MODEL_KLEIN_4B:
+    case "black-forest-labs/flux.2-klein-4b":
+    case "klein":
+    case "zimage":
+      return [
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
+      ];
+
+    case "tongyi-mai/z-image-turbo":
+      return [
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_9B),
+      ];
+
+    case CLOUDFLARE_MODEL_DREAMSHAPER:
+    case "dreamshaper":
+      return [
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_DREAMSHAPER),
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
+      ];
+
+    case CLOUDFLARE_MODEL_SCHNELL:
+    case "flux":
+    default:
+      return [
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_DREAMSHAPER),
+      ];
+  }
+}
 
 // ==============================
 // Prompt complexity detection
@@ -76,8 +196,8 @@ const COMPLEXITY_PATTERNS: readonly RegExp[] = [
 ];
 
 /**
- * Detect whether a prompt requires complex generation (spatial reasoning, text, multi-element).
- * Provider entitlement remains plan-based; complexity is retained for diagnostics.
+ * Detect whether a prompt requests complex imagery (text, spatial composition, etc.).
+ * Retained for logging and diagnostics; plan entitlement remains authoritative.
  */
 export function detectPromptComplexity(prompt: string): boolean {
   let matchCount = 0;
@@ -104,96 +224,24 @@ export function selectImageProviderMode(
     : "standard";
 }
 
-function getProvidersForMode(
-  mode: "standard" | "complex",
-  preferredModel?: ImageModelPreference,
-): readonly ImageProvider[] {
-  switch (preferredModel) {
-    case undefined:
-    case "dreamshaper":
-      return mode === "complex" ? complexProviders : standardProviders;
-    case "flux":
-      return [
-        new FluxSchnellProvider(),
-        new ZimageProvider(),
-        new HuggingFaceProvider(),
-        new PollinationsProvider(),
-      ];
-    case "zimage":
-      return [
-        new ZimageProvider(),
-        new PollinationsImageModelProvider("klein", { enhance: true }),
-        new FluxSchnellProvider(),
-        new HuggingFaceProvider(),
-        new PollinationsProvider(),
-      ];
-    case "klein":
-      return [
-        new PollinationsImageModelProvider("klein", { enhance: true }),
-        new FluxSchnellProvider(),
-        new ZimageProvider(),
-        new HuggingFaceProvider(),
-        new PollinationsProvider(),
-      ];
-    case "tongyi-mai/z-image-turbo":
-      return [
-        new PollinationsImageModelProvider("tongyi-mai/z-image-turbo"),
-        new PollinationsImageModelProvider("black-forest-labs/flux.2-klein-4b"),
-        new FluxSchnellProvider(),
-        new ZimageProvider(),
-        new HuggingFaceProvider(),
-        new PollinationsProvider(),
-      ];
-    case "black-forest-labs/flux.2-klein-4b":
-      return [
-        new PollinationsImageModelProvider("black-forest-labs/flux.2-klein-4b"),
-        new FluxSchnellProvider(),
-        new ZimageProvider(),
-        new HuggingFaceProvider(),
-        new PollinationsProvider(),
-      ];
-    case "gpt-image-2":
-      // Obsolete preference compatibility branch; never routes to GPT-Image-2.
-      return [
-        new ZimageProvider(),
-        new PollinationsImageModelProvider("klein", { enhance: true }),
-        new FluxSchnellProvider(),
-        new HuggingFaceProvider(),
-        new PollinationsProvider(),
-      ];
-    case "kontext":
-      return [
-        new PollinationsImageModelProvider("kontext"),
-        new DreamshaperProvider(),
-        new FluxSchnellProvider(),
-        new ZimageProvider(),
-        new HuggingFaceProvider(),
-        new PollinationsProvider(),
-      ];
-    case "gptimage":
-    case "gptimage-large":
-    case "wan-image":
-      return [
-        new PollinationsImageModelProvider(preferredModel),
-        new FluxSchnellProvider(),
-        new ZimageProvider(),
-        new HuggingFaceProvider(),
-        new PollinationsProvider(),
-      ];
-  }
-
-  // Defensive runtime fallback for malformed or stale external preferences.
-  // Typed call sites cannot reach this branch, but request boundaries and old
-  // clients must degrade to the ordinary chain instead of crashing.
-  return mode === "complex" ? complexProviders : standardProviders;
-}
-
+/**
+ * Returns the ordered names of providers in the chain for diagnostics and tests.
+ */
 export function getImageProviderOrder(
   prompt: string,
   preferredModel?: ImageModelPreference,
+  planCode?: BillingPlanCode,
+  executionMode?: ExecutionMode | string,
 ): readonly string[] {
-  return getProvidersForMode(selectImageProviderMode(prompt, preferredModel), preferredModel)
-    .map((provider) => provider.name);
+  let providers: readonly ImageProvider[];
+  if (planCode) {
+    providers = getProvidersForPlanAndMode(planCode, executionMode ?? "fast");
+  } else if (preferredModel) {
+    providers = getProvidersForModelPreference(preferredModel);
+  } else {
+    providers = getProvidersForPlanAndMode("free", "fast");
+  }
+  return providers.map((p) => p.name);
 }
 
 // ==============================
@@ -206,7 +254,10 @@ const providerCooldownUntil: Map<string, number> = new Map();
 function isOnCooldown(name: string): boolean {
   const until = providerCooldownUntil.get(name);
   if (!until) return false;
-  if (Date.now() >= until) { providerCooldownUntil.delete(name); return false; }
+  if (Date.now() >= until) {
+    providerCooldownUntil.delete(name);
+    return false;
+  }
   return true;
 }
 
@@ -259,15 +310,21 @@ const MAX_QUEUE_SIZE = parsePositiveInt(process.env.SENTIQ_IMAGE_QUEUE_MAX, 10);
 const MAX_QUEUE_SIZE_PER_USER = parsePositiveInt(process.env.SENTIQ_IMAGE_QUEUE_MAX_PER_USER, 3);
 const MAX_CONCURRENT_JOBS = parsePositiveInt(process.env.SENTIQ_IMAGE_QUEUE_CONCURRENCY, 2);
 
+export interface RouteImageGenerationArgs {
+  readonly prompt: string;
+  readonly size?: string;
+  readonly userId?: string;
+  readonly signal?: AbortSignal;
+  readonly preferredModel?: ImageModelPreference;
+  readonly provider?: "cloudflare" | "pollinations";
+  readonly planCode?: BillingPlanCode;
+  readonly executionMode?: ExecutionMode | string;
+  readonly requestKey?: string;
+  readonly providers?: readonly ImageProvider[];
+}
+
 interface QueueItem {
-  args: {
-    readonly prompt: string;
-    readonly size?: string;
-    readonly userId?: string;
-    readonly signal?: AbortSignal;
-    readonly preferredModel?: ImageModelPreference;
-    readonly requestKey?: string;
-  };
+  args: RouteImageGenerationArgs;
   userKey: string;
   resolve: (result: ImageGenerationResult) => void;
   reject: (err: Error) => void;
@@ -359,14 +416,9 @@ function processQueue(): void {
 /**
  * Route an image generation request through the fair in-process queue and provider chain.
  */
-export async function routeImageGeneration(args: {
-  readonly prompt: string;
-  readonly size?: string;
-  readonly userId?: string;
-  readonly signal?: AbortSignal;
-  readonly preferredModel?: ImageModelPreference;
-  readonly requestKey?: string;
-}): Promise<ImageGenerationResult> {
+export async function routeImageGeneration(
+  args: RouteImageGenerationArgs,
+): Promise<ImageGenerationResult> {
   if (!args.prompt.trim()) {
     return { success: false, prompt: args.prompt, error: "Prompt is required" };
   }
@@ -417,20 +469,20 @@ export async function routeImageGeneration(args: {
  * Execute the provider fallback chain for a single request.
  * Called sequentially by the queue processor.
  */
-async function executeImageGeneration(args: {
-  readonly prompt: string;
-  readonly size?: string;
-  readonly userId?: string;
-  readonly signal?: AbortSignal;
-  readonly preferredModel?: ImageModelPreference;
-  readonly requestKey?: string;
-  readonly providers?: readonly ImageProvider[];
-}): Promise<ImageGenerationResult> {
+async function executeImageGeneration(
+  args: RouteImageGenerationArgs,
+): Promise<ImageGenerationResult> {
   throwIfAborted(args.signal);
   const errors: string[] = [];
   const startTime = Date.now();
   const providerMode = selectImageProviderMode(args.prompt, args.preferredModel);
-  const selectedProviders = args.providers ?? getProvidersForMode(providerMode, args.preferredModel);
+
+  const selectedProviders: readonly ImageProvider[] = args.providers ?? (
+    args.planCode
+      ? getProvidersForPlanAndMode(args.planCode, args.executionMode ?? "fast")
+      : getProvidersForModelPreference(args.preferredModel)
+  );
+
   const requestKey = args.requestKey?.trim() || createHash("sha256")
     .update(args.userId?.trim() || "anonymous")
     .update("\0")
@@ -438,6 +490,7 @@ async function executeImageGeneration(args: {
     .update("\0")
     .update(args.prompt)
     .digest("hex");
+
   console.log(
     `[IMAGE] routing mode=${providerMode} preferred=${args.preferredModel ?? "none"} primary=${selectedProviders[0]?.name ?? "none"} providers=${selectedProviders.length}`,
   );

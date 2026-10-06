@@ -13,7 +13,7 @@ export interface ModelRoute {
 
 export interface ImageModelRoute extends ModelRoute {
   readonly feature: "image_generation";
-  readonly provider: "pollinations";
+  readonly provider: "cloudflare" | "pollinations";
   readonly model: ImageModelPreference;
   readonly adapterModelOverride: ImageModelPreference;
   readonly route: "image";
@@ -112,8 +112,10 @@ export function getImageModelPreferenceForPlan(
   requiresTextRendering = false,
 ): ImageModelPreference {
   void requiresTextRendering;
-  if (planCode === "free") return "dreamshaper";
-  return "zimage";
+  if (planCode === "free") return "@cf/black-forest-labs/flux-1-schnell";
+  if (planCode === "student_core") return "@cf/black-forest-labs/flux-1-schnell";
+  if (planCode === "premium") return "@cf/black-forest-labs/flux-2-klein-4b";
+  return "@cf/black-forest-labs/flux-2-klein-9b";
 }
 
 /**
@@ -128,7 +130,7 @@ export function getImageModelForPlan(
   const model = getImageModelPreferenceForPlan(planCode, requiresTextRendering);
   return {
     feature: "image_generation",
-    provider: "pollinations",
+    provider: "cloudflare",
     model,
     adapterModelOverride: model,
     safeModelLabel: planCode === "free" ? "Image" : "Precision Image",
@@ -146,22 +148,41 @@ export interface ResolveImageRouteArgs {
  * Resolve the image route accounting for billing plan entitlement, execution mode,
  * and text-rendering decision.
  *
- * Policy matrix:
- * - Fast mode (free or paid) retains existing plan-based image routes (dreamshaper for free, zimage for paid).
- * - Free + Intuitive retains existing Free image route (dreamshaper).
- * - Paid + Intuitive (Essential, Plus, Pro) routes to tongyi-mai/z-image-turbo
- *   (with black-forest-labs/flux.2-klein-4b as immediate fallback in the image router),
- *   completely overriding any legacy text-rendering switch to GPT-Image-2.
+ * Exact production policy matrix:
+ * - Free Fast:           Cloudflare Schnell
+ * - Free Intuitive:      Cloudflare Schnell
+ * - Essential Fast:      Cloudflare Schnell
+ * - Essential Intuitive: Cloudflare Klein 4B
+ * - Plus Fast:           Cloudflare Klein 4B
+ * - Plus Intuitive:      Cloudflare Klein 9B
+ * - Pro Fast:            Cloudflare Klein 9B
+ * - Pro Intuitive:       Pollinations GPT-Image-2 (openai/gpt-image-2)
+ *
+ * Prompt complexity or requiresTextRendering must NOT override this entitlement matrix.
  */
 export function resolveImageRoute(args: ResolveImageRouteArgs): ImageModelRoute {
   const mode = normalizeExecutionMode(args.executionMode);
-  const isPaid = args.planCode !== "free";
+  const plan = args.planCode;
 
-  if (mode === "intuitive" && isPaid) {
-    const model: ImageModelPreference = "tongyi-mai/z-image-turbo";
+  if (plan === "free") {
+    const model: ImageModelPreference = "@cf/black-forest-labs/flux-1-schnell";
     return {
       feature: "image_generation",
-      provider: "pollinations",
+      provider: "cloudflare",
+      model,
+      adapterModelOverride: model,
+      safeModelLabel: "Image",
+      route: "image",
+    };
+  }
+
+  if (plan === "student_core") {
+    const model: ImageModelPreference = mode === "intuitive"
+      ? "@cf/black-forest-labs/flux-2-klein-4b"
+      : "@cf/black-forest-labs/flux-1-schnell";
+    return {
+      feature: "image_generation",
+      provider: "cloudflare",
       model,
       adapterModelOverride: model,
       safeModelLabel: "Precision Image",
@@ -169,7 +190,44 @@ export function resolveImageRoute(args: ResolveImageRouteArgs): ImageModelRoute 
     };
   }
 
-  return getImageModelForPlan(args.planCode, args.requiresTextRendering ?? false);
+  if (plan === "premium") {
+    const model: ImageModelPreference = mode === "intuitive"
+      ? "@cf/black-forest-labs/flux-2-klein-9b"
+      : "@cf/black-forest-labs/flux-2-klein-4b";
+    return {
+      feature: "image_generation",
+      provider: "cloudflare",
+      model,
+      adapterModelOverride: model,
+      safeModelLabel: "Precision Image",
+      route: "image",
+    };
+  }
+
+  if (plan === "pro") {
+    if (mode === "intuitive") {
+      const model: ImageModelPreference = "openai/gpt-image-2";
+      return {
+        feature: "image_generation",
+        provider: "pollinations",
+        model,
+        adapterModelOverride: model,
+        safeModelLabel: "Precision Image",
+        route: "image",
+      };
+    }
+    const model: ImageModelPreference = "@cf/black-forest-labs/flux-2-klein-9b";
+    return {
+      feature: "image_generation",
+      provider: "cloudflare",
+      model,
+      adapterModelOverride: model,
+      safeModelLabel: "Precision Image",
+      route: "image",
+    };
+  }
+
+  return getImageModelForPlan(plan, args.requiresTextRendering ?? false);
 }
 
 export function getDeepResearchRoute(): ModelRoute {

@@ -1055,6 +1055,7 @@ export async function execImageGeneration(
   let reservation: UsageReservation | null = null;
   let committedReservation: UsageReservation | null = null;
   let preferredModel: ImageModelPreference | undefined;
+  let entitledRoute: ReturnType<typeof resolveImageRoute> | null = null;
 
   if (ctx.billingIdentity) {
     const initialRoute = getImageModelForPlan("free", false);
@@ -1067,7 +1068,7 @@ export async function execImageGeneration(
       clientRequestId: ctx.billingRequestId,
       metadata: { endpoint: "orchestrator", tool: "image_generation" },
     });
-    const entitledRoute = resolveImageRoute({
+    entitledRoute = resolveImageRoute({
       planCode: reservation.planCode,
       executionMode: profile.mode,
       requiresTextRendering,
@@ -1100,6 +1101,9 @@ export async function execImageGeneration(
       userId: ctx.userId,
       signal,
       preferredModel,
+      provider: entitledRoute?.provider,
+      planCode: reservation?.planCode,
+      executionMode: profile?.mode,
       requestKey,
     });
     if (result.success && committedReservation) {
