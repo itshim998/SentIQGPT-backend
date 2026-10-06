@@ -51,7 +51,6 @@ export function overrideCloudflareSlotsForTesting(slots: CloudflareCredentialSlo
 }
 
 export function resetCloudflareHealthState(): void {
-  accountHealthMap.clear;
   accountHealthMap.clear();
   accountModelHealthMap.clear();
   modelRoundRobinCursors.clear();

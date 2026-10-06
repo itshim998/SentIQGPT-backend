@@ -109,10 +109,13 @@ function parseSize(size?: string): { width: number; height: number } {
   return { width, height };
 }
 
-function isDailyNeuronExhaustion(code?: number, message = ""): boolean {
+export function isDailyNeuronExhaustion(code?: number, message = ""): boolean {
   if (code === 3036) return true;
   const lower = message.toLowerCase();
-  return lower.includes("daily free allocation") || lower.includes("neuron") || lower.includes("quota exhausted");
+  return (
+    lower.includes("daily free allocation of neurons") ||
+    (lower.includes("daily free allocation") && lower.includes("neuron") && lower.includes("exhaust"))
+  );
 }
 
 function isCapacityExceeded(code?: number, message = ""): boolean {
