@@ -424,6 +424,88 @@ def test_retry_after_clamping():
     assert_true(cooldown_until <= now + 305 and cooldown_until >= now + 295, "retry-after clamped to 300s")
 
 
+def test_stream_router_lite_pool_failure_before_output_proceeds_to_fallback():
+    reset_gemini_state()
+    pollinations_stream_called = []
+    groq_stream_called = []
+
+    def fake_call_gemini_stream(prompt, api_key, model=None, **kwargs):
+        raise RuntimeError("429 all gemini candidates exhausted")
+
+    def fake_call_pollinations_stream(prompt, model, **kwargs):
+        pollinations_stream_called.append(model)
+        yield "pollinations-stream-chunk"
+
+    def fake_call_groq_stream(prompt, api_key, model, **kwargs):
+        groq_stream_called.append((api_key, model))
+        yield "groq-stream-chunk"
+
+    # Part A1: Groq disabled / unconfigured -> fallback proceeds directly to Pollinations Lite
+    with patched(
+        _cache_get=lambda _key: None,
+        _cache_set=lambda _key, _value: None,
+        _call_gemini_stream=fake_call_gemini_stream,
+        _call_pollinations_stream=fake_call_pollinations_stream,
+        GROQ_API_KEYS=[],
+    ):
+        chunks = list(adapter.stream_llm_router("test prompt", model_override="gemini:gemini-lite"))
+
+    assert_equal(chunks, ["pollinations-stream-chunk"], "stream yields fallback pollinations chunk")
+    assert_equal(pollinations_stream_called, [adapter.POLLINATIONS_LITE_MODEL], "falls back to pollinations lite model")
+    assert_equal(groq_stream_called, [], "groq was not called when not configured")
+
+    # Part A2: Groq configured -> fallback proceeds to Groq GPT-OSS
+    with patched(
+        _cache_get=lambda _key: None,
+        _cache_set=lambda _key, _value: None,
+        _call_gemini_stream=fake_call_gemini_stream,
+        _call_groq_stream=fake_call_groq_stream,
+        GROQ_API_KEYS=["fake-groq-key"],
+    ):
+        groq_chunks = list(adapter.stream_llm_router("test prompt", model_override="gemini:gemini-lite"))
+
+    assert_equal(groq_chunks, ["groq-stream-chunk"], "stream yields fallback groq chunk")
+    assert_equal(len(groq_stream_called), 1, "groq stream called as fallback")
+
+
+def test_stream_router_lite_pool_failure_after_visible_output_propagates_without_fallback():
+    reset_gemini_state()
+    groq_stream_called = []
+    pollinations_stream_called = []
+
+    def fake_call_gemini_stream(prompt, api_key, model=None, **kwargs):
+        yield "first-visible-gemini-chunk"
+        raise RuntimeError("mid-stream connection dropped")
+
+    def fake_call_pollinations_stream(prompt, model, **kwargs):
+        pollinations_stream_called.append(model)
+        yield "pollinations-should-not-be-reached"
+
+    def fake_call_groq_stream(prompt, api_key, model, **kwargs):
+        groq_stream_called.append((api_key, model))
+        yield "groq-should-not-be-reached"
+
+    with patched(
+        _cache_get=lambda _key: None,
+        _cache_set=lambda _key, _value: None,
+        _call_gemini_stream=fake_call_gemini_stream,
+        _call_pollinations_stream=fake_call_pollinations_stream,
+        _call_groq_stream=fake_call_groq_stream,
+        GROQ_API_KEYS=["fake-groq-key"],
+    ):
+        gen = adapter.stream_llm_router("test prompt", model_override="gemini:gemini-lite")
+        first = next(gen)
+        assert_equal(first, "first-visible-gemini-chunk", "received first visible chunk from Gemini")
+        try:
+            next(gen)
+            assert_true(False, "mid-stream error should propagate outward without falling back")
+        except RuntimeError as err:
+            assert_true("mid-stream connection dropped" in str(err), "re-raised original mid-stream error")
+
+    assert_equal(groq_stream_called, [], "neither Groq was invoked after visible output failure")
+    assert_equal(pollinations_stream_called, [], "nor Pollinations was invoked after visible output failure")
+
+
 def main():
     test_lite_pool_definition_and_ordering()
     test_key_major_candidate_traversal()
@@ -444,6 +526,8 @@ def main():
     test_final_fallback_to_pollinations_after_full_lite_pool_failure()
     test_streaming_failover_before_output()
     test_no_streaming_failover_after_visible_output_emitted()
+    test_stream_router_lite_pool_failure_before_output_proceeds_to_fallback()
+    test_stream_router_lite_pool_failure_after_visible_output_propagates_without_fallback()
     test_capability_filtering()
     test_legacy_aliases_route_to_lite_pool()
     print("PASS | All Gemini Lite Quota Router tests passed successfully.")

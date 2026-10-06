@@ -4245,20 +4245,28 @@ def stream_llm_router(
             raise ModelToolCapabilityUnavailableError("No capable buffered tool fallback route is available") from buffered_tool_error
 
     # --- Gemini text streaming path ---
+    emitted_gemini_text = False
     if _is_lite_model(model, model_override):
         try:
             if not GEMINI_KEY_RECORDS:
                 raise RuntimeError("No Gemini API keys configured")
-            yield from _stream_gemini_lite_pool(
+            for chunk in _stream_gemini_lite_pool(
                 prompt,
                 max_output_tokens=max_output_tokens,
                 execution_mode=execution_mode,
                 sentiq_tool_request=sentiq_tool_request,
                 required_capabilities=required_capabilities,
                 image_attachments=image_attachments,
-            )
+            ):
+                if chunk:
+                    emitted_gemini_text = True
+                yield chunk
             return
+        except GeneratorExit:
+            raise
         except Exception as gemini_stream_error:
+            if emitted_gemini_text:
+                raise
             logger.warning("Gemini Lite stream chain failed before first text: %s", _redact_secrets(gemini_stream_error))
     else:
         if gemini_stream_attempts is None:
@@ -4272,7 +4280,7 @@ def stream_llm_router(
         try:
             if not GEMINI_KEY_RECORDS:
                 raise RuntimeError("No Gemini API keys configured")
-            yield from _stream_gemini_attempt_chain(
+            for chunk in _stream_gemini_attempt_chain(
                 prompt,
                 gemini_stream_attempts,
                 max_output_tokens=max_output_tokens,
@@ -4280,54 +4288,62 @@ def stream_llm_router(
                 sentiq_tool_request=sentiq_tool_request,
                 required_capabilities=required_capabilities,
                 image_attachments=image_attachments,
-            )
+            ):
+                if chunk:
+                    emitted_gemini_text = True
+                yield chunk
             return
+        except GeneratorExit:
+            raise
         except Exception as gemini_stream_error:
+            if emitted_gemini_text:
+                raise
             logger.warning("Gemini/Gemma stream chain failed before first text: %s", _redact_secrets(gemini_stream_error))
-        if GROQ_API_KEYS and not image_attachments and not sentiq_tool_request:
-            try:
-                logger.info("[Fallback] Attempting Groq GPT-OSS stream fallback after Gemini error")
-                for api_key in _get_round_robin_groq_keys():
-                    try:
-                        for chunk in _call_groq_stream(
-                            prompt,
-                            api_key,
-                            GROQ_CHAT_MODEL,
-                            max_output_tokens=max_output_tokens,
-                            reasoning_effort=effective_reasoning_effort,
-                            execution_mode=execution_mode,
-                        ):
-                            if chunk:
-                                yield chunk
-                        logger.info("[Fallback] Groq GPT-OSS stream fallback succeeded")
-                        return
-                    except Exception as groq_err:
-                        logger.warning("[Fallback] Groq key failed: %s", groq_err)
-                        continue
-            except Exception as groq_fallback_err:
-                logger.warning("[Fallback] Groq fallback failed: %s", groq_fallback_err)
 
-        pollinations_model = (
-            "openai-large"
-            if stream_reasoning_request
-            else POLLINATIONS_LITE_MODEL
-            if _is_lite_model(model, model_override)
-            else SEARCH_MODEL
-            if task == "web_search_synthesis"
-            else GENERAL_CHAT_MODEL
-        )
-        if not _route_supports_required_capabilities(
-            "pollinations", pollinations_model, required_capabilities, streaming=True
-        ):
-            raise RuntimeError("No capable streaming fallback route is available")
-        yield from _call_pollinations_stream(
-            prompt,
-            pollinations_model,
-            image_attachments=image_attachments,
-            max_output_tokens=max_output_tokens,
-            sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "pollinations", pollinations_model, streaming=True),
-        )
-        return
+    if GROQ_API_KEYS and not image_attachments and not sentiq_tool_request:
+        try:
+            logger.info("[Fallback] Attempting Groq GPT-OSS stream fallback after Gemini error")
+            for api_key in _get_round_robin_groq_keys():
+                try:
+                    for chunk in _call_groq_stream(
+                        prompt,
+                        api_key,
+                        GROQ_CHAT_MODEL,
+                        max_output_tokens=max_output_tokens,
+                        reasoning_effort=effective_reasoning_effort,
+                        execution_mode=execution_mode,
+                    ):
+                        if chunk:
+                            yield chunk
+                    logger.info("[Fallback] Groq GPT-OSS stream fallback succeeded")
+                    return
+                except Exception as groq_err:
+                    logger.warning("[Fallback] Groq key failed: %s", groq_err)
+                    continue
+        except Exception as groq_fallback_err:
+            logger.warning("[Fallback] Groq fallback failed: %s", groq_fallback_err)
+
+    pollinations_model = (
+        "openai-large"
+        if stream_reasoning_request
+        else POLLINATIONS_LITE_MODEL
+        if _is_lite_model(model, model_override)
+        else SEARCH_MODEL
+        if task == "web_search_synthesis"
+        else GENERAL_CHAT_MODEL
+    )
+    if not _route_supports_required_capabilities(
+        "pollinations", pollinations_model, required_capabilities, streaming=True
+    ):
+        raise RuntimeError("No capable streaming fallback route is available")
+    yield from _call_pollinations_stream(
+        prompt,
+        pollinations_model,
+        image_attachments=image_attachments,
+        max_output_tokens=max_output_tokens,
+        sentiq_tool_request=_sentiq_tool_request_for_route(sentiq_tool_request, "pollinations", pollinations_model, streaming=True),
+    )
+    return
 
 
 # ==============================
