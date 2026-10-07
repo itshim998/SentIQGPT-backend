@@ -244,21 +244,40 @@ async function testPlanResolutionFailClosed(): Promise<void> {
     "Database failure during image plan resolution must throw and not convert to free",
   );
 
-  // 5. Missing / null planCode throws BillingQuotaError
-  const nullPlanService = new BillingQuotaService(new MockBillingRepo(null, false) as any);
-  await assert.rejects(
-    async () => {
-      await nullPlanService.resolvePlanCodeForImageBilling({
-        userId: "user_corrupt",
-        anonymousKeyHash: null,
-        isGuest: false,
-      });
-    },
-    (err: any) => err instanceof BillingQuotaError && err.code === "plan_resolution_failed",
-    "Empty plan row must throw BillingQuotaError and fail closed",
-  );
+  // 5. Explicit edge cases: missing, null, empty, unknown, and malformed plan codes MUST fail closed
+  const invalidCases = [
+    { label: "null plan row", repo: new MockBillingRepo(null, false) },
+    { label: "empty string plan_code", repo: new MockBillingRepo({ plan_code: "", status: "active" } as any) },
+    { label: "whitespace-only plan_code", repo: new MockBillingRepo({ plan_code: "   ", status: "active" } as any) },
+    { label: "unknown plan_code enterprise", repo: new MockBillingRepo({ plan_code: "enterprise", status: "active" } as any) },
+    { label: "unknown plan_code unknown", repo: new MockBillingRepo({ plan_code: "unknown", status: "active" } as any) },
+    { label: "malformed plan_code FREEE", repo: new MockBillingRepo({ plan_code: "FREEE", status: "active" } as any) },
+    { label: "partial plan_code student", repo: new MockBillingRepo({ plan_code: "student", status: "active" } as any) },
+    { label: "legacy plan_code premium_plus", repo: new MockBillingRepo({ plan_code: "premium_plus", status: "active" } as any) },
+    { label: "non-string plan_code", repo: new MockBillingRepo({ plan_code: 12345 as any, status: "active" } as any) },
+  ];
 
-  console.log("PASS: Fail-closed image billing plan resolution verified.");
+  for (const tc of invalidCases) {
+    const service = new BillingQuotaService(tc.repo as any);
+    await assert.rejects(
+      async () => {
+        await service.resolvePlanCodeForImageBilling({
+          userId: "user_test_fail_closed",
+          anonymousKeyHash: null,
+          isGuest: false,
+        });
+      },
+      (err: any) => {
+        assert(err instanceof BillingQuotaError, `Expected BillingQuotaError for ${tc.label}`);
+        assert.equal(err.code, "plan_resolution_failed", `Expected code plan_resolution_failed for ${tc.label}`);
+        assert.equal(err.feature, "image_generation", `Expected feature image_generation for ${tc.label}`);
+        return true;
+      },
+      `Invalid plan case "${tc.label}" must throw BillingQuotaError and fail closed`,
+    );
+  }
+
+  console.log("PASS: Fail-closed image billing plan resolution verified across all valid and invalid cases.");
 }
 
 function testSettlementAndReleaseCalculations(): void {

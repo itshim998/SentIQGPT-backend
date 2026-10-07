@@ -361,7 +361,7 @@ export class BillingQuotaService {
   async resolvePlanCodeForImageBilling(identity: BillingIdentity): Promise<BillingPlanCode> {
     if (identity.isGuest || !identity.userId) return "free";
 
-    let planCode: string | undefined;
+    let planCode: unknown;
     if (typeof (this.repository as any).getEffectivePlan === "function") {
       const effective = await (this.repository as any).getEffectivePlan(identity.userId);
       planCode = effective?.plan_code;
@@ -370,26 +370,30 @@ export class BillingQuotaService {
       planCode = summary?.plan_code;
     }
 
-    if (!planCode || typeof planCode !== "string") {
-      throw new BillingQuotaError("Authoritative billing plan could not be determined for image billing", {
-        code: "plan_resolution_failed",
-        type: "plan_resolution_failed",
-        feature: "image_generation",
-        planCode: "free",
-        policyVersion: UNIFIED_TEXT_POLICY_VERSION,
-        limitTokens: 0,
-        usedTokens: 0,
-        reservedTokens: 0,
-        remainingTokens: 0,
-        fastReserveTokens: 0,
-        fastAvailableTokens: 0,
-        intuitiveAvailableTokens: 0,
-        nextRecoveryAt: null,
-        resetAt: null,
-      });
+    if (typeof planCode === "string") {
+      const trimmed = planCode.trim();
+      if (trimmed === "free") return "free";
+      if (trimmed === "student_core") return "student_core";
+      if (trimmed === "premium") return "premium";
+      if (trimmed === "pro") return "pro";
     }
 
-    return normalizePlanCode(planCode);
+    throw new BillingQuotaError("Authoritative billing plan could not be determined for image billing", {
+      code: "plan_resolution_failed",
+      type: "plan_resolution_failed",
+      feature: "image_generation",
+      planCode: "free",
+      policyVersion: UNIFIED_TEXT_POLICY_VERSION,
+      limitTokens: 0,
+      usedTokens: 0,
+      reservedTokens: 0,
+      remainingTokens: 0,
+      fastReserveTokens: 0,
+      fastAvailableTokens: 0,
+      intuitiveAvailableTokens: 0,
+      nextRecoveryAt: null,
+      resetAt: null,
+    });
   }
 
   async reserveFeature(args: {
