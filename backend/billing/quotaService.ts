@@ -352,6 +352,46 @@ export class BillingQuotaService {
     }
   }
 
+  /**
+   * Authoritative billing-critical plan resolution for image generation.
+   * Unlike general context budgeting, this MUST fail closed:
+   * A failure to resolve an authenticated user's plan must NEVER default to "free",
+   * preventing undercharges when paid users consume weighted credits.
+   */
+  async resolvePlanCodeForImageBilling(identity: BillingIdentity): Promise<BillingPlanCode> {
+    if (identity.isGuest || !identity.userId) return "free";
+
+    let planCode: string | undefined;
+    if (typeof (this.repository as any).getEffectivePlan === "function") {
+      const effective = await (this.repository as any).getEffectivePlan(identity.userId);
+      planCode = effective?.plan_code;
+    } else {
+      const summary = await this.getUsageSummary(identity);
+      planCode = summary?.plan_code;
+    }
+
+    if (!planCode || typeof planCode !== "string") {
+      throw new BillingQuotaError("Authoritative billing plan could not be determined for image billing", {
+        code: "plan_resolution_failed",
+        type: "plan_resolution_failed",
+        feature: "image_generation",
+        planCode: "free",
+        policyVersion: UNIFIED_TEXT_POLICY_VERSION,
+        limitTokens: 0,
+        usedTokens: 0,
+        reservedTokens: 0,
+        remainingTokens: 0,
+        fastReserveTokens: 0,
+        fastAvailableTokens: 0,
+        intuitiveAvailableTokens: 0,
+        nextRecoveryAt: null,
+        resetAt: null,
+      });
+    }
+
+    return normalizePlanCode(planCode);
+  }
+
   async reserveFeature(args: {
     readonly identity: BillingIdentity;
     readonly feature: BillableFeature;

@@ -25,7 +25,6 @@ import { PollinationsImageModelProvider } from "./tools/imageGeneration/provider
 import {
   CLOUDFLARE_MODEL_SCHNELL,
   CLOUDFLARE_MODEL_KLEIN_4B,
-  CLOUDFLARE_MODEL_KLEIN_9B,
   CLOUDFLARE_MODEL_DREAMSHAPER,
 } from "./tools/imageGeneration/providers/cloudflareImageProvider";
 import { detectExplicitTextRenderingRequirement } from "./tools/imageGeneration/imageTextRenderingDecision";

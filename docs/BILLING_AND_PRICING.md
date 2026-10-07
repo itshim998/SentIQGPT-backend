@@ -9,7 +9,7 @@ Authoritative plans are stored in the auth/control Supabase database (Database 1
 - **Free**: Starter Standard and Lite access. 2 image credits per 24 hours (86,400s). Price: ₹0 (0 paise).
 - **Essential** (`student_core`): 12 image credits per 12 hours (43,200s). Price: ₹129/month (12,900 paise).
 - **Plus** (`premium`): 20 image credits per 12 hours (43,200s). Price: ₹299/month (29,900 paise).
-- **Pro** (`pro`): 32 image credits per 12 hours (43,200s). Price: ₹699/month (43,200s). Price: ₹699/month (69,900 paise).
+- **Pro** (`pro`): 32 image credits per 12 hours (43,200s). Price: ₹699/month (69,900 paise).
 
 Razorpay plan IDs are preserved without modification across plan updates.
 
@@ -26,7 +26,7 @@ Different image models consume differing numbers of credits based on computation
 | `mai-image-2.6` (Pollinations) | 8 credits | Pro Intuitive tier secondary fallback |
 | `flux-pro` (FLUX 1.1 Pro) | 8 credits | Pro Intuitive tier tertiary fallback |
 
-*Note*: Klein 9B has been completely retired from active preference and routing.
+*Note*: The Pro Intuitive 8-credit cost is an explicit SentIQ product safety policy. Klein 9B has been completely retired from active preference and routing.
 
 ## Final Image Routing Matrix
 

@@ -6771,7 +6771,7 @@ app.post(
       await ensureNamedWorkspaceProfile(userId, "images.generate", userDb);
     }
 
-    const initialPlanCode = await billingQuotaService.resolvePlanCode(billingIdentity);
+    const initialPlanCode = await billingQuotaService.resolvePlanCodeForImageBilling(billingIdentity);
     const initialImageRoute = getImageModelForPlan(initialPlanCode, false);
     const reservedCredits = getImageReservationCredits(initialPlanCode, parsed.data.executionMode);
     const imageReservation = await billingQuotaService.reserveFeature({
@@ -6863,15 +6863,20 @@ app.post(
       return;
     }
 
-    const actualImageCredits = getImageModelCreditCost(result.provider_used || committedImageReservation.model);
-    await billingQuotaService.commit(committedImageReservation, {
-      endpoint: "images.generate",
-      route: "image_generation",
-      requires_text_rendering: textRenderingDecision.requiresTextRendering,
-      text_rendering_decision_source: textRenderingDecision.source,
-      actual_image_credits: actualImageCredits,
-      provider_used: result.provider_used,
-    });
+    try {
+      const actualImageCredits = getImageModelCreditCost(result.provider_used || committedImageReservation.model);
+      await billingQuotaService.commit(committedImageReservation, {
+        endpoint: "images.generate",
+        route: "image_generation",
+        requires_text_rendering: textRenderingDecision.requiresTextRendering,
+        text_rendering_decision_source: textRenderingDecision.source,
+        actual_image_credits: actualImageCredits,
+        provider_used: result.provider_used,
+      });
+    } catch (settlementError) {
+      await releaseBillingReservation(committedImageReservation);
+      throw settlementError;
+    }
 
     if (userDb && conversationId) {
       const imageDataForPersistence = result.image_base64 || result.image_url || "";

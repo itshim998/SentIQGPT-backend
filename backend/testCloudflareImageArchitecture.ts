@@ -24,7 +24,6 @@ import {
   CloudflareImageProvider,
   CLOUDFLARE_MODEL_SCHNELL,
   CLOUDFLARE_MODEL_KLEIN_4B,
-  CLOUDFLARE_MODEL_KLEIN_9B,
   CLOUDFLARE_MODEL_DREAMSHAPER,
   setCloudflareFetchForTesting,
 } from "./tools/imageGeneration/providers/cloudflareImageProvider";
@@ -461,7 +460,7 @@ async function runAllTests(): Promise<void> {
   ];
   overrideCloudflareSlotsForTesting(threeAccountSlots);
 
-  // Scenario 1: Pro Fast (Primary = Klein 9B, Fallback = Klein 4B).
+  // Scenario 1: Pro Fast (Primary = Schnell, Fallback = Klein 4B).
   // Schnell: Account 1 fails (3036), Account 2 fails (3040), Account 3 SUCCEEDS.
   // Result: Succeeded on Schnell! MUST NOT fall back to Klein 4B!
   const calledModels: string[] = [];

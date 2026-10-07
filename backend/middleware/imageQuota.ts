@@ -1,8 +1,8 @@
-// SentIQ Chat v2 — Image Quota & Cooldown Middleware
+// SentIQ Chat — Image Burst Cooldown Middleware
 //
 // Enforces:
-//   • 30 image generations per IP per 24 hours
-//   • 5-second cooldown between image requests per IP
+//   • 5-second burst cooldown between image requests per user/IP
+//   • Authoritative image credit allowances are strictly governed by BillingQuotaService
 //
 
 import type { Request, Response, NextFunction } from "express";
@@ -12,7 +12,6 @@ import type { AuthenticatedRequest } from "./auth";
 // Configuration
 // ==============================
 
-const MAX_IMAGES_PER_DAY = 30;
 const COOLDOWN_MS = 5_000; // 5 seconds
 const WINDOW_MS = 24 * 60 * 60 * 1_000; // 24 hours
 
@@ -57,29 +56,30 @@ export function getImageQuotaKey(req: Request): string {
 // Quota query (non-blocking)
 // ==============================
 
-/** Get remaining quota info for an IP. */
+/** Get burst cooldown and status info for an IP or user key. */
 export function getQuotaInfo(ip: string): {
   remaining: number;
   limit: number;
   cooldownActive: boolean;
   resetMs: number;
+  cooldownResetMs: number;
 } {
   const tracker = getTracker(ip);
   const now = Date.now();
   prune(tracker, now);
 
-  const used = tracker.timestamps.length;
-  const remaining = Math.max(0, MAX_IMAGES_PER_DAY - used);
   const cooldownActive =
     tracker.lastGeneration > 0 && now - tracker.lastGeneration < COOLDOWN_MS;
+  const cooldownResetMs =
+    cooldownActive ? Math.max(0, COOLDOWN_MS - (now - tracker.lastGeneration)) : 0;
 
-  // Time until oldest entry expires (i.e. a slot reopens)
-  const resetMs =
-    used >= MAX_IMAGES_PER_DAY && tracker.timestamps.length > 0
-      ? WINDOW_MS - (now - tracker.timestamps[0])
-      : 0;
-
-  return { remaining, limit: MAX_IMAGES_PER_DAY, cooldownActive, resetMs };
+  return {
+    remaining: 0,
+    limit: 0,
+    cooldownActive,
+    resetMs: cooldownResetMs,
+    cooldownResetMs,
+  };
 }
 
 export function commitImageQuotaSuccess(key: string, committedAt = Date.now()): void {

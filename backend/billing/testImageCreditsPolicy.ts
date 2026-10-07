@@ -1,3 +1,11 @@
+import dotenv from "dotenv";
+dotenv.config();
+
+for (const id of [1, 2, 3, 4]) {
+  process.env[`SUPABASE_URL_${id}`] ||= "https://example.supabase.co";
+  process.env[`SUPABASE_SERVICE_ROLE_KEY_${id}`] ||= "test-service-role-key";
+}
+
 import assert from "node:assert/strict";
 import { getPlanCatalog } from "./planCatalog";
 import {
@@ -174,43 +182,149 @@ function testEightCellMatrixAndReservations(): void {
   console.log("PASS: 8-cell routing matrix and reservation amounts verified.");
 }
 
-function testSettlementAndReleaseCalculations(): void {
-  // Pro Fast: reserves 2 credits.
-  // Case A: Schnell succeeds -> settles 1 credit, releases 1 credit.
-  const reservedProFast = getImageReservationCredits("pro", "fast");
-  assert.equal(reservedProFast, 2);
-  const actualCostSchnell = getImageModelCreditCost(CLOUDFLARE_MODEL_SCHNELL);
-  assert.equal(actualCostSchnell, 1);
-  const releasedWhenSchnellSucceeds = reservedProFast - actualCostSchnell;
-  assert.equal(releasedWhenSchnellSucceeds, 1);
+import { BillingQuotaService, BillingQuotaError } from "./quotaService";
+import type { BillingIdentity } from "./entitlementTypes";
 
-  // Case B: Schnell fails, Klein 4B succeeds -> settles 2 credits, releases 0 credits.
-  const actualCostKlein4B = getImageModelCreditCost(CLOUDFLARE_MODEL_KLEIN_4B);
-  assert.equal(actualCostKlein4B, 2);
-  const releasedWhenKlein4BSucceeds = reservedProFast - actualCostKlein4B;
-  assert.equal(releasedWhenKlein4BSucceeds, 0);
+async function testPlanResolutionFailClosed(): Promise<void> {
+  // Mock repository with configurable behavior
+  class MockBillingRepo {
+    constructor(
+      private readonly effectivePlan: { plan_code: string; status: string } | null,
+      private readonly shouldThrow: boolean = false,
+    ) {}
 
-  // Pro Intuitive: reserves 8 credits.
-  const reservedProIntuitive = getImageReservationCredits("pro", "intuitive");
-  assert.equal(reservedProIntuitive, 8);
-  const actualCostGptImage2 = getImageModelCreditCost("openai/gpt-image-2");
-  assert.equal(actualCostGptImage2, 8);
-  assert.equal(reservedProIntuitive - actualCostGptImage2, 0);
+    async getEffectivePlan(_userId: string) {
+      if (this.shouldThrow) {
+        throw new Error("Database 1 connection timeout");
+      }
+      return this.effectivePlan;
+    }
+  }
 
-  // Entire failure: releases all reserved credits
-  const releasedOnFailure = reservedProIntuitive;
-  assert.equal(releasedOnFailure, 8);
+  // 1. Guest identity always resolves to "free"
+  const guestService = new BillingQuotaService(new MockBillingRepo(null, true) as any);
+  const guestPlan = await guestService.resolvePlanCodeForImageBilling({
+    userId: null,
+    anonymousKeyHash: "anon_hash_123",
+    isGuest: true,
+  });
+  assert.equal(guestPlan, "free", "Guest identity must resolve to free without querying DB");
 
-  console.log("PASS: Settlement and refund calculations verified.");
+  // 2. Authenticated Free user resolves to "free"
+  const freeService = new BillingQuotaService(new MockBillingRepo({ plan_code: "free", status: "free" }) as any);
+  const freePlan = await freeService.resolvePlanCodeForImageBilling({
+    userId: "user_free_123",
+    anonymousKeyHash: null,
+    isGuest: false,
+  });
+  assert.equal(freePlan, "free", "Authenticated free user must resolve to free");
+
+  // 3. Authenticated Paid users resolve to their correct plan codes
+  for (const paidCode of ["student_core", "premium", "pro"] as const) {
+    const paidService = new BillingQuotaService(new MockBillingRepo({ plan_code: paidCode, status: "active" }) as any);
+    const resolved = await paidService.resolvePlanCodeForImageBilling({
+      userId: `user_${paidCode}`,
+      anonymousKeyHash: null,
+      isGuest: false,
+    });
+    assert.equal(resolved, paidCode, `Authenticated user on ${paidCode} must resolve to ${paidCode}`);
+  }
+
+  // 4. CRITICAL: Simulated DB failure MUST throw and FAIL CLOSED, never convert to "free"
+  const failingService = new BillingQuotaService(new MockBillingRepo(null, true) as any);
+  await assert.rejects(
+    async () => {
+      await failingService.resolvePlanCodeForImageBilling({
+        userId: "user_paid_victim",
+        anonymousKeyHash: null,
+        isGuest: false,
+      });
+    },
+    /Database 1 connection timeout/,
+    "Database failure during image plan resolution must throw and not convert to free",
+  );
+
+  // 5. Missing / null planCode throws BillingQuotaError
+  const nullPlanService = new BillingQuotaService(new MockBillingRepo(null, false) as any);
+  await assert.rejects(
+    async () => {
+      await nullPlanService.resolvePlanCodeForImageBilling({
+        userId: "user_corrupt",
+        anonymousKeyHash: null,
+        isGuest: false,
+      });
+    },
+    (err: any) => err instanceof BillingQuotaError && err.code === "plan_resolution_failed",
+    "Empty plan row must throw BillingQuotaError and fail closed",
+  );
+
+  console.log("PASS: Fail-closed image billing plan resolution verified.");
 }
 
-function main(): void {
+function testSettlementAndReleaseCalculations(): void {
+  // Helper for reservation & settlement simulation
+  function simulateSettlement(plan: "free" | "student_core" | "premium" | "pro", mode: "fast" | "intuitive", actualModel: string | null) {
+    const reserved = getImageReservationCredits(plan, mode);
+    if (!actualModel) {
+      // Failure scenario: 0 charged, all reserved released
+      return { reserved, settled: 0, released: reserved, charged: 0 };
+    }
+    const settled = getImageModelCreditCost(actualModel);
+    const released = Math.max(0, reserved - settled);
+    return { reserved, settled, released, charged: settled };
+  }
+
+  // Free Fast/Intuitive: Reserve 1
+  assert.deepEqual(simulateSettlement("free", "fast", CLOUDFLARE_MODEL_SCHNELL), { reserved: 1, settled: 1, released: 0, charged: 1 });
+  assert.deepEqual(simulateSettlement("free", "fast", CLOUDFLARE_MODEL_DREAMSHAPER), { reserved: 1, settled: 1, released: 0, charged: 1 });
+  assert.deepEqual(simulateSettlement("free", "fast", null), { reserved: 1, settled: 0, released: 1, charged: 0 });
+
+  // Essential Fast: Reserve 2
+  // Schnell succeeds -> settled: 1, released: 1
+  assert.deepEqual(simulateSettlement("student_core", "fast", CLOUDFLARE_MODEL_SCHNELL), { reserved: 2, settled: 1, released: 1, charged: 1 });
+  // Schnell fails, Klein 4B succeeds -> settled: 2, released: 0
+  assert.deepEqual(simulateSettlement("student_core", "fast", CLOUDFLARE_MODEL_KLEIN_4B), { reserved: 2, settled: 2, released: 0, charged: 2 });
+  // Both fail -> 0 charged, 2 released
+  assert.deepEqual(simulateSettlement("student_core", "fast", null), { reserved: 2, settled: 0, released: 2, charged: 0 });
+
+  // Essential Intuitive: Reserve 2
+  // Klein 4B succeeds -> settled: 2, released: 0
+  assert.deepEqual(simulateSettlement("student_core", "intuitive", CLOUDFLARE_MODEL_KLEIN_4B), { reserved: 2, settled: 2, released: 0, charged: 2 });
+  // Klein 4B fails, Schnell succeeds -> settled: 1, released: 1
+  assert.deepEqual(simulateSettlement("student_core", "intuitive", CLOUDFLARE_MODEL_SCHNELL), { reserved: 2, settled: 1, released: 1, charged: 1 });
+  // Both fail -> 0 charged, 2 released
+  assert.deepEqual(simulateSettlement("student_core", "intuitive", null), { reserved: 2, settled: 0, released: 2, charged: 0 });
+
+  // Plus Fast / Intuitive corresponding
+  assert.deepEqual(simulateSettlement("premium", "fast", CLOUDFLARE_MODEL_SCHNELL), { reserved: 2, settled: 1, released: 1, charged: 1 });
+  assert.deepEqual(simulateSettlement("premium", "fast", CLOUDFLARE_MODEL_KLEIN_4B), { reserved: 2, settled: 2, released: 0, charged: 2 });
+  assert.deepEqual(simulateSettlement("premium", "intuitive", CLOUDFLARE_MODEL_KLEIN_4B), { reserved: 2, settled: 2, released: 0, charged: 2 });
+  assert.deepEqual(simulateSettlement("premium", "intuitive", CLOUDFLARE_MODEL_SCHNELL), { reserved: 2, settled: 1, released: 1, charged: 1 });
+
+  // Pro Fast: Reserve 2
+  assert.deepEqual(simulateSettlement("pro", "fast", CLOUDFLARE_MODEL_SCHNELL), { reserved: 2, settled: 1, released: 1, charged: 1 });
+  assert.deepEqual(simulateSettlement("pro", "fast", CLOUDFLARE_MODEL_KLEIN_4B), { reserved: 2, settled: 2, released: 0, charged: 2 });
+
+  // Pro Intuitive: Reserve 8
+  assert.deepEqual(simulateSettlement("pro", "intuitive", "openai/gpt-image-2"), { reserved: 8, settled: 8, released: 0, charged: 8 });
+  assert.deepEqual(simulateSettlement("pro", "intuitive", "microsoft/mai-image-2.6"), { reserved: 8, settled: 8, released: 0, charged: 8 });
+  assert.deepEqual(simulateSettlement("pro", "intuitive", "black-forest-labs/flux.1.1-pro"), { reserved: 8, settled: 8, released: 0, charged: 8 });
+  assert.deepEqual(simulateSettlement("pro", "intuitive", null), { reserved: 8, settled: 0, released: 8, charged: 0 });
+
+  console.log("PASS: Comprehensive fallback settlement and release verified across all tiers.");
+}
+
+async function main(): Promise<void> {
   console.log("=== Running Weighted Image Credits & Revised Tiers Policy Suite ===\n");
   testPlanPricingAndQuotas();
   testCreditCostsAndModelRules();
   testEightCellMatrixAndReservations();
+  await testPlanResolutionFailClosed();
   testSettlementAndReleaseCalculations();
   console.log("\nAll Weighted Image Credits tests passed successfully!");
 }
 
-main();
+main().catch((err) => {
+  console.error("Test failure:", err);
+  process.exit(1);
+});

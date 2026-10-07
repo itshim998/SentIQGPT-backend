@@ -4,8 +4,9 @@ import {
   CLOUDFLARE_MODEL_SCHNELL,
   CLOUDFLARE_MODEL_DREAMSHAPER,
   CLOUDFLARE_MODEL_KLEIN_4B,
-  CLOUDFLARE_MODEL_KLEIN_9B,
 } from "../tools/imageGeneration/providers/cloudflareImageProvider";
+
+const RETIRED_KLEIN_9B_CANONICAL = "@cf/black-forest-labs/flux-2-klein-9b";
 
 // Authoritative credit costs per successful model generation
 export const IMAGE_MODEL_CREDIT_COSTS: Readonly<Record<string, number>> = Object.freeze({
@@ -22,12 +23,13 @@ export const IMAGE_MODEL_CREDIT_COSTS: Readonly<Record<string, number>> = Object
  * which is retired from all active routes and must not be routable.
  */
 export function isRetiredKlein9B(modelOrProvider?: string | null): boolean {
-  if (!modelOrProvider) return false;
+  if (!modelOrProvider || typeof modelOrProvider !== "string") return false;
   const normalized = modelOrProvider.trim().toLowerCase();
   return (
-    normalized === CLOUDFLARE_MODEL_KLEIN_9B.toLowerCase() ||
+    normalized === RETIRED_KLEIN_9B_CANONICAL ||
     normalized.includes("klein-9b") ||
-    normalized.includes("klein_9b")
+    normalized.includes("klein_9b") ||
+    normalized.includes("flux-2-klein-9b")
   );
 }
 

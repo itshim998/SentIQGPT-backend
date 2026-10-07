@@ -1056,7 +1056,7 @@ export async function execImageGeneration(
   let entitledRoute: ReturnType<typeof resolveImageRoute> | null = null;
 
   if (ctx.billingIdentity) {
-    const planCode = await billingQuotaService.resolvePlanCode(ctx.billingIdentity);
+    const planCode = await billingQuotaService.resolvePlanCodeForImageBilling(ctx.billingIdentity);
     const reservedCredits = getImageReservationCredits(planCode, profile?.mode);
     entitledRoute = resolveImageRoute({
       planCode,

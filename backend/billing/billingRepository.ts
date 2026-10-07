@@ -125,6 +125,22 @@ export class BillingRepository {
     return data;
   }
 
+  async getEffectivePlan(userId: string): Promise<{
+    plan_code: string;
+    status: string;
+    subscription_id: string | null;
+    current_period_end: string | null;
+  } | null> {
+    const { data, error } = await this.db.rpc("get_effective_plan", {
+      p_user_id: userId,
+    });
+    if (error) {
+      throw new BillingRepositoryError(`Failed to get effective plan: ${formatSupabaseError(error)}`);
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    return row ?? null;
+  }
+
   async getUsageSummary(identity: BillingIdentity): Promise<any> {
     const { data, error } = await this.db.rpc("get_usage_summary", {
       p_user_id: identity.userId,

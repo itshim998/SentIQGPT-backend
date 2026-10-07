@@ -34,7 +34,6 @@ import {
   CloudflareImageProvider,
   CLOUDFLARE_MODEL_SCHNELL,
   CLOUDFLARE_MODEL_KLEIN_4B,
-  CLOUDFLARE_MODEL_KLEIN_9B,
   CLOUDFLARE_MODEL_DREAMSHAPER,
 } from "./providers/cloudflareImageProvider";
 import { PollinationsImageModelProvider } from "./providers/pollinationsImageModelProvider";

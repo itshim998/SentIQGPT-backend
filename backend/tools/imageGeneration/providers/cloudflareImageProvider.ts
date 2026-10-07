@@ -6,12 +6,11 @@
 // Supports canonical models:
 //   - @cf/black-forest-labs/flux-1-schnell
 //   - @cf/black-forest-labs/flux-2-klein-4b
-//   - @cf/black-forest-labs/flux-2-klein-9b
 //   - @cf/lykon/dreamshaper-8-lcm
 //
 // Enforces model-specific request shapes:
 //   - Schnell and Dreamshaper use application/json
-//   - Klein 4B and 9B use multipart/form-data (FormData)
+//   - Klein 4B uses multipart/form-data (FormData)
 //
 // Handles account-level vs model-level errors:
 //   - 3036: daily neuron allocation exhaustion (account-wide until UTC midnight)
@@ -45,13 +44,11 @@ import {
 
 export const CLOUDFLARE_MODEL_SCHNELL = "@cf/black-forest-labs/flux-1-schnell";
 export const CLOUDFLARE_MODEL_KLEIN_4B = "@cf/black-forest-labs/flux-2-klein-4b";
-export const CLOUDFLARE_MODEL_KLEIN_9B = "@cf/black-forest-labs/flux-2-klein-9b";
 export const CLOUDFLARE_MODEL_DREAMSHAPER = "@cf/lykon/dreamshaper-8-lcm";
 
 export type CloudflareModelId =
   | typeof CLOUDFLARE_MODEL_SCHNELL
   | typeof CLOUDFLARE_MODEL_KLEIN_4B
-  | typeof CLOUDFLARE_MODEL_KLEIN_9B
   | typeof CLOUDFLARE_MODEL_DREAMSHAPER
   | string;
 
