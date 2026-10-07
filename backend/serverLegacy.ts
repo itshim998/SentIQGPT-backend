@@ -194,6 +194,7 @@ import {
 } from "./billing/quotaService";
 import type { BillingIdentity, UsageReservation } from "./billing/entitlementTypes";
 import { getImageModelForPlan, resolveImageRoute } from "./billing/modelEntitlementRouter";
+import { getImageModelCreditCost, getImageReservationCredits } from "./billing/imageCreditPolicy";
 import {
   CANONICAL_FRONTEND_ORIGIN,
   LOG_PREFIX,
@@ -605,6 +606,8 @@ async function getImageQuotaDisplay(
   resetMs: number;
   reset_at: string | null;
   plan_code: string;
+  unit: string;
+  label: string;
   cooldownActive: boolean;
   cooldownResetMs: number;
 }> {
@@ -617,6 +620,8 @@ async function getImageQuotaDisplay(
       resetMs: 0,
       reset_at: typeof quota?.reset_at === "string" ? quota.reset_at : null,
       plan_code: typeof summary?.plan_code === "string" ? summary.plan_code : "free",
+      unit: typeof quota?.unit === "string" ? quota.unit : "credits",
+      label: typeof quota?.label === "string" ? quota.label : "Image credits",
       cooldownActive: localInfo.cooldownActive,
       cooldownResetMs: localInfo.cooldownActive ? 5_000 : 0,
     };
@@ -626,6 +631,8 @@ async function getImageQuotaDisplay(
       ...localInfo,
       reset_at: null,
       plan_code: "free",
+      unit: "credits",
+      label: "Image credits",
       cooldownResetMs: localInfo.cooldownActive ? 5_000 : 0,
     };
   }
@@ -6735,6 +6742,10 @@ app.post(
           success: true,
           remaining: quota.remaining,
           limit: quota.limit,
+          unit: quota.unit,
+          label: quota.label,
+          reset_at: quota.reset_at,
+          plan_code: quota.plan_code,
           cooldownActive: localQuota.cooldownActive,
           image_url: existingAssistantImage.image_url,
           image_base64: undefined,
@@ -6760,15 +6771,18 @@ app.post(
       await ensureNamedWorkspaceProfile(userId, "images.generate", userDb);
     }
 
-    const initialImageRoute = getImageModelForPlan("free", false);
+    const initialPlanCode = await billingQuotaService.resolvePlanCode(billingIdentity);
+    const initialImageRoute = getImageModelForPlan(initialPlanCode, false);
+    const reservedCredits = getImageReservationCredits(initialPlanCode, parsed.data.executionMode);
     const imageReservation = await billingQuotaService.reserveFeature({
       identity: billingIdentity,
       feature: "image_generation",
+      units: reservedCredits,
       requestId: buildBillingRequestId("image", userId, clientRequestId || undefined),
       route: initialImageRoute,
       conversationId: conversationId || null,
       clientRequestId: clientRequestId || null,
-      metadata: { endpoint: "images.generate" },
+      metadata: { endpoint: "images.generate", execution_mode: parsed.data.executionMode },
     });
     const textRenderingDecision = imageReservation.planCode === "free"
       ? { requiresTextRendering: false, source: "free_not_applicable" as const }
@@ -6849,11 +6863,14 @@ app.post(
       return;
     }
 
+    const actualImageCredits = getImageModelCreditCost(result.provider_used || committedImageReservation.model);
     await billingQuotaService.commit(committedImageReservation, {
       endpoint: "images.generate",
       route: "image_generation",
       requires_text_rendering: textRenderingDecision.requiresTextRendering,
       text_rendering_decision_source: textRenderingDecision.source,
+      actual_image_credits: actualImageCredits,
+      provider_used: result.provider_used,
     });
 
     if (userDb && conversationId) {
@@ -6903,6 +6920,8 @@ app.post(
           warning: "Image was generated, but couldn't be saved to your conversation.",
           remaining: quota.remaining,
           limit: quota.limit,
+          unit: quota.unit,
+          label: quota.label,
           reset_at: quota.reset_at,
           plan_code: quota.plan_code,
           cooldownActive: quota.cooldownActive,
@@ -6936,6 +6955,8 @@ app.post(
       success: true,
       remaining: quota.remaining,
       limit: quota.limit,
+      unit: quota.unit,
+      label: quota.label,
       reset_at: quota.reset_at,
       plan_code: quota.plan_code,
       cooldownActive: quota.cooldownActive,

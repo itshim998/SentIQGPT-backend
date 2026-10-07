@@ -1,133 +1,57 @@
-# Plan-Tier Image Policy Rollout
+# Plan-Tier Image Policy Rollout & Weighted Credits
 
 ## Scope
 
-- Application branch: `fix/plan-tier-image-routing-pass1`
-- Database migration: `supabase/migrations/20260801091500_plan_tier_image_policy.sql`
-- Database target: auth/control database only (`Database 1`, `SUPABASE_URL_1`)
-- Data shards 2–4: no migration required and the image quota migration must not be applied there
+- Database migration: `supabase/migrations/20261007180000_weighted_image_credits_and_revised_tiers.sql`
+- Target database: Auth/control database only (`Database 1`, `SUPABASE_URL_1`)
+- Data shards 2–4: No billing migration required (shards do not own `public.billing_plans` or the `reserve_usage` ledger)
 
-The auth/control database owns `public.billing_plans`, `public.usage_events`, `public.quota_reservations`, `public.get_effective_plan`, and `public.reserve_usage`. User data shards own conversation, memory, and user workspace records instead.
+## Policy & Pricing Summary
 
-## Policy
+### Plans and Quotas
 
-### Quotas
+| Plan | Price | Image Quota | Window | Label | Unit |
+|---|---|---|---|---|---|
+| Free | ₹0 | 2 credits | 24 hours | Image credits | credits |
+| Essential (`student_core`) | ₹129/mo (12,900 paise) | 12 credits | 12 hours | Image credits | credits |
+| Plus (`premium`) | ₹299/mo (29,900 paise) | 20 credits | 12 hours | Image credits | credits |
+| Pro (`pro`) | ₹699/mo (69,900 paise) | 32 credits | 12 hours | Image credits | credits |
 
-| Plan | Image quota |
-|---|---|
-| Free | 2 / 24 hours |
-| Essential | 4 / 12 hours |
-| Plus | 8 / 12 hours |
-| Pro | 16 / 12 hours |
+### Credit Costs by Model
 
-### Runtime model selection
+- Schnell (`@cf/black-forest-labs/flux-1-schnell`): 1 credit
+- DreamShaper (`dreamshaper-xl-lightning`): 1 credit
+- Klein 4B (`@cf/black-forest-labs/flux-2-klein-4b`): 2 credits
+- Pro Intuitive Pollinations chain (`gpt-image-2`, `mai-image-2.6`, `flux-pro`): 8 credits
+- Klein 9B: Retired completely
 
-| Plan | Mode | Primary | Immediate fallback |
-|---|---|---|---|
-| Free | Fast | `dreamshaper` | `flux` |
-| Free | Intuitive | `dreamshaper` | `flux` |
-| Essential | Fast | `zimage` | `klein` |
-| Essential | Intuitive | `tongyi-mai/z-image-turbo` | `black-forest-labs/flux.2-klein-4b` |
-| Plus | Fast | `zimage` | `klein` |
-| Plus | Intuitive | `tongyi-mai/z-image-turbo` | `black-forest-labs/flux.2-klein-4b` |
-| Pro | Fast | `zimage` | `klein` |
-| Pro | Intuitive | `tongyi-mai/z-image-turbo` | `black-forest-labs/flux.2-klein-4b` |
+### Final 8-Cell Routing Matrix
 
-Essential, Plus, and Pro have identical image-model access. Their difference is quota only.
+| Plan | Fast Route | Intuitive Route |
+|---|---|---|
+| Free | Schnell → DreamShaper (reserve 1) | Schnell → DreamShaper (reserve 1) |
+| Essential | Schnell → Klein 4B (reserve 2) | Klein 4B → Schnell (reserve 2) |
+| Plus | Schnell → Klein 4B (reserve 2) | Klein 4B → Schnell (reserve 2) |
+| Pro | Schnell → Klein 4B (reserve 2) | GPT-Image-2 → MAI-Image-2.6 → FLUX 1.1 Pro (reserve 8) |
 
-The active texting model returns a schema-validated `image_gen.requires_text_rendering` Boolean. Node owns plan enforcement and converts that Boolean into the paid-plan route. Prompt wording is not reparsed inside the entitlement router. The direct image endpoint asks the active text lane for the same structured decision and uses a deterministic classifier only when that call is unavailable.
-
-Fast mode supports the tool contract through Groq, Gemini, and Pollinations. Intuitive mode supports it through Nvidia Nemotron when the Nvidia and Intuitive rollout flags are both enabled.
-
-## Pre-apply check — auth/control database
+## Verification Check — Auth/Control Database (DB1)
 
 ```sql
 select
   code,
-  entitlements #>> '{quotas,image_generation,limit}' as image_limit,
-  entitlements #>> '{quotas,image_generation,window_seconds}' as image_window_seconds
-from public.billing_plans
-where code in ('free', 'student_core', 'premium', 'pro')
-order by sort_order;
-```
-
-Expected before migration: all four plans exist. Pro may still show `12` for the image limit.
-
-## Apply
-
-Run the complete contents of:
-
-```text
-supabase/migrations/20260801091500_plan_tier_image_policy.sql
-```
-
-against `SUPABASE_URL_1` only.
-
-Do not run it against `SUPABASE_URL_2`, `SUPABASE_URL_3`, or `SUPABASE_URL_4`.
-
-The text-rendering routing improvement does not require another migration. It changes runtime provider selection while preserving the quota records below.
-
-## Post-apply verification — auth/control database
-
-```sql
-select
-  code,
+  price_paise,
   (entitlements #>> '{quotas,image_generation,limit}')::integer as image_limit,
   (entitlements #>> '{quotas,image_generation,window_seconds}')::integer as image_window_seconds,
   entitlements #>> '{quotas,image_generation,label}' as image_label,
   entitlements #>> '{quotas,image_generation,unit}' as image_unit
 from public.billing_plans
-where code in ('free', 'student_core', 'premium', 'pro')
-order by case code
-  when 'free' then 1
-  when 'student_core' then 2
-  when 'premium' then 3
-  when 'pro' then 4
-end;
+order by sort_order;
 ```
 
-Expected rows:
-
+Expected output:
 ```text
-free         | 2  | 86400 | Images | count
-student_core | 4  | 43200 | Images | count
-premium      | 8  | 43200 | Images | count
-pro          | 16 | 43200 | Images | count
+free         | 0     | 2  | 86400 | Image credits | credits
+student_core | 12900 | 12 | 43200 | Image credits | credits
+premium      | 29900 | 20 | 43200 | Image credits | credits
+pro          | 69900 | 32 | 43200 | Image credits | credits
 ```
-
-## Deployment order
-
-1. Merge the application PR after all checks pass.
-2. Apply the auth/control database migration.
-3. Deploy the backend revision containing the typed plan-tier router and expanded tool transports.
-4. Confirm `/api/billing/plans` exposes the new Pro quota.
-5. For each paid plan, generate one purely visual image and confirm `zimage` is primary with `klein` as immediate fallback.
-6. For each paid plan in Intuitive mode, generate an image and confirm `tongyi-mai/z-image-turbo` is primary with `black-forest-labs/flux.2-klein-4b` as immediate fallback.
-7. Test one Fast request through each available text-provider route and one Intuitive request through Nvidia, confirming that structured tool arguments are validated before image execution.
-8. Confirm provider lifecycle logs contain model/outcome diagnostics without prompt text, request URLs, seeds, or credentials.
-
-## Rollback
-
-Application rollback: redeploy the previous backend revision.
-
-Database rollback for the Pro quota only:
-
-```sql
-update public.billing_plans
-set
-  entitlements = jsonb_set(
-    entitlements,
-    '{quotas,image_generation}',
-    jsonb_build_object(
-      'limit', 12,
-      'window_seconds', 43200,
-      'label', 'Images',
-      'unit', 'count'
-    ),
-    true
-  ),
-  updated_at = now()
-where code = 'pro';
-```
-
-Free, Essential, and Plus retain their pre-existing image quota values. The runtime text-rendering route rolls back with the application revision and has no database rollback step.

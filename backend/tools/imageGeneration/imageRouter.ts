@@ -7,14 +7,15 @@
 //   Cloudflare Workers AI is the PRIMARY family for:
 //     - Free (Fast & Intuitive): Schnell -> Dreamshaper
 //     - Essential Fast:         Schnell -> Klein 4B
-//     - Essential Intuitive:    Klein 4B -> Klein 9B
-//     - Plus Fast:              Klein 4B -> Schnell
-//     - Plus Intuitive:         Klein 9B -> Klein 4B
-//     - Pro Fast:               Klein 9B -> Klein 4B -> Schnell
+//     - Essential Intuitive:    Klein 4B -> Schnell
+//     - Plus Fast:              Schnell -> Klein 4B
+//     - Plus Intuitive:         Klein 4B -> Schnell
+//     - Pro Fast:               Schnell -> Klein 4B
 //   Pollinations is used ONLY for:
 //     - Pro Intuitive:          GPT-Image-2 -> MAI-Image-2.6 -> FLUX 1.1 Pro
 //
 // CRITICAL POLICY RULES:
+//   - Klein 9B must no longer be used by any active plan/mode.
 //   - Pollinations MUST NOT be used by: Free, Essential, Plus, Pro Fast.
 //   - Cloudflare MUST NOT be used by: Pro Intuitive.
 //   - Each Cloudflare model pool exhausts all healthy configured accounts before
@@ -37,6 +38,7 @@ import {
   CLOUDFLARE_MODEL_DREAMSHAPER,
 } from "./providers/cloudflareImageProvider";
 import { PollinationsImageModelProvider } from "./providers/pollinationsImageModelProvider";
+import { isRetiredKlein9B } from "../../billing/imageCreditPolicy";
 import { DreamshaperProvider } from "./providers/dreamshaperProvider";
 import { ZimageProvider } from "./providers/zimageProvider";
 import { FluxSchnellProvider } from "./providers/fluxSchnellProvider";
@@ -70,10 +72,10 @@ export function getProvidersForPlanAndMode(
 
   if (planCode === "student_core") {
     if (mode === "intuitive") {
-      // Essential Intuitive: Klein 4B pool -> Klein 9B pool
+      // Essential Intuitive: Klein 4B pool -> Schnell pool
       return [
         new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
-        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_9B),
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
       ];
     }
     // Essential Fast: Schnell pool -> Klein 4B pool
@@ -85,16 +87,16 @@ export function getProvidersForPlanAndMode(
 
   if (planCode === "premium") {
     if (mode === "intuitive") {
-      // Plus Intuitive: Klein 9B pool -> Klein 4B pool
+      // Plus Intuitive: Klein 4B pool -> Schnell pool
       return [
-        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_9B),
         new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
       ];
     }
-    // Plus Fast: Klein 4B pool -> Schnell pool
+    // Plus Fast: Schnell pool -> Klein 4B pool
     return [
-      new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
       new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
+      new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
     ];
   }
 
@@ -107,11 +109,10 @@ export function getProvidersForPlanAndMode(
         new PollinationsImageModelProvider("black-forest-labs/flux.1.1-pro"),
       ];
     }
-    // Pro Fast: Klein 9B pool -> Klein 4B pool -> Schnell pool
+    // Pro Fast: Schnell pool -> Klein 4B pool
     return [
-      new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_9B),
-      new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
       new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
+      new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
     ];
   }
 
@@ -128,6 +129,9 @@ export function getProvidersForPlanAndMode(
 export function getProvidersForModelPreference(
   preferredModel?: ImageModelPreference,
 ): readonly ImageProvider[] {
+  if (preferredModel && isRetiredKlein9B(preferredModel)) {
+    throw new Error(`Klein 9B (${preferredModel}) is retired and not routable.`);
+  }
   switch (preferredModel) {
     case "openai/gpt-image-2":
     case "microsoft/mai-image-2.6":
@@ -138,26 +142,14 @@ export function getProvidersForModelPreference(
         new PollinationsImageModelProvider("black-forest-labs/flux.1.1-pro"),
       ];
 
-    case CLOUDFLARE_MODEL_KLEIN_9B:
-      return [
-        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_9B),
-        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
-        new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
-      ];
-
     case CLOUDFLARE_MODEL_KLEIN_4B:
     case "black-forest-labs/flux.2-klein-4b":
     case "klein":
     case "zimage":
-      return [
-        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
-        new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
-      ];
-
     case "tongyi-mai/z-image-turbo":
       return [
         new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_4B),
-        new CloudflareImageProvider(CLOUDFLARE_MODEL_KLEIN_9B),
+        new CloudflareImageProvider(CLOUDFLARE_MODEL_SCHNELL),
       ];
 
     case CLOUDFLARE_MODEL_DREAMSHAPER:

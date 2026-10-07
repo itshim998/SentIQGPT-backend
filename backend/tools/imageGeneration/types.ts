@@ -18,7 +18,6 @@ export const IMAGE_MODEL_PREFERENCES = Object.freeze([
   // Canonical Cloudflare Workers AI model IDs
   "@cf/black-forest-labs/flux-1-schnell",
   "@cf/black-forest-labs/flux-2-klein-4b",
-  "@cf/black-forest-labs/flux-2-klein-9b",
   "@cf/lykon/dreamshaper-8-lcm",
   // Canonical Pollinations Pro Intuitive model IDs
   "openai/gpt-image-2",

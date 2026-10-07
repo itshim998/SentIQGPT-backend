@@ -71,18 +71,18 @@ async function runTestSuite(): Promise<void> {
 
   // Fast + Plus (premium)
   const fastPlus = resolveImageRoute({ planCode: "premium", executionMode: "fast" });
-  assert.equal(fastPlus.model, CLOUDFLARE_MODEL_KLEIN_4B);
+  assert.equal(fastPlus.model, CLOUDFLARE_MODEL_SCHNELL);
   assert.deepEqual(
     getImageProviderOrder("visual prompt", fastPlus.model, "premium", "fast").slice(0, 2),
-    [CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_SCHNELL],
+    [CLOUDFLARE_MODEL_SCHNELL, CLOUDFLARE_MODEL_KLEIN_4B],
   );
 
   // Fast + Pro
   const fastPro = resolveImageRoute({ planCode: "pro", executionMode: "fast" });
-  assert.equal(fastPro.model, CLOUDFLARE_MODEL_KLEIN_9B);
+  assert.equal(fastPro.model, CLOUDFLARE_MODEL_SCHNELL);
   assert.deepEqual(
-    getImageProviderOrder("visual prompt", fastPro.model, "pro", "fast").slice(0, 3),
-    [CLOUDFLARE_MODEL_KLEIN_9B, CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_SCHNELL],
+    getImageProviderOrder("visual prompt", fastPro.model, "pro", "fast").slice(0, 2),
+    [CLOUDFLARE_MODEL_SCHNELL, CLOUDFLARE_MODEL_KLEIN_4B],
   );
   console.log("   ✓ Fast mode behavior verified intact across all plans.\n");
 
@@ -110,22 +110,22 @@ async function runTestSuite(): Promise<void> {
   // 3. PAID + INTUITIVE POLICY
   // =========================================================================
   console.log("3. Testing Paid + Intuitive Policy...");
-  // Essential Intuitive: Klein 4B -> Klein 9B
+  // Essential Intuitive: Klein 4B -> Schnell
   const essentialIntuitive = resolveImageRoute({ planCode: "student_core", executionMode: "intuitive" });
   assert.equal(essentialIntuitive.model, CLOUDFLARE_MODEL_KLEIN_4B);
   assert.equal(essentialIntuitive.provider, "cloudflare");
   assert.deepEqual(
     getImageProviderOrder("scenic", essentialIntuitive.model, "student_core", "intuitive").slice(0, 2),
-    [CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_KLEIN_9B],
+    [CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_SCHNELL],
   );
 
-  // Plus Intuitive: Klein 9B -> Klein 4B
+  // Plus Intuitive: Klein 4B -> Schnell
   const plusIntuitive = resolveImageRoute({ planCode: "premium", executionMode: "intuitive" });
-  assert.equal(plusIntuitive.model, CLOUDFLARE_MODEL_KLEIN_9B);
+  assert.equal(plusIntuitive.model, CLOUDFLARE_MODEL_KLEIN_4B);
   assert.equal(plusIntuitive.provider, "cloudflare");
   assert.deepEqual(
     getImageProviderOrder("scenic", plusIntuitive.model, "premium", "intuitive").slice(0, 2),
-    [CLOUDFLARE_MODEL_KLEIN_9B, CLOUDFLARE_MODEL_KLEIN_4B],
+    [CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_SCHNELL],
   );
 
   // Pro Intuitive: Pollinations GPT-Image-2 -> MAI-Image-2.6 -> FLUX 1.1 Pro
@@ -159,12 +159,12 @@ async function runTestSuite(): Promise<void> {
     assert.notEqual(essentialRoute.model, "openai/gpt-image-2");
 
     const plusRoute = resolveImageRoute({ planCode: "premium", executionMode: "intuitive", requiresTextRendering: requiresText });
-    assert.equal(plusRoute.model, CLOUDFLARE_MODEL_KLEIN_9B);
+    assert.equal(plusRoute.model, CLOUDFLARE_MODEL_KLEIN_4B);
     assert.notEqual(plusRoute.model, "openai/gpt-image-2");
 
     // Pro Fast must never switch to GPT-Image-2
     const proFastRoute = resolveImageRoute({ planCode: "pro", executionMode: "fast", requiresTextRendering: requiresText });
-    assert.equal(proFastRoute.model, CLOUDFLARE_MODEL_KLEIN_9B);
+    assert.equal(proFastRoute.model, CLOUDFLARE_MODEL_SCHNELL);
     assert.notEqual(proFastRoute.model, "openai/gpt-image-2");
   }
   console.log("   ✓ Text-rendering prompts cannot override plan entitlement.\n");
@@ -175,8 +175,8 @@ async function runTestSuite(): Promise<void> {
   console.log("5. Testing Provider Fallback Execution...");
   const attemptedProviders: string[] = [];
   const mockProviders: readonly ImageProvider[] = [
-    createMockProvider(CLOUDFLARE_MODEL_KLEIN_9B, async () => {
-      attemptedProviders.push(CLOUDFLARE_MODEL_KLEIN_9B);
+    createMockProvider(CLOUDFLARE_MODEL_SCHNELL, async () => {
+      attemptedProviders.push(CLOUDFLARE_MODEL_SCHNELL);
       throw new ImageProviderFailure("503 Service Unavailable", "indeterminate", 503);
     }),
     createMockProvider(CLOUDFLARE_MODEL_KLEIN_4B, async () => {
@@ -195,7 +195,7 @@ async function runTestSuite(): Promise<void> {
   assert.equal(executionResult.provider_used, CLOUDFLARE_MODEL_KLEIN_4B, "provider_used must be fallback provider");
   assert.deepEqual(
     attemptedProviders,
-    [CLOUDFLARE_MODEL_KLEIN_9B, CLOUDFLARE_MODEL_KLEIN_4B],
+    [CLOUDFLARE_MODEL_SCHNELL, CLOUDFLARE_MODEL_KLEIN_4B],
     "Should attempt primary first, then fallback next",
   );
   console.log("   ✓ Primary failure successfully triggers fallback to next model in chain.\n");
@@ -267,31 +267,31 @@ async function runTestSuite(): Promise<void> {
       mode: "intuitive",
       expectedProvider: "cloudflare",
       expectedPrimary: CLOUDFLARE_MODEL_KLEIN_4B,
-      expectedFallbackChain: [CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_KLEIN_9B],
+      expectedFallbackChain: [CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_SCHNELL],
     },
     // 5. Plus Fast
     {
       plan: "premium",
       mode: "fast",
       expectedProvider: "cloudflare",
-      expectedPrimary: CLOUDFLARE_MODEL_KLEIN_4B,
-      expectedFallbackChain: [CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_SCHNELL],
+      expectedPrimary: CLOUDFLARE_MODEL_SCHNELL,
+      expectedFallbackChain: [CLOUDFLARE_MODEL_SCHNELL, CLOUDFLARE_MODEL_KLEIN_4B],
     },
     // 6. Plus Intuitive
     {
       plan: "premium",
       mode: "intuitive",
       expectedProvider: "cloudflare",
-      expectedPrimary: CLOUDFLARE_MODEL_KLEIN_9B,
-      expectedFallbackChain: [CLOUDFLARE_MODEL_KLEIN_9B, CLOUDFLARE_MODEL_KLEIN_4B],
+      expectedPrimary: CLOUDFLARE_MODEL_KLEIN_4B,
+      expectedFallbackChain: [CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_SCHNELL],
     },
     // 7. Pro Fast
     {
       plan: "pro",
       mode: "fast",
       expectedProvider: "cloudflare",
-      expectedPrimary: CLOUDFLARE_MODEL_KLEIN_9B,
-      expectedFallbackChain: [CLOUDFLARE_MODEL_KLEIN_9B, CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_SCHNELL],
+      expectedPrimary: CLOUDFLARE_MODEL_SCHNELL,
+      expectedFallbackChain: [CLOUDFLARE_MODEL_SCHNELL, CLOUDFLARE_MODEL_KLEIN_4B],
     },
     // 8. Pro Intuitive
     {

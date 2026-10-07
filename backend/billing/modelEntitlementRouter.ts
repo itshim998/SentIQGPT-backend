@@ -112,10 +112,8 @@ export function getImageModelPreferenceForPlan(
   requiresTextRendering = false,
 ): ImageModelPreference {
   void requiresTextRendering;
-  if (planCode === "free") return "@cf/black-forest-labs/flux-1-schnell";
-  if (planCode === "student_core") return "@cf/black-forest-labs/flux-1-schnell";
-  if (planCode === "premium") return "@cf/black-forest-labs/flux-2-klein-4b";
-  return "@cf/black-forest-labs/flux-2-klein-9b";
+  void planCode;
+  return "@cf/black-forest-labs/flux-1-schnell";
 }
 
 /**
@@ -149,15 +147,16 @@ export interface ResolveImageRouteArgs {
  * and text-rendering decision.
  *
  * Exact production policy matrix:
- * - Free Fast:           Cloudflare Schnell
- * - Free Intuitive:      Cloudflare Schnell
- * - Essential Fast:      Cloudflare Schnell
- * - Essential Intuitive: Cloudflare Klein 4B
- * - Plus Fast:           Cloudflare Klein 4B
- * - Plus Intuitive:      Cloudflare Klein 9B
- * - Pro Fast:            Cloudflare Klein 9B
- * - Pro Intuitive:       Pollinations GPT-Image-2 (openai/gpt-image-2)
+ * - Free Fast:           Cloudflare Schnell (fallback: DreamShaper)
+ * - Free Intuitive:      Cloudflare Schnell (fallback: DreamShaper)
+ * - Essential Fast:      Cloudflare Schnell (fallback: Klein 4B)
+ * - Essential Intuitive: Cloudflare Klein 4B (fallback: Schnell)
+ * - Plus Fast:           Cloudflare Schnell (fallback: Klein 4B)
+ * - Plus Intuitive:      Cloudflare Klein 4B (fallback: Schnell)
+ * - Pro Fast:            Cloudflare Schnell (fallback: Klein 4B)
+ * - Pro Intuitive:       Pollinations GPT-Image-2 (fallback: MAI-Image-2.6 -> FLUX 1.1 Pro)
  *
+ * Klein 9B is retired from all active routes.
  * Prompt complexity or requiresTextRendering must NOT override this entitlement matrix.
  */
 export function resolveImageRoute(args: ResolveImageRouteArgs): ImageModelRoute {
@@ -192,8 +191,8 @@ export function resolveImageRoute(args: ResolveImageRouteArgs): ImageModelRoute 
 
   if (plan === "premium") {
     const model: ImageModelPreference = mode === "intuitive"
-      ? "@cf/black-forest-labs/flux-2-klein-9b"
-      : "@cf/black-forest-labs/flux-2-klein-4b";
+      ? "@cf/black-forest-labs/flux-2-klein-4b"
+      : "@cf/black-forest-labs/flux-1-schnell";
     return {
       feature: "image_generation",
       provider: "cloudflare",
@@ -216,7 +215,7 @@ export function resolveImageRoute(args: ResolveImageRouteArgs): ImageModelRoute 
         route: "image",
       };
     }
-    const model: ImageModelPreference = "@cf/black-forest-labs/flux-2-klein-9b";
+    const model: ImageModelPreference = "@cf/black-forest-labs/flux-1-schnell";
     return {
       feature: "image_generation",
       provider: "cloudflare",

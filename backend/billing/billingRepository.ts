@@ -80,6 +80,8 @@ export class BillingRepository {
                 label: quota.label,
                 ...(feature === "premium_text" || feature === "lite_text"
                   ? { policy_version: TEXT_TOKEN_POLICY_VERSION, unit: "tokens" }
+                  : feature === "image_generation"
+                  ? { unit: "credits" }
                   : { unit: "count" }),
               },
             ])),

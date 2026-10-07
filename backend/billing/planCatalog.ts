@@ -111,7 +111,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
         quotas: buildQuotas({
           premiumText: quota(TEXT_TOKEN_PLAN_POLICY.free.standardTokens, 8 * 60 * 60, "Standard tokens"),
           liteText: quota(TEXT_TOKEN_PLAN_POLICY.free.liteTokens, 24 * 60 * 60, "Lite tokens"),
-          imageGeneration: quota(2, 24 * 60 * 60, "Images"),
+          imageGeneration: quota(2, 24 * 60 * 60, "Image credits"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_FREE_DAILY", 0), 24 * 60 * 60, "Advanced reasoning"),
           deepResearch: quota(7, 2592000, "Deep Researches"),
         }),
@@ -122,7 +122,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
       name: "Essential",
       description: "Balanced access for regular, everyday use.",
       currency,
-      pricePaise: readPricePaise("SENTIQ_PLAN_STUDENT_CORE_PRICE_PAISE", 9_900),
+      pricePaise: readPricePaise("SENTIQ_PLAN_STUDENT_CORE_PRICE_PAISE", 12_900),
       interval: "month",
       sortOrder: 20,
       isPublic: true,
@@ -133,7 +133,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
         quotas: buildQuotas({
           premiumText: quota(TEXT_TOKEN_PLAN_POLICY.student_core.standardTokens, 8 * 60 * 60, "Standard tokens"),
           liteText: quota(TEXT_TOKEN_PLAN_POLICY.student_core.liteTokens, 24 * 60 * 60, "Lite tokens"),
-          imageGeneration: quota(4, 12 * 60 * 60, "Images"),
+          imageGeneration: quota(12, 12 * 60 * 60, "Image credits"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_STUDENT_CORE_DAILY", 3), 24 * 60 * 60, "Advanced reasoning"),
           deepResearch: quota(15, 2592000, "Deep Researches"),
         }),
@@ -144,7 +144,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
       name: "Plus",
       description: "Expanded limits for frequent and more involved workflows.",
       currency,
-      pricePaise: readPricePaise("SENTIQ_PLAN_PREMIUM_PRICE_PAISE", 24_900),
+      pricePaise: readPricePaise("SENTIQ_PLAN_PREMIUM_PRICE_PAISE", 29_900),
       interval: "month",
       sortOrder: 30,
       isPublic: true,
@@ -155,7 +155,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
         quotas: buildQuotas({
           premiumText: quota(TEXT_TOKEN_PLAN_POLICY.premium.standardTokens, 8 * 60 * 60, "Standard tokens"),
           liteText: quota(TEXT_TOKEN_PLAN_POLICY.premium.liteTokens, 24 * 60 * 60, "Lite tokens"),
-          imageGeneration: quota(8, 12 * 60 * 60, "Images"),
+          imageGeneration: quota(20, 12 * 60 * 60, "Image credits"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_PREMIUM_DAILY", 8), 24 * 60 * 60, "Advanced reasoning"),
           deepResearch: quota(30, 2592000, "Deep Researches"),
         }),
@@ -166,7 +166,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
       name: "Pro",
       description: "Our highest limits for sustained, demanding use.",
       currency,
-      pricePaise: readPricePaise("SENTIQ_PLAN_PRO_PRICE_PAISE", 54_900),
+      pricePaise: readPricePaise("SENTIQ_PLAN_PRO_PRICE_PAISE", 69_900),
       interval: "month",
       sortOrder: 40,
       isPublic: true,
@@ -177,7 +177,7 @@ export function getPlanCatalog(): readonly BillingPlan[] {
         quotas: buildQuotas({
           premiumText: quota(TEXT_TOKEN_PLAN_POLICY.pro.standardTokens, 6 * 60 * 60, "Standard tokens"),
           liteText: quota(TEXT_TOKEN_PLAN_POLICY.pro.liteTokens, 24 * 60 * 60, "Lite tokens"),
-          imageGeneration: quota(16, 12 * 60 * 60, "Images"),
+          imageGeneration: quota(32, 12 * 60 * 60, "Image credits"),
           advancedReasoning: quota(readQuotaLimit("SENTIQ_ADVANCED_REASONING_PRO_DAILY", 20), 24 * 60 * 60, "Advanced reasoning"),
           deepResearch: quota(50, 2592000, "Deep Researches"),
         }),
@@ -220,6 +220,8 @@ export function toPublicPlan(plan: BillingPlan) {
               window_seconds: quotaValue.windowSeconds,
               ...(feature === "premium_text" || feature === "lite_text"
                 ? { policy_version: TEXT_TOKEN_POLICY_VERSION, unit: "tokens" }
+                : feature === "image_generation"
+                ? { unit: "credits" }
                 : { unit: "count" }),
             },
           ]),

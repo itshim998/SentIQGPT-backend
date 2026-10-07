@@ -19,6 +19,7 @@ import type { SearchResult } from "../tools/webSearch/types";
 import { INTUITIVE_PROFILE, type ExecutionProfile } from "./executionProfile";
 import { BillingQuotaError, BillingQuotaService } from "../billing/quotaService";
 import { getGeminiStandardCapabilityRoute, getImageModelForPlan, resolveImageRoute } from "../billing/modelEntitlementRouter";
+import { getImageModelCreditCost, getImageReservationCredits } from "../billing/imageCreditPolicy";
 import type { UsageReservation } from "../billing/entitlementTypes";
 import { UNIFIED_TEXT_POLICY_VERSION } from "../billing/planCatalog";
 import {
@@ -1029,9 +1030,6 @@ export async function execImageGeneration(
   if (localQuota?.cooldownActive) {
     throw new Error("Image generation cooldown is active.");
   }
-  if (localQuota && localQuota.remaining <= 0) {
-    throw new Error("Image generation quota is exhausted.");
-  }
   if (ctx.userDb && ctx.conversationId && ctx.clientRequestId) {
     const existing = await findExistingAssistantImageMessage(ctx.userDb, ctx.conversationId, ctx.clientRequestId);
     if (existing?.image_url) {
@@ -1058,22 +1056,26 @@ export async function execImageGeneration(
   let entitledRoute: ReturnType<typeof resolveImageRoute> | null = null;
 
   if (ctx.billingIdentity) {
-    const initialRoute = getImageModelForPlan("free", false);
+    const planCode = await billingQuotaService.resolvePlanCode(ctx.billingIdentity);
+    const reservedCredits = getImageReservationCredits(planCode, profile?.mode);
+    entitledRoute = resolveImageRoute({
+      planCode,
+      executionMode: profile?.mode,
+      requiresTextRendering,
+    });
+    preferredModel = entitledRoute.adapterModelOverride;
+
+    const initialRoute = getImageModelForPlan(planCode, false);
     reservation = await billingQuotaService.reserveFeature({
       identity: ctx.billingIdentity,
       feature: "image_generation",
+      units: reservedCredits,
       requestId: createBillingStepRequestId(ctx, "image_generation", input),
       route: initialRoute,
       conversationId: ctx.conversationId,
       clientRequestId: ctx.billingRequestId,
-      metadata: { endpoint: "orchestrator", tool: "image_generation" },
+      metadata: { endpoint: "orchestrator", tool: "image_generation", execution_mode: profile?.mode },
     });
-    entitledRoute = resolveImageRoute({
-      planCode: reservation.planCode,
-      executionMode: profile.mode,
-      requiresTextRendering,
-    });
-    preferredModel = entitledRoute.adapterModelOverride;
     committedReservation = {
       ...reservation,
       provider: entitledRoute.provider,
@@ -1107,7 +1109,13 @@ export async function execImageGeneration(
       requestKey,
     });
     if (result.success && committedReservation) {
-      await billingQuotaService.commit(committedReservation, { endpoint: "orchestrator", tool: "image_generation" });
+      const actualCredits = getImageModelCreditCost(result.provider_used || committedReservation.model);
+      await billingQuotaService.commit(committedReservation, {
+        endpoint: "orchestrator",
+        tool: "image_generation",
+        actual_image_credits: actualCredits,
+        provider_used: result.provider_used,
+      });
     } else if (!result.success) {
       await releaseBillingReservation(committedReservation ?? reservation);
     }

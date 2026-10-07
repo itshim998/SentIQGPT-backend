@@ -218,7 +218,7 @@ function deriveImageCapability(facts) {
     });
   }
   if (quota?.remaining === 0 && (quota.limit || 0) > 0) {
-    return record(key, "limit-reached", "You have used all available image generations for this allowance window.", {
+    return record(key, "limit-reached", "You have used all available image credits for this allowance window.", {
       ...options,
       cta: upgradeCtaFor(facts, quota),
       remaining: 0,
@@ -235,7 +235,7 @@ function deriveImageCapability(facts) {
     });
   }
   return record(key, "available", quota?.remaining !== null && quota?.limit !== null
-    ? `${quota.remaining} of ${quota.limit} image generations remain.`
+    ? `${quota.remaining} of ${quota.limit} image credits remain.`
     : "Image generation is available.", {
     ...options,
     remaining: quota?.remaining ?? null,

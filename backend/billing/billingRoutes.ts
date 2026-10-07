@@ -53,6 +53,9 @@ function toFallbackUsageSummary(identity: BillingIdentity) {
             tokens_consumed: 0,
             tokens_remaining: quota.limit,
             policy_version: TEXT_TOKEN_POLICY_VERSION,
+          } : feature === "image_generation" ? {
+            unit: "credits",
+            label: "Image credits",
           } : {}),
         },
       ])),

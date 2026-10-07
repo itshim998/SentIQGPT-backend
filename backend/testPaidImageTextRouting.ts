@@ -7,22 +7,16 @@ import { getProviderToolDefinitions, validateModelToolCalls } from "./orchestrat
 for (const plan of ["student_core", "premium", "pro"] as const) {
   const visual = getImageModelForPlan(plan, false);
   const text = getImageModelForPlan(plan, true);
-  const expectedFastModel = plan === "student_core"
-    ? "@cf/black-forest-labs/flux-1-schnell"
-    : plan === "premium"
-      ? "@cf/black-forest-labs/flux-2-klein-4b"
-      : "@cf/black-forest-labs/flux-2-klein-9b";
+  const expectedFastModel = "@cf/black-forest-labs/flux-1-schnell";
   assert.equal(visual.model, expectedFastModel, plan + " Fast non-text image route");
   assert.equal(text.model, expectedFastModel, plan + " Fast text-rendering image route (policy-owned)");
 
   // Intuitive mode:
   const intuitiveVisual = resolveImageRoute({ planCode: plan, executionMode: "intuitive", requiresTextRendering: false });
   const intuitiveText = resolveImageRoute({ planCode: plan, executionMode: "intuitive", requiresTextRendering: true });
-  const expectedIntuitiveModel = plan === "student_core"
-    ? "@cf/black-forest-labs/flux-2-klein-4b"
-    : plan === "premium"
-      ? "@cf/black-forest-labs/flux-2-klein-9b"
-      : "openai/gpt-image-2";
+  const expectedIntuitiveModel = plan === "pro"
+    ? "openai/gpt-image-2"
+    : "@cf/black-forest-labs/flux-2-klein-4b";
   assert.equal(intuitiveVisual.model, expectedIntuitiveModel, plan + " Intuitive visual route");
   assert.equal(intuitiveText.model, expectedIntuitiveModel, plan + " Intuitive text-rendering route");
 }

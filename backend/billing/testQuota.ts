@@ -50,19 +50,19 @@ function testPlanCatalog() {
       code: "student_core",
       name: "Essential",
       description: "Balanced access for regular, everyday use.",
-      pricePaise: 9_900,
+      pricePaise: 12_900,
     },
     {
       code: "premium",
       name: "Plus",
       description: "Expanded limits for frequent and more involved workflows.",
-      pricePaise: 24_900,
+      pricePaise: 29_900,
     },
     {
       code: "pro",
       name: "Pro",
       description: "Our highest limits for sustained, demanding use.",
-      pricePaise: 54_900,
+      pricePaise: 69_900,
     },
   ] as const;
   expectedPlans.forEach((expected, index) => {

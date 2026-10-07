@@ -37,6 +37,7 @@ export const CONTROL_ONLY_VERSIONS = new Set([
   "20260801091500", // plan_tier_image_policy.sql
   "20260809133000", // guest_text_trial_quota.sql
   "20260922120000", // retire_db4_assigned_db.sql
+  "20261007180000", // weighted_image_credits_and_revised_tiers.sql
 ]);
 
 export const DATA_ONLY_VERSIONS = new Set([

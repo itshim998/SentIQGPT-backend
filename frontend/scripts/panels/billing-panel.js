@@ -38,6 +38,7 @@ import { getPlanDisplayName, PLAN_DISPLAY_NAMES } from "../features/free-tool-ex
       resetAt: quota.reset_at || null,
       windowStart: quota.window_start || null,
       available: quota.available !== false,
+      unit: quota.unit || (feature === "image_generation" ? "credits" : undefined),
       isTokenPool: feature === "premium_text" || feature === "lite_text",
     };
   }
@@ -52,6 +53,9 @@ import { getPlanDisplayName, PLAN_DISPLAY_NAMES } from "../features/free-tool-ex
     const left = Math.max(0, quota.remaining);
     if (quota.isTokenPool) {
       return `${formatCompactTokenNumber(left)} / ${formatCompactTokenNumber(quota.limit)} left`;
+    }
+    if (quota.unit === "credits") {
+      return `${left} / ${quota.limit} credits left`;
     }
     return `${left}/${quota.limit} left`;
   }

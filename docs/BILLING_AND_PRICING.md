@@ -1,77 +1,56 @@
 # SentIQ Chat Billing And Pricing
 
-SentIQ Chat billing is server-owned. The frontend only displays quota state and sends an opaque anonymous id header for guest quota identity.
+SentIQ Chat billing is server-owned. The frontend displays quota state and sends an opaque anonymous id header for guest quota identity.
 
-## Plans
+## Plans and Pricing
 
-Default plans are stored in the auth/control Supabase database (Database 1):
+Authoritative plans are stored in the auth/control Supabase database (Database 1):
 
-- Free: starter Standard and Lite access, 2 images per 24 hours.
-- Essential (`student_core`): 4 images per 12 hours.
-- Plus (`premium`): 8 images per 12 hours.
-- Pro: 16 images per 12 hours.
+- **Free**: Starter Standard and Lite access. 2 image credits per 24 hours (86,400s). Price: ₹0 (0 paise).
+- **Essential** (`student_core`): 12 image credits per 12 hours (43,200s). Price: ₹129/month (12,900 paise).
+- **Plus** (`premium`): 20 image credits per 12 hours (43,200s). Price: ₹299/month (29,900 paise).
+- **Pro** (`pro`): 32 image credits per 12 hours (43,200s). Price: ₹699/month (43,200s). Price: ₹699/month (69,900 paise).
 
-Plan prices and advanced reasoning limits can be overridden with the documented billing environment variables. Image quota windows are plan policy, not prompt-category environment configuration.
+Razorpay plan IDs are preserved without modification across plan updates.
 
-## Billable Features
+## Weighted Image Credit Costs
 
-- `premium_text`: Standard text route.
-- `lite_text`: fallback text route after Standard quota is exhausted.
-- `image_generation`: plan-tier image generation route.
-- `advanced_reasoning`: math and deeper reasoning route.
-- `file_analysis`, `web_search`, and `generated_file`: tracked in the catalog for future enforcement.
+Different image models consume differing numbers of credits based on computational intensity:
 
-## Text-model tool calling
+| Model | Credit Cost | Description |
+|---|---|---|
+| `@cf/black-forest-labs/flux-1-schnell` | 1 credit | Fast, high-throughput base generation |
+| `dreamshaper` / `dreamshaper-xl-lightning` | 1 credit | Immediate fallback for Free tier |
+| `@cf/black-forest-labs/flux-2-klein-4b` | 2 credits | High-detail paid model |
+| `gpt-image-2` (Pollinations) | 8 credits | Pro Intuitive tier primary model |
+| `mai-image-2.6` (Pollinations) | 8 credits | Pro Intuitive tier secondary fallback |
+| `flux-pro` (FLUX 1.1 Pro) | 8 credits | Pro Intuitive tier tertiary fallback |
 
-SentIQ Chat keeps image generation server-owned while allowing the active texting model to select the validated `image_gen` tool:
+*Note*: Klein 9B has been completely retired from active preference and routing.
 
-- Fast mode: Groq, Gemini, and the Pollinations fallback support the SentIQ tool contract.
-- Intuitive mode: Nvidia Nemotron supports the same tool contract when the Intuitive rollout flags are enabled.
-- The model returns structured tool arguments; Node validates and authorizes them before any image provider is called.
-- `image_gen.requires_text_rendering` is a required Boolean. It means that readable words, letters, numbers, captions, labels, signage, titles, slogans, logos, interface copy, or similar text must appear inside the generated pixels.
+## Final Image Routing Matrix
 
-Provider support does not grant model-side authority over billing, quotas, plan identity, storage, or fallback execution. Those remain server-owned.
+| Public Plan | Internal Code | Mode | Primary Model | Fallback Chain | Max Reservation |
+|---|---|---|---|---|---|
+| Free | `free` | Fast | Schnell (`flux-1-schnell`) | DreamShaper (`dreamshaper-xl-lightning`) | 1 credit |
+| Free | `free` | Intuitive | Schnell (`flux-1-schnell`) | DreamShaper (`dreamshaper-xl-lightning`) | 1 credit |
+| Essential | `student_core` | Fast | Schnell (`flux-1-schnell`) | Klein 4B (`flux-2-klein-4b`) | 2 credits |
+| Essential | `student_core` | Intuitive | Klein 4B (`flux-2-klein-4b`) | Schnell (`flux-1-schnell`) | 2 credits |
+| Plus | `premium` | Fast | Schnell (`flux-1-schnell`) | Klein 4B (`flux-2-klein-4b`) | 2 credits |
+| Plus | `premium` | Intuitive | Klein 4B (`flux-2-klein-4b`) | Schnell (`flux-1-schnell`) | 2 credits |
+| Pro | `pro` | Fast | Schnell (`flux-1-schnell`) | Klein 4B (`flux-2-klein-4b`) | 2 credits |
+| Pro | `pro` | Intuitive | GPT-Image-2 (`gpt-image-2`) | MAI-Image-2.6 → FLUX 1.1 Pro (`flux-pro`) | 8 credits |
 
-## Image routing
+## Reservation & Settlement Lifecycle
 
-Free retains its existing route regardless of the text-rendering decision:
+1. **Pre-flight Reservation**: Before invoking an image provider, the server resolves the user's plan and execution mode, reserving the maximum possible credits for the fallback chain (e.g. 2 credits for Essential Fast, 8 credits for Pro Intuitive).
+2. **Actual Settlement**: Upon successful generation, `actual_image_credits` is calculated from the model that actually succeeded (e.g. if Pro Fast uses Schnell, 1 credit is settled; unused reserved credits are automatically released).
+3. **Failure Release**: If image generation fails, the entire reservation is released with 0 credits charged.
+4. **Burst Cooldown**: A 5-second burst cooldown per user prevents abusive rapid-fire generation without arbitrary daily ceilings.
 
-| Public plan | Internal code | Mode | Primary model | Immediate fallback |
-|---|---|---|---|---|
-| Free | `free` | Fast | `dreamshaper` | `flux` |
-| Free | `free` | Intuitive | `dreamshaper` | `flux` |
-| Essential | `student_core` | Fast | `zimage` | `klein` |
-| Essential | `student_core` | Intuitive | `tongyi-mai/z-image-turbo` | `black-forest-labs/flux.2-klein-4b` |
-| Plus | `premium` | Fast | `zimage` | `klein` |
-| Plus | `premium` | Intuitive | `tongyi-mai/z-image-turbo` | `black-forest-labs/flux.2-klein-4b` |
-| Pro | `pro` | Fast | `zimage` | `klein` |
-| Pro | `pro` | Intuitive | `tongyi-mai/z-image-turbo` | `black-forest-labs/flux.2-klein-4b` |
+## Database Rollout
 
-Essential, Plus, and Pro therefore have identical model access. Their image-generation difference is quota only.
-
-For automatic `image_gen` calls, the active texting model supplies the validated text-rendering decision. The direct image endpoint requests the same structured decision from the active text lane after quota reservation. A deterministic classifier is used only when that classification call is unavailable; it does not override a valid model decision.
-
-Additional emergency providers remain after the immediate fallback so a temporary provider failure does not unnecessarily make image generation unavailable.
-
-The retired prompt-category variables `SENTIQ_IMAGE_MODEL_NORMAL`, `SENTIQ_IMAGE_MODEL_TEXT_CORE`, and `SENTIQ_IMAGE_MODEL_TEXT_PREMIUM` are no longer read.
-
-The server reserves quota before provider calls, commits successful generations, and releases failed reservations.
-
-## Database rollout
-
-`supabase/migrations/20260801091500_plan_tier_image_policy.sql` updates the authoritative image quota records in `billing_plans`.
-
-Apply it only to the auth/control database (`SUPABASE_URL_1`). Do not apply it to data shards 2–4; those shards do not own billing plans or the `reserve_usage` ledger.
-
-The model-decided text-rendering route does not require an additional database migration. It changes runtime model selection while preserving the existing quota records and windows.
-
-## Frontend contract
-
-Frontend billing state is display/cache only:
-
-- `GET /api/billing/plans`
-- `GET /api/billing/me`
-- `GET /api/billing/usage`
-- `GET /api/images/quota`
-
-Quota errors use safe fields: `code`, `type`, `feature`, `plan_code`, `reset_at`, `remaining`, `limit`, and `upgrade_cta`.
+Migration `supabase/migrations/20261007180000_weighted_image_credits_and_revised_tiers.sql` applies to Database 1 (auth/control) only:
+- Updates prices and image credit quotas in `public.billing_plans`.
+- Updates `public.commit_usage_reservation` to settle `actual_image_credits` and release unused units.
+- Updates `public.get_usage_summary` to include quota `unit`.

@@ -86,28 +86,28 @@ async function runAllTests(): Promise<void> {
       mode: "intuitive",
       expectedProvider: "cloudflare",
       expectedModel: CLOUDFLARE_MODEL_KLEIN_4B,
-      expectedChain: [CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_KLEIN_9B],
+      expectedChain: [CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_SCHNELL],
     },
     {
       plan: "premium" as const,
       mode: "fast",
       expectedProvider: "cloudflare",
-      expectedModel: CLOUDFLARE_MODEL_KLEIN_4B,
-      expectedChain: [CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_SCHNELL],
+      expectedModel: CLOUDFLARE_MODEL_SCHNELL,
+      expectedChain: [CLOUDFLARE_MODEL_SCHNELL, CLOUDFLARE_MODEL_KLEIN_4B],
     },
     {
       plan: "premium" as const,
       mode: "intuitive",
       expectedProvider: "cloudflare",
-      expectedModel: CLOUDFLARE_MODEL_KLEIN_9B,
-      expectedChain: [CLOUDFLARE_MODEL_KLEIN_9B, CLOUDFLARE_MODEL_KLEIN_4B],
+      expectedModel: CLOUDFLARE_MODEL_KLEIN_4B,
+      expectedChain: [CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_SCHNELL],
     },
     {
       plan: "pro" as const,
       mode: "fast",
       expectedProvider: "cloudflare",
-      expectedModel: CLOUDFLARE_MODEL_KLEIN_9B,
-      expectedChain: [CLOUDFLARE_MODEL_KLEIN_9B, CLOUDFLARE_MODEL_KLEIN_4B, CLOUDFLARE_MODEL_SCHNELL],
+      expectedModel: CLOUDFLARE_MODEL_SCHNELL,
+      expectedChain: [CLOUDFLARE_MODEL_SCHNELL, CLOUDFLARE_MODEL_KLEIN_4B],
     },
     {
       plan: "pro" as const,
@@ -462,13 +462,13 @@ async function runAllTests(): Promise<void> {
   overrideCloudflareSlotsForTesting(threeAccountSlots);
 
   // Scenario 1: Pro Fast (Primary = Klein 9B, Fallback = Klein 4B).
-  // Klein 9B: Account 1 fails (3036), Account 2 fails (3040), Account 3 SUCCEEDS.
-  // Result: Succeeded on Klein 9B! MUST NOT fall back to Klein 4B!
+  // Schnell: Account 1 fails (3036), Account 2 fails (3040), Account 3 SUCCEEDS.
+  // Result: Succeeded on Schnell! MUST NOT fall back to Klein 4B!
   const calledModels: string[] = [];
   setCloudflareFetchForTesting(async (rawUrl) => {
     const url = String(rawUrl);
-    if (url.includes(CLOUDFLARE_MODEL_KLEIN_9B)) {
-      calledModels.push(CLOUDFLARE_MODEL_KLEIN_9B);
+    if (url.includes(CLOUDFLARE_MODEL_SCHNELL)) {
+      calledModels.push(CLOUDFLARE_MODEL_SCHNELL);
       if (url.includes("acc-1")) {
         return new Response(JSON.stringify({ success: false, errors: [{ code: 3036, message: "exhausted" }] }), { status: 429, headers: { "Content-Type": "application/json" } });
       }
@@ -487,18 +487,18 @@ async function runAllTests(): Promise<void> {
     executionMode: "fast",
   });
   assert.equal(proFastResult.success, true);
-  assert.equal(proFastResult.provider_used, CLOUDFLARE_MODEL_KLEIN_9B);
-  assert(!calledModels.includes(CLOUDFLARE_MODEL_KLEIN_4B), "Must NOT call Klein 4B when Klein 9B succeeded on account 3");
+  assert.equal(proFastResult.provider_used, CLOUDFLARE_MODEL_SCHNELL);
+  assert(!calledModels.includes(CLOUDFLARE_MODEL_KLEIN_4B), "Must NOT call Klein 4B when Schnell succeeded on account 3");
 
-  // Scenario 2: Pro Fast: ALL accounts fail on Klein 9B -> ONLY THEN Klein 4B begins.
+  // Scenario 2: Pro Fast: ALL accounts fail on Schnell -> ONLY THEN Klein 4B begins.
   resetCloudflareHealthState();
   overrideCloudflareSlotsForTesting(threeAccountSlots);
   const executionOrder: string[] = [];
 
   setCloudflareFetchForTesting(async (rawUrl) => {
     const url = String(rawUrl);
-    if (url.includes(CLOUDFLARE_MODEL_KLEIN_9B)) {
-      executionOrder.push(`${CLOUDFLARE_MODEL_KLEIN_9B}::${url.includes("acc-1") ? "acc-1" : url.includes("acc-2") ? "acc-2" : "acc-3"}`);
+    if (url.includes(CLOUDFLARE_MODEL_SCHNELL)) {
+      executionOrder.push(`${CLOUDFLARE_MODEL_SCHNELL}::${url.includes("acc-1") ? "acc-1" : url.includes("acc-2") ? "acc-2" : "acc-3"}`);
       return new Response("500 Server Error", { status: 500 });
     }
     if (url.includes(CLOUDFLARE_MODEL_KLEIN_4B)) {
@@ -516,10 +516,10 @@ async function runAllTests(): Promise<void> {
   assert.equal(proFastFallbackResult.success, true);
   assert.equal(proFastFallbackResult.provider_used, CLOUDFLARE_MODEL_KLEIN_4B);
 
-  // Check that all 3 accounts were attempted for Klein 9B before any Klein 4B request was made
-  const klein9bCalls = executionOrder.filter((item) => item.startsWith(CLOUDFLARE_MODEL_KLEIN_9B));
-  assert.equal(klein9bCalls.length, 3, "All 3 accounts must be exhausted on Klein 9B before fallback");
-  assert.ok(executionOrder[3]?.startsWith(CLOUDFLARE_MODEL_KLEIN_4B), "Klein 4B begins only after all Klein 9B accounts failed");
+  // Check that all 3 accounts were attempted for Schnell before any Klein 4B request was made
+  const schnellCalls = executionOrder.filter((item) => item.startsWith(CLOUDFLARE_MODEL_SCHNELL));
+  assert.equal(schnellCalls.length, 3, "All 3 accounts must be exhausted on Schnell before fallback");
+  assert.ok(executionOrder[3]?.startsWith(CLOUDFLARE_MODEL_KLEIN_4B), "Klein 4B begins only after all Schnell accounts failed");
 
   console.log("PASS: Account pool exhaustively attempted before advancing to next model in fallback chain.");
 

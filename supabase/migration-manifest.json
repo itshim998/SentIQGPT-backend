@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-03T06:13:53.049Z",
-  "totalCanonicalMigrations": 80,
+  "generatedAt": "2026-10-07T13:07:36.291Z",
+  "totalCanonicalMigrations": 81,
   "topology": {
     "controlDatabases": [
       1
@@ -15,9 +15,9 @@
   },
   "counts": {
     "both": 9,
-    "controlOnly": 14,
+    "controlOnly": 15,
     "dataOnly": 57,
-    "controlTrackTotal": 23,
+    "controlTrackTotal": 24,
     "dataTrackTotal": 66
   },
   "migrations": [
@@ -829,6 +829,16 @@
         "data"
       ],
       "checksum": "984b6af0da205f1b78be065927a133e62950db395d34700cb1107db60866cd82"
+    },
+    {
+      "version": "20261007180000",
+      "name": "weighted_image_credits_and_revised_tiers",
+      "filename": "20261007180000_weighted_image_credits_and_revised_tiers.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "4128701ced44cd1b49efe160193589c7a7ec5640494f24c36c4eaf505db11cde"
     }
   ]
 }
