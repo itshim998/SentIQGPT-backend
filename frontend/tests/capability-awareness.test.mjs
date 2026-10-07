@@ -19,10 +19,39 @@ const guest = deriveCapabilitySnapshot({
   liveStatus: { available: false, reason: "sign_in_required" },
 });
 assert.equal(guest.capabilities["image-generation"].state, "sign-in-required");
+assert.equal(guest.capabilities["image-generation"].interactive, false);
 assert.equal(guest.capabilities["deep-research"].state, "sign-in-required");
+assert.equal(guest.capabilities["deep-research"].interactive, false);
 assert.equal(guest.capabilities.live.state, "sign-in-required");
+assert.equal(guest.capabilities.live.interactive, false);
 assert.equal(guest.capabilities.upload.state, "available", "guest uploads remain available");
+assert.equal(guest.capabilities.upload.interactive, true);
 assert.equal(guest.capabilities["image-generation"].cta, "sign-in");
+
+const authenticatedChecking = deriveCapabilitySnapshot({
+  authKnown: true,
+  authenticated: true,
+  planKnown: false,
+});
+assert.equal(authenticatedChecking.capabilities["image-generation"].state, "checking");
+assert.equal(authenticatedChecking.capabilities["image-generation"].available, false);
+assert.equal(authenticatedChecking.capabilities["image-generation"].interactive, true);
+assert.equal(authenticatedChecking.capabilities["deep-research"].state, "checking");
+assert.equal(authenticatedChecking.capabilities["deep-research"].available, false);
+assert.equal(authenticatedChecking.capabilities["deep-research"].interactive, true);
+assert.equal(authenticatedChecking.capabilities.live.state, "checking");
+assert.equal(authenticatedChecking.capabilities.live.available, false);
+assert.equal(authenticatedChecking.capabilities.live.interactive, true);
+
+const authUnknown = deriveCapabilitySnapshot({
+  authKnown: false,
+  authenticated: false,
+  planKnown: false,
+});
+assert.equal(authUnknown.capabilities["image-generation"].state, "checking");
+assert.equal(authUnknown.capabilities["image-generation"].available, false);
+assert.equal(authUnknown.capabilities["image-generation"].interactive, false);
+assert.equal(authUnknown.capabilities["deep-research"].interactive, false);
 
 const planRestricted = deriveCapabilitySnapshot({
   authKnown: true,
@@ -39,8 +68,14 @@ const planRestricted = deriveCapabilitySnapshot({
   liveStatus: { available: false, reason: "not_available_on_plan" },
 });
 assert.equal(planRestricted.capabilities["image-generation"].state, "plan-restricted");
+assert.equal(planRestricted.capabilities["image-generation"].available, false);
+assert.equal(planRestricted.capabilities["image-generation"].interactive, false);
 assert.equal(planRestricted.capabilities["deep-research"].state, "plan-restricted");
+assert.equal(planRestricted.capabilities["deep-research"].available, false);
+assert.equal(planRestricted.capabilities["deep-research"].interactive, false);
 assert.equal(planRestricted.capabilities.live.state, "plan-restricted");
+assert.equal(planRestricted.capabilities.live.available, false);
+assert.equal(planRestricted.capabilities.live.interactive, false);
 assert.equal(planRestricted.capabilities.live.cta, "upgrade");
 
 const exhausted = deriveCapabilitySnapshot({
@@ -58,9 +93,15 @@ const exhausted = deriveCapabilitySnapshot({
   liveStatus: { available: false, reason: "daily_limit_reached" },
 });
 assert.equal(exhausted.capabilities["image-generation"].state, "limit-reached");
+assert.equal(exhausted.capabilities["image-generation"].available, false);
+assert.equal(exhausted.capabilities["image-generation"].interactive, false);
 assert.equal(exhausted.capabilities["image-generation"].remaining, 0);
 assert.equal(exhausted.capabilities["deep-research"].state, "limit-reached");
+assert.equal(exhausted.capabilities["deep-research"].available, false);
+assert.equal(exhausted.capabilities["deep-research"].interactive, false);
 assert.equal(exhausted.capabilities.live.state, "limit-reached");
+assert.equal(exhausted.capabilities.live.available, false);
+assert.equal(exhausted.capabilities.live.interactive, false);
 assert.equal(exhausted.capabilities["deep-research"].cta, "upgrade");
 
 const cooling = deriveCapabilitySnapshot({

@@ -55,7 +55,7 @@ function createApiError(response, errorData, fallbackMessage) {
   error.response = response;
   error.details = errorData;
   error.internalMessage = internalMessage;
-  error.message = errorData?.type === "quota_exceeded" && errorData?.error
+  error.message = (errorData?.type === "quota_exceeded" || errorData?.code === "quota_exceeded") && errorData?.error
     ? errorData.error
     : (window.SentIQErrors?.getSafeErrorMessage?.(error) || `${PRODUCT_NAME} could not finish that action. Please try again.`);
   if (error.code === "profile_name_required" || error.requiresName || error.requires_name) {

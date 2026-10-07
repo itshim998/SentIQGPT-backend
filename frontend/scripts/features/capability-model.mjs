@@ -142,11 +142,16 @@ export function normalizeCapabilityFacts(input = {}) {
 }
 
 function record(key, state, reason, options = {}) {
+  const available = state === "available";
+  const interactive = typeof options.interactive === "boolean"
+    ? options.interactive
+    : available;
   return Object.freeze({
     key,
     label: options.label || key,
     state,
-    available: state === "available",
+    available,
+    interactive,
     reason: String(reason || "").trim(),
     cta: options.cta || null,
     remaining: options.remaining ?? null,
@@ -195,15 +200,15 @@ function strictQuota(...candidates) {
 function deriveImageCapability(facts) {
   const key = "image-generation";
   const label = "Image generation";
-  if (!facts.online) return record(key, "offline", "Reconnect to the internet to generate images.", { label });
-  if (!facts.authKnown) return record(key, "checking", "Checking sign-in status…", { label });
-  if (!facts.authenticated) return record(key, "sign-in-required", "Sign in to generate and save images.", { label, cta: "sign-in" });
-  if (!facts.planKnown) return record(key, "checking", "Checking image availability for your plan…", { label });
+  if (!facts.online) return record(key, "offline", "Reconnect to the internet to generate images.", { label, interactive: false });
+  if (!facts.authKnown) return record(key, "checking", "Checking sign-in status…", { label, interactive: false });
+  if (!facts.authenticated) return record(key, "sign-in-required", "Sign in to generate and save images.", { label, cta: "sign-in", interactive: false });
+  if (!facts.planKnown) return record(key, "checking", "Checking image availability for your plan…", { label, ...planOptions(facts), interactive: true });
   // The process-level image quota does not prove plan entitlement. If billing
   // cannot be resolved, keep the control blocked rather than claiming that an
   // IP-level slot means image generation is actually available.
   if (facts.planError || !hasQuotaSignal(facts.imageBillingQuota)) {
-    return record(key, "unavailable", "Image availability could not be checked right now. Try refreshing in a moment.", { label });
+    return record(key, "unavailable", "Image availability could not be checked right now. Try refreshing in a moment.", { label, interactive: false });
   }
 
   const quota = strictQuota(facts.imageBillingQuota, facts.imageQuotaKnown ? facts.imageQuota : null);
@@ -215,6 +220,7 @@ function deriveImageCapability(facts) {
       remaining: quota.remaining,
       limit: quota.limit,
       resetAt: quota.resetAt,
+      interactive: false,
     });
   }
   if (quota?.remaining === 0 && (quota.limit || 0) > 0) {
@@ -224,6 +230,7 @@ function deriveImageCapability(facts) {
       remaining: 0,
       limit: quota.limit,
       resetAt: quota.resetAt,
+      interactive: false,
     });
   }
   if (quota?.cooldownActive) {
@@ -232,6 +239,7 @@ function deriveImageCapability(facts) {
       remaining: quota.remaining,
       limit: quota.limit,
       retryAfterMs: quota.retryAfterMs,
+      interactive: false,
     });
   }
   return record(key, "available", quota?.remaining !== null && quota?.limit !== null
@@ -242,20 +250,21 @@ function deriveImageCapability(facts) {
     limit: quota?.limit ?? null,
     resetAt: quota?.resetAt || "",
     degraded: facts.imageQuotaKnown && !facts.imageQuota,
+    interactive: true,
   });
 }
 
 function deriveDeepResearchCapability(facts) {
   const key = "deep-research";
   const label = "Deep Research";
-  if (!facts.online) return record(key, "offline", "Reconnect to the internet to start Deep Research.", { label });
-  if (!facts.authKnown) return record(key, "checking", "Checking sign-in status…", { label });
-  if (!facts.authenticated) return record(key, "sign-in-required", "Sign in to start Deep Research and keep its report.", { label, cta: "sign-in" });
-  if (!facts.planKnown) return record(key, "checking", "Checking Deep Research availability for your plan…", { label });
+  if (!facts.online) return record(key, "offline", "Reconnect to the internet to start Deep Research.", { label, interactive: false });
+  if (!facts.authKnown) return record(key, "checking", "Checking sign-in status…", { label, interactive: false });
+  if (!facts.authenticated) return record(key, "sign-in-required", "Sign in to start Deep Research and keep its report.", { label, cta: "sign-in", interactive: false });
+  if (!facts.planKnown) return record(key, "checking", "Checking Deep Research availability for your plan…", { label, ...planOptions(facts), interactive: true });
   const researchQuotaAvailable = hasQuotaSignal(facts.deepResearchBillingQuota)
     || (facts.deepResearchQuotaKnown && hasQuotaSignal(facts.deepResearchQuota));
   if (!researchQuotaAvailable || (facts.planError && (!facts.deepResearchQuotaKnown || facts.deepResearchQuotaError))) {
-    return record(key, "unavailable", "Deep Research availability could not be checked right now. Try refreshing in a moment.", { label });
+    return record(key, "unavailable", "Deep Research availability could not be checked right now. Try refreshing in a moment.", { label, interactive: false });
   }
 
   const quota = strictQuota(facts.deepResearchBillingQuota, facts.deepResearchQuotaKnown ? facts.deepResearchQuota : null);
@@ -267,6 +276,7 @@ function deriveDeepResearchCapability(facts) {
       remaining: quota.remaining,
       limit: quota.limit,
       resetAt: quota.resetAt,
+      interactive: false,
     });
   }
   if (quota?.remaining === 0 && (quota.limit || 0) > 0) {
@@ -276,6 +286,7 @@ function deriveDeepResearchCapability(facts) {
       remaining: 0,
       limit: quota.limit,
       resetAt: quota.resetAt,
+      interactive: false,
     });
   }
   return record(key, "available", quota?.remaining !== null && quota?.limit !== null
@@ -286,16 +297,17 @@ function deriveDeepResearchCapability(facts) {
     limit: quota?.limit ?? null,
     resetAt: quota?.resetAt || "",
     degraded: facts.deepResearchQuotaKnown && !facts.deepResearchQuota,
+    interactive: true,
   });
 }
 
 function deriveLiveCapability(facts) {
   const key = "live";
   const label = "SentIQ Live";
-  if (!facts.online) return record(key, "offline", "Reconnect to the internet to use Live voice.", { label });
-  if (!facts.authKnown) return record(key, "checking", "Checking sign-in status…", { label });
-  if (!facts.authenticated) return record(key, "sign-in-required", "Sign in to start a Live voice conversation.", { label, cta: "sign-in" });
-  if (!facts.liveKnown) return record(key, "checking", "Checking Live voice availability…", { label });
+  if (!facts.online) return record(key, "offline", "Reconnect to the internet to use Live voice.", { label, interactive: false });
+  if (!facts.authKnown) return record(key, "checking", "Checking sign-in status…", { label, interactive: false });
+  if (!facts.authenticated) return record(key, "sign-in-required", "Sign in to start a Live voice conversation.", { label, cta: "sign-in", interactive: false });
+  if (!facts.liveKnown) return record(key, "checking", "Checking Live voice availability…", { label, ...planOptions(facts), interactive: true });
   if (facts.liveError) return record(key, "unavailable", "Live voice availability could not be checked right now.", { label });
   const status = facts.liveStatus;
   if (!status) return record(key, "unavailable", "Live voice availability could not be checked right now.", { label });

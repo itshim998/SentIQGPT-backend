@@ -166,13 +166,14 @@ function initializeToolActionSheet() {
       const definition = ACTION_DEFINITIONS[button.id];
       const { purpose, state } = copyNodes.get(button.id);
       const hiddenByController = controllerHides(button);
+      const capabilityInteractive = button.dataset.capabilityInteractive;
       const ariaDisabledByController = (
         button.getAttribute("aria-disabled") === "true"
         && button.dataset.sheetManagedAriaDisabled !== "true"
       );
       const disabledByController = Boolean(
         button.disabled
-        || ariaDisabledByController
+        || (capabilityInteractive ? capabilityInteractive === "false" : ariaDisabledByController)
         || button.classList.contains("auth-disabled")
         || (button.id === "file-attach-btn" && fileInput?.disabled)
       );
@@ -251,7 +252,7 @@ function initializeToolActionSheet() {
     subtree: true,
     childList: true,
     attributes: true,
-    attributeFilter: ["class", "hidden", "style", "disabled", "aria-disabled", "aria-pressed", "title"],
+    attributeFilter: ["class", "hidden", "style", "disabled", "aria-disabled", "aria-pressed", "title", "data-capability-interactive", "data-capability-available"],
   });
 
   window.addEventListener("focus", scheduleSync);

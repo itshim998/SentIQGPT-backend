@@ -97,7 +97,8 @@ function initializeCapabilityAwareness() {
     const subtitle = control.querySelector?.(".composer-action-subtitle");
     if (!(subtitle instanceof HTMLElement)) return;
     if (!originalSubtitles.has(subtitle)) originalSubtitles.set(subtitle, subtitle.textContent || "");
-    if (capability.available) {
+    const interactive = capability.interactive !== undefined ? capability.interactive : capability.available;
+    if (interactive) {
       setTextIfChanged(subtitle, originalSubtitles.get(subtitle));
       subtitle.removeAttribute("data-capability-copy");
     } else {
@@ -109,32 +110,36 @@ function initializeCapabilityAwareness() {
   function syncControl(control, capability) {
     if (!(control instanceof HTMLElement) || !capability) return;
     if (!originalTitles.has(control)) originalTitles.set(control, control.getAttribute("title"));
+    const interactive = capability.interactive !== undefined ? capability.interactive : capability.available;
     control.dataset.capabilityKey = capability.key;
     control.dataset.capabilityState = capability.state;
     control.dataset.capabilityAvailable = String(capability.available);
+    control.dataset.capabilityInteractive = String(interactive);
     control.dataset.capabilityReason = capability.reason;
-    control.classList.toggle("is-capability-blocked", !capability.available);
+    control.classList.toggle("is-capability-blocked", !interactive);
     control.classList.toggle("is-capability-checking", capability.state === "checking");
-    setAttributeIfChanged(control, "aria-disabled", capability.available ? "false" : "true");
+    setAttributeIfChanged(control, "aria-disabled", interactive ? "false" : "true");
     const help = helpNode(capability.key);
     setTextIfChanged(help, capability.reason);
     appendDescription(control, help.id);
     const originalTitle = originalTitles.get(control);
-    if (capability.available && originalTitle === null) control.removeAttribute("title");
-    else setAttributeIfChanged(control, "title", capability.available ? originalTitle : capability.reason);
+    if (interactive && originalTitle === null) control.removeAttribute("title");
+    else setAttributeIfChanged(control, "title", interactive ? (originalTitle || "") : capability.reason);
     syncSubtitle(control, capability);
   }
 
   function syncUploadInput(capability) {
     if (!(fileInput instanceof HTMLInputElement)) return;
+    const interactive = capability.interactive !== undefined ? capability.interactive : capability.available;
     fileInput.dataset.capabilityKey = "upload";
     fileInput.dataset.capabilityState = capability.state;
     fileInput.dataset.capabilityAvailable = String(capability.available);
+    fileInput.dataset.capabilityInteractive = String(interactive);
     fileInput.dataset.capabilityReason = capability.reason;
-    if (!capability.available && !fileInput.disabled) {
+    if (!interactive && !fileInput.disabled) {
       fileInput.disabled = true;
       ownedDisabledInputs.add(fileInput);
-    } else if (capability.available && ownedDisabledInputs.has(fileInput)) {
+    } else if (interactive && ownedDisabledInputs.has(fileInput)) {
       fileInput.disabled = false;
       ownedDisabledInputs.delete(fileInput);
     }
@@ -245,7 +250,8 @@ function initializeCapabilityAwareness() {
   function explain(target, options = {}) {
     const control = target instanceof Element ? target.closest(CONTROL_SELECTOR) || target : null;
     const capability = capabilityFor(control);
-    if (!capability || capability.available) return false;
+    const interactive = capability?.interactive !== undefined ? capability.interactive : capability?.available;
+    if (!capability || interactive) return false;
     return explainer.open(capability, options.anchor || control, { focus: options.focus });
   }
 
@@ -253,7 +259,8 @@ function initializeCapabilityAwareness() {
     if (!(event.target instanceof Element)) return null;
     const control = event.target.closest(CONTROL_SELECTOR);
     const capability = capabilityFor(control);
-    return control instanceof HTMLElement && capability && !capability.available ? control : null;
+    const interactive = capability?.interactive !== undefined ? capability.interactive : capability?.available;
+    return control instanceof HTMLElement && capability && !interactive ? control : null;
   }
 
   function containsAddedCapabilityControl(records) {

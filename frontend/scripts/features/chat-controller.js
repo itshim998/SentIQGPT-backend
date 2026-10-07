@@ -8326,7 +8326,20 @@ import {
         }, ac.signal);
       }
     } catch (err) {
-      if (err.name === "AbortError") {
+      const isQuotaRejection = !reportId && (
+        err.code === "quota_exceeded" ||
+        err.details?.type === "quota_exceeded" ||
+        err.details?.code === "quota_exceeded" ||
+        err.status === 402 ||
+        Boolean(err.message && /deep research.*limit reached/i.test(err.message))
+      );
+      if (isQuotaRejection) {
+        runningCard?.remove?.();
+        const quotaWarningMessage = err.message || err.details?.error || "Deep Research limit reached. Review Billing for reset and upgrade options.";
+        showQuotaWarning(quotaWarningMessage);
+        window.SentIQBilling?.refresh?.(true);
+        window.SentIQCapabilities?.refresh?.();
+      } else if (err.name === "AbortError") {
         runningCard.subscriptionClosed("Research continues in the background. Reopen this chat to reconnect.");
       } else if (reportId) {
         runningCard.subscriptionClosed();
@@ -8600,7 +8613,13 @@ import {
       subscriptionClosed(message = "Research continues in the background. Reconnecting...") {
         if (isFinished) return;
         statusText.textContent = message;
-      }
+      },
+      remove() {
+        bubble.remove();
+      },
+      get bubble() {
+        return bubble;
+      },
     };
 
     function applySnapshot(report) {
@@ -10523,6 +10542,7 @@ import {
       else if (err.code === "quota_exceeded" || err.details?.type === "quota_exceeded") {
         showQuotaWarning(err.message || "Image generation limit reached. Review Billing for reset and upgrade options.");
         window.SentIQBilling?.refresh?.(true);
+        window.SentIQCapabilities?.refresh?.();
       } else if (err.message && (err.message.includes("Daily image limit") || err.message.includes("Please wait"))) {
         showQuotaWarning(err.message);
       } else if (err.message && err.message.includes("queue is full")) {

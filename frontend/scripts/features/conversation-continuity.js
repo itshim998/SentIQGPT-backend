@@ -267,10 +267,12 @@ function initializeConversationContinuity() {
     await persistRegistry();
   }
 
-  function capabilityAvailable(key) {
+  function capabilityInteractive(key) {
     const capability = window.SentIQCapabilities?.get?.(key);
-    return capability ? capability.available : true;
+    if (!capability) return true;
+    return typeof capability.interactive === "boolean" ? capability.interactive : capability.available;
   }
+  const capabilityAvailable = capabilityInteractive;
 
   function clickIfVisible(element) {
     if (isElementVisible(element) && typeof element.click === "function") element.click();
@@ -286,7 +288,7 @@ function initializeConversationContinuity() {
     clearToolModes();
     document.documentElement.removeAttribute("data-continuity-mode-blocked");
     if (toolMode === "image") {
-      if (!capabilityAvailable("image-generation")) {
+      if (!capabilityInteractive("image-generation")) {
         document.documentElement.dataset.continuityModeBlocked = "image";
         return false;
       }
@@ -294,7 +296,7 @@ function initializeConversationContinuity() {
       return true;
     }
     if (toolMode === "deep-research") {
-      if (!capabilityAvailable("deep-research")) {
+      if (!capabilityInteractive("deep-research")) {
         document.documentElement.dataset.continuityModeBlocked = "deep-research";
         return false;
       }
