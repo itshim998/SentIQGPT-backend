@@ -163,7 +163,25 @@ export function openGenerationSubscription(response: Response, generationId: str
       const result = await withDbTimeout(getChatGenerationById(context.userDb, context.userId, generationId), DB_TIMEOUT_MS, "getChatGenerationById").catch(() => ({ data: context.generation, error: null }));
       if (result?.data) persisted = result.data;
     }
-    const task = chatGenerationTaskCoordinator.get(generationId);
+    let task = chatGenerationTaskCoordinator.get(generationId);
+    if (!task && persisted && context.userDb) {
+      task = chatGenerationTaskCoordinator.start({
+        generationId,
+        clientRequestId: persisted.client_request_id,
+        conversationId: persisted.conversation_id,
+        generationSessionId: persisted.generation_session_id,
+        userId: context.userId,
+        userDb: context.userDb,
+        generation: persisted,
+      });
+      if (!closed) {
+        unsubscribe?.();
+        unsubscribe = chatGenerationTaskCoordinator.subscribe(generationId, (event) => {
+          emit(event);
+          if (["generation_completed", "generation_failed", "generation_cancelled"].includes(String(event.type))) emitDoneAndClose();
+        }, cursor);
+      }
+    }
     if (context.userDb && persisted && task) {
       const restartable = ["queued", "running", "generating", "persisting", "waiting_for_tool", "cancel_requested"].includes(String(persisted.status));
       if (!task.terminal && !task.runPromise && restartable) void runGeneration(generationId).catch((error) => { void chatGenerationTaskCoordinator.failed(generationId, String((error as any)?.code || "generation_restart_failed")); });

@@ -15,7 +15,7 @@ type Task = ChatGenerationTaskContext & {
   events: ChatGenerationEvent[]; subscribers: Set<SubscriberState>; sequence: number; partialText: string; tokensGenerated: number;
   status: "queued" | "running" | "completed" | "failed" | "cancel_requested" | "cancelled"; terminal: boolean; explicitCancelRequested: boolean;
   lastErrorCode: string | null; executionLeaseId: string | null; execution?: ChatGenerationExecution; runPromise?: Promise<void>; cleanupTimer?: NodeJS.Timeout;
-  deliveryChain: Promise<void>; pollTimer?: NodeJS.Timeout; pollInFlight: boolean;
+  deliveryChain: Promise<void>; pollTimer?: NodeJS.Timeout; pollInFlight: boolean; concurrencyRetries?: number;
 };
 
 const EVENT_BUFFER_LIMIT = 1000;

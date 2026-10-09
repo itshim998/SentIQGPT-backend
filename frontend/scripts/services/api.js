@@ -174,12 +174,14 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
   let interrupted = false;
   let terminalError = null;
   let structuredReceived = false;
+  let doneReceived = false;
 
   function processSseLines(lines) {
     for (const line of lines) {
       if (!line.startsWith("data: ")) continue;
       const payload = line.slice(6).trim();
       if (payload === "[DONE]") {
+        doneReceived = true;
         return true;
       }
       try {
@@ -264,11 +266,19 @@ async function sendMessageStream(message, context = {}, callbacks = {}, signal =
     if (callbacks.onError) callbacks.onError(terminalError, { tokensReceived: false, interrupted: false });
     throw terminalError;
   }
+  if (!doneReceived && !structuredReceived && !terminalError) {
+    terminalError = new Error("Response interrupted before completion.");
+    terminalError.code = "response_interrupted";
+    interrupted = tokensReceived;
+    if (callbacks.onError) callbacks.onError(terminalError, { tokensReceived, interrupted });
+  }
   if (terminalError && !tokensReceived) {
     throw terminalError;
   }
-  if (!interrupted && callbacks.onDone) callbacks.onDone();
-  if (!interrupted) window.dispatchEvent(new CustomEvent("sentiq-billing-refresh"));
+  if (!interrupted && (doneReceived || structuredReceived)) {
+    if (callbacks.onDone) callbacks.onDone();
+    window.dispatchEvent(new CustomEvent("sentiq-billing-refresh"));
+  }
   return { structured: structuredReceived, tokensReceived, interrupted, error: terminalError };
 }
 

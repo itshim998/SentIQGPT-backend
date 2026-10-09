@@ -13,7 +13,6 @@ type SupabaseError = {
 
 const GUEST_TEXT_POLICY_VERSION = "guest-text-trial-v1";
 const GUEST_TEXT_LIMIT_TOKENS = 8_000;
-const guestTextReservationRequestIds = new Set<string>();
 
 function formatSupabaseError(error: SupabaseError): string {
   if (!error) return "unknown";
@@ -222,7 +221,6 @@ export class BillingRepository {
           "guest_text_quota_unavailable",
         );
       }
-      if (data?.reserved === true) guestTextReservationRequestIds.add(args.requestId);
       return data;
     }
 
@@ -295,6 +293,44 @@ export class BillingRepository {
     return data;
   }
 
+  private async isGuestTextReservation(requestId: string): Promise<boolean | null> {
+    if (!requestId || typeof (this.db as any)?.from !== "function") {
+      return null;
+    }
+    let data: any;
+    let error: any;
+    try {
+      const result = await this.db
+        .from("quota_reservations")
+        .select("user_id, metadata")
+        .eq("request_id", requestId)
+        .maybeSingle();
+      data = result.data;
+      error = result.error;
+    } catch (err) {
+      throw new BillingRepositoryError(
+        `Failed to inspect quota reservation: ${err instanceof Error ? err.message : String(err)}`,
+        "reservation_lookup_failed",
+      );
+    }
+
+    if (error) {
+      throw new BillingRepositoryError(
+        `Failed to inspect quota reservation: ${formatSupabaseError(error)}`,
+        "reservation_lookup_failed",
+      );
+    }
+
+    if (!data) {
+      return null;
+    }
+    const isGuest = !data.user_id;
+    const metadata = data.metadata as Record<string, unknown> | null | undefined;
+    const policyVersion = metadata?.quota_policy_version;
+    const isGuestTrial = metadata?.guest_text_trial === true;
+    return isGuest && (policyVersion === GUEST_TEXT_POLICY_VERSION || isGuestTrial);
+  }
+
   async commitReservation(args: {
     readonly requestId: string;
     readonly provider: string;
@@ -302,8 +338,10 @@ export class BillingRepository {
     readonly route: string;
     readonly metadata?: Record<string, unknown>;
   }): Promise<any> {
-    if (guestTextReservationRequestIds.has(args.requestId)) {
-      const actualTokens = Math.max(1, Math.trunc(normalizeNumber(args.metadata?.actual_token_units, 1)));
+    const isGuest = await this.isGuestTextReservation(args.requestId);
+    const actualTokens = Math.max(1, Math.trunc(normalizeNumber(args.metadata?.actual_token_units, 1)));
+
+    if (isGuest === true) {
       const { data, error } = await this.db.rpc("commit_guest_text_tokens", {
         p_request_id: args.requestId,
         p_reservation_id: null,
@@ -319,11 +357,64 @@ export class BillingRepository {
           "guest_text_quota_unavailable",
         );
       }
-      guestTextReservationRequestIds.delete(args.requestId);
       if (data?.matched !== true) {
         throw new BillingRepositoryError("Guest text reservation could not be settled.", "guest_text_reservation_missing");
       }
       return data;
+    }
+
+    if (isGuest === false) {
+      const { data, error } = await this.db.rpc("commit_usage_reservation", {
+        p_request_id: args.requestId,
+        p_provider: args.provider,
+        p_model: args.model,
+        p_route: args.route,
+        p_metadata: args.metadata ?? {},
+      });
+      if (error) {
+        throw new BillingRepositoryError(`Failed to commit usage reservation: ${formatSupabaseError(error)}`);
+      }
+      return data;
+    }
+
+    // isGuest is null (e.g. this.db.from is undefined in mock/test environments)
+    const isGuestMetadata = args.metadata?.guest_text_trial === true
+      || args.metadata?.quota_policy_version === GUEST_TEXT_POLICY_VERSION;
+
+    if (isGuestMetadata) {
+      const { data, error } = await this.db.rpc("commit_guest_text_tokens", {
+        p_request_id: args.requestId,
+        p_reservation_id: null,
+        p_actual_tokens: actualTokens,
+        p_provider: args.provider,
+        p_model: args.model,
+        p_route: args.route,
+        p_metadata: args.metadata ?? {},
+      });
+      if (error) {
+        throw new BillingRepositoryError(
+          `Guest text settlement is unavailable: ${formatSupabaseError(error)}`,
+          "guest_text_quota_unavailable",
+        );
+      }
+      if (data?.matched !== true) {
+        throw new BillingRepositoryError("Guest text reservation could not be settled.", "guest_text_reservation_missing");
+      }
+      return data;
+    }
+
+    // Fallback attempt for test mocks: try guest commit first; if matched, return; otherwise call commit_usage_reservation
+    const { data: guestData, error: guestError } = await this.db.rpc("commit_guest_text_tokens", {
+      p_request_id: args.requestId,
+      p_reservation_id: null,
+      p_actual_tokens: actualTokens,
+      p_provider: args.provider,
+      p_model: args.model,
+      p_route: args.route,
+      p_metadata: args.metadata ?? {},
+    });
+    if (!guestError && guestData?.matched === true) {
+      return guestData;
     }
 
     const { data, error } = await this.db.rpc("commit_usage_reservation", {
@@ -361,7 +452,8 @@ export class BillingRepository {
   }
 
   async releaseReservation(requestId: string): Promise<any> {
-    if (guestTextReservationRequestIds.has(requestId)) {
+    const isGuest = await this.isGuestTextReservation(requestId);
+    if (isGuest === true) {
       const { data, error } = await this.db.rpc("release_guest_text_tokens", {
         p_request_id: requestId,
         p_reservation_id: null,
@@ -372,11 +464,29 @@ export class BillingRepository {
           "guest_text_quota_unavailable",
         );
       }
-      guestTextReservationRequestIds.delete(requestId);
       if (data?.matched !== true) {
         throw new BillingRepositoryError("Guest text reservation could not be released.", "guest_text_reservation_missing");
       }
       return data;
+    }
+
+    if (isGuest === false) {
+      const { data, error } = await this.db.rpc("release_usage_reservation", {
+        p_request_id: requestId,
+      });
+      if (error) {
+        throw new BillingRepositoryError(`Failed to release usage reservation: ${formatSupabaseError(error)}`);
+      }
+      return data;
+    }
+
+    // isGuest is null (e.g. this.db.from is undefined in mock/test environments)
+    const { data: guestData, error: guestError } = await this.db.rpc("release_guest_text_tokens", {
+      p_request_id: requestId,
+      p_reservation_id: null,
+    });
+    if (!guestError && guestData?.matched === true) {
+      return guestData;
     }
 
     const { data, error } = await this.db.rpc("release_usage_reservation", {

@@ -83,11 +83,15 @@ declare
   v_row public.guest_chat_generations%rowtype;
   v_active integer;
 begin
+  perform pg_advisory_xact_lock(hashtextextended(p_owner_key_hash, 0));
+
   select count(*) into v_active
   from public.guest_chat_generations
   where user_id = p_owner_key_hash
-    and status in ('queued','running','waiting_for_tool','generating','persisting')
-    and (execution_lease_expires_at is null or execution_lease_expires_at > now());
+    and id <> p_generation_id
+    and status in ('running','waiting_for_tool','generating','persisting','cancel_requested')
+    and execution_lease_expires_at is not null
+    and execution_lease_expires_at > now();
 
   if v_active >= greatest(1, p_max_active_generations) then
     raise exception using errcode = '55P03', message = 'Guest generation concurrency limit reached';
@@ -102,7 +106,7 @@ begin
   where id = p_generation_id
     and user_id = p_owner_key_hash
     and status not in ('completed','failed','cancelled')
-    and (execution_lease_id is null or execution_lease_expires_at <= now())
+    and (execution_lease_id is null or execution_lease_expires_at <= now() or execution_lease_id = p_lease_id)
   returning * into v_row;
 
   if not found then

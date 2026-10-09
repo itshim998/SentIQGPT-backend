@@ -11,6 +11,7 @@ import { chatGenerationTaskCoordinator, type ChatGenerationExecution, type ChatG
 import { executeChatGeneration } from "./chatGenerationExecutor";
 
 const CONCURRENCY_RETRY_MS = 2000;
+const MAX_CONCURRENCY_RETRIES = 30;
 const CONTROL_POLL_MS = 2000;
 const LEASE_RENEW_MS = 15000;
 export type GenerationExecutorHandler = (request: GenerationExecutionRequest, response: GenerationEventSink, next: (error?: unknown) => void) => unknown;
@@ -143,7 +144,26 @@ export async function runGeneration(generationId: string): Promise<void> {
     const leaseId = randomUUID();
     if (userDb) {
       const claimed = await claimChatGenerationExecution(userDb, { userId: generation.user_id, generationId: generation.id, leaseId, leaseSeconds: 60, maxActiveGenerations: MAX_ACTIVE_GENERATIONS_PER_USER });
-      if (claimed.error || !claimed.data) { if (claimed.error?.code === "55P03") { task.status = "queued"; setTimeout(() => { if (!chatGenerationTaskCoordinator.get(generationId)?.terminal) void runGeneration(generationId).catch(() => undefined); }, CONCURRENCY_RETRY_MS).unref?.(); return; } throw Object.assign(new Error("Generation execution lease unavailable"), { code: "generation_execution_lease_unavailable", cause: claimed.error }); }
+      if (claimed.error || !claimed.data) {
+        if (claimed.error?.code === "55P03") {
+          task.status = "queued";
+          await chatGenerationTaskCoordinator.publish(generation.id, {
+            type: "generation_snapshot",
+            status: "queued",
+            reason: "concurrency_limit",
+          });
+          task.concurrencyRetries = (task.concurrencyRetries ?? 0) + 1;
+          if (task.concurrencyRetries > MAX_CONCURRENCY_RETRIES) {
+            await chatGenerationTaskCoordinator.failed(generation.id, "generation_concurrency_timeout");
+            return;
+          }
+          setTimeout(() => {
+            if (!chatGenerationTaskCoordinator.get(generationId)?.terminal) void runGeneration(generationId).catch(() => undefined);
+          }, CONCURRENCY_RETRY_MS).unref?.();
+          return;
+        }
+        throw Object.assign(new Error("Generation execution lease unavailable"), { code: "generation_execution_lease_unavailable", cause: claimed.error });
+      }
       generation = claimed.data;
       task.generation = generation;
       task.executionLeaseId = leaseId;
