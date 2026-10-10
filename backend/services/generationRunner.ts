@@ -198,14 +198,62 @@ export async function runGeneration(generationId: string): Promise<void> {
             const maxRetries = getMaxConcurrencyRetries();
             if (task.concurrencyRetries > maxRetries) {
               if (userDb) {
-                await markChatGenerationFailedGuarded(userDb, {
+                const nextSequence = (task.sequence ?? 0) + 1;
+                const guardedResult = await markChatGenerationFailedGuarded(userDb, {
                   userId: generation.user_id,
                   generationId: generation.id,
                   errorCode: "generation_concurrency_timeout",
                   partialText: task.partialText,
                   tokensGenerated: task.tokensGenerated,
-                  lastEventSequence: task.sequence,
-                }).catch(() => undefined);
+                  lastEventSequence: nextSequence,
+                }).catch(() => null);
+
+                if (guardedResult?.data) {
+                  await chatGenerationTaskCoordinator.failed(generation.id, "generation_concurrency_timeout", { skipDbUpdate: true });
+                  return;
+                }
+
+                const refreshed = await getChatGenerationById(userDb, generation.user_id, generation.id).catch(() => null);
+                const durable = refreshed?.data;
+                if (durable) {
+                  const now = Date.now();
+                  const leaseExp = durable.execution_lease_expires_at ? Date.parse(durable.execution_lease_expires_at) : 0;
+                  const hasActiveLease = Boolean(durable.execution_lease_id && leaseExp > now);
+
+                  if (hasActiveLease) {
+                    task.generation = durable;
+                    task.status = (durable.status as any) || "running";
+                    return;
+                  }
+
+                  if (["completed", "failed", "cancelled"].includes(durable.status)) {
+                    task.generation = durable;
+                    task.status = durable.status as any;
+                    if (durable.status === "completed") {
+                      await chatGenerationTaskCoordinator.complete(generation.id);
+                    } else if (durable.status === "cancelled") {
+                      await chatGenerationTaskCoordinator.cancelled(generation.id);
+                    } else {
+                      await chatGenerationTaskCoordinator.failed(generation.id, durable.error_code || "generation_failed", { skipDbUpdate: true });
+                    }
+                    return;
+                  }
+
+                  const retryGuarded = await markChatGenerationFailedGuarded(userDb, {
+                    userId: generation.user_id,
+                    generationId: generation.id,
+                    errorCode: "generation_concurrency_timeout",
+                    partialText: task.partialText,
+                    tokensGenerated: task.tokensGenerated,
+                    lastEventSequence: nextSequence,
+                  }).catch(() => null);
+
+                  if (retryGuarded?.data) {
+                    await chatGenerationTaskCoordinator.failed(generation.id, "generation_concurrency_timeout", { skipDbUpdate: true });
+                    return;
+                  }
+                }
+                return;
               }
               await chatGenerationTaskCoordinator.failed(generation.id, "generation_concurrency_timeout");
               return;

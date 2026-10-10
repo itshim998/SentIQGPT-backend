@@ -539,10 +539,12 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           const event = extractSsePayload(line);
           if (event === "[DONE]") {
             entry.terminal = true;
-            entry.status = "completed";
-            entry.completedAt = new Date().toISOString();
+            if (entry.status !== "failed" && entry.status !== "cancelled") {
+              entry.status = "completed";
+              entry.completedAt = new Date().toISOString();
+              entry.callbacks.onDone?.();
+            }
             activeGenerations.delete(entry.generationId);
-            entry.callbacks.onDone?.();
             if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
             pruneTerminalEntryCallbacks(entry);
             return true;
@@ -968,10 +970,12 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           if (event === "[DONE]") {
             if (entry) {
               entry.terminal = true;
-              entry.status = "completed";
-              entry.completedAt = new Date().toISOString();
+              if (entry.status !== "failed" && entry.status !== "cancelled") {
+                entry.status = "completed";
+                entry.completedAt = new Date().toISOString();
+                entry.callbacks.onDone?.();
+              }
               activeGenerations.delete(entry.generationId);
-              entry.callbacks.onDone?.();
               if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
               pruneTerminalEntryCallbacks(entry);
             }

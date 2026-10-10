@@ -199,6 +199,7 @@ export async function markChatGenerationFailedGuarded(
     partialText?: string;
     tokensGenerated?: number;
     lastEventSequence?: number;
+    allowAlreadyFailed?: boolean;
   }
 ) {
   const userId = normalizeRequired(args.userId, "userId");
@@ -222,8 +223,12 @@ export async function markChatGenerationFailedGuarded(
     .eq("id", generationId)
     .eq("user_id", userId);
 
+  const allowedStatuses = args.allowAlreadyFailed
+    ? ["queued", "recoverable", "failed"]
+    : ["queued", "recoverable"];
+
   if (typeof query.in === "function") {
-    query = query.in("status", ["queued", "recoverable"]);
+    query = query.in("status", allowedStatuses);
   }
   if (typeof query.or === "function") {
     query = query.or(`execution_lease_id.is.null,execution_lease_expires_at.is.null,execution_lease_expires_at.lte.${nowIso}`);

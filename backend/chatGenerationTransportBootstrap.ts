@@ -186,10 +186,10 @@ export function openGenerationSubscription(response: Response, generationId: str
       const restartable = ["queued", "running", "generating", "persisting", "waiting_for_tool", "cancel_requested"].includes(String(persisted.status));
       if (!task.terminal && !task.runPromise && restartable) void runGeneration(generationId).catch((error) => { void chatGenerationTaskCoordinator.failed(generationId, String((error as any)?.code || "generation_restart_failed")); });
     }
-    if (cursor === 0 && (task || persisted)) {
+    const isTerminal = Boolean(task?.terminal) || ["completed", "failed", "cancelled"].includes(String(persisted?.status || ""));
+    if (cursor === 0 || isTerminal) {
       emit(await chatGenerationTaskCoordinator.snapshot(generationId, persisted));
     }
-    const isTerminal = Boolean(task?.terminal) || ["completed", "failed", "cancelled"].includes(String(persisted?.status || ""));
     if (isTerminal) {
       emitDoneAndClose();
     }

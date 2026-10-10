@@ -84,6 +84,7 @@ await import("../scripts/generation-lifecycle.js");
 const {
   pollDurableStatusUntilTerminal,
   subscribeUntilTerminal,
+  subscribeOnce,
   createGenerationEntry,
   cancelGeneration,
 } = window.SentIQGenerationLifecycle;
@@ -309,6 +310,80 @@ assert.ok(typeof subscribeUntilTerminal === "function", "subscribeUntilTerminal 
   controller.abort();
   const abortRes = await pollDurableStatusUntilTerminal(entryAbort, controller.signal);
   assert.equal(abortRes.detached, true, "Aborted signal returns detached: true");
+}
+
+// Test F: Nonzero cursor reconnect receives terminal failed snapshot before [DONE] - verifies failed state, not completed
+{
+  let onDoneCalled = false;
+  let errorReceived = null;
+
+  const entryReplayFailed = createGenerationEntry({
+    generationId: "gen-runtime-replay-failed",
+    tokensReceived: true,
+    lastSequence: 1,
+    callbacks: {
+      onDone: () => { onDoneCalled = true; },
+      onError: (err) => { errorReceived = err; },
+    },
+  });
+
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(
+        'data: {"type":"generation_snapshot","generation_id":"gen-runtime-replay-failed","status":"failed","error_code":"generation_concurrency_timeout","terminal":true,"sequence":2}\n\n'
+      ));
+      controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+      controller.close();
+    },
+  });
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    body: stream,
+  });
+
+  await subscribeOnce(entryReplayFailed);
+
+  assert.equal(entryReplayFailed.status, "failed", "Entry status must be failed after snapshot replay");
+  assert.equal(entryReplayFailed.terminal, true, "Entry must be marked terminal");
+  assert.equal(entryReplayFailed.error?.code, "generation_concurrency_timeout", "Error code must be generation_concurrency_timeout");
+  assert.equal(errorReceived?.code, "generation_concurrency_timeout", "onError callback must receive failure code");
+  assert.equal(onDoneCalled, false, "onDone callback must NEVER be called for failed generation");
+}
+
+// Test G: Bare [DONE] on an already failed or cancelled generation entry never turns it into completed
+{
+  let onDoneCalled = false;
+  const entryBareDoneFailed = createGenerationEntry({
+    generationId: "gen-runtime-bare-done-failed",
+    tokensReceived: true,
+    lastSequence: 2,
+    callbacks: {
+      onDone: () => { onDoneCalled = true; },
+    },
+  });
+  entryBareDoneFailed.status = "failed";
+  entryBareDoneFailed.error = Object.assign(new Error("concurrency timeout"), { code: "generation_concurrency_timeout" });
+
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+      controller.close();
+    },
+  });
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    body: stream,
+  });
+
+  await subscribeOnce(entryBareDoneFailed);
+
+  assert.equal(entryBareDoneFailed.status, "failed", "Bare [DONE] must NOT overwrite failed status");
+  assert.equal(entryBareDoneFailed.terminal, true, "Entry must be terminal");
+  assert.equal(onDoneCalled, false, "Bare [DONE] must NOT call onDone on failed entry");
 }
 
 // ============================================================================

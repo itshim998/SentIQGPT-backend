@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { EventEmitter } from "node:events";
+import type { Response } from "express";
 
 for (const id of [1, 2, 3, 4]) {
   process.env[`SUPABASE_URL_${id}`] ||= "https://example.supabase.co";
@@ -11,6 +13,7 @@ import { chatGenerationTaskCoordinator } from "./services/chatGenerationTaskCoor
 import { runGeneration } from "./services/generationRunner";
 import { registerChatGenerationExecutor } from "./services/chatGenerationExecutor";
 import { markChatGenerationFailedGuarded, getChatGenerationById } from "./services/chatGenerationService";
+import { openGenerationSubscription } from "./chatGenerationTransportBootstrap";
 
 /**
  * Regression test suite verifying guest text generation robustness:
@@ -545,6 +548,212 @@ test("Requirement D: Production runGeneration() handles 55P03 rejection, genuine
   });
   assert.equal(overwriteAttempt2.data, null, "Must refuse to overwrite completed generation");
   assert.equal(completedGenRow.status, "completed", "Completed generation status must remain completed");
+
+  // 5. Integration regression test: Concurrency retry expires while another worker owns active lease.
+  // Assert that the active worker's generation is NOT falsely reported as failed by the retrying worker.
+  const activeWorkerGenId = "00000000-0000-0000-0000-0000000000a1";
+  const activeWorkerRow: any = {
+    id: activeWorkerGenId,
+    conversation_id: "conv-a1",
+    user_id: "guest-hash-a1",
+    client_request_id: "req-a1",
+    generation_session_id: "sess-a1",
+    status: "running",
+    execution_mode: "fast",
+    model_route: "chat",
+    execution_snapshot: { body: { message: "test-active" }, user: { sub: "guest-hash-a1", isGuest: true } },
+    started_at: new Date().toISOString(),
+    completed_at: null,
+    failed_at: null,
+    cancelled_at: null,
+    error_code: null,
+    partial_text: "In progress on active worker...",
+    tokens_generated: 15,
+    last_event_sequence: 15,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    execution_lease_id: "active-worker-lease-id",
+    execution_lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+    recovery_attempts: 0,
+    last_execution_error: null,
+  };
+
+  const activeWorkerDb: any = {
+    rpc: async (name: string) => {
+      if (name === "claim_chat_generation_execution") {
+        return { data: null, error: { code: "55P03", message: "Guest generation concurrency limit reached" } };
+      }
+      return { data: null, error: null };
+    },
+    from: () => ({
+      select: () => ({
+        eq: (_f1: string, v1: string) => ({
+          eq: (_f2: string, v2: string) => ({
+            maybeSingle: async () => ({
+              data: (activeWorkerRow.id === v1 && activeWorkerRow.user_id === v2) ? activeWorkerRow : null,
+              error: null,
+            }),
+          }),
+          maybeSingle: async () => ({
+            data: activeWorkerRow.id === v1 ? activeWorkerRow : null,
+            error: null,
+          }),
+        }),
+      }),
+      update: (payload: any) => {
+        let matches = true;
+        const builder: any = {
+          eq: (field: string, val: any) => { if (activeWorkerRow[field] !== val) matches = false; return builder; },
+          in: (field: string, vals: any[]) => { if (!vals.includes(activeWorkerRow[field])) matches = false; return builder; },
+          or: () => {
+            const exp = activeWorkerRow.execution_lease_expires_at ? Date.parse(activeWorkerRow.execution_lease_expires_at) : 0;
+            if (activeWorkerRow.execution_lease_id && exp > Date.now()) matches = false;
+            return builder;
+          },
+          select: () => builder,
+          maybeSingle: async () => matches ? { data: Object.assign(activeWorkerRow, payload), error: null } : { data: null, error: null },
+        };
+        return builder;
+      },
+    }),
+  };
+
+  const retryingTask = chatGenerationTaskCoordinator.start({
+    generationId: activeWorkerGenId,
+    conversationId: "conv-a1",
+    userId: "guest-hash-a1",
+    clientRequestId: "req-a1",
+    generationSessionId: "sess-a1",
+    userDb: activeWorkerDb,
+    generation: activeWorkerRow,
+    liveExecutionSnapshot: activeWorkerRow.execution_snapshot,
+  });
+
+  await runGeneration(activeWorkerGenId);
+  let waitCountA = 0;
+  while (!retryingTask.terminal && waitCountA < 60) {
+    await new Promise((r) => setTimeout(r, 10));
+    waitCountA += 1;
+  }
+
+  // Active worker's generation in DB must remain running and unfailed
+  assert.equal(activeWorkerRow.status, "running", "Active worker's generation must remain running in DB");
+  assert.equal(activeWorkerRow.error_code, null, "Active worker's error_code must remain null");
+  assert.equal(activeWorkerRow.failed_at, null, "Active worker's failed_at must remain null");
+  assert.notEqual(retryingTask.status, "failed", "Retrying worker must NOT report active worker's generation as failed");
+
+  // 6. Regression test: Reconnect with nonzero event cursor after in-memory coordinator loss
+  // Causes concurrency-timeout failure, removes in-memory task, reconnects with nonzero event cursor,
+  // and asserts that the subscriber receives a failed terminal state—NOT completed.
+  (chatGenerationTaskCoordinator as any).tasks.delete(genId2);
+  assert.equal(chatGenerationTaskCoordinator.has(genId2), false);
+
+  class MockSseResponse extends EventEmitter {
+    statusCode = 200;
+    headersSent = false;
+    writableEnded = false;
+    private readonly headers = new Map<string, string>();
+    public frames: string[] = [];
+
+    status(code: number) { this.statusCode = code; return this; }
+    setHeader(name: string, value: string | number | readonly string[]) {
+      this.headers.set(name.toLowerCase(), Array.isArray(value) ? value.join(", ") : String(value));
+      return this;
+    }
+    getHeader(name: string) { return this.headers.get(name.toLowerCase()); }
+    flushHeaders() { this.headersSent = true; }
+    write(chunk: unknown) {
+      if (this.writableEnded) return false;
+      this.headersSent = true;
+      this.frames.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk ?? ""));
+      return true;
+    }
+    end(chunk?: unknown) {
+      if (this.writableEnded) return this;
+      if (chunk !== undefined) this.frames.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk ?? ""));
+      this.writableEnded = true;
+      this.emit("finish");
+      this.emit("close");
+      return this;
+    }
+  }
+
+  const reconnectRes = new MockSseResponse();
+  const reconnectContext = {
+    userId: "guest-hash-d2",
+    userDb: userDb2,
+    generation: genRow2,
+    conversationId: "conv-d2",
+  };
+
+  // Reconnect with nonzero event cursor: afterSequence = 1
+  openGenerationSubscription(reconnectRes as unknown as Response, genId2, reconnectContext, 1);
+
+  // Allow async snapshot and done emission
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.ok(reconnectRes.frames.length >= 2, "Must receive terminal failure frame and [DONE] frame on nonzero cursor reconnect");
+  const failureFrameStr = reconnectRes.frames.find((f) =>
+    (f.includes('"type":"generation_failed"') || f.includes('"type":"generation_snapshot"')) &&
+    f.includes('"status":"failed"')
+  );
+  assert.ok(failureFrameStr, "Nonzero cursor reconnect must emit terminal failure event before closing");
+  const parsedFailure = JSON.parse(failureFrameStr.replace(/^data:\s*/, "").trim());
+  assert.equal(parsedFailure.status, "failed", "Reconnected event status must be failed");
+  assert.equal(parsedFailure.error_code, "generation_concurrency_timeout", "Event must contain generation_concurrency_timeout");
+
+  const doneFrameStr = reconnectRes.frames.find((f) => f.includes("[DONE]"));
+  assert.ok(doneFrameStr, "Stream must conclude with [DONE]");
+
+  // Verify that frontend lifecycle processing receives failed terminal state and never completed
+  let frontendDoneCalled = false;
+  let frontendErrorReceived: any = null;
+  const mockFrontendEntry = {
+    generationId: genId2,
+    status: "queued",
+    deliveredText: "",
+    responseBuffer: "",
+    tokensReceived: true, // Nonzero cursor: tokens received prior to disconnect
+    lastSequence: 1,
+    terminal: false,
+    error: null as any,
+    callbacks: {
+      onDone: () => { frontendDoneCalled = true; },
+      onError: (err: any) => { frontendErrorReceived = err; },
+    },
+  };
+
+  for (const frame of reconnectRes.frames) {
+    const lines = frame.split("\n");
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const payload = line.slice(6).trim();
+      if (payload === "[DONE]") {
+        mockFrontendEntry.terminal = true;
+        if (mockFrontendEntry.status !== "failed" && mockFrontendEntry.status !== "cancelled") {
+          mockFrontendEntry.status = "completed";
+          mockFrontendEntry.callbacks.onDone?.();
+        }
+      } else {
+        const ev = JSON.parse(payload);
+        if (ev.type === "generation_failed" || ev.type === "generation_snapshot") {
+          mockFrontendEntry.status = ev.status;
+          if (ev.status === "failed") {
+            mockFrontendEntry.terminal = true;
+            const err = Object.assign(new Error(ev.error_code || "Generation failed"), { code: ev.error_code });
+            mockFrontendEntry.error = err;
+            mockFrontendEntry.callbacks.onError?.(err);
+          }
+        }
+      }
+    }
+  }
+
+  assert.equal(mockFrontendEntry.status, "failed", "Frontend status must be failed");
+  assert.equal(mockFrontendEntry.terminal, true, "Frontend entry must be terminal");
+  assert.equal(mockFrontendEntry.error?.code, "generation_concurrency_timeout");
+  assert.equal(frontendErrorReceived?.code, "generation_concurrency_timeout");
+  assert.equal(frontendDoneCalled, false, "Frontend onDone must NOT be called for failed generation");
 
   // Restore environment variables
   delete process.env.SENTIQ_CONCURRENCY_RETRY_MS;
