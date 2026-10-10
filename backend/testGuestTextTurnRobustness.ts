@@ -549,6 +549,67 @@ test("Requirement D: Production runGeneration() handles 55P03 rejection, genuine
   assert.equal(overwriteAttempt2.data, null, "Must refuse to overwrite completed generation");
   assert.equal(completedGenRow.status, "completed", "Completed generation status must remain completed");
 
+  // 4b. Refusal to overwrite original error code / timestamp of already failed row when allowAlreadyFailed is true
+  const alreadyFailedRow: any = {
+    id: "00000000-0000-0000-0000-0000000000c3",
+    user_id: "guest-hash-c3",
+    status: "failed",
+    execution_lease_id: null,
+    execution_lease_expires_at: null,
+    error_code: "provider_quota_exceeded",
+    failed_at: "2026-10-10T11:22:33.444Z",
+    last_event_sequence: 3,
+  };
+  const mockAlreadyFailedDb: any = {
+    from: () => ({
+      select: () => ({
+        eq: (_f1: string, v1: string) => ({
+          eq: (_f2: string, v2: string) => ({
+            maybeSingle: async () => ({
+              data: (alreadyFailedRow.id === v1 && alreadyFailedRow.user_id === v2) ? { ...alreadyFailedRow } : null,
+              error: null,
+            }),
+          }),
+          maybeSingle: async () => ({
+            data: alreadyFailedRow.id === v1 ? { ...alreadyFailedRow } : null,
+            error: null,
+          }),
+        }),
+      }),
+      update: (payload: any) => {
+        let matches = true;
+        const builder: any = {
+          eq: (field: string, val: any) => { if (alreadyFailedRow[field] !== val) matches = false; return builder; },
+          in: (field: string, vals: any[]) => { if (!vals.includes(alreadyFailedRow[field])) matches = false; return builder; },
+          or: () => builder,
+          select: () => builder,
+          maybeSingle: async () => {
+            if (matches) {
+              Object.assign(alreadyFailedRow, payload);
+              return { data: { ...alreadyFailedRow }, error: null };
+            }
+            return { data: null, error: null };
+          },
+        };
+        return builder;
+      },
+    }),
+  };
+  const failReconcileResult = await markChatGenerationFailedGuarded(mockAlreadyFailedDb, {
+    userId: "guest-hash-c3",
+    generationId: "00000000-0000-0000-0000-0000000000c3",
+    errorCode: "generation_concurrency_timeout",
+    allowAlreadyFailed: true,
+    lastEventSequence: 7,
+  });
+  assert.ok(failReconcileResult.data, "Must return reconciled row for already-failed generation");
+  assert.equal(failReconcileResult.data.status, "failed");
+  assert.equal(failReconcileResult.data.error_code, "provider_quota_exceeded", "Original error_code must be preserved");
+  assert.equal(failReconcileResult.data.failed_at, "2026-10-10T11:22:33.444Z", "Original failed_at must be preserved");
+  assert.equal(failReconcileResult.data.last_event_sequence, 7, "Event sequence must be reconciled");
+  assert.equal(alreadyFailedRow.error_code, "provider_quota_exceeded", "Underlying row error_code must NOT be overwritten");
+  assert.equal(alreadyFailedRow.failed_at, "2026-10-10T11:22:33.444Z", "Underlying row failed_at must NOT be overwritten");
+
   // 5. Integration regression test: Concurrency retry expires while another worker owns active lease.
   // Assert that the active worker's generation is NOT falsely reported as failed by the retrying worker.
   const activeWorkerGenId = "00000000-0000-0000-0000-0000000000a1";
@@ -735,6 +796,124 @@ test("Requirement D: Production runGeneration() handles 55P03 rejection, genuine
   assert.equal(staleWorkerRow.status, "failed", "Durable DB row for stale generation must transition to failed");
   assert.equal(staleWorkerRow.error_code, "generation_concurrency_timeout", "Durable error_code must be generation_concurrency_timeout");
   assert.ok(staleWorkerRow.failed_at, "Durable failed_at timestamp must be set");
+
+  // 5c. Integration regression test: Concurrent provider failure occurring between initial database read and guarded update.
+  // Simulates another worker transitioning generation to 'failed' with provider error code and timestamp
+  // after the initial read but before the guarded update.
+  // Asserts that the final durable status remains failed and the original error code and timestamp are preserved.
+  const concurrentFailGenId = "00000000-0000-0000-0000-0000000000f1";
+  const providerErrorCode = "provider_quota_exceeded";
+  const originalFailedAtTimestamp = "2026-10-10T12:34:56.789Z";
+  let initialReadCompleted = false;
+
+  const concurrentFailRow: any = {
+    id: concurrentFailGenId,
+    conversation_id: "conv-f1",
+    user_id: "guest-hash-f1",
+    client_request_id: "req-f1",
+    generation_session_id: "sess-f1",
+    status: "queued",
+    execution_mode: "fast",
+    model_route: "chat",
+    execution_snapshot: { body: { message: "test-concurrent-fail" }, user: { sub: "guest-hash-f1", isGuest: true } },
+    started_at: new Date(Date.now() - 30_000).toISOString(),
+    completed_at: null,
+    failed_at: null,
+    cancelled_at: null,
+    error_code: null,
+    partial_text: "Provider text stream...",
+    tokens_generated: 4,
+    last_event_sequence: 4,
+    created_at: new Date(Date.now() - 30_000).toISOString(),
+    updated_at: new Date(Date.now() - 30_000).toISOString(),
+    execution_lease_id: null,
+    execution_lease_expires_at: null,
+    recovery_attempts: 0,
+    last_execution_error: null,
+  };
+
+  const concurrentFailDb: any = {
+    rpc: async (name: string) => {
+      if (name === "claim_chat_generation_execution") {
+        return { data: null, error: { code: "55P03", message: "Guest generation concurrency limit reached" } };
+      }
+      return { data: null, error: null };
+    },
+    from: (_table: string) => ({
+      select: () => ({
+        eq: (_f1: string, v1: string) => ({
+          eq: (_f2: string, v2: string) => ({
+            maybeSingle: async () => {
+              if (concurrentFailRow.id !== v1 || concurrentFailRow.user_id !== v2) return { data: null, error: null };
+              // First select is the initial read when retries are exhausted (line 206)
+              if (!initialReadCompleted) {
+                initialReadCompleted = true;
+                const snapshotBeforeFail = { ...concurrentFailRow };
+                // Simulate race: concurrent worker transitions generation to failed right after initial read
+                concurrentFailRow.status = "failed";
+                concurrentFailRow.error_code = providerErrorCode;
+                concurrentFailRow.failed_at = originalFailedAtTimestamp;
+                concurrentFailRow.updated_at = originalFailedAtTimestamp;
+                return { data: snapshotBeforeFail, error: null };
+              }
+              return { data: { ...concurrentFailRow }, error: null };
+            },
+          }),
+          maybeSingle: async () => ({
+            data: concurrentFailRow.id === v1 ? { ...concurrentFailRow } : null,
+            error: null,
+          }),
+        }),
+      }),
+      update: (payload: any) => {
+        let matches = true;
+        const builder: any = {
+          eq: (field: string, val: any) => { if (concurrentFailRow[field] !== val) matches = false; return builder; },
+          in: (field: string, vals: any[]) => { if (!vals.includes(concurrentFailRow[field])) matches = false; return builder; },
+          or: () => {
+            const exp = concurrentFailRow.execution_lease_expires_at ? Date.parse(concurrentFailRow.execution_lease_expires_at) : 0;
+            if (concurrentFailRow.execution_lease_id && exp > Date.now()) matches = false;
+            return builder;
+          },
+          select: () => builder,
+          maybeSingle: async () => {
+            if (matches) {
+              Object.assign(concurrentFailRow, payload);
+              return { data: { ...concurrentFailRow }, error: null };
+            }
+            return { data: null, error: null };
+          },
+        };
+        return builder;
+      },
+    }),
+  };
+
+  const concurrentFailTask = chatGenerationTaskCoordinator.start({
+    generationId: concurrentFailGenId,
+    conversationId: "conv-f1",
+    userId: "guest-hash-f1",
+    clientRequestId: "req-f1",
+    generationSessionId: "sess-f1",
+    userDb: concurrentFailDb,
+    generation: concurrentFailRow,
+    liveExecutionSnapshot: concurrentFailRow.execution_snapshot,
+  });
+
+  await runGeneration(concurrentFailGenId);
+  let waitCountF = 0;
+  while (!concurrentFailTask.terminal && waitCountF < 60) {
+    await new Promise((r) => setTimeout(r, 10));
+    waitCountF += 1;
+  }
+
+  // Assert that final durable status remains failed and that the original provider error code and timestamp are preserved
+  assert.equal(concurrentFailRow.status, "failed", "Durable DB row must remain failed");
+  assert.equal(concurrentFailRow.error_code, providerErrorCode, "Original provider error code must be preserved, NOT overwritten with generation_concurrency_timeout");
+  assert.equal(concurrentFailRow.failed_at, originalFailedAtTimestamp, "Original failed_at timestamp must be preserved");
+  assert.equal(concurrentFailTask.terminal, true, "Task must reach terminal state");
+  assert.equal(concurrentFailTask.status, "failed", "Task status must be failed");
+  assert.equal(concurrentFailTask.lastErrorCode, providerErrorCode, "Task coordinator must reflect the preserved provider error code");
 
   // 6. Regression test: Reconnect with nonzero event cursor after in-memory coordinator loss
   // Causes concurrency-timeout failure, removes in-memory task, reconnects with nonzero event cursor,

@@ -251,7 +251,10 @@ export async function runGeneration(generationId: string): Promise<void> {
                 }).catch(() => null);
 
                 if (guardedResult?.data) {
-                  await chatGenerationTaskCoordinator.failed(generation.id, "generation_concurrency_timeout", { skipDbUpdate: true });
+                  task.generation = guardedResult.data;
+                  task.status = "failed";
+                  const resolvedErrorCode = guardedResult.data.error_code || "generation_concurrency_timeout";
+                  await chatGenerationTaskCoordinator.failed(generation.id, resolvedErrorCode, { skipDbUpdate: true });
                   return;
                 }
 

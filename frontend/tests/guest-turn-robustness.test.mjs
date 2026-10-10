@@ -509,6 +509,47 @@ assert.ok(typeof subscribeUntilTerminal === "function", "subscribeUntilTerminal 
   assert.equal(entryBareDoneUnconfirmed.terminal, true, "Entry must be terminal");
 }
 
+// Test K: Direct generation_cancelled SSE event invokes onCancelled exactly once and never onDone
+{
+  let onDoneCalled = false;
+  let onCancelledCount = 0;
+
+  const entryDirectCancelled = createGenerationEntry({
+    generationId: "gen-runtime-direct-cancelled-event",
+    tokensReceived: true,
+    lastSequence: 2,
+    status: "running",
+    callbacks: {
+      onDone: () => { onDoneCalled = true; },
+      onCancelled: () => { onCancelledCount += 1; },
+    },
+  });
+
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(
+        'data: {"type":"generation_cancelled","generation_id":"gen-runtime-direct-cancelled-event","status":"cancelled","sequence":3}\n\n'
+      ));
+      controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+      controller.close();
+    },
+  });
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    body: stream,
+  });
+
+  await subscribeOnce(entryDirectCancelled);
+
+  assert.equal(entryDirectCancelled.status, "cancelled", "Final status must be cancelled");
+  assert.equal(entryDirectCancelled.terminal, true, "Entry must be terminal");
+  assert.equal(entryDirectCancelled.cancelled, true, "Cancelled flag must be true");
+  assert.equal(onCancelledCount, 1, "onCancelled callback must be invoked exactly once");
+  assert.equal(onDoneCalled, false, "onDone must NEVER be called on direct generation_cancelled event");
+}
+
 
 // ============================================================================
 // 3. Behavioral Tests for Stream Interruption Handling in sendMessageStream

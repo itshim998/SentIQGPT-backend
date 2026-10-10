@@ -491,6 +491,10 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         entry.cancelled = true;
         entry.completedAt = new Date().toISOString();
         activeGenerations.delete(entry.generationId);
+        if (!entry.cancelledDispatched) {
+          entry.cancelledDispatched = true;
+          entry.callbacks.onCancelled?.();
+        }
         if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
         pruneTerminalEntryCallbacks(entry);
         break;
@@ -734,7 +738,10 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
               entry.callbacks.onDone?.();
             } else if (status === "cancelled") {
               entry.cancelled = true;
-              entry.callbacks.onCancelled?.();
+              if (!entry.cancelledDispatched) {
+                entry.cancelledDispatched = true;
+                entry.callbacks.onCancelled?.();
+              }
             } else {
               const err = new Error(String(data?.error_code || "generation_failed"));
               err.code = data?.error_code || "generation_failed";
@@ -782,7 +789,10 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       entry.terminal = true;
       activeGenerations.delete(entry.generationId);
       if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
-      entry.callbacks.onCancelled?.();
+      if (!entry.cancelledDispatched) {
+        entry.cancelledDispatched = true;
+        entry.callbacks.onCancelled?.();
+      }
       pruneTerminalEntryCallbacks(entry);
       return { cancelled: true };
     }

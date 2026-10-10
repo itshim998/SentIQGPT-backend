@@ -229,7 +229,6 @@ export async function markChatGenerationFailedGuarded(
   const allowedStatuses = [
     ...baseStatuses,
     ...(args.allowStaleStatuses !== false ? staleStatuses : []),
-    ...(args.allowAlreadyFailed ? ["failed"] : []),
   ];
 
   if (typeof query.in === "function") {
@@ -243,7 +242,73 @@ export async function markChatGenerationFailedGuarded(
   }
 
   const result = await (typeof query.maybeSingle === "function" ? query.maybeSingle() : query);
-  return { data: result?.data ? normalizeRow(result.data) : null, error: result?.error ?? null };
+  if (result?.data) {
+    return { data: normalizeRow(result.data), error: null };
+  }
+
+  if (args.allowAlreadyFailed) {
+    // If the generation was already transitioned to 'failed', reconcile state and event sequence
+    // WITHOUT overwriting original error_code or failed_at
+    let existingResult: any = null;
+    try {
+      const fromObj = typeof userDb.from === "function" ? userDb.from("chat_generations") : null;
+      if (fromObj && typeof fromObj.select === "function") {
+        let selectQuery = fromObj.select(CHAT_GENERATION_COLUMNS).eq("id", generationId).eq("user_id", userId);
+        existingResult = await (typeof selectQuery.maybeSingle === "function" ? selectQuery.maybeSingle() : selectQuery);
+      }
+    } catch {
+      existingResult = null;
+    }
+
+    const existing = existingResult?.data ? normalizeRow(existingResult.data) : null;
+    if (existing && existing.status === "failed") {
+      const reconcilePayload: Record<string, unknown> = {
+        updated_at: nowIso,
+      };
+      let needsReconcile = false;
+      if (Number.isFinite(args.lastEventSequence)) {
+        const nextSequence = Math.max(0, Math.floor(args.lastEventSequence!));
+        if (nextSequence > (existing.last_event_sequence ?? 0)) {
+          reconcilePayload.last_event_sequence = nextSequence;
+          needsReconcile = true;
+        }
+      }
+      if (typeof args.partialText === "string" && (!existing.partial_text || args.partialText.length > existing.partial_text.length)) {
+        reconcilePayload.partial_text = args.partialText;
+        needsReconcile = true;
+      }
+      if (Number.isFinite(args.tokensGenerated)) {
+        const nextTokens = Math.max(0, Math.floor(args.tokensGenerated!));
+        if (nextTokens > (existing.tokens_generated ?? 0)) {
+          reconcilePayload.tokens_generated = nextTokens;
+          needsReconcile = true;
+        }
+      }
+
+      if (needsReconcile) {
+        try {
+          let updateQuery = userDb
+            .from("chat_generations")
+            .update(reconcilePayload)
+            .eq("id", generationId)
+            .eq("user_id", userId)
+            .eq("status", "failed");
+          if (typeof updateQuery.select === "function") {
+            updateQuery = updateQuery.select(CHAT_GENERATION_COLUMNS);
+          }
+          const reconcileRes = await (typeof updateQuery.maybeSingle === "function" ? updateQuery.maybeSingle() : updateQuery);
+          if (reconcileRes?.data) {
+            return { data: normalizeRow(reconcileRes.data), error: null };
+          }
+        } catch {
+          // If update fails, still return existing row
+        }
+      }
+      return { data: existing, error: null };
+    }
+  }
+
+  return { data: null, error: result?.error ?? null };
 }
 export async function requestChatGenerationCancel(userDb: any, userId: string, generationId: string) { const result = await userDb.rpc("request_chat_generation_cancel", { p_user_id: normalizeRequired(userId, "userId"), p_generation_id: normalizeRequired(generationId, "generationId") }); const row = Array.isArray(result.data) ? result.data[0] : result.data; return { data: row ? normalizeRow(row) : null, error: result.error }; }
 export async function cancelChatGeneration(userDb: any, userId: string, generationId: string) { const result = await userDb.rpc("cancel_chat_generation", { p_user_id: normalizeRequired(userId, "userId"), p_generation_id: normalizeRequired(generationId, "generationId") }); const row = Array.isArray(result.data) ? result.data[0] : result.data; return { data: row ? normalizeRow(row) : null, error: result.error }; }

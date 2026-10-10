@@ -286,7 +286,7 @@ class ChatGenerationTaskCoordinator {
       } else if (task.userDb) {
         await this.enqueue(task, async () => {
           try {
-            await markChatGenerationFailedGuarded(task.userDb, {
+            const guarded = await markChatGenerationFailedGuarded(task.userDb, {
               userId: task.userId,
               generationId: task.generationId,
               errorCode: task.lastErrorCode || errorCode || "generation_failed",
@@ -295,6 +295,13 @@ class ChatGenerationTaskCoordinator {
               lastEventSequence: task.sequence,
               allowAlreadyFailed: true,
             });
+            if (guarded?.data?.error_code && guarded.data.error_code !== task.lastErrorCode) {
+              task.lastErrorCode = guarded.data.error_code;
+              event.error_code = guarded.data.error_code;
+            }
+            if (guarded?.data) {
+              task.generation = guarded.data;
+            }
           } catch (error) {
             console.warn(`[GenerationEvents] guarded failed persist failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`);
           }
