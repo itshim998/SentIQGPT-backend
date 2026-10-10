@@ -3,6 +3,7 @@ import {
   claimChatGenerationExecution,
   getChatGenerationById,
   releaseChatGenerationExecutionLease,
+  markChatGenerationFailedGuarded,
   MAX_ACTIVE_GENERATIONS_PER_USER,
   type ChatGenerationRow,
 } from "./chatGenerationService";
@@ -196,6 +197,16 @@ export async function runGeneration(generationId: string): Promise<void> {
             task.concurrencyRetries = (task.concurrencyRetries ?? 0) + 1;
             const maxRetries = getMaxConcurrencyRetries();
             if (task.concurrencyRetries > maxRetries) {
+              if (userDb) {
+                await markChatGenerationFailedGuarded(userDb, {
+                  userId: generation.user_id,
+                  generationId: generation.id,
+                  errorCode: "generation_concurrency_timeout",
+                  partialText: task.partialText,
+                  tokensGenerated: task.tokensGenerated,
+                  lastEventSequence: task.sequence,
+                }).catch(() => undefined);
+              }
               await chatGenerationTaskCoordinator.failed(generation.id, "generation_concurrency_timeout");
               return;
             }

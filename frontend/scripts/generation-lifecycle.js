@@ -573,21 +573,24 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         try { reader.releaseLock(); } catch {}
       }
     } finally {
-      entry.subscription.active = false;
+      if (entry.subscription) {
+        entry.subscription.active = false;
+      }
     }
   }
 
   async function pollDurableStatusUntilTerminal(entry, signal) {
-    const pollIntervalMs = 1500;
+    const pollIntervalMs = Number(window.__SENTIQ_POLL_INTERVAL_MS) || 1500;
     const maxPollAttemptsPerCycle = 20;
     const maxTotalPollAttempts = 80;
     let cycleAttempts = 0;
-    let totalAttempts = 0;
+    let totalAttempts = Number(entry.totalPollAttempts || 0);
 
     while (!entry.terminal && !entry.cancelled && !entry.cancelRequested) {
       if (signal?.aborted) return { detached: true };
       cycleAttempts += 1;
       totalAttempts += 1;
+      entry.totalPollAttempts = totalAttempts;
 
       try {
         const headers = await buildAuthHeaders();
@@ -625,6 +628,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
             entry.responseBuffer = data.partial_text;
             entry.tokensReceived = true;
             totalAttempts = 0;
+            entry.totalPollAttempts = 0;
             entry.callbacks.onToken?.(newText);
           }
           if (["completed", "failed", "cancelled"].includes(status)) {
@@ -678,40 +682,54 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
 
       await wait(pollIntervalMs, signal);
     }
+
+    if (entry.cancelRequested || entry.cancelled) {
+      entry.cancelled = true;
+      entry.status = "cancelled";
+      entry.terminal = true;
+      activeGenerations.delete(entry.generationId);
+      if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+      entry.callbacks.onCancelled?.();
+      pruneTerminalEntryCallbacks(entry);
+      return { cancelled: true };
+    }
     return { cancelled: entry.cancelled };
   }
 
   async function subscribeUntilTerminal(entry, signal) {
+    const reconnectBaseMs = Number(window.__SENTIQ_RECONNECT_BASE_MS) || RECONNECT_BASE_MS;
+    const reconnectMaxMs = Number(window.__SENTIQ_RECONNECT_MAX_MS) || RECONNECT_MAX_MS;
     while (!entry.terminal && !entry.cancelled && !entry.cancelRequested) {
       if (signal?.aborted) return { detached: true };
       try {
         await subscribeOnce(entry, signal);
         if (entry.terminal || entry.cancelled || entry.cancelRequested) break;
-        if (signal?.aborted) return { detached: true };
+        if (!entry.subscription) entry.subscription = { active: false, reconnectAttempts: 0, signal: null };
         entry.subscription.reconnectAttempts += 1;
         console.warn(`[GenerationLifecycle] Stream closed before terminal state; reconnecting generation=${entry.generationId} endpoint=/api/chat/generations/${entry.generationId}/events attempt=${entry.subscription.reconnectAttempts}`);
         if (entry.subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
           const pollResult = await pollDurableStatusUntilTerminal(entry, signal);
           if (entry.terminal || entry.cancelled || entry.cancelRequested) return pollResult;
-          if (pollResult?.resumeSse) {
+          if (pollResult?.resumeSse && entry.subscription) {
             entry.subscription.reconnectAttempts = 0;
           }
         }
-        await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, Math.max(0, entry.subscription.reconnectAttempts - 1))), signal);
+        await wait(Math.min(reconnectMaxMs, reconnectBaseMs * Math.pow(2, Math.max(0, entry.subscription.reconnectAttempts - 1))), signal);
       } catch (error) {
         if (error?.name === "AbortError" || signal?.aborted) return { detached: true };
-        if (entry.cancelRequested) return { cancelled: true };
+        if (entry.terminal || entry.cancelRequested) return { cancelled: Boolean(entry.cancelled), completed: entry.terminal && entry.status === "completed" };
+        if (!entry.subscription) entry.subscription = { active: false, reconnectAttempts: 0, signal: null };
         entry.subscription.reconnectAttempts += 1;
         const statusOrErr = error?.status ? `HTTP ${error.status}` : (error?.message || "stream_error");
         console.warn(`[GenerationLifecycle] Subscription error generation=${entry.generationId} endpoint=/api/chat/generations/${entry.generationId}/events status=${statusOrErr} attempt=${entry.subscription.reconnectAttempts}`);
         if (entry.subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
           const pollResult = await pollDurableStatusUntilTerminal(entry, signal);
           if (entry.terminal || entry.cancelled || entry.cancelRequested) return pollResult;
-          if (pollResult?.resumeSse) {
+          if (pollResult?.resumeSse && entry.subscription) {
             entry.subscription.reconnectAttempts = 0;
           }
         }
-        await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, Math.max(0, entry.subscription.reconnectAttempts - 1))), signal);
+        await wait(Math.min(reconnectMaxMs, reconnectBaseMs * Math.pow(2, Math.max(0, entry.subscription.reconnectAttempts - 1))), signal);
       }
     }
 
@@ -1199,6 +1217,42 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         result[chatId] = Array.from(registry.values()).map(publicGenerationEntry);
       }
       return result;
+    },
+    pollDurableStatusUntilTerminal,
+    subscribeUntilTerminal,
+    subscribeOnce,
+    createGenerationEntry: (options = {}) => {
+      const entry = {
+        generationId: options.generationId,
+        requestId: options.requestId || null,
+        clientRequestId: options.clientRequestId || null,
+        chatId: options.chatId || "__unassigned__",
+        localChatId: options.localChatId || null,
+        conversationId: options.conversationId || options.chatId || "__unassigned__",
+        status: options.status || "queued",
+        responseBuffer: options.responseBuffer || "",
+        lastSequence: options.lastSequence || 0,
+        pendingReplayThrough: 0,
+        subscription: options.subscription || { active: false, reconnectAttempts: 0, signal: null },
+        startedAt: options.startedAt || new Date().toISOString(),
+        completedAt: null,
+        callbacks: options.callbacks || {},
+        pendingCallbacks: [],
+        readyAcknowledged: false,
+        startedDelivered: false,
+        rehydrated: false,
+        deliveredText: options.deliveredText || "",
+        tokensReceived: Boolean(options.tokensReceived),
+        structuredReceived: false,
+        interrupted: false,
+        cancelled: false,
+        cancelRequested: false,
+        terminal: false,
+        error: null,
+      };
+      registerGeneration(entry);
+      if (!entry.terminal) activeGenerations.set(entry.generationId, entry);
+      return entry;
     },
   });
 })();

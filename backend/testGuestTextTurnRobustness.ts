@@ -10,6 +10,7 @@ import { BillingRepository, BillingRepositoryError } from "./billing/billingRepo
 import { chatGenerationTaskCoordinator } from "./services/chatGenerationTaskCoordinator";
 import { runGeneration } from "./services/generationRunner";
 import { registerChatGenerationExecutor } from "./services/chatGenerationExecutor";
+import { markChatGenerationFailedGuarded, getChatGenerationById } from "./services/chatGenerationService";
 
 /**
  * Regression test suite verifying guest text generation robustness:
@@ -391,10 +392,48 @@ test("Requirement D: Production runGeneration() handles 55P03 rejection, genuine
     },
     from: () => ({
       select: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({ data: genRow2, error: null }),
+        eq: (_f1: string, v1: string) => ({
+          eq: (_f2: string, v2: string) => ({
+            maybeSingle: async () => ({
+              data: (genRow2.id === v1 && genRow2.user_id === v2) ? genRow2 : null,
+              error: null,
+            }),
+          }),
+          maybeSingle: async () => ({
+            data: genRow2.id === v1 ? genRow2 : null,
+            error: null,
+          }),
         }),
       }),
+      update: (payload: any) => {
+        let matches = true;
+        const builder: any = {
+          eq: (field: string, val: any) => {
+            if (genRow2[field] !== val) matches = false;
+            return builder;
+          },
+          in: (field: string, vals: any[]) => {
+            if (!vals.includes(genRow2[field])) matches = false;
+            return builder;
+          },
+          or: () => {
+            const exp = genRow2.execution_lease_expires_at ? Date.parse(genRow2.execution_lease_expires_at) : 0;
+            if (genRow2.execution_lease_id && exp > Date.now()) {
+              matches = false;
+            }
+            return builder;
+          },
+          select: () => builder,
+          maybeSingle: async () => {
+            if (matches) {
+              Object.assign(genRow2, payload);
+              return { data: genRow2, error: null };
+            }
+            return { data: null, error: null };
+          },
+        };
+        return builder;
+      },
     }),
   };
 
@@ -422,6 +461,90 @@ test("Requirement D: Production runGeneration() handles 55P03 rejection, genuine
   assert.equal(task2.status, "failed", "Task failed after exhausting concurrency retries");
   assert.equal(task2.lastErrorCode, "generation_concurrency_timeout", "Failure code is generation_concurrency_timeout");
   assert.equal(executions2, 0, "Execution was never started when concurrency remained exhausted");
+
+  // 1. Assert durable database status and error code
+  assert.equal(genRow2.status, "failed", "Durable database row status must be failed");
+  assert.equal(genRow2.error_code, "generation_concurrency_timeout", "Durable error_code must be generation_concurrency_timeout");
+  assert.ok(genRow2.failed_at, "Durable failed_at timestamp must be set");
+
+  // 2. Simulate losing the in-memory coordinator (server restart / process crash)
+  (chatGenerationTaskCoordinator as any).tasks.delete(genId2);
+  assert.equal(chatGenerationTaskCoordinator.has(genId2), false, "In-memory coordinator state is lost");
+
+  // 3. Verify that reconnect checks durable status and does not restart the failed generation
+  const durableCheck = await getChatGenerationById(userDb2, "guest-hash-d2", genId2);
+  assert.equal(durableCheck.data?.status, "failed", "Durable lookup returns failed status");
+  assert.equal(durableCheck.data?.error_code, "generation_concurrency_timeout");
+
+  const restartable = !chatGenerationTaskCoordinator.has(genId2) && !["completed", "failed", "cancelled"].includes(durableCheck.data?.status as any);
+  assert.equal(restartable, false, "Failed generation must NOT be restartable on reconnect");
+
+  // 4. Refusal to overwrite: A claimed generation or already completed generation must not be overwritten
+  const claimedGenRow: any = {
+    id: "00000000-0000-0000-0000-0000000000c1",
+    user_id: "guest-hash-c1",
+    status: "running",
+    execution_lease_id: "active-lease-id",
+    execution_lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+    error_code: null,
+  };
+  const mockClaimedDb: any = {
+    from: () => ({
+      update: (payload: any) => {
+        let matches = true;
+        const builder: any = {
+          eq: (field: string, val: any) => { if (claimedGenRow[field] !== val) matches = false; return builder; },
+          in: (field: string, vals: any[]) => { if (!vals.includes(claimedGenRow[field])) matches = false; return builder; },
+          or: () => {
+            const exp = claimedGenRow.execution_lease_expires_at ? Date.parse(claimedGenRow.execution_lease_expires_at) : 0;
+            if (claimedGenRow.execution_lease_id && exp > Date.now()) matches = false;
+            return builder;
+          },
+          select: () => builder,
+          maybeSingle: async () => matches ? { data: Object.assign(claimedGenRow, payload), error: null } : { data: null, error: null },
+        };
+        return builder;
+      },
+    }),
+  };
+  const overwriteAttempt1 = await markChatGenerationFailedGuarded(mockClaimedDb, {
+    userId: "guest-hash-c1",
+    generationId: "00000000-0000-0000-0000-0000000000c1",
+    errorCode: "generation_concurrency_timeout",
+  });
+  assert.equal(overwriteAttempt1.data, null, "Must refuse to overwrite actively claimed generation");
+  assert.equal(claimedGenRow.status, "running", "Claimed generation status must remain running");
+
+  const completedGenRow: any = {
+    id: "00000000-0000-0000-0000-0000000000c2",
+    user_id: "guest-hash-c2",
+    status: "completed",
+    execution_lease_id: null,
+    execution_lease_expires_at: null,
+    error_code: null,
+  };
+  const mockCompletedDb: any = {
+    from: () => ({
+      update: (payload: any) => {
+        let matches = true;
+        const builder: any = {
+          eq: (field: string, val: any) => { if (completedGenRow[field] !== val) matches = false; return builder; },
+          in: (field: string, vals: any[]) => { if (!vals.includes(completedGenRow[field])) matches = false; return builder; },
+          or: () => builder,
+          select: () => builder,
+          maybeSingle: async () => matches ? { data: Object.assign(completedGenRow, payload), error: null } : { data: null, error: null },
+        };
+        return builder;
+      },
+    }),
+  };
+  const overwriteAttempt2 = await markChatGenerationFailedGuarded(mockCompletedDb, {
+    userId: "guest-hash-c2",
+    generationId: "00000000-0000-0000-0000-0000000000c2",
+    errorCode: "generation_concurrency_timeout",
+  });
+  assert.equal(overwriteAttempt2.data, null, "Must refuse to overwrite completed generation");
+  assert.equal(completedGenRow.status, "completed", "Completed generation status must remain completed");
 
   // Restore environment variables
   delete process.env.SENTIQ_CONCURRENCY_RETRY_MS;

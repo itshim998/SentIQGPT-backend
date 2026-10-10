@@ -1,4 +1,4 @@
-import { cancelChatGeneration, type ChatGenerationRow } from "./chatGenerationService";
+import { cancelChatGeneration, markChatGenerationFailedGuarded, type ChatGenerationRow } from "./chatGenerationService";
 import { expireStaleChatGenerationSessions } from "./chatGenerationSessionService";
 import { appendChatGenerationEventFenced, listChatGenerationEvents, normalizeStoredGenerationEvent } from "./chatGenerationEventService";
 import { normalizeGenerationEventType, type CanonicalGenerationEvent } from "./generationEventTypes";
@@ -247,6 +247,21 @@ class ChatGenerationTaskCoordinator {
     if (task.userDb && task.executionLeaseId) {
       await this.enqueue(task, async () => {
         try { await this.persistEvent(task, event, eventState); } catch (error) { console.warn(`[GenerationEvents] failed persistEvent failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`); }
+      });
+    } else if (task.userDb) {
+      await this.enqueue(task, async () => {
+        try {
+          await markChatGenerationFailedGuarded(task.userDb, {
+            userId: task.userId,
+            generationId: task.generationId,
+            errorCode: task.lastErrorCode || errorCode || "generation_failed",
+            partialText: task.partialText,
+            tokensGenerated: task.tokensGenerated,
+            lastEventSequence: task.sequence,
+          });
+        } catch (error) {
+          console.warn(`[GenerationEvents] guarded failed persist failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       });
     }
     this.stopPolling(task); task.subscribers.clear(); this.scheduleCleanup(task);

@@ -190,6 +190,51 @@ export async function markChatGenerationFailed(userDb: any, args: { userId: stri
   const result = await userDb.from("chat_generations").update({ status: "failed", error_code: normalizeRequired(args.errorCode, "errorCode"), failed_at: new Date().toISOString(), ...(typeof args.partialText === "string" ? { partial_text: args.partialText } : {}), ...(Number.isFinite(args.tokensGenerated) ? { tokens_generated: Math.max(0, Math.floor(args.tokensGenerated!)) } : {}), ...(Number.isFinite(args.lastEventSequence) ? { last_event_sequence: Math.max(0, Math.floor(args.lastEventSequence!)) } : {}) }).eq("id", normalizeRequired(args.generationId, "generationId")).eq("user_id", normalizeRequired(args.userId, "userId")).select(CHAT_GENERATION_COLUMNS).maybeSingle();
   return { data: result.data ? normalizeRow(result.data) : null, error: result.error };
 }
+export async function markChatGenerationFailedGuarded(
+  userDb: any,
+  args: {
+    userId: string;
+    generationId: string;
+    errorCode: string;
+    partialText?: string;
+    tokensGenerated?: number;
+    lastEventSequence?: number;
+  }
+) {
+  const userId = normalizeRequired(args.userId, "userId");
+  const generationId = normalizeRequired(args.generationId, "generationId");
+  const errorCode = normalizeRequired(args.errorCode, "errorCode");
+  const nowIso = new Date().toISOString();
+
+  const updatePayload: Record<string, unknown> = {
+    status: "failed",
+    error_code: errorCode,
+    failed_at: nowIso,
+    updated_at: nowIso,
+  };
+  if (typeof args.partialText === "string") updatePayload.partial_text = args.partialText;
+  if (Number.isFinite(args.tokensGenerated)) updatePayload.tokens_generated = Math.max(0, Math.floor(args.tokensGenerated!));
+  if (Number.isFinite(args.lastEventSequence)) updatePayload.last_event_sequence = Math.max(0, Math.floor(args.lastEventSequence!));
+
+  let query = userDb
+    .from("chat_generations")
+    .update(updatePayload)
+    .eq("id", generationId)
+    .eq("user_id", userId);
+
+  if (typeof query.in === "function") {
+    query = query.in("status", ["queued", "recoverable"]);
+  }
+  if (typeof query.or === "function") {
+    query = query.or(`execution_lease_id.is.null,execution_lease_expires_at.is.null,execution_lease_expires_at.lte.${nowIso}`);
+  }
+  if (typeof query.select === "function") {
+    query = query.select(CHAT_GENERATION_COLUMNS);
+  }
+
+  const result = await (typeof query.maybeSingle === "function" ? query.maybeSingle() : query);
+  return { data: result?.data ? normalizeRow(result.data) : null, error: result?.error ?? null };
+}
 export async function requestChatGenerationCancel(userDb: any, userId: string, generationId: string) { const result = await userDb.rpc("request_chat_generation_cancel", { p_user_id: normalizeRequired(userId, "userId"), p_generation_id: normalizeRequired(generationId, "generationId") }); const row = Array.isArray(result.data) ? result.data[0] : result.data; return { data: row ? normalizeRow(row) : null, error: result.error }; }
 export async function cancelChatGeneration(userDb: any, userId: string, generationId: string) { const result = await userDb.rpc("cancel_chat_generation", { p_user_id: normalizeRequired(userId, "userId"), p_generation_id: normalizeRequired(generationId, "generationId") }); const row = Array.isArray(result.data) ? result.data[0] : result.data; return { data: row ? normalizeRow(row) : null, error: result.error }; }
 export const CHAT_GENERATION_CANCELLATION_INVARIANT = "SSE subscriber disconnects do not cancel chat generations; cancellation requires an explicit generation cancellation operation.";

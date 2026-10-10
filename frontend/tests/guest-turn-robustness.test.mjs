@@ -52,41 +52,70 @@ assert.match(
 );
 
 // ============================================================================
-// 2. Behavioral Tests for Polling Fallback State Machine
+// 2. Runtime Tests Invoking Production Polling & SSE-Recovery Flow
 // ============================================================================
 
-// Test: Polling fallback delivers incremental tokens and completes cleanly
-{
-  let tokenDeltas = [];
-  let doneCalled = false;
-  let pollCount = 0;
+// Setup browser DOM environment for production module execution
+if (!globalThis.window) {
+  globalThis.window = globalThis;
+}
+globalThis.window.addEventListener = () => {};
+globalThis.window.removeEventListener = () => {};
+globalThis.location = { hostname: "localhost", protocol: "http:" };
+globalThis.document = {
+  getElementById: () => null,
+  head: { appendChild: () => {} },
+  body: { appendChild: () => {} },
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  createElement: () => ({ dataset: {}, setAttribute: () => {}, classList: { add: () => {} } }),
+  documentElement: { dataset: {}, classList: { contains: () => false, add: () => {} } },
+  addEventListener: () => {},
+};
+globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+globalThis.CustomEvent = class CustomEvent { constructor(name, init) { this.name = name; this.detail = init?.detail; } };
+window.SentIQAPI = { sendMessage: () => {}, sendMessageStream: () => {} };
+window.__SENTIQ_POLL_INTERVAL_MS = 2; // Fast polling for test suite (2ms)
+window.__SENTIQ_RECONNECT_BASE_MS = 2; // Fast reconnect for test suite (2ms)
+window.__SENTIQ_RECONNECT_MAX_MS = 10;
 
-  const mockEntry = {
-    generationId: "gen-behavioral-poll-1",
-    deliveredText: "",
-    responseBuffer: "",
-    tokensReceived: false,
-    terminal: false,
-    cancelled: false,
-    cancelRequested: false,
-    status: "queued",
+await import("../scripts/generation-lifecycle.js");
+
+const {
+  pollDurableStatusUntilTerminal,
+  subscribeUntilTerminal,
+  createGenerationEntry,
+  cancelGeneration,
+} = window.SentIQGenerationLifecycle;
+
+assert.ok(typeof pollDurableStatusUntilTerminal === "function", "pollDurableStatusUntilTerminal must be exported");
+assert.ok(typeof subscribeUntilTerminal === "function", "subscribeUntilTerminal must be exported");
+
+// Test A: Production polling delivers incremental tokens and completes cleanly
+{
+  const tokenDeltas = [];
+  let doneCalled = false;
+  let fetchCount = 0;
+
+  const entry = createGenerationEntry({
+    generationId: "gen-runtime-poll-tokens",
     callbacks: {
       onToken: (delta) => tokenDeltas.push(delta),
       onDone: () => { doneCalled = true; },
-      onError: () => {},
+      onError: (err) => { throw err; },
     },
-  };
+  });
 
-  const fakeFetch = async () => {
-    pollCount += 1;
-    if (pollCount === 1) {
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    if (fetchCount === 1) {
       return {
         ok: true,
         status: 200,
         json: async () => ({ status: "generating", partial_text: "First chunk" }),
       };
     }
-    if (pollCount === 2) {
+    if (fetchCount === 2) {
       return {
         ok: true,
         status: 200,
@@ -100,99 +129,186 @@ assert.match(
     };
   };
 
-  const pollIntervalMs = 5;
-  let totalAttempts = 0;
-
-  while (!mockEntry.terminal && !mockEntry.cancelled) {
-    totalAttempts += 1;
-    const response = await fakeFetch();
-    if (response.ok) {
-      const data = await response.json();
-      const status = String(data?.status || "");
-      if (typeof data?.partial_text === "string" && data.partial_text.length > mockEntry.deliveredText.length) {
-        const newText = data.partial_text.slice(mockEntry.deliveredText.length);
-        mockEntry.deliveredText = data.partial_text;
-        mockEntry.responseBuffer = data.partial_text;
-        mockEntry.tokensReceived = true;
-        totalAttempts = 0;
-        mockEntry.callbacks.onToken?.(newText);
-      }
-      if (["completed", "failed", "cancelled"].includes(status)) {
-        mockEntry.status = status;
-        mockEntry.terminal = true;
-        if (status === "completed") mockEntry.callbacks.onDone?.();
-        break;
-      }
-    }
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
-  }
-
-  assert.equal(mockEntry.terminal, true, "Polling must transition entry to terminal state");
-  assert.equal(mockEntry.status, "completed", "Entry status must be completed");
-  assert.equal(doneCalled, true, "onDone must be called upon completed status");
-  assert.deepEqual(tokenDeltas, ["First chunk", " second chunk"], "Token deltas must be dispatched incrementally");
+  const result = await pollDurableStatusUntilTerminal(entry);
+  assert.equal(result.completed, true, "pollDurableStatusUntilTerminal must report completed: true");
+  assert.equal(entry.terminal, true, "Production polling must transition entry to terminal state");
+  assert.equal(entry.status, "completed", "Entry status must be completed");
+  assert.equal(doneCalled, true, "onDone callback must be triggered on completion");
+  assert.deepEqual(tokenDeltas, ["First chunk", " second chunk"], "Incremental tokens must be dispatched via callbacks.onToken");
+  assert.equal(entry.deliveredText, "First chunk second chunk");
+  assert.equal(entry.tokensReceived, true);
 }
 
-// Test: Polling fallback on 404 fails cleanly with generation_not_found
+// Test B: Production polling handles 404 cleanly with generation_not_found
 {
   let errorReceived = null;
-  const mockEntry404 = {
-    generationId: "gen-behavioral-404",
-    deliveredText: "",
-    tokensReceived: false,
-    terminal: false,
-    cancelled: false,
-    status: "queued",
+  const entry404 = createGenerationEntry({
+    generationId: "gen-runtime-poll-404",
+    tokensReceived: true,
     callbacks: {
       onError: (err) => { errorReceived = err; },
     },
-  };
+  });
 
-  const response404 = { status: 404, ok: false };
-  if (response404.status === 404) {
-    const err = new Error("Generation record not found.");
-    err.code = "generation_not_found";
-    mockEntry404.status = "failed";
-    mockEntry404.terminal = true;
-    mockEntry404.error = err;
-    mockEntry404.callbacks.onError?.(err);
-  }
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 404,
+    json: async () => ({ error: "Not found", code: "generation_not_found" }),
+  });
 
-  assert.equal(mockEntry404.terminal, true, "404 response must mark entry terminal");
-  assert.equal(mockEntry404.status, "failed", "Entry status must be failed");
-  assert.equal(errorReceived?.code, "generation_not_found", "Error code must be generation_not_found");
+  const result = await pollDurableStatusUntilTerminal(entry404);
+  assert.equal(result.failed, true, "Production polling must report failed: true on 404");
+  assert.equal(entry404.terminal, true, "404 must mark entry terminal");
+  assert.equal(entry404.status, "failed", "Entry status must be failed");
+  assert.equal(entry404.error?.code, "generation_not_found", "Error code must be generation_not_found");
+  assert.equal(errorReceived?.code, "generation_not_found", "onError must receive generation_not_found");
+  assert.equal(entry404.interrupted, true, "Previously received tokens mark it as interrupted");
 }
 
-// Test: Polling fallback on persistent stall terminates with generation_recovery_timeout
+// Test C: Quiet-polling returns resumeSse: true after 20 attempts, and subscribeUntilTerminal resumes SSE cleanly
+{
+  let pollAttempts = 0;
+  const entryQuiet = createGenerationEntry({
+    generationId: "gen-runtime-poll-quiet",
+  });
+
+  globalThis.fetch = async () => {
+    pollAttempts += 1;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ status: "running", partial_text: "" }),
+    };
+  };
+
+  const pollRes = await pollDurableStatusUntilTerminal(entryQuiet);
+  assert.equal(pollAttempts, 20, "Cycle must stop after 20 quiet attempts to allow SSE resume");
+  assert.equal(pollRes.resumeSse, true, "Must signal resumeSse: true");
+  assert.equal(entryQuiet.terminal, false, "Must not be terminal yet");
+
+  // Verify the integrated SSE-recovery flow through subscribeUntilTerminal:
+  // After SSE drops and quiet polling signals resumeSse, reconnectAttempts resets to 0 and SSE succeeds
+  let sseCalls = 0;
+  let pollCalls = 0;
+  let sseResumedAndSucceeded = false;
+
+  const entryRecovery = createGenerationEntry({
+    generationId: "gen-runtime-sse-recovery",
+    callbacks: {
+      onDone: () => {},
+    },
+  });
+
+  globalThis.fetch = async (url) => {
+    const urlStr = String(url);
+    if (urlStr.includes("/events")) {
+      sseCalls += 1;
+      if (sseCalls <= 9) {
+        throw new Error("SSE connection dropped");
+      }
+      sseResumedAndSucceeded = true;
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+      });
+      return {
+        ok: true,
+        status: 200,
+        body: stream,
+      };
+    }
+
+    // Polling endpoint
+    pollCalls += 1;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ status: "running", partial_text: "" }),
+    };
+  };
+
+  await subscribeUntilTerminal(entryRecovery);
+  assert.ok(pollCalls >= 20, "Polling fallback was exercised during disconnect recovery");
+  assert.equal(sseResumedAndSucceeded, true, "SSE was resumed after quiet polling and succeeded");
+  assert.equal(entryRecovery.terminal, true, "Entry reached terminal state");
+  assert.equal(entryRecovery.status, "completed", "Entry completed successfully via resumed SSE");
+}
+
+// Test D: Persistent stall without progress times out with generation_recovery_timeout
 {
   let timeoutErrorReceived = null;
-  const mockEntryTimeout = {
-    generationId: "gen-behavioral-timeout",
-    deliveredText: "",
+  const entryTimeout = createGenerationEntry({
+    generationId: "gen-runtime-poll-timeout",
     tokensReceived: false,
-    terminal: false,
-    cancelled: false,
-    status: "queued",
     callbacks: {
       onError: (err) => { timeoutErrorReceived = err; },
     },
-  };
+  });
 
-  const maxTotalPollAttempts = 5;
-  let totalAttempts = 5;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ status: "queued", partial_text: "" }),
+  });
 
-  if (totalAttempts >= maxTotalPollAttempts) {
-    const timeoutError = new Error("Generation recovery timed out before reaching a terminal state.");
-    timeoutError.code = "generation_recovery_timeout";
-    mockEntryTimeout.status = "failed";
-    mockEntryTimeout.terminal = true;
-    mockEntryTimeout.error = timeoutError;
-    mockEntryTimeout.callbacks.onError?.(timeoutError);
+  while (!entryTimeout.terminal) {
+    const res = await pollDurableStatusUntilTerminal(entryTimeout);
+    if (res.failed || entryTimeout.terminal) break;
   }
 
-  assert.equal(mockEntryTimeout.terminal, true, "Persistent poll stall must not leave entry nonterminal");
-  assert.equal(mockEntryTimeout.status, "failed", "Entry status must be failed");
-  assert.equal(timeoutErrorReceived?.code, "generation_recovery_timeout", "Must report generation_recovery_timeout");
+  assert.equal(entryTimeout.terminal, true, "Stalled poll recovery must terminate");
+  assert.equal(entryTimeout.status, "failed", "Entry status must be failed");
+  assert.equal(entryTimeout.error?.code, "generation_recovery_timeout");
+  assert.equal(timeoutErrorReceived?.code, "generation_recovery_timeout");
+}
+
+// Test E: Cancellation cleanly halts polling and dispatches onCancelled
+{
+  let cancelledCalled = false;
+  const entryCancel = createGenerationEntry({
+    generationId: "gen-runtime-poll-cancel",
+    callbacks: {
+      onCancelled: () => { cancelledCalled = true; },
+    },
+  });
+
+  let pollCount = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/cancel")) {
+      return { ok: true, status: 200, json: async () => ({ status: "cancelled" }) };
+    }
+    pollCount += 1;
+    if (pollCount === 1) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ status: "running", partial_text: "Starting..." }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ status: "cancelled" }),
+    };
+  };
+
+  const pollPromise = pollDurableStatusUntilTerminal(entryCancel);
+  await cancelGeneration("gen-runtime-poll-cancel");
+  await pollPromise;
+
+  assert.equal(entryCancel.cancelled, true, "Entry must be marked cancelled");
+  assert.equal(entryCancel.terminal, true, "Entry must be marked terminal");
+  assert.equal(entryCancel.status, "cancelled", "Entry status must be cancelled");
+  assert.equal(cancelledCalled, true, "onCancelled callback must be invoked");
+
+  // AbortSignal detachment
+  const entryAbort = createGenerationEntry({ generationId: "gen-runtime-abort" });
+  const controller = new AbortController();
+  controller.abort();
+  const abortRes = await pollDurableStatusUntilTerminal(entryAbort, controller.signal);
+  assert.equal(abortRes.detached, true, "Aborted signal returns detached: true");
 }
 
 // ============================================================================
