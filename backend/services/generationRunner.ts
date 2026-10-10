@@ -10,8 +10,14 @@ import { closeTokenAllowanceAccounting } from "../context/requestBudgetContext";
 import { chatGenerationTaskCoordinator, type ChatGenerationExecution, type ChatGenerationTaskContext } from "./chatGenerationTaskCoordinator";
 import { executeChatGeneration } from "./chatGenerationExecutor";
 
-const CONCURRENCY_RETRY_MS = 2000;
-const MAX_CONCURRENCY_RETRIES = 30;
+function getConcurrencyRetryMs(): number {
+  const envVal = Number(process.env.SENTIQ_CONCURRENCY_RETRY_MS);
+  return Number.isFinite(envVal) && envVal > 0 ? envVal : 2000;
+}
+function getMaxConcurrencyRetries(): number {
+  const envVal = Number(process.env.SENTIQ_MAX_CONCURRENCY_RETRIES);
+  return Number.isFinite(envVal) && envVal >= 0 ? envVal : 30;
+}
 const CONTROL_POLL_MS = 2000;
 const LEASE_RENEW_MS = 15000;
 export type GenerationExecutorHandler = (request: GenerationExecutionRequest, response: GenerationEventSink, next: (error?: unknown) => void) => unknown;
@@ -132,101 +138,147 @@ function buildExecutionRequest(snapshot: GenerationRequestSnapshot, generation: 
 function buildGuestGenerationRow(task: ReturnType<typeof chatGenerationTaskCoordinator.get>): ChatGenerationRow | null { if (!task) return null; const now = new Date().toISOString(); return { id: task.generationId, conversation_id: task.conversationId ?? "guest-conversation", user_id: task.userId, client_request_id: task.clientRequestId ?? null, generation_session_id: task.generationSessionId ?? null, status: task.status as ChatGenerationRow["status"], execution_mode: "fast", model_route: null, execution_snapshot: {}, started_at: now, completed_at: null, failed_at: null, cancelled_at: null, error_code: task.lastErrorCode, partial_text: task.partialText, tokens_generated: task.tokensGenerated, last_event_sequence: task.sequence, created_at: now, updated_at: now, execution_lease_id: null, execution_lease_expires_at: null, recovery_attempts: 0, last_execution_error: null }; }
 
 export async function runGeneration(generationId: string): Promise<void> {
-  const existingTask = chatGenerationTaskCoordinator.get(generationId); if (existingTask?.terminal) return; if (existingTask?.runPromise) return existingTask.runPromise;
-  const runPromise = (async () => {
-    let userDb: any = existingTask?.userDb ?? null;
-    let generation: ChatGenerationRow | null = existingTask?.generation ?? null;
-    if (!generation && existingTask?.userDb) { const loaded = await getChatGenerationById(existingTask.userDb, existingTask.userId, generationId); if (loaded.error) throw loaded.error; generation = loaded.data; }
-    if (!generation) generation = buildGuestGenerationRow(existingTask); if (!generation) throw Object.assign(new Error("Generation execution context is unavailable"), { code: "generation_execution_context_unavailable" }); if (["completed", "failed", "cancelled"].includes(generation.status)) return;
-    const taskContext: ChatGenerationTaskContext = { generationId: generation.id, clientRequestId: generation.client_request_id, generationSessionId: generation.generation_session_id, conversationId: generation.conversation_id, userId: generation.user_id, userDb, generation, liveExecutionSnapshot: existingTask?.liveExecutionSnapshot };
-    const task = chatGenerationTaskCoordinator.start(taskContext); if (task.explicitCancelRequested || generation.status === "cancel_requested") { await chatGenerationTaskCoordinator.cancelled(generation.id); return; }
-    const requestSnapshot = task.liveExecutionSnapshot ?? snapshotFromGeneration(generation); if (!requestSnapshot) throw Object.assign(new Error("Generation request snapshot is unavailable"), { code: "generation_snapshot_unavailable" });
-    const leaseId = randomUUID();
-    if (userDb) {
-      const claimed = await claimChatGenerationExecution(userDb, { userId: generation.user_id, generationId: generation.id, leaseId, leaseSeconds: 60, maxActiveGenerations: MAX_ACTIVE_GENERATIONS_PER_USER });
-      if (claimed.error || !claimed.data) {
-        if (claimed.error?.code === "55P03") {
-          task.status = "queued";
-          await chatGenerationTaskCoordinator.publish(generation.id, {
-            type: "generation_snapshot",
-            status: "queued",
-            reason: "concurrency_limit",
-          });
-          task.concurrencyRetries = (task.concurrencyRetries ?? 0) + 1;
-          if (task.concurrencyRetries > MAX_CONCURRENCY_RETRIES) {
-            await chatGenerationTaskCoordinator.failed(generation.id, "generation_concurrency_timeout");
+  const existingTask = chatGenerationTaskCoordinator.get(generationId);
+  if (existingTask?.terminal) return;
+  if (existingTask?.runPromise) return existingTask.runPromise;
+
+  let userDb: any = existingTask?.userDb ?? null;
+  let generation: ChatGenerationRow | null = existingTask?.generation ?? null;
+  if (!generation && existingTask?.userDb) {
+    const loaded = await getChatGenerationById(existingTask.userDb, existingTask.userId, generationId);
+    if (loaded.error) throw loaded.error;
+    generation = loaded.data;
+  }
+  if (!generation) generation = buildGuestGenerationRow(existingTask);
+  if (!generation) throw Object.assign(new Error("Generation execution context is unavailable"), { code: "generation_execution_context_unavailable" });
+  if (["completed", "failed", "cancelled"].includes(generation.status)) return;
+
+  const taskContext: ChatGenerationTaskContext = {
+    generationId: generation.id,
+    clientRequestId: generation.client_request_id,
+    generationSessionId: generation.generation_session_id,
+    conversationId: generation.conversation_id,
+    userId: generation.user_id,
+    userDb,
+    generation,
+    liveExecutionSnapshot: existingTask?.liveExecutionSnapshot,
+  };
+  const task = chatGenerationTaskCoordinator.start(taskContext);
+  if (task.terminal) return;
+  if (task.runPromise) return task.runPromise;
+
+  let currentRunPromise: Promise<void> | undefined = undefined;
+  currentRunPromise = (async () => {
+    try {
+      if (task.explicitCancelRequested || generation.status === "cancel_requested") {
+        await chatGenerationTaskCoordinator.cancelled(generation.id);
+        return;
+      }
+      const requestSnapshot = task.liveExecutionSnapshot ?? snapshotFromGeneration(generation);
+      if (!requestSnapshot) throw Object.assign(new Error("Generation request snapshot is unavailable"), { code: "generation_snapshot_unavailable" });
+      const leaseId = randomUUID();
+      if (userDb) {
+        const claimed = await claimChatGenerationExecution(userDb, {
+          userId: generation.user_id,
+          generationId: generation.id,
+          leaseId,
+          leaseSeconds: 60,
+          maxActiveGenerations: MAX_ACTIVE_GENERATIONS_PER_USER,
+        });
+        if (claimed.error || !claimed.data) {
+          if (claimed.error?.code === "55P03") {
+            task.status = "queued";
+            await chatGenerationTaskCoordinator.publish(generation.id, {
+              type: "generation_snapshot",
+              status: "queued",
+              reason: "concurrency_limit",
+            });
+            task.concurrencyRetries = (task.concurrencyRetries ?? 0) + 1;
+            const maxRetries = getMaxConcurrencyRetries();
+            if (task.concurrencyRetries > maxRetries) {
+              await chatGenerationTaskCoordinator.failed(generation.id, "generation_concurrency_timeout");
+              return;
+            }
+            const retryMs = getConcurrencyRetryMs();
+            setTimeout(() => {
+              if (!chatGenerationTaskCoordinator.get(generationId)?.terminal) {
+                void runGeneration(generationId).catch(() => undefined);
+              }
+            }, retryMs).unref?.();
             return;
           }
-          setTimeout(() => {
-            if (!chatGenerationTaskCoordinator.get(generationId)?.terminal) void runGeneration(generationId).catch(() => undefined);
-          }, CONCURRENCY_RETRY_MS).unref?.();
-          return;
+          throw Object.assign(new Error("Generation execution lease unavailable"), {
+            code: "generation_execution_lease_unavailable",
+            cause: claimed.error,
+          });
         }
-        throw Object.assign(new Error("Generation execution lease unavailable"), { code: "generation_execution_lease_unavailable", cause: claimed.error });
+        generation = claimed.data;
+        task.generation = generation;
+        task.executionLeaseId = leaseId;
       }
-      generation = claimed.data;
-      task.generation = generation;
-      task.executionLeaseId = leaseId;
-    }
-    await chatGenerationTaskCoordinator.publish(generation.id, { type: "generation_started", conversation_id: generation.conversation_id, status: "running" });
-    const request = buildExecutionRequest(requestSnapshot, generation);
-    request.userDb = userDb;
-    request.generation = generation;
-    request.canonicalConversationId = generation.conversation_id;
-    let runnerError: unknown = null;
-    let executionOwnershipLost = false;
-    const sink = new GenerationEventSink(generation.id, async (frame) => {
-      if (frame !== "[DONE]") {
-        if (frame.type === "token" && typeof frame.text === "string") {
-          chatGenerationTaskCoordinator.publishTokenFast(generation!.id, frame.text);
-          return;
-        }
-        await chatGenerationTaskCoordinator.publish(generation!.id, frame);
-      }
-    }, (error) => {
-      runnerError = runnerError ?? error;
-      if (String((error as any)?.message || "").includes("lease lost")) {
-        executionOwnershipLost = true;
-        task.execution?.cancel();
-      }
-    });
-    task.execution = { cancel: () => { request.emit("sentiq-generation-cancel"); request.emit("close"); } };
 
-    const controlTimer = userDb ? setInterval(() => {
-      void getChatGenerationById(userDb, generation!.user_id, generation!.id).then((latest) => {
-        if (latest.error || !latest.data) return;
-        const currentLeaseId = latest.data.execution_lease_id;
-        const currentStatus = String(latest.data.status || "");
-        if (currentLeaseId !== leaseId) {
-          executionOwnershipLost = true;
-          task.execution?.cancel();
-          return;
-        }
-        if (["cancel_requested", "cancelled"].includes(currentStatus)) {
-          task.explicitCancelRequested = true;
-          task.status = "cancel_requested";
-          task.execution?.cancel();
-        }
-      }).catch(() => undefined);
-    }, CONTROL_POLL_MS) : null;
-    controlTimer?.unref?.();
-
-    const renewTimer = userDb ? setInterval(() => {
-      void import("./chatGenerationService").then(({ renewChatGenerationExecutionLease }) =>
-        renewChatGenerationExecutionLease(userDb, { userId: generation!.user_id, generationId: generation!.id, leaseId, leaseSeconds: 60 }),
-      ).then((renewed) => {
-        if (renewed.error || !renewed.data) {
-          executionOwnershipLost = true;
-          task.execution?.cancel();
-        }
-      }).catch(() => {
-        executionOwnershipLost = true;
-        task.execution?.cancel();
+      await chatGenerationTaskCoordinator.publish(generation.id, {
+        type: "generation_started",
+        conversation_id: generation.conversation_id,
+        status: "running",
       });
-    }, LEASE_RENEW_MS) : null;
-    renewTimer?.unref?.();
+      const request = buildExecutionRequest(requestSnapshot, generation);
+      request.userDb = userDb;
+      request.generation = generation;
+      request.canonicalConversationId = generation.conversation_id;
+      let runnerError: unknown = null;
+      let executionOwnershipLost = false;
+      const sink = new GenerationEventSink(generation.id, async (frame) => {
+        if (frame !== "[DONE]") {
+          if (frame.type === "token" && typeof frame.text === "string") {
+            chatGenerationTaskCoordinator.publishTokenFast(generation!.id, frame.text);
+            return;
+          }
+          await chatGenerationTaskCoordinator.publish(generation!.id, frame);
+        }
+      }, (error) => {
+        runnerError = runnerError ?? error;
+        if (String((error as any)?.message || "").includes("lease lost")) {
+          executionOwnershipLost = true;
+          task.execution?.cancel();
+        }
+      });
+      task.execution = { cancel: () => { request.emit("sentiq-generation-cancel"); request.emit("close"); } };
 
-    task.runPromise = (async () => {
+      const controlTimer = userDb ? setInterval(() => {
+        void getChatGenerationById(userDb, generation!.user_id, generation!.id).then((latest) => {
+          if (latest.error || !latest.data) return;
+          const currentLeaseId = latest.data.execution_lease_id;
+          const currentStatus = String(latest.data.status || "");
+          if (currentLeaseId !== leaseId) {
+            executionOwnershipLost = true;
+            task.execution?.cancel();
+            return;
+          }
+          if (["cancel_requested", "cancelled"].includes(currentStatus)) {
+            task.explicitCancelRequested = true;
+            task.status = "cancel_requested";
+            task.execution?.cancel();
+          }
+        }).catch(() => undefined);
+      }, CONTROL_POLL_MS) : null;
+      controlTimer?.unref?.();
+
+      const renewTimer = userDb ? setInterval(() => {
+        void import("./chatGenerationService").then(({ renewChatGenerationExecutionLease }) =>
+          renewChatGenerationExecutionLease(userDb, { userId: generation!.user_id, generationId: generation!.id, leaseId, leaseSeconds: 60 }),
+        ).then((renewed) => {
+          if (renewed.error || !renewed.data) {
+            executionOwnershipLost = true;
+            task.execution?.cancel();
+          }
+        }).catch(() => {
+          executionOwnershipLost = true;
+          task.execution?.cancel();
+        });
+      }, LEASE_RENEW_MS) : null;
+      renewTimer?.unref?.();
+
       try {
         task.status = "running";
         await executeChatGeneration(request, sink);
@@ -284,11 +336,14 @@ export async function runGeneration(generationId: string): Promise<void> {
         }
         task.execution = undefined;
         task.executionLeaseId = null;
+      }
+    } finally {
+      if (task.runPromise === currentRunPromise) {
         task.runPromise = undefined;
       }
-    })();
-    await task.runPromise;
+    }
   })();
-  if (existingTask) existingTask.runPromise = runPromise;
-  return runPromise;
+
+  task.runPromise = currentRunPromise;
+  return currentRunPromise;
 }

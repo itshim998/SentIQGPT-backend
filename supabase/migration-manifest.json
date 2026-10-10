@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-07T13:07:36.291Z",
-  "totalCanonicalMigrations": 81,
+  "generatedAt": "2026-10-10T04:47:29.786Z",
+  "totalCanonicalMigrations": 82,
   "topology": {
     "controlDatabases": [
       1
@@ -16,9 +16,9 @@
   "counts": {
     "both": 9,
     "controlOnly": 15,
-    "dataOnly": 57,
+    "dataOnly": 58,
     "controlTrackTotal": 24,
-    "dataTrackTotal": 66
+    "dataTrackTotal": 67
   },
   "migrations": [
     {
@@ -797,7 +797,7 @@
       "targetTracks": [
         "data"
       ],
-      "checksum": "36e7d53478f0178cc15c467370de6947378475a1175b1de17965f423bc48b28d"
+      "checksum": "38406399f3eed9a6d0d081109459e42f87cdec570355d7deba8f257a105b5a38"
     },
     {
       "version": "20260922120000",
@@ -839,6 +839,16 @@
         "control"
       ],
       "checksum": "4128701ced44cd1b49efe160193589c7a7ec5640494f24c36c4eaf505db11cde"
+    },
+    {
+      "version": "20261010120000",
+      "name": "update_guest_generation_claim_concurrency",
+      "filename": "20261010120000_update_guest_generation_claim_concurrency.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "b80a88ebbad58a1f51294c220b0cb3c5c10da69508b3bc2bb71855fa002b50e8"
     }
   ]
 }

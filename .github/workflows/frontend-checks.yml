@@ -26,6 +26,7 @@ on:
       - "backend/frontendSource.ts"
       - "backend/testFrontendBootstrap.ts"
       - "backend/testFrontendFileGeneration.ts"
+      - "backend/testGuestTextTurnRobustness.ts"
       - "package.json"
       - "package-lock.json"
       - "tsconfig.backend.json"
@@ -58,6 +59,7 @@ on:
       - "backend/frontendSource.ts"
       - "backend/testFrontendBootstrap.ts"
       - "backend/testFrontendFileGeneration.ts"
+      - "backend/testGuestTextTurnRobustness.ts"
       - "package.json"
       - "package-lock.json"
       - "tsconfig.backend.json"
@@ -123,6 +125,9 @@ jobs:
 
       - name: Frontend billing
         run: npm run test:frontend-billing
+
+      - name: Guest turn robustness
+        run: npm run test:guest-turn-robustness
 
       - name: Focused UI state
         id: frontend_ui_state

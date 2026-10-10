@@ -199,6 +199,9 @@ jobs:
       - name: Streaming disconnect lifecycle
         run: npm run test:stream-lifecycle
 
+      - name: Guest turn robustness
+        run: npm run test:guest-turn-robustness
+
       - name: Protected context safety
         run: npm run test:protected-context-safety
 

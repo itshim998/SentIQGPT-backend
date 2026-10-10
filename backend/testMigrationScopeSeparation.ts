@@ -27,7 +27,7 @@ test("Migration Scope Separation & Manifest Validation", async (t) => {
   await t.test("Manifest accounts for all canonical migrations", () => {
     assert.equal(manifest.totalCanonicalMigrations, canonicalFiles.length);
     assert.equal(manifest.migrations.length, canonicalFiles.length);
-    assert.equal(canonicalFiles.length, 81, "Must have exactly 81 canonical migrations");
+    assert.equal(canonicalFiles.length, 82, "Must have exactly 82 canonical migrations");
 
     const manifestFiles = manifest.migrations.map((m: any) => m.filename);
     assert.deepEqual(manifestFiles, canonicalFiles, "Manifest filenames must match filesystem exactly");
@@ -44,9 +44,9 @@ test("Migration Scope Separation & Manifest Validation", async (t) => {
   await t.test("Migration classification counts match architecture specification", () => {
     assert.equal(manifest.counts.both, 9, "Expected exactly 9 BOTH migrations");
     assert.equal(manifest.counts.controlOnly, 15, "Expected exactly 15 CONTROL_ONLY migrations");
-    assert.equal(manifest.counts.dataOnly, 57, "Expected exactly 57 DATA_ONLY migrations");
+    assert.equal(manifest.counts.dataOnly, 58, "Expected exactly 58 DATA_ONLY migrations");
     assert.equal(manifest.counts.controlTrackTotal, 24, "Expected 24 control track migrations");
-    assert.equal(manifest.counts.dataTrackTotal, 66, "Expected 66 data track migrations");
+    assert.equal(manifest.counts.dataTrackTotal, 67, "Expected 67 data track migrations");
   });
 
   await t.test("Control track files match manifest exactly", () => {
@@ -63,7 +63,7 @@ test("Migration Scope Separation & Manifest Validation", async (t) => {
 
   await t.test("Data track files match manifest exactly", () => {
     const dataFiles = fs.readdirSync(DATA_TRACK_DIR).filter((f) => f.endsWith(".sql")).sort();
-    assert.equal(dataFiles.length, 66);
+    assert.equal(dataFiles.length, 67);
 
     const expectedDataFiles = manifest.migrations
       .filter((m: any) => m.targetTracks.includes("data"))

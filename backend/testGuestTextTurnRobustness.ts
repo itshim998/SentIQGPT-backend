@@ -8,6 +8,8 @@ for (const id of [1, 2, 3, 4]) {
 
 import { BillingRepository, BillingRepositoryError } from "./billing/billingRepository";
 import { chatGenerationTaskCoordinator } from "./services/chatGenerationTaskCoordinator";
+import { runGeneration } from "./services/generationRunner";
+import { registerChatGenerationExecutor } from "./services/chatGenerationExecutor";
 
 /**
  * Regression test suite verifying guest text generation robustness:
@@ -241,45 +243,189 @@ test("Requirement C: Disconnect followed by immediate next turn succeeds without
 // ----------------------------------------------------------------------------
 // Test D: Concurrency exhaustion (3 active, 4th queued, bounded retry)
 // ----------------------------------------------------------------------------
-test("Requirement D: Concurrency limit (3) queues 4th generation and bounds retries", async () => {
-  let activeCount = 3; // 3 active generations currently running
-  const MAX_ACTIVE = 3;
+// ----------------------------------------------------------------------------
+// Test D: Concurrency exhaustion and retry in production runGeneration()
+// ----------------------------------------------------------------------------
+test("Requirement D: Production runGeneration() handles 55P03 rejection, genuine retry, and bounded timeout", async () => {
+  process.env.SENTIQ_CONCURRENCY_RETRY_MS = "15";
+  process.env.SENTIQ_MAX_CONCURRENCY_RETRIES = "3";
 
-  function claimLease(isFourth: boolean) {
-    if (activeCount >= MAX_ACTIVE) {
-      const err = new Error("Guest generation concurrency limit reached");
-      (err as any).code = "55P03";
-      return { data: null, error: err };
-    }
-    activeCount += 1;
-    return { data: { id: "claimed" }, error: null };
+  // Scenario 1: First claim returns 55P03, subsequent claim succeeds
+  const genId1 = "00000000-0000-0000-0000-0000000000d1";
+  let claimAttempts1 = 0;
+  let executions1 = 0;
+
+  const genRow1: any = {
+    id: genId1,
+    conversation_id: "conv-d1",
+    user_id: "guest-hash-d1",
+    client_request_id: "req-d1",
+    generation_session_id: "sess-d1",
+    status: "queued",
+    execution_mode: "fast",
+    model_route: "chat",
+    execution_snapshot: { body: { message: "test1" }, user: { sub: "guest-hash-d1", isGuest: true } },
+    started_at: new Date().toISOString(),
+    completed_at: null,
+    failed_at: null,
+    cancelled_at: null,
+    error_code: null,
+    partial_text: "",
+    tokens_generated: 0,
+    last_event_sequence: 0,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    execution_lease_id: null,
+    execution_lease_expires_at: null,
+    recovery_attempts: 0,
+    last_execution_error: null,
+  };
+
+  const userDb1: any = {
+    rpc: async (name: string, args: any) => {
+      if (name === "claim_chat_generation_execution") {
+        claimAttempts1 += 1;
+        if (claimAttempts1 === 1) {
+          return { data: null, error: { code: "55P03", message: "Guest generation concurrency limit reached" } };
+        }
+        return { data: { ...genRow1, execution_lease_id: args.p_lease_id, status: "running" }, error: null };
+      }
+      if (name === "release_chat_generation_execution_lease") {
+        return { data: { released: true }, error: null };
+      }
+      return { data: null, error: null };
+    },
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({ data: genRow1, error: null }),
+        }),
+      }),
+      update: () => ({
+        eq: () => ({
+          select: () => ({
+            maybeSingle: async () => ({ data: genRow1, error: null }),
+          }),
+        }),
+      }),
+    }),
+  };
+
+  registerChatGenerationExecutor(async (_req, sink, finish) => {
+    executions1 += 1;
+    sink.writeEvent({ type: "token", text: "Generated text" });
+    sink.end();
+    finish();
+  });
+
+  const task1 = chatGenerationTaskCoordinator.start({
+    generationId: genId1,
+    conversationId: "conv-d1",
+    userId: "guest-hash-d1",
+    clientRequestId: "req-d1",
+    generationSessionId: "sess-d1",
+    userDb: userDb1,
+    generation: genRow1,
+    liveExecutionSnapshot: genRow1.execution_snapshot,
+  });
+
+  // Call runGeneration()
+  const firstPromise = runGeneration(genId1);
+  await firstPromise;
+
+  // After 55P03, task.runPromise must be cleared so the retry is not blocked!
+  assert.equal(task1.runPromise, undefined, "Stale promise must be cleared after 55P03 rejection");
+  assert.equal(task1.status, "queued", "Task enters queued status upon 55P03 rejection");
+  assert.equal(claimAttempts1, 1, "First claim was rejected");
+
+  // Wait for the scheduled retry (15ms delay) to execute
+  let waitCount = 0;
+  while (!task1.terminal && waitCount < 50) {
+    await new Promise((r) => setTimeout(r, 10));
+    waitCount += 1;
   }
 
-  // Fourth generation arrives
-  const fourthClaim = claimLease(true);
-  assert.equal((fourthClaim.error as any)?.code, "55P03", "4th generation hits concurrency limit");
+  assert.equal(claimAttempts1, 2, "Subsequent claim really occurred via production retry");
+  assert.equal(executions1, 1, "Execution started exactly once across claims");
+  assert.equal(task1.status, "completed", "Task completed cleanly after retry");
+  assert.equal(task1.terminal, true, "Task reached terminal state");
 
-  // Verify bounded retry policy behavior: retries increment, does not loop infinitely
-  const MAX_CONCURRENCY_RETRIES = 30;
-  let retries = 0;
-  let failedWithTimeout = false;
+  // Scenario 2: Persistent 55P03 rejection terminates after retry limit
+  const genId2 = "00000000-0000-0000-0000-0000000000d2";
+  let claimAttempts2 = 0;
+  let executions2 = 0;
 
-  while (retries <= MAX_CONCURRENCY_RETRIES + 1) {
-    retries += 1;
-    if (retries > MAX_CONCURRENCY_RETRIES) {
-      failedWithTimeout = true;
-      break;
-    }
+  const genRow2: any = {
+    id: genId2,
+    conversation_id: "conv-d2",
+    user_id: "guest-hash-d2",
+    client_request_id: "req-d2",
+    generation_session_id: "sess-d2",
+    status: "queued",
+    execution_mode: "fast",
+    model_route: "chat",
+    execution_snapshot: { body: { message: "test2" }, user: { sub: "guest-hash-d2", isGuest: true } },
+    started_at: new Date().toISOString(),
+    completed_at: null,
+    failed_at: null,
+    cancelled_at: null,
+    error_code: null,
+    partial_text: "",
+    tokens_generated: 0,
+    last_event_sequence: 0,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    execution_lease_id: null,
+    execution_lease_expires_at: null,
+    recovery_attempts: 0,
+    last_execution_error: null,
+  };
+
+  const userDb2: any = {
+    rpc: async (name: string) => {
+      if (name === "claim_chat_generation_execution") {
+        claimAttempts2 += 1;
+        return { data: null, error: { code: "55P03", message: "Guest generation concurrency limit reached" } };
+      }
+      return { data: null, error: null };
+    },
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({ data: genRow2, error: null }),
+        }),
+      }),
+    }),
+  };
+
+  const task2 = chatGenerationTaskCoordinator.start({
+    generationId: genId2,
+    conversationId: "conv-d2",
+    userId: "guest-hash-d2",
+    clientRequestId: "req-d2",
+    generationSessionId: "sess-d2",
+    userDb: userDb2,
+    generation: genRow2,
+    liveExecutionSnapshot: genRow2.execution_snapshot,
+  });
+
+  await runGeneration(genId2);
+
+  // Wait for bounded retries to exhaust (limit = 3 retries, retry delay = 15ms)
+  let waitCount2 = 0;
+  while (!task2.terminal && waitCount2 < 60) {
+    await new Promise((r) => setTimeout(r, 10));
+    waitCount2 += 1;
   }
 
-  assert.equal(failedWithTimeout, true, "Exceeding MAX_CONCURRENCY_RETRIES triggers timeout failure");
-  assert.equal(retries, 31, "Fails cleanly after exactly bounded retries");
+  assert.equal(task2.terminal, true, "Task must terminate after exhausting retries");
+  assert.equal(task2.status, "failed", "Task failed after exhausting concurrency retries");
+  assert.equal(task2.lastErrorCode, "generation_concurrency_timeout", "Failure code is generation_concurrency_timeout");
+  assert.equal(executions2, 0, "Execution was never started when concurrency remained exhausted");
 
-  // Now simulate slot freeing up before timeout
-  activeCount = 2; // One finished
-  const unblockedClaim = claimLease(false);
-  assert.equal(unblockedClaim.error, null, "Freed slot allows queued generation to claim lease");
-  assert.ok(unblockedClaim.data);
+  // Restore environment variables
+  delete process.env.SENTIQ_CONCURRENCY_RETRY_MS;
+  delete process.env.SENTIQ_MAX_CONCURRENCY_RETRIES;
 });
 
 // ----------------------------------------------------------------------------

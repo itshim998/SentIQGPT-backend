@@ -579,11 +579,16 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
 
   async function pollDurableStatusUntilTerminal(entry, signal) {
     const pollIntervalMs = 1500;
-    const maxPollAttempts = 40;
-    let attempts = 0;
-    while (!entry.terminal && !entry.cancelled && attempts < maxPollAttempts) {
+    const maxPollAttemptsPerCycle = 20;
+    const maxTotalPollAttempts = 80;
+    let cycleAttempts = 0;
+    let totalAttempts = 0;
+
+    while (!entry.terminal && !entry.cancelled && !entry.cancelRequested) {
       if (signal?.aborted) return { detached: true };
-      attempts += 1;
+      cycleAttempts += 1;
+      totalAttempts += 1;
+
       try {
         const headers = await buildAuthHeaders();
         const url = `${SENTIQ_API_BASE}/api/chat/generations/${encodeURIComponent(entry.generationId)}`;
@@ -593,6 +598,24 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           signal,
           cache: "no-store",
         });
+
+        if (response.status === 404) {
+          const err = new Error("Generation record not found.");
+          err.code = "generation_not_found";
+          entry.status = "failed";
+          entry.terminal = true;
+          entry.error = err;
+          entry.interrupted = Boolean(entry.tokensReceived);
+          activeGenerations.delete(entry.generationId);
+          if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+          entry.callbacks.onError?.(err, {
+            tokensReceived: entry.tokensReceived,
+            interrupted: entry.interrupted,
+          });
+          pruneTerminalEntryCallbacks(entry);
+          return { failed: true, error: err };
+        }
+
         if (response.ok) {
           const data = await response.json().catch(() => ({}));
           const status = String(data?.status || "");
@@ -601,6 +624,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
             entry.deliveredText = data.partial_text;
             entry.responseBuffer = data.partial_text;
             entry.tokensReceived = true;
+            totalAttempts = 0;
             entry.callbacks.onToken?.(newText);
           }
           if (["completed", "failed", "cancelled"].includes(status)) {
@@ -630,24 +654,50 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       } catch (err) {
         if (err?.name === "AbortError" || signal?.aborted) return { detached: true };
       }
+
+      if (totalAttempts >= maxTotalPollAttempts) {
+        const timeoutError = new Error("Generation recovery timed out before reaching a terminal state.");
+        timeoutError.code = "generation_recovery_timeout";
+        entry.status = "failed";
+        entry.terminal = true;
+        entry.error = timeoutError;
+        entry.interrupted = Boolean(entry.tokensReceived);
+        activeGenerations.delete(entry.generationId);
+        if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+        entry.callbacks.onError?.(timeoutError, {
+          tokensReceived: entry.tokensReceived,
+          interrupted: entry.interrupted,
+        });
+        pruneTerminalEntryCallbacks(entry);
+        return { failed: true, error: timeoutError };
+      }
+
+      if (cycleAttempts >= maxPollAttemptsPerCycle) {
+        return { resumeSse: true };
+      }
+
       await wait(pollIntervalMs, signal);
     }
     return { cancelled: entry.cancelled };
   }
 
   async function subscribeUntilTerminal(entry, signal) {
-    while (!entry.terminal && !entry.cancelled) {
+    while (!entry.terminal && !entry.cancelled && !entry.cancelRequested) {
       if (signal?.aborted) return { detached: true };
       try {
         await subscribeOnce(entry, signal);
-        if (entry.terminal || entry.cancelled) break;
+        if (entry.terminal || entry.cancelled || entry.cancelRequested) break;
         if (signal?.aborted) return { detached: true };
         entry.subscription.reconnectAttempts += 1;
         console.warn(`[GenerationLifecycle] Stream closed before terminal state; reconnecting generation=${entry.generationId} endpoint=/api/chat/generations/${entry.generationId}/events attempt=${entry.subscription.reconnectAttempts}`);
         if (entry.subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-          return await pollDurableStatusUntilTerminal(entry, signal);
+          const pollResult = await pollDurableStatusUntilTerminal(entry, signal);
+          if (entry.terminal || entry.cancelled || entry.cancelRequested) return pollResult;
+          if (pollResult?.resumeSse) {
+            entry.subscription.reconnectAttempts = 0;
+          }
         }
-        await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, entry.subscription.reconnectAttempts - 1)), signal);
+        await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, Math.max(0, entry.subscription.reconnectAttempts - 1))), signal);
       } catch (error) {
         if (error?.name === "AbortError" || signal?.aborted) return { detached: true };
         if (entry.cancelRequested) return { cancelled: true };
@@ -655,12 +705,34 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         const statusOrErr = error?.status ? `HTTP ${error.status}` : (error?.message || "stream_error");
         console.warn(`[GenerationLifecycle] Subscription error generation=${entry.generationId} endpoint=/api/chat/generations/${entry.generationId}/events status=${statusOrErr} attempt=${entry.subscription.reconnectAttempts}`);
         if (entry.subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-          return await pollDurableStatusUntilTerminal(entry, signal);
+          const pollResult = await pollDurableStatusUntilTerminal(entry, signal);
+          if (entry.terminal || entry.cancelled || entry.cancelRequested) return pollResult;
+          if (pollResult?.resumeSse) {
+            entry.subscription.reconnectAttempts = 0;
+          }
         }
-        await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, entry.subscription.reconnectAttempts - 1)), signal);
+        await wait(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, Math.max(0, entry.subscription.reconnectAttempts - 1))), signal);
       }
     }
-    return { cancelled: entry.cancelled };
+
+    if (!entry.terminal && !entry.cancelled && !entry.cancelRequested && !signal?.aborted) {
+      const interruptedError = new Error("Generation stream disconnected before completion.");
+      interruptedError.code = "stream_interrupted";
+      entry.status = "failed";
+      entry.terminal = true;
+      entry.error = interruptedError;
+      entry.interrupted = Boolean(entry.tokensReceived);
+      activeGenerations.delete(entry.generationId);
+      if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+      entry.callbacks.onError?.(interruptedError, {
+        tokensReceived: entry.tokensReceived,
+        interrupted: entry.interrupted,
+      });
+      pruneTerminalEntryCallbacks(entry);
+      return { failed: true, error: interruptedError };
+    }
+
+    return { completed: entry.terminal && entry.status === "completed", cancelled: entry.cancelled };
   }
 
   async function cancelGeneration(generationId, { keepalive = false } = {}) {

@@ -98,6 +98,7 @@ export const DATA_ONLY_VERSIONS = new Set([
   "20260817123000", // durable_generation_event_log.sql
   "20260817140000", // durable_guest_generations.sql
   "20261001120000", // add_visual_assets.sql
+  "20261010120000", // update_guest_generation_claim_concurrency.sql
 ]);
 
 function hashFile(filePath) {
