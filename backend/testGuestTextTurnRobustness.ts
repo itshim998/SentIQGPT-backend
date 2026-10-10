@@ -642,6 +642,100 @@ test("Requirement D: Production runGeneration() handles 55P03 rejection, genuine
   assert.equal(activeWorkerRow.failed_at, null, "Active worker's failed_at must remain null");
   assert.notEqual(retryingTask.status, "failed", "Retrying worker must NOT report active worker's generation as failed");
 
+  // 5b. Integration regression test: Stale 'running' generation with expired lease reaches durable terminal failure upon retry exhaustion
+  const staleWorkerGenId = "00000000-0000-0000-0000-0000000000s1";
+  const staleWorkerRow: any = {
+    id: staleWorkerGenId,
+    conversation_id: "conv-s1",
+    user_id: "guest-hash-s1",
+    client_request_id: "req-s1",
+    generation_session_id: "sess-s1",
+    status: "running",
+    execution_mode: "fast",
+    model_route: "chat",
+    execution_snapshot: { body: { message: "test-stale" }, user: { sub: "guest-hash-s1", isGuest: true } },
+    started_at: new Date(Date.now() - 120_000).toISOString(),
+    completed_at: null,
+    failed_at: null,
+    cancelled_at: null,
+    error_code: null,
+    partial_text: "Old partial text from crashed worker...",
+    tokens_generated: 10,
+    last_event_sequence: 10,
+    created_at: new Date(Date.now() - 120_000).toISOString(),
+    updated_at: new Date(Date.now() - 120_000).toISOString(),
+    execution_lease_id: "stale-expired-lease-id",
+    execution_lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
+    recovery_attempts: 1,
+    last_execution_error: null,
+  };
+
+  const staleWorkerDb: any = {
+    rpc: async (name: string) => {
+      if (name === "claim_chat_generation_execution") {
+        return { data: null, error: { code: "55P03", message: "Guest generation concurrency limit reached" } };
+      }
+      return { data: null, error: null };
+    },
+    from: () => ({
+      select: () => ({
+        eq: (_f1: string, v1: string) => ({
+          eq: (_f2: string, v2: string) => ({
+            maybeSingle: async () => ({
+              data: (staleWorkerRow.id === v1 && staleWorkerRow.user_id === v2) ? staleWorkerRow : null,
+              error: null,
+            }),
+          }),
+          maybeSingle: async () => ({
+            data: staleWorkerRow.id === v1 ? staleWorkerRow : null,
+            error: null,
+          }),
+        }),
+      }),
+      update: (payload: any) => {
+        let matches = true;
+        const builder: any = {
+          eq: (field: string, val: any) => { if (staleWorkerRow[field] !== val) matches = false; return builder; },
+          in: (field: string, vals: any[]) => { if (!vals.includes(staleWorkerRow[field])) matches = false; return builder; },
+          or: () => {
+            const exp = staleWorkerRow.execution_lease_expires_at ? Date.parse(staleWorkerRow.execution_lease_expires_at) : 0;
+            if (staleWorkerRow.execution_lease_id && exp > Date.now()) matches = false;
+            return builder;
+          },
+          select: () => builder,
+          maybeSingle: async () => matches ? { data: Object.assign(staleWorkerRow, payload), error: null } : { data: null, error: null },
+        };
+        return builder;
+      },
+    }),
+  };
+
+  const staleTask = chatGenerationTaskCoordinator.start({
+    generationId: staleWorkerGenId,
+    conversationId: "conv-s1",
+    userId: "guest-hash-s1",
+    clientRequestId: "req-s1",
+    generationSessionId: "sess-s1",
+    userDb: staleWorkerDb,
+    generation: staleWorkerRow,
+    liveExecutionSnapshot: staleWorkerRow.execution_snapshot,
+  });
+
+  await runGeneration(staleWorkerGenId);
+  let waitCountS = 0;
+  while (!staleTask.terminal && waitCountS < 60) {
+    await new Promise((r) => setTimeout(r, 10));
+    waitCountS += 1;
+  }
+
+  // Stale worker's generation in DB MUST reach durable terminal failure
+  assert.equal(staleTask.terminal, true, "Stale task must be terminal");
+  assert.equal(staleTask.status, "failed", "Stale task status must be failed");
+  assert.equal(staleTask.lastErrorCode, "generation_concurrency_timeout", "Failure code must be generation_concurrency_timeout");
+  assert.equal(staleWorkerRow.status, "failed", "Durable DB row for stale generation must transition to failed");
+  assert.equal(staleWorkerRow.error_code, "generation_concurrency_timeout", "Durable error_code must be generation_concurrency_timeout");
+  assert.ok(staleWorkerRow.failed_at, "Durable failed_at timestamp must be set");
+
   // 6. Regression test: Reconnect with nonzero event cursor after in-memory coordinator loss
   // Causes concurrency-timeout failure, removes in-memory task, reconnects with nonzero event cursor,
   // and asserts that the subscriber receives a failed terminal state—NOT completed.

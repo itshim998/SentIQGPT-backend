@@ -200,6 +200,7 @@ export async function markChatGenerationFailedGuarded(
     tokensGenerated?: number;
     lastEventSequence?: number;
     allowAlreadyFailed?: boolean;
+    allowStaleStatuses?: boolean;
   }
 ) {
   const userId = normalizeRequired(args.userId, "userId");
@@ -223,9 +224,13 @@ export async function markChatGenerationFailedGuarded(
     .eq("id", generationId)
     .eq("user_id", userId);
 
-  const allowedStatuses = args.allowAlreadyFailed
-    ? ["queued", "recoverable", "failed"]
-    : ["queued", "recoverable"];
+  const baseStatuses = ["queued", "recoverable"];
+  const staleStatuses = ["running", "generating", "persisting", "waiting_for_tool"];
+  const allowedStatuses = [
+    ...baseStatuses,
+    ...(args.allowStaleStatuses !== false ? staleStatuses : []),
+    ...(args.allowAlreadyFailed ? ["failed"] : []),
+  ];
 
   if (typeof query.in === "function") {
     query = query.in("status", allowedStatuses);

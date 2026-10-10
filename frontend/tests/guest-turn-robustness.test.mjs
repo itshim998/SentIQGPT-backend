@@ -226,7 +226,7 @@ assert.ok(typeof subscribeUntilTerminal === "function", "subscribeUntilTerminal 
     return {
       ok: true,
       status: 200,
-      json: async () => ({ status: "running", partial_text: "" }),
+      json: async () => ({ status: sseResumedAndSucceeded ? "completed" : "running", partial_text: "" }),
     };
   };
 
@@ -385,6 +385,130 @@ assert.ok(typeof subscribeUntilTerminal === "function", "subscribeUntilTerminal 
   assert.equal(entryBareDoneFailed.terminal, true, "Entry must be terminal");
   assert.equal(onDoneCalled, false, "Bare [DONE] must NOT call onDone on failed entry");
 }
+
+// Test H: Higher cursor nonterminal entry receives lower-sequence terminal failure snapshot before [DONE]
+{
+  let onDoneCalled = false;
+  let errorReceived = null;
+
+  const entryHigherCursorFailed = createGenerationEntry({
+    generationId: "gen-runtime-higher-cursor-failed",
+    tokensReceived: true,
+    lastSequence: 8,
+    status: "running",
+    callbacks: {
+      onDone: () => { onDoneCalled = true; },
+      onError: (err) => { errorReceived = err; },
+    },
+  });
+
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(
+        'data: {"type":"generation_snapshot","generation_id":"gen-runtime-higher-cursor-failed","status":"failed","error_code":"generation_concurrency_timeout","terminal":true,"sequence":4}\n\n'
+      ));
+      controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+      controller.close();
+    },
+  });
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    body: stream,
+  });
+
+  await subscribeOnce(entryHigherCursorFailed);
+
+  assert.equal(entryHigherCursorFailed.status, "failed", "Final status must remain failed");
+  assert.equal(entryHigherCursorFailed.terminal, true, "Entry must be terminal");
+  assert.equal(entryHigherCursorFailed.lastSequence, 8, "Sequence counter must not roll backwards");
+  assert.equal(entryHigherCursorFailed.error?.code, "generation_concurrency_timeout", "Error code must match snapshot error_code");
+  assert.equal(errorReceived?.code, "generation_concurrency_timeout", "onError must receive generation_concurrency_timeout");
+  assert.equal(onDoneCalled, false, "onDone must NEVER be called on terminal failure snapshot");
+}
+
+// Test I: Higher cursor nonterminal entry receives lower-sequence terminal cancellation snapshot before [DONE]
+{
+  let onDoneCalled = false;
+  let onCancelledCalled = false;
+
+  const entryHigherCursorCancelled = createGenerationEntry({
+    generationId: "gen-runtime-higher-cursor-cancelled",
+    tokensReceived: true,
+    lastSequence: 8,
+    status: "running",
+    callbacks: {
+      onDone: () => { onDoneCalled = true; },
+      onCancelled: () => { onCancelledCalled = true; },
+    },
+  });
+
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(
+        'data: {"type":"generation_snapshot","generation_id":"gen-runtime-higher-cursor-cancelled","status":"cancelled","terminal":true,"sequence":4}\n\n'
+      ));
+      controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+      controller.close();
+    },
+  });
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    body: stream,
+  });
+
+  await subscribeOnce(entryHigherCursorCancelled);
+
+  assert.equal(entryHigherCursorCancelled.status, "cancelled", "Final status must remain cancelled");
+  assert.equal(entryHigherCursorCancelled.terminal, true, "Entry must be terminal");
+  assert.equal(entryHigherCursorCancelled.cancelled, true, "Cancelled flag must be set");
+  assert.equal(entryHigherCursorCancelled.lastSequence, 8, "Sequence counter must not roll backwards");
+  assert.equal(onCancelledCalled, true, "onCancelled callback must be invoked");
+  assert.equal(onDoneCalled, false, "onDone must NEVER be called on terminal cancellation snapshot");
+}
+
+// Test J: Bare [DONE] alone without authoritative completion never reports completed
+{
+  let onDoneCalled = false;
+  let onErrorCalled = false;
+
+  const entryBareDoneUnconfirmed = createGenerationEntry({
+    generationId: "gen-runtime-bare-done-unconfirmed",
+    tokensReceived: true,
+    lastSequence: 3,
+    status: "running",
+    callbacks: {
+      onDone: () => { onDoneCalled = true; },
+      onError: () => { onErrorCalled = true; },
+    },
+  });
+
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+      controller.close();
+    },
+  });
+
+  globalThis.fetch = async (url) => {
+    const urlStr = String(url);
+    if (urlStr.includes("/events")) {
+      return { ok: true, status: 200, body: stream };
+    }
+    // Reconciliation fetch returns 404 (unconfirmed)
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+
+  await subscribeOnce(entryBareDoneUnconfirmed);
+
+  assert.notEqual(entryBareDoneUnconfirmed.status, "completed", "Status must NOT be completed from bare [DONE] alone");
+  assert.equal(onDoneCalled, false, "onDone must NEVER be called when completion is unconfirmed");
+  assert.equal(entryBareDoneUnconfirmed.terminal, true, "Entry must be terminal");
+}
+
 
 // ============================================================================
 // 3. Behavioral Tests for Stream Interruption Handling in sendMessageStream

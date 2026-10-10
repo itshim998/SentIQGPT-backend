@@ -326,15 +326,16 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     const hasSequence = Number.isFinite(sequence) && sequence > 0;
 
     if (event.type === "generation_snapshot") {
-      if (hasSequence && sequence < entry.lastSequence) return false;
+      const terminalSnapshot = Boolean(event.terminal)
+        || ["completed", "failed", "cancelled"].includes(String(event.status || ""));
+
+      if (hasSequence && sequence < entry.lastSequence && !terminalSnapshot) return false;
       if (hasSequence && sequence > entry.lastSequence) {
         entry.pendingReplayThrough = Math.max(entry.pendingReplayThrough || 0, sequence);
       }
       if (typeof event.status === "string") entry.status = event.status;
       emitSnapshotDelta(entry, event);
 
-      const terminalSnapshot = Boolean(event.terminal)
-        || ["completed", "failed", "cancelled"].includes(String(event.status || ""));
       if (hasSequence) {
         entry.lastSequence = Math.max(entry.lastSequence, sequence);
         entry.pendingReplayThrough = 0;
@@ -344,17 +345,31 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         entry.terminal = true;
         entry.completedAt = entry.completedAt || new Date().toISOString();
         activeGenerations.delete(entry.generationId);
-        if (event.status === "cancelled") entry.cancelled = true;
+        if (event.status === "cancelled") {
+          entry.cancelled = true;
+          if (!entry.cancelledDispatched) {
+            entry.cancelledDispatched = true;
+            entry.callbacks.onCancelled?.();
+          }
+        }
         if (event.status === "failed") {
           const error = new Error(String(event.error_code || "Generation failed."));
           error.code = typeof event.error_code === "string" ? event.error_code : "generation_failed";
           entry.error = error;
-          entry.callbacks.onError?.(error, {
-            tokensReceived: entry.tokensReceived,
-            interrupted: entry.interrupted,
-          });
+          if (!entry.errorDispatched) {
+            entry.errorDispatched = true;
+            entry.callbacks.onError?.(error, {
+              tokensReceived: entry.tokensReceived,
+              interrupted: entry.interrupted,
+            });
+          }
         }
-        if (event.status === "completed") entry.callbacks.onDone?.();
+        if (event.status === "completed") {
+          if (!entry.doneDispatched) {
+            entry.doneDispatched = true;
+            entry.callbacks.onDone?.();
+          }
+        }
         if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
         pruneTerminalEntryCallbacks(entry);
         return true;
@@ -506,6 +521,76 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     return entry.terminal;
   }
 
+  async function reconcileEntryDurableStatus(entry) {
+    if (!entry) return;
+    try {
+      const headers = await buildAuthHeaders();
+      const url = `${SENTIQ_API_BASE}/api/chat/generations/${encodeURIComponent(entry.generationId)}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers,
+        cache: "no-store",
+      });
+      if (response && response.ok) {
+        const data = await response.json().catch(() => ({}));
+        const status = String(data?.status || "");
+        if (status === "completed") {
+          entry.status = "completed";
+          entry.terminal = true;
+          entry.completedAt = data?.completed_at || new Date().toISOString();
+          if (!entry.doneDispatched) {
+            entry.doneDispatched = true;
+            entry.callbacks.onDone?.();
+          }
+          return;
+        }
+        if (status === "failed") {
+          entry.status = "failed";
+          entry.terminal = true;
+          entry.completedAt = data?.failed_at || new Date().toISOString();
+          const err = new Error(String(data?.error_code || "generation_failed"));
+          err.code = data?.error_code || "generation_failed";
+          entry.error = err;
+          entry.interrupted = Boolean(entry.tokensReceived);
+          if (!entry.errorDispatched) {
+            entry.errorDispatched = true;
+            entry.callbacks.onError?.(err, {
+              tokensReceived: entry.tokensReceived,
+              interrupted: entry.interrupted,
+            });
+          }
+          return;
+        }
+        if (status === "cancelled") {
+          entry.status = "cancelled";
+          entry.terminal = true;
+          entry.cancelled = true;
+          entry.completedAt = data?.cancelled_at || new Date().toISOString();
+          if (!entry.cancelledDispatched) {
+            entry.cancelledDispatched = true;
+            entry.callbacks.onCancelled?.();
+          }
+          return;
+        }
+      }
+    } catch {}
+
+    // Never report success from [DONE] alone without authoritative completion established
+    entry.status = "failed";
+    entry.terminal = true;
+    const err = new Error("Generation stream concluded without authoritative completion.");
+    err.code = "generation_unconfirmed";
+    entry.error = err;
+    entry.interrupted = Boolean(entry.tokensReceived);
+    if (!entry.errorDispatched) {
+      entry.errorDispatched = true;
+      entry.callbacks.onError?.(err, {
+        tokensReceived: entry.tokensReceived,
+        interrupted: entry.interrupted,
+      });
+    }
+  }
+
   async function subscribeOnce(entry, signal) {
     entry.subscription.active = true;
     entry.subscription.reconnectAttempts = Number(entry.subscription.reconnectAttempts || 0);
@@ -534,15 +619,21 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       const decoder = new TextDecoder();
       let buffer = "";
 
-      const processLines = (lines) => {
+      const processLines = async (lines) => {
         for (const line of lines) {
           const event = extractSsePayload(line);
           if (event === "[DONE]") {
             entry.terminal = true;
-            if (entry.status !== "failed" && entry.status !== "cancelled") {
-              entry.status = "completed";
-              entry.completedAt = new Date().toISOString();
-              entry.callbacks.onDone?.();
+            if (entry.status === "completed") {
+              entry.completedAt = entry.completedAt || new Date().toISOString();
+              if (!entry.doneDispatched) {
+                entry.doneDispatched = true;
+                entry.callbacks.onDone?.();
+              }
+            } else if (entry.status === "failed" || entry.status === "cancelled") {
+              // Terminal status was already established authoritatively
+            } else {
+              await reconcileEntryDurableStatus(entry);
             }
             activeGenerations.delete(entry.generationId);
             if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
@@ -561,14 +652,14 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
             if (buffer) {
               const lines = buffer.split("\n");
               buffer = "";
-              if (processLines(lines)) return;
+              if (await processLines(lines)) return;
             }
             return;
           }
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
           buffer = lines.pop() || "";
-          if (processLines(lines) || entry.terminal) return;
+          if ((await processLines(lines)) || entry.terminal) return;
         }
       } finally {
         try { await reader.cancel(); } catch {}
@@ -963,17 +1054,23 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       const decoder = new TextDecoder();
       let buffer = "";
 
-      const processLines = (lines) => {
+      const processLines = async (lines) => {
         for (const line of lines) {
           const event = extractSsePayload(line);
           if (!event) continue;
           if (event === "[DONE]") {
             if (entry) {
               entry.terminal = true;
-              if (entry.status !== "failed" && entry.status !== "cancelled") {
-                entry.status = "completed";
-                entry.completedAt = new Date().toISOString();
-                entry.callbacks.onDone?.();
+              if (entry.status === "completed") {
+                entry.completedAt = entry.completedAt || new Date().toISOString();
+                if (!entry.doneDispatched) {
+                  entry.doneDispatched = true;
+                  entry.callbacks.onDone?.();
+                }
+              } else if (entry.status === "failed" || entry.status === "cancelled") {
+                // Terminal status was already established authoritatively
+              } else {
+                await reconcileEntryDurableStatus(entry);
               }
               activeGenerations.delete(entry.generationId);
               if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
@@ -996,14 +1093,14 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
             if (buffer) {
               const lines = buffer.split("\n");
               buffer = "";
-              if (processLines(lines)) break;
+              if (await processLines(lines)) break;
             }
             break;
           }
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
           buffer = lines.pop() || "";
-          if (processLines(lines) || (entry && entry.terminal)) break;
+          if ((await processLines(lines)) || (entry && entry.terminal)) break;
         }
       } finally {
         try { await reader.cancel(); } catch {}
