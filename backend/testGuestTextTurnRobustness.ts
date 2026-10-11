@@ -708,6 +708,387 @@ test("Requirement D: Production runGeneration() handles 55P03 rejection, genuine
   assert.equal(directFailedRow.error_code, "provider_quota_exceeded", "Durable original error code must remain provider_quota_exceeded");
   assert.equal(directFailedRow.failed_at, originalProviderFailedAt, "Durable original failed_at timestamp must be preserved");
 
+  // 4d. Focused regression test: Invoke production chatGenerationTaskCoordinator.failed() directly
+  // when another worker owns an active unexpired execution lease and guarded update returns no row.
+  const activeLeaseGenId = "00000000-0000-0000-0000-0000000000d4";
+  const otherWorkerLeaseId = "other-worker-active-lease-123";
+  const activeLeaseExpiresAt = new Date(Date.now() + 60_000).toISOString();
+  const activeLeaseRow: any = {
+    id: activeLeaseGenId,
+    conversation_id: "conv-d4",
+    user_id: "guest-hash-d4",
+    client_request_id: "req-d4",
+    generation_session_id: "sess-d4",
+    status: "running",
+    execution_mode: "fast",
+    model_route: "chat",
+    execution_snapshot: { body: { message: "test-active-lease" } },
+    started_at: new Date(Date.now() - 10_000).toISOString(),
+    completed_at: null,
+    failed_at: null,
+    cancelled_at: null,
+    error_code: null,
+    partial_text: "Actively generating on worker 2...",
+    tokens_generated: 20,
+    last_event_sequence: 20,
+    created_at: new Date(Date.now() - 10_000).toISOString(),
+    updated_at: new Date(Date.now() - 10_000).toISOString(),
+    execution_lease_id: otherWorkerLeaseId,
+    execution_lease_expires_at: activeLeaseExpiresAt,
+    recovery_attempts: 0,
+    last_execution_error: null,
+  };
+
+  const mockActiveLeaseDb: any = {
+    from: (_table: string) => ({
+      select: () => {
+        const query: any = {
+          eq: () => query,
+          gt: () => query,
+          order: () => query,
+          limit: () => query,
+          maybeSingle: async () => ({
+            data: { ...activeLeaseRow },
+            error: null,
+          }),
+        };
+        return query;
+      },
+      update: (_payload: any) => {
+        // Guarded update refuses because execution_lease_expires_at > now
+        const builder: any = {
+          eq: () => builder,
+          in: () => builder,
+          or: () => builder,
+          select: () => builder,
+          maybeSingle: async () => ({ data: null, error: null }),
+        };
+        return builder;
+      },
+    }),
+  };
+
+  const activeLeaseTask = chatGenerationTaskCoordinator.start({
+    generationId: activeLeaseGenId,
+    conversationId: "conv-d4",
+    userId: "guest-hash-d4",
+    clientRequestId: "req-d4",
+    generationSessionId: "sess-d4",
+    userDb: mockActiveLeaseDb,
+    generation: { ...activeLeaseRow, execution_lease_id: null },
+  });
+  activeLeaseTask.executionLeaseId = null; // explicit: local task has no lease ID
+  activeLeaseTask.terminal = false;
+  activeLeaseTask.status = "queued";
+
+  const capturedActiveLeaseEvents: any[] = [];
+  const unsubscribeActiveLease = chatGenerationTaskCoordinator.subscribe(activeLeaseGenId, (event) => {
+    capturedActiveLeaseEvents.push(event);
+  });
+
+  // Call failed() directly on coordinator
+  await chatGenerationTaskCoordinator.failed(activeLeaseGenId, "generation_concurrency_timeout");
+
+  // Assertions per requirement:
+  // 1. Local coordinator does NOT publish generation_failed
+  const activeLeaseFailEvent = capturedActiveLeaseEvents.find((e) => e.type === "generation_failed");
+  assert.equal(activeLeaseFailEvent, undefined, "Coordinator must NOT publish generation_failed when durable row has active lease");
+
+  // 2. Local coordinator does NOT mark the task terminal as failed
+  assert.equal(activeLeaseTask.terminal, false, "Local task must NOT be marked terminal");
+  assert.notEqual(activeLeaseTask.status, "failed", "Local task status must NOT be failed");
+  assert.equal(activeLeaseTask.status, "running", "Local task adopts running status from durable row");
+
+  // 3. Does NOT overwrite the durable row
+  assert.equal(activeLeaseRow.status, "running", "Durable row must remain running");
+  assert.equal(activeLeaseRow.error_code, null, "Durable row error_code must remain null");
+  assert.equal(activeLeaseRow.failed_at, null, "Durable row failed_at must remain null");
+  assert.equal(activeLeaseRow.execution_lease_id, otherWorkerLeaseId, "Durable lease must remain intact");
+
+  unsubscribeActiveLease();
+
+  // 4e. Focused regression test: Invoke production chatGenerationTaskCoordinator.failed() directly
+  // when durable row is already completed and guarded update returns no row.
+  const completedGenId = "00000000-0000-0000-0000-0000000000e4";
+  const completedAtTimestamp = "2026-10-10T11:00:00.000Z";
+  const completedDurableRow: any = {
+    id: completedGenId,
+    conversation_id: "conv-e4",
+    user_id: "guest-hash-e4",
+    client_request_id: "req-e4",
+    generation_session_id: "sess-e4",
+    status: "completed",
+    execution_mode: "fast",
+    model_route: "chat",
+    execution_snapshot: { body: { message: "test-completed" } },
+    started_at: new Date(Date.now() - 30_000).toISOString(),
+    completed_at: completedAtTimestamp,
+    failed_at: null,
+    cancelled_at: null,
+    error_code: null,
+    partial_text: "Fully completed text response from another worker.",
+    tokens_generated: 30,
+    last_event_sequence: 30,
+    created_at: new Date(Date.now() - 30_000).toISOString(),
+    updated_at: completedAtTimestamp,
+    execution_lease_id: null,
+    execution_lease_expires_at: null,
+    recovery_attempts: 0,
+    last_execution_error: null,
+  };
+
+  const mockCompletedRefusalDb: any = {
+    from: (_table: string) => ({
+      select: () => ({
+        eq: (_f1: string, v1: string) => ({
+          eq: (_f2: string, v2: string) => ({
+            maybeSingle: async () => ({
+              data: (completedDurableRow.id === v1 && completedDurableRow.user_id === v2) ? { ...completedDurableRow } : null,
+              error: null,
+            }),
+          }),
+          maybeSingle: async () => ({
+            data: completedDurableRow.id === v1 ? { ...completedDurableRow } : null,
+            error: null,
+          }),
+        }),
+      }),
+      update: (_payload: any) => {
+        // Guarded update returns no row because status is 'completed'
+        const builder: any = {
+          eq: () => builder,
+          in: () => builder,
+          or: () => builder,
+          select: () => builder,
+          maybeSingle: async () => ({ data: null, error: null }),
+        };
+        return builder;
+      },
+    }),
+  };
+
+  const completedTask = chatGenerationTaskCoordinator.start({
+    generationId: completedGenId,
+    conversationId: "conv-e4",
+    userId: "guest-hash-e4",
+    clientRequestId: "req-e4",
+    generationSessionId: "sess-e4",
+    userDb: mockCompletedRefusalDb,
+    generation: { ...completedDurableRow, status: "queued" },
+  });
+  completedTask.executionLeaseId = null;
+  completedTask.terminal = false;
+  completedTask.status = "queued";
+
+  const capturedCompletedEvents: any[] = [];
+  chatGenerationTaskCoordinator.subscribe(completedGenId, (event) => {
+    capturedCompletedEvents.push(event);
+  });
+
+  await chatGenerationTaskCoordinator.failed(completedGenId, "generation_concurrency_timeout");
+
+  // Assertions:
+  // 1. Reconciles to completed, does NOT emit generation_failed
+  const completedFailEvent = capturedCompletedEvents.find((e) => e.type === "generation_failed");
+  assert.equal(completedFailEvent, undefined, "Coordinator must NOT emit generation_failed when durable row is completed");
+  const completedSuccessEvent = capturedCompletedEvents.find((e) => e.type === "generation_completed");
+  assert.ok(completedSuccessEvent, "Subscriber must receive generation_completed event upon reconciliation");
+  assert.equal(completedTask.terminal, true, "Task must be marked terminal");
+  assert.equal(completedTask.status, "completed", "Task status must be reconciled to completed");
+
+  // 2. Durable row is not overwritten
+  assert.equal(completedDurableRow.status, "completed", "Durable row must remain completed");
+  assert.equal(completedDurableRow.failed_at, null, "Durable row failed_at must remain null");
+
+  // 4f. Focused regression test: Invoke production chatGenerationTaskCoordinator.failed() directly
+  // when durable row is already failed and guarded update returns no row (simulating update failure/miss).
+  const failedGenId = "00000000-0000-0000-0000-0000000000f4";
+  const originalFailAt = "2026-10-10T12:00:00.000Z";
+  const durableFailedRow: any = {
+    id: failedGenId,
+    conversation_id: "conv-f4",
+    user_id: "guest-hash-f4",
+    client_request_id: "req-f4",
+    generation_session_id: "sess-f4",
+    status: "failed",
+    execution_mode: "fast",
+    model_route: "chat",
+    execution_snapshot: { body: { message: "test-failed" } },
+    started_at: new Date(Date.now() - 40_000).toISOString(),
+    completed_at: null,
+    failed_at: originalFailAt,
+    cancelled_at: null,
+    error_code: "provider_model_overloaded",
+    partial_text: "Partial text before overload...",
+    tokens_generated: 8,
+    last_event_sequence: 8,
+    created_at: new Date(Date.now() - 40_000).toISOString(),
+    updated_at: originalFailAt,
+    execution_lease_id: null,
+    execution_lease_expires_at: null,
+    recovery_attempts: 0,
+    last_execution_error: null,
+  };
+
+  const mockFailedDb: any = {
+    from: (_table: string) => ({
+      select: () => ({
+        eq: (_f1: string, v1: string) => ({
+          eq: (_f2: string, v2: string) => ({
+            maybeSingle: async () => ({
+              data: (durableFailedRow.id === v1 && durableFailedRow.user_id === v2) ? { ...durableFailedRow } : null,
+              error: null,
+            }),
+          }),
+          maybeSingle: async () => ({
+            data: durableFailedRow.id === v1 ? { ...durableFailedRow } : null,
+            error: null,
+          }),
+        }),
+      }),
+      update: (_payload: any) => {
+        // Return null to test re-read reconciliation path when guarded update returns no row
+        const builder: any = {
+          eq: () => builder,
+          in: () => builder,
+          or: () => builder,
+          select: () => builder,
+          maybeSingle: async () => ({ data: null, error: null }),
+        };
+        return builder;
+      },
+    }),
+  };
+
+  const failedTask = chatGenerationTaskCoordinator.start({
+    generationId: failedGenId,
+    conversationId: "conv-f4",
+    userId: "guest-hash-f4",
+    clientRequestId: "req-f4",
+    generationSessionId: "sess-f4",
+    userDb: mockFailedDb,
+    generation: { ...durableFailedRow, status: "queued", error_code: null },
+  });
+  failedTask.executionLeaseId = null;
+  failedTask.terminal = false;
+  failedTask.status = "queued";
+
+  const capturedFailedEvents: any[] = [];
+  chatGenerationTaskCoordinator.subscribe(failedGenId, (event) => {
+    capturedFailedEvents.push(event);
+  });
+
+  await chatGenerationTaskCoordinator.failed(failedGenId, "generation_concurrency_timeout");
+
+  // Assertions:
+  // 1. Subscriber receives generation_failed with original durable error code
+  const deliveredFailEvent = capturedFailedEvents.find((e) => e.type === "generation_failed");
+  assert.ok(deliveredFailEvent, "Subscriber must receive generation_failed event");
+  assert.equal(deliveredFailEvent.error_code, "provider_model_overloaded", "Must preserve authoritative durable error code");
+  assert.equal(failedTask.terminal, true, "Task must be marked terminal");
+  assert.equal(failedTask.status, "failed", "Task status must be failed");
+  assert.equal(failedTask.lastErrorCode, "provider_model_overloaded");
+
+  // 2. Durable row in DB is not overwritten with new error_code or timestamp
+  assert.equal(durableFailedRow.error_code, "provider_model_overloaded");
+  assert.equal(durableFailedRow.failed_at, originalFailAt);
+
+  // 4g. Regression assertion for stored sequence consistency on no-local-lease failure path
+  const seqGenId = "00000000-0000-0000-0000-0000000000s4";
+  const seqRow: any = {
+    id: seqGenId,
+    conversation_id: "conv-s4",
+    user_id: "guest-hash-s4",
+    client_request_id: "req-s4",
+    generation_session_id: "sess-s4",
+    status: "queued",
+    execution_mode: "fast",
+    model_route: "chat",
+    execution_snapshot: { body: { message: "test-sequence" } },
+    started_at: new Date(Date.now() - 20_000).toISOString(),
+    completed_at: null,
+    failed_at: null,
+    cancelled_at: null,
+    error_code: null,
+    partial_text: "Text generated before failure",
+    tokens_generated: 5,
+    last_event_sequence: 5,
+    created_at: new Date(Date.now() - 20_000).toISOString(),
+    updated_at: new Date(Date.now() - 20_000).toISOString(),
+    execution_lease_id: null,
+    execution_lease_expires_at: null,
+    recovery_attempts: 0,
+    last_execution_error: null,
+  };
+
+  const mockSeqDb: any = {
+    from: (_table: string) => ({
+      select: () => ({
+        eq: (_f1: string, v1: string) => ({
+          eq: (_f2: string, v2: string) => ({
+            maybeSingle: async () => ({
+              data: (seqRow.id === v1 && seqRow.user_id === v2) ? { ...seqRow } : null,
+              error: null,
+            }),
+          }),
+          maybeSingle: async () => ({
+            data: seqRow.id === v1 ? { ...seqRow } : null,
+            error: null,
+          }),
+        }),
+      }),
+      update: (payload: any) => {
+        let matches = true;
+        const builder: any = {
+          eq: (field: string, val: any) => { if (seqRow[field] !== val) matches = false; return builder; },
+          in: (field: string, vals: any[]) => { if (!vals.includes(seqRow[field])) matches = false; return builder; },
+          or: () => builder,
+          select: () => builder,
+          maybeSingle: async () => {
+            if (matches) {
+              Object.assign(seqRow, payload);
+              return { data: { ...seqRow }, error: null };
+            }
+            return { data: null, error: null };
+          },
+        };
+        return builder;
+      },
+    }),
+  };
+
+  const seqTask = chatGenerationTaskCoordinator.start({
+    generationId: seqGenId,
+    conversationId: "conv-s4",
+    userId: "guest-hash-s4",
+    clientRequestId: "req-s4",
+    generationSessionId: "sess-s4",
+    userDb: mockSeqDb,
+    generation: seqRow,
+  });
+  seqTask.sequence = 5; // Local task has sequence 5
+  seqTask.executionLeaseId = null;
+
+  const capturedSeqEvents: any[] = [];
+  chatGenerationTaskCoordinator.subscribe(seqGenId, (event) => {
+    capturedSeqEvents.push(event);
+  });
+
+  await chatGenerationTaskCoordinator.failed(seqGenId, "terminal_failure_error");
+
+  const terminalSeqEvent = capturedSeqEvents.find((e) => e.type === "generation_failed");
+  assert.ok(terminalSeqEvent, "Must receive terminal failure event");
+  assert.equal(terminalSeqEvent.sequence, 6, "Terminal event sequence must be 6 (incremented from 5)");
+
+  // Assert durable last_event_sequence in DB matches terminal event sequence
+  assert.equal(seqRow.last_event_sequence, 6, "Durable DB last_event_sequence must agree with terminal event sequence (6)");
+  assert.equal(seqRow.last_event_sequence, terminalSeqEvent.sequence, "Durable last_event_sequence must equal event sequence");
+
+  // Assert snapshot returns matching sequence
+  const seqSnapshot = await chatGenerationTaskCoordinator.snapshot(seqGenId, seqRow);
+  assert.equal(seqSnapshot.sequence, 6, "Snapshot sequence must match terminal event sequence");
+  assert.equal(seqSnapshot.last_event_sequence, 6, "Snapshot last_event_sequence must match durable sequence");
+
   // 5. Integration regression test: Concurrency retry expires while another worker owns active lease.
   // Assert that the active worker's generation is NOT falsely reported as failed by the retrying worker.
   const activeWorkerGenId = "00000000-0000-0000-0000-0000000000a1";

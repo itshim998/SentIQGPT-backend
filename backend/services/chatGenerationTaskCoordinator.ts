@@ -1,4 +1,4 @@
-import { cancelChatGeneration, markChatGenerationFailedGuarded, type ChatGenerationRow } from "./chatGenerationService";
+import { cancelChatGeneration, getChatGenerationById, markChatGenerationFailedGuarded, type ChatGenerationRow } from "./chatGenerationService";
 import { expireStaleChatGenerationSessions } from "./chatGenerationSessionService";
 import { appendChatGenerationEventFenced, listChatGenerationEvents, normalizeStoredGenerationEvent } from "./chatGenerationEventService";
 import { normalizeGenerationEventType, type CanonicalGenerationEvent } from "./generationEventTypes";
@@ -280,8 +280,12 @@ class ChatGenerationTaskCoordinator {
     if (task.explicitCancelRequested) return this.cancelled(generationId);
 
     let resolvedErrorCode = errorCode || "generation_failed";
+    const nextSequence = Math.max((task.sequence ?? 0) + 1, Number(task.generation?.last_event_sequence ?? 0));
 
     if (!options?.skipDbUpdate && task.userDb && !task.executionLeaseId) {
+      let shouldHalt = false;
+      let reconciliationError: Error | null = null;
+
       await this.enqueue(task, async () => {
         try {
           const guarded = await markChatGenerationFailedGuarded(task.userDb, {
@@ -290,19 +294,110 @@ class ChatGenerationTaskCoordinator {
             errorCode: resolvedErrorCode,
             partialText: task.partialText,
             tokensGenerated: task.tokensGenerated,
-            lastEventSequence: task.sequence,
+            lastEventSequence: nextSequence,
             allowAlreadyFailed: true,
+            allowStaleStatuses: true,
           });
+
           if (guarded?.data) {
             task.generation = guarded.data;
             if (guarded.data.error_code) {
               resolvedErrorCode = guarded.data.error_code;
             }
+            return;
           }
+
+          // Guarded update returned no row; re-read durable state
+          const refreshed = await getChatGenerationById(task.userDb, task.userId, task.generationId).catch(() => null);
+          const durable = refreshed?.data;
+
+          if (durable) {
+            const now = Date.now();
+            const leaseExp = durable.execution_lease_expires_at ? Date.parse(durable.execution_lease_expires_at) : 0;
+            const hasActiveLease = Boolean(durable.execution_lease_id && leaseExp > now);
+
+            if (hasActiveLease) {
+              task.generation = durable;
+              task.status = (durable.status as any) || "running";
+              shouldHalt = true;
+              return;
+            }
+
+            if (task.explicitCancelRequested || durable.status === "cancel_requested" || durable.status === "cancelled") {
+              task.generation = durable;
+              task.status = "cancelled";
+              if (durable.status === "cancel_requested") {
+                await cancelChatGeneration(task.userDb, task.userId, task.generationId).catch(() => null);
+              }
+              await this.cancelled(generationId);
+              shouldHalt = true;
+              return;
+            }
+
+            if (durable.status === "completed") {
+              task.generation = durable;
+              if (durable.partial_text && durable.partial_text.length > task.partialText.length) {
+                task.partialText = durable.partial_text;
+              }
+              if (durable.tokens_generated) {
+                task.tokensGenerated = Math.max(task.tokensGenerated, durable.tokens_generated);
+              }
+              await this.complete(generationId);
+              shouldHalt = true;
+              return;
+            }
+
+            if (durable.status === "failed") {
+              task.generation = durable;
+              resolvedErrorCode = durable.error_code || resolvedErrorCode;
+              if (durable.partial_text && durable.partial_text.length > task.partialText.length) {
+                task.partialText = durable.partial_text;
+              }
+              if (durable.tokens_generated) {
+                task.tokensGenerated = Math.max(task.tokensGenerated, durable.tokens_generated);
+              }
+              return;
+            }
+
+            // Nonterminal and unleased: retry safe durable transition
+            const retryGuarded = await markChatGenerationFailedGuarded(task.userDb, {
+              userId: task.userId,
+              generationId: task.generationId,
+              errorCode: resolvedErrorCode,
+              partialText: task.partialText,
+              tokensGenerated: task.tokensGenerated,
+              lastEventSequence: nextSequence,
+              allowAlreadyFailed: true,
+              allowStaleStatuses: true,
+            }).catch(() => null);
+
+            if (retryGuarded?.data) {
+              task.generation = retryGuarded.data;
+              if (retryGuarded.data.error_code) {
+                resolvedErrorCode = retryGuarded.data.error_code;
+              }
+              return;
+            }
+          }
+
+          shouldHalt = true;
+          reconciliationError = Object.assign(
+            new Error(`Failed to reconcile durable terminal failure for generation ${generationId}`),
+            { code: "generation_reconciliation_failed" }
+          );
         } catch (error) {
-          console.warn(`[GenerationEvents] guarded failed persist failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`);
+          shouldHalt = true;
+          reconciliationError = error instanceof Error ? error : new Error(String(error));
+          console.warn(`[GenerationEvents] guarded failed persist failed generation=${generationId}: ${reconciliationError.message}`);
         }
       });
+
+      if (shouldHalt || task.terminal) {
+        if (reconciliationError) {
+          throw reconciliationError;
+        }
+        return;
+      }
     }
 
     if (task.terminal) return;
@@ -310,12 +405,16 @@ class ChatGenerationTaskCoordinator {
 
     task.status = "failed";
     task.lastErrorCode = resolvedErrorCode;
+    const finalSequence = Math.max(nextSequence, Number(task.generation?.last_event_sequence ?? 0));
+    if (task.generation && (!task.generation.last_event_sequence || finalSequence > task.generation.last_event_sequence)) {
+      task.generation.last_event_sequence = finalSequence;
+    }
     const event = this.appendEvent(task, {
       type: "generation_failed",
       status: "failed",
       partial_text: task.partialText,
       error_code: task.lastErrorCode,
-    });
+    }, finalSequence);
     const eventState = {
       partialText: task.partialText,
       tokensGenerated: task.tokensGenerated,
