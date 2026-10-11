@@ -275,40 +275,70 @@ class ChatGenerationTaskCoordinator {
   }
 
   async failed(generationId: string, errorCode = "generation_failed", options?: { skipDbUpdate?: boolean }): Promise<void> {
-    const task = this.tasks.get(generationId); if (!task || task.terminal) return; if (task.explicitCancelRequested) return this.cancelled(generationId);
-    task.status = "failed"; task.lastErrorCode = errorCode || "generation_failed"; const event = this.appendEvent(task, { type: "generation_failed", status: "failed", partial_text: task.partialText, error_code: task.lastErrorCode }); const eventState = { partialText: task.partialText, tokensGenerated: task.tokensGenerated, status: "failed", errorCode: task.lastErrorCode }; task.terminal = true;
-    await this.notify(task, event);
-    if (!options?.skipDbUpdate) {
-      if (task.userDb && task.executionLeaseId) {
-        await this.enqueue(task, async () => {
-          try { await this.persistEvent(task, event, eventState); } catch (error) { console.warn(`[GenerationEvents] failed persistEvent failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`); }
-        });
-      } else if (task.userDb) {
-        await this.enqueue(task, async () => {
-          try {
-            const guarded = await markChatGenerationFailedGuarded(task.userDb, {
-              userId: task.userId,
-              generationId: task.generationId,
-              errorCode: task.lastErrorCode || errorCode || "generation_failed",
-              partialText: task.partialText,
-              tokensGenerated: task.tokensGenerated,
-              lastEventSequence: task.sequence,
-              allowAlreadyFailed: true,
-            });
-            if (guarded?.data?.error_code && guarded.data.error_code !== task.lastErrorCode) {
-              task.lastErrorCode = guarded.data.error_code;
-              event.error_code = guarded.data.error_code;
+    const task = this.tasks.get(generationId);
+    if (!task || task.terminal) return;
+    if (task.explicitCancelRequested) return this.cancelled(generationId);
+
+    let resolvedErrorCode = errorCode || "generation_failed";
+
+    if (!options?.skipDbUpdate && task.userDb && !task.executionLeaseId) {
+      await this.enqueue(task, async () => {
+        try {
+          const guarded = await markChatGenerationFailedGuarded(task.userDb, {
+            userId: task.userId,
+            generationId: task.generationId,
+            errorCode: resolvedErrorCode,
+            partialText: task.partialText,
+            tokensGenerated: task.tokensGenerated,
+            lastEventSequence: task.sequence,
+            allowAlreadyFailed: true,
+          });
+          if (guarded?.data) {
+            task.generation = guarded.data;
+            if (guarded.data.error_code) {
+              resolvedErrorCode = guarded.data.error_code;
             }
-            if (guarded?.data) {
-              task.generation = guarded.data;
-            }
-          } catch (error) {
-            console.warn(`[GenerationEvents] guarded failed persist failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`);
           }
-        });
-      }
+        } catch (error) {
+          console.warn(`[GenerationEvents] guarded failed persist failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      });
     }
-    this.stopPolling(task); task.subscribers.clear(); this.scheduleCleanup(task);
+
+    if (task.terminal) return;
+    if (task.explicitCancelRequested) return this.cancelled(generationId);
+
+    task.status = "failed";
+    task.lastErrorCode = resolvedErrorCode;
+    const event = this.appendEvent(task, {
+      type: "generation_failed",
+      status: "failed",
+      partial_text: task.partialText,
+      error_code: task.lastErrorCode,
+    });
+    const eventState = {
+      partialText: task.partialText,
+      tokensGenerated: task.tokensGenerated,
+      status: "failed",
+      errorCode: task.lastErrorCode,
+    };
+    task.terminal = true;
+
+    await this.notify(task, event);
+
+    if (!options?.skipDbUpdate && task.userDb && task.executionLeaseId) {
+      await this.enqueue(task, async () => {
+        try {
+          await this.persistEvent(task, event, eventState);
+        } catch (error) {
+          console.warn(`[GenerationEvents] failed persistEvent failed generation=${generationId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      });
+    }
+
+    this.stopPolling(task);
+    task.subscribers.clear();
+    this.scheduleCleanup(task);
   }
 
   async cancelled(generationId: string): Promise<void> {

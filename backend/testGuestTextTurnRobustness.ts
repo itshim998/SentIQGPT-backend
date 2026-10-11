@@ -610,6 +610,104 @@ test("Requirement D: Production runGeneration() handles 55P03 rejection, genuine
   assert.equal(alreadyFailedRow.error_code, "provider_quota_exceeded", "Underlying row error_code must NOT be overwritten");
   assert.equal(alreadyFailedRow.failed_at, "2026-10-10T11:22:33.444Z", "Underlying row failed_at must NOT be overwritten");
 
+  // 4c. Focused regression test: Invoke production chatGenerationTaskCoordinator.failed() directly on already-failed row
+  // 1. Arrange for the durable generation row to already be failed with error_code: "provider_quota_exceeded" and an existing failed_at timestamp.
+  const directCoordinatorGenId = "00000000-0000-0000-0000-0000000000c4";
+  const originalProviderFailedAt = "2026-10-10T10:15:20.123Z";
+  const directFailedRow: any = {
+    id: directCoordinatorGenId,
+    conversation_id: "conv-c4",
+    user_id: "guest-hash-c4",
+    client_request_id: "req-c4",
+    generation_session_id: "sess-c4",
+    status: "failed",
+    execution_mode: "fast",
+    model_route: "chat",
+    execution_snapshot: { body: { message: "test-direct-failed" } },
+    started_at: new Date(Date.now() - 60_000).toISOString(),
+    completed_at: null,
+    failed_at: originalProviderFailedAt,
+    cancelled_at: null,
+    error_code: "provider_quota_exceeded",
+    partial_text: "Provider response before quota exceeded...",
+    tokens_generated: 12,
+    last_event_sequence: 12,
+    created_at: new Date(Date.now() - 60_000).toISOString(),
+    updated_at: originalProviderFailedAt,
+    execution_lease_id: null,
+    execution_lease_expires_at: null,
+    recovery_attempts: 0,
+    last_execution_error: null,
+  };
+
+  const mockDirectFailedDb: any = {
+    from: (_table: string) => ({
+      select: () => ({
+        eq: (_f1: string, v1: string) => ({
+          eq: (_f2: string, v2: string) => ({
+            maybeSingle: async () => ({
+              data: (directFailedRow.id === v1 && directFailedRow.user_id === v2) ? { ...directFailedRow } : null,
+              error: null,
+            }),
+          }),
+          maybeSingle: async () => ({
+            data: directFailedRow.id === v1 ? { ...directFailedRow } : null,
+            error: null,
+          }),
+        }),
+      }),
+      update: (payload: any) => {
+        let matches = true;
+        const builder: any = {
+          eq: (field: string, val: any) => { if (directFailedRow[field] !== val) matches = false; return builder; },
+          in: (field: string, vals: any[]) => { if (!vals.includes(directFailedRow[field])) matches = false; return builder; },
+          or: () => builder,
+          select: () => builder,
+          maybeSingle: async () => {
+            if (matches) {
+              Object.assign(directFailedRow, payload);
+              return { data: { ...directFailedRow }, error: null };
+            }
+            return { data: null, error: null };
+          },
+        };
+        return builder;
+      },
+    }),
+  };
+
+  const directTask = chatGenerationTaskCoordinator.start({
+    generationId: directCoordinatorGenId,
+    conversationId: "conv-c4",
+    userId: "guest-hash-c4",
+    clientRequestId: "req-c4",
+    generationSessionId: "sess-c4",
+    userDb: mockDirectFailedDb,
+    generation: { ...directFailedRow, status: "queued", error_code: null },
+  });
+  directTask.terminal = false;
+  directTask.status = "queued";
+
+  // 3. Capture the event delivered to the subscriber
+  const capturedDirectEvents: any[] = [];
+  chatGenerationTaskCoordinator.subscribe(directCoordinatorGenId, (event) => {
+    capturedDirectEvents.push(event);
+  });
+
+  // 2. Call failed() with a different temporary recovery or concurrency error
+  await chatGenerationTaskCoordinator.failed(directCoordinatorGenId, "temporary_recovery_error");
+
+  // 4. Assert that the subscriber receives status: "failed" and error_code: "provider_quota_exceeded"
+  const directFailureEvent = capturedDirectEvents.find((e) => e.type === "generation_failed");
+  assert.ok(directFailureEvent, "Subscriber must receive a generation_failed event");
+  assert.equal(directFailureEvent.status, "failed", "Delivered event status must be failed");
+  assert.equal(directFailureEvent.error_code, "provider_quota_exceeded", "Subscriber must receive authoritative provider_quota_exceeded error code, NOT temporary_recovery_error");
+
+  // 5. Assert that the durable original error code and timestamp are preserved
+  assert.equal(directFailedRow.status, "failed", "Durable status must remain failed");
+  assert.equal(directFailedRow.error_code, "provider_quota_exceeded", "Durable original error code must remain provider_quota_exceeded");
+  assert.equal(directFailedRow.failed_at, originalProviderFailedAt, "Durable original failed_at timestamp must be preserved");
+
   // 5. Integration regression test: Concurrency retry expires while another worker owns active lease.
   // Assert that the active worker's generation is NOT falsely reported as failed by the retrying worker.
   const activeWorkerGenId = "00000000-0000-0000-0000-0000000000a1";
