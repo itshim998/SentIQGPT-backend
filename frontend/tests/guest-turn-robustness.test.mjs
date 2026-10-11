@@ -83,6 +83,7 @@ await import("../scripts/generation-lifecycle.js");
 
 const {
   pollDurableStatusUntilTerminal,
+  reconcileEntryDurableStatus,
   subscribeUntilTerminal,
   subscribeOnce,
   createGenerationEntry,
@@ -146,6 +147,7 @@ assert.ok(typeof subscribeUntilTerminal === "function", "subscribeUntilTerminal 
   const entry404 = createGenerationEntry({
     generationId: "gen-runtime-poll-404",
     tokensReceived: true,
+    isGuest: true,
     callbacks: {
       onError: (err) => { errorReceived = err; },
     },
@@ -166,13 +168,14 @@ assert.ok(typeof subscribeUntilTerminal === "function", "subscribeUntilTerminal 
   assert.equal(entry404.interrupted, true, "Previously received tokens mark it as interrupted");
 }
 
-// Test B2: Production SSE reconnect handles 404/generation_not_found immediately without looping
+// Test B2: Production SSE reconnect handles guest 404/generation_not_found immediately without looping
 {
   let sseFetchCount = 0;
   let errorReceived = null;
   const entrySse404 = createGenerationEntry({
     generationId: "gen-runtime-sse-404",
     tokensReceived: true,
+    isGuest: true,
     callbacks: {
       onError: (err) => { errorReceived = err; },
     },
@@ -188,13 +191,133 @@ assert.ok(typeof subscribeUntilTerminal === "function", "subscribeUntilTerminal 
   };
 
   const result = await subscribeUntilTerminal(entrySse404);
-  assert.equal(result.failed, true, "SSE reconnect must fail immediately on 404");
-  assert.equal(sseFetchCount, 1, "Must NOT retry 8 times when 404 generation_not_found is received");
+  assert.equal(result.failed, true, "Guest SSE reconnect must fail immediately on 404");
+  assert.equal(sseFetchCount, 1, "Must NOT retry 8 times when guest 404 generation_not_found is received");
   assert.equal(entrySse404.terminal, true, "404 must mark entry terminal");
   assert.equal(entrySse404.status, "failed");
   assert.equal(entrySse404.error?.code, "generation_not_found");
   assert.equal(errorReceived?.code, "generation_not_found");
   assert.equal(entrySse404.interrupted, true, "Tokens received mark it as interrupted");
+}
+
+// Test B3: Transient or unrelated SSE error is not misclassified as generation_not_found
+{
+  let sseFetchCount = 0;
+  const entryTransient = createGenerationEntry({
+    generationId: "gen-runtime-sse-transient-404",
+    tokensReceived: true,
+    isGuest: true,
+    callbacks: {
+      onError: () => {},
+    },
+  });
+
+  globalThis.fetch = async () => {
+    sseFetchCount += 1;
+    if (sseFetchCount < 3) {
+      // 404 without generation_not_found code (e.g. gateway HTML error)
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({ error: "Gateway not found", code: "gateway_error" }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ status: "completed", partial_text: "Recovered text" }),
+    };
+  };
+
+  const result = await subscribeUntilTerminal(entryTransient);
+  assert.ok(sseFetchCount > 1, "Must retry transient error and not misclassify as generation_not_found");
+  assert.notEqual(entryTransient.error?.code, "generation_not_found");
+}
+
+// Test B4: Authenticated SSE reconnect preserves durable retry/polling behavior on 404
+{
+  let sseFetchCount = 0;
+  let pollCalled = false;
+  const entryAuth404 = createGenerationEntry({
+    generationId: "gen-runtime-sse-auth-404",
+    tokensReceived: true,
+    isGuest: false,
+    callbacks: {
+      onError: () => {},
+    },
+  });
+
+  globalThis.fetch = async (url) => {
+    const urlStr = String(url || "");
+    sseFetchCount += 1;
+    if (urlStr.includes("/events")) {
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({ error: "Generation not found.", code: "generation_not_found" }),
+      };
+    }
+    pollCalled = true;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ status: "completed", partial_text: "Recovered text from durable database" }),
+    };
+  };
+
+  const result = await subscribeUntilTerminal(entryAuth404);
+  assert.ok(sseFetchCount > 1, "Authenticated generation must retry SSE before falling back to polling");
+  assert.equal(pollCalled, true, "Authenticated generation must fall back to durable status polling");
+  assert.equal(entryAuth404.status, "completed", "Authenticated entry must complete via durable recovery polling");
+}
+
+// Test B5: Guest durable-status reconciliation marks missing generation as interrupted failure, not completed
+{
+  let errorReceived = null;
+  const entryGuestReconcile = createGenerationEntry({
+    generationId: "gen-runtime-guest-reconcile-404",
+    tokensReceived: true,
+    isGuest: true,
+    callbacks: {
+      onError: (err) => { errorReceived = err; },
+    },
+  });
+
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 404,
+    json: async () => ({ error: "Generation not found.", code: "generation_not_found" }),
+  });
+
+  await reconcileEntryDurableStatus(entryGuestReconcile);
+  assert.equal(entryGuestReconcile.terminal, true);
+  assert.equal(entryGuestReconcile.status, "failed");
+  assert.equal(entryGuestReconcile.interrupted, true);
+  assert.equal(entryGuestReconcile.error?.code, "generation_not_found");
+  assert.equal(errorReceived?.code, "generation_not_found");
+}
+
+// Test B6: Authenticated durable-status reconciliation preserves pre-refactor behavior on 404
+{
+  const entryAuthReconcile = createGenerationEntry({
+    generationId: "gen-runtime-auth-reconcile-404",
+    tokensReceived: true,
+    isGuest: false,
+    callbacks: {
+      onError: () => {},
+    },
+  });
+
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 404,
+    json: async () => ({ error: "Generation not found.", code: "generation_not_found" }),
+  });
+
+  await reconcileEntryDurableStatus(entryAuthReconcile);
+  // Preserves pre-refactor unconfirmed failure policy when [DONE] was not authoritatively verified
+  assert.equal(entryAuthReconcile.terminal, true);
+  assert.equal(entryAuthReconcile.error?.code, "generation_unconfirmed");
 }
 
 // Test C: Quiet-polling returns resumeSse: true after 20 attempts, and subscribeUntilTerminal resumes SSE cleanly

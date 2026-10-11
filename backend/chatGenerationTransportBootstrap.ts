@@ -245,19 +245,57 @@ export function openGenerationSubscription(response: Response, generationId: str
     }
   })().catch((error) => { emit({ type: "error", code: String((error as any)?.code || "generation_subscription_failed"), error: "Generation subscription failed." }); emitDoneAndClose(); });
 }
-function installGenerationRoutes(app: any) {
+export function installGenerationRoutes(app: any) {
   if (app.__sentiqGenerationRoutesInstalled) return; app.__sentiqGenerationRoutesInstalled = true; const application = app; const originalPost = application.post;
   installRehydrationRoutes(app);
   installSessionRoutes(app);
   app.get(EVENTS_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => { try { const context = await resolveOwnedGeneration(req, String(req.params.generationId || "")); if (!context.generation && !context.task) return res.status(404).json({ error: "Generation not found.", code: "generation_not_found" }); const after = Number(req.headers["last-event-id"] ?? req.query.after ?? 0); openGenerationSubscription(res, context.generationId, context, Number.isFinite(after) ? Math.max(0, after) : 0); } catch { res.status(500).json({ error: "Unable to subscribe to generation.", code: "generation_subscription_failed" }); } });
   app.get(STATUS_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => { try { const context = await resolveOwnedGeneration(req, String(req.params.generationId || "")); if (context.task) { res.json(await chatGenerationTaskCoordinator.snapshot(context.generationId, context.generation)); return; } if (!context.generation) return res.status(404).json({ error: "Generation not found", code: "generation_not_found" }); res.json(context.generation); } catch { res.status(500).json({ error: "Unable to load generation status", code: "generation_status_failed" }); } });
-  app.post(CANCEL_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => { try { const generationId = String(req.params.generationId || "").trim(); if (!generationId) return res.status(400).json({ error: "generationId is required" }); const context = await resolveOwnedGeneration(req, generationId); if (!context.generation && !context.task) return res.status(404).json({ error: "Generation not found", code: "generation_not_found" }); if (context.userDb) { const cancel = await requestChatGenerationCancel(context.userDb, context.userId, generationId); if (cancel.error) throw cancel.error; } const requested = await chatGenerationTaskCoordinator.requestCancel(generationId); res.status(202).json({ generation_id: generationId, status: requested ? "cancel_requested" : context.generation?.status ?? "cancel_requested" }); } catch { res.status(500).json({ error: "Unable to cancel generation", code: "generation_cancel_failed" }); } });
+  app.post(CANCEL_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => {
+    try {
+      const generationId = String(req.params.generationId || "").trim();
+      if (!generationId) return res.status(400).json({ error: "generationId is required" });
+      const context = await resolveOwnedGeneration(req, generationId);
+      if (!context.generation && !context.task) return res.status(404).json({ error: "Generation not found", code: "generation_not_found" });
+      if (context.userDb) {
+        const cancel = await requestChatGenerationCancel(context.userDb, context.userId, generationId);
+        if (cancel.error) throw cancel.error;
+      }
+      const requested = await chatGenerationTaskCoordinator.requestCancel(generationId);
+      const isGuest = Boolean(context.requestUser?.isGuest || !context.userDb);
+      const guestStatus = context.task?.status ?? context.generation?.status ?? "cancel_requested";
+      const status = isGuest
+        ? (requested ? "cancel_requested" : guestStatus)
+        : (requested ? "cancel_requested" : context.generation?.status ?? "cancel_requested");
+      res.status(202).json({ generation_id: generationId, status });
+    } catch {
+      res.status(500).json({ error: "Unable to cancel generation", code: "generation_cancel_failed" });
+    }
+  });
   app.post(CANCEL_ALL_PATH, verifyJWT({ allowGuest: true }), async (req: Request, res: Response) => {
     const intent = typeof req.body?.intent === "string" ? req.body.intent : "";
     if (intent !== "explicit_bulk_stop") return res.status(202).json({ results: [], ignored: true, reason: "bulk_cancellation_requires_explicit_intent" });
     const ids = Array.isArray(req.body?.generation_ids) ? req.body.generation_ids.map((id: unknown) => String(id || "").trim()).filter(Boolean).slice(0, 32) : [];
     const results: Array<{ generation_id: string; status: string }> = [];
-    for (const generationId of ids) { try { const context = await resolveOwnedGeneration(req, generationId); if (!context.generation && !context.task) { results.push({ generation_id: generationId, status: "not_found" }); continue; } if (context.userDb) await requestChatGenerationCancel(context.userDb, context.userId, generationId); const requested = await chatGenerationTaskCoordinator.requestCancel(generationId); results.push({ generation_id: generationId, status: requested ? "cancel_requested" : context.generation?.status ?? "cancel_requested" }); } catch { results.push({ generation_id: generationId, status: "unavailable" }); } }
+    for (const generationId of ids) {
+      try {
+        const context = await resolveOwnedGeneration(req, generationId);
+        if (!context.generation && !context.task) {
+          results.push({ generation_id: generationId, status: "not_found" });
+          continue;
+        }
+        if (context.userDb) await requestChatGenerationCancel(context.userDb, context.userId, generationId);
+        const requested = await chatGenerationTaskCoordinator.requestCancel(generationId);
+        const isGuest = Boolean(context.requestUser?.isGuest || !context.userDb);
+        const guestStatus = context.task?.status ?? context.generation?.status ?? "cancel_requested";
+        const status = isGuest
+          ? (requested ? "cancel_requested" : guestStatus)
+          : (requested ? "cancel_requested" : context.generation?.status ?? "cancel_requested");
+        results.push({ generation_id: generationId, status });
+      } catch {
+        results.push({ generation_id: generationId, status: "unavailable" });
+      }
+    }
     res.json({ results });
   });
   void originalPost;

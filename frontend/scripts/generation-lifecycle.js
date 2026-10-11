@@ -45,6 +45,20 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     }
   }
 
+  function resolveIsGuest(explicitFlag, contextOrOptions = {}) {
+    if (typeof explicitFlag === "boolean") return explicitFlag;
+    if (typeof contextOrOptions?.isGuest === "boolean") return contextOrOptions.isGuest;
+    if (typeof contextOrOptions?.guest === "boolean") return contextOrOptions.guest;
+    if (typeof window !== "undefined" && typeof window.SentIQGuestExperience?.isGuest === "function") {
+      try {
+        return Boolean(window.SentIQGuestExperience.isGuest());
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+
   async function buildAuthHeaders() {
     const headers = {
       "Content-Type": "application/json",
@@ -119,6 +133,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       status: entry.status,
       responseBuffer: entry.responseBuffer,
       lastSequence: entry.lastSequence,
+      isGuest: Boolean(entry.isGuest),
       subscription: entry.subscription ? {
         active: Boolean(entry.subscription.active),
         reconnectAttempts: Number(entry.subscription.reconnectAttempts || 0),
@@ -205,8 +220,11 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       return existing;
     }
 
+    const isGuest = resolveIsGuest(entry?.isGuest, entry);
+
     const canonical = {
       ...entry,
+      isGuest,
       generationId,
       chatId,
       localChatId: entry.localChatId || null,
@@ -535,21 +553,27 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         headers,
         cache: "no-store",
       });
-      if (response && response.status === 404) {
-        const err = new Error("Generation record not found.");
-        err.code = "generation_not_found";
-        entry.status = "failed";
-        entry.terminal = true;
-        entry.error = err;
-        entry.interrupted = Boolean(entry.tokensReceived);
-        if (!entry.errorDispatched) {
-          entry.errorDispatched = true;
-          entry.callbacks.onError?.(err, {
-            tokensReceived: entry.tokensReceived,
-            interrupted: entry.interrupted,
-          });
+      if (entry.isGuest && response && response.status === 404) {
+        const body = await response.json().catch(() => ({}));
+        if (body?.code === "generation_not_found" || !body?.code) {
+          const err = new Error(body?.error || "Generation record not found.");
+          err.code = "generation_not_found";
+          entry.status = "failed";
+          entry.terminal = true;
+          entry.error = err;
+          entry.interrupted = Boolean(entry.tokensReceived);
+          activeGenerations.delete(entry.generationId);
+          if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+          if (!entry.errorDispatched) {
+            entry.errorDispatched = true;
+            entry.callbacks.onError?.(err, {
+              tokensReceived: entry.tokensReceived,
+              interrupted: entry.interrupted,
+            });
+          }
+          pruneTerminalEntryCallbacks(entry);
+          return;
         }
-        return;
       }
       if (response && response.ok) {
         const data = await response.json().catch(() => ({}));
@@ -629,7 +653,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         const body = await response.json().catch(() => ({}));
         const error = new Error(body?.error || `Generation subscription failed: HTTP ${response.status}`);
         error.status = response.status;
-        error.code = body?.code || (response.status === 404 ? "generation_not_found" : "generation_subscription_failed");
+        error.code = body?.code || "generation_subscription_failed";
         console.warn(`[GenerationLifecycle] Subscription HTTP error generation=${entry.generationId} endpoint=/api/chat/generations/${entry.generationId}/events status=HTTP ${response.status} code=${error.code}`);
         throw error;
       }
@@ -837,7 +861,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       } catch (error) {
         if (error?.name === "AbortError" || signal?.aborted) return { detached: true };
         if (entry.terminal || entry.cancelRequested) return { cancelled: Boolean(entry.cancelled), completed: entry.terminal && entry.status === "completed" };
-        if (error?.status === 404 || error?.code === "generation_not_found") {
+        if (entry.isGuest && error?.code === "generation_not_found") {
           const notFoundError = new Error("Generation record not found.");
           notFoundError.code = "generation_not_found";
           entry.status = "failed";
@@ -1028,6 +1052,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         || context.conversation_id
         || chatId;
 
+      const isGuest = resolveIsGuest(context.isGuest, context);
       const initEntry = (genId, convId) => {
         if (entry) return entry;
         generationId = genId;
@@ -1058,6 +1083,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           cancelRequested: false,
           terminal: false,
           error: null,
+          isGuest,
         };
         activeGenerations.set(genId, entry);
         registerGeneration(entry);
@@ -1225,6 +1251,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       || context.conversation_id
       || chatId;
 
+    const isGuest = resolveIsGuest(context.isGuest, context);
     const entry = {
       generationId,
       requestId: context.clientRequestId || context.client_request_id || started?.client_request_id || null,
@@ -1252,6 +1279,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       cancelRequested: false,
       terminal: false,
       error: null,
+      isGuest,
     };
 
     activeGenerations.set(generationId, entry);
@@ -1362,9 +1390,11 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       return result;
     },
     pollDurableStatusUntilTerminal,
+    reconcileEntryDurableStatus,
     subscribeUntilTerminal,
     subscribeOnce,
     createGenerationEntry: (options = {}) => {
+      const isGuest = resolveIsGuest(options.isGuest, options);
       const entry = {
         generationId: options.generationId,
         requestId: options.requestId || null,
@@ -1392,6 +1422,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         cancelRequested: false,
         terminal: false,
         error: null,
+        isGuest,
       };
       registerGeneration(entry);
       if (!entry.terminal) activeGenerations.set(entry.generationId, entry);

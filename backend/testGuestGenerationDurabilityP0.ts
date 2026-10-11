@@ -276,3 +276,235 @@ test("runtime: authenticated durability persists fenced events and claims durabl
   assert.equal(fencedEvents[0].args.p_user_id, userId);
   assert.equal(fencedEvents[0].args.p_lease_id, leaseId);
 });
+
+test("runtime: guest cancellation responses reflect authoritative in-memory task status (Fix B)", async () => {
+  for (const id of [1, 2, 3]) {
+    process.env[`SUPABASE_URL_${id}`] ??= `https://shard-${id}-test.supabase.co`;
+    process.env[`SUPABASE_SERVICE_ROLE_KEY_${id}`] ??= `test-key-${id}`;
+  }
+  const express = (await import("express")).default;
+  const { installGenerationRoutes } = await import("./chatGenerationTransportBootstrap");
+  const { guestGenerationOwnerKeyFromAnonymousId } = await import("./services/guestGenerationIdentity");
+  const { chatGenerationTaskCoordinator } = await import("./services/chatGenerationTaskCoordinator");
+
+  const app = express();
+  app.use(express.json());
+  installGenerationRoutes(app);
+
+  const server = app.listen(0);
+  const port = (server.address() as any).port;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const anonId = "guest-cancel-status-anon-1";
+  const guestOwner = guestGenerationOwnerKeyFromAnonymousId(anonId);
+  const guestHeaders = {
+    "content-type": "application/json",
+    "x-sentiq-anonymous-id": anonId,
+  };
+
+  try {
+    // 1. Requesting cancellation after a guest task has completed
+    const completedGenId = randomUUID();
+    const completedTask = chatGenerationTaskCoordinator.start({
+      generationId: completedGenId,
+      clientRequestId: "req-completed-1",
+      userId: guestOwner,
+      conversationId: "conv-completed-1",
+      userDb: null,
+      generation: {
+        id: completedGenId,
+        status: "queued" as any, // initial snapshot status
+      } as any,
+    });
+    await chatGenerationTaskCoordinator.complete(completedGenId);
+    assert.equal(completedTask.status, "completed");
+
+    const resCompleted = await fetch(`${baseUrl}/api/chat/generations/${completedGenId}/cancel`, {
+      method: "POST",
+      headers: guestHeaders,
+      body: "{}",
+    });
+    assert.equal(resCompleted.status, 202);
+    const bodyCompleted: any = await resCompleted.json();
+    assert.equal(bodyCompleted.generation_id, completedGenId);
+    assert.equal(bodyCompleted.status, "completed", "Cancellation of completed guest task must report 'completed', not 'queued'");
+
+    // 2. Requesting cancellation after a guest task has already been cancelled
+    const cancelledGenId = randomUUID();
+    const cancelledTask = chatGenerationTaskCoordinator.start({
+      generationId: cancelledGenId,
+      clientRequestId: "req-cancelled-1",
+      userId: guestOwner,
+      conversationId: "conv-cancelled-1",
+      userDb: null,
+      generation: {
+        id: cancelledGenId,
+        status: "queued" as any,
+      } as any,
+    });
+    await chatGenerationTaskCoordinator.cancelled(cancelledGenId);
+    assert.equal(cancelledTask.status, "cancelled");
+
+    const resCancelled = await fetch(`${baseUrl}/api/chat/generations/${cancelledGenId}/cancel`, {
+      method: "POST",
+      headers: guestHeaders,
+      body: "{}",
+    });
+    assert.equal(resCancelled.status, 202);
+    const bodyCancelled: any = await resCancelled.json();
+    assert.equal(bodyCancelled.generation_id, cancelledGenId);
+    assert.equal(bodyCancelled.status, "cancelled", "Cancellation of already-cancelled guest task must report 'cancelled'");
+
+    // 3. Requesting cancellation while a guest task is still running
+    const runningGenId = randomUUID();
+    const runningTask = chatGenerationTaskCoordinator.start({
+      generationId: runningGenId,
+      clientRequestId: "req-running-1",
+      userId: guestOwner,
+      conversationId: "conv-running-1",
+      userDb: null,
+      generation: {
+        id: runningGenId,
+        status: "queued" as any,
+      } as any,
+    });
+    runningTask.status = "running";
+
+    const resRunning = await fetch(`${baseUrl}/api/chat/generations/${runningGenId}/cancel`, {
+      method: "POST",
+      headers: guestHeaders,
+      body: "{}",
+    });
+    assert.equal(resRunning.status, 202);
+    const bodyRunning: any = await resRunning.json();
+    assert.equal(bodyRunning.generation_id, runningGenId);
+    assert.equal(bodyRunning.status, "cancel_requested", "Cancellation of running guest task must report 'cancel_requested'");
+
+    // 4. Cancellation of a guest task that has failed
+    const failedGenId = randomUUID();
+    const failedTask = chatGenerationTaskCoordinator.start({
+      generationId: failedGenId,
+      clientRequestId: "req-failed-1",
+      userId: guestOwner,
+      conversationId: "conv-failed-1",
+      userDb: null,
+      generation: {
+        id: failedGenId,
+        status: "queued" as any,
+      } as any,
+    });
+    await chatGenerationTaskCoordinator.failed(failedGenId, "model_timeout");
+    assert.equal(failedTask.status, "failed");
+
+    const resFailed = await fetch(`${baseUrl}/api/chat/generations/${failedGenId}/cancel`, {
+      method: "POST",
+      headers: guestHeaders,
+      body: "{}",
+    });
+    assert.equal(resFailed.status, 202);
+    const bodyFailed: any = await resFailed.json();
+    assert.equal(bodyFailed.generation_id, failedGenId);
+    assert.equal(bodyFailed.status, "failed", "Cancellation of failed guest task must report 'failed'");
+
+    // 5. Bulk cancellation containing a mix of active, terminal, unknown, and cross-guest generation IDs
+    const otherAnonId = "guest-cancel-status-other-anon";
+    const otherGuestOwner = guestGenerationOwnerKeyFromAnonymousId(otherAnonId);
+    const crossGuestGenId = randomUUID();
+    chatGenerationTaskCoordinator.start({
+      generationId: crossGuestGenId,
+      clientRequestId: "req-cross-1",
+      userId: otherGuestOwner,
+      conversationId: "conv-cross-1",
+      userDb: null,
+    });
+
+    const unknownGenId = randomUUID();
+    const bulkActiveGenId = randomUUID();
+    chatGenerationTaskCoordinator.start({
+      generationId: bulkActiveGenId,
+      clientRequestId: "req-bulk-active-1",
+      userId: guestOwner,
+      conversationId: "conv-bulk-active-1",
+      userDb: null,
+    });
+
+    // Test intent validation first: without explicit intent, must ignore
+    const resNoIntent = await fetch(`${baseUrl}/api/chat/generations/cancel-all`, {
+      method: "POST",
+      headers: guestHeaders,
+      body: JSON.stringify({ generation_ids: [bulkActiveGenId] }),
+    });
+    const bodyNoIntent: any = await resNoIntent.json();
+    assert.equal(bodyNoIntent.ignored, true);
+    assert.equal(bodyNoIntent.reason, "bulk_cancellation_requires_explicit_intent");
+
+    // With explicit intent
+    const resBulk = await fetch(`${baseUrl}/api/chat/generations/cancel-all`, {
+      method: "POST",
+      headers: guestHeaders,
+      body: JSON.stringify({
+        intent: "explicit_bulk_stop",
+        generation_ids: [
+          bulkActiveGenId,
+          completedGenId,
+          cancelledGenId,
+          failedGenId,
+          unknownGenId,
+          crossGuestGenId,
+        ],
+      }),
+    });
+    assert.equal(resBulk.status, 200);
+    const bodyBulk: any = await resBulk.json();
+    assert.ok(Array.isArray(bodyBulk.results));
+    const resultsMap = new Map(bodyBulk.results.map((r: any) => [r.generation_id, r.status]));
+
+    assert.equal(resultsMap.get(bulkActiveGenId), "cancel_requested", "Active task in bulk cancellation must be cancel_requested");
+    assert.equal(resultsMap.get(completedGenId), "completed", "Completed task in bulk cancellation must reflect completed");
+    assert.equal(resultsMap.get(cancelledGenId), "cancelled", "Cancelled task in bulk cancellation must reflect cancelled");
+    assert.equal(resultsMap.get(failedGenId), "failed", "Failed task in bulk cancellation must reflect failed");
+    assert.equal(resultsMap.get(unknownGenId), "not_found", "Unknown generation in bulk cancellation must be not_found");
+    assert.equal(resultsMap.get(crossGuestGenId), "not_found", "Cross-guest generation in bulk cancellation must be not_found");
+
+    // Clean up coordinator tasks
+    await chatGenerationTaskCoordinator.complete(bulkActiveGenId);
+    await chatGenerationTaskCoordinator.complete(crossGuestGenId);
+    await chatGenerationTaskCoordinator.complete(runningGenId);
+  } finally {
+    server.close();
+  }
+});
+
+test("runtime: authenticated cancellation response behavior remains unchanged", async () => {
+  const { chatGenerationTaskCoordinator } = await import("./services/chatGenerationTaskCoordinator");
+  const authUserId = "auth-cancel-user-test";
+  const authGenId = randomUUID();
+
+  let dbCancelCalled = false;
+  const fakeUserDb = {
+    rpc: async (name: string, _args: any) => {
+      if (name === "request_chat_generation_cancel") {
+        dbCancelCalled = true;
+        return { data: { cancelled: true }, error: null };
+      }
+      return { data: null, error: null };
+    },
+  };
+
+  const authTask = chatGenerationTaskCoordinator.start({
+    generationId: authGenId,
+    clientRequestId: "req-auth-cancel",
+    userId: authUserId,
+    conversationId: "conv-auth-cancel",
+    userDb: fakeUserDb,
+    generation: {
+      id: authGenId,
+      status: "running" as any,
+    } as any,
+  });
+
+  const requested = await chatGenerationTaskCoordinator.requestCancel(authGenId);
+  assert.equal(requested, true);
+  assert.equal(authTask.status, "cancel_requested");
+  await chatGenerationTaskCoordinator.complete(authGenId);
+});
