@@ -32,6 +32,12 @@ class ChatGenerationTaskCoordinator {
   has(generationId: string): boolean { return this.tasks.has(generationId); }
   get(generationId: string): Task | null { return this.tasks.get(generationId) ?? null; }
   findByClientRequestId(clientRequestId: string): Task | null { const normalized = String(clientRequestId || "").trim(); return normalized ? Array.from(this.tasks.values()).find((task) => task.clientRequestId === normalized) ?? null : null; }
+  findByUserAndClientRequestId(userId: string, clientRequestId: string): Task | null {
+    const normUser = String(userId || "").trim();
+    const normReq = String(clientRequestId || "").trim();
+    if (!normUser || !normReq) return null;
+    return Array.from(this.tasks.values()).find((task) => task.userId === normUser && task.clientRequestId === normReq) ?? null;
+  }
 
   start(context: ChatGenerationTaskContext): Task {
     const existing = this.tasks.get(context.generationId);

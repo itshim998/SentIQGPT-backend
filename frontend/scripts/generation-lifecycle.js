@@ -535,6 +535,22 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         headers,
         cache: "no-store",
       });
+      if (response && response.status === 404) {
+        const err = new Error("Generation record not found.");
+        err.code = "generation_not_found";
+        entry.status = "failed";
+        entry.terminal = true;
+        entry.error = err;
+        entry.interrupted = Boolean(entry.tokensReceived);
+        if (!entry.errorDispatched) {
+          entry.errorDispatched = true;
+          entry.callbacks.onError?.(err, {
+            tokensReceived: entry.tokensReceived,
+            interrupted: entry.interrupted,
+          });
+        }
+        return;
+      }
       if (response && response.ok) {
         const data = await response.json().catch(() => ({}));
         const status = String(data?.status || "");
@@ -613,7 +629,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         const body = await response.json().catch(() => ({}));
         const error = new Error(body?.error || `Generation subscription failed: HTTP ${response.status}`);
         error.status = response.status;
-        error.code = body?.code || "generation_subscription_failed";
+        error.code = body?.code || (response.status === 404 ? "generation_not_found" : "generation_subscription_failed");
         console.warn(`[GenerationLifecycle] Subscription HTTP error generation=${entry.generationId} endpoint=/api/chat/generations/${entry.generationId}/events status=HTTP ${response.status} code=${error.code}`);
         throw error;
       }
@@ -821,6 +837,22 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       } catch (error) {
         if (error?.name === "AbortError" || signal?.aborted) return { detached: true };
         if (entry.terminal || entry.cancelRequested) return { cancelled: Boolean(entry.cancelled), completed: entry.terminal && entry.status === "completed" };
+        if (error?.status === 404 || error?.code === "generation_not_found") {
+          const notFoundError = new Error("Generation record not found.");
+          notFoundError.code = "generation_not_found";
+          entry.status = "failed";
+          entry.terminal = true;
+          entry.error = notFoundError;
+          entry.interrupted = Boolean(entry.tokensReceived);
+          activeGenerations.delete(entry.generationId);
+          if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+          entry.callbacks.onError?.(notFoundError, {
+            tokensReceived: entry.tokensReceived,
+            interrupted: entry.interrupted,
+          });
+          pruneTerminalEntryCallbacks(entry);
+          return { failed: true, error: notFoundError };
+        }
         if (!entry.subscription) entry.subscription = { active: false, reconnectAttempts: 0, signal: null };
         entry.subscription.reconnectAttempts += 1;
         const statusOrErr = error?.status ? `HTTP ${error.status}` : (error?.message || "stream_error");

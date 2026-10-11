@@ -155,9 +155,9 @@ function read(relative: string): string {
   return fs.readFileSync(path.resolve(CONTRACT_ROOT, relative), "utf8");
 }
 
-test("guest generation survives crash and recovers on the same shard", () => {
+test("authenticated generation survives crash and recovers on the same shard", () => {
   const store = new DurableGenerationStore();
-  const row = store.create({ id: "g-same-shard", ownerKey: "guest-owner-1", shardId: 2 });
+  const row = store.create({ id: "auth-same-shard", ownerKey: "auth-user-1", shardId: 2 });
 
   const firstLease = store.claimLease(row.id, 1000, 100);
   const first = new ReplicaExecutor("backend-A", store, row.id, firstLease);
@@ -179,9 +179,9 @@ test("guest generation survives crash and recovers on the same shard", () => {
   assert.equal(row.lastEventSequence, 2);
 });
 
-test("guest generation recovers on another backend instance from the same durable shard", () => {
+test("authenticated generation recovers on another backend instance from the same durable shard", () => {
   const store = new DurableGenerationStore();
-  const row = store.create({ id: "g-cross-instance", ownerKey: "guest-owner-2", shardId: 3 });
+  const row = store.create({ id: "auth-cross-instance", ownerKey: "auth-user-2", shardId: 3 });
   const leaseA = store.claimLease(row.id, 1000, 100);
   const replicaA = new ReplicaExecutor("backend-A", store, row.id, leaseA);
   replicaA.emit("token", "partial");
@@ -201,9 +201,9 @@ test("guest generation recovers on another backend instance from the same durabl
   assert.equal(row.partialText, "partial-complete");
 });
 
-test("guest cancellation requested on replica B stops execution owned by replica A", () => {
+test("authenticated cancellation requested on replica B stops execution owned by replica A", () => {
   const store = new DurableGenerationStore();
-  const row = store.create({ id: "g-cancel-cross-replica", ownerKey: "guest-owner-3", shardId: 4 });
+  const row = store.create({ id: "auth-cancel-cross-replica", ownerKey: "auth-user-3", shardId: 4 });
   const leaseA = store.claimLease(row.id, 1000, 1000);
   const replicaA = new ReplicaExecutor("backend-A", store, row.id, leaseA);
 
@@ -294,15 +294,15 @@ test("fresh snapshot is delivered before future events", async () => {
   assert.equal(snapshotSequence, 3);
 });
 
-test("production code keeps distributed generation guarantees off the Azure startup path", () => {
+test("production code keeps distributed generation guarantees off the Azure startup path and removes guest recovery scanner", () => {
   const server = read("server.ts");
-  const guestRecovery = read("services/guestGenerationRecovery.ts");
   const coordinator = read("services/chatGenerationTaskCoordinator.ts");
   const runner = read("services/generationRunner.ts");
+  const recovery = read("services/generationRecovery.ts");
 
-  assert.match(server, /guestGenerationRecovery/);
-  assert.match(guestRecovery, /getGuestGenerationDatabase/);
-  assert.match(guestRecovery, /claimGuestGenerationRecoveryAttempt/);
+  assert.doesNotMatch(server, /guestGenerationRecovery/);
+  assert.match(server, /generationRecovery/);
+  assert.match(recovery, /recoverStaleGenerations/);
   assert.match(coordinator, /deliveryChain/);
   assert.match(coordinator, /DURABLE_EVENT_POLL_MS/);
   assert.match(runner, /CONTROL_POLL_MS/);

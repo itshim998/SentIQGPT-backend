@@ -161,9 +161,7 @@ async function main() {
   const {
     normalizeGuestOwnerKey,
     guestGenerationOwnerKeyFromAnonymousId,
-    getGuestAssignedShardId,
-    getGuestGenerationDatabase,
-  } = await import("./services/guestGenerationStore");
+  } = await import("./services/guestGenerationIdentity");
 
   await test("Scenario 1: Normal generation lifecycle", async () => {
     const shard = new ShardEmulator(2);
@@ -525,133 +523,70 @@ async function main() {
     }
   });
 
-  await test("Scenario 16: Guest shard stability under shard health changes (Tests A, B, C, D)", async () => {
+  await test("Scenario 16: Guest in-memory generation is isolated from data shard health changes", async () => {
     resetShardHealth();
     try {
-      // Find an anonymous ID that deterministically hashes to Shard 3
-      let anonIdShard3 = "";
-      let ownerKeyShard3 = "";
-      for (let i = 0; i < 1000; i++) {
-        const candidate = `test-guest-anon-${i}`;
-        const key = guestGenerationOwnerKeyFromAnonymousId(candidate);
-        if (getGuestAssignedShardId(key) === 3) {
-          anonIdShard3 = candidate;
-          ownerKeyShard3 = key;
-          break;
-        }
-      }
-      assert.ok(anonIdShard3, "Should find an anonymous ID mapping to Shard 3");
+      const anonId = "test-guest-anon-memory";
+      const ownerKey = guestGenerationOwnerKeyFromAnonymousId(anonId);
+      assert.ok(ownerKey, "Must generate valid guest owner key");
+      assert.equal(ownerKey.length, 64);
 
-      // Test A: All shards healthy: same anonymous ID always maps to same shard
-      assert.equal(isShardDegraded(2), false);
-      assert.equal(isShardDegraded(3), false);
-      assert.equal(getGuestAssignedShardId(ownerKeyShard3), 3);
-      assert.equal(getGuestAssignedShardId(ownerKeyShard3), 3);
-      const dbInstanceA = getGuestGenerationDatabase(ownerKeyShard3);
-      assert.ok(dbInstanceA, "Must return database client for Shard 3");
-
-      // Test B: Assigned shard becomes degraded: same anonymous ID still resolves to Shard 3 and receives ShardUnavailableError / 503
+      // Shard 3 becomes degraded
       markShardDegraded(3, "Simulation: Shard 3 network partitioned");
       assert.equal(isShardDegraded(3), true);
-      assert.equal(getGuestAssignedShardId(ownerKeyShard3), 3, "Assigned shard must remain Shard 3");
 
-      let thrownError: any = null;
-      try {
-        getGuestGenerationDatabase(ownerKeyShard3);
-      } catch (err: any) {
-        thrownError = err;
-      }
-      assert.ok(thrownError, "Must throw when assigned shard is degraded");
-      assert.ok(thrownError instanceof ShardUnavailableError, "Must throw ShardUnavailableError");
-      assert.equal(thrownError.statusCode, 503);
-      assert.equal(thrownError.shardId, 3);
-      assert.equal(thrownError.headers["Retry-After"], "30");
+      // In-memory guest task starts and runs completely independently of shard degradation
+      const genId = randomUUID();
+      const task = chatGenerationTaskCoordinator.start({
+        generationId: genId,
+        clientRequestId: "req-guest-mem",
+        userId: ownerKey,
+        conversationId: "conv-guest-mem",
+        userDb: null,
+      });
+      assert.ok(task, "Guest task must start in memory");
+      assert.equal(task.userDb, null, "Guest task userDb must be null");
 
-      // Test C: Another shard is healthy (Shard 2 is healthy): guest is NOT remapped to Shard 2
-      assert.equal(isShardDegraded(2), false);
-      assert.equal(getGuestAssignedShardId(ownerKeyShard3), 3, "Must NOT remap to Shard 2");
+      // Can publish tokens in memory without touching degraded shards
+      const event = chatGenerationTaskCoordinator.publishTokenFast(genId, "Hello guest");
+      assert.ok(event);
+      assert.equal(task.partialText, "Hello guest");
 
-      // Test D: Original shard becomes healthy again: guest resolves back to the exact original shard
-      markShardHealthy(3);
-      assert.equal(isShardDegraded(3), false);
-      assert.equal(getGuestAssignedShardId(ownerKeyShard3), 3);
-      const dbInstanceD = getGuestGenerationDatabase(ownerKeyShard3);
-      assert.ok(dbInstanceD, "Must successfully return database client for Shard 3 after recovery");
+      await chatGenerationTaskCoordinator.complete(genId);
+      assert.equal(task.status, "completed");
     } finally {
       resetShardHealth();
     }
   });
 
-  await test("Scenario 17: Guest generation operations strictly pinned to original shard under degradation (Test E)", async () => {
+  await test("Scenario 17: Guest operations perform zero operations against data shards", async () => {
     resetShardHealth();
     try {
-      // Find an anonymous ID that maps to Shard 3
-      let anonId = "";
-      let ownerKey = "";
-      for (let i = 0; i < 1000; i++) {
-        const candidate = `test-guest-e-${i}`;
-        const key = guestGenerationOwnerKeyFromAnonymousId(candidate);
-        if (getGuestAssignedShardId(key) === 3) {
-          anonId = candidate;
-          ownerKey = key;
-          break;
-        }
-      }
-
-      // Emulate 2 shards: 2, 3
       const shards = new Map<number, ShardEmulator>([
         [2, new ShardEmulator(2)],
         [3, new ShardEmulator(3)],
       ]);
 
+      const ownerKey = guestGenerationOwnerKeyFromAnonymousId("test-guest-e-isolation");
       const genId = randomUUID();
-      const leaseId = randomUUID();
 
-      // Guest generation created on DB3 while DB3 is healthy
-      const shard3 = shards.get(3)!;
-      shard3.insertGeneration({
-        id: genId,
-        conversation_id: randomUUID(),
-        user_id: ownerKey,
-        client_request_id: "guest-req-e",
+      // Guest generation is tracked in-memory, zero writes to Shard 2 or Shard 3
+      const task = chatGenerationTaskCoordinator.start({
+        generationId: genId,
+        clientRequestId: "guest-req-e",
+        userId: ownerKey,
+        conversationId: "guest-conv-e",
+        userDb: null,
       });
-      shard3.claimLease(genId, leaseId, 60);
-      shard3.appendEventFenced(genId, leaseId, "token", { text: "Hello from DB3" });
+      assert.ok(task);
 
-      assert.equal(shard3.generations.size, 1);
-      assert.equal(shards.get(2)!.generations.size, 0);
+      chatGenerationTaskCoordinator.publishTokenFast(genId, "In memory only");
+      await chatGenerationTaskCoordinator.complete(genId);
 
-      // DB3 later degrades
-      markShardDegraded(3, "Simulation: DB3 degraded during generation");
-      assert.equal(isShardDegraded(3), true);
-
-      // Rehydration / resolution attempt during degradation must fail with 503, NEVER touch DB2
-      assert.throws(
-        () => getGuestGenerationDatabase(ownerKey),
-        (err: any) => {
-          assert(err instanceof ShardUnavailableError);
-          assert.equal(err.shardId, 3);
-          assert.equal(err.statusCode, 503);
-          return true;
-        },
-      );
-
-      // Verify that NO operation was silently routed to DB2
-      assert.equal(shards.get(2)!.generations.size, 0, "DB2 must remain untouched");
+      assert.equal(shards.get(2)!.generations.size, 0, "DB2 must remain untouched with 0 generations");
       assert.equal(shards.get(2)!.events.size, 0, "DB2 must have 0 events");
-
-      // DB3 recovers
-      markShardHealthy(3);
-      assert.equal(isShardDegraded(3), false);
-
-      // Guest operations resume on DB3 with state completely preserved
-      const client = getGuestGenerationDatabase(ownerKey);
-      assert.ok(client);
-
-      const restoredGen = shard3.generations.get(genId)!;
-      assert.equal(restoredGen.partial_text, "Hello from DB3");
-      assert.equal(restoredGen.last_event_sequence, 1);
-      assert.equal(shards.get(2)!.generations.size, 0);
+      assert.equal(shards.get(3)!.generations.size, 0, "DB3 must remain untouched with 0 generations");
+      assert.equal(shards.get(3)!.events.size, 0, "DB3 must have 0 events");
     } finally {
       resetShardHealth();
     }

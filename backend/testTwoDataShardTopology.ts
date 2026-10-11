@@ -14,7 +14,6 @@ async function runTests(): Promise<void> {
     selectLeastLoadedDatabaseFromCounts,
     getClientForDatabase,
   } = await import("./dbRouter");
-  const { getGuestAssignedShardId } = await import("./services/guestGenerationStore");
 
   await test("Two Data Shard Topology (DB1 Control, DB2 Shard 1, DB3 Shard 2)", async (t) => {
     await t.test("Assignable shards are strictly DB2 and DB3", () => {
@@ -45,15 +44,13 @@ async function runTests(): Promise<void> {
       assert.equal(selectLeastLoadedDatabaseFromCounts(counts2, () => 0), 2);
     });
 
-    await t.test("Guest owner key hashing maps only to DB2 or DB3", () => {
-      const assignedShards = new Set<number>();
-      for (let i = 0; i < 100; i++) {
-        const shard = getGuestAssignedShardId(`guest-test-key-${i}`);
-        assert.ok(shard === 2 || shard === 3, `Expected shard 2 or 3, got ${shard}`);
-        assignedShards.add(shard);
-      }
-      assert.equal(assignedShards.size, 2, "Must distribute across both DB2 and DB3");
-      assert.ok(!assignedShards.has(4), "Must NEVER assign DB4");
+    await t.test("Guest owner keys are isolated from shard router", async () => {
+      const { guestGenerationOwnerKeyFromAnonymousId } = await import("./services/guestGenerationIdentity");
+      const key1 = guestGenerationOwnerKeyFromAnonymousId("guest-test-key-1");
+      const key2 = guestGenerationOwnerKeyFromAnonymousId("guest-test-key-1");
+      assert.equal(key1, key2);
+      assert.equal(typeof key1, "string");
+      assert.equal(key1.length, 64);
     });
   });
 }

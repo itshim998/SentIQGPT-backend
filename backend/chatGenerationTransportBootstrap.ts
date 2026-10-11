@@ -4,7 +4,7 @@ import { verifyJWT, getRequestUser } from "./middleware/auth";
 import { getOrAssignUserDatabase } from "./dbRouter";
 import { resolveConversationForTurn } from "./services/conversationService";
 import { createChatGeneration, getChatGenerationByClientRequestId, getChatGenerationById, requestChatGenerationCancel, updateChatGenerationExecutionSnapshot, type ChatGenerationRow } from "./services/chatGenerationService";
-import { getGuestGenerationDatabase, getGuestGenerationOwnerKeyForRequest } from "./services/guestGenerationStore";
+import { getGuestGenerationOwnerKeyForRequest } from "./services/guestGenerationIdentity";
 import { ChatRequestSchema } from "./validation/schemas";
 import { chatGenerationTaskCoordinator } from "./services/chatGenerationTaskCoordinator";
 import { registerChatGenerationExecutor, getChatGenerationExecutor } from "./services/chatGenerationExecutor";
@@ -102,27 +102,77 @@ async function prepareGeneration(request: Request) {
 
   if (!requestUser?.isGuest) throw new Error("Guest authentication context unavailable");
   const guestOwnerKey = getGuestGenerationOwnerKeyForRequest(request);
-  const userDb = getGuestGenerationDatabase(guestOwnerKey);
   const userId = guestOwnerKey;
   conversationId = requireConversationId(conversationId || randomUUID(), "Guest");
-  const existing = await getChatGenerationByClientRequestId(userDb, userId, clientRequestId); if (existing.error) throw existing.error;
+  const existingTask = chatGenerationTaskCoordinator.findByUserAndClientRequestId(guestOwnerKey, clientRequestId);
   let generation: ChatGenerationRow;
-  if (existing.data) {
-    generation = existing.data;
-    if (Object.keys(generation.execution_snapshot || {}).length === 0) { const updated = await updateChatGenerationExecutionSnapshot(userDb, { userId, generationId: generation.id, executionSnapshot: snapshot.persisted }); if (updated.error) throw updated.error; if (updated.data) generation = updated.data; }
+  if (existingTask) {
+    generation = existingTask.generation || {
+      id: existingTask.generationId,
+      conversation_id: existingTask.conversationId ?? conversationId,
+      user_id: guestOwnerKey,
+      client_request_id: clientRequestId,
+      generation_session_id: existingTask.generationSessionId ?? generationSessionId,
+      status: existingTask.status as ChatGenerationRow["status"],
+      execution_mode: "fast",
+      model_route: null,
+      execution_snapshot: snapshot.persisted,
+      started_at: new Date().toISOString(),
+      completed_at: null,
+      failed_at: null,
+      cancelled_at: null,
+      error_code: existingTask.lastErrorCode,
+      partial_text: existingTask.partialText,
+      tokens_generated: existingTask.tokensGenerated,
+      last_event_sequence: existingTask.sequence,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      execution_lease_id: null,
+      execution_lease_expires_at: null,
+      recovery_attempts: 0,
+      last_execution_error: null,
+    };
+    conversationId = requireConversationId(existingTask.conversationId || conversationId, "Generation");
   } else {
-    const created = await createChatGeneration(userDb, { conversationId, userId, clientRequestId, generationId: requestedGenerationId, generationSessionId, executionMode, executionSnapshot: snapshot.persisted }); if (created.error || !created.data) throw created.error || new Error("Unable to create guest chat generation"); generation = created.data;
+    const now = new Date().toISOString();
+    generation = {
+      id: requestedGenerationId,
+      conversation_id: conversationId,
+      user_id: guestOwnerKey,
+      client_request_id: clientRequestId,
+      generation_session_id: generationSessionId,
+      status: "queued",
+      execution_mode: "fast",
+      model_route: null,
+      execution_snapshot: snapshot.persisted,
+      started_at: now,
+      completed_at: null,
+      failed_at: null,
+      cancelled_at: null,
+      error_code: null,
+      partial_text: "",
+      tokens_generated: 0,
+      last_event_sequence: 0,
+      created_at: now,
+      updated_at: now,
+      execution_lease_id: null,
+      execution_lease_expires_at: null,
+      recovery_attempts: 0,
+      last_execution_error: null,
+    };
   }
-  conversationId = requireConversationId(generation.conversation_id, "Generation");
-  request.body = { ...request.body, conversationId, conversation_id: conversationId, clientRequestId: generation.client_request_id, client_request_id: generation.client_request_id, generationId: generation.id, generation_id: generation.id, executionMode: generation.execution_mode ?? executionMode, execution_mode: generation.execution_mode ?? executionMode };
-  return { requestUser, userId, userDb, generationId: generation.id, clientRequestId: generation.client_request_id || clientRequestId, conversationId, status: generation.status, generation, persistedSnapshot: snapshot.persisted, liveSnapshot: snapshot.live };
+  request.body = { ...request.body, conversationId, conversation_id: conversationId, clientRequestId: generation.client_request_id, client_request_id: generation.client_request_id, generationId: generation.id, generation_id: generation.id, executionMode: "fast", execution_mode: "fast" };
+  return { requestUser, userId, userDb: null, generationId: generation.id, clientRequestId: generation.client_request_id || clientRequestId, conversationId, status: (existingTask ? existingTask.status : "queued") as ChatGenerationRow["status"], generation, persistedSnapshot: snapshot.persisted, liveSnapshot: snapshot.live };
 }
 async function resolveOwnedGeneration(request: Request, generationId: string) {
   const requestUser = getRequestUser(request);
   if (requestUser?.isGuest) {
-    const userId = getGuestGenerationOwnerKeyForRequest(request); const userDb = getGuestGenerationDatabase(userId);
-    const result = await withDbTimeout(getChatGenerationById(userDb, userId, generationId), DB_TIMEOUT_MS, "getChatGenerationById"); if (result.error) throw result.error;
-    return { requestUser, userId, userDb, generationId, generation: result.data, task: chatGenerationTaskCoordinator.get(generationId) };
+    const userId = getGuestGenerationOwnerKeyForRequest(request);
+    const task = chatGenerationTaskCoordinator.get(generationId);
+    if (!task || task.userId !== userId) {
+      return { requestUser, userId, userDb: null, generationId, generation: null, task: null };
+    }
+    return { requestUser, userId, userDb: null, generationId, generation: task.generation ?? null, task };
   }
   const userId = String(requestUser?.sub || "guest");
   if (!requestUser) { const task = chatGenerationTaskCoordinator.get(generationId); if (!task) return { requestUser, userId, userDb: null, generationId, generation: null, task: null }; return { requestUser, userId, userDb: null, generationId, generation: task.generation ?? null, task }; }

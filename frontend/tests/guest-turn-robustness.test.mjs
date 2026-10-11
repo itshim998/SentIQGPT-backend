@@ -166,6 +166,37 @@ assert.ok(typeof subscribeUntilTerminal === "function", "subscribeUntilTerminal 
   assert.equal(entry404.interrupted, true, "Previously received tokens mark it as interrupted");
 }
 
+// Test B2: Production SSE reconnect handles 404/generation_not_found immediately without looping
+{
+  let sseFetchCount = 0;
+  let errorReceived = null;
+  const entrySse404 = createGenerationEntry({
+    generationId: "gen-runtime-sse-404",
+    tokensReceived: true,
+    callbacks: {
+      onError: (err) => { errorReceived = err; },
+    },
+  });
+
+  globalThis.fetch = async () => {
+    sseFetchCount += 1;
+    return {
+      ok: false,
+      status: 404,
+      json: async () => ({ error: "Generation not found.", code: "generation_not_found" }),
+    };
+  };
+
+  const result = await subscribeUntilTerminal(entrySse404);
+  assert.equal(result.failed, true, "SSE reconnect must fail immediately on 404");
+  assert.equal(sseFetchCount, 1, "Must NOT retry 8 times when 404 generation_not_found is received");
+  assert.equal(entrySse404.terminal, true, "404 must mark entry terminal");
+  assert.equal(entrySse404.status, "failed");
+  assert.equal(entrySse404.error?.code, "generation_not_found");
+  assert.equal(errorReceived?.code, "generation_not_found");
+  assert.equal(entrySse404.interrupted, true, "Tokens received mark it as interrupted");
+}
+
 // Test C: Quiet-polling returns resumeSse: true after 20 attempts, and subscribeUntilTerminal resumes SSE cleanly
 {
   let pollAttempts = 0;
