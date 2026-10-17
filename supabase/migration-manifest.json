@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-10T04:47:29.786Z",
-  "totalCanonicalMigrations": 82,
+  "generatedAt": "2026-10-17T06:37:19.616Z",
+  "totalCanonicalMigrations": 83,
   "topology": {
     "controlDatabases": [
       1
@@ -16,9 +16,9 @@
   "counts": {
     "both": 9,
     "controlOnly": 15,
-    "dataOnly": 58,
+    "dataOnly": 59,
     "controlTrackTotal": 24,
-    "dataTrackTotal": 67
+    "dataTrackTotal": 68
   },
   "migrations": [
     {
@@ -849,6 +849,16 @@
         "data"
       ],
       "checksum": "b80a88ebbad58a1f51294c220b0cb3c5c10da69508b3bc2bb71855fa002b50e8"
+    },
+    {
+      "version": "20261017120000",
+      "name": "fix_generation_lease_serialization_retry_loop",
+      "filename": "20261017120000_fix_generation_lease_serialization_retry_loop.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "9471bd8d937ac81082a821a72a5c53e7fa052fac7af1b193450c9d579e04773f"
     }
   ]
 }

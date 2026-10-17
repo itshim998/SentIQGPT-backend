@@ -11,7 +11,7 @@ dotenv.config();
 const ROOT_DIR = path.resolve(process.cwd());
 const MANIFEST_PATH = path.join(ROOT_DIR, "supabase", "migration-manifest.json");
 const DATA_TRACK_DIR = path.join(ROOT_DIR, "supabase", "tracks", "data", "migrations");
-const EXPECTED_MIGRATION_COUNT = 64;
+const EXPECTED_MIGRATION_COUNT = 68;
 
 export const REQUIRED_DATA_SHARD_TABLES = [
   "users",

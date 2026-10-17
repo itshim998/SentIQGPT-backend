@@ -54,7 +54,12 @@ export async function appendChatGenerationEventFenced(
       const row = rowsFromResult(result)[0] ?? null;
       if (result?.error) {
         lastError = result.error;
-        if (result.error?.code === "40001") {
+        if (
+          result.error?.code === "P0001" ||
+          result.error?.code === "40001" ||
+          String(result.error?.message || "").includes("lease lost") ||
+          String(result.error?.message || "").includes("sequence mismatch")
+        ) {
           return { data: null, error: result.error };
         }
         if (attempt < maxAttempts) {
