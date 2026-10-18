@@ -8,6 +8,7 @@
     "dev": "ts-node --project tsconfig.backend.json backend/verifyNemotronDeploymentReadiness.ts && ts-node --project tsconfig.backend.json backend/server.ts",
     "check:migrations": "ts-node --project tsconfig.backend.json backend/checkShardMigrations.ts",
     "test:migrations": "ts-node --project tsconfig.backend.json backend/testMigrationScopeSeparation.ts",
+    "test:lease-retry-regression": "ts-node --project tsconfig.backend.json backend/testGenerationLeaseRetryRegression.ts",
     "test:shards": "ts-node --project tsconfig.backend.json backend/testTwoDataShardTopology.ts",
     "llm-service": "python backend/llm_service.py",
     "dev:all": "concurrently \"npm run dev\" \"npm run llm-service\"",

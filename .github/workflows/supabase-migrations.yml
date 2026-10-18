@@ -7,10 +7,20 @@ on:
     paths:
       - 'supabase/**'
       - 'scripts/generateMigrationTracks.mjs'
+      - 'scripts/nativeDataTrackBootstrap.mjs'
+      - 'backend/services/chatGenerationEventService.ts'
+      - 'backend/testGenerationLeaseRetryRegression.ts'
+      - 'backend/testMigrationScopeSeparation.ts'
+      - '.github/workflows/supabase-migrations.yml'
   pull_request:
     paths:
       - 'supabase/**'
       - 'scripts/generateMigrationTracks.mjs'
+      - 'scripts/nativeDataTrackBootstrap.mjs'
+      - 'backend/services/chatGenerationEventService.ts'
+      - 'backend/testGenerationLeaseRetryRegression.ts'
+      - 'backend/testMigrationScopeSeparation.ts'
+      - '.github/workflows/supabase-migrations.yml'
   workflow_dispatch:
 
 jobs:
@@ -35,6 +45,9 @@ jobs:
 
       - name: Run migration separation automated tests
         run: npm run test:migrations
+
+      - name: Run generation lease retry regression tests
+        run: npm run test:lease-retry-regression
 
   deploy-db1:
     name: Deploy Control Track to DB1 (Control DB)
