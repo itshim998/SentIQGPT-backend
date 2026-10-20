@@ -39,7 +39,7 @@ function switchToVolatileStorage(error) {
   dbOpenPromise = null;
   window.SentIQBootstrap?.addLimitedReason?.(
     "indexed-db",
-    "Browser storage is unavailable. This session will use temporary in-memory storage."
+    "Browser storage is unavailable. Data won't be kept after this session."
   );
 }
 
@@ -152,7 +152,7 @@ function openDB() {
       useVolatileStorage(request.error);
     };
     request.onblocked = () => {
-      useVolatileStorage(new Error(`${PRODUCT_NAME} storage is blocked by another open tab.`));
+      useVolatileStorage(new Error("Storage is blocked by another open tab."));
     };
   });
   return dbOpenPromise;
@@ -243,7 +243,7 @@ function generateId() {
     }
     window.SentIQBootstrap?.addLimitedReason?.(
       "secure-random",
-      "Secure browser identifiers are unavailable. Avoid using this session for sensitive work."
+      "Secure IDs are unavailable in this browser. Avoid sensitive work in this session."
     );
   }
   bytes[6] = (bytes[6] & 0x0f) | 0x40;
@@ -277,7 +277,7 @@ function clearSentIqWebStorage(storageName) {
   } catch {
     window.SentIQBootstrap?.addLimitedReason?.(
       "web-storage",
-      "Some browser preferences could not be cleared because web storage is blocked."
+      "Some preferences couldn't be cleared. Browser storage is blocked."
     );
   }
 }
@@ -292,7 +292,7 @@ async function clearLocalData() {
       storeNames.forEach((storeName) => tx.objectStore(storeName).clear());
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error || new Error("Local browser data clear was interrupted."));
+      tx.onabort = () => reject(tx.error || new Error("Clearing local data was interrupted."));
     });
   }
   clearSentIqWebStorage("localStorage");

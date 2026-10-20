@@ -76,8 +76,8 @@ export function createContinuityConfirmationDialog() {
     ensure();
     if (pendingResolve) settle(false);
     previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    title.textContent = options.title || "Discard unsent content?";
-    message.textContent = options.message || "This action will remove content that has not been sent.";
+    title.textContent = options.title || "Discard unsent message?";
+    message.textContent = options.message || "Unsent content will be lost.";
     continueButton.textContent = options.confirmLabel || "Continue";
     continueButton.dataset.intent = options.intent === "danger" ? "danger" : "default";
     root.hidden = false;

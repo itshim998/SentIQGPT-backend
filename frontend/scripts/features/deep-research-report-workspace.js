@@ -55,8 +55,8 @@ export function enhanceDeepResearchReport(card, reportId = "") {
   const sources = countLinks(card);
   const values = [
     minutes ? `${minutes} min read` : "Report ready",
-    sources ? `${sources} linked ${sources === 1 ? "source" : "sources"}` : "Sources preserved in report",
-    reportId ? "Saved report" : "Saved in this conversation",
+    sources ? `${sources} ${sources === 1 ? "source" : "sources"}` : "Sources included",
+    reportId ? "Saved report" : "Saved in this chat",
   ];
   const signature = values.join("|");
   if (metadata.dataset.signature !== signature) {

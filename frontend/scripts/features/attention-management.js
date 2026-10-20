@@ -390,7 +390,7 @@ function initializeAttentionManagement() {
         kind: "file-analysis-failed",
         chatId: activeConversationId,
         signature,
-        detail: filename ? `${filename} could not be analysed.` : "The attached file could not be analysed.",
+        detail: filename ? `Couldn't analyse ${filename}.` : "Couldn't analyse the file.",
         updatedAt: Date.now(),
         source: "composer-attachment",
       });

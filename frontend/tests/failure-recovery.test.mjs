@@ -42,7 +42,7 @@ assert.equal(inferFailureRecoveryState({ status: "stopped" }), "cancelled");
 assert.equal(inferFailureRecoveryState({ text: "Something went wrong. Try again." }), "failed");
 assert.equal(inferFailureRecoveryState({ classes: "is-ready" }), "successful");
 assert.equal(inferFailureRecoveryState({ status: "aria-busy" }), "running");
-assert.match(getFailureRecoveryCopy("websurf", "failed").message, /WebSurf mode/);
+assert.match(getFailureRecoveryCopy("websurf", "failed").message, /Search didn't finish/);
 assert.match(getFailureRecoveryCopy("document", "partial").message, /draft is preserved/);
 
 assert.equal(shouldRestoreComposerDraft("", "original prompt"), true);

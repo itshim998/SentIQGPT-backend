@@ -61,8 +61,8 @@ function ensureDetails(card, rail, context) {
   if (!checklist) {
     const facts = ensureFacts(body);
     const draft = cleanDeepResearchText(card.querySelector(".deep-research-report-preview-text")?.textContent);
-    setText(facts.querySelector('[data-fact="workspace"]'), context.reportId ? "Saved report" : "Saved conversation state");
-    setText(facts.querySelector('[data-fact="updates"]'), context.status === "running" ? "Reconnect automatically" : "State preserved");
+    setText(facts.querySelector('[data-fact="workspace"]'), context.reportId ? "Saved report" : "Saved");
+    setText(facts.querySelector('[data-fact="updates"]'), context.status === "running" ? "Reconnects automatically" : "Saved");
     setText(facts.querySelector('[data-fact="draft"]'), draft ? "Draft available" : context.status === "completed" ? "Report complete" : "Waiting for content");
   }
 }

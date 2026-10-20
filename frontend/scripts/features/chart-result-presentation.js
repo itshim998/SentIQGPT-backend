@@ -61,28 +61,28 @@ async function exportChart(container, button) {
     const plot = container.querySelector(".js-plotly-plot");
     if (plot && window.Plotly?.downloadImage) {
       await window.Plotly.downloadImage(plot, { format: "png", filename: `sentiq-chart-${Date.now()}` });
-      setChartStatus(container, "Chart export started.");
+      setChartStatus(container, "Exporting chart…");
       return;
     }
     const canvas = container.querySelector("canvas");
     if (canvas) {
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-      if (!blob) throw new Error("Chart export is unavailable.");
+      if (!blob) throw new Error("Export unavailable.");
       const url = URL.createObjectURL(blob);
       triggerDownload(url, `sentiq-chart-${Date.now()}.png`);
       setTimeout(() => URL.revokeObjectURL(url), 1200);
-      setChartStatus(container, "Chart export started.");
+      setChartStatus(container, "Exporting chart…");
       return;
     }
     const image = container.querySelector(".message-chart-image");
     if (image?.currentSrc || image?.src) {
       triggerDownload(image.currentSrc || image.src, `sentiq-chart-${Date.now()}.png`);
-      setChartStatus(container, "Chart export started.");
+      setChartStatus(container, "Exporting chart…");
       return;
     }
-    throw new Error("Chart export is unavailable.");
+    throw new Error("Export unavailable.");
   } catch {
-    setChartStatus(container, "This chart could not be exported. Try regenerating it.", "error");
+    setChartStatus(container, "Couldn't export the chart. Try regenerating it.", "error");
   } finally {
     button.disabled = false;
     button.removeAttribute("aria-busy");
@@ -205,7 +205,7 @@ function ensureFailure(container) {
     actions.appendChild(retry);
   } else {
     const hint = document.createElement("span");
-    hint.textContent = "Use the response retry action to regenerate this chart.";
+    hint.textContent = "Retry the response to regenerate this chart.";
     actions.appendChild(hint);
   }
   container.appendChild(actions);

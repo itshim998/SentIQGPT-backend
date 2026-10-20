@@ -62,9 +62,9 @@
   function fail() { if (isReady || didFail) return; didFail = true; root.dataset.sentiqBootState = "failed"; removeStartupScreen({ animate: false }); disablePrimaryActions(); render(); }
   window.SentIQBootstrap = { addLimitedReason, fail, getCapabilities: () => capabilities, getStatus: () => ({ ready: isReady, failed: didFail, limited: Array.from(limitedReasons.keys()) }), markReady };
   if (!capabilities.fetch) fail();
-  if (!capabilities.indexedDb) addLimitedReason("indexed-db", "Browser storage is unavailable. This session will use temporary in-memory storage.");
-  if (!capabilities.localStorage) addLimitedReason("local-storage", "Some browser preferences cannot be saved in this session.");
-  if (!capabilities.readableStream || !capabilities.textDecoder) addLimitedReason("streaming", "Live response streaming is unavailable. Responses will load after they finish.");
+  if (!capabilities.indexedDb) addLimitedReason("indexed-db", "Browser storage is unavailable. Data won't be kept after this session.");
+  if (!capabilities.localStorage) addLimitedReason("local-storage", "Browser preferences can't be saved in this session.");
+  if (!capabilities.readableStream || !capabilities.textDecoder) addLimitedReason("streaming", "Streaming isn't available. Responses will appear when complete.");
   document.addEventListener("DOMContentLoaded", () => { render(); if (didFail) { disablePrimaryActions(); return; } ensureStartupScreen(); });
   window.addEventListener("error", () => fail());
   window.addEventListener("unhandledrejection", () => fail());

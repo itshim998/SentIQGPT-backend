@@ -339,7 +339,7 @@ import {
     try {
       return window.localStorage?.getItem(key) ?? fallback;
     } catch {
-      window.SentIQBootstrap?.addLimitedReason?.("local-storage", "Some browser preferences cannot be saved in this session.");
+      window.SentIQBootstrap?.addLimitedReason?.("local-storage", "Browser preferences can't be saved in this session.");
       return fallback;
     }
   }
@@ -359,7 +359,7 @@ import {
     try {
       window.localStorage?.setItem(key, value);
     } catch {
-      window.SentIQBootstrap?.addLimitedReason?.("local-storage", "Some browser preferences cannot be saved in this session.");
+      window.SentIQBootstrap?.addLimitedReason?.("local-storage", "Browser preferences can't be saved in this session.");
     }
   }
 
@@ -392,7 +392,7 @@ import {
     try {
       window.sessionStorage?.setItem(key, value);
     } catch {
-      window.SentIQBootstrap?.addLimitedReason?.("session-storage", "Interrupted guest responses cannot be restored after a reload in this session.");
+      window.SentIQBootstrap?.addLimitedReason?.("session-storage", "Interrupted guest responses can't be restored after a reload.");
     }
   }
 
@@ -409,7 +409,7 @@ import {
 
   function createAbortController() {
     if (typeof AbortController === "function") return new AbortController();
-    window.SentIQBootstrap?.addLimitedReason?.("abort-controller", "Request cancellation is unavailable in this browser session.");
+    window.SentIQBootstrap?.addLimitedReason?.("abort-controller", "Can't cancel requests in this browser.");
     return { abort() {}, signal: undefined };
   }
 
@@ -439,7 +439,7 @@ import {
 
   function getSafeErrorMessage(error, context = {}) {
     return window.SentIQErrors?.getSafeErrorMessage?.(error, context)
-      || `${PRODUCT_NAME} could not finish that action. Please try again.`;
+      || "Something went wrong. Try again.";
   }
 
   function isConversationNotFoundError(error) {
@@ -966,7 +966,7 @@ import {
       guestChatState = snapshot.chat;
       currentChatId = guestChatState.id;
       renderLoadedChat(guestChatState.id, guestChatState, { forceRender: true });
-      showToast("Restored an interrupted guest response from this browser tab.", "info", 3600);
+      showToast("Restored an interrupted response.", "info", 3600);
       return true;
     } catch {
       removeSessionStorageWithLegacy(GUEST_RECOVERY_DRAFT_KEY, LEGACY_GUEST_RECOVERY_DRAFT_KEY);
@@ -985,8 +985,8 @@ import {
     row.dataset.responseRecovery = responseStatus;
     const text = document.createElement("span");
     text.textContent = responseStatus === "stopped"
-      ? "Stopped by you. The partial answer was saved."
-      : "Response interrupted. The partial answer was saved.";
+      ? "Stopped. Partial answer saved."
+      : "Response interrupted. Partial answer saved.";
     row.appendChild(text);
     const button = document.createElement("button");
     button.className = "response-recovery-btn";
@@ -1584,7 +1584,7 @@ import {
     if (!meta && messageType === "deep_research") {
       const deepResearchStatus = ["running", "completed", "cancelled", "failed"].includes(preview.status)
         ? preview.status
-        : message.content === "Initializing Deep Research report..."
+        : (message.content === "Starting Deep Research…" || message.content === "Initializing Deep Research report...")
           ? "running"
           : "completed";
       meta = {
@@ -1983,7 +1983,7 @@ import {
 
     await Storage.updateChatSyncState?.(chat.id, {
       pending_server_sync: true,
-      sync_error: "Remote conversation missing; recovery sync queued",
+      sync_error: "Chat not found on the server. Restoring…",
       missing_remote_at: new Date().toISOString(),
       message_cache_status: "local-preserved",
       message_count: messages.length,
@@ -2053,7 +2053,7 @@ import {
         return getCachedServerChats();
       }
       if (!silent) {
-        showToast("Couldn't load your conversations right now. Please try again.", "error");
+        showToast("Couldn't load your chats. Try again.", "error");
       }
       return getCachedServerChats();
     }
@@ -2121,7 +2121,7 @@ import {
         if (chatHasMessages(cachedChat)) {
           const recoveredChat = await queueRemoteMissingChatRecovery(cachedChat, "conversation_not_found");
           if (!silent) {
-            showToast("Loaded your local copy while this chat resyncs.", "info", 4500);
+            showToast("Showing the saved copy while this chat syncs.", "info", 4500);
           }
           return recoveredChat || cachedChat;
         }
@@ -2131,14 +2131,14 @@ import {
           if (currentChatId === cachedChat.id) currentChatId = null;
           scheduleChatListRefresh();
           if (!silent) {
-            showToast("Removed a stale chat entry from your list.", "info", 3500);
+            showToast("Removed a chat that no longer exists.", "info", 3500);
           }
           return null;
         }
       }
 
       if (!silent) {
-        showToast("Couldn't open that conversation right now. Please try again.", "error");
+        showToast("Couldn't open that chat. Try again.", "error");
       }
       if (isServerBackedChat(cachedChat) && chatHasMessages(cachedChat)) {
         return cachedChat;
@@ -2259,7 +2259,7 @@ import {
     await Storage.upsertServerChat({
       ...syncedChat,
       pending_server_sync: Boolean(syncMeta?.deferred && !syncMeta?.persisted),
-      sync_error: syncMeta?.deferred && !syncMeta?.persisted ? "Message sync deferred" : null,
+      sync_error: syncMeta?.deferred && !syncMeta?.persisted ? "Message will sync later." : null,
     });
     return conversationId;
   }
@@ -2278,7 +2278,7 @@ import {
     try {
       const response = await API.createConversation(title, conversationId);
       const chat = normalizeServerConversation(response?.conversation || { id: "", title });
-      if (!chat.id) throw new Error("Failed to create conversation");
+      if (!chat.id) throw new Error("Couldn't create the chat.");
       await Storage.upsertServerChat(chat);
       stopMeasure("ok", { chat_id: chat.id });
       return chat;
@@ -2325,7 +2325,7 @@ import {
           return Storage.getAllMemories();
         }
         if (!silent) {
-          showToast("Couldn't refresh your memories right now.", "error");
+          showToast("Couldn't refresh memories.", "error");
         }
         return Storage.getAllMemories();
       } finally {
@@ -4293,7 +4293,7 @@ import {
   function buildChartError(message) {
     const error = document.createElement("div");
     error.className = "message-chart-error";
-    error.textContent = message || "Chart failed to render.";
+    error.textContent = message || "Couldn't render the chart.";
     return error;
   }
 
@@ -4305,7 +4305,7 @@ import {
     img.src = meta.imageUrl || (meta.imageBase64.startsWith("data:") ? meta.imageBase64 : `data:image/png;base64,${meta.imageBase64}`);
     img.addEventListener("load", () => scrollToBottom(true));
     img.addEventListener("error", () => {
-      img.replaceWith(buildChartError("Chart image failed to load."));
+      img.replaceWith(buildChartError("Couldn't load the chart image."));
     });
     container.appendChild(img);
   }
@@ -4337,7 +4337,7 @@ import {
       scrollToBottom(true);
     } catch (error) {
       debugWarn(`[Chart] Plotly render failed: ${getSafeErrorMessage(error)}`);
-      frame.replaceWith(buildChartError("Plotly chart failed to render."));
+      frame.replaceWith(buildChartError("Couldn't render the chart."));
     }
   }
 
@@ -4433,7 +4433,7 @@ import {
       return;
     }
 
-    container.appendChild(buildChartError("Chart payload was received, but no renderable data was found."));
+    container.appendChild(buildChartError("No chart data to display."));
   }
 
   async function getChatContextData(chatId, options = {}) {
@@ -4572,8 +4572,8 @@ import {
         });
       }
       cacheGeneratedFileFromMeta(fileMeta).catch(() => null);
-      await persistChatMessage(targetChatId, "assistant", assistantText || `Generated ${fileMeta.file_name}.`, fileMeta, assistantPersistOptions);
-      return assistantText || `Generated ${fileMeta.file_name}.`;
+      await persistChatMessage(targetChatId, "assistant", assistantText || `${fileMeta.file_name} generated.`, fileMeta, assistantPersistOptions);
+      return assistantText || `${fileMeta.file_name} generated.`;
     }
 
     const webSurfV2 = normalizeWebSurfV2Payload(response?.web_search?.v2 || response?.web_surf_v2);
@@ -4613,7 +4613,7 @@ import {
         responseTrust,
       });
       await persistChatMessage(targetChatId, "assistant", assistantText, chartMeta, assistantPersistOptions);
-      return assistantText || "Generated a chart.";
+      return assistantText || "Chart generated.";
     }
 
     const rawImagePayload = response?.image || (response?.type === "image" ? response : null);
@@ -4626,10 +4626,10 @@ import {
           responseTrust,
         });
         await persistChatMessage(targetChatId, "assistant", assistantText, imageMeta, assistantPersistOptions);
-        return assistantText || "Generated an image.";
+        return assistantText || "Image generated.";
       }
 
-      const fallbackText = "Sorry, I couldn't generate that image. Please try again.";
+      const fallbackText = "Couldn't generate the image. Try again.";
       if (renderInView) {
         const { contentDiv: imgErrDiv } = appendMessageBubble("assistant", "");
         await typeMessage(fallbackText, imgErrDiv, effectiveRenderOptions);
@@ -5538,13 +5538,13 @@ import {
     const title = document.createElement("div");
     title.className = "chat-load-error-title";
     title.textContent = isConversationNotFoundError(error)
-      ? "This chat is no longer available from the server."
+      ? "This chat is no longer available."
       : "Couldn't load this chat.";
     wrap.appendChild(title);
 
     const detail = document.createElement("div");
     detail.className = "chat-load-error-detail";
-    detail.textContent = "Try again, or pick another chat from the sidebar.";
+    detail.textContent = "Try again or choose another chat.";
     wrap.appendChild(detail);
 
     const retryBtn = document.createElement("button");
@@ -5746,7 +5746,7 @@ import {
           } catch (error) {
             deleteBtn.disabled = false;
             debugWarn(`[UI] Chat deletion failed: ${getSafeErrorMessage(error)}`);
-            showToast("Couldn't remove that chat and its stored artifacts. Please try again.", "error", 4200);
+            showToast("Couldn't delete the chat. Try again.", "error", 4200);
             return;
           }
         }
@@ -6192,7 +6192,7 @@ import {
     if (!shouldUseLegacyFallback) {
       const cleanAnswer = beautifyAnswerText(structuredAnswer || answerSource);
       return {
-        answer: cleanAnswer || "Sorry, I couldn't generate a proper response. Please try again.",
+        answer: cleanAnswer || "Couldn't generate a response. Try again.",
         thinking: explicitThinking || "",
       };
     }
@@ -6213,7 +6213,7 @@ import {
     }
 
     if (!cleanAnswer.trim()) {
-      cleanAnswer = "Sorry, I couldn't generate a proper response. Please try again.";
+      cleanAnswer = "Couldn't generate a response. Try again.";
     }
 
     return {
@@ -6411,7 +6411,7 @@ import {
         img.style.display = "none";
         const fallback = document.createElement("p");
         fallback.className = "image-load-error";
-        fallback.textContent = "Image failed to load.";
+        fallback.textContent = "Couldn't load the image.";
         frame.appendChild(fallback);
       });
 
@@ -6473,13 +6473,13 @@ import {
               ));
               imageId = match?.id || "";
             }
-            if (!imageId) throw new Error("Stored image metadata is unavailable.");
+            if (!imageId) throw new Error("Image details unavailable.");
             await API.deleteImage(imageId);
-            frame.innerHTML = '<p class="message-status">Generated image removed.</p>';
-            showToast("Generated image removed.", "success", 2400);
+            frame.innerHTML = '<p class="message-status">Image removed.</p>';
+            showToast("Image removed.", "success", 2400);
           } catch (error) {
             debugWarn(`[UI] Image removal failed: ${getSafeErrorMessage(error)}`);
-            showToast("Couldn't remove that image. Please try again.", "error");
+            showToast("Couldn't remove the image. Try again.", "error");
             removeBtn.disabled = false;
           }
         });
@@ -6628,7 +6628,7 @@ import {
           copyHandler: async () => {
             const result = await copyImageToClipboard(meta.imageUrl, { allowUrlFallback: true });
             if (result?.mode === "url") {
-              showToast("Image link copied to clipboard.", "info");
+              showToast("Image link copied.", "info");
             }
           },
         });
@@ -7120,7 +7120,7 @@ import {
         const copied = document.execCommand("copy");
         temp.remove();
         if (copied) resolve();
-        else reject(new Error("Copy command failed."));
+        else reject(new Error("Couldn't copy."));
       } catch (err) {
         reject(err);
       }
@@ -7128,12 +7128,12 @@ import {
   }
 
   function resolveImageBlob(imageUrl) {
-    if (!imageUrl) return Promise.reject(new Error("Missing image URL."));
+    if (!imageUrl) return Promise.reject(new Error("Image unavailable."));
     const url = String(imageUrl).trim();
     const isDataUrl = url.startsWith("data:");
     const options = isDataUrl ? {} : { mode: "cors", credentials: "omit" };
     return fetch(url, options).then((response) => {
-      if (!response.ok) throw new Error(`Image fetch failed (${response.status}).`);
+      if (!response.ok) throw new Error("Couldn't load the image.");
       return response.blob();
     });
   }
@@ -7256,7 +7256,7 @@ import {
     const accessUrl = await resolveGeneratedFileAccessUrl(meta, "download");
     if (!accessUrl) return null;
     const response = await fetch(accessUrl, { mode: "cors" });
-    if (!response.ok) throw new Error(`File fetch failed (${response.status}).`);
+    if (!response.ok) throw new Error("Couldn't load the file.");
     return response.blob();
   }
 
@@ -7366,7 +7366,7 @@ import {
 
   async function downloadGeneratedFile(meta) {
     const normalized = normalizeGeneratedFileMeta(meta);
-    if (!normalized) throw new Error("Missing generated file metadata.");
+    if (!normalized) throw new Error("File details unavailable.");
     const filename = normalized.file_name || getGeneratedFileDownloadName(normalized.format);
     try {
       const blob = await resolveGeneratedFileBlob(normalized);
@@ -7379,7 +7379,7 @@ import {
     }
     if (normalized.file_url || normalized.file_id || normalized.storage_path) {
       const href = await resolveGeneratedFileAccessUrl(normalized, "download");
-      if (!href) throw new Error("Generated file is not available for download.");
+      if (!href) throw new Error("File isn't available to download.");
       if (window.SentIQNative?.isNative && /^https?:\/\//i.test(String(href))) {
         await window.SentIQNative.openExternalUrl(href);
         return;
@@ -7393,7 +7393,7 @@ import {
       link.remove();
       return;
     }
-    throw new Error("Generated file is not available for download.");
+    throw new Error("File isn't available to download.");
   }
 
   function setArtifactButtonState(button, enabled) {
@@ -7468,11 +7468,11 @@ import {
       try {
         await API.deleteGeneratedFile(current.meta.file_id);
         await Storage.deleteGeneratedFile(current.meta.id).catch(() => null);
-        container.innerHTML = '<p class="message-status">Generated file removed.</p>';
-        showToast("Generated file removed.", "success", 2400);
+        container.innerHTML = '<p class="message-status">File removed.</p>';
+        showToast("File removed.", "success", 2400);
       } catch (error) {
         debugWarn(`[UI] Generated file removal failed: ${getSafeErrorMessage(error)}`);
-        showToast("Couldn't remove that generated file. Please try again.", "error");
+        showToast("Couldn't remove the file. Try again.", "error");
         removeBtn.disabled = false;
       }
     });
@@ -7573,7 +7573,7 @@ import {
       saveBtn.addEventListener("click", async () => {
         if (!current.dirty || current.saving) return;
         if (!current.meta.file_id || !API.updateGeneratedHtmlFile) {
-          showToast("This HTML file cannot be saved to your account.", "error");
+          showToast("This file can't be saved to your account.", "error");
           return;
         }
         const previousText = saveBtn.textContent;
@@ -7583,14 +7583,14 @@ import {
         try {
           const response = await API.updateGeneratedHtmlFile(current.meta.file_id, editor.value, current.meta.version);
           const normalized = normalizeGeneratedFileMeta(response?.file, { chatId: current.meta.chat_id || currentChatId });
-          if (!normalized) throw new Error("Save response did not include generated file metadata.");
+          if (!normalized) throw new Error("Couldn't save the file.");
           Object.assign(current.meta, normalized);
           updateHtml(normalized.html || editor.value, { cache: true });
           current.savedHtml = current.html;
           refreshHtmlEditState();
           title.textContent = current.meta.file_name || getGeneratedFileDownloadName(current.meta.format);
           setHtmlEditing(false);
-          showToast("Saved HTML changes.", "success");
+          showToast("Changes saved.", "success");
         } catch (error) {
           debugWarn(`[UI] Generated HTML save failed: ${getSafeErrorMessage(error)}`);
           const conflictMeta = normalizeGeneratedFileMeta(error?.details?.file || error?.file, { chatId: current.meta.chat_id || currentChatId });
@@ -7602,9 +7602,9 @@ import {
             current.meta.preview = { ...(current.meta.preview || {}), html: current.html, text: current.html.slice(0, 2400) };
             title.textContent = current.meta.file_name || getGeneratedFileDownloadName(current.meta.format);
             refreshHtmlEditState();
-            showToast("This file changed elsewhere. Your edits are still visible; save again to replace the latest version.", "error", 6000);
+            showToast("This file changed elsewhere. Your edits are kept. Save again to overwrite the latest version.", "error", 6000);
           } else {
-            showToast("Couldn't save those HTML edits.", "error");
+            showToast("Couldn't save changes.", "error");
           }
         } finally {
           current.saving = false;
@@ -7818,7 +7818,7 @@ import {
       await writeClipboardText(String(imageUrl));
       return { mode: "url" };
     }
-    throw new Error("Clipboard image write not supported.");
+    throw new Error("Copying images isn't supported here.");
   }
 
   function syncCopyButtonState(btn, enabled) {
@@ -7940,7 +7940,7 @@ import {
         }, 2000);
       }).catch((error) => {
         debugWarn(`[UI] Code copy failed: ${getSafeErrorMessage(error)}`);
-        showToast("Couldn't copy that code block.", "error");
+        showToast("Couldn't copy the code.", "error");
       });
     }
   }
@@ -8180,14 +8180,14 @@ import {
   function waitForDeepResearchReconnect(delayMs, signal) {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) {
-        const error = new Error("Deep Research subscription closed.");
+        const error = new Error("Deep Research disconnected.");
         error.name = "AbortError";
         reject(error);
         return;
       }
       const onAbort = () => {
         clearTimeout(timer);
-        const error = new Error("Deep Research subscription closed.");
+        const error = new Error("Deep Research disconnected.");
         error.name = "AbortError";
         reject(error);
       };
@@ -8232,14 +8232,14 @@ import {
       await waitForDeepResearchReconnect(1800, signal);
     }
 
-    const error = new Error("Deep Research subscription closed.");
+    const error = new Error("Deep Research disconnected.");
     error.name = "AbortError";
     throw error;
   }
 
   async function handleDeepResearchSend(message) {
     if (!isAuthenticatedSession()) {
-      requireAuthAccess("Log in to use Deep Research.");
+      requireAuthAccess("Sign in to use Deep Research.");
       return;
     }
     if (composerResponseLocked) return;
@@ -8333,7 +8333,7 @@ import {
       );
       if (isQuotaRejection) {
         runningCard?.remove?.();
-        const quotaWarningMessage = err.message || err.details?.error || "Deep Research limit reached. Review Billing for reset and upgrade options.";
+        const quotaWarningMessage = err.message || err.details?.error || "Deep Research limit reached. See Plan & usage for reset and upgrade options.";
         showQuotaWarning(quotaWarningMessage);
         window.SentIQBilling?.refresh?.(true);
         window.SentIQCapabilities?.refresh?.();
@@ -8342,7 +8342,7 @@ import {
       } else if (reportId) {
         runningCard.subscriptionClosed();
       } else {
-        runningCard.fail(err.message || "Deep Research failed to start.");
+        runningCard.fail(err.message || "Couldn't start Deep Research.");
       }
     }
     if (state) {
@@ -8393,7 +8393,7 @@ import {
     const steps = [
       { id: "plan", text: "Planning research path" },
       { id: "search", text: "Searching the web" },
-      { id: "synthesize", text: "Synthesizing report" }
+      { id: "synthesize", text: "Writing report" }
     ];
 
     const stepElements = {};
@@ -8429,7 +8429,7 @@ import {
 
     const statusText = document.createElement("div");
     statusText.className = "deep-research-status-text";
-    statusText.textContent = "Initializing report...";
+    statusText.textContent = "Starting report…";
     progressContainer.appendChild(statusText);
 
     card.appendChild(progressContainer);
@@ -8456,12 +8456,12 @@ import {
     cancelBtn.addEventListener("click", async () => {
       if (isFinished || cancelBtn.disabled) return;
       cancelBtn.disabled = true;
-      statusText.textContent = "Cancelling research...";
+      statusText.textContent = "Cancelling…";
       try {
         const report = await options.onCancel?.(reportId);
         if (report) applySnapshot(report);
       } catch {
-        statusText.textContent = "Could not cancel yet. Please try again.";
+        statusText.textContent = "Couldn't cancel. Try again.";
         cancelBtn.disabled = false;
       }
     });
@@ -8508,7 +8508,7 @@ import {
           setStepState("search", "pending");
           setStepState("synthesize", "pending");
           progressFill.style.width = "15%";
-          statusText.textContent = "Planning research path...";
+          statusText.textContent = "Planning…";
         } else if (data.step === "search") {
           currentStep = "search";
           setStepState("plan", "completed");
@@ -8516,7 +8516,7 @@ import {
           setStepState("synthesize", "pending");
 
           progressFill.style.width = "40%";
-          statusText.textContent = data.query ? `Searching: "${data.query}"` : "Searching the web...";
+          statusText.textContent = data.query ? `Searching: "${data.query}"` : "Searching the web…";
 
           if (data.query && !searchQueries.includes(data.query)) {
             searchQueries.push(data.query);
@@ -8535,13 +8535,13 @@ import {
           setStepState("synthesize", "active");
 
           progressFill.style.width = "75%";
-          statusText.textContent = "Synthesizing report...";
+          statusText.textContent = "Writing report…";
         }
       },
       updateSources(newSources) {
         if (isFinished) return;
         sources = newSources;
-        statusText.textContent = `Found ${sources.length} sources...`;
+        statusText.textContent = `Found ${sources.length} sources…`;
       },
       updateContent(text) {
         if (isFinished) return;
@@ -8553,7 +8553,7 @@ import {
         setStepState("synthesize", "active");
 
         progressFill.style.width = "90%";
-        statusText.textContent = "Writing final report sections...";
+        statusText.textContent = "Finishing report…";
       },
       applySnapshot,
       finish(report = null) {
@@ -8608,7 +8608,7 @@ import {
         cancelWrapper.remove();
 
       },
-      subscriptionClosed(message = "Research continues in the background. Reconnecting...") {
+      subscriptionClosed(message = "Research continues in the background. Reconnecting…") {
         if (isFinished) return;
         statusText.textContent = message;
       },
@@ -8636,7 +8636,7 @@ import {
         return cardController.cancel(report);
       }
       if (report.status === "failed") {
-        return cardController.fail(report.latest_status_text || "Research could not be completed.", report);
+        return cardController.fail(report.latest_status_text || "Couldn't complete the research.", report);
       }
       const percent = Number(report.progress_percent);
       if (Number.isFinite(percent)) progressFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
@@ -8656,7 +8656,7 @@ import {
 
     const titleEl = document.createElement("div");
     titleEl.className = "deep-research-report-title";
-    titleEl.textContent = report.title || "Deep Research Report";
+    titleEl.textContent = report.title || "Deep Research report";
     card.appendChild(titleEl);
 
     const actionsEl = document.createElement("div");
@@ -8670,9 +8670,9 @@ import {
     copyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
     copyBtn.addEventListener("click", () => {
       navigator.clipboard.writeText(report.content || "").then(() => {
-        showToast("Copied to clipboard!", "success");
+        showToast("Copied.", "success");
       }).catch(() => {
-        showToast("Failed to copy", "error");
+        showToast("Couldn't copy.", "error");
       });
     });
     actionsEl.appendChild(copyBtn);
@@ -8713,11 +8713,11 @@ import {
         const format = item.dataset.format;
         const repId = report.reportId || report.id;
         if (!repId) {
-          showToast("Report ID not available.", "error");
+          showToast("Report unavailable.", "error");
           return;
         }
         try {
-          showToast(`Exporting as ${format.toUpperCase()}...`, "info");
+          showToast(`Exporting ${format.toUpperCase()}…`, "info");
           const blob = await API.exportDeepResearchReport(repId, format);
           const blobUrl = URL.createObjectURL(blob);
           const a = document.createElement("a");
@@ -8727,9 +8727,9 @@ import {
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(blobUrl);
-          showToast("Export completed successfully.", "success");
+          showToast("Export complete.", "success");
         } catch (err) {
-          showToast("Failed to export report.", "error");
+          showToast("Couldn't export the report.", "error");
         }
       });
     });
@@ -8789,7 +8789,7 @@ import {
       API.getDeepResearchReport(reportId).then((report) => {
         if (!card.parentElement || !report) return;
         if (report.status === "running") {
-          if (statusElement?.parentElement) statusElement.textContent = "Research is still being finalized.";
+          if (statusElement?.parentElement) statusElement.textContent = "Finishing the report.";
           return;
         }
         if (!["completed", "cancelled", "failed"].includes(report.status)) return;
@@ -8804,7 +8804,7 @@ import {
         }, hydratedContent);
       }).catch(() => {
         if (statusElement?.parentElement) {
-          statusElement.textContent = "Research status is temporarily unavailable.";
+          statusElement.textContent = "Status unavailable.";
         }
       });
     };
@@ -8835,7 +8835,7 @@ import {
 
       const statusText = document.createElement("div");
       statusText.className = "deep-research-status-text";
-      statusText.textContent = meta.latestStatusText || "Checking the saved research status...";
+      statusText.textContent = meta.latestStatusText || "Checking status…";
       progressContainer.appendChild(statusText);
       card.appendChild(progressContainer);
 
@@ -8894,11 +8894,11 @@ import {
       cancelButton.addEventListener("click", async () => {
         if (!reportId || cancelButton.disabled) return;
         cancelButton.disabled = true;
-        statusText.textContent = "Cancelling research...";
+        statusText.textContent = "Cancelling…";
         try {
           renderSnapshot(await API.cancelDeepResearchReport(reportId));
         } catch {
-          statusText.textContent = "Could not cancel yet. Please try again.";
+          statusText.textContent = "Couldn't cancel. Try again.";
           cancelButton.disabled = false;
         }
       });
@@ -8910,15 +8910,15 @@ import {
           onCancelled: renderSnapshot,
           onFailed: renderSnapshot,
           onConnectionError: () => {
-            if (card.isConnected) statusText.textContent = "Research continues in the background. Reconnecting...";
+            if (card.isConnected) statusText.textContent = "Research continues in the background. Reconnecting…";
           },
         }, monitorAbort.signal).catch((error) => {
           if (error?.name !== "AbortError" && card.isConnected) {
-            statusText.textContent = "Research status is temporarily unavailable. Retrying...";
+            statusText.textContent = "Status unavailable. Retrying…";
           }
         });
       } else {
-        statusText.textContent = "Research status is temporarily unavailable.";
+        statusText.textContent = "Status unavailable.";
         cancelButton.disabled = true;
       }
     } else if (meta.status === "cancelled") {
@@ -9401,7 +9401,7 @@ import {
             return;
           }
           logAuthenticatedConversationError("handleSend.ensureRemoteConversation", error);
-          showToast("Couldn't sync this chat yet. Please try again in a moment.", "error");
+          showToast("Couldn't sync this chat. Try again.", "error");
           return;
         }
       }
@@ -9697,7 +9697,7 @@ import {
             if (fileArtifactResponse) {
               const fileMeta = normalizeGeneratedFileMeta(fileArtifactResponse.file, { chatId: targetChatId });
               finalAssistantMeta = fileMeta;
-              fullReply = fileArtifactResponse.reply || fileArtifactResponse.answer || (fileMeta ? `Generated ${fileMeta.file_name}.` : "Sorry, I couldn't generate that file. Please try again.");
+              fullReply = fileArtifactResponse.reply || fileArtifactResponse.answer || (fileMeta ? `${fileMeta.file_name} generated.` : "Couldn't generate the file. Try again.");
               if (fileMeta) {
                 await streamBubble.finish();
                 await persistChatMessage(targetChatId, "assistant", fullReply, fileMeta, {
@@ -9780,7 +9780,7 @@ import {
             debugLog("[UI] Stream aborted by user");
             const partial = streamBubble?.getFullText?.() || "";
             if (partial) {
-              await streamBubble.finish({ interruptionNotice: "Stopped by you. Partial output was preserved." });
+              await streamBubble.finish({ interruptionNotice: "Stopped. Partial answer saved." });
               fullReply = partial;
               await streamDraft.markIncomplete(fullReply, "stopped", {
                 ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
@@ -9953,7 +9953,7 @@ import {
         wrap.className = "message-error-wrap";
         const errText = document.createElement("p");
         errText.className = "message-error-text";
-        errText.textContent = "Sorry, something went wrong. Please try again.";
+        errText.textContent = "Something went wrong. Try again.";
         wrap.appendChild(errText);
         const retryBtn = document.createElement("button");
         retryBtn.className = "error-retry-btn";
@@ -9971,7 +9971,7 @@ import {
           });
         wrap.appendChild(retryBtn);
         errDiv.appendChild(wrap);
-        showToast("Failed to get response. You can retry.", "error");
+        showToast("Couldn't get a response. Retry.", "error");
       }
     } finally {
       stopMeasure("done", { conversation_id: targetChatId });
@@ -10325,7 +10325,7 @@ import {
     const cooldown = checkImageCooldown();
     if (cooldown.active) {
       const waitSec = Math.ceil(cooldown.waitMs / 1000);
-      showQuotaWarning(`Please wait ${waitSec} second${waitSec !== 1 ? "s" : ""} before generating another image.`);
+      showQuotaWarning(`Wait ${waitSec} second${waitSec !== 1 ? "s" : ""} before generating another image.`);
       return;
     }
 
@@ -10511,9 +10511,9 @@ import {
           });
         }
 
-        maybeGenerateTitle(prompt, "Generated an image.", targetChatId);
+        maybeGenerateTitle(prompt, "Image generated.", targetChatId);
         if (result.persisted === false) {
-          showToast(result.warning || "Image generated, but it could not be synced to this chat yet.", "error", 6000);
+          showToast(result.warning || "Image generated. It hasn't synced to this chat yet.", "error", 6000);
         }
         if (isAuthenticatedSession() && targetChatId) {
           settleImageGenerationUi(targetChatId, state);
@@ -10525,7 +10525,7 @@ import {
         if (pendingBubbleResult?.bubble) {
           pendingBubbleResult.bubble.remove();
         }
-        const friendlyErr = "Sorry, I couldn't generate that image. Please try again.";
+        const friendlyErr = "Couldn't generate the image. Try again.";
         showToast(friendlyErr, "error");
       }
     } catch (err) {
@@ -10538,15 +10538,15 @@ import {
         return;
       }
       else if (err.code === "quota_exceeded" || err.details?.type === "quota_exceeded") {
-        showQuotaWarning(err.message || "Image generation limit reached. Review Billing for reset and upgrade options.");
+        showQuotaWarning(err.message || "Image limit reached. See Plan & usage for reset and upgrade options.");
         window.SentIQBilling?.refresh?.(true);
         window.SentIQCapabilities?.refresh?.();
       } else if (err.message && (err.message.includes("Daily image limit") || err.message.includes("Please wait"))) {
         showQuotaWarning(err.message);
       } else if (err.message && err.message.includes("queue is full")) {
-        showQuotaWarning("The image generation server is busy. Please try again in a moment.");
+        showQuotaWarning("Image generation is busy. Try again soon.");
       } else if (err.code === "context_clarification_required") {
-        const clarificationText = err.message || "What should I generate an image of?";
+        const clarificationText = err.message || "Describe the image.";
         const { contentDiv: genClarifyDiv } = appendMessageBubble("assistant", "");
         typeMessage(clarificationText, genClarifyDiv);
         await safelyAddImageMessage(targetChatId, "assistant", clarificationText, null, "image clarification message", {
@@ -10556,7 +10556,7 @@ import {
       } else {
         const userFacingError = err.message && err.message.includes("couldn't be saved to your conversation")
           ? err.message
-          : "Sorry, something went wrong generating that image. Please try again.";
+          : "Couldn't generate the image. Try again.";
         showToast(userFacingError, "error");
         debugWarn(`[UI] Image generation error: ${getSafeErrorMessage(err)}`);
       }
@@ -10918,7 +10918,7 @@ import {
         const commaIndex = result.indexOf(",");
         resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
       };
-      reader.onerror = () => reject(reader.error || new Error("Unable to read image."));
+      reader.onerror = () => reject(reader.error || new Error("Couldn't read the image."));
       reader.readAsDataURL(file);
     });
   }
@@ -11188,7 +11188,7 @@ import {
       logAuthenticatedConversationError("startNewChat", error);
       await removePendingServerChat(pendingChat?.id || null);
       if (isAuthenticatedSession()) {
-        showToast("Couldn't start a new chat right now. Please try again.", "error");
+        showToast("Couldn't start a new chat. Try again.", "error");
       }
       return;
     }
@@ -11418,7 +11418,7 @@ import {
       .catch((error) => {
         window.SentIQBootstrap?.fail?.();
         debugWarn(`[UI] ${PRODUCT_NAME} UI failed to start: ${getSafeErrorMessage(error)}`, error);
-        showToast(`${PRODUCT_NAME} couldn't finish starting. Please refresh the page.`, "error", 6000);
+        showToast(`${PRODUCT_NAME} didn't start. Refresh the page.`, "error", 6000);
       });
   }
 

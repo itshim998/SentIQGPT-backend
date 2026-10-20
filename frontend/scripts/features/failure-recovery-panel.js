@@ -30,10 +30,10 @@ export function createFailureRecoveryPanel(options) {
     return {
       attachmentState,
       items: [
-        ["prompt", "Prompt", "Preserved in this conversation"],
-        ["draft", "Draft", draftState === "restored" ? "Restored to the composer" : draftState === "newer" ? "Newer draft left untouched" : "No recoverable text draft"],
-        ["attachments", "Attachments", attachmentState === "preserved" ? "Still attached and ready" : attachmentState === "reattach" ? "Reattach local files before retrying" : "No attachments were used"],
-        ["mode", "Mode", modeState === "restored" ? "Original mode restored" : modeState === "preserved" ? "Original mode remains active" : modeState === "newer" ? "Newer mode left untouched" : modeState === "available" ? "Original mode can be selected again" : "Standard response mode"],
+        ["prompt", "Prompt", "Saved in this chat"],
+        ["draft", "Draft", draftState === "restored" ? "Restored to the message box" : draftState === "newer" ? "Newer draft kept" : "No draft to restore"],
+        ["attachments", "Attachments", attachmentState === "preserved" ? "Files still attached" : attachmentState === "reattach" ? "Reattach files to retry" : "No files attached"],
+        ["mode", "Mode", modeState === "restored" ? "Mode restored" : modeState === "preserved" ? "Mode unchanged" : modeState === "newer" ? "Newer mode kept" : modeState === "available" ? "Select the mode again" : "Standard mode"],
       ],
     };
   }
@@ -71,7 +71,7 @@ export function createFailureRecoveryPanel(options) {
     panel.setAttribute("role", state === "failed" ? "alert" : "status");
     panel.setAttribute("aria-live", "polite");
     const descriptionId = `failure-recovery-${Math.random().toString(36).slice(2, 9)}`;
-    panel.querySelector(".failure-recovery-state").textContent = state === "partial" ? "Partial" : state === "cancelled" ? "Cancelled" : "Needs attention";
+    panel.querySelector(".failure-recovery-state").textContent = state === "partial" ? "Partial" : state === "cancelled" ? "Cancelled" : "Action needed";
     panel.querySelector(".failure-recovery-title").textContent = `${copy.label} recovery`;
     const description = panel.querySelector(".failure-recovery-description");
     description.id = descriptionId;
@@ -99,7 +99,7 @@ export function createFailureRecoveryPanel(options) {
       const restore = document.createElement("button");
       restore.type = "button";
       restore.className = "failure-recovery-restore";
-      restore.textContent = "Restore original prompt";
+      restore.textContent = "Restore prompt";
       restore.addEventListener("click", () => {
         snapshotManager.restoreDraft(snapshot, true);
         chatInput.focus();
@@ -109,7 +109,7 @@ export function createFailureRecoveryPanel(options) {
     if (result.attachmentState === "reattach") {
       const note = document.createElement("span");
       note.className = "failure-recovery-action-note";
-      note.textContent = "Local files are not recreated automatically for safety.";
+      note.textContent = "Files aren't restored automatically.";
       actions.appendChild(note);
     }
     return panel;

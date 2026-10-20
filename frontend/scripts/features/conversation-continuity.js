@@ -488,7 +488,7 @@ function initializeConversationContinuity() {
     }
     const label = marker.querySelector(".conversation-activity-label");
     if (label && label.textContent !== activity.label) label.textContent = activity.label;
-    const accessibleLabel = `${activity.label} in this conversation`;
+    const accessibleLabel = `${activity.label} in this chat`;
     if (marker.getAttribute("aria-label") !== accessibleLabel) marker.setAttribute("aria-label", accessibleLabel);
     if (marker.title !== accessibleLabel) marker.title = accessibleLabel;
   }
@@ -572,9 +572,9 @@ function initializeConversationContinuity() {
         kind: "delete",
         conversationId,
         risky: storedDraftRisk(conversationId) || (active && currentDiscardRisk()),
-        title: "Delete this conversation and its draft?",
-        message: "The conversation, its saved reading position, and any unsent draft in it will be removed.",
-        confirmLabel: "Delete conversation",
+        title: "Delete this chat?",
+        message: "The chat and any unsent draft will be deleted.",
+        confirmLabel: "Delete chat",
         intent: "danger",
       };
     }
@@ -586,11 +586,11 @@ function initializeConversationContinuity() {
         kind: "new-chat",
         conversationId: currentConversationId,
         risky: guestContentWillBeDiscarded || hasAttachments() || hasSelectionContext(),
-        title: "Start a new conversation?",
+        title: "Start a new chat?",
         message: isSignedInScope()
-          ? "Your typed draft is saved with this conversation, but attached files or selected context cannot move to the new chat."
-          : "This guest draft cannot be revisited after starting a new conversation.",
-        confirmLabel: "Start new conversation",
+          ? "Your draft stays with this chat. Attached files and selected text won't carry over."
+          : "You can't return to this guest draft after starting a new chat.",
+        confirmLabel: "Start new chat",
       };
     }
 
@@ -601,8 +601,8 @@ function initializeConversationContinuity() {
         kind: "logout",
         conversationId: currentConversationId,
         risky: hasAttachments() || hasSelectionContext(),
-        title: "Sign out with unsent attachments?",
-        message: "Your typed draft is saved, but attached files and selected response context will be cleared when you sign out.",
+        title: "Sign out with unsent files?",
+        message: "Your draft is saved. Attached files and selected text will be cleared.",
         confirmLabel: "Sign out",
       };
     }
@@ -616,9 +616,9 @@ function initializeConversationContinuity() {
         kind: "switch",
         conversationId,
         risky: hasAttachments() || hasSelectionContext(),
-        title: "Switch conversations?",
-        message: "Your typed draft is saved here, but attached files and selected response context cannot be restored after switching.",
-        confirmLabel: "Switch conversation",
+        title: "Switch chats?",
+        message: "Your draft stays here. Attached files and selected text won't carry over.",
+        confirmLabel: "Switch chat",
       };
     }
     return null;

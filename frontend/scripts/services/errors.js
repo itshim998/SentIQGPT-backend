@@ -4,20 +4,20 @@
 import { PRODUCT_NAME } from "../shared/brand.js";
 
 const ERROR_MESSAGES = {
-  network_unavailable: `${PRODUCT_NAME} could not reach the network. Check your connection and try again.`,
-  request_timed_out: "That request took too long. Please try again.",
-  response_interrupted: "The response was interrupted. Your partial answer has been preserved.",
-  backend_unavailable: `${PRODUCT_NAME} is temporarily unavailable. Please try again shortly.`,
-  auth_required: "Please log in to continue.",
-  profile_setup_required: "Add your display name to continue.",
-  file_too_large: "That file is too large to process.",
-  unsupported_file_type: "That file type is not supported.",
-  file_analysis_failed: "File analysis could not finish. Please try again.",
-  search_unavailable: "Web search is temporarily unavailable. Please try again shortly.",
-  browser_feature_blocked: "A browser feature required for that action is blocked.",
-  storage_unavailable: "Browser storage is unavailable. This session will use temporary storage.",
-  rate_limit: "You have reached a temporary usage limit. Please try again later.",
-  unknown_recoverable: `${PRODUCT_NAME} could not finish that action. Please try again.`,
+  network_unavailable: "No connection. Check your network and try again.",
+  request_timed_out: "The request timed out. Try again.",
+  response_interrupted: "Response interrupted. Partial answer saved.",
+  backend_unavailable: `${PRODUCT_NAME} is unavailable. Try again soon.`,
+  auth_required: "Sign in to continue.",
+  profile_setup_required: "Add your name to continue.",
+  file_too_large: "File is too large.",
+  unsupported_file_type: "File type not supported.",
+  file_analysis_failed: "Couldn't analyse the file. Try again.",
+  search_unavailable: "Web search is unavailable. Try again soon.",
+  browser_feature_blocked: "Your browser blocked this action.",
+  storage_unavailable: "Browser storage is unavailable. Data won't be kept after this session.",
+  rate_limit: "Usage limit reached. Try again later.",
+  unknown_recoverable: "Something went wrong. Try again.",
 };
 
 function inferCategory(error, context = {}) {

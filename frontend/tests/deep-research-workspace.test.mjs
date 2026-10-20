@@ -39,9 +39,9 @@ assert.match(core, /new MutationObserver/);
 assert.match(progress, /document\.createElement\("details"\)/);
 assert.match(progress, /sessionStorage/);
 assert.match(core, /Running in background/);
-assert.match(core, /Resumed from saved state/);
+assert.match(core, /Resumed\. Updates reconnect when this chat is open/);
 assert.match(progress, /progressbar/);
-assert.match(report, /Saved in this conversation/);
+assert.match(report, /Saved in this chat/);
 assert.match(report, /Open full report/);
 assert.doesNotMatch(`${core}\n${progress}\n${report}`, /fetch\(|XMLHttpRequest|SentIQAPI|persistChatMessage|startDeepResearch|subscribeDeepResearchEvents|cloneNode/);
 

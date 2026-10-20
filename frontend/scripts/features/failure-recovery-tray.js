@@ -12,7 +12,7 @@ export function createFailureRecoveryTray(options) {
     if (!tray) {
       tray = document.createElement("section");
       tray.className = "failure-recovery-tray";
-      tray.innerHTML = '<div class="failure-recovery-tray-copy"><strong class="failure-recovery-tray-title"></strong><span class="failure-recovery-tray-description"></span></div><button type="button" class="failure-recovery-tray-action">Review and retry</button><button type="button" class="failure-recovery-tray-close" aria-label="Dismiss recovery notice">×</button>';
+      tray.innerHTML = '<div class="failure-recovery-tray-copy"><strong class="failure-recovery-tray-title"></strong><span class="failure-recovery-tray-description"></span></div><button type="button" class="failure-recovery-tray-action">Review and retry</button><button type="button" class="failure-recovery-tray-close" aria-label="Dismiss">×</button>';
       chatInputWrapper.insertBefore(tray, chatInputWrapper.firstChild);
       tray.querySelector(".failure-recovery-tray-action")?.addEventListener("click", () => {
         const current = tray._failureRecoverySnapshot;

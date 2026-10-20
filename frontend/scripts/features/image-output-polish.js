@@ -72,9 +72,9 @@ function showToast(message, type = "info", durationMs = 3200) {
 
 async function fetchImageBlob(imageUrl, fetchImpl) {
   const url = String(imageUrl || "").trim();
-  if (!url) throw createClipboardError("missing_image_url", "Missing generated image URL.");
+  if (!url) throw createClipboardError("missing_image_url", "Image unavailable.");
   if (typeof fetchImpl !== "function") {
-    throw createClipboardError("image_fetch_unsupported", "Image fetching is unavailable in this browser.");
+    throw createClipboardError("image_fetch_unsupported", "Can't load images in this browser.");
   }
 
   const isDataUrl = url.startsWith("data:");
@@ -82,11 +82,11 @@ async function fetchImageBlob(imageUrl, fetchImpl) {
     ? {}
     : { mode: "cors", credentials: "omit", cache: "force-cache" });
   if (!response?.ok && !isDataUrl) {
-    throw createClipboardError("image_fetch_failed", `Image fetch failed with status ${response?.status || "unknown"}.`);
+    throw createClipboardError("image_fetch_failed", "Couldn't load the image.");
   }
   const blob = await response.blob();
   if (!blob || !String(blob.type || "").toLowerCase().startsWith("image/")) {
-    throw createClipboardError("invalid_image_blob", "The generated image could not be decoded.");
+    throw createClipboardError("invalid_image_blob", "Couldn't open the image.");
   }
   return blob;
 }
@@ -108,7 +108,7 @@ async function loadImageSource(blob, options = {}) {
   const ImageCtor = options.ImageCtor || getBrowserWindow()?.Image;
   const URLRef = options.URLRef || getBrowserWindow()?.URL;
   if (!documentRef || typeof ImageCtor !== "function" || !URLRef?.createObjectURL) {
-    throw createClipboardError("image_decode_unsupported", "Image decoding is unavailable in this browser.");
+    throw createClipboardError("image_decode_unsupported", "Can't open images in this browser.");
   }
 
   const objectUrl = URLRef.createObjectURL(blob);
@@ -123,7 +123,7 @@ async function loadImageSource(blob, options = {}) {
     });
     image.onerror = () => {
       URLRef.revokeObjectURL?.(objectUrl);
-      reject(createClipboardError("image_decode_failed", "The generated image could not be decoded."));
+      reject(createClipboardError("image_decode_failed", "Couldn't open the image."));
     };
     image.src = objectUrl;
   });
@@ -134,7 +134,7 @@ async function renderBlobAsPng(blob, options = {}) {
 
   const documentRef = options.documentRef || (typeof document !== "undefined" ? document : null);
   if (!documentRef?.createElement) {
-    throw createClipboardError("canvas_unsupported", "PNG conversion is unavailable in this browser.");
+    throw createClipboardError("canvas_unsupported", "Can't copy images in this browser.");
   }
 
   const decoded = await loadImageSource(blob, options);
@@ -142,7 +142,7 @@ async function renderBlobAsPng(blob, options = {}) {
     const width = Number(decoded.width) || 0;
     const height = Number(decoded.height) || 0;
     if (width <= 0 || height <= 0) {
-      throw createClipboardError("invalid_image_dimensions", "The generated image has invalid dimensions.");
+      throw createClipboardError("invalid_image_dimensions", "Couldn't copy the image.");
     }
 
     const canvas = documentRef.createElement("canvas");
@@ -150,14 +150,14 @@ async function renderBlobAsPng(blob, options = {}) {
     canvas.height = height;
     const context = canvas.getContext?.("2d", { alpha: true });
     if (!context) {
-      throw createClipboardError("canvas_context_unavailable", "PNG conversion is unavailable in this browser.");
+      throw createClipboardError("canvas_context_unavailable", "Can't copy images in this browser.");
     }
     context.drawImage(decoded.source, 0, 0, width, height);
 
     return await new Promise((resolve, reject) => {
       canvas.toBlob?.((pngBlob) => {
         if (pngBlob) resolve(pngBlob);
-        else reject(createClipboardError("png_conversion_failed", "The generated image could not be converted for copying."));
+        else reject(createClipboardError("png_conversion_failed", "Couldn't copy the image."));
       }, PNG_MIME_TYPE);
     });
   } finally {
@@ -180,13 +180,13 @@ export async function writeImageToClipboard(imageUrl, options = {}) {
   if (typeof clipboard?.write !== "function" || typeof ClipboardItemCtor !== "function") {
     throw createClipboardError(
       "image_clipboard_unsupported",
-      "Copying images is not supported in this browser.",
+      "Copying images isn't supported in this browser.",
     );
   }
   if (typeof ClipboardItemCtor.supports === "function" && !ClipboardItemCtor.supports(PNG_MIME_TYPE)) {
     throw createClipboardError(
       "image_clipboard_unsupported",
-      "This browser cannot place images on the clipboard.",
+      "Copying images isn't supported in this browser.",
     );
   }
 
@@ -197,7 +197,7 @@ export async function writeImageToClipboard(imageUrl, options = {}) {
     .then(() => resolvePngBlob(imageUrl))
     .then((blob) => {
       if (!blob || String(blob.type || "").toLowerCase() !== PNG_MIME_TYPE) {
-        throw createClipboardError("invalid_png_blob", "The generated image could not be prepared for copying.");
+        throw createClipboardError("invalid_png_blob", "Couldn't copy the image.");
       }
       return blob;
     });
@@ -327,21 +327,21 @@ function initializeImageOutputPolish(documentRef = document) {
     const originalTitle = button.getAttribute("title");
     button.dataset.sentiqImageCopyPending = "true";
     button.disabled = true;
-    setCopyControlLabel(button, "Copying image");
+    setCopyControlLabel(button, "Copying…");
 
     writeImageToClipboard(imageContext.imageUrl)
       .then(() => {
         button.classList.add("copied");
-        setCopyControlLabel(button, "Copied image");
-        showToast("Image copied to clipboard.", "success", 2400);
+        setCopyControlLabel(button, "Copied");
+        showToast("Image copied.", "success", 2400);
       })
       .catch((error) => {
         button.classList.remove("copied");
-        setCopyControlLabel(button, "Copy failed");
+        setCopyControlLabel(button, "Couldn't copy");
         const unsupported = error?.code === "image_clipboard_unsupported";
         showToast(
           unsupported
-            ? "Copying images is not supported in this browser."
+            ? "Copying images isn't supported in this browser."
             : "Couldn't copy the image. Check clipboard permission and try again.",
           "error",
           3800,

@@ -69,13 +69,13 @@ function initDeepResearchWorkspace() {
     }
     const copy = status === "running"
       ? origin === "resumed"
-        ? "Resumed from saved state. Updates reconnect automatically when this chat is open."
-        : "Running in the background. You can switch chats and return to this saved workspace."
+        ? "Resumed. Updates reconnect when this chat is open."
+        : "Running in the background. You can switch chats and come back."
       : status === "completed"
-        ? "The completed report is saved in this conversation."
+        ? "Report saved in this chat."
         : status === "cancelled"
-          ? "Research stopped. Any available draft remains saved below."
-          : "Research could not finish. Available progress remains visible below.";
+          ? "Research stopped. Any draft is saved below."
+          : "Research didn't finish. Progress is shown below.";
     setText(note, copy);
     return note;
   }
@@ -109,7 +109,7 @@ function initDeepResearchWorkspace() {
     const stage = normalizeDeepResearchStage({ status, phase: phaseOf(card), statusText: card.querySelector(".deep-research-status-text")?.textContent, percent });
     Object.assign(card.dataset, { deepResearchOrigin: origin, deepResearchWorkspaceVersion: DEEP_RESEARCH_WORKSPACE_VERSION, deepResearchStatus: status, deepResearchStage: stage });
     setAttribute(card, "role", "region");
-    setAttribute(card, "aria-label", status === "completed" ? "Completed Deep Research report" : "Deep Research workspace");
+    setAttribute(card, "aria-label", status === "completed" ? "Deep Research report" : "Deep Research");
     setAttribute(card, "aria-busy", status === "running" ? "true" : "false");
 
     const header = ensureHeader(card);
