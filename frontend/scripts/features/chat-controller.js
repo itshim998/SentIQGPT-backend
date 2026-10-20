@@ -10346,7 +10346,7 @@ import {
             return;
           }
           logAuthenticatedConversationError("handleImageGeneration.ensureRemoteConversation", error);
-          showToast("Couldn't sync this chat yet. Please try again in a moment.", "error");
+          showToast("Couldn't sync this chat. Try again.", "error");
           return;
         }
       }
@@ -10467,14 +10467,14 @@ import {
                     ));
                     imageId = match?.id || "";
                   }
-                  if (!imageId) throw new Error("Stored image metadata is unavailable.");
+                  if (!imageId) throw new Error("Image details unavailable.");
                   await API.deleteImage(imageId);
                   const imgContainer = contentDiv.querySelector(".image-generation-frame") || contentDiv;
-                  imgContainer.innerHTML = '<p class="message-status">Generated image removed.</p>';
-                  showToast("Generated image removed.", "success", 2400);
+                  imgContainer.innerHTML = '<p class="message-status">Image removed.</p>';
+                  showToast("Image removed.", "success", 2400);
                 } catch (error) {
                   debugWarn(`[UI] Image removal failed: ${getSafeErrorMessage(error)}`);
-                  showToast("Couldn't remove that image. Please try again.", "error");
+                  showToast("Couldn't remove the image. Try again.", "error");
                   removeBtn.disabled = false;
                 }
               });
