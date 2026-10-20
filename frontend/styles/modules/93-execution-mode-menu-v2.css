@@ -1,0 +1,582 @@
+/* ============================================================
+   SentIQ Chat — Execution Mode Menu Redesign (V2)
+   Calm surfaces, uniform ink tone, concentric geometry,
+   tick-only selection marker, compositor-only motion.
+   ============================================================ */
+
+/* Root custom property design tokens */
+html:root[data-execution-menu="v2"] {
+  --execution-menu-surface: var(--composer-menu-surface, #0c0f17);
+  --execution-menu-rim: var(--composer-menu-rim, rgba(255, 255, 255, 0.09));
+  --execution-menu-inner-highlight: var(--composer-menu-inner-highlight, rgba(255, 255, 255, 0.06));
+  --execution-menu-shadow: var(--composer-menu-shadow, 0 4px 14px rgba(0, 0, 0, 0.35), 0 24px 54px rgba(0, 0, 0, 0.58));
+  --execution-menu-radius: var(--composer-menu-radius, 20px);
+  --execution-menu-item-radius: var(--composer-menu-item-radius, 12px);
+  --execution-menu-padding: var(--composer-menu-padding, 8px);
+  --execution-menu-gap: 2px;
+  --execution-menu-hover-bg: var(--composer-menu-hover-bg, rgba(255, 255, 255, 0.06));
+  --execution-menu-active-press-bg: rgba(255, 255, 255, 0.08);
+  --execution-menu-focus-ring: var(--composer-menu-focus-ring, rgba(169, 149, 239, 0.65));
+  --execution-menu-title-color: var(--composer-menu-title-color, rgba(255, 255, 255, 0.94));
+  --execution-menu-desc-color: var(--composer-menu-subtitle-color, rgba(255, 255, 255, 0.62));
+  --execution-menu-tick-color: rgba(255, 255, 255, 0.55);
+  --execution-menu-locked-title-color: rgba(255, 255, 255, 0.55);
+  --execution-menu-spring: var(--composer-menu-spring, cubic-bezier(0.16, 1, 0.3, 1));
+  --execution-menu-width: 300px;
+}
+
+@supports (transition-timing-function: linear(0, 1)) {
+  html:root[data-execution-menu="v2"] {
+    --execution-menu-spring: linear(
+      0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 12.9%, 0.938 16.7%,
+      1.017 20.2%, 1.049 23.6%, 1.049 26.8%, 1.028 30.6%,
+      1.008 34.5%, 0.998 38.6%, 0.997 43.5%, 1 54.5%, 1
+    );
+  }
+}
+
+/* Concentric squircle support */
+@supports (corner-shape: squircle) {
+  html:root[data-execution-menu="v2"] .execution-mode-menu {
+    corner-shape: squircle;
+  }
+  html:root[data-execution-menu="v2"] .execution-mode-option {
+    corner-shape: squircle;
+  }
+}
+
+/* ============================================================
+   Menu Popover Surface & Shell
+   Overrides: Module 29 gradient/border, Module 13 84%/90% fills,
+   Module 75 blur candidate / slot overrides
+   ============================================================ */
+
+html:root[data-execution-menu="v2"] .execution-mode-menu,
+html:root[data-execution-menu="v2"] .execution-mode-control .execution-mode-menu,
+html:root[data-execution-menu="v2"] .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-menu,
+html:root[data-execution-menu="v2"] [data-sentiq-blur-candidate="true"].execution-mode-menu,
+html:root[data-execution-menu="v2"] [data-sentiq-blur-candidate="true"][data-sentiq-blur-slot].execution-mode-menu {
+  display: flex !important;
+  flex-direction: column !important;
+  width: min(var(--execution-menu-width), calc(100vw - 24px)) !important;
+  max-height: min(240px, calc(100vh - 80px)) !important;
+  padding: var(--execution-menu-padding) !important;
+  gap: var(--execution-menu-gap) !important;
+  border: 1px solid var(--execution-menu-rim) !important;
+  border-radius: var(--execution-menu-radius) !important;
+  background: var(--execution-menu-surface) !important;
+  background-color: var(--execution-menu-surface) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow:
+    inset 0 1px 0 var(--execution-menu-inner-highlight),
+    var(--execution-menu-shadow) !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  transform: translateY(6px) scale(0.97) !important;
+  transform-origin: bottom right !important;
+  pointer-events: none !important;
+  will-change: auto;
+  transition:
+    opacity 130ms ease,
+    transform 130ms ease,
+    visibility 0s linear 130ms !important;
+  z-index: 30 !important;
+}
+
+/* Open state: calm spring expansion */
+html:root[data-execution-menu="v2"] .execution-mode-control.open .execution-mode-menu,
+html:root[data-execution-menu="v2"] .execution-mode-control[data-execution-mode-version="5.6"].open .execution-mode-menu {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transform: translateY(0) scale(1) !important;
+  pointer-events: auto !important;
+  will-change: transform, opacity;
+  transition:
+    opacity 220ms ease-out,
+    transform 220ms var(--execution-menu-spring),
+    visibility 0s linear 0s !important;
+}
+
+/* ============================================================
+   Option Rows (Equal Height, Borderless & Fill-less at rest)
+   Overrides: Module 29 bordered cards, Module 13 backgrounds
+   ============================================================ */
+
+html:root[data-execution-menu="v2"] .execution-mode-option,
+html:root[data-execution-menu="v2"] .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option {
+  position: relative !important;
+  width: 100% !important;
+  min-height: 56px !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  padding: 10px 12px !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--execution-menu-item-radius) !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  color: var(--execution-menu-title-color) !important;
+  text-align: left !important;
+  cursor: pointer !important;
+  opacity: 1 !important;
+  transform: none !important;
+  transition:
+    background-color 140ms ease,
+    transform 140ms ease !important;
+}
+
+/* Selected row: NO border, NO background, NO ring at rest */
+html:root[data-execution-menu="v2"] .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option.is-selected,
+html:root[data-execution-menu="v2"] .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option[aria-selected="true"],
+html:root[data-execution-menu="v2"] .execution-mode-option.is-selected,
+html:root[data-execution-menu="v2"] .execution-mode-option.active,
+html:root[data-execution-menu="v2"] .execution-mode-option[aria-selected="true"] {
+  border: 1px solid transparent !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  color: var(--execution-menu-title-color) !important;
+}
+
+/* Closed state reset for row transitions */
+html:root[data-execution-menu="v2"] .execution-mode-control:not(.open) .execution-mode-option,
+html:root[data-execution-menu="v2"] .execution-mode-control:not(.open) .execution-mode-upsell {
+  opacity: 0 !important;
+  transform: translateY(4px) !important;
+  transition: none !important;
+}
+
+/* Open stagger: ~20ms intervals (compositor properties only) */
+html:root[data-execution-menu="v2"] .execution-mode-control.open .execution-mode-option,
+html:root[data-execution-menu="v2"] .execution-mode-control.open .execution-mode-upsell {
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+  transition:
+    opacity 220ms ease,
+    transform 220ms var(--execution-menu-spring),
+    background-color 140ms ease !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-control.open .execution-mode-option:nth-of-type(1) {
+  transition-delay: 15ms !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-control.open .execution-mode-option:nth-of-type(2) {
+  transition-delay: 35ms !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-control.open .execution-mode-upsell {
+  transition-delay: 55ms !important;
+}
+
+/* Hover state: very faint borderless fill, 140ms */
+html:root[data-execution-menu="v2"] .execution-mode-option:hover:not(:disabled):not(.is-tool-locked):not([aria-disabled="true"]) {
+  background-color: var(--execution-menu-hover-bg) !important;
+  border-color: transparent !important;
+}
+
+/* Pressed state: subtle scale(.985) */
+html:root[data-execution-menu="v2"] .execution-mode-option:active:not(:disabled):not(.is-tool-locked):not([aria-disabled="true"]) {
+  transform: scale(0.985) !important;
+  background-color: var(--execution-menu-active-press-bg) !important;
+}
+
+/* Keyboard focus: clear inset 2px ring */
+html:root[data-execution-menu="v2"] .execution-mode-option:focus-visible {
+  outline: none !important;
+  border-color: transparent !important;
+  box-shadow: inset 0 0 0 2px var(--execution-menu-focus-ring) !important;
+}
+
+/* ============================================================
+   Typography (Title & Description)
+   ============================================================ */
+
+html:root[data-execution-menu="v2"] .execution-mode-option-copy {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 3px !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  padding-right: 12px !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-option-title {
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--execution-menu-title-color) !important;
+  line-height: 1.3 !important;
+  white-space: nowrap !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-option-description {
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  color: var(--execution-menu-desc-color) !important;
+  line-height: 1.4 !important;
+  text-wrap: pretty !important;
+  text-wrap: balance;
+  display: block !important;
+  -webkit-line-clamp: unset !important;
+  line-clamp: unset !important;
+  overflow: visible !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-option.is-selected .execution-mode-option-description,
+html:root[data-execution-menu="v2"] .execution-mode-option[aria-selected="true"] .execution-mode-option-description {
+  color: var(--execution-menu-desc-color) !important;
+}
+
+/* ============================================================
+   Selection Indicator: Bare Grey Tick (No Rings, No Circles)
+   Overrides: Module 29 circle container & background
+   ============================================================ */
+
+html:root[data-execution-menu="v2"] .execution-mode-option-check,
+html:root[data-execution-menu="v2"] .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option-check {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin: 1px 0 0 0 !important;
+  align-self: flex-start !important;
+  color: var(--execution-menu-tick-color) !important;
+  flex-shrink: 0 !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-option-check svg,
+html:root[data-execution-menu="v2"] .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-option-check svg {
+  width: 15px !important;
+  height: 15px !important;
+  stroke: var(--execution-menu-tick-color) !important;
+  stroke-width: 1.75px !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  display: block !important;
+}
+
+/* Unselected row: reserve space, hide completely */
+html:root[data-execution-menu="v2"] .execution-mode-option:not(.is-selected):not([aria-selected="true"]) .execution-mode-option-check {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  transition: opacity 140ms ease, visibility 0s linear 140ms !important;
+}
+
+/* Selected row: calm grey tick */
+html:root[data-execution-menu="v2"] .execution-mode-option.is-selected .execution-mode-option-check,
+html:root[data-execution-menu="v2"] .execution-mode-option[aria-selected="true"] .execution-mode-option-check {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transition: opacity 140ms ease, visibility 0s linear 0s !important;
+}
+
+/* Tick draw-in animation (~200ms, starting 70ms after open) */
+html:root[data-execution-menu="v2"] .execution-mode-option-check svg path {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 0;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-control.open .execution-mode-option.is-selected .execution-mode-option-check svg path,
+html:root[data-execution-menu="v2"] .execution-mode-control.open .execution-mode-option[aria-selected="true"] .execution-mode-option-check svg path {
+  animation: executionModeTickDraw 200ms ease forwards !important;
+  animation-delay: 70ms !important;
+}
+
+@keyframes executionModeTickDraw {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ============================================================
+   Trigger Micro-Interactions (Chevron rotate & Label crossfade)
+   ============================================================ */
+
+html:root[data-execution-menu="v2"] .execution-mode-control .execution-mode-toggle svg,
+html:root[data-execution-menu="v2"] .execution-mode-control[data-execution-mode-version="5.6"] .execution-mode-toggle svg {
+  transition: transform 220ms var(--execution-menu-spring) !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-control.open .execution-mode-toggle svg,
+html:root[data-execution-menu="v2"] .execution-mode-control[data-execution-mode-version="5.6"].open .execution-mode-toggle svg {
+  transform: rotate(180deg) !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-control[data-execution-mode="fast"] #execution-mode-label {
+  animation: executionLabelCrossfadeFast 160ms ease !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-control[data-execution-mode="intuitive"] #execution-mode-label {
+  animation: executionLabelCrossfadeIntuitive 160ms ease !important;
+}
+
+@keyframes executionLabelCrossfadeFast {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes executionLabelCrossfadeIntuitive {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================================
+   Locked and Upsell States
+   ============================================================ */
+
+html:root[data-execution-menu="v2"] .execution-mode-option.is-tool-locked,
+html:root[data-execution-menu="v2"] .execution-mode-option[aria-disabled="true"],
+html:root[data-execution-menu="v2"] .execution-mode-control.guest-fast-only .execution-mode-option:not([data-execution-mode="fast"]) {
+  cursor: not-allowed !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  transform: none !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-option.is-tool-locked:hover,
+html:root[data-execution-menu="v2"] .execution-mode-option[aria-disabled="true"]:hover,
+html:root[data-execution-menu="v2"] .execution-mode-control.guest-fast-only .execution-mode-option:not([data-execution-mode="fast"]):hover {
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  transform: none !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-option.is-tool-locked .execution-mode-option-title,
+html:root[data-execution-menu="v2"] .execution-mode-option[aria-disabled="true"] .execution-mode-option-title,
+html:root[data-execution-menu="v2"] .execution-mode-control.guest-fast-only .execution-mode-option:not([data-execution-mode="fast"]) .execution-mode-option-title {
+  color: var(--execution-menu-locked-title-color) !important;
+  opacity: 0.55 !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-option.is-tool-locked .execution-mode-option-description,
+html:root[data-execution-menu="v2"] .execution-mode-option[aria-disabled="true"] .execution-mode-option-description,
+html:root[data-execution-menu="v2"] .execution-mode-control.guest-fast-only .execution-mode-option:not([data-execution-mode="fast"]) .execution-mode-option-description {
+  opacity: 0.45 !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-option.is-tool-locked .execution-mode-option-check,
+html:root[data-execution-menu="v2"] .execution-mode-option[aria-disabled="true"] .execution-mode-option-check {
+  display: none !important;
+}
+
+/* Upsell block: quiet hairline pill Upgrade button, no gradients, no glow */
+html:root[data-execution-menu="v2"] .execution-mode-upsell {
+  margin-top: 4px !important;
+  padding: 10px 12px !important;
+  border: 1px solid var(--execution-menu-rim) !important;
+  border-radius: var(--execution-menu-item-radius) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-upsell[hidden] {
+  display: none !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-upsell-text {
+  margin: 0 !important;
+  color: var(--execution-menu-desc-color) !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  line-height: 1.4 !important;
+  letter-spacing: normal !important;
+  text-wrap: pretty !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-upgrade-btn {
+  align-self: flex-start !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 12px !important;
+  border-radius: 999px !important;
+  border: 1px solid var(--execution-menu-rim) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: var(--execution-menu-title-color) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  letter-spacing: normal !important;
+  cursor: pointer !important;
+  box-shadow: none !important;
+  transition: background-color 140ms ease, transform 140ms ease !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-upgrade-btn:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-upgrade-btn:active {
+  transform: scale(0.98) !important;
+}
+
+html:root[data-execution-menu="v2"] .execution-mode-upgrade-btn:focus-visible {
+  outline: none !important;
+  box-shadow: inset 0 0 0 2px var(--execution-menu-focus-ring) !important;
+}
+
+/* ============================================================
+   Mobile Dock Viewport
+   ============================================================ */
+
+@media (max-width: 768px) {
+  html:root[data-execution-menu="v2"] .execution-mode-menu {
+    width: min(var(--execution-menu-width), calc(100vw - 24px)) !important;
+    padding: 6px !important;
+  }
+
+  html:root[data-execution-menu="v2"] .execution-mode-option {
+    min-height: 52px !important;
+    padding: 10px 12px !important;
+  }
+
+  html:root[data-execution-menu="v2"]:root[data-mobile-composer-active="true"] #execution-mode-control .execution-mode-menu {
+    top: calc(100% + 9px) !important;
+    right: 0 !important;
+    bottom: auto !important;
+    transform-origin: top right !important;
+  }
+
+  html:root[data-execution-menu="v2"]:root[data-mobile-composer-active="true"] #execution-mode-control:not(.open) .execution-mode-menu {
+    transform: translateY(-6px) scale(0.97) !important;
+  }
+
+  html:root[data-execution-menu="v2"]:root[data-mobile-composer-active="true"] #execution-mode-control.open .execution-mode-menu {
+    transform: translateY(0) scale(1) !important;
+  }
+}
+
+/* ============================================================
+   Accessibility Modes
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  html:root[data-execution-menu="v2"] .execution-mode-menu,
+  html:root[data-execution-menu="v2"] .execution-mode-control.open .execution-mode-menu,
+  html:root[data-execution-menu="v2"] .execution-mode-option,
+  html:root[data-execution-menu="v2"] .execution-mode-control.open .execution-mode-option,
+  html:root[data-execution-menu="v2"] .execution-mode-upsell,
+  html:root[data-execution-menu="v2"] .execution-mode-toggle svg,
+  html:root[data-execution-menu="v2"] #execution-mode-label,
+  html:root[data-execution-menu="v2"] .execution-mode-upgrade-btn {
+    transition: opacity 100ms ease !important;
+    transform: none !important;
+    animation: none !important;
+    will-change: auto !important;
+    transition-delay: 0s !important;
+  }
+
+  html:root[data-execution-menu="v2"] .execution-mode-option-check svg path {
+    animation: none !important;
+    stroke-dashoffset: 0 !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  html:root[data-execution-menu="v2"] .execution-mode-menu {
+    background: #000000 !important;
+    background-color: #000000 !important;
+    border: 2px solid rgba(255, 255, 255, 0.45) !important;
+    box-shadow: none !important;
+  }
+
+  html:root[data-execution-menu="v2"] .execution-mode-option-title {
+    color: #ffffff !important;
+  }
+
+  html:root[data-execution-menu="v2"] .execution-mode-option-description {
+    color: rgba(255, 255, 255, 0.88) !important;
+  }
+
+  html:root[data-execution-menu="v2"] .execution-mode-option-check,
+  html:root[data-execution-menu="v2"] .execution-mode-option-check svg {
+    color: #ffffff !important;
+    stroke: #ffffff !important;
+  }
+
+  html:root[data-execution-menu="v2"] .execution-mode-upgrade-btn {
+    border: 1px solid rgba(255, 255, 255, 0.4) !important;
+    color: #ffffff !important;
+  }
+}
+
+@media (forced-colors: active) {
+  html:root[data-execution-menu="v2"] .execution-mode-menu {
+    background: Canvas !important;
+    background-color: Canvas !important;
+    border: 1px solid CanvasText !important;
+    box-shadow: none !important;
+  }
+
+  html:root[data-execution-menu="v2"] .execution-mode-option {
+    border: 1px solid transparent !important;
+  }
+
+  html:root[data-execution-menu="v2"] .execution-mode-option:focus-visible {
+    outline: 2px solid Highlight !important;
+  }
+
+  html:root[data-execution-menu="v2"] .execution-mode-option-title,
+  html:root[data-execution-menu="v2"] .execution-mode-option-description {
+    color: CanvasText !important;
+  }
+
+  html:root[data-execution-menu="v2"] .execution-mode-option-check,
+  html:root[data-execution-menu="v2"] .execution-mode-option-check svg {
+    color: CanvasText !important;
+    stroke: CanvasText !important;
+  }
+
+  html:root[data-execution-menu="v2"] .execution-mode-upsell {
+    border-color: CanvasText !important;
+  }
+
+  html:root[data-execution-menu="v2"] .execution-mode-upgrade-btn {
+    border: 1px solid ButtonText !important;
+    background: ButtonFace !important;
+    color: ButtonText !important;
+  }
+}

@@ -21,7 +21,7 @@ assert.match(
   'index.html <html> tag must declare kill-switch attribute data-composer-menu="v2"',
 );
 
-// 2. Assert module 92 is imported last in 12-reduced-motion.css
+// 2. Assert module 92 is imported in 12-reduced-motion.css after module 91
 assert.ok(
   styleImports.includes('@import url("./92-composer-action-menu-v2.css");'),
   "12-reduced-motion.css must import 92-composer-action-menu-v2.css",
@@ -30,12 +30,9 @@ const lines = styleImports
   .split("\n")
   .map((line) => line.trim())
   .filter((line) => line.startsWith("@import"));
-const lastImportLine = lines[lines.length - 1];
-assert.equal(
-  lastImportLine,
-  '@import url("./92-composer-action-menu-v2.css");',
-  "92-composer-action-menu-v2.css must be the last import in 12-reduced-motion.css",
-);
+const mod92Index = lines.indexOf('@import url("./92-composer-action-menu-v2.css");');
+const mod91Index = lines.indexOf('@import url("./91-logo-activity.css");');
+assert.ok(mod92Index > mod91Index, "92-composer-action-menu-v2.css must be imported after 91-logo-activity.css");
 
 // 3. Assert the menu surface has no linear-gradient or radial-gradient fill
 assert.equal(
