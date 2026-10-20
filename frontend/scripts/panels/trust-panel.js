@@ -43,7 +43,7 @@ import { PRODUCT_NAME } from "../shared/brand.js";
 
   if (supportLink) {
     supportLink.href = `mailto:${supportEmail}`;
-    supportLink.textContent = `Email ${supportEmail}`;
+    supportLink.textContent = "Email support";
   }
 
   document.querySelectorAll("[data-trust-tab]").forEach((element) => {
@@ -78,28 +78,28 @@ import { PRODUCT_NAME } from "../shared/brand.js";
   });
 
   clearButton?.addEventListener("click", async () => {
-    if (!window.confirm(`Clear ${PRODUCT_NAME} data stored in this browser? Your sign-in session will remain active.`)) return;
+    if (!window.confirm(`Clear local ${PRODUCT_NAME} data in this browser? You'll stay signed in.`)) return;
     clearButton.disabled = true;
-    if (status) status.textContent = "Clearing local data...";
+    if (status) status.textContent = "Clearing…";
     try {
       await window.SentIQAPI?.clearFileSession?.().catch(() => null);
       await window.SentIQStorage?.clearLocalData?.();
-      if (status) status.textContent = `Local ${PRODUCT_NAME} data was cleared. Reloading...`;
+      if (status) status.textContent = "Local data cleared. Reloading…";
       window.setTimeout(() => window.location.reload(), 500);
     } catch (error) {
-      if (status) status.textContent = window.SentIQErrors?.getSafeErrorMessage?.(error) || "Local data could not be cleared.";
+      if (status) status.textContent = window.SentIQErrors?.getSafeErrorMessage?.(error) || "Couldn't clear local data.";
       clearButton.disabled = false;
     }
   });
 
   clearSourceFilesButton?.addEventListener("click", async () => {
     clearSourceFilesButton.disabled = true;
-    if (status) status.textContent = "Clearing temporary source files...";
+    if (status) status.textContent = "Clearing…";
     try {
       await window.SentIQChat?.clearUploadedSourceContext?.();
-      if (status) status.textContent = "Temporary source files were cleared from this workspace.";
+      if (status) status.textContent = "Temporary files cleared.";
     } catch (error) {
-      if (status) status.textContent = window.SentIQErrors?.getSafeErrorMessage?.(error, { area: "file" }) || "Temporary source files could not be cleared.";
+      if (status) status.textContent = window.SentIQErrors?.getSafeErrorMessage?.(error, { area: "file" }) || "Couldn't clear temporary files.";
     } finally {
       clearSourceFilesButton.disabled = false;
     }

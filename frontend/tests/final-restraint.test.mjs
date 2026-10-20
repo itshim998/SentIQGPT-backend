@@ -46,10 +46,10 @@ for (const token of [
   'setText("#settings-tab-button-memory", "Memory")',
   'setText("#support-email-link", "Email support")',
   "Guest chats aren't saved. Sign in to save chats and generate images.",
-  "SentIQ Chat can be used for conversations, files, web search, deep research, and content creation.",
-  "Files you share with SentIQ Chat are used solely to fulfill your request.",
-  "By using SentIQ Chat, you agree to use the service lawfully and responsibly.",
-  "may occasionally produce inaccurate or incomplete results.",
+  "SentIQ Chat handles chats, files, web search, Deep Research, and content creation.",
+  "Files you upload are used only to complete your request.",
+  "By using SentIQ Chat, you agree to use it lawfully.",
+  "SentIQ Chat can produce inaccurate or incomplete results.",
 ]) {
   assert.ok(behavior.includes(token), `Final restraint copy policy is missing ${token}`);
 }

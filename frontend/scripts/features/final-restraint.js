@@ -88,21 +88,21 @@ function applyFinalRestraintCopy() {
   setText(".trust-tab[data-trust-tab='controls']", "Data");
   setText("#trust-tab-privacy h3", "Privacy");
   setParagraphs("#trust-tab-privacy", [
-    "SentIQ Chat can be used for conversations, files, web search, deep research, and content creation. As with any AI-powered tool, we recommend reviewing important outputs before relying on them.",
-    "Guest sessions are temporary by design. Conversations started without an account are not saved and will not persist once the session ends.",
-    "Signing in to your account allows your conversations, messages, memories, and created files to be securely saved and accessible across sessions.",
-    "Files you share with SentIQ Chat are used solely to fulfill your request.",
+    "SentIQ Chat handles chats, files, web search, Deep Research, and content creation. AI can make mistakes, so check important outputs before relying on them.",
+    "Guest chats are temporary. Chats started without an account aren't saved after the session ends.",
+    "When you're signed in, your chats, memories, and generated files are saved to your account.",
+    "Files you upload are used only to complete your request.",
   ]);
   setText("#trust-tab-terms h3", "Terms of use");
   setParagraphs("#trust-tab-terms", [
-    "By using SentIQ Chat, you agree to use the service lawfully and responsibly. You are responsible for ensuring that any material you upload or share is content you have the right to use.",
-    "We recommend reviewing important outputs before relying on them, as SentIQ Chat, like any AI-powered tool, may occasionally produce inaccurate or incomplete results.",
+    "By using SentIQ Chat, you agree to use it lawfully. You're responsible for making sure you have the right to use anything you upload or share.",
+    "SentIQ Chat can produce inaccurate or incomplete results. Check important outputs before relying on them.",
   ]);
-  setText("#trust-tab-controls p:first-of-type", "Clearing local data removes this device's cache and temporary upload session. It does not remove cloud conversations or memories.");
+  setText("#trust-tab-controls p:first-of-type", "Clearing local data removes this device's cache and temporary uploads. It doesn't delete saved chats or memories.");
   setText("#clear-source-files-btn", "Clear temporary files");
-  setText("#clear-local-data-btn", "Clear data on this device");
-  setText("#trust-tab-controls .data-controls-note", "Delete conversations from the sidebar and memories from Memory.");
-  setText("#trust-tab-support p", "For account, privacy, file, or chat help, email our team.");
+  setText("#clear-local-data-btn", "Clear local data");
+  setText("#trust-tab-controls .data-controls-note", "Delete chats from the sidebar and memories from Memory.");
+  setText("#trust-tab-support p", "For help with your account, privacy, files, or chats, email us.");
   setText("#support-email-link", "Email support");
 
   setText("#live-beta-message", "Connecting…");

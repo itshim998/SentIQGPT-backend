@@ -468,7 +468,7 @@
   <div id="trust-modal" class="modal-overlay" style="display: none;" aria-hidden="true">
     <div class="modal-container trust-modal-container" role="dialog" aria-modal="true" aria-labelledby="trust-modal-title">
       <div class="modal-header">
-        <h2 id="trust-modal-title">Privacy, data &amp; support</h2>
+        <h2 id="trust-modal-title">Privacy &amp; support</h2>
         <button id="close-trust-btn" class="modal-close" type="button" title="Close" aria-label="Close privacy and support dialog">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"></path><path d="M6 6l12 12"></path></svg>
         </button>
@@ -477,32 +477,33 @@
         <div class="settings-tabs trust-tabs" role="tablist" aria-label="Privacy, data, and support">
           <button class="settings-tab trust-tab active" type="button" data-trust-tab="privacy" role="tab" aria-selected="true">Privacy</button>
           <button class="settings-tab trust-tab" type="button" data-trust-tab="terms" role="tab" aria-selected="false">Terms</button>
-          <button class="settings-tab trust-tab" type="button" data-trust-tab="controls" role="tab" aria-selected="false">Data controls</button>
+          <button class="settings-tab trust-tab" type="button" data-trust-tab="controls" role="tab" aria-selected="false">Data</button>
           <button class="settings-tab trust-tab" type="button" data-trust-tab="support" role="tab" aria-selected="false">Support</button>
         </div>
         <section id="trust-tab-privacy" class="trust-tab-content active">
-          <h3>How data is handled</h3>
-          <p>SentIQ Chat is an AI assistant for chat, file analysis, web-assisted research, and generated artifacts. Review important outputs before relying on them.</p>
-          <p>Guest chats are sent to the backend when you use chat features, but they are not saved as cloud conversations or memories. A recovery draft may remain in this browser tab if a response is interrupted.</p>
-          <p>When you sign in, conversations, messages, memories, and generated artifacts can be stored in your account. This browser also keeps a local cache so recent work remains available.</p>
-          <p>Uploaded source files are processed for analysis. The latest temporary extraction may remain in the backend session cache for up to about one hour. Relevant context can be processed by configured AI and search services when you use those features.</p>
+          <h3>Privacy</h3>
+          <p>SentIQ Chat handles chats, files, web search, Deep Research, and content creation. AI can make mistakes, so check important outputs before relying on them.</p>
+          <p>Guest chats are temporary. Chats started without an account aren't saved after the session ends.</p>
+          <p>When you're signed in, your chats, memories, and generated files are saved to your account.</p>
+          <p>Files you upload are used only to complete your request.</p>
         </section>
         <section id="trust-tab-terms" class="trust-tab-content">
           <h3>Terms of use</h3>
-          <p>Use SentIQ Chat lawfully and review important outputs before relying on them. Do not upload data you are not authorized to process. Generated and analyzed content can contain mistakes.</p>
+          <p>By using SentIQ Chat, you agree to use it lawfully. You're responsible for making sure you have the right to use anything you upload or share.</p>
+          <p>SentIQ Chat can produce inaccurate or incomplete results. Check important outputs before relying on them.</p>
         </section>
         <section id="trust-tab-controls" class="trust-tab-content">
           <h3>Data controls</h3>
-          <p>Clearing local data removes this browser's SentIQ Chat cache and temporary upload session without signing you out. Cloud conversations and memories remain until you remove them from their respective controls.</p>
+          <p>Clearing local data removes this device's cache and temporary uploads. It doesn't delete saved chats or memories.</p>
           <div id="data-controls-status" class="data-controls-status" role="status" aria-live="polite"></div>
-          <button id="clear-source-files-btn" class="btn btn-secondary" type="button">Clear temporary source files</button>
-          <button id="clear-local-data-btn" class="btn btn-danger" type="button">Clear local SentIQ Chat data</button>
-          <p class="data-controls-note">Remove cloud conversations from the sidebar and memories from Memory Manager. Generated artifacts include their own Remove action. For account-deletion help, contact support.</p>
+          <button id="clear-source-files-btn" class="btn btn-secondary" type="button">Clear temporary files</button>
+          <button id="clear-local-data-btn" class="btn btn-danger" type="button">Clear local data</button>
+          <p class="data-controls-note">Delete chats from the sidebar and memories from Memory.</p>
         </section>
         <section id="trust-tab-support" class="trust-tab-content">
           <h3>Support</h3>
-          <p>For bug reports, account help, privacy questions, file or chat issues, and general support, email our team.</p>
-          <a id="support-email-link" class="btn btn-primary support-email-link" href="mailto:support@sentiqlabs.com">Email support@sentiqlabs.com</a>
+          <p>For help with your account, privacy, files, or chats, email us.</p>
+          <a id="support-email-link" class="btn btn-primary support-email-link" href="mailto:support@sentiqlabs.com">Email support</a>
         </section>
       </div>
     </div>
