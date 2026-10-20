@@ -296,8 +296,6 @@ function initializeSettingsWorkspace() {
     }
     if (accountSessionAction) {
       accountSessionAction.textContent = identity.signedIn ? "Sign out" : "Sign in";
-      accountSessionAction.classList.toggle("btn-primary", !identity.signedIn);
-      accountSessionAction.classList.toggle("btn-secondary", identity.signedIn);
     }
   }
 
