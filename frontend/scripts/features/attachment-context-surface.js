@@ -101,8 +101,8 @@ function ensureProgressNode(card) {
   progress = document.createElement("span");
   progress.className = "composer-attachment-progress";
   progress.setAttribute("role", "progressbar");
-  progress.setAttribute("aria-label", "Preparing attachment");
-  progress.setAttribute("aria-valuetext", "Preparing attachment");
+  progress.setAttribute("aria-label", "Preparing file");
+  progress.setAttribute("aria-valuetext", "Preparing file");
   const track = document.createElement("span");
   track.className = "composer-attachment-progress-track";
   progress.appendChild(track);
@@ -130,7 +130,7 @@ function enrichAttachment(card) {
     setData(visual, "fileIdentity", identity.identity);
   }
 
-  setText(statusNode, status === "processing" ? "Preparing" : status === "failed" ? "Needs attention" : "Ready");
+  setText(statusNode, status === "processing" ? "Preparing" : status === "failed" ? "Failed" : "Ready");
   setHidden(progress, status !== "processing");
   setAttribute(progress, "aria-hidden", status === "processing" ? "false" : "true");
 

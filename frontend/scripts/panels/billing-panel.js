@@ -63,10 +63,10 @@ import { getPlanDisplayName, PLAN_DISPLAY_NAMES } from "../features/free-tool-ex
   function renderMeter(feature, quota) {
     const percent = calculateUsagePercent(quota.limit, quota.remaining);
     const tokenDescription = quota.isTokenPool
-      ? '<span class="billing-meter-description">Counts model input and generated output within your rolling allowance.</span>'
+      ? '<span class="billing-meter-description">Includes input and output.</span>'
       : "";
     return `
-      <div class="billing-meter" data-feature="${feature}" ${quota.isTokenPool ? 'aria-description="Counts model input and generated output within your rolling allowance."' : ""}>
+      <div class="billing-meter" data-feature="${feature}" ${quota.isTokenPool ? 'aria-description="Includes input and output."' : ""}>
         <div class="billing-meter-row">
           <span>${escapeHtml(quota.label)}</span>
           <strong>${escapeHtml(usageText(quota))}</strong>
@@ -82,7 +82,7 @@ import { getPlanDisplayName, PLAN_DISPLAY_NAMES } from "../features/free-tool-ex
     if (!allowance) return "";
     const percent = calculateUsagePercent(allowance.limitTokens, allowance.remainingTokens);
     return `
-      <div class="billing-meter billing-meter-unified" data-feature="unified_text" aria-description="One shared rolling text-token allowance.">
+      <div class="billing-meter billing-meter-unified" data-feature="unified_text" aria-description="Shared text token allowance.">
         <div class="billing-meter-row">
           <span>Text tokens</span>
           <strong>${escapeHtml(`${formatCompactTokenNumber(allowance.remainingTokens)} / ${formatCompactTokenNumber(allowance.limitTokens)} left`)}</strong>
@@ -106,7 +106,7 @@ import { getPlanDisplayName, PLAN_DISPLAY_NAMES } from "../features/free-tool-ex
   function renderPanel() {
     if (!panel) return;
     if (!plansState || !billingState) {
-      panel.innerHTML = '<div class="billing-panel-status">Loading billing details...</div>';
+      panel.innerHTML = '<div class="billing-panel-status">Loading…</div>';
       return;
     }
 
@@ -239,7 +239,7 @@ import { getPlanDisplayName, PLAN_DISPLAY_NAMES } from "../features/free-tool-ex
       renderPanel();
       return me;
     }).catch((error) => {
-      if (panel) panel.innerHTML = `<div class="billing-panel-status error">${escapeHtml(error?.message || "Billing details are unavailable.")}</div>`;
+      if (panel) panel.innerHTML = `<div class="billing-panel-status error">${escapeHtml(error?.message || "Plan details are unavailable.")}</div>`;
       return null;
     }).finally(() => {
       loadingPromise = null;
@@ -267,16 +267,16 @@ import { getPlanDisplayName, PLAN_DISPLAY_NAMES } from "../features/free-tool-ex
 
   async function startCheckout(planCode) {
     if (!planCode || !API) return;
-    setPanelMessage("Preparing checkout...");
+    setPanelMessage("Opening checkout…");
     try {
       const result = await API.startBillingCheckout(planCode);
       if (result.status !== "created" || !result.checkout?.subscription_id) {
-        setPanelMessage(result.message || "Checkout is not available for this plan yet.");
+        setPanelMessage(result.message || "Checkout isn't available for this plan.");
         return;
       }
       const available = await loadRazorpayScript();
       if (!available) {
-        setPanelMessage("Payment checkout could not load. Please try again.");
+        setPanelMessage("Checkout didn't load. Try again.");
         return;
       }
       const checkout = result.checkout;
@@ -286,10 +286,10 @@ import { getPlanDisplayName, PLAN_DISPLAY_NAMES } from "../features/free-tool-ex
         name: PRODUCT_NAME,
         description: `${PRODUCT_NAME} plan`,
         handler: async (payload) => {
-          setPanelMessage("Verifying payment...");
+          setPanelMessage("Verifying payment…");
           await API.verifyBillingCheckout(payload);
           await refreshBilling(true);
-          setPanelMessage("Plan update is being applied.");
+          setPanelMessage("Applying your plan…");
         },
         modal: {
           ondismiss: () => setPanelMessage("Checkout closed."),
@@ -297,7 +297,7 @@ import { getPlanDisplayName, PLAN_DISPLAY_NAMES } from "../features/free-tool-ex
       });
       razorpay.open();
     } catch (error) {
-      setPanelMessage(error?.message || "Checkout could not start.");
+      setPanelMessage(error?.message || "Checkout couldn't start. Try again.");
     }
   }
 

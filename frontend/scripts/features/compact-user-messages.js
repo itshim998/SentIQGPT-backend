@@ -56,7 +56,7 @@ if (chatMessages) {
     const indicator = document.createElement("div");
     indicator.className = "user-selected-context-indicator";
     indicator.setAttribute("role", "note");
-    indicator.setAttribute("aria-label", "Selected context used with this message");
+    indicator.setAttribute("aria-label", "Selected text included");
 
     const icon = document.createElement("span");
     icon.className = "user-selected-context-icon";
@@ -68,7 +68,7 @@ if (chatMessages) {
 
     const label = document.createElement("span");
     label.className = "user-selected-context-label";
-    label.textContent = "Selected context";
+    label.textContent = "Selected text";
     copy.appendChild(label);
 
     const normalizedContext = normalizeText(context.text);

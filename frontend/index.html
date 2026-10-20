@@ -40,14 +40,14 @@
             </svg>
           </button>
         </div>
-        <button id="new-chat-btn" class="btn-new-chat" title="New Chat" aria-label="Start a new chat" data-ui-action>
+        <button id="new-chat-btn" class="btn-new-chat" title="New chat" aria-label="Start a new chat" data-ui-action>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          New Chat
+          New chat
         </button>
       </div>
 
       <div class="sidebar-conversations">
-        <h3 class="sidebar-label">Conversations</h3>
+        <h3 class="sidebar-label">Chats</h3>
         <input id="chat-search-input" class="chat-search-input" type="search" placeholder="Search chats">
         <div id="chat-list" class="chat-list"></div>
       </div>
@@ -62,11 +62,11 @@
           <div class="account-panel-actions">
             <button id="account-upgrade-btn" class="account-panel-item" type="button" role="menuitem">
               <svg class="account-panel-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2L15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2z"/></svg>
-              <span>Upgrade Plan</span>
+              <span>Upgrade</span>
             </button>
             <button id="account-personalization-btn" class="account-panel-item" type="button" role="menuitem">
               <svg class="account-panel-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a4 4 0 0 1 4 4c0 1.95-2 4-4 6-2-2-4-4.05-4-6a4 4 0 0 1 4-4z"/><path d="M12 12c2.21 0 4 1.79 4 4v4H8v-4c0-2.21 1.79-4 4-4z"/></svg>
-              <span>Personalization</span>
+              <span>Memory</span>
             </button>
             <button id="account-support-btn" class="account-panel-item" type="button" role="menuitem" data-trust-tab="support">
               <svg class="account-panel-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -103,13 +103,13 @@
     <main class="main-content">
       <div class="main-content-glow" aria-hidden="true"></div>
       <div id="auth-actions" class="auth-actions">
-        <button id="auth-login-btn" class="auth-btn" type="button">Log in</button>
+        <button id="auth-login-btn" class="auth-btn" type="button">Sign in</button>
         <button id="auth-signup-btn" class="auth-btn auth-btn-primary" type="button">Sign up</button>
         <div id="auth-user-chip" class="auth-user-chip" style="display: none;">
           <span class="auth-user-dot" aria-hidden="true"></span>
           <span id="auth-user-email" class="auth-user-email"></span>
         </div>
-        <button id="auth-logout-btn" class="auth-btn" type="button" style="display: none;">Log out</button>
+        <button id="auth-logout-btn" class="auth-btn" type="button" style="display: none;">Sign out</button>
         <button id="auth-menu-toggle" class="auth-menu-toggle" type="button" aria-label="Open account settings" aria-expanded="false" aria-haspopup="true" style="display: none;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M20 21a8 8 0 0 0-16 0"></path>
@@ -124,15 +124,15 @@
               <span id="auth-menu-email" class="auth-menu-email"></span>
             </div>
           </div>
-          <button id="auth-menu-billing-btn" class="auth-btn auth-menu-billing" type="button" role="menuitem">Billing</button>
-          <button id="auth-menu-logout-btn" class="auth-btn auth-menu-logout" type="button" role="menuitem">Log out</button>
+          <button id="auth-menu-billing-btn" class="auth-btn auth-menu-billing" type="button" role="menuitem">Plan & usage</button>
+          <button id="auth-menu-logout-btn" class="auth-btn auth-menu-logout" type="button" role="menuitem">Sign out</button>
         </div>
       </div>
 
       <!-- Welcome screen -->
       <div id="welcome-screen" class="welcome-screen">
         <div class="welcome-eyebrow">SentIQ Chat</div>
-        <h2 id="welcome-heading">Ready when you are.</h2>
+        <h2 id="welcome-heading">How can I help?</h2>
         <p id="welcome-subtitle" class="welcome-subtitle" hidden></p>
         <div id="starter-actions" class="starter-actions" aria-label="Starter actions">
           <button class="starter-action-btn" type="button" data-starter-action="file">
@@ -177,7 +177,7 @@
             <span>Search web</span>
           </button>
         </div>
-        <p id="auth-welcome-note" class="auth-welcome-note">Guest chats are temporary. Sign in to sync conversations and use image generation.</p>
+        <p id="auth-welcome-note" class="auth-welcome-note">Guest chats aren't saved. Sign in to save chats and generate images.</p>
       </div>
 
       <!-- Chat messages -->
@@ -198,7 +198,7 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
           </button>
         </div>
-        <div id="auth-gate-message" class="auth-gate-message" role="status" aria-live="polite">Log in to start chatting.</div>
+        <div id="auth-gate-message" class="auth-gate-message" role="status" aria-live="polite">Sign in to start chatting.</div>
 
         <div class="chat-input-area">
           <input type="file" id="file-input" accept=".pdf,.txt,.png,.jpg,.jpeg,.webp,.html,.css,.js,.ts,.json,.xml,.md,.py,.java,.cpp,.c,.rs,.go" multiple hidden>
@@ -442,14 +442,14 @@
 
       <div class="modal-body">
         <div class="settings-tabs" role="tablist" aria-label="Settings sections">
-          <button id="settings-tab-button-billing" class="settings-tab active" type="button" data-tab="billing" role="tab" aria-selected="true" aria-controls="settings-tab-billing">Billing</button>
-          <button id="settings-tab-button-memory" class="settings-tab" type="button" data-tab="memory" role="tab" aria-selected="false" aria-controls="settings-tab-memory">Memory Manager</button>
+          <button id="settings-tab-button-billing" class="settings-tab active" type="button" data-tab="billing" role="tab" aria-selected="true" aria-controls="settings-tab-billing">Plan &amp; usage</button>
+          <button id="settings-tab-button-memory" class="settings-tab" type="button" data-tab="memory" role="tab" aria-selected="false" aria-controls="settings-tab-memory">Memory</button>
         </div>
 
         <!-- Billing -->
         <div id="settings-tab-billing" class="settings-tab-content active" role="tabpanel" aria-labelledby="settings-tab-button-billing">
           <div id="billing-panel" class="billing-panel" aria-live="polite">
-            <div class="billing-panel-status">Loading billing details...</div>
+            <div class="billing-panel-status">Loading…</div>
           </div>
         </div>
 

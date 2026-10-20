@@ -60,15 +60,15 @@ function hideElement(selector) {
 }
 
 function applyFinalRestraintCopy() {
-  setText("#account-upgrade-btn span", "Plan");
-  setText("#account-personalization-btn span", "Preferences");
-  setText("#auth-menu-billing-btn", "Plan");
+  setText("#account-upgrade-btn span", "Upgrade");
+  setText("#account-personalization-btn span", "Memory");
+  setText("#auth-menu-billing-btn", "Plan & usage");
   setText("#auth-logout-btn", "Sign out");
   setText("#auth-menu-logout-btn", "Sign out");
 
-  setText("#auth-welcome-note", "Guest chats are temporary. Sign in to keep conversations across devices.");
-  setText("#auth-gate-message", "Log in to chat.");
-  setText(".selected-context-label", "Selection");
+  setText("#auth-welcome-note", "Guest chats aren't saved. Sign in to save chats and generate images.");
+  setText("#auth-gate-message", "Sign in to start chatting.");
+  setText(".selected-context-label", "Selected text");
   setText("#deep-research-mode-bar .composer-mode-pill-label", "Deep Research");
 
   setText("#auth-modal-title", "");
@@ -80,8 +80,9 @@ function applyFinalRestraintCopy() {
   setText(".name-modal-container .auth-modal-copy p", "Used for greetings and your account.");
   hideElement(".name-modal-container .auth-modal-copy h2");
 
+  setText("#settings-tab-button-billing", "Plan & usage");
   setText("#settings-tab-button-memory", "Memory");
-  setText(".billing-panel-status", "Loading plan details…");
+  setText(".billing-panel-status", "Loading…");
 
   setText("#trust-modal-title", "Privacy & support");
   setText(".trust-tab[data-trust-tab='controls']", "Data");

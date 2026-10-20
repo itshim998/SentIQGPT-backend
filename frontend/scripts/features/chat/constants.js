@@ -36,24 +36,16 @@ export const WELCOME_GREETING_STORAGE_PREFIX = STORAGE_KEYS.greetingIndexPrefix;
 export const LEGACY_WELCOME_GREETING_STORAGE_PREFIX = LEGACY_STORAGE_KEYS.greetingIndexPrefix;
 
 export const WELCOME_GREETINGS = [
-  "Ready when you are{suffix}.",
-  "Good to see you{suffix}.",
-  "Let's pick up where you left off{suffix}.",
-  "What should we work through today{suffix}?",
-  "I'm here whenever you're ready{suffix}.",
-  "Let's make progress on it{suffix}.",
-  "What's on your mind today{suffix}?",
-  "Happy to help you sort through it{suffix}.",
-  "Let's get into it{suffix}.",
+  "How can I help{suffix}?",
+  "What are you working on{suffix}?",
   "Where do you want to start{suffix}?",
-  "Let's untangle it together{suffix}.",
-  "I'm ready for the next thing{suffix}.",
+  "What do you need{suffix}?",
 ];
 
 export const COMPOSER_HINTS = [
-  "summarizing a dense article",
-  "planning a cleaner backend route",
-  "researching what changed this week",
-  "turning rough notes into a brief",
-  "spotting edge cases in a feature",
+  "summarizing an article",
+  "planning a project",
+  "checking a draft",
+  "debugging an error",
+  "comparing two options",
 ];

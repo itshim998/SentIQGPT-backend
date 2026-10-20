@@ -11,7 +11,7 @@ import { normalizeMemoryScope } from "../services/storage.js";
   const memoryCount = document.getElementById("memory-count");
   const compressBtn = document.getElementById("compress-memories-btn");
   const getSafeErrorMessage = window.SentIQGetSafeErrorMessage || ((error) => (
-    error instanceof Error ? error.message : String(error || "Unknown error")
+    error instanceof Error ? error.message : String(error || "Something went wrong.")
   ));
   const debugWarn = (...args) => {
     if (window.SentIQChat?.debugWarn) {
@@ -31,7 +31,7 @@ import { normalizeMemoryScope } from "../services/storage.js";
     if (memoryCount) memoryCount.textContent = `${memories.length} memories`;
 
     if (memories.length === 0) {
-      memoryList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; padding: 12px 0;">No memories stored yet. Memories appear when you explicitly ask ${PRODUCT_NAME} to remember something.</p>`;
+      memoryList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; padding: 12px 0;">No memories yet. Ask ${PRODUCT_NAME} to remember something and it will appear here.</p>`;
       return;
     }
     const groups = {};
@@ -80,7 +80,7 @@ import { normalizeMemoryScope } from "../services/storage.js";
     if (memoryCount) memoryCount.textContent = `${memories.length} memories`;
 
     if (memories.length === 0) {
-      memoryList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; padding: 12px 0;">No memories stored yet. Memories appear when you explicitly ask ${PRODUCT_NAME} to remember something.</p>`;
+      memoryList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; padding: 12px 0;">No memories yet. Ask ${PRODUCT_NAME} to remember something and it will appear here.</p>`;
       return;
     }
 
@@ -117,7 +117,7 @@ import { normalizeMemoryScope } from "../services/storage.js";
               await API.deleteMemory(mem.id);
             } catch (error) {
               debugWarn(`[UI] Memory delete sync failed: ${getSafeErrorMessage(error)}`);
-              showToast("Couldn't delete that memory from the cloud. Please try again.", "error", 3200);
+              showToast("Couldn't delete that memory. Try again.", "error", 3200);
               return;
             }
           }
@@ -133,7 +133,7 @@ import { normalizeMemoryScope } from "../services/storage.js";
 
   compressBtn?.addEventListener("click", async () => {
     const memories = await Storage.getAllMemories();
-    if (memories.length < 5) { alert("Not enough memories to compress (need at least 5)."); return; }
+    if (memories.length < 5) { alert("Compression needs at least 5 memories."); return; }
     compressBtn.disabled = true;
     compressBtn.textContent = "Compressing...";
     const sorted = memories.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
@@ -168,7 +168,7 @@ import { normalizeMemoryScope } from "../services/storage.js";
       } catch (err) { debugWarn(`[UI] Compression failed for type ${type} (${scope}): ${getSafeErrorMessage(err)}`); }
     }
     compressBtn.disabled = false;
-    compressBtn.textContent = "Compress Memories";
+    compressBtn.textContent = "Compress memories";
     await renderMemories();
   });
 

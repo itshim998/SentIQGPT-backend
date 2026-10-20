@@ -31,7 +31,7 @@ assert.match(moduleSource, /captureReadingAnchor/);
 assert.match(moduleSource, /preserveReadingPosition/);
 assert.match(moduleSource, /new MutationObserver/);
 assert.match(moduleSource, /new ResizeObserver/);
-assert.match(moduleSource, /Response source navigation/);
+assert.match(moduleSource, /aria-label", "Sources"\);/);
 assert.match(moduleSource, /Back to answer/);
 assert.match(moduleSource, /aria-controls/);
 assert.match(moduleSource, /websurf-v2-source-explorer/);

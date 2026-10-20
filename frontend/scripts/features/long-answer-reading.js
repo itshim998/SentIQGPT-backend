@@ -92,8 +92,8 @@ function initLongAnswerReadingMode() {
     '<span class="scroll-anchor-pill-label">Latest</span>',
     '<span class="scroll-anchor-pill-dot" aria-hidden="true"></span>',
   ].join("");
-  latestButton.setAttribute("aria-label", "Return to latest message");
-  latestButton.setAttribute("title", "Return to latest message");
+  latestButton.setAttribute("aria-label", "Jump to latest");
+  latestButton.setAttribute("title", "Jump to latest");
 
   const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)") || { matches: false };
   const nativeScrollTo = typeof chatMessages.scrollTo === "function"
@@ -147,11 +147,11 @@ function initLongAnswerReadingMode() {
   function syncLatestButton() {
     const visible = readingEarlier && distanceFromLatest() > READING_DISTANCE_THRESHOLD;
     const label = latestButton.querySelector(".scroll-anchor-pill-label");
-    if (label) label.textContent = hasNewContent ? "New content" : "Latest";
+    if (label) label.textContent = hasNewContent ? "New" : "Latest";
     latestButton.dataset.hasNewContent = hasNewContent ? "true" : "false";
     const accessibleLabel = hasNewContent
-      ? "New content available. Return to latest message"
-      : "Return to latest message";
+      ? "New messages. Jump to latest."
+      : "Jump to latest";
     latestButton.setAttribute("aria-label", accessibleLabel);
     latestButton.setAttribute("title", accessibleLabel);
     setLatestButtonVisible(visible);
@@ -357,7 +357,7 @@ function initLongAnswerReadingMode() {
       sourceAnchor.id = `response-sources-${sourceNavigationId}`;
       sourceAnchor.tabIndex = -1;
       sourceAnchor.setAttribute("role", "region");
-      sourceAnchor.setAttribute("aria-label", "Sources for this response");
+      sourceAnchor.setAttribute("aria-label", "Sources");
 
       const returnButton = document.createElement("button");
       returnButton.className = "long-answer-source-return";
@@ -372,7 +372,7 @@ function initLongAnswerReadingMode() {
     if (!navigation) {
       navigation = document.createElement("nav");
       navigation.className = "long-answer-source-nav";
-      navigation.setAttribute("aria-label", "Response source navigation");
+      navigation.setAttribute("aria-label", "Sources");
 
       const sourceButton = document.createElement("button");
       sourceButton.className = "long-answer-source-jump";

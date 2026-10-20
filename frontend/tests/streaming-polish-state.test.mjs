@@ -23,7 +23,7 @@ assert.equal(formatProcessDuration(65_000), "1m 5s");
 
 assert.equal(
   deriveCompletedProcessSummary({ elapsedMs: 8_200, activities: ["Searching"], hasThinking: true }),
-  "Researched and reasoned · 8s",
+  "Researched · 8s",
 );
 assert.equal(
   deriveCompletedProcessSummary({ elapsedMs: 4_100, activities: ["Reading files"], hasThinking: false }),

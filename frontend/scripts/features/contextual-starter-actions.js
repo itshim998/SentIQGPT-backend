@@ -135,16 +135,16 @@ function initializeContextualStarterActions() {
       const createLabel = state.imageAvailable
         ? "Create an image"
         : state.signedIn
-          ? "Create with SentIQ Chat"
-          : "Create with text; sign in for image generation";
+          ? "Create"
+          : "Create text. Sign in to generate images.";
       create.title = createLabel;
       create.setAttribute("aria-label", createLabel);
       create.dataset.capability = state.imageAvailable ? "image" : "text";
     }
     if (research) {
       research.title = state.researchAvailable
-        ? "Research current information on the web"
-        : "Research is unavailable right now";
+        ? "Search the web"
+        : "Web search is unavailable.";
       research.setAttribute("aria-label", research.title);
     }
   }

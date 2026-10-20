@@ -10,7 +10,7 @@ const GUEST_HANDOFF_TARGET_KEY = "sentiq-chat:guest-handoff-target-v1";
 const GUEST_RECOVERY_DRAFT_KEY = "sentiq-chat:guest-recovery-draft";
 const GUEST_TEXT_LIMIT_TOKENS = 8_000;
 const SIGN_IN_TO_CONTINUE = "Sign in to continue";
-const GUEST_WELCOME_NOTE = "Log in to save your chats, get smarter responses, generate images, and more.";
+const GUEST_WELCOME_NOTE = "Guest chats aren't saved. Sign in to save chats and generate images.";
 
 let guestMode = true;
 let apiWrapped = false;

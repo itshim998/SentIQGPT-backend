@@ -1144,7 +1144,7 @@ import {
       sendBtn.disabled = requiresName || (locked && !stopModeActive) || (!stopModeActive && attachmentBlocksSend);
       sendBtn.setAttribute("aria-disabled", sendBtn.disabled ? "true" : "false");
       if (!stopModeActive && attachmentBlocksSend) {
-        sendBtn.title = attachmentsReady ? "Add a message before sending attachments" : "Finishing attachment...";
+        sendBtn.title = attachmentsReady ? "Add a message to send with your files" : "Finishing upload…";
       } else if (!stopModeActive) {
         sendBtn.title = "Send message";
       }
@@ -1368,9 +1368,9 @@ import {
   }
 
   function getBaseComposerPlaceholder() {
-    if (isNameCaptureRequired()) return "Add your name to continue...";
-    if (imageMode) return "Describe the image you want to generate...";
-    if (webSearchModeOverride) return "Ask about something current on the web...";
+    if (isNameCaptureRequired()) return "Add your name to continue";
+    if (imageMode) return "Describe the image";
+    if (webSearchModeOverride) return "Search the web";
     return composerHintIntroConsumed ? `Message ${PRODUCT_NAME}` : "";
   }
 
@@ -2799,14 +2799,14 @@ import {
     imageGenBtn?.classList.toggle("auth-disabled", !signedIn || requiresName);
     if (authGateMessage) {
       authGateMessage.textContent = requiresName
-        ? "Add your name to unlock your signed-in workspace."
-        : "Sign in for access to higher intelligence, image generation.";
+        ? "Add your name to continue."
+        : "Sign in to use Intuitive and generate images.";
       authGateMessage.classList.toggle("visible", requiresName);
     }
     if (authWelcomeNote) {
       authWelcomeNote.textContent = requiresName
-        ? `Add your name to personalize ${PRODUCT_NAME} and continue.`
-        : "Guest chats are temporary. Sign in to sync conversations and use image generation.";
+        ? "Add your name to continue."
+        : "Guest chats aren't saved. Sign in to save chats and generate images.";
       authWelcomeNote.style.display = (!signedIn || requiresName) ? "block" : "none";
     }
     document.querySelectorAll(".settings-tab[data-tab=\"memory\"], #compress-memories-btn").forEach((el) => {
@@ -2958,7 +2958,7 @@ import {
     }
   }
 
-  async function requireAuthAccess(message = "Log in to start chatting.") {
+  async function requireAuthAccess(message = "Sign in to start chatting.") {
     let session = authSessionState;
     if (!session && window.SentIQAuth?.getSession) {
       try {
@@ -3751,7 +3751,7 @@ import {
     detail.hidden = true;
     const cited = payload.sources.filter((source) => citedIds.has(source.id));
     const additional = payload.sources.filter((source) => !citedIds.has(source.id));
-    [["Cited in answer", cited], ["Additional results", additional]].forEach(([heading, sources]) => {
+    [["Cited", cited], ["Other results", additional]].forEach(([heading, sources]) => {
       if (!sources.length) return;
       const group = document.createElement("section");
       group.className = "websurf-v2-source-group";
@@ -3922,7 +3922,7 @@ import {
     const answerBlock = document.createElement("div");
     answerBlock.className = "web-search-answer";
     answerBlock.innerHTML = renderAssistantMessageHtml(
-      safePayload.answer || "Search results are ready.",
+      safePayload.answer || "Search complete.",
       thinkingText,
       { ...renderOptions, mode: "web_search" }
     );
@@ -3935,7 +3935,7 @@ import {
       const galleryWrap = document.createElement("div");
       const galleryLabel = document.createElement("div");
       galleryLabel.className = "web-search-section-label";
-      galleryLabel.textContent = "Top Images";
+      galleryLabel.textContent = "Images";
       galleryWrap.appendChild(galleryLabel);
 
       const gallery = document.createElement("div");
@@ -4587,7 +4587,7 @@ import {
         });
       }
       await persistChatMessage(targetChatId, "assistant", assistantText, webSurfMeta, assistantPersistOptions);
-      return assistantText || "Web search results are ready.";
+      return assistantText || "Search complete.";
     }
 
     if (webSearchPayload) {
@@ -5613,7 +5613,7 @@ import {
         chatSearchInput.value = "";
         chatSearchInput.style.display = "none";
       }
-      chatList.innerHTML = '<div class="chat-list-empty">Log in to save your chats</div>';
+      chatList.innerHTML = '<div class="chat-list-empty">Sign in to save chats</div>';
       syncActiveChatItem();
       stopMeasure("ok", { chat_count: 0, guest: true });
       return [];

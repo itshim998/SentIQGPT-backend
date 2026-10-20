@@ -92,7 +92,7 @@ function initializeTouchInteractionLanguage() {
     const chrome = scope.querySelector?.(".mobile-navigation-sheet-chrome");
     if (!(chrome instanceof HTMLElement)) return;
     chrome.dataset.touchDragDiscoverable = "dismiss";
-    chrome.setAttribute("aria-label", "Navigation sheet. Swipe down to close, or use the Close button.");
+    chrome.setAttribute("aria-label", "Swipe down or tap Close to dismiss.");
     const eyebrow = chrome.querySelector(".mobile-navigation-sheet-eyebrow");
     if (eyebrow instanceof HTMLElement && eyebrow.textContent !== "Swipe down to close") {
       eyebrow.textContent = "Swipe down to close";

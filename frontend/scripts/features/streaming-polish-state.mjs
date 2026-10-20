@@ -49,15 +49,15 @@ export function deriveCompletedProcessSummary(input = {}) {
 
   let label = "";
   if (normalizedActivities.has("comparing-sources") || normalizedActivities.has("searching")) {
-    label = hasThinking ? "Researched and reasoned" : "Researched";
+    label = "Researched";
   } else if (normalizedActivities.has("reading-files")) {
-    label = hasThinking ? "Read files and reasoned" : "Read files";
+    label = "Read files";
   } else if (normalizedActivities.has("preparing-document")) {
-    label = hasThinking ? "Prepared and reasoned" : "Document prepared";
+    label = "Prepared";
   } else if (normalizedActivities.has("generating-chart")) {
-    label = hasThinking ? "Analysed and generated chart" : "Chart generated";
+    label = "Chart generated";
   } else if (normalizedActivities.has("creating-image")) {
-    label = hasThinking ? "Planned and created image" : "Image created";
+    label = "Image created";
   } else if (hasThinking || normalizedActivities.has("reasoning")) {
     label = "Reasoned";
   } else if (normalizedActivities.has("thinking")) {

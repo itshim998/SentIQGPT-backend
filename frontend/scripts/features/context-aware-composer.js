@@ -199,17 +199,17 @@ function initializeContextAwareComposer() {
       setAttribute(sendButton, "aria-label", "Stop response");
       setAttribute(sendButton, "title", "Stop response");
     } else if (fileState.state === "uploading") {
-      setAttribute(sendButton, "aria-label", "Preparing files before sending");
-      setAttribute(sendButton, "title", "Preparing files before sending");
+      setAttribute(sendButton, "aria-label", "Preparing files");
+      setAttribute(sendButton, "title", "Preparing files");
     } else if (fileState.state === "failed") {
-      setAttribute(sendButton, "aria-label", "Review failed attachments before sending");
-      setAttribute(sendButton, "title", "Review failed attachments before sending");
+      setAttribute(sendButton, "aria-label", "Remove or retry failed files");
+      setAttribute(sendButton, "title", "Remove or retry failed files");
     } else if (fileState.state === "ready" && !hasPrompt) {
-      setAttribute(sendButton, "aria-label", "Add a message before sending attachments");
-      setAttribute(sendButton, "title", "Add a message before sending attachments");
+      setAttribute(sendButton, "aria-label", "Add a message to send with your files");
+      setAttribute(sendButton, "title", "Add a message to send with your files");
     } else if (fileState.state === "ready") {
-      setAttribute(sendButton, "aria-label", "Send message with attachments");
-      setAttribute(sendButton, "title", "Send message with attachments");
+      setAttribute(sendButton, "aria-label", "Send with files");
+      setAttribute(sendButton, "title", "Send with files");
     } else {
       setAttribute(sendButton, "aria-label", "Send message");
       setAttribute(sendButton, "title", "Send message");

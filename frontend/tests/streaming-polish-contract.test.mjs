@@ -72,6 +72,6 @@ assert.ok(
   "Streaming polish must layer after UI stability without re-enabling streamed-word motion",
 );
 assert.ok(stateSource.includes("hasSignificantProcessActivity"));
-assert.ok(stateSource.includes("Researched and reasoned"));
+assert.ok(stateSource.includes("Researched"));
 
 console.log("Streaming polish contract passed: one shared pipeline gains a stable caret, loader handoff, and concise completed-process summaries.");

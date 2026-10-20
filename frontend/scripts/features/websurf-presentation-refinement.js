@@ -105,7 +105,7 @@ function initWebSurfPresentationRefinement() {
     const meta = status.querySelector(".websurf-v2-search-status-meta");
     const sourceLabel = `${sourceCount} ${sourceCount === 1 ? "source" : "sources"}`;
     if (meta && meta.textContent !== sourceLabel) meta.textContent = sourceLabel;
-    status.setAttribute("aria-label", `Web search ready with ${sourceLabel}`);
+    status.setAttribute("aria-label", `Search complete: ${sourceLabel}`);
     panel.setAttribute("aria-describedby", status.id);
   }
 
@@ -137,7 +137,7 @@ function initWebSurfPresentationRefinement() {
     if (!(menu instanceof HTMLElement) || menu.dataset.websurfMenuVersion === "7.1") return;
     const heading = document.createElement("span");
     heading.className = "websurf-v2-citation-menu-heading";
-    heading.textContent = "Supporting sources";
+    heading.textContent = "Sources";
     heading.setAttribute("role", "heading");
     heading.setAttribute("aria-level", "4");
     menu.insertBefore(heading, menu.firstChild);
@@ -202,7 +202,7 @@ function initWebSurfPresentationRefinement() {
     shelf.dataset.featuredUseful = useful ? "true" : "false";
     if (!useful) return;
 
-    shelf.setAttribute("aria-label", "Featured web sources");
+    shelf.setAttribute("aria-label", "Top sources");
     cards.forEach((card, index) => {
       card.hidden = index >= 2;
       const media = card.querySelector(".websurf-v2-featured-media");
@@ -264,7 +264,7 @@ function initWebSurfPresentationRefinement() {
     detail?.removeAttribute("aria-modal");
     if (detail) {
       detail.setAttribute("role", "region");
-      detail.setAttribute("aria-label", "Web sources");
+      detail.setAttribute("aria-label", "Sources");
     }
     if (activeExplorer === explorer) activeExplorer = null;
     if (!activeExplorer) document.body.classList.remove("has-websurf-source-sheet");
