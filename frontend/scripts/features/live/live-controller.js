@@ -247,30 +247,30 @@ import {
       return { label: "Daily limit reached", message: getLiveUnavailableCopy("daily_limit_reached") };
     }
     if (error?.code === "live_active_limit") {
-      return { label: "Session active", message: "You already have an active Live voice session. Please close it first." };
+      return { label: "Session active", message: "Live voice is already open in another session. Close it first." };
     }
     if (error?.code === "live_provider_rate_limited") {
-      return { label: "Rate limited", message: "Live voice is temporarily rate limited. Try again shortly." };
+      return { label: "Too many requests", message: "Wait a moment and try again." };
     }
     if (error?.code === "live_global_capacity" || error?.code === "live_project_capacity" || error?.code === "live_capacity_unavailable") {
-      return { label: "At capacity", message: "Live voice is temporarily at capacity. Try again shortly." };
+      return { label: "Busy", message: "Live voice is busy. Try again soon." };
     }
     if (error?.code === "live_provider_unavailable") {
-      return { label: "Provider unavailable", message: "Live voice provider is currently unavailable. Try again shortly." };
+      return { label: "Unavailable", message: "Live voice is unavailable. Try again soon." };
     }
     if (error?.code === "live_provider_auth_failure") {
-      return { label: "Provider error", message: "Live voice authentication failed. Check server configuration." };
+      return { label: "Live voice error", message: "Couldn't authenticate. Try again later." };
     }
     if (error?.code === "live_provider_configuration") {
-      return { label: "Configuration error", message: "Live voice provider is not properly configured." };
+      return { label: "Unavailable", message: "Live voice isn't available. Try again later." };
     }
     if (error?.code === "live_network_error") {
-      return { label: "Network error", message: "Could not connect to Live voice. Check your internet connection." };
+      return { label: "Network error", message: "Couldn't connect. Check your connection." };
     }
     if (error?.code === "live_internal_error") {
-      return { label: "Server error", message: "An internal server error occurred while starting Live voice." };
+      return { label: "Couldn't start", message: "Couldn't start Live voice. Try again." };
     }
-    return { label: "Could not start", message: "Check microphone access and try Live voice again." };
+    return { label: "Couldn't start", message: "Check microphone access and try again." };
   }
 
   function showPanel() {
@@ -402,7 +402,7 @@ import {
     void releaseLocalResources();
 
     // 2. Immediately and synchronously hide UI & clear flags
-    setPanelState("ended", "Ending", "Live session ended.");
+    setPanelState("ended", "Ending", "Session ended.");
     hidePanel();
     currentSession = null;
     ending = false;
@@ -472,7 +472,7 @@ import {
             turnComplete: true,
           },
         });
-        if (!historySent) throw new Error("Live setup could not be completed.");
+        if (!historySent) throw new Error("Couldn't start Live voice.");
         liveDebug("setup_complete");
 
         if (ending || !currentSession || socket?.readyState !== WebSocket.OPEN) return;
@@ -511,7 +511,7 @@ import {
           currentSession.sessionMaxSeconds * 1_000,
         );
         muteButton.disabled = false;
-        setPanelState("listening", "Listening", "Speak naturally. You can interrupt while SentIQ is responding.");
+        setPanelState("listening", "Listening", "Speak any time. You can interrupt.");
         return;
       }
 
@@ -529,17 +529,17 @@ import {
       const content = message.serverContent;
       if (content?.interrupted) {
         playback?.clear();
-        setPanelState("listening", "Listening", "SentIQ stopped so you can continue.");
+        setPanelState("listening", "Listening", "Stopped.");
       }
       if (content?.inputTranscription?.text) {
         liveDebug("transcription_received", { direction: "input" });
         appendTranscript("user", content.inputTranscription.text);
-        setPanelState("thinking", "Thinking", "Considering what you said.");
+        setPanelState("thinking", "Thinking", "Thinking.");
       }
       if (content?.outputTranscription?.text) {
         liveDebug("transcription_received", { direction: "output" });
         appendTranscript("assistant", content.outputTranscription.text);
-        setPanelState("thinking", "Thinking", "Preparing a response.");
+        setPanelState("thinking", "Thinking", "Responding.");
       }
       for (const part of content?.modelTurn?.parts || []) {
         const audio = part?.inlineData;
@@ -556,11 +556,11 @@ import {
             sample_rate: currentSession?.audio?.outputSampleRate || LIVE_OUTPUT_SAMPLE_RATE,
           });
         }
-        setPanelState("speaking", "Speaking", "You can interrupt at any time.");
+        setPanelState("speaking", "Speaking", "Speak any time.");
         await playback.enqueue(audio.data);
       }
       if (content?.turnComplete) {
-        setPanelState(muted ? "muted" : "listening", muted ? "Muted" : "Listening", muted ? "Unmute when you are ready." : "Speak when you are ready.");
+        setPanelState(muted ? "muted" : "listening", muted ? "Muted" : "Listening", muted ? "Unmute to speak." : "Listening.");
       }
       if (message.goAway) {
         const timeLeft = message.goAway.timeLeft;
@@ -576,7 +576,7 @@ import {
         "audio_start_failed",
         "audio_failed",
         "Audio connection failed",
-        "Live voice could not process audio. Try again.",
+        "Couldn't process audio. Try again.",
       );
     }
   }
@@ -648,7 +648,7 @@ import {
       socket.onopen = () => {
         liveDebug("websocket_open");
         if (!sendSocketMessage({ setup: currentSession.setup })) {
-          void failSession("websocket_failed", "websocket_failed", "Connection failed", "Live voice could not connect. Try again.");
+          void failSession("websocket_failed", "websocket_failed", "Connection failed", "Couldn't connect. Try again.");
         }
       };
 
@@ -658,7 +658,7 @@ import {
         if (currentSession?.sessionId) {
           API.reportLiveSessionError?.(currentSession.sessionId, { errorType: "websocket_failed" }).catch(() => {});
         }
-        void failSession("websocket_failed", "websocket_failed", "Connection failed", "Live voice could not connect. Try again.");
+        void failSession("websocket_failed", "websocket_failed", "Connection failed", "Couldn't connect. Try again.");
       };
 
       socket.onclose = (event) => {
@@ -679,7 +679,7 @@ import {
           if (currentSession.resumptionHandle && (sessionEndAt > Date.now()) && reconnectAttempts < MAX_RECONNECT_ATTEMPTS && !reconnecting) {
             void attemptSessionResumption("socket_close");
           } else if (!reconnecting) {
-            void failSession("websocket_failed", "websocket_failed", "Connection closed", "Live voice disconnected. Try again.");
+            void failSession("websocket_failed", "websocket_failed", "Connection closed", "Disconnected. Try again.");
           }
         }
       };
@@ -811,13 +811,13 @@ import {
   async function attemptSessionResumption(trigger) {
     if (ending || !currentSession || reconnecting) return;
     if (!currentSession.resumptionHandle) {
-      void failSession("websocket_failed", "websocket_failed", "Connection closed", "Live voice disconnected. Try again.");
+      void failSession("websocket_failed", "websocket_failed", "Connection closed", "Disconnected. Try again.");
       return;
     }
     reconnecting = true;
     reconnectAttempts += 1;
     liveDebug("reconnect_started", { attempt: reconnectAttempts, trigger });
-    setPanelState("connecting", "Reconnecting", "Reconnecting Live voice…");
+    setPanelState("connecting", "Reconnecting", "Reconnecting…");
 
     try {
       if (socket && socket.readyState < WebSocket.CLOSING) {

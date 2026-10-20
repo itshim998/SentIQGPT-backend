@@ -47,7 +47,7 @@ export function createCapabilityExplainer({ onAction } = {}) {
   function metaText(capability) {
     const parts = [];
     if (capability.remaining !== null && capability.limit !== null) {
-      parts.push(`${capability.remaining} of ${capability.limit} remaining`);
+      parts.push(`${capability.remaining} of ${capability.limit} left`);
     }
     if (capability.planName) parts.push(`${capability.planName} plan`);
     if (capability.resetAt) {

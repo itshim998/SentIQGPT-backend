@@ -36,13 +36,13 @@ import "./conversation-special-mode-activity.js";
   let configError = null;
   try {
     if (!window.supabase) {
-      throw new Error("Supabase auth is unavailable.");
+      throw new Error("Sign-in isn't available. Try again later.");
     }
     if (!window.SENTIQ_SUPABASE_URL || !window.SENTIQ_SUPABASE_ANON_KEY) {
-      throw new Error("Supabase auth configuration is missing.");
+      throw new Error("Sign-in isn't available. Try again later.");
     }
   } catch (error) {
-    configError = error instanceof Error ? error : new Error("Supabase auth configuration is missing.");
+    configError = error instanceof Error ? error : new Error("Sign-in isn't available. Try again later.");
   }
 
   const configured = !configError;
@@ -166,7 +166,7 @@ import "./conversation-special-mode-activity.js";
   }
 
   async function handleNativeAuthRedirect(callbackUrl) {
-    if (!client) throw configError || new Error("Supabase auth is not configured.");
+    if (!client) throw configError || new Error("Sign-in isn't available. Try again later.");
     const params = readAuthCallbackParams(callbackUrl);
     if (params.error) {
       throw new Error(params.errorDescription || params.error);
@@ -201,7 +201,7 @@ import "./conversation-special-mode-activity.js";
   }
 
   async function getSession() {
-    if (!client) throw configError || new Error("Supabase auth is not configured.");
+    if (!client) throw configError || new Error("Sign-in isn't available. Try again later.");
     const { data, error } = await client.auth.getSession();
     if (error) throw error;
     assignCurrentSession(data?.session || null);
@@ -214,17 +214,17 @@ import "./conversation-special-mode-activity.js";
   }
 
   async function signInWithPassword(email, password) {
-    if (!client) throw configError || new Error("Supabase auth is not configured.");
+    if (!client) throw configError || new Error("Sign-in isn't available. Try again later.");
     const { data, error } = await client.auth.signInWithPassword({ email, password });
     if (error) throw error;
     const session = await getSessionFromAuthResult(data);
-    if (!session) throw new Error("Sign-in completed, but no session was returned.");
+    if (!session) throw new Error("Couldn't complete sign-in. Try again.");
     commitAuthSession(session, "password");
     return { ...data, session };
   }
 
   async function signInWithGoogle() {
-    if (!client) throw configError || new Error("Supabase auth is not configured.");
+    if (!client) throw configError || new Error("Sign-in isn't available. Try again later.");
     const redirectTo = buildOAuthRedirectUrl();
     const useNativeBrowser = isNativeAndroidPlatform();
     const { data, error } = await client.auth.signInWithOAuth({
@@ -243,7 +243,7 @@ import "./conversation-special-mode-activity.js";
   }
 
   async function signUp(email, password) {
-    if (!client) throw configError || new Error("Supabase auth is not configured.");
+    if (!client) throw configError || new Error("Sign-in isn't available. Try again later.");
     const emailRedirectTo = buildEmailRedirectUrl();
     const { data, error } = await client.auth.signUp({
       email,
@@ -257,7 +257,7 @@ import "./conversation-special-mode-activity.js";
   }
 
   async function resetPasswordForEmail(email) {
-    if (!client) throw configError || new Error("Supabase auth is not configured.");
+    if (!client) throw configError || new Error("Sign-in isn't available. Try again later.");
     const redirectTo = buildRecoveryRedirectUrl();
     const { data, error } = await client.auth.resetPasswordForEmail(
       email,
@@ -268,7 +268,7 @@ import "./conversation-special-mode-activity.js";
   }
 
   async function updatePassword(password) {
-    if (!client) throw configError || new Error("Supabase auth is not configured.");
+    if (!client) throw configError || new Error("Sign-in isn't available. Try again later.");
     const { data, error } = await client.auth.updateUser({ password });
     if (error) throw error;
     const session = await getSession().catch(() => currentSession);

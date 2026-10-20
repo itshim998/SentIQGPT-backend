@@ -6,7 +6,7 @@ const domRefs = await readFile(new URL("../scripts/features/chat/dom-refs.js", i
 
 for (const token of [
   'dataset.accessibilityDynamicBridge = "12.1"',
-  'executionToggle.setAttribute("aria-label", "Choose execution mode")',
+  'executionToggle.setAttribute("aria-label", "Execution mode")',
   "window.SentIQAccessibility?.enhance?.(scope)",
   "records.forEach((record) => schedule(record.target))",
   '.observe(document.body, { childList: true, subtree: true })',

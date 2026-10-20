@@ -7,7 +7,7 @@ function initializeAccessibilityDynamicBridge() {
 
   const executionToggle = document.getElementById("execution-mode-toggle");
   if (executionToggle instanceof HTMLElement) {
-    executionToggle.setAttribute("aria-label", "Choose execution mode");
+    executionToggle.setAttribute("aria-label", "Execution mode");
   }
 
   const pending = new Set();

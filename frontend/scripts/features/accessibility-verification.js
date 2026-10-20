@@ -22,7 +22,7 @@ const MENU_ITEM_SELECTOR = "[role='menuitem'], [role='option'], button:not([disa
 const KNOWN_LABELS = Object.freeze({
   "chat-search-input": "Search conversations",
   "composer-plus-btn": "More message actions",
-  "execution-mode-toggle": "Choose execution mode",
+  "execution-mode-toggle": "Execution mode",
   "send-btn": "Send message",
   "sidebar-toggle": "Open navigation",
   "sidebar-collapse-btn": "Collapse chat history",
@@ -148,7 +148,7 @@ function ensureStaticSemantics(scope = document) {
   if (executionToggle instanceof HTMLElement) {
     setAttributeIfChanged(executionToggle, "aria-haspopup", "listbox");
     const current = document.getElementById("execution-mode-label")?.textContent?.trim();
-    setAttributeIfChanged(executionToggle, "aria-label", current ? `Choose execution mode. Current mode: ${current}` : "Choose execution mode");
+    setAttributeIfChanged(executionToggle, "aria-label", current ? `Execution mode: ${current}` : "Execution mode");
   }
 
   scope.querySelectorAll?.("[role='dialog'][aria-modal='true']").forEach((dialog) => {

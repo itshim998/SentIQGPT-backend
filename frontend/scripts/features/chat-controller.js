@@ -1415,7 +1415,7 @@ import {
     setComposerHintText(visible ? (COMPOSER_HINTS[composerHintIndex % COMPOSER_HINTS.length] || "") : "");
   }
 
-  function ensureNameCapture(message = "Add your name to continue.") {
+  function ensureNameCapture(message = "Add your name to continue") {
     if (!isNameCaptureRequired()) return false;
     openRequiredNameModal();
     showToast(message, "info", 2600);
@@ -2543,7 +2543,7 @@ import {
       stopMeasure("error");
       logAuthenticatedConversationError("syncConversationStateForAuth.loadChatList", error);
       if (signedIn) {
-        showToast("Signed in, but we couldn't sync your conversations yet.", "error");
+        showToast("Signed in. Chats haven't synced yet.", "error");
         return [];
       }
       throw error;
@@ -2644,53 +2644,53 @@ import {
     }
     if (authModalTitle) {
       authModalTitle.textContent = isSignup
-        ? "Create your account"
+        ? "Create account"
         : isResetRequest
-          ? "Reset your password"
+          ? "Reset password"
           : isRecovery
-            ? "Set a new password"
-            : `Log in to ${PRODUCT_NAME}`;
+            ? "New password"
+            : "Sign in";
     }
     if (authModalHeading) {
       authModalHeading.textContent = isSignup
-        ? "Sign up"
+        ? "Create account"
         : isResetRequest
-          ? "Forgot Password"
+          ? "Forgot password?"
           : isRecovery
-            ? "Set New Password"
-            : "Log in";
+            ? "New password"
+            : "Sign in";
     }
     if (authModalSubtitle) {
       authModalSubtitle.textContent = isSignup
-        ? "Create an account with your email and password to keep chatting."
+        ? "Create an account to keep chatting."
         : isResetRequest
-          ? "Enter your email and we'll send you a password reset link."
+          ? "Enter your email. We'll send a reset link."
           : isRecovery
-            ? `Choose a new password for your ${PRODUCT_NAME} account.`
-            : "Continue with your email and password to unlock the full chat experience.";
+            ? "Choose a new password."
+            : "Sign in with your email and password.";
     }
     if (authSubmitBtn) {
       authSubmitBtn.textContent = isSignup
-        ? "Create Account"
+        ? "Create account"
         : isResetRequest
-          ? "Send Reset Link"
+          ? "Send reset link"
           : isRecovery
-            ? "Update Password"
-            : "Log in";
+            ? "Update password"
+            : "Sign in";
     }
     if (authSwitchLabel) {
       authSwitchLabel.textContent = isSignup
         ? "Already have an account?"
         : (isResetRequest || isRecovery)
-          ? "Remembered your password?"
-          : `New to ${PRODUCT_NAME}?`;
+          ? "Remembered it?"
+          : "New here?";
     }
     if (authSwitchBtn) {
       authSwitchBtn.textContent = isSignup
-        ? "Sign in."
+        ? "Sign in"
         : (isResetRequest || isRecovery)
-          ? "Back to sign in."
-          : "Create new account.";
+          ? "Back to sign in"
+          : "Create account";
     }
     if (authOauthGroup) authOauthGroup.style.display = showOAuth ? "" : "none";
     if (authPasswordInput) {
@@ -3021,7 +3021,7 @@ import {
     if (shouldOpenRecovery) {
       clearAuthReturnUrlState();
       openAuthModal("password-recovery");
-      setAuthStatus("Set a new password to finish resetting your account.", "success");
+      setAuthStatus("Set a new password to finish.", "success");
       return;
     }
 
@@ -4979,7 +4979,7 @@ import {
         await window.SentIQAuth?.signOut?.();
         await refreshAuthUI(null);
         await syncConversationStateForAuth(false);
-        showToast("Logged out successfully.", "info");
+        showToast("Signed out.", "info");
       } catch (err) {
         showToast(getSafeErrorMessage(err), "error");
       }
@@ -4997,13 +4997,13 @@ import {
     authGoogleBtn?.addEventListener("click", async () => {
       if (authGooglePending) return;
       if (!window.SentIQAuth?.configured) {
-        setAuthStatus("Supabase auth is not configured yet.", "error");
+        setAuthStatus("Sign-in isn't available. Try again later.", "error");
         return;
       }
       if (!isOAuthAuthView()) return;
       setAuthGooglePending(true);
       setAuthFormControlsDisabled(true);
-      setAuthStatus("Opening Google sign-in...");
+      setAuthStatus("Opening Google…");
       try {
         await window.SentIQAuth.signInWithGoogle();
       } catch (err) {
@@ -5023,7 +5023,7 @@ import {
       e.preventDefault();
       const displayName = nameInput?.value || "";
       if (!displayName.trim()) {
-        setNameStatus("Please enter your name.", "error");
+        setNameStatus("Enter your name.", "error");
         return;
       }
       if (nameSubmitBtn) nameSubmitBtn.disabled = true;
@@ -5071,11 +5071,11 @@ import {
         return;
       }
       if (isPasswordAuthView() && !password) {
-        setAuthStatus(isPasswordRecoveryView() ? "A new password is required." : "Email and password are required.", "error");
+        setAuthStatus(isPasswordRecoveryView() ? "Enter a new password." : "Enter your email and password.", "error");
         return;
       }
       if (!window.SentIQAuth?.configured) {
-        setAuthStatus("Supabase auth is not configured yet.", "error");
+        setAuthStatus("Sign-in isn't available. Try again later.", "error");
         return;
       }
       if (authSubmitBtn) authSubmitBtn.disabled = true;
@@ -5088,25 +5088,25 @@ import {
           if (result?.session) {
             await refreshAuthUI(result.session);
             await syncConversationStateForAuth(true);
-            showToast("Account created successfully.", "success");
+            showToast("Account created.", "success");
           } else {
             await refreshAuthUI(null);
             setAuthStatus("Check your email to verify your account, then sign in.", "success");
           }
         } else if (isPasswordResetRequestView()) {
           await window.SentIQAuth.resetPasswordForEmail(email);
-          setAuthStatus("Check your email for reset link.", "success");
-          showToast("Password reset email sent.", "success");
+          setAuthStatus("Check your email for the reset link.", "success");
+          showToast("Reset email sent.", "success");
         } else if (isPasswordRecoveryView()) {
           await window.SentIQAuth.updatePassword(password);
           await refreshAuthUI();
-          setAuthStatus("Password updated. You can continue securely now.", "success");
-          showToast("Password updated successfully.", "success");
+          setAuthStatus("Password updated.", "success");
+          showToast("Password updated.", "success");
         } else {
           const result = await window.SentIQAuth.signInWithPassword(email, password);
           await refreshAuthUI(result?.session || null);
           await syncConversationStateForAuth(true);
-          showToast("Logged in successfully.", "success");
+          showToast("Signed in.", "success");
           chatInput?.focus();
         }
       } catch (err) {
@@ -5461,7 +5461,7 @@ import {
           return;
         }
         openAuthModal("login");
-        setAuthStatus("Sign-in returned to SentIQ Chat. Continue with your email if needed.", "success");
+        setAuthStatus("Sign-in finished. Continue with your email if prompted.", "success");
       } catch (error) {
         debugWarn("[Auth] Native return handling failed:", getSafeErrorMessage(error));
         openAuthModal("login");
@@ -5471,7 +5471,7 @@ import {
 
     document.addEventListener("sentiq-native-auth-error", (event) => {
       openAuthModal("login");
-      setAuthStatus(event.detail?.message || "Sign-in could not be completed.", "error");
+      setAuthStatus(event.detail?.message || "Couldn't sign in. Try again.", "error");
     });
 
     window.SentIQNativeNavigation = {
@@ -10195,7 +10195,7 @@ import {
       intuitiveOption.classList.toggle("is-tool-locked", isLocked);
       if (isLocked) {
         intuitiveOption.setAttribute("aria-disabled", "true");
-        intuitiveOption.title = "Intuitive execution is unavailable while this tool is active on the Free plan.";
+        intuitiveOption.title = "Intuitive isn't available with this tool on the Free plan.";
         intuitiveOption.setAttribute("aria-describedby", "execution-mode-upsell-text");
       } else {
         intuitiveOption.removeAttribute("aria-describedby");

@@ -13,25 +13,25 @@ const TOOL_ACTION_SHEET_VERSION = "5.4";
 const ACTION_DEFINITIONS = Object.freeze({
   "file-attach-btn": {
     title: "Attach files",
-    purpose: "Add documents or images to this message.",
-    unavailable: "File attachment is unavailable right now.",
+    purpose: "Add documents or images.",
+    unavailable: "Attachments are unavailable.",
   },
   "image-gen-btn": {
     title: "Visualize",
-    purpose: "Create an image from your prompt.",
-    unavailable: "Image generation is unavailable right now.",
+    purpose: "Generate an image from a prompt.",
+    unavailable: "Image generation is unavailable.",
     hiddenReason: "Sign in to create images.",
   },
   "websurf-basic-btn": {
     title: "WebSurf",
-    purpose: "Search current sources on the web.",
-    unavailable: "WebSurf is unavailable right now.",
+    purpose: "Search the web.",
+    unavailable: "WebSurf is unavailable.",
   },
   "deep-research-btn": {
     title: "Deep Research",
-    purpose: "Build a cited, multi-source research report.",
-    unavailable: "Deep Research is unavailable right now.",
-    hiddenReason: "Not available for this account.",
+    purpose: "Research report with sources.",
+    unavailable: "Deep Research is unavailable.",
+    hiddenReason: "Not included in your plan.",
   },
 });
 

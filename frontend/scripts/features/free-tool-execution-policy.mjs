@@ -14,10 +14,10 @@ export const RESTRICTED_TOOLS = Object.freeze({
 });
 
 export const TOOL_UPSELL_COPY = Object.freeze({
-  [RESTRICTED_TOOLS.VISUALIZE]: "Upgrade to Essential to unlock access to more advanced visualization models.",
-  [RESTRICTED_TOOLS.WEBSURF]: "Upgrade to Essential to unlock Intuitive mode for deeper web research.",
-  [RESTRICTED_TOOLS.DEEP_RESEARCH]: "Upgrade to Essential to unlock Intuitive mode for deeper research.",
-  [RESTRICTED_TOOLS.ATTACH_FILES]: "Upgrade to Essential to unlock Intuitive mode for deeper file understanding.",
+  [RESTRICTED_TOOLS.VISUALIZE]: "Upgrade to Essential for advanced image models.",
+  [RESTRICTED_TOOLS.WEBSURF]: "Upgrade to Essential to use Intuitive with web search.",
+  [RESTRICTED_TOOLS.DEEP_RESEARCH]: "Upgrade to Essential to use Intuitive with Deep Research.",
+  [RESTRICTED_TOOLS.ATTACH_FILES]: "Upgrade to Essential to use Intuitive with files.",
 });
 
 export const PAID_PLAN_CODES = Object.freeze(new Set([

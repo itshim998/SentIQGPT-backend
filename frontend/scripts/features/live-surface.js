@@ -113,7 +113,7 @@ function initializeLiveSurface() {
     transcriptEmpty = document.createElement("p");
     transcriptEmpty.id = "live-beta-transcript-empty";
     transcriptEmpty.className = "live-workspace-transcript-empty";
-    transcriptEmpty.textContent = "The transcript will begin after you or SentIQ speaks.";
+    transcriptEmpty.textContent = "Transcript appears as you talk.";
 
     transcript.before(transcriptSheet);
     transcriptSheet.append(transcriptHeader, transcriptEmpty, transcript);
@@ -152,10 +152,10 @@ function initializeLiveSurface() {
   let pendingComposerFocus = false;
 
   function fallbackCopy(state) {
-    if (state === "quota_denied") return "Live voice is unavailable for now, but the conversation can continue in text.";
-    if (state === "mic_blocked") return "Microphone access is needed for Live voice. Text chat remains available.";
-    if (state === "unavailable") return "This device or account cannot start Live voice right now. Text chat still works normally.";
-    return "Live voice could not continue. Your text conversation is still available.";
+    if (state === "quota_denied") return "Live voice is unavailable. Continue in text.";
+    if (state === "mic_blocked") return "Live voice needs microphone access.";
+    if (state === "unavailable") return "Live voice isn't available on this device or account.";
+    return "Live voice stopped. Continue in text.";
   }
 
   function syncTranscriptEmptyState() {

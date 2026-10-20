@@ -115,12 +115,12 @@ const NOTICE_DURATION_MS = 7_000;
       option.setAttribute("aria-disabled", ariaVal);
     }
     if (!isGuestFastOnly && !isToolLocked) {
-      const nextTitle = allowed ? "Intuitive" : "Intuitive will return as tokens refresh";
+      const nextTitle = allowed ? "Intuitive" : "Intuitive returns when tokens refresh";
       if (option.title !== nextTitle) option.title = nextTitle;
     }
   }
 
-  function switchToFast(message = "Switched to Fast to protect your remaining tokens.") {
+  function switchToFast(message = "Switched to Fast. Tokens are running low.") {
     const fastOption = document.querySelector('[data-execution-mode="fast"]');
     if (currentExecutionMode() !== "fast") fastOption?.click();
     notice = message;
@@ -306,7 +306,7 @@ const NOTICE_DURATION_MS = 7_000;
     if (isModeAction?.getAttribute("data-execution-mode") === "intuitive" && !view.intuitiveSelectable) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      switchToFast("Intuitive will return as your tokens refresh. Fast remains available.");
+      switchToFast("Intuitive returns when your tokens refresh. Fast is still available.");
       return;
     }
     if (isSendAction && view.shouldSwitchToFast) switchToFast();

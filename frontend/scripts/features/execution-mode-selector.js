@@ -13,11 +13,11 @@ const EXECUTION_MODE_VERSION = "5.6";
 const MODE_DETAILS = Object.freeze({
   fast: {
     label: "Fast",
-    description: "Direct, lower-latency replies for everyday prompts.",
+    description: "Quick replies for everyday prompts.",
   },
   intuitive: {
     label: "Intuitive",
-    description: "Deeper context and reflection for complex prompts.",
+    description: "More depth for complex prompts.",
   },
 });
 
@@ -85,8 +85,8 @@ function initializeExecutionModeSelector() {
 
   control.dataset.executionModeVersion = EXECUTION_MODE_VERSION;
   wrapper.dataset.executionModeVersion = EXECUTION_MODE_VERSION;
-  toggle.setAttribute("aria-label", "Choose execution mode");
-  menu.setAttribute("aria-label", "Choose execution mode");
+  toggle.setAttribute("aria-label", "Execution mode");
+  menu.setAttribute("aria-label", "Execution mode");
   ensureToggleIndicator(toggle);
 
   const options = Array.from(menu.querySelectorAll("[data-execution-mode]"));
@@ -115,10 +115,10 @@ function initializeExecutionModeSelector() {
     control.dataset.executionMode = selectedMode;
     toggle.dataset.executionMode = selectedMode;
     if (!control.classList.contains("guest-fast-only")) {
-      toggle.title = `${detail.label} mode — ${detail.description}`;
+      toggle.title = `${detail.label}. ${detail.description}`;
       toggle.setAttribute(
         "aria-label",
-        `${detail.label} execution mode. ${detail.description} Choose execution mode.`,
+        `Execution mode: ${detail.label}. ${detail.description}`,
       );
     }
 

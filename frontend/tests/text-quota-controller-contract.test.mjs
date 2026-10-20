@@ -17,7 +17,7 @@ assert.match(controller, /__sentiqQuotaRetry:\s*true/);
 assert.match(controller, /intuitive_fast_required/);
 assert.match(controller, /unified_text_insufficient_for_request/);
 assert.match(controller, /executionMode:\s*"fast"/);
-assert.match(controller, /Switched to Fast to protect your remaining tokens\./);
+assert.match(controller, /Switched to Fast\. Tokens are running low\./);
 assert.match(controller, /setAttribute\("inert",\s*""\)/);
 assert.match(controller, /textQuotaReadOnly/);
 assert.match(controller, /sentiq-billing-refresh/);

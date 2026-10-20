@@ -94,19 +94,19 @@ assert.equal(resolveActiveRestrictedTool({ attachmentCount: 0 }), null);
 // 1.7 Tool-specific marketing copy (Strict Essential Plan Copy)
 assert.equal(
   getToolUpsellCopy(RESTRICTED_TOOLS.VISUALIZE),
-  "Upgrade to Essential to unlock access to more advanced visualization models.",
+  "Upgrade to Essential for advanced image models.",
 );
 assert.equal(
   getToolUpsellCopy(RESTRICTED_TOOLS.WEBSURF),
-  "Upgrade to Essential to unlock Intuitive mode for deeper web research.",
+  "Upgrade to Essential to use Intuitive with web search.",
 );
 assert.equal(
   getToolUpsellCopy(RESTRICTED_TOOLS.DEEP_RESEARCH),
-  "Upgrade to Essential to unlock Intuitive mode for deeper research.",
+  "Upgrade to Essential to use Intuitive with Deep Research.",
 );
 assert.equal(
   getToolUpsellCopy(RESTRICTED_TOOLS.ATTACH_FILES),
-  "Upgrade to Essential to unlock Intuitive mode for deeper file understanding.",
+  "Upgrade to Essential to use Intuitive with files.",
 );
 
 // 1.8 Intuitive lock policy with uncertainty safety
@@ -192,7 +192,7 @@ assert.equal(state.isLocked, true);
 assert.equal(state.activeTool, RESTRICTED_TOOLS.VISUALIZE);
 assert.equal(state.effectiveMode, "fast");
 assert.equal(state.preferredMode, "intuitive", "Internal preferred execution mode remains intact");
-assert.equal(state.upsellCopy, "Upgrade to Essential to unlock access to more advanced visualization models.");
+assert.equal(state.upsellCopy, "Upgrade to Essential for advanced image models.");
 
 // Deselect tool: Effective mode REMAINS Fast (does NOT automatically restore Intuitive)
 state = resolveFreeToolPolicyState({
@@ -389,7 +389,7 @@ function applyToolLock(toolName) {
   intuitiveOpt.classList.toggle("is-tool-locked", isLocked);
   if (isLocked) {
     intuitiveOpt.setAttribute("aria-disabled", "true");
-    intuitiveOpt.title = "Intuitive execution is unavailable while this tool is active on the Free plan.";
+    intuitiveOpt.title = "Intuitive isn't available with this tool on the Free plan.";
     intuitiveOpt.setAttribute("aria-describedby", "execution-mode-upsell-text");
   } else {
     intuitiveOpt.removeAttribute("aria-describedby");
@@ -411,23 +411,23 @@ assert.equal(label.textContent, "Fast");
 assert.equal(intuitiveOpt.getAttribute("aria-disabled"), "true");
 assert.equal(intuitiveOpt.classList.contains("is-tool-locked"), true);
 assert.equal(upsellBox.hidden, false);
-assert.equal(upsellText.textContent, "Upgrade to Essential to unlock access to more advanced visualization models.");
+assert.equal(upsellText.textContent, "Upgrade to Essential for advanced image models.");
 assert.equal(control.classList.contains("tool-fast-locked"), true);
 
 // Test 2: WebSurf active
 applyToolLock(RESTRICTED_TOOLS.WEBSURF);
 assert.equal(label.textContent, "Fast");
-assert.equal(upsellText.textContent, "Upgrade to Essential to unlock Intuitive mode for deeper web research.");
+assert.equal(upsellText.textContent, "Upgrade to Essential to use Intuitive with web search.");
 
 // Test 3: Attach Files active
 applyToolLock(RESTRICTED_TOOLS.ATTACH_FILES);
 assert.equal(label.textContent, "Fast");
-assert.equal(upsellText.textContent, "Upgrade to Essential to unlock Intuitive mode for deeper file understanding.");
+assert.equal(upsellText.textContent, "Upgrade to Essential to use Intuitive with files.");
 
 // Test 4: Deep Research active
 applyToolLock(RESTRICTED_TOOLS.DEEP_RESEARCH);
 assert.equal(label.textContent, "Fast");
-assert.equal(upsellText.textContent, "Upgrade to Essential to unlock Intuitive mode for deeper research.");
+assert.equal(upsellText.textContent, "Upgrade to Essential to use Intuitive with Deep Research.");
 
 // Test 5: Tool removed -> stays Fast
 applyToolLock(null);

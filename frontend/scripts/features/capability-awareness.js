@@ -75,16 +75,16 @@ function initializeCapabilityAwareness() {
   function compactReason(capability) {
     const labels = {
       "sign-in-required": "Sign in required",
-      "plan-restricted": "Not included in this plan",
+      "plan-restricted": "Not included in your plan",
       "limit-reached": "Allowance used",
-      cooldown: "Available again shortly",
-      offline: "Internet connection required",
+      cooldown: "Available soon",
+      offline: "You're offline",
       checking: "Checking availability…",
-      unavailable: "Unavailable right now",
+      unavailable: "Unavailable",
     };
     return capability.state === "busy" && capability.key === "upload"
-      ? "Upload already in progress"
-      : labels[capability.state] || "Temporarily busy";
+      ? "Upload in progress"
+      : labels[capability.state] || "Busy";
   }
 
   function capabilityFor(control) {

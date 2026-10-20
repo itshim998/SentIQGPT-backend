@@ -9,19 +9,19 @@ const AUTH_VIEW_COPY = Object.freeze({
     passwordHint: "",
   }),
   signup: Object.freeze({
-    emailTitle: "Create with email",
-    emailDescription: "Use an email address you can access for confirmation and recovery.",
-    passwordHint: "A longer password with mixed characters is easier to keep secure.",
+    emailTitle: "Sign up with email",
+    emailDescription: "Use an email you can access. We'll send a confirmation.",
+    passwordHint: "Longer passwords are stronger.",
   }),
   "forgot-password-request": Object.freeze({
-    emailTitle: "Reset by email",
-    emailDescription: "We will send a secure recovery link to this address.",
+    emailTitle: "Reset password",
+    emailDescription: "We'll send a reset link to this address.",
     passwordHint: "",
   }),
   "password-recovery": Object.freeze({
-    emailTitle: "Choose a new password",
-    emailDescription: "Set a new password for the account opened from your recovery link.",
-    passwordHint: "Use a password you have not used for this account before.",
+    emailTitle: "New password",
+    emailDescription: "Enter a new password.",
+    passwordHint: "Don't reuse an old password.",
   }),
 });
 
@@ -87,10 +87,10 @@ function passwordStrength(value) {
     /[^A-Za-z0-9]/.test(password),
   ].filter(Boolean).length;
 
-  if (password.length < 8) return { level: 1, label: "Add more length" };
-  if (password.length >= 12 && variety >= 3) return { level: 4, label: "Strong password" };
-  if (password.length >= 10 && variety >= 2) return { level: 3, label: "Good password" };
-  return { level: 2, label: "Password is usable" };
+  if (password.length < 8) return { level: 1, label: "Too short" };
+  if (password.length >= 12 && variety >= 3) return { level: 4, label: "Strong" };
+  if (password.length >= 10 && variety >= 2) return { level: 3, label: "Good" };
+  return { level: 2, label: "Fair" };
 }
 
 function initializeAuthenticationSurface() {
@@ -157,7 +157,7 @@ function initializeAuthenticationSurface() {
       help = document.createElement("span");
       help.id = "authentication-google-help";
       help.className = "sr-only";
-      help.textContent = "Continue securely using your Google account.";
+      help.textContent = "Continue with your Google account.";
       googleButton.after(help);
     }
   }

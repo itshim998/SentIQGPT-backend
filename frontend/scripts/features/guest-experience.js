@@ -231,7 +231,7 @@ function applyExecutionModePolicy() {
   } else {
     if (control.classList.contains("guest-fast-only")) control.classList.remove("guest-fast-only");
     setDisabled(toggle, false);
-    if (toggle.title === "Guest chats use Fast mode") toggle.title = "Choose execution mode";
+    if (toggle.title === "Guest chats use Fast mode") toggle.title = "Execution mode";
     document.querySelectorAll(".execution-mode-option").forEach((option) => {
       setDisabled(option, false);
       if (option.title === "Guest chats use Fast mode") option.removeAttribute("title");
@@ -381,7 +381,7 @@ function releaseGuestUi() {
     execControl?.classList.remove("guest-fast-only");
     if (execToggle) {
       setDisabled(execToggle, false);
-      if (execToggle.title === "Guest chats use Fast mode") execToggle.title = "Choose execution mode";
+      if (execToggle.title === "Guest chats use Fast mode") execToggle.title = "Execution mode";
     }
     document.querySelectorAll(".execution-mode-option").forEach((opt) => {
       setDisabled(opt, false);
@@ -650,7 +650,7 @@ async function migrateGuestConversationAfterSignIn() {
     const createResult = await window.SentIQAPI.createConversation("New Chat");
     const conversation = createResult?.conversation || createResult;
     const conversationId = String(conversation?.id || "").trim();
-    if (!conversationId) throw new Error("Guest chat migration could not create a conversation.");
+    if (!conversationId) throw new Error("Couldn't save your guest chat.");
 
     await window.SentIQAPI.syncChatMessages({
       conversationId,
@@ -666,7 +666,7 @@ async function migrateGuestConversationAfterSignIn() {
     clearGuestHandoff();
     removeSession(GUEST_RECOVERY_DRAFT_KEY);
     await focusMigratedConversation(conversationId);
-    window.SentIQChat?.showToast?.("Your guest chat is saved. You can continue here.", "success", 3000);
+    window.SentIQChat?.showToast?.("Chat saved to your account.", "success", 3000);
     return true;
   } catch (error) {
     // Profile-name capture can legitimately block workspace writes immediately
