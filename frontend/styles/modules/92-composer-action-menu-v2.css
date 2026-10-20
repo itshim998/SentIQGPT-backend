@@ -1,0 +1,510 @@
+/* ============================================================
+   SentIQ Chat — Composer Action Menu Redesign (V2)
+   Calm surfaces, uniform ink tone, concentric geometry,
+   pure light-and-shadow depth, compositor-only motion.
+   ============================================================ */
+
+/* Root custom property design tokens */
+html:root[data-composer-menu="v2"] {
+  --composer-menu-surface: #0c0f17;
+  --composer-menu-rim: rgba(255, 255, 255, 0.09);
+  --composer-menu-inner-highlight: rgba(255, 255, 255, 0.06);
+  --composer-menu-shadow: 0 4px 14px rgba(0, 0, 0, 0.35), 0 24px 54px rgba(0, 0, 0, 0.58);
+  --composer-menu-radius: 20px;
+  --composer-menu-item-radius: 12px;
+  --composer-menu-padding: 8px;
+  --composer-menu-gap: 4px;
+  --composer-menu-divider: rgba(255, 255, 255, 0.07);
+  --composer-menu-hover-bg: rgba(255, 255, 255, 0.06);
+  --composer-menu-active-bg: rgba(149, 123, 232, 0.12);
+  --composer-menu-accent: #957be8;
+  --composer-menu-accent-glow: rgba(149, 123, 232, 0.45);
+  --composer-menu-focus-ring: rgba(169, 149, 239, 0.65);
+  --composer-menu-title-color: rgba(255, 255, 255, 0.94);
+  --composer-menu-subtitle-color: rgba(255, 255, 255, 0.62);
+  --composer-menu-reason-color: rgba(255, 255, 255, 0.65);
+  --composer-menu-icon-color: rgba(255, 255, 255, 0.68);
+  --composer-menu-spring: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@supports (transition-timing-function: linear(0, 1)) {
+  html:root[data-composer-menu="v2"] {
+    --composer-menu-spring: linear(
+      0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 12.9%, 0.938 16.7%,
+      1.017 20.2%, 1.049 23.6%, 1.049 26.8%, 1.028 30.6%,
+      1.008 34.5%, 0.998 38.6%, 0.997 43.5%, 1 54.5%, 1
+    );
+  }
+}
+
+/* Squircle corner support */
+@supports (corner-shape: squircle) {
+  html:root[data-composer-menu="v2"] .composer-action-menu {
+    corner-shape: squircle;
+  }
+  html:root[data-composer-menu="v2"] .composer-action-option {
+    corner-shape: squircle;
+  }
+}
+
+/* ============================================================
+   Menu Popover Surface & Shell
+   ============================================================ */
+
+/* Override module 90 final composer brand polish gradient background and module 26 borders */
+html:root[data-composer-menu="v2"] .composer-action-menu,
+html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-action-menu,
+html:root[data-composer-menu="v2"] .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu,
+html:root[data-composer-menu="v2"] .chat-input-wrapper[data-composer-version="5.1"] .composer-action-menu {
+  display: flex !important;
+  flex-direction: column !important;
+  width: min(324px, calc(100vw - 32px)) !important;
+  max-height: min(380px, calc(100vh - 140px)) !important;
+  padding: var(--composer-menu-padding) !important;
+  gap: var(--composer-menu-gap) !important;
+  border: 1px solid var(--composer-menu-rim) !important;
+  border-radius: var(--composer-menu-radius) !important;
+  background: var(--composer-menu-surface) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow:
+    inset 0 1px 0 var(--composer-menu-inner-highlight),
+    var(--composer-menu-shadow) !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  transform: translateY(8px) scale(0.96) !important;
+  transform-origin: bottom left !important;
+  pointer-events: none !important;
+  will-change: auto;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease,
+    visibility 0s linear 140ms !important;
+  z-index: 30 !important;
+}
+
+/* Override module 26 decorative gradient sheen pseudo-element */
+html:root[data-composer-menu="v2"] .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu::before,
+html:root[data-composer-menu="v2"] .composer-action-menu::before {
+  display: none !important;
+}
+
+/* Open state: calm spring expansion */
+html:root[data-composer-menu="v2"] .composer-action-menu.open,
+html:root[data-composer-menu="v2"] .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu.open {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transform: translateY(0) scale(1) !important;
+  pointer-events: auto !important;
+  will-change: transform, opacity;
+  transition:
+    opacity 240ms ease-out,
+    transform 240ms var(--composer-menu-spring),
+    visibility 0s linear 0s !important;
+}
+
+/* ============================================================
+   Action Rows & Rhythm (Equal 52px height)
+   ============================================================ */
+
+/* Override module 26 and module 90 option sizing and backgrounds */
+html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-action-option,
+html:root[data-composer-menu="v2"] .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option {
+  position: relative !important;
+  width: 100% !important;
+  height: 52px !important;
+  min-height: 52px !important;
+  max-height: 52px !important;
+  box-sizing: border-box !important;
+  display: grid !important;
+  grid-template-columns: 28px minmax(0, 1fr) auto !important;
+  grid-template-rows: auto auto !important;
+  align-content: center !important;
+  column-gap: 12px !important;
+  row-gap: 2px !important;
+  padding: 8px 14px !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--composer-menu-item-radius) !important;
+  background: transparent !important;
+  color: var(--composer-menu-title-color) !important;
+  text-align: left !important;
+  cursor: pointer !important;
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+/* Respect hidden attribute and inline hidden styles from controllers */
+html:root[data-composer-menu="v2"] .composer-action-option[hidden],
+html:root[data-composer-menu="v2"] .composer-action-option[style*="display: none"],
+html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-action-option[hidden],
+html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-action-option[style*="display: none"] {
+  display: none !important;
+}
+
+/* Closed state reset for row transitions */
+html:root[data-composer-menu="v2"] .composer-action-menu:not(.open) .composer-action-option {
+  opacity: 0 !important;
+  transform: translateY(4px) !important;
+  transition: none !important;
+}
+
+/* Open stagger: 18-24ms intervals (compositor properties only) */
+html:root[data-composer-menu="v2"] .composer-action-menu.open .composer-action-option {
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+  transition:
+    opacity 220ms ease,
+    transform 220ms var(--composer-menu-spring),
+    background-color 140ms ease !important;
+}
+
+html:root[data-composer-menu="v2"] .composer-action-menu.open .composer-action-option:nth-child(1) {
+  transition-delay: 15ms !important;
+}
+html:root[data-composer-menu="v2"] .composer-action-menu.open .composer-action-option:nth-child(2) {
+  transition-delay: 35ms !important;
+}
+html:root[data-composer-menu="v2"] .composer-action-menu.open .composer-action-option:nth-child(3) {
+  transition-delay: 55ms !important;
+}
+html:root[data-composer-menu="v2"] .composer-action-menu.open .composer-action-option:nth-child(4) {
+  transition-delay: 75ms !important;
+}
+
+/* Hover state: soft 140ms fill, no border change */
+html:root[data-composer-menu="v2"] .composer-action-option:hover:not(:disabled):not(.is-sheet-disabled) {
+  background-color: var(--composer-menu-hover-bg) !important;
+  border-color: transparent !important;
+}
+
+/* Pressed state: subtle 0.985 scale */
+html:root[data-composer-menu="v2"] .composer-action-option:active:not(:disabled):not(.is-sheet-disabled) {
+  transform: scale(0.985) !important;
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Keyboard focus: clear 2px inset ring in accent (meets > 3:1) */
+html:root[data-composer-menu="v2"] .composer-action-option:focus-visible {
+  outline: none !important;
+  border-color: transparent !important;
+  box-shadow: inset 0 0 0 2px var(--composer-menu-focus-ring) !important;
+}
+
+/* ============================================================
+   Bare Stroke Icons (No Box-in-a-Box Tiles)
+   ============================================================ */
+
+/* Override module 26 and module 90 tile border, gradient background, and sizing */
+html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-action-icon,
+html:root[data-composer-menu="v2"] .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-icon {
+  grid-column: 1 !important;
+  grid-row: 1 / 3 !important;
+  align-self: center !important;
+  justify-self: center !important;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: var(--composer-menu-icon-color) !important;
+  flex-shrink: 0 !important;
+}
+
+html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-action-icon svg,
+html:root[data-composer-menu="v2"] .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-icon svg {
+  width: 20px !important;
+  height: 20px !important;
+  stroke-width: 1.75px !important;
+  display: block !important;
+}
+
+/* ============================================================
+   Typography (Title & Purpose Copy)
+   ============================================================ */
+
+html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-action-copy,
+html:root[data-composer-menu="v2"] .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-copy {
+  display: contents !important;
+}
+
+html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-action-title,
+html:root[data-composer-menu="v2"] .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-title {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  align-self: end !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--composer-menu-title-color) !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  line-height: 1.25 !important;
+}
+
+/* Override module 17 final restraint display: none !important */
+html:root[data-composer-menu="v2"] .composer-action-option:not(.is-sheet-disabled) .composer-action-subtitle {
+  grid-column: 2 !important;
+  grid-row: 2 !important;
+  align-self: start !important;
+  display: block !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  color: var(--composer-menu-subtitle-color) !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  line-height: 1.25 !important;
+}
+
+/* ============================================================
+   Grouping Hairline Divider (CSS Only)
+   ============================================================ */
+
+html:root[data-composer-menu="v2"] #file-attach-btn {
+  position: relative !important;
+  overflow: visible !important;
+}
+
+html:root[data-composer-menu="v2"] #file-attach-btn:has(~ .composer-action-option:not([hidden]):not([style*="display: none"])) {
+  margin-bottom: calc(var(--composer-menu-gap) + 2px) !important;
+}
+
+html:root[data-composer-menu="v2"] #file-attach-btn:has(~ .composer-action-option:not([hidden]):not([style*="display: none"]))::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -3px;
+  height: 1px;
+  background-color: var(--composer-menu-divider);
+  pointer-events: none;
+}
+
+/* ============================================================
+   Unavailable / Disabled Rows
+   ============================================================ */
+
+html:root[data-composer-menu="v2"] .composer-action-option.is-sheet-disabled,
+html:root[data-composer-menu="v2"] .composer-action-option:disabled {
+  cursor: not-allowed !important;
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+html:root[data-composer-menu="v2"] .composer-action-option.is-sheet-disabled:hover,
+html:root[data-composer-menu="v2"] .composer-action-option:disabled:hover {
+  background: transparent !important;
+  transform: none !important;
+}
+
+html:root[data-composer-menu="v2"] .composer-action-option.is-sheet-disabled .composer-action-icon,
+html:root[data-composer-menu="v2"] .composer-action-option:disabled .composer-action-icon {
+  opacity: 0.55 !important;
+}
+
+html:root[data-composer-menu="v2"] .composer-action-option.is-sheet-disabled .composer-action-title,
+html:root[data-composer-menu="v2"] .composer-action-option:disabled .composer-action-title {
+  opacity: 0.55 !important;
+}
+
+/* On disabled rows, hide generic subtitle so state reason renders cleanly */
+html:root[data-composer-menu="v2"] .composer-action-option.is-sheet-disabled .composer-action-subtitle,
+html:root[data-composer-menu="v2"] .composer-action-option:disabled .composer-action-subtitle {
+  display: none !important;
+}
+
+/* Override module 26 capsule / pill styling on disabled state */
+html:root[data-composer-menu="v2"] .composer-action-option.is-sheet-disabled .composer-action-state,
+html:root[data-composer-menu="v2"] .composer-action-option:disabled .composer-action-state {
+  grid-column: 2 !important;
+  grid-row: 2 !important;
+  align-self: start !important;
+  display: block !important;
+  max-width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--composer-menu-reason-color) !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  line-height: 1.25 !important;
+  text-align: left !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  opacity: 0.65 !important;
+}
+
+/* ============================================================
+   Active State (.is-sheet-active or aria-pressed="true")
+   ============================================================ */
+
+html:root[data-composer-menu="v2"] .composer-action-option.is-sheet-active,
+html:root[data-composer-menu="v2"] .composer-action-option[aria-pressed="true"] {
+  background-color: var(--composer-menu-active-bg) !important;
+  border-color: transparent !important;
+}
+
+/* Accessible trailing active indicator replacing heavy bordered pill */
+html:root[data-composer-menu="v2"] .composer-action-option.is-sheet-active .composer-action-state,
+html:root[data-composer-menu="v2"] .composer-action-option[aria-pressed="true"] .composer-action-state {
+  grid-column: 3 !important;
+  grid-row: 1 / 3 !important;
+  align-self: center !important;
+  justify-self: end !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 16px !important;
+  height: 16px !important;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  font-size: 0 !important;
+  color: transparent !important;
+  line-height: 0 !important;
+  text-indent: -9999px !important;
+  overflow: hidden !important;
+}
+
+html:root[data-composer-menu="v2"] .composer-action-option.is-sheet-active::after,
+html:root[data-composer-menu="v2"] .composer-action-option[aria-pressed="true"]::after {
+  content: "";
+  grid-column: 3;
+  grid-row: 1 / 3;
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--composer-menu-accent);
+  box-shadow: 0 0 8px var(--composer-menu-accent-glow);
+  justify-self: end;
+  align-self: center;
+  pointer-events: none;
+}
+
+/* Hide empty states when not disabled or active */
+html:root[data-composer-menu="v2"] .composer-action-option:not(.is-sheet-active):not(.is-sheet-disabled) .composer-action-state {
+  display: none !important;
+}
+
+/* ============================================================
+   Trigger Icon Smooth Rotate Morph
+   ============================================================ */
+
+html:root[data-composer-menu="v2"] .chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn svg,
+html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-plus-btn svg {
+  transition: transform 220ms var(--composer-menu-spring) !important;
+}
+
+html:root[data-composer-menu="v2"] .chat-input-wrapper[data-composer-version="5.1"] .composer-plus-btn.active svg,
+html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-plus-btn.active svg {
+  transform: rotate(45deg) !important;
+}
+
+/* ============================================================
+   Mobile Viewport Refinements
+   ============================================================ */
+
+@media (max-width: 640px) {
+  html:root[data-composer-menu="v2"] .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-menu,
+  html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-action-menu {
+    left: 0 !important;
+    right: 0 !important;
+    bottom: calc(100% + 8px) !important;
+    width: auto !important;
+    padding: 6px !important;
+    border-radius: 18px !important;
+  }
+
+  html:root[data-composer-menu="v2"] .chat-input-wrapper[data-tool-action-sheet-version="5.4"] .composer-action-option,
+  html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-action-option {
+    height: 50px !important;
+    min-height: 50px !important;
+    max-height: 50px !important;
+    padding: 0 12px !important;
+    column-gap: 10px !important;
+  }
+}
+
+/* ============================================================
+   Accessibility Modes
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  html:root[data-composer-menu="v2"] .composer-action-menu,
+  html:root[data-composer-menu="v2"] .composer-action-menu.open,
+  html:root[data-composer-menu="v2"] .composer-action-option,
+  html:root[data-composer-menu="v2"] .composer-action-menu.open .composer-action-option,
+  html:root[data-composer-menu="v2"] #composer-plus-btn svg,
+  html:root[data-composer-menu="v2"] .composer-plus-btn svg {
+    transition: opacity 100ms ease !important;
+    transform: none !important;
+    animation: none !important;
+    will-change: auto !important;
+    transition-delay: 0s !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  html:root[data-composer-menu="v2"] .composer-action-menu,
+  html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-action-menu {
+    background: #000000 !important;
+    border: 2px solid rgba(255, 255, 255, 0.45) !important;
+    box-shadow: none !important;
+  }
+
+  html:root[data-composer-menu="v2"] .composer-action-option {
+    border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  }
+
+  html:root[data-composer-menu="v2"] .composer-action-title {
+    color: #ffffff !important;
+  }
+
+  html:root[data-composer-menu="v2"] .composer-action-subtitle,
+  html:root[data-composer-menu="v2"] .composer-action-state {
+    color: rgba(255, 255, 255, 0.88) !important;
+  }
+}
+
+@media (forced-colors: active) {
+  html:root[data-composer-menu="v2"] .composer-action-menu,
+  html:root[data-composer-menu="v2"] .chat-input-wrapper .composer-action-menu {
+    background: Canvas !important;
+    border: 1px solid CanvasText !important;
+    box-shadow: none !important;
+  }
+
+  html:root[data-composer-menu="v2"] .composer-action-option {
+    border: 1px solid transparent !important;
+  }
+
+  html:root[data-composer-menu="v2"] .composer-action-option:focus-visible {
+    outline: 2px solid Highlight !important;
+  }
+
+  html:root[data-composer-menu="v2"] .composer-action-option.is-sheet-active {
+    border-color: Highlight !important;
+  }
+
+  html:root[data-composer-menu="v2"] .composer-action-option.is-sheet-active::after {
+    background-color: Highlight !important;
+  }
+}
