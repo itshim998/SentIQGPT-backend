@@ -1,35 +1,37 @@
 /* SentIQ Liquid Glass V4 — Phase 8.2 settings and billing workspace */
 
+import { FALLBACK_ACCOUNT_NAME } from "../shared/brand.js";
+
 const SETTINGS_WORKSPACE_VERSION = "8.2";
 
 const SECTION_META = Object.freeze({
   account: Object.freeze({
-    eyebrow: "Account",
-    title: "Account information",
-    description: "Review the identity connected to this workspace and move into plan, privacy, or session controls.",
+    eyebrow: "",
+    title: "Account",
+    description: "",
   }),
   billing: Object.freeze({
-    eyebrow: "Plan & usage",
-    title: "Plan, tokens, and upgrades",
-    description: "See your active plan, remaining plan limits, and explore upgrades.",
+    eyebrow: "",
+    title: "Plan & usage",
+    description: "",
   }),
   memory: Object.freeze({
-    eyebrow: "Personalization",
-    title: "Memory Manager",
-    description: "Review the details SentIQ Chat can use across conversations and remove anything that should no longer be remembered.",
+    eyebrow: "",
+    title: "Memory",
+    description: "",
   }),
   trust: Object.freeze({
-    eyebrow: "Trust & support",
-    title: "Privacy, data, and help",
-    description: "Open the detailed controls for privacy, local data, terms, and support from one place.",
+    eyebrow: "",
+    title: "Privacy & support",
+    description: "",
   }),
 });
 
 const NAV_META = Object.freeze({
-  account: Object.freeze({ label: "Account", detail: "Identity and session", icon: "user" }),
-  billing: Object.freeze({ label: "Plan & usage", detail: "Tokens and upgrades", icon: "spark" }),
-  memory: Object.freeze({ label: "Memory", detail: "Personalization", icon: "memory" }),
-  trust: Object.freeze({ label: "Trust & support", detail: "Privacy and help", icon: "shield" }),
+  account: Object.freeze({ label: "Account", icon: "user" }),
+  billing: Object.freeze({ label: "Plan & usage", icon: "spark" }),
+  memory: Object.freeze({ label: "Memory", icon: "memory" }),
+  trust: Object.freeze({ label: "Privacy & support", icon: "shield" }),
 });
 
 const ICONS = Object.freeze({
@@ -54,7 +56,6 @@ function createNavButton(tabName) {
     <span class="settings-workspace-nav-icon" aria-hidden="true">${ICONS[meta.icon]}</span>
     <span class="settings-workspace-nav-copy">
       <span class="settings-workspace-nav-label">${meta.label}</span>
-      <span class="settings-workspace-nav-detail">${meta.detail}</span>
     </span>
   `;
   return button;
@@ -70,7 +71,6 @@ function decorateNavButton(button) {
     <span class="settings-workspace-nav-icon" aria-hidden="true">${ICONS[meta.icon]}</span>
     <span class="settings-workspace-nav-copy">
       <span class="settings-workspace-nav-label">${meta.label}</span>
-      <span class="settings-workspace-nav-detail">${meta.detail}</span>
     </span>
   `;
 }
@@ -84,17 +84,10 @@ function createAccountPanel() {
   panel.hidden = true;
   panel.innerHTML = `
     <div class="settings-workspace-section settings-account-details">
-      <div class="settings-workspace-section-heading">
-        <div>
-          <span class="settings-workspace-section-kicker">Connected identity</span>
-          <h4>Your SentIQ Chat account</h4>
-        </div>
-        <span id="settings-account-state" class="settings-account-state">Checking session</span>
-      </div>
       <dl class="settings-account-definition-list">
         <div>
-          <dt>Display name</dt>
-          <dd id="settings-account-name">Signed in</dd>
+          <dt>Name</dt>
+          <dd id="settings-account-name">—</dd>
         </div>
         <div>
           <dt>Email</dt>
@@ -102,28 +95,12 @@ function createAccountPanel() {
         </div>
         <div>
           <dt>Plan</dt>
-          <dd id="settings-account-plan">Loading plan</dd>
+          <dd id="settings-account-plan">—</dd>
         </div>
       </dl>
       <div class="settings-account-actions">
         <button id="settings-account-plan-action" class="btn btn-primary" type="button">Manage plan</button>
         <button id="settings-account-session-action" class="btn btn-secondary" type="button">Sign out</button>
-      </div>
-    </div>
-    <div class="settings-workspace-section settings-account-shortcuts" aria-labelledby="settings-account-shortcuts-title">
-      <div class="settings-workspace-section-heading">
-        <div>
-          <span class="settings-workspace-section-kicker">Workspace controls</span>
-          <h4 id="settings-account-shortcuts-title">Related settings</h4>
-        </div>
-      </div>
-      <div class="settings-workspace-link-list">
-        <button type="button" class="settings-workspace-link-row" data-settings-target-tab="memory">
-          <span><strong>Personalization</strong><small>Review memories used across chats.</small></span><span aria-hidden="true">→</span>
-        </button>
-        <button type="button" class="settings-workspace-link-row" data-settings-target-tab="trust">
-          <span><strong>Privacy and support</strong><small>Open trust, local data, and help controls.</small></span><span aria-hidden="true">→</span>
-        </button>
       </div>
     </div>
   `;
@@ -139,25 +116,18 @@ function createTrustPanel() {
   panel.hidden = true;
   panel.innerHTML = `
     <div class="settings-workspace-section">
-      <div class="settings-workspace-section-heading">
-        <div>
-          <span class="settings-workspace-section-kicker">Trust centre</span>
-          <h4>Privacy, data, and support</h4>
-          <p>Open a focused detail sheet while keeping Settings as the primary workspace.</p>
-        </div>
-      </div>
       <div class="settings-workspace-link-list settings-trust-link-list">
         <button type="button" class="settings-workspace-link-row" data-settings-trust-target="privacy">
-          <span><strong>Privacy</strong><small>Understand how chats, files, memories, and generated work are handled.</small></span><span aria-hidden="true">→</span>
+          <span><strong>Privacy</strong></span><span aria-hidden="true">→</span>
         </button>
         <button type="button" class="settings-workspace-link-row" data-settings-trust-target="controls">
-          <span><strong>Data controls</strong><small>Clear temporary source context or browser-local SentIQ Chat data.</small></span><span aria-hidden="true">→</span>
+          <span><strong>Data</strong></span><span aria-hidden="true">→</span>
         </button>
         <button type="button" class="settings-workspace-link-row" data-settings-trust-target="terms">
-          <span><strong>Terms of use</strong><small>Review the expectations for responsible product use.</small></span><span aria-hidden="true">→</span>
+          <span><strong>Terms of use</strong></span><span aria-hidden="true">→</span>
         </button>
         <button type="button" class="settings-workspace-link-row" data-settings-trust-target="support">
-          <span><strong>Support</strong><small>Get help with account, privacy, files, chats, or product issues.</small></span><span aria-hidden="true">→</span>
+          <span><strong>Support</strong></span><span aria-hidden="true">→</span>
         </button>
       </div>
     </div>
@@ -206,13 +176,13 @@ function initializeSettingsWorkspace() {
 
   const rail = document.createElement("aside");
   rail.className = "settings-workspace-rail";
-  rail.setAttribute("aria-label", "Settings navigation and account summary");
+  rail.setAttribute("aria-label", "Settings");
   rail.innerHTML = `
     <div class="settings-workspace-identity">
       <span id="settings-workspace-avatar" class="settings-workspace-avatar" aria-hidden="true">S</span>
       <span class="settings-workspace-identity-copy">
-        <strong id="settings-workspace-name">SentIQ Chat</strong>
-        <small id="settings-workspace-email">Guest workspace</small>
+        <strong id="settings-workspace-name">Account</strong>
+        <small id="settings-workspace-email" hidden>Guest</small>
       </span>
       <span id="settings-workspace-plan" class="settings-workspace-plan">Guest</span>
     </div>
@@ -223,9 +193,9 @@ function initializeSettingsWorkspace() {
   main.className = "settings-workspace-main";
   main.innerHTML = `
     <header class="settings-workspace-context-header">
-      <span id="settings-workspace-eyebrow" class="settings-workspace-eyebrow">${SECTION_META.billing.eyebrow}</span>
+      <span id="settings-workspace-eyebrow" class="settings-workspace-eyebrow" hidden></span>
       <h3 id="settings-workspace-title">${SECTION_META.billing.title}</h3>
-      <p id="settings-workspace-description">${SECTION_META.billing.description}</p>
+      <p id="settings-workspace-description" class="settings-workspace-description" hidden></p>
     </header>
     <div class="settings-workspace-content" aria-live="off"></div>
   `;
@@ -244,7 +214,6 @@ function initializeSettingsWorkspace() {
   const accountName = document.getElementById("settings-account-name");
   const accountEmail = document.getElementById("settings-account-email");
   const accountPlan = document.getElementById("settings-account-plan");
-  const accountState = document.getElementById("settings-account-state");
   const accountPlanAction = document.getElementById("settings-account-plan-action");
   const accountSessionAction = document.getElementById("settings-account-session-action");
 
@@ -276,9 +245,15 @@ function initializeSettingsWorkspace() {
       panel.toggleAttribute("hidden", !selected);
     });
     const meta = SECTION_META[nextName] || SECTION_META.billing;
-    eyebrow.textContent = meta.eyebrow;
-    title.textContent = meta.title;
-    description.textContent = meta.description;
+    if (eyebrow) {
+      eyebrow.textContent = meta.eyebrow || "";
+      eyebrow.hidden = !meta.eyebrow;
+    }
+    if (title) title.textContent = meta.title;
+    if (description) {
+      description.textContent = meta.description || "";
+      description.hidden = !meta.description;
+    }
     modal.dataset.settingsWorkspaceSection = nextName;
     if (options.focus) active.focus({ preventScroll: true });
   }
@@ -292,34 +267,46 @@ function initializeSettingsWorkspace() {
       || document.getElementById("auth-menu-email")?.textContent?.trim()
       || sessionEmail;
     const signedIn = Boolean(activeSession || profileEmail);
-    const fallbackName = signedIn ? "Signed in" : "Guest workspace";
-    const name = profileName && profileName !== "Signed in" ? profileName : fallbackName;
-    return { signedIn, name, email: profileEmail || "Not signed in" };
+    const hasCustomName = Boolean(profileName && profileName !== FALLBACK_ACCOUNT_NAME && profileName !== "Signed in");
+    const name = hasCustomName ? profileName : (signedIn ? FALLBACK_ACCOUNT_NAME : "Guest");
+    return { signedIn, hasCustomName, name, email: profileEmail || "—" };
   }
 
   function syncIdentity() {
     const identity = currentIdentity();
-    const initialSource = identity.name !== "Signed in" && identity.name !== "Guest workspace"
-      ? identity.name
-      : identity.email;
-    const initial = initialSource?.trim()?.charAt(0)?.toUpperCase() || "S";
-    workspaceName.textContent = identity.name;
-    workspaceEmail.textContent = identity.email;
-    workspaceAvatar.textContent = initial;
-    accountName.textContent = identity.name;
-    accountEmail.textContent = identity.email;
-    accountState.textContent = identity.signedIn ? "Signed in" : "Guest session";
-    accountState.classList.toggle("is-signed-in", identity.signedIn);
-    accountPlanAction.textContent = identity.signedIn ? "Manage plan" : "Log in to view plans";
-    accountSessionAction.textContent = identity.signedIn ? "Sign out" : "Log in";
+    const initialSource = identity.hasCustomName ? identity.name : identity.email;
+    const initial = initialSource && initialSource !== "—" ? initialSource.trim().charAt(0).toUpperCase() : "S";
+    if (workspaceName) workspaceName.textContent = identity.name;
+    if (workspaceEmail) {
+      workspaceEmail.textContent = identity.email;
+      workspaceEmail.hidden = !identity.signedIn;
+    }
+    if (workspaceAvatar) workspaceAvatar.textContent = initial;
+    if (accountName) {
+      if (identity.signedIn) {
+        accountName.textContent = identity.hasCustomName ? identity.name : "Not set";
+      } else {
+        accountName.textContent = "Guest";
+      }
+    }
+    if (accountEmail) accountEmail.textContent = identity.signedIn ? identity.email : "—";
+    if (accountPlanAction) {
+      accountPlanAction.hidden = !identity.signedIn;
+      accountPlanAction.textContent = "Manage plan";
+    }
+    if (accountSessionAction) {
+      accountSessionAction.textContent = identity.signedIn ? "Sign out" : "Sign in";
+      accountSessionAction.classList.toggle("btn-primary", !identity.signedIn);
+      accountSessionAction.classList.toggle("btn-secondary", identity.signedIn);
+    }
   }
 
   function readPlan() {
     const current = billingPanel?.querySelector(".billing-current h3")?.textContent?.trim();
     const status = billingPanel?.querySelector(".billing-current p")?.textContent?.trim();
-    const plan = current || (currentIdentity().signedIn ? "Plan unavailable" : "Guest");
-    workspacePlan.textContent = plan;
-    accountPlan.textContent = status ? `${plan} · ${status}` : plan;
+    const plan = current || (currentIdentity().signedIn ? "—" : "Guest");
+    if (workspacePlan) workspacePlan.textContent = plan;
+    if (accountPlan) accountPlan.textContent = status ? `${plan} · ${status}` : plan;
   }
 
   function decorateBilling() {
@@ -338,7 +325,7 @@ function initializeSettingsWorkspace() {
     if (!usage.previousElementSibling?.matches("[data-settings-generated-heading='usage']")) {
       const heading = sectionHeading(
         null,
-        "Plan limits",
+        "Usage",
         null,
       );
       heading.dataset.settingsGeneratedHeading = "usage";
@@ -346,9 +333,9 @@ function initializeSettingsWorkspace() {
     }
     if (!plans.previousElementSibling?.matches("[data-settings-generated-heading='plans']")) {
       const heading = sectionHeading(
-        "Available plans",
-        "Compare and upgrade",
-        "Choose the allowance level that best fits how often you use SentIQ Chat.",
+        null,
+        "Plans",
+        null,
       );
       heading.dataset.settingsGeneratedHeading = "plans";
       plans.before(heading);
@@ -405,8 +392,8 @@ function initializeSettingsWorkspace() {
   });
 
   modal.addEventListener("click", (event) => {
-    const settingsTarget = event.target.closest("[data-settings-target-tab]");
-    if (settingsTarget) {
+    const settingsTarget = event.target.closest?.("[data-settings-target-tab]");
+    if (settingsTarget && settingsTarget.dataset?.settingsTargetTab) {
       activateTab(settingsTarget.dataset.settingsTargetTab, { focus: true });
       return;
     }

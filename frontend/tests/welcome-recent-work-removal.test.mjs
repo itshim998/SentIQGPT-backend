@@ -28,9 +28,9 @@ for (const retiredToken of [
 }
 
 for (const requiredToken of [
-  'setText(welcomeEyebrow, "Welcome back")',
+  "setHidden(welcomeEyebrow, true)",
   "`Welcome back, ${greetingName}.`",
-  "Start with a question, a file, or something you want to work through.",
+  "setHidden(welcomeSubtitle, true)",
   'welcomeScreen.dataset.welcomeAudience = signedIn ? "member" : "guest"',
   "window.requestAnimationFrame(render)",
 ]) {

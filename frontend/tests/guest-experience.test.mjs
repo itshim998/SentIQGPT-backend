@@ -12,7 +12,7 @@ assert.match(welcomeComposition, /setText\(welcomeHeading, "How can I help\?"\)/
 assert.match(welcomeComposition, /setHidden\(welcomeSubtitle, true\)/, "guest subtitle must be removed from the composition");
 assert.match(
   welcomeComposition,
-  /Log in to save your chats, get smarter responses, generate images, and more\./,
+  /Guest chats aren't saved\. Sign in to save chats and generate images\./,
   "guest sign-in note must use the requested copy",
 );
 

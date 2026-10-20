@@ -33,8 +33,8 @@ const lines = styleImports
 const lastImportLine = lines[lines.length - 1];
 assert.equal(
   lastImportLine,
-  '@import url("./93-execution-mode-menu-v2.css");',
-  "93-execution-mode-menu-v2.css must be the last import in 12-reduced-motion.css",
+  '@import url("./95-copy-layout-fixes.css");',
+  "95-copy-layout-fixes.css must be the last import in 12-reduced-motion.css (appended after 93)",
 );
 const mod92Index = lines.indexOf('@import url("./92-composer-action-menu-v2.css");');
 const mod93Index = lines.indexOf('@import url("./93-execution-mode-menu-v2.css");');

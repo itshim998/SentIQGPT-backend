@@ -7,6 +7,8 @@ export const PRODUCT_SHORT_NAME = PRODUCT_NAME;
 // Legacy labels remain only for storage/domain migration compatibility.
 export const LEGACY_PRODUCT_NAME = "SentIQGPT";
 
+export const FALLBACK_ACCOUNT_NAME = "Account";
+
 export const CANONICAL_FRONTEND_ORIGIN = "https://sentiqchat.sentiqlabs.com";
 // Exported for compatibility. Old frontend domains are handled by Cloudflare 301 redirects and are not allowed by default.
 export const LEGACY_FRONTEND_ORIGINS = [];
@@ -39,6 +41,7 @@ window.SentIQBrand = {
   PRODUCT_NAME,
   PRODUCT_SHORT_NAME,
   LEGACY_PRODUCT_NAME,
+  FALLBACK_ACCOUNT_NAME,
   CANONICAL_FRONTEND_ORIGIN,
   LEGACY_FRONTEND_ORIGINS,
   STORAGE_NAMESPACE,

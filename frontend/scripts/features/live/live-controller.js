@@ -183,7 +183,10 @@ import {
   function setPanelState(state, label, message) {
     panel.dataset.state = state;
     stateLabel.textContent = label;
-    if (message) messageLabel.textContent = message;
+    if (messageLabel) {
+      messageLabel.textContent = message || "";
+      messageLabel.hidden = !message;
+    }
     const retryable = [
       "error",
       "quota_denied",
@@ -586,7 +589,7 @@ import {
 
     // Step 1: Immediately show UI in connecting state!
     showPanel();
-    setPanelState("connecting", "Connecting", "Getting Live voice ready.");
+    setPanelState("connecting", "Connecting", "");
     transcript = [];
     renderTranscript();
     if (transcriptWrap) transcriptWrap.open = false;

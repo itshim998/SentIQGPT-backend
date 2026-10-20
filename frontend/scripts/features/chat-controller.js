@@ -22,7 +22,7 @@ import {
   collapseAdjacentDuplicateChatMessages,
   normalizeMemoryScope,
 } from "../services/storage.js";
-import { PRODUCT_NAME, STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "../shared/brand.js";
+import { PRODUCT_NAME, STORAGE_KEYS, LEGACY_STORAGE_KEYS, FALLBACK_ACCOUNT_NAME } from "../shared/brand.js";
 import { PROFILE_NAME_REQUIRED_EVENT } from "../shared/events.js";
 import { resolveLiveComposerAction } from "./live/live-composer-state.js";
 import { reduceToolLifecycleState } from "./tool-lifecycle-reducer.mjs";
@@ -1364,9 +1364,7 @@ import {
     const greetingTemplate = WELCOME_GREETINGS[greetingIndex] || WELCOME_GREETINGS[0];
     const suffix = getGreetingName() ? `, ${getGreetingName()}` : "";
     welcomeHeading.textContent = greetingTemplate.replace("{suffix}", suffix);
-    welcomeSubtitle.textContent = authProfileState.displayName
-      ? "Ask a question, inspect a file, or keep a conversation moving."
-      : "Ask a question, work through a file, or pick up a thread from earlier.";
+    welcomeSubtitle.hidden = true;
   }
 
   function getBaseComposerPlaceholder() {
@@ -2869,7 +2867,7 @@ import {
         }
       } finally {
         if (profileRefreshUserId === userId) {
-          const preferredLabel = getPreferredAccountLabel() || "Signed in";
+          const preferredLabel = getPreferredAccountLabel() || FALLBACK_ACCOUNT_NAME;
           if (authUserEmail) authUserEmail.textContent = preferredLabel;
           if (authMenuName) authMenuName.textContent = preferredLabel;
           if (authMenuEmail) authMenuEmail.textContent = authSessionState?.user?.email || "";
@@ -2908,7 +2906,7 @@ import {
     const activeUserId = getActiveAuthUserId();
     const cachedProfile = authProfileState.userId === activeUserId ? authProfileState : null;
     const initialAccountLabel = signedIn
-      ? (cachedProfile?.displayName || (cachedProfile?.fetchFailed ? email : "Signed in"))
+      ? (cachedProfile?.displayName || (cachedProfile?.fetchFailed ? email : FALLBACK_ACCOUNT_NAME))
       : "";
     if (authActions) {
       authActions.dataset.state = signedIn ? "signed-in" : "signed-out";
@@ -2936,7 +2934,7 @@ import {
     if (settingsBtn) settingsBtn.style.display = "none";
 
     if (signedIn) {
-      const preferredLabel = getPreferredAccountLabel() || "Signed in";
+      const preferredLabel = getPreferredAccountLabel() || FALLBACK_ACCOUNT_NAME;
       if (accountBtnName) accountBtnName.textContent = preferredLabel;
       if (accountPanelName) accountPanelName.textContent = preferredLabel;
       if (accountPanelEmail) accountPanelEmail.textContent = email;
@@ -5041,8 +5039,8 @@ import {
           userId: getActiveAuthUserId(),
         };
         closeRequiredNameModal();
-        if (authUserEmail) authUserEmail.textContent = getPreferredAccountLabel() || "Signed in";
-        if (authMenuName) authMenuName.textContent = getPreferredAccountLabel() || "Signed in";
+        if (authUserEmail) authUserEmail.textContent = getPreferredAccountLabel() || FALLBACK_ACCOUNT_NAME;
+        if (authMenuName) authMenuName.textContent = getPreferredAccountLabel() || FALLBACK_ACCOUNT_NAME;
         if (authMenuEmail) authMenuEmail.textContent = authSessionState?.user?.email || "";
         setChatAccess(true);
         await syncConversationStateForAuth(true);

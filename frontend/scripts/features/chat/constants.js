@@ -13,7 +13,9 @@ import "../controlled-response-polish.js";
 import "../live/live-audio-visualizer.js";
 import "../artifact-workspace.js";
 import "../brand-polish.js";
-import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "../../shared/brand.js";
+import { STORAGE_KEYS, LEGACY_STORAGE_KEYS, FALLBACK_ACCOUNT_NAME } from "../../shared/brand.js";
+
+export { FALLBACK_ACCOUNT_NAME };
 
 export const DEFAULT_IMAGE_ANALYSIS_PROMPT = "Analyze this image. Describe what it shows, read any visible text, and explain any important details.";
 

@@ -56,7 +56,7 @@
         <!-- Account panel (expands upward when account button is clicked) -->
         <div id="account-panel" class="account-panel" role="menu" aria-label="Account menu" aria-hidden="true">
           <div class="account-panel-header">
-            <span id="account-panel-name" class="account-panel-name">Signed in</span>
+            <span id="account-panel-name" class="account-panel-name">Account</span>
             <span id="account-panel-email" class="account-panel-email"></span>
           </div>
           <div class="account-panel-actions">
@@ -117,11 +117,10 @@
           </svg>
         </button>
         <div id="auth-menu-panel" class="auth-menu-panel" role="menu" aria-label="Account settings">
-          <div class="auth-menu-label">Account</div>
           <div class="auth-menu-account">
             <span class="auth-user-dot" aria-hidden="true"></span>
             <div class="auth-menu-account-copy">
-              <span id="auth-menu-name" class="auth-menu-name">Signed in</span>
+              <span id="auth-menu-name" class="auth-menu-name">Account</span>
               <span id="auth-menu-email" class="auth-menu-email"></span>
             </div>
           </div>
@@ -134,7 +133,7 @@
       <div id="welcome-screen" class="welcome-screen">
         <div class="welcome-eyebrow">SentIQ Chat</div>
         <h2 id="welcome-heading">Ready when you are.</h2>
-        <p id="welcome-subtitle" class="welcome-subtitle">Ask a question, work through a file, or pick up a thread from earlier.</p>
+        <p id="welcome-subtitle" class="welcome-subtitle" hidden></p>
         <div id="starter-actions" class="starter-actions" aria-label="Starter actions">
           <button class="starter-action-btn" type="button" data-starter-action="file">
             <span class="starter-action-icon" aria-hidden="true">
@@ -336,7 +335,7 @@
         <span id="live-beta-state-dot" class="live-beta-state-dot" aria-hidden="true"></span>
         <strong id="live-beta-state" role="status" aria-live="polite">Connecting</strong>
       </div>
-      <p id="live-beta-message" class="live-beta-message">Getting Live voice ready.</p>
+      <p id="live-beta-message" class="live-beta-message" hidden></p>
       <details id="live-beta-transcript-wrap" class="live-beta-transcript-wrap">
         <summary class="sr-only">Live transcript</summary>
         <div id="live-beta-transcript" class="live-beta-transcript" aria-live="polite"></div>
@@ -413,7 +412,7 @@
       </div>
       <div class="modal-body name-modal-body">
         <div class="auth-modal-copy">
-          <h2>Add your name</h2>
+          <h2 hidden>Add your name</h2>
           <p>We use it for a warmer greeting and trusted personalization in your chats.</p>
         </div>
         <form id="name-form" class="auth-form">

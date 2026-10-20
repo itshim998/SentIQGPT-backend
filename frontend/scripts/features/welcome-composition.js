@@ -77,21 +77,17 @@ function initializeWelcomeComposition() {
     welcomeScreen.dataset.welcomeAudience = signedIn ? "member" : "guest";
 
     if (signedIn) {
-      setText(welcomeEyebrow, "Welcome back");
+      setHidden(welcomeEyebrow, true);
       setText(welcomeHeading, greetingName ? `Welcome back, ${greetingName}.` : "Welcome back.");
-      setText(
-        welcomeSubtitle,
-        "Start with a question, a file, or something you want to work through.",
-      );
-      setHidden(welcomeSubtitle, false);
+      setHidden(welcomeSubtitle, true);
       setHidden(authWelcomeNote, true);
     } else {
+      setHidden(welcomeEyebrow, false);
       setText(welcomeEyebrow, "SentIQ Chat");
       setText(welcomeHeading, "How can I help?");
-      setText(welcomeSubtitle, "");
       setHidden(welcomeSubtitle, true);
       if (authWelcomeNote) {
-        setText(authWelcomeNote, "Log in to save your chats, get smarter responses, generate images, and more.");
+        setText(authWelcomeNote, "Guest chats aren't saved. Sign in to save chats and generate images.");
         setHidden(authWelcomeNote, false);
       }
     }

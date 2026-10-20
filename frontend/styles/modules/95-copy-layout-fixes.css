@@ -1,0 +1,43 @@
+/* ============================================================
+   SentIQ Liquid Glass V4 — Phase 1 Copy Layout Fixes
+   Spacing repair rules only (margin, padding, gap, min-height, display, row-gap, column-gap)
+   NO typography rules allowed in this module.
+   ============================================================ */
+
+.settings-workspace-context-header {
+  padding: 18px 30px 16px;
+}
+
+.settings-workspace-context-header h3 {
+  margin: 0;
+}
+
+#settings-modal .settings-workspace-nav-item {
+  min-height: 42px;
+  padding: 6px 10px;
+}
+
+.settings-account-details .settings-account-definition-list {
+  margin-top: 0;
+}
+
+.settings-workspace-link-list.settings-trust-link-list {
+  margin-top: 0;
+}
+
+.settings-workspace-link-list.settings-trust-link-list .settings-workspace-link-row {
+  min-height: 46px;
+  padding: 10px 14px;
+}
+
+.auth-menu-panel {
+  padding-top: 8px;
+}
+
+.name-modal-body .auth-modal-copy {
+  margin-bottom: 12px;
+}
+
+.live-beta-state-row {
+  margin-bottom: 0;
+}
