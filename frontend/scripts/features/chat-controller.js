@@ -9974,6 +9974,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
         let structuredResponse = null;
         let streamResult = null;
         let streamBubble = null;
+        let streamPhase = "stream";
         try {
           debugLog("[UI] Attempting streaming");
           streamBubble = (targetChatId === currentChatId && API.canStreamResponses?.() !== false)
@@ -10186,6 +10187,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
                 structuredResponse = response;
               },
             }, ac.signal);
+            streamPhase = "post_stream";
             await ensureUserPersistenceSettled();
             if (fileArtifactResponse) {
               const fileMeta = normalizeGeneratedFileMeta(fileArtifactResponse.file, { chatId: targetChatId });
@@ -10232,7 +10234,56 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
               responseSync = structuredResponse.sync || null;
               if (structuredResponse?.image_input) imageInputResult = structuredResponse.image_input;
               assistantPersisted = true;
+            } else if (streamResult?.cancelled) {
+              const partial = streamBubble?.getFullText?.() || "";
+              if (partial) {
+                await streamBubble.finish({ interruptionNotice: "Stopped. Partial answer saved." });
+                fullReply = partial;
+                await streamDraft.markIncomplete(fullReply, "stopped", {
+                  ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
+                  ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+                });
+                finalAssistantMeta = {
+                  responseStatus: "stopped",
+                  ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+                };
+                appendResponseRecoveryRow(
+                  chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .message-content`),
+                  { responseStatus: "stopped", requestId },
+                );
+                assistantPersisted = true;
+              } else {
+                chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"]`)?.remove();
+              }
+              usedStreaming = true;
+            } else if (streamResult?.interrupted) {
+              const streamErrorMessage = getSafeErrorMessage(streamResult?.error);
+              debugWarn("[UI] Stream reported interrupted:", streamErrorMessage);
+              const partial = streamBubble?.getFullText?.() || "";
+              const orphan = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .typing-active`);
+              if (partial) {
+                await streamBubble.finish({ interruptionNotice: "Streaming interrupted." });
+                fullReply = partial;
+                const failedStatus = (streamResult?.error?.code === "generation_unconfirmed") ? "unconfirmed" : "interrupted";
+                await streamDraft.markIncomplete(fullReply, failedStatus, {
+                  ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
+                  ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+                });
+                finalAssistantMeta = {
+                  responseStatus: failedStatus,
+                  ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+                };
+                appendResponseRecoveryRow(
+                  chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .message-content`),
+                  { responseStatus: failedStatus, requestId },
+                );
+                assistantPersisted = true;
+                usedStreaming = true;
+              } else if (orphan) {
+                orphan.closest(".message")?.remove();
+              }
             } else {
+              // Confirmed complete!
               await streamBubble.finish();
               if (webSurfV2Completion) {
                 fullReply = webSurfV2Completion.answer || streamBubble.getFullText();
@@ -10290,6 +10341,10 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
             }
           }
         } catch (streamErr) {
+          if (streamErr?.__sentiqApplicationCallback) {
+            debugWarn("[UI] Application callback error during streaming:", getSafeErrorMessage(streamErr));
+            throw streamErr;
+          }
           if (options.isRetry && options.targetAssistantBubble) {
             debugWarn("[UI] Retry stream error:", getSafeErrorMessage(streamErr));
             chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"]`)?.remove();
@@ -10327,19 +10382,33 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
             const partial = streamBubble?.getFullText?.() || "";
             const orphan = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .typing-active`);
             if (partial) {
-              await streamBubble.finish({ interruptionNotice: "Streaming interrupted." });
-              fullReply = partial;
-              await streamDraft.finalize(fullReply, {
-                ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
-                responseStatus: "complete",
-                ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
-              });
-              finalAssistantMeta = {
-                responseStatus: "complete",
-                ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
-              };
-              assistantPersisted = true;
-              usedStreaming = true;
+              if (streamPhase === "post_stream") {
+                debugWarn("[UI] Post-stream persistence error after generation complete:", streamErrorMessage);
+                try {
+                  await streamBubble.finish();
+                } catch {}
+                fullReply = partial;
+                assistantPersisted = true;
+                usedStreaming = true;
+              } else {
+                await streamBubble.finish({ interruptionNotice: "Streaming interrupted." });
+                fullReply = partial;
+                const failedStatus = (streamErr?.code === "generation_unconfirmed") ? "unconfirmed" : "interrupted";
+                await streamDraft.markIncomplete(fullReply, failedStatus, {
+                  ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
+                  ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+                });
+                finalAssistantMeta = {
+                  responseStatus: failedStatus,
+                  ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
+                };
+                appendResponseRecoveryRow(
+                  chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .message-content`),
+                  { responseStatus: failedStatus, requestId },
+                );
+                assistantPersisted = true;
+                usedStreaming = true;
+              }
             } else if (orphan) {
               orphan.closest(".message")?.remove();
             }
@@ -10359,7 +10428,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
 
       await ensureUserPersistenceSettled();
       if (isRequestStale(targetChatId, requestId) && !ac.signal?.aborted) {
-        if (fullReply) {
+        if (fullReply && !assistantPersisted) {
           if (usedStreaming) await streamDraft.finalize(fullReply, responseRenderMode ? { renderMode: responseRenderMode } : {});
           else await persistChatMessage(targetChatId, "assistant", fullReply, null, {
             id: `assistant-${requestId}`,

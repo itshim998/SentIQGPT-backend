@@ -88,6 +88,20 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     return error;
   }
 
+  function safeInvokeCallback(fn, ...args) {
+    if (typeof fn !== "function") return;
+    try {
+      return fn(...args);
+    } catch (err) {
+      if (err && typeof err === "object") {
+        try {
+          err.__sentiqApplicationCallback = true;
+        } catch {}
+      }
+      throw err;
+    }
+  }
+
   function wait(ms, signal) {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) {
@@ -320,7 +334,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     entry.responseBuffer = partialText;
     if (delta) {
       entry.tokensReceived = true;
-      entry.callbacks.onToken?.(delta);
+      safeInvokeCallback(entry.callbacks.onToken, delta);
     }
   }
 
@@ -367,7 +381,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           entry.cancelled = true;
           if (!entry.cancelledDispatched) {
             entry.cancelledDispatched = true;
-            entry.callbacks.onCancelled?.();
+            safeInvokeCallback(entry.callbacks.onCancelled);
           }
         }
         if (event.status === "failed") {
@@ -376,7 +390,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           entry.error = error;
           if (!entry.errorDispatched) {
             entry.errorDispatched = true;
-            entry.callbacks.onError?.(error, {
+            safeInvokeCallback(entry.callbacks.onError, error, {
               tokensReceived: entry.tokensReceived,
               interrupted: entry.interrupted,
             });
@@ -385,7 +399,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         if (event.status === "completed") {
           if (!entry.doneDispatched) {
             entry.doneDispatched = true;
-            entry.callbacks.onDone?.();
+            safeInvokeCallback(entry.callbacks.onDone);
           }
         }
         if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
@@ -419,63 +433,66 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         entry.deliveredText += text;
         entry.responseBuffer = entry.deliveredText;
         entry.tokensReceived = true;
-        entry.callbacks.onToken?.(text);
+        safeInvokeCallback(entry.callbacks.onToken, text);
         break;
       }
       case "file_token":
         entry.status = "running";
         if (event.text) {
           entry.tokensReceived = true;
-          entry.callbacks.onFileToken?.(event.text, event);
+          safeInvokeCallback(entry.callbacks.onFileToken, event.text, event);
         }
         break;
       case "file_artifact":
         entry.status = "running";
         entry.tokensReceived = true;
-        entry.callbacks.onFileArtifact?.(event);
+        safeInvokeCallback(entry.callbacks.onFileArtifact, event);
         break;
       case "thinking":
         entry.status = "running";
-        if (event.text) entry.callbacks.onThinking?.(event.text);
+        if (event.text) safeInvokeCallback(entry.callbacks.onThinking, event.text);
         break;
       case "structured_response":
         entry.status = "completed";
         if (event.response) {
           entry.structuredReceived = true;
-          entry.callbacks.onStructuredResponse?.(event.response);
+          safeInvokeCallback(entry.callbacks.onStructuredResponse, event.response);
         }
         entry.terminal = true;
         entry.completedAt = new Date().toISOString();
         activeGenerations.delete(entry.generationId);
-        entry.callbacks.onDone?.();
+        if (!entry.doneDispatched) {
+          entry.doneDispatched = true;
+          safeInvokeCallback(entry.callbacks.onDone);
+        }
         if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
         pruneTerminalEntryCallbacks(entry);
         break;
       case "route":
         entry.status = "running";
-        if (event.route) entry.callbacks.onRoute?.(event.route, event);
+        if (event.route) safeInvokeCallback(entry.callbacks.onRoute, event.route, event);
         break;
       case "tool_selected":
       case "tool_started":
       case "tool_result":
       case "tool_error":
         entry.status = "running";
-        if (event.tool) entry.callbacks.onToolLifecycle?.(event);
+        if (event.tool) safeInvokeCallback(entry.callbacks.onToolLifecycle, event);
         break;
       case "websurf_sources":
         entry.status = "running";
-        if (event.web_search) entry.callbacks.onWebSurfSources?.(event.web_search, event);
+        if (event.web_search) safeInvokeCallback(entry.callbacks.onWebSurfSources, event.web_search, event);
         break;
       case "websurf_complete":
         entry.status = "running";
-        if (event.web_search) entry.callbacks.onWebSurfComplete?.(event, event.web_search);
+        if (event.web_search) safeInvokeCallback(entry.callbacks.onWebSurfComplete, event, event.web_search);
         break;
       case "memory":
         entry.status = "running";
-        if (event.memory) entry.callbacks.onMemory?.(event.memory);
+        if (event.memory) safeInvokeCallback(entry.callbacks.onMemory, event.memory);
         break;
       case "sync":
-        if (event.sync) entry.callbacks.onSync?.(event.sync, event.degraded || null);
+        if (event.sync) safeInvokeCallback(entry.callbacks.onSync, event.sync, event.degraded || null);
         break;
       case "error": {
         entry.status = "failed";
@@ -484,10 +501,13 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         error.details = event;
         entry.error = error;
         entry.interrupted = entry.tokensReceived;
-        entry.callbacks.onError?.(error, {
-          tokensReceived: entry.tokensReceived,
-          interrupted: entry.interrupted,
-        });
+        if (!entry.errorDispatched) {
+          entry.errorDispatched = true;
+          safeInvokeCallback(entry.callbacks.onError, error, {
+            tokensReceived: entry.tokensReceived,
+            interrupted: entry.interrupted,
+          });
+        }
         dispatchGenerationEvent(entry, event);
         pruneTerminalEntryCallbacks(entry);
         return true;
@@ -498,7 +518,10 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         entry.terminal = true;
         entry.completedAt = new Date().toISOString();
         activeGenerations.delete(entry.generationId);
-        entry.callbacks.onDone?.();
+        if (!entry.doneDispatched) {
+          entry.doneDispatched = true;
+          safeInvokeCallback(entry.callbacks.onDone);
+        }
         if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
         pruneTerminalEntryCallbacks(entry);
         break;
@@ -511,7 +534,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         activeGenerations.delete(entry.generationId);
         if (!entry.cancelledDispatched) {
           entry.cancelledDispatched = true;
-          entry.callbacks.onCancelled?.();
+          safeInvokeCallback(entry.callbacks.onCancelled);
         }
         if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
         pruneTerminalEntryCallbacks(entry);
@@ -527,10 +550,13 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         error.details = event;
         entry.error = error;
         entry.interrupted = entry.tokensReceived;
-        entry.callbacks.onError?.(error, {
-          tokensReceived: entry.tokensReceived,
-          interrupted: entry.interrupted,
-        });
+        if (!entry.errorDispatched) {
+          entry.errorDispatched = true;
+          safeInvokeCallback(entry.callbacks.onError, error, {
+            tokensReceived: entry.tokensReceived,
+            interrupted: entry.interrupted,
+          });
+        }
         if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
         pruneTerminalEntryCallbacks(entry);
         break;
@@ -543,95 +569,121 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     return entry.terminal;
   }
 
-  async function reconcileEntryDurableStatus(entry) {
+  async function reconcileEntryDurableStatus(entry, options = {}) {
     if (!entry) return;
-    try {
-      const headers = await buildAuthHeaders();
-      const url = `${SENTIQ_API_BASE}/api/chat/generations/${encodeURIComponent(entry.generationId)}`;
-      const response = await fetch(url, {
-        method: "GET",
-        headers,
-        cache: "no-store",
-      });
-      if (entry.isGuest && response && response.status === 404) {
-        const body = await response.json().catch(() => ({}));
-        if (body?.code === "generation_not_found" || !body?.code) {
-          const err = new Error(body?.error || "Generation record not found.");
-          err.code = "generation_not_found";
-          entry.status = "failed";
-          entry.terminal = true;
-          entry.error = err;
-          entry.interrupted = Boolean(entry.tokensReceived);
-          activeGenerations.delete(entry.generationId);
-          if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
-          if (!entry.errorDispatched) {
-            entry.errorDispatched = true;
-            entry.callbacks.onError?.(err, {
-              tokensReceived: entry.tokensReceived,
-              interrupted: entry.interrupted,
-            });
-          }
-          pruneTerminalEntryCallbacks(entry);
-          return;
-        }
-      }
-      if (response && response.ok) {
-        const data = await response.json().catch(() => ({}));
-        const status = String(data?.status || "");
-        if (status === "completed") {
-          entry.status = "completed";
-          entry.terminal = true;
-          entry.completedAt = data?.completed_at || new Date().toISOString();
-          if (!entry.doneDispatched) {
-            entry.doneDispatched = true;
-            entry.callbacks.onDone?.();
-          }
-          return;
-        }
-        if (status === "failed") {
-          entry.status = "failed";
-          entry.terminal = true;
-          entry.completedAt = data?.failed_at || new Date().toISOString();
-          const err = new Error(String(data?.error_code || "generation_failed"));
-          err.code = data?.error_code || "generation_failed";
-          entry.error = err;
-          entry.interrupted = Boolean(entry.tokensReceived);
-          if (!entry.errorDispatched) {
-            entry.errorDispatched = true;
-            entry.callbacks.onError?.(err, {
-              tokensReceived: entry.tokensReceived,
-              interrupted: entry.interrupted,
-            });
-          }
-          return;
-        }
-        if (status === "cancelled") {
-          entry.status = "cancelled";
-          entry.terminal = true;
-          entry.cancelled = true;
-          entry.completedAt = data?.cancelled_at || new Date().toISOString();
-          if (!entry.cancelledDispatched) {
-            entry.cancelledDispatched = true;
-            entry.callbacks.onCancelled?.();
-          }
-          return;
-        }
-      }
-    } catch {}
+    const maxRetries = typeof options.maxRetries === "number" ? options.maxRetries : 3;
+    const retryDelayMs = typeof options.retryDelayMs === "number" ? options.retryDelayMs : 200;
+    const signal = options.signal || null;
+    const markUnconfirmedOnFailure = options.markUnconfirmedOnFailure !== false;
 
-    // Never report success from [DONE] alone without authoritative completion established
-    entry.status = "failed";
-    entry.terminal = true;
-    const err = new Error("Generation stream concluded without authoritative completion.");
-    err.code = "generation_unconfirmed";
-    entry.error = err;
-    entry.interrupted = Boolean(entry.tokensReceived);
-    if (!entry.errorDispatched) {
-      entry.errorDispatched = true;
-      entry.callbacks.onError?.(err, {
-        tokensReceived: entry.tokensReceived,
-        interrupted: entry.interrupted,
-      });
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (signal?.aborted) return;
+      try {
+        const headers = await buildAuthHeaders();
+        const url = `${SENTIQ_API_BASE}/api/chat/generations/${encodeURIComponent(entry.generationId)}`;
+        const response = await fetch(url, {
+          method: "GET",
+          headers,
+          signal,
+          cache: "no-store",
+        });
+        if (entry.isGuest && response && response.status === 404) {
+          const body = await response.json().catch(() => ({}));
+          if (body?.code === "generation_not_found" || !body?.code) {
+            const err = new Error(body?.error || "Generation record not found.");
+            err.code = "generation_not_found";
+            entry.status = "failed";
+            entry.terminal = true;
+            entry.error = err;
+            entry.interrupted = Boolean(entry.tokensReceived);
+            activeGenerations.delete(entry.generationId);
+            if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+            if (!entry.errorDispatched) {
+              entry.errorDispatched = true;
+              safeInvokeCallback(entry.callbacks.onError, err, {
+                tokensReceived: entry.tokensReceived,
+                interrupted: entry.interrupted,
+              });
+            }
+            pruneTerminalEntryCallbacks(entry);
+            return;
+          }
+        }
+        if (response && response.ok) {
+          const data = await response.json().catch(() => ({}));
+          const status = String(data?.status || "");
+          if (status === "completed") {
+            entry.status = "completed";
+            entry.terminal = true;
+            entry.completedAt = data?.completed_at || new Date().toISOString();
+            if (!entry.doneDispatched) {
+              entry.doneDispatched = true;
+              safeInvokeCallback(entry.callbacks.onDone);
+            }
+            return;
+          }
+          if (status === "failed") {
+            entry.status = "failed";
+            entry.terminal = true;
+            entry.completedAt = data?.failed_at || new Date().toISOString();
+            const err = new Error(String(data?.error_code || "generation_failed"));
+            err.code = data?.error_code || "generation_failed";
+            entry.error = err;
+            entry.interrupted = Boolean(entry.tokensReceived);
+            if (!entry.errorDispatched) {
+              entry.errorDispatched = true;
+              safeInvokeCallback(entry.callbacks.onError, err, {
+                tokensReceived: entry.tokensReceived,
+                interrupted: entry.interrupted,
+              });
+            }
+            return;
+          }
+          if (status === "cancelled") {
+            entry.status = "cancelled";
+            entry.terminal = true;
+            entry.cancelled = true;
+            entry.completedAt = data?.cancelled_at || new Date().toISOString();
+            if (!entry.cancelledDispatched) {
+              entry.cancelledDispatched = true;
+              safeInvokeCallback(entry.callbacks.onCancelled);
+            }
+            return;
+          }
+          if (attempt < maxRetries) {
+            await wait(retryDelayMs, signal);
+            continue;
+          }
+        } else if (response && response.status === 404 && !entry.isGuest) {
+          break;
+        } else if (attempt < maxRetries && response && response.status >= 500) {
+          await wait(retryDelayMs, signal);
+          continue;
+        }
+      } catch (fetchErr) {
+        if (fetchErr?.name === "AbortError" || signal?.aborted) return;
+        if (attempt < maxRetries) {
+          await wait(retryDelayMs, signal);
+          continue;
+        }
+      }
+    }
+
+    if (markUnconfirmedOnFailure) {
+      // Never report success from [DONE] alone without authoritative completion established
+      entry.status = "failed";
+      entry.terminal = true;
+      const err = new Error("Generation stream concluded without authoritative completion.");
+      err.code = "generation_unconfirmed";
+      entry.error = err;
+      entry.interrupted = Boolean(entry.tokensReceived);
+      if (!entry.errorDispatched) {
+        entry.errorDispatched = true;
+        safeInvokeCallback(entry.callbacks.onError, err, {
+          tokensReceived: entry.tokensReceived,
+          interrupted: entry.interrupted,
+        });
+      }
     }
   }
 
@@ -672,7 +724,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
               entry.completedAt = entry.completedAt || new Date().toISOString();
               if (!entry.doneDispatched) {
                 entry.doneDispatched = true;
-                entry.callbacks.onDone?.();
+                safeInvokeCallback(entry.callbacks.onDone);
               }
             } else if (entry.status === "failed" || entry.status === "cancelled") {
               // Terminal status was already established authoritatively
@@ -748,10 +800,13 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           entry.interrupted = Boolean(entry.tokensReceived);
           activeGenerations.delete(entry.generationId);
           if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
-          entry.callbacks.onError?.(err, {
-            tokensReceived: entry.tokensReceived,
-            interrupted: entry.interrupted,
-          });
+          if (!entry.errorDispatched) {
+            entry.errorDispatched = true;
+            safeInvokeCallback(entry.callbacks.onError, err, {
+              tokensReceived: entry.tokensReceived,
+              interrupted: entry.interrupted,
+            });
+          }
           pruneTerminalEntryCallbacks(entry);
           return { failed: true, error: err };
         }
@@ -766,7 +821,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
             entry.tokensReceived = true;
             totalAttempts = 0;
             entry.totalPollAttempts = 0;
-            entry.callbacks.onToken?.(newText);
+            safeInvokeCallback(entry.callbacks.onToken, newText);
           }
           if (["completed", "failed", "cancelled"].includes(status)) {
             entry.status = status;
@@ -775,21 +830,27 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
             activeGenerations.delete(entry.generationId);
             if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
             if (status === "completed") {
-              entry.callbacks.onDone?.();
+              if (!entry.doneDispatched) {
+                entry.doneDispatched = true;
+                safeInvokeCallback(entry.callbacks.onDone);
+              }
             } else if (status === "cancelled") {
               entry.cancelled = true;
               if (!entry.cancelledDispatched) {
                 entry.cancelledDispatched = true;
-                entry.callbacks.onCancelled?.();
+                safeInvokeCallback(entry.callbacks.onCancelled);
               }
             } else {
               const err = new Error(String(data?.error_code || "generation_failed"));
               err.code = data?.error_code || "generation_failed";
               entry.error = err;
-              entry.callbacks.onError?.(err, {
-                tokensReceived: entry.tokensReceived,
-                interrupted: entry.interrupted,
-              });
+              if (!entry.errorDispatched) {
+                entry.errorDispatched = true;
+                safeInvokeCallback(entry.callbacks.onError, err, {
+                  tokensReceived: entry.tokensReceived,
+                  interrupted: entry.interrupted,
+                });
+              }
             }
             pruneTerminalEntryCallbacks(entry);
             return { completed: status === "completed", status };
@@ -808,10 +869,13 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         entry.interrupted = Boolean(entry.tokensReceived);
         activeGenerations.delete(entry.generationId);
         if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
-        entry.callbacks.onError?.(timeoutError, {
-          tokensReceived: entry.tokensReceived,
-          interrupted: entry.interrupted,
-        });
+        if (!entry.errorDispatched) {
+          entry.errorDispatched = true;
+          safeInvokeCallback(entry.callbacks.onError, timeoutError, {
+            tokensReceived: entry.tokensReceived,
+            interrupted: entry.interrupted,
+          });
+        }
         pruneTerminalEntryCallbacks(entry);
         return { failed: true, error: timeoutError };
       }
@@ -831,7 +895,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
       if (!entry.cancelledDispatched) {
         entry.cancelledDispatched = true;
-        entry.callbacks.onCancelled?.();
+        safeInvokeCallback(entry.callbacks.onCancelled);
       }
       pruneTerminalEntryCallbacks(entry);
       return { cancelled: true };
@@ -870,10 +934,13 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           entry.interrupted = Boolean(entry.tokensReceived);
           activeGenerations.delete(entry.generationId);
           if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
-          entry.callbacks.onError?.(notFoundError, {
-            tokensReceived: entry.tokensReceived,
-            interrupted: entry.interrupted,
-          });
+          if (!entry.errorDispatched) {
+            entry.errorDispatched = true;
+            safeInvokeCallback(entry.callbacks.onError, notFoundError, {
+              tokensReceived: entry.tokensReceived,
+              interrupted: entry.interrupted,
+            });
+          }
           pruneTerminalEntryCallbacks(entry);
           return { failed: true, error: notFoundError };
         }
@@ -901,10 +968,13 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       entry.interrupted = Boolean(entry.tokensReceived);
       activeGenerations.delete(entry.generationId);
       if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
-      entry.callbacks.onError?.(interruptedError, {
-        tokensReceived: entry.tokensReceived,
-        interrupted: entry.interrupted,
-      });
+      if (!entry.errorDispatched) {
+        entry.errorDispatched = true;
+        safeInvokeCallback(entry.callbacks.onError, interruptedError, {
+          tokensReceived: entry.tokensReceived,
+          interrupted: entry.interrupted,
+        });
+      }
       pruneTerminalEntryCallbacks(entry);
       return { failed: true, error: interruptedError };
     }
@@ -1024,7 +1094,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         const error = new Error(errorBody?.error || `Generation request failed: HTTP ${response.status}`);
         error.status = response.status;
         error.code = errorBody?.code || "generation_request_failed";
-        callbacks.onError?.(error, { tokensReceived: false, interrupted: false });
+        safeInvokeCallback(callbacks.onError, error, { tokensReceived: false, interrupted: false });
         throw error;
       }
 
@@ -1088,7 +1158,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         activeGenerations.set(genId, entry);
         registerGeneration(entry);
         foregroundGenerationId = genId;
-        callbacks.onGenerationStarted?.(genId, {
+        safeInvokeCallback(callbacks.onGenerationStarted, genId, {
           generation_id: genId,
           conversation_id: convId || canonicalConversationId,
           client_request_id: clientRequestId || headerReqId || null,
@@ -1133,7 +1203,7 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
                 entry.completedAt = entry.completedAt || new Date().toISOString();
                 if (!entry.doneDispatched) {
                   entry.doneDispatched = true;
-                  entry.callbacks.onDone?.();
+                  safeInvokeCallback(entry.callbacks.onDone);
                 }
               } else if (entry.status === "failed" || entry.status === "cancelled") {
                 // Terminal status was already established authoritatively
@@ -1154,9 +1224,20 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
         return false;
       };
 
+      let transportError = null;
+      let appCallbackError = null;
+
       try {
         while (true) {
-          const { done, value } = await reader.read();
+          let readResult;
+          try {
+            readResult = await reader.read();
+          } catch (readErr) {
+            transportError = readErr;
+            break;
+          }
+
+          const { done, value } = readResult;
           if (done) {
             if (buffer) {
               const lines = buffer.split("\n");
@@ -1170,14 +1251,44 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           buffer = lines.pop() || "";
           if ((await processLines(lines)) || (entry && entry.terminal)) break;
         }
+      } catch (processingErr) {
+        if (processingErr?.__sentiqApplicationCallback) {
+          appCallbackError = processingErr;
+        } else {
+          transportError = processingErr;
+        }
       } finally {
         try { await reader.cancel(); } catch {}
         try { reader.releaseLock(); } catch {}
-        if (entry) entry.subscription.active = false;
+        if (entry?.subscription) entry.subscription.active = false;
       }
 
-      if (entry && !entry.terminal && !entry.cancelled && !entry.cancelRequested && !signal?.aborted) {
-        await subscribeUntilTerminal(entry, signal);
+      if (appCallbackError) {
+        throw appCallbackError;
+      }
+
+      if (transportError) {
+        const safeErrMsg = transportError?.message || String(transportError);
+        console.warn(`[GenerationLifecycle] Stream transport error during read: generation=${entry?.generationId || generationId || "none"} requestId=${entry?.requestId || clientRequestId || "none"} tokensReceived=${Boolean(entry?.tokensReceived)} stage=reading error=${safeErrMsg}`);
+      }
+
+      if (signal?.aborted || transportError?.name === "AbortError") {
+        if (entry) {
+          entry.cancelled = true;
+          entry.status = "cancelled";
+          entry.terminal = true;
+          activeGenerations.delete(entry.generationId);
+          if (foregroundGenerationId === entry.generationId) foregroundGenerationId = null;
+          if (!entry.cancelledDispatched) {
+            entry.cancelledDispatched = true;
+            safeInvokeCallback(entry.callbacks.onCancelled);
+          }
+          pruneTerminalEntryCallbacks(entry);
+        }
+        if (transportError?.name === "AbortError") throw transportError;
+        const abortErr = new Error("The operation was aborted.");
+        abortErr.name = "AbortError";
+        throw abortErr;
       }
 
       if (entry?.cancelRequested || entry?.cancelled) {
@@ -1188,7 +1299,62 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
           cancelled: true,
           detached: false,
           error: null,
+          status: "cancelled",
         };
+      }
+
+      if (entry && !entry.terminal && !entry.cancelled && !entry.cancelRequested && !signal?.aborted) {
+        // Fast durable status check first (if generation completed on backend before SSE disconnected)
+        await reconcileEntryDurableStatus(entry, {
+          maxRetries: transportError ? 2 : 1,
+          retryDelayMs: 200,
+          signal,
+          markUnconfirmedOnFailure: false,
+        });
+
+        // If not terminal yet, subscribe until terminal via SSE events endpoint
+        if (!entry.terminal && !entry.cancelled && !entry.cancelRequested && !signal?.aborted) {
+          await subscribeUntilTerminal(entry, signal);
+        }
+
+        // If still not terminal after subscription and polling, perform final reconciliation
+        if (!entry.terminal && !entry.cancelled && !entry.cancelRequested && !signal?.aborted) {
+          await reconcileEntryDurableStatus(entry, {
+            maxRetries: 1,
+            retryDelayMs: 150,
+            signal,
+            markUnconfirmedOnFailure: true,
+          });
+        }
+      }
+
+      if (entry?.cancelRequested || entry?.cancelled) {
+        return {
+          structured: Boolean(entry?.structuredReceived),
+          tokensReceived: Boolean(entry?.tokensReceived),
+          interrupted: false,
+          cancelled: true,
+          detached: false,
+          error: null,
+          status: "cancelled",
+        };
+      }
+
+      if (entry?.status === "completed") {
+        return {
+          structured: Boolean(entry?.structuredReceived),
+          tokensReceived: Boolean(entry?.tokensReceived),
+          interrupted: false,
+          cancelled: false,
+          detached: false,
+          error: null,
+          completed: true,
+          status: "completed",
+        };
+      }
+
+      if (!entry && transportError) {
+        throw transportError;
       }
 
       if (entry?.error && !entry?.tokensReceived && !entry?.structuredReceived) {
@@ -1198,10 +1364,11 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
       return {
         structured: Boolean(entry?.structuredReceived),
         tokensReceived: Boolean(entry?.tokensReceived),
-        interrupted: Boolean(entry?.interrupted),
+        interrupted: Boolean(entry?.interrupted || entry?.error || entry?.status === "failed"),
         cancelled: false,
         detached: false,
         error: entry?.error || null,
+        status: entry?.status || (entry?.terminal ? "completed" : "running"),
       };
     } finally {
       pendingGenerationStarts = Math.max(0, pendingGenerationStarts - 1);
@@ -1393,6 +1560,8 @@ import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from "./shared/brand.js";
     reconcileEntryDurableStatus,
     subscribeUntilTerminal,
     subscribeOnce,
+    streamFastGeneration,
+    streamTwoRequestGeneration,
     createGenerationEntry: (options = {}) => {
       const isGuest = resolveIsGuest(options.isGuest, options);
       const entry = {
