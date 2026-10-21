@@ -47,37 +47,35 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
-  padding-top: 8px;
+  gap: 4px;
+  padding-top: 6px;
   margin-top: 2px;
 }
 
-/* Icon-only compact response action buttons */
+/* Icon-only compact response action buttons (borderless, no bubbles) */
 .message-action-btn,
 .message[data-message-actions-version="6.4"] .message-action-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  min-height: 32px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
   padding: 0;
   margin: 0;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.055);
-  color: #d1d7e3;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #c9d1d9;
+  box-shadow: none;
   cursor: pointer;
   opacity: 1;
   transform: none;
   transition:
-    background-color 140ms ease,
-    border-color 140ms ease,
     color 140ms ease,
-    transform 120ms ease,
-    box-shadow 140ms ease;
+    background-color 140ms ease,
+    transform 120ms ease;
 }
 
 .message-action-btn svg,
@@ -94,19 +92,19 @@
 
 .message[data-message-actions-version="6.4"] .message-action-btn:hover,
 .message-action-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
   color: #ffffff;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.32);
+  box-shadow: none;
   transform: none;
 }
 
 .message[data-message-actions-version="6.4"] .message-action-btn:active,
 .message-action-btn:active {
-  background: rgba(255, 255, 255, 0.16);
-  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.12);
+  border: none;
   color: #ffffff;
-  transform: scale(0.95);
+  transform: scale(0.92);
 }
 
 .message[data-message-actions-version="6.4"] .message-action-btn:focus-visible,
@@ -115,84 +113,87 @@
 .message[data-message-actions-version="6.4"] [data-message-action-zone="context"] :is(button, a):focus-visible {
   outline: 2px solid rgba(190, 171, 239, 0.85);
   outline-offset: 2px;
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(190, 171, 239, 0.5);
+  background: rgba(255, 255, 255, 0.06);
+  border: none;
   color: #ffffff;
 }
 
 .message-action-btn:disabled,
 .message-action-btn.is-disabled {
-  opacity: 0.38;
+  opacity: 0.35;
   cursor: not-allowed;
   pointer-events: none;
-  background: rgba(255, 255, 255, 0.02);
-  border-color: rgba(255, 255, 255, 0.06);
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .message-action-btn[aria-pressed="true"],
 .message-action-btn.is-active {
   opacity: 1;
   color: #beb5ef;
-  background: rgba(190, 171, 239, 0.16);
-  border-color: rgba(190, 171, 239, 0.42);
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .message-action-btn.message-feedback-good[aria-pressed="true"],
 .message-action-btn.message-feedback-good.is-active {
   color: #34d399;
-  background: rgba(52, 211, 153, 0.16);
-  border-color: rgba(52, 211, 153, 0.48);
-  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.2);
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .message-action-btn.message-feedback-good[aria-pressed="true"]:hover,
 .message-action-btn.message-feedback-good.is-active:hover {
-  background: rgba(52, 211, 153, 0.24);
-  border-color: rgba(52, 211, 153, 0.65);
   color: #6ee7b7;
+  background: rgba(52, 211, 153, 0.12);
+  border: none;
 }
 
 .message-action-btn.message-feedback-bad[aria-pressed="true"],
 .message-action-btn.message-feedback-bad.is-active {
   color: #f87171;
-  background: rgba(248, 113, 113, 0.16);
-  border-color: rgba(248, 113, 113, 0.48);
-  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.2);
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .message-action-btn.message-feedback-bad[aria-pressed="true"]:hover,
 .message-action-btn.message-feedback-bad.is-active:hover {
-  background: rgba(248, 113, 113, 0.24);
-  border-color: rgba(248, 113, 113, 0.65);
   color: #fca5a5;
+  background: rgba(248, 113, 113, 0.12);
+  border: none;
 }
 
 .message-action-btn.message-read-aloud-btn.is-speaking,
 .message-action-btn.message-read-aloud-btn[aria-pressed="true"] {
   color: #60a5fa;
-  background: rgba(96, 165, 250, 0.18);
-  border-color: rgba(96, 165, 250, 0.5);
-  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.22);
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .message-action-btn.message-read-aloud-btn.is-speaking:hover,
 .message-action-btn.message-read-aloud-btn[aria-pressed="true"]:hover {
-  background: rgba(96, 165, 250, 0.26);
-  border-color: rgba(96, 165, 250, 0.7);
   color: #93c5fd;
+  background: rgba(96, 165, 250, 0.12);
+  border: none;
 }
 
 .message-action-btn.copied {
   color: #34d399;
-  background: rgba(52, 211, 153, 0.16);
-  border-color: rgba(52, 211, 153, 0.48);
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .message-action-btn.is-loading,
 .message-action-btn.message-retry-btn.is-loading {
   color: #beb5ef;
-  background: rgba(190, 171, 239, 0.16);
-  border-color: rgba(190, 171, 239, 0.45);
+  background: transparent;
+  border: none;
   cursor: wait;
 }
 
@@ -208,7 +209,7 @@
 /* Fine-pointer desktop: reveal without removing controls from keyboard order. */
 @media (hover: hover) and (pointer: fine) and (min-width: 769px) {
   .message[data-message-actions-version="6.4"] > .message-action-bar {
-    opacity: 0.78;
+    opacity: 0.8;
     pointer-events: auto;
     transform: translateY(0);
     transition:
@@ -275,16 +276,19 @@
 
   .message[data-message-actions-version="6.4"] > .message-action-bar {
     flex-wrap: wrap;
-    gap: 7px;
+    gap: 6px;
   }
 
   .message[data-message-actions-version="6.4"] .message-action-btn {
-    width: 38px;
-    min-width: 38px;
-    height: 38px;
-    min-height: 38px;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
     padding: 0;
     opacity: 1;
+    background: transparent;
+    border: none;
+    box-shadow: none;
   }
 
   .message[data-message-actions-version="6.4"] [data-message-action-zone="context"] {
@@ -322,15 +326,18 @@
   }
 
   .message[data-message-actions-version="6.4"] > .message-action-bar {
-    gap: 6px;
+    gap: 4px;
   }
 
   .message[data-message-actions-version="6.4"] .message-action-btn {
-    width: 36px;
-    min-width: 36px;
-    height: 36px;
-    min-height: 36px;
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
     padding: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
   }
 }
 
