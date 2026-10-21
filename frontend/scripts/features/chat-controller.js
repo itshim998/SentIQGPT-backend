@@ -41,6 +41,8 @@ import {
   isAuthenticatedFreeAccount,
   resolveActiveRestrictedTool,
 } from "./free-tool-execution-policy.mjs";
+import { isConfidentEnglish } from "./chat/language-detector.mjs";
+import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat/speech-synthesizer.mjs";
 
 // ================================================================
 // 3. Chat UI Controller
@@ -891,6 +893,28 @@ import {
     if (existingIndex >= 0) chat.messages[existingIndex] = nextMessage;
     else chat.messages.push(nextMessage);
     chat.updated = new Date().toISOString();
+    return chat;
+  }
+
+  async function replaceLocalChatMessage(chatId, messageId, messageIndex, updatedMessage) {
+    if (isAuthenticatedSession()) {
+      return Storage.updateMessageInChat(chatId, messageId, updatedMessage);
+    }
+    const chat = ensureGuestChatState(chatId);
+    if (!chat || !Array.isArray(chat.messages)) return chat;
+    let idx = messageIndex;
+    if (idx < 0 || !chat.messages[idx] || chat.messages[idx].id !== messageId) {
+      idx = chat.messages.findIndex((m) => m.id === messageId);
+    }
+    if (idx >= 0) {
+      chat.messages[idx] = {
+        ...chat.messages[idx],
+        ...updatedMessage,
+        id: messageId,
+        timestamp: new Date().toISOString(),
+      };
+      chat.updated = new Date().toISOString();
+    }
     return chat;
   }
 
@@ -4639,11 +4663,22 @@ import {
     }
 
     if (renderInView) {
-      const { contentDiv } = appendMessageBubble("assistant", "");
+      const { contentDiv } = appendMessageBubble("assistant", "", {
+        type: "text",
+        plainTextEligible: true,
+        executionMode: renderOptions?.executionMode,
+        clientRequestId: renderOptions?.clientRequestId,
+      }, effectiveRenderOptions, {
+        insertAfter: renderOptions?.insertAfter,
+      });
       await typeMessage(assistantText, contentDiv, effectiveRenderOptions, assistantThinking);
       appendResponseTrustRow(contentDiv, responseTrust);
     }
-    await persistChatMessage(targetChatId, "assistant", assistantText, null, assistantPersistOptions);
+    await persistChatMessage(targetChatId, "assistant", assistantText, {
+      type: "text",
+      plainTextEligible: true,
+      executionMode: renderOptions?.executionMode,
+    }, assistantPersistOptions);
     return assistantText;
   }
 
@@ -5847,6 +5882,7 @@ import {
     const prevChatId = currentChatId;
     const switchedChats = Boolean(prevChatId && prevChatId !== chatId);
     if (switchedChats) {
+      stopCurrentSpeech();
       if (composerAttachments.some((attachment) => attachment.chatId !== chatId)) {
         clearPendingFiles();
       }
@@ -6062,7 +6098,11 @@ import {
         const fragment = document.createDocumentFragment();
         for (let i = 0; i < startIdx; i++) {
           const msg = visibleMessages[i];
-          const { bubble } = appendMessageBubble(msg.role, msg.content, msg.meta) || {};
+          const { bubble } = appendMessageBubble(msg.role, msg.content, msg.meta, {}, {
+            messageId: msg.id,
+            clientRequestId: msg.clientRequestId || msg.meta?.clientRequestId,
+            executionMode: msg.meta?.executionMode,
+          }) || {};
           if (bubble) { bubble.classList.add("no-animate", "offscreen"); fragment.appendChild(bubble); }
         }
         chatMessages.insertBefore(fragment, chatMessages.firstChild);
@@ -6071,7 +6111,11 @@ import {
     }
     for (let i = startIdx; i < total; i++) {
       const msg = visibleMessages[i];
-      const result = appendMessageBubble(msg.role, msg.content, msg.meta);
+      const result = appendMessageBubble(msg.role, msg.content, msg.meta, {}, {
+        messageId: msg.id,
+        clientRequestId: msg.clientRequestId || msg.meta?.clientRequestId,
+        executionMode: msg.meta?.executionMode,
+      });
       // Skip animation for all but the last 2 messages loaded from history
       if (result?.bubble && i < total - 2) result.bubble.classList.add("no-animate");
     }
@@ -6622,8 +6666,31 @@ import {
     bubble.appendChild(contentDiv);
     let actionBar = null;
     if (role === "assistant") {
+      const isSpecialized = Boolean(meta?.type && [
+        "image", "deep-research", "generated-file", "chart", "websurf_v2", "web_search",
+        "file-upload", "image-upload", "message-attachments", "error"
+      ].includes(meta.type)) || Boolean(meta?.imageUrl || meta?.chart || meta?.file || meta?.sources || meta?.web_search || ["interrupted", "stopped"].includes(meta?.responseStatus));
+
+      const isPlainTextEligible = !isSpecialized && Boolean(
+        meta?.plainTextEligible ||
+        meta?.type === "text" ||
+        (!meta?.type && !contentDiv.querySelector(".message-error-wrap, .deep-research-card, .image-generation-card, .generated-file-panel, .message-chart-container"))
+      );
+
+      bubble.dataset.plainTextEligible = isPlainTextEligible ? "true" : "false";
+      if (ephemeral?.clientRequestId || meta?.clientRequestId || meta?.requestId) {
+        bubble.dataset.requestId = ephemeral?.clientRequestId || meta?.clientRequestId || meta?.requestId || "";
+      }
+      if (ephemeral?.executionMode || meta?.executionMode) {
+        bubble.dataset.executionMode = ephemeral?.executionMode || meta?.executionMode || "";
+      }
+      if (ephemeral?.messageId || meta?.id) {
+        bubble.dataset.messageId = ephemeral?.messageId || meta?.id || "";
+      }
+
       if (meta?.type === "image" && meta.imageUrl) {
         actionBar = attachAssistantActionBar(bubble, "", {
+          isPlainTextEligible: false,
           isEnabled: () => Boolean(meta.imageUrl),
           copyHandler: async () => {
             const result = await copyImageToClipboard(meta.imageUrl, { allowUrlFallback: true });
@@ -6633,10 +6700,17 @@ import {
           },
         });
       } else if (meta?.type !== "generated-file") {
-        actionBar = attachAssistantActionBar(bubble, content || "");
+        actionBar = attachAssistantActionBar(bubble, content || "", {
+          isPlainTextEligible,
+          executionMode: bubble.dataset.executionMode,
+        });
       }
     }
-    chatMessages.appendChild(bubble);
+    if (ephemeral?.insertAfter && ephemeral.insertAfter.parentNode) {
+      ephemeral.insertAfter.after(bubble);
+    } else {
+      chatMessages.appendChild(bubble);
+    }
     chatMessages.scrollTo({ top: chatMessages.scrollHeight, behavior: 'smooth' });
     if (animateReveal) {
       requestAnimationFrame(() => contentDiv.classList.add("is-visible"));
@@ -6666,7 +6740,10 @@ import {
         contentDiv.innerHTML = fullHtml;
         wireThinkingPanels(contentDiv);
         wireCodeCopyButtons(contentDiv);
-        if (bubble) setAssistantBubbleCopyText(bubble, text);
+        if (bubble) {
+          setAssistantBubbleCopyText(bubble, text);
+          bubble._assistantActionBar?.markComplete?.();
+        }
         revealContent();
         scrollToBottom();
         return resolve();
@@ -6677,7 +6754,10 @@ import {
         contentDiv.innerHTML = fullHtml;
         wireThinkingPanels(contentDiv);
         wireCodeCopyButtons(contentDiv);
-        if (bubble) setAssistantBubbleCopyText(bubble, text);
+        if (bubble) {
+          setAssistantBubbleCopyText(bubble, text);
+          bubble._assistantActionBar?.markComplete?.();
+        }
         revealContent();
         scrollToBottom();
         return resolve();
@@ -6706,7 +6786,10 @@ import {
           contentDiv.innerHTML = fullHtml;
           wireThinkingPanels(contentDiv);
           wireCodeCopyButtons(contentDiv);
-          if (bubble) setAssistantBubbleCopyText(bubble, text);
+          if (bubble) {
+            setAssistantBubbleCopyText(bubble, text);
+            bubble._assistantActionBar?.markComplete?.();
+          }
           revealContent();
           scrollToBottom();
           return resolve();
@@ -7836,22 +7919,66 @@ import {
     const config = options && typeof options === "object" ? options : {};
     const copyHandler = typeof config.copyHandler === "function" ? config.copyHandler : null;
     const copyEnabled = typeof config.isEnabled === "function" ? config.isEnabled : null;
+    const onRetry = typeof config.onRetry === "function" ? config.onRetry : null;
+    let isPlainTextEligible = Boolean(config.isPlainTextEligible);
+    let isStreaming = Boolean(config.isStreaming);
     const baseCopyLabel = typeof config.copyLabel === "string" && config.copyLabel.trim()
       ? config.copyLabel.trim()
       : "Copy";
     let currentText = typeof initialText === "string" ? initialText : "";
     let textSource = null;
     let resetTimer = null;
+    let feedbackState = config.initialFeedback || null;
+    let isRetrying = false;
 
     const actionBar = document.createElement("div");
     actionBar.className = "message-action-bar";
 
+    const readAloudBtn = document.createElement("button");
+    readAloudBtn.className = "message-action-btn message-read-aloud-btn";
+    readAloudBtn.type = "button";
+    readAloudBtn.setAttribute("aria-label", "Read aloud");
+    readAloudBtn.setAttribute("title", "Read aloud");
+    readAloudBtn.setAttribute("aria-pressed", "false");
+    readAloudBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg><span class="message-action-label">Read aloud</span>';
+    readAloudBtn.style.display = "none";
+
+    const goodBtn = document.createElement("button");
+    goodBtn.className = "message-action-btn message-feedback-btn message-feedback-good";
+    goodBtn.type = "button";
+    goodBtn.setAttribute("aria-label", "Good response");
+    goodBtn.setAttribute("title", "Good response");
+    goodBtn.setAttribute("aria-pressed", "false");
+    goodBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg><span class="message-action-label">Good response</span>';
+
+    const badBtn = document.createElement("button");
+    badBtn.className = "message-action-btn message-feedback-btn message-feedback-bad";
+    badBtn.type = "button";
+    badBtn.setAttribute("aria-label", "Bad response");
+    badBtn.setAttribute("title", "Bad response");
+    badBtn.setAttribute("aria-pressed", "false");
+    badBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"></path></svg><span class="message-action-label">Bad response</span>';
+
+    const retryBtn = document.createElement("button");
+    retryBtn.className = "message-action-btn message-retry-btn";
+    retryBtn.type = "button";
+    retryBtn.setAttribute("aria-label", "Retry");
+    retryBtn.setAttribute("title", "Retry");
+    retryBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg><span class="message-action-label">Retry</span>';
+
     const copyBtn = document.createElement("button");
-    copyBtn.className = "message-action-btn";
+    copyBtn.className = "message-action-btn message-copy-btn";
     copyBtn.type = "button";
-    copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span class="message-action-label"></span>';
+    copyBtn.setAttribute("aria-label", "Copy");
+    copyBtn.setAttribute("title", "Copy");
+    copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span class="message-action-label"></span>';
     setMessageCopyLabel(copyBtn, baseCopyLabel);
-    actionBar.appendChild(copyBtn);
+
+    if (isPlainTextEligible) {
+      actionBar.append(readAloudBtn, goodBtn, badBtn, retryBtn, copyBtn);
+    } else {
+      actionBar.appendChild(copyBtn);
+    }
 
     function getText() {
       const raw = typeof textSource === "function" ? textSource() : currentText;
@@ -7863,9 +7990,106 @@ import {
       return copyEnabled ? Boolean(copyEnabled()) : Boolean(getText());
     }
 
+    function syncFeedbackState() {
+      const isGood = feedbackState === "good";
+      const isBad = feedbackState === "bad";
+      goodBtn.setAttribute("aria-pressed", isGood ? "true" : "false");
+      goodBtn.classList.toggle("is-active", isGood);
+      badBtn.setAttribute("aria-pressed", isBad ? "true" : "false");
+      badBtn.classList.toggle("is-active", isBad);
+    }
+
+    function resetReadAloudState() {
+      readAloudBtn.classList.remove("is-speaking");
+      readAloudBtn.setAttribute("aria-pressed", "false");
+      readAloudBtn.setAttribute("aria-label", "Read aloud");
+      readAloudBtn.setAttribute("title", "Read aloud");
+      setMessageCopyLabel(readAloudBtn, "Read aloud");
+      const svg = readAloudBtn.querySelector("svg");
+      if (svg) svg.outerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>';
+    }
+
+    function resetRetryButton() {
+      isRetrying = false;
+      retryBtn.disabled = false;
+      retryBtn.classList.remove("is-loading");
+      retryBtn.removeAttribute("aria-busy");
+      setMessageCopyLabel(retryBtn, "Retry");
+    }
+
     function refresh() {
       syncCopyButtonState(copyBtn, isCopyEnabled());
+      if (isPlainTextEligible && !isStreaming) {
+        const text = getText();
+        const isEnglish = isSpeechSynthesisSupported() && isConfidentEnglish(text);
+        readAloudBtn.style.display = isEnglish ? "" : "none";
+      } else if (readAloudBtn) {
+        readAloudBtn.style.display = "none";
+      }
     }
+
+    function markComplete() {
+      isStreaming = false;
+      refresh();
+    }
+
+    function setPlainTextEligible(eligible) {
+      isPlainTextEligible = Boolean(eligible);
+      if (!isPlainTextEligible) {
+        readAloudBtn.remove();
+        goodBtn.remove();
+        badBtn.remove();
+        retryBtn.remove();
+      } else {
+        if (!actionBar.contains(goodBtn)) {
+          actionBar.insertBefore(goodBtn, copyBtn);
+          actionBar.insertBefore(badBtn, copyBtn);
+          actionBar.insertBefore(retryBtn, copyBtn);
+          actionBar.insertBefore(readAloudBtn, goodBtn);
+        }
+      }
+      refresh();
+    }
+
+    readAloudBtn.addEventListener("click", () => {
+      const text = getText();
+      if (!text) return;
+      speakText(text, {
+        button: readAloudBtn,
+        onStart() {
+          readAloudBtn.classList.add("is-speaking");
+          readAloudBtn.setAttribute("aria-pressed", "true");
+          readAloudBtn.setAttribute("aria-label", "Stop reading aloud");
+          readAloudBtn.setAttribute("title", "Stop reading aloud");
+          setMessageCopyLabel(readAloudBtn, "Stop");
+          const svg = readAloudBtn.querySelector("svg");
+          if (svg) svg.outerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>';
+        },
+        onEnd() {
+          resetReadAloudState();
+        },
+        onError() {
+          resetReadAloudState();
+        },
+      });
+    });
+
+    goodBtn.addEventListener("click", () => {
+      feedbackState = feedbackState === "good" ? null : "good";
+      syncFeedbackState();
+    });
+
+    badBtn.addEventListener("click", () => {
+      feedbackState = feedbackState === "bad" ? null : "bad";
+      syncFeedbackState();
+    });
+
+    retryBtn.addEventListener("click", async () => {
+      if (retryBtn.disabled || isRetrying) return;
+      if (typeof onRetry === "function") {
+        await onRetry();
+      }
+    });
 
     copyBtn.addEventListener("click", async () => {
       if (!isCopyEnabled()) return;
@@ -7895,6 +8119,16 @@ import {
     return {
       element: actionBar,
       button: copyBtn,
+      readAloudButton: readAloudBtn,
+      goodButton: goodBtn,
+      badButton: badBtn,
+      retryButton: retryBtn,
+      getRetryButton: () => retryBtn,
+      resetRetryButton,
+      setPlainTextEligible,
+      markComplete,
+      isPlainTextEligible: () => isPlainTextEligible,
+      getFeedbackState: () => feedbackState,
       setText(text) {
         currentText = typeof text === "string" ? text : "";
         textSource = null;
@@ -7910,10 +8144,117 @@ import {
 
   function attachAssistantActionBar(bubble, initialText = "", options = {}) {
     if (!bubble) return null;
-    const actionBar = createAssistantActionBar(initialText, options);
+    const resolvedOptions = {
+      ...options,
+      bubble,
+      onRetry: () => retryAssistantMessage(bubble, bubble._assistantActionBar),
+    };
+    const actionBar = createAssistantActionBar(initialText, resolvedOptions);
     bubble._assistantActionBar = actionBar;
     bubble.appendChild(actionBar.element);
     return actionBar;
+  }
+
+  async function retryAssistantMessage(bubble, actionBar) {
+    if (!bubble || bubble._isRetrying) return;
+    stopCurrentSpeech();
+
+    const state = getChatState(currentChatId);
+    if (state?.isThinking) {
+      showToast("Please wait for the current response to complete.", "info");
+      return;
+    }
+
+    const chatId = currentChatId;
+    if (!chatId) return;
+
+    const chat = (await Storage.getChat(chatId)) || getGuestChat(chatId);
+    const messages = Array.isArray(chat?.messages) ? chat.messages : [];
+    let assistantIndex = -1;
+
+    const requestId = bubble.dataset.requestId;
+    const messageId = bubble.dataset.messageId;
+
+    if (requestId) {
+      assistantIndex = messages.findIndex((m) => m.clientRequestId === requestId || m.id === `assistant-${requestId}`);
+    }
+    if (assistantIndex === -1 && messageId) {
+      assistantIndex = messages.findIndex((m) => m.id === messageId);
+    }
+    if (assistantIndex === -1) {
+      const allAssistantBubbles = Array.from(chatMessages.querySelectorAll(".message.assistant"));
+      const bubbleIndex = allAssistantBubbles.indexOf(bubble);
+      const assistantMessages = messages.filter((m) => m.role === "assistant");
+      if (bubbleIndex >= 0 && bubbleIndex < assistantMessages.length) {
+        assistantIndex = messages.indexOf(assistantMessages[bubbleIndex]);
+      }
+    }
+
+    if (assistantIndex === -1) {
+      showToast("Couldn't find the message to retry.", "error");
+      return;
+    }
+
+    const assistantMessage = messages[assistantIndex];
+    let userIndex = -1;
+    for (let i = assistantIndex - 1; i >= 0; i--) {
+      if (messages[i].role === "user") {
+        userIndex = i;
+        break;
+      }
+    }
+
+    if (userIndex === -1) {
+      showToast("Couldn't find the original prompt to retry.", "error");
+      return;
+    }
+
+    const userMessage = messages[userIndex];
+    const originalPrompt = userMessage.content;
+    if (!originalPrompt) {
+      showToast("Original prompt is empty.", "error");
+      return;
+    }
+
+    const originalExecutionMode = assistantMessage?.meta?.executionMode
+      || bubble.dataset.executionMode
+      || (document.querySelector('[data-execution-mode="intuitive"].active') ? "intuitive" : "fast");
+
+    const precedingContext = messages.slice(0, userIndex).map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    bubble._isRetrying = true;
+    const retryBtn = actionBar?.getRetryButton?.();
+    if (retryBtn) {
+      retryBtn.disabled = true;
+      retryBtn.classList.add("is-loading");
+      retryBtn.setAttribute("aria-busy", "true");
+      setMessageCopyLabel(retryBtn, "Retrying...");
+    }
+
+    bubble.style.display = "none";
+
+    try {
+      await handleSend(originalPrompt, {
+        isRetry: true,
+        retryMessage: originalPrompt,
+        executionMode: originalExecutionMode,
+        retryContextMessages: precedingContext,
+        targetAssistantBubble: bubble,
+        targetAssistantIndex: assistantIndex,
+        targetAssistantMessage: assistantMessage,
+        targetChatId: chatId,
+      });
+    } catch (err) {
+      debugWarn("[UI] Retry failed:", getSafeErrorMessage(err));
+      bubble.style.display = "";
+      actionBar?.resetRetryButton?.();
+      showToast("Couldn't complete retry. Try again.", "error");
+    } finally {
+      bubble._isRetrying = false;
+    }
   }
 
   function setAssistantBubbleCopyText(bubble, text) {
@@ -8984,6 +9325,9 @@ import {
     if (options.chatId) bubble.dataset.chatId = options.chatId;
     if (options.requestId) bubble.dataset.requestId = options.requestId;
     if (options.loaderKind) bubble.dataset.loaderKind = options.loaderKind;
+    if (options.executionMode) bubble.dataset.executionMode = options.executionMode;
+    const isPlainTextEligible = options.plainTextEligible !== false;
+    bubble.dataset.plainTextEligible = isPlainTextEligible ? "true" : "false";
     const header = document.createElement("div");
     header.className = "message-header";
     const avatar = document.createElement("div");
@@ -9015,8 +9359,17 @@ import {
     contentDiv.appendChild(inlineLoader);
     contentDiv.appendChild(renderedDiv);
     contentDiv.appendChild(tailDiv);
-    const actionBar = attachAssistantActionBar(bubble, "");
-    chatMessages.appendChild(bubble);
+    const actionBar = attachAssistantActionBar(bubble, "", {
+      isPlainTextEligible,
+      isStreaming: true,
+      executionMode: options.executionMode || currentExecutionMode,
+      requestId: options.requestId,
+    });
+    if (options.insertAfter && options.insertAfter.parentNode) {
+      options.insertAfter.parentNode.insertBefore(bubble, options.insertAfter.nextSibling);
+    } else {
+      chatMessages.appendChild(bubble);
+    }
     scrollToBottom(true);
 
     // Buffered rAF typing — tokens accumulate, chars reveal smoothly
@@ -9113,6 +9466,7 @@ import {
         scrollToBottom(true);
       }
       rafId = 0;
+      actionBar?.markComplete?.();
       if (finalizeResolve) { finalizeResolve(); finalizeResolve = null; }
     }
 
@@ -9148,6 +9502,7 @@ import {
     }
 
     return {
+      bubble,
       appendToken(token) {
         if (fullText.length >= MAX_RENDER_CHARS) return;
         const hadText = Boolean(fullText.trim());
@@ -9178,6 +9533,9 @@ import {
           finalize();
         });
       },
+      markComplete() {
+        actionBar?.markComplete?.();
+      },
       setRenderMode(mode) {
         const nextMode = mode || null;
         if (nextMode !== renderMode) {
@@ -9198,6 +9556,11 @@ import {
         pendingRenderReset = true;
         const visibleText = fullText.substring(0, displayedChars);
         if (visibleText) updateStreamingRender(visibleText, true);
+      },
+      setPlainTextEligible(eligible) {
+        const flag = Boolean(eligible);
+        bubble.dataset.plainTextEligible = flag ? "true" : "false";
+        actionBar?.setPlainTextEligible?.(flag);
       },
       getRequestId() { return bubble.dataset.requestId || ""; },
       getFullText() { return fullText; },
@@ -9376,7 +9739,9 @@ import {
       );
     }
 
-    const requestExecutionMode = normalizeExecutionMode(effectiveExecutionMode || currentExecutionMode);
+    const requestExecutionMode = normalizeExecutionMode(
+      options.executionMode || effectiveExecutionMode || currentExecutionMode
+    );
     const preliminaryWebSearchMode = getEffectiveWebSearchMode();
     const requestedFileFormat = null;
     const authenticatedFileGenerationRequired = false;
@@ -9473,11 +9838,13 @@ import {
       debugLog("[API Request] context counts", { file_references: fileReferences.length, image_attachments: imageAttachmentsForRequest.length });
 
       const contextPayload = {
-        recentMessages: addSelectedContextToRecentMessages(
-          contextData.recentMessages,
-          selectedContextForRequest,
-          visibleUserMessage,
-        ),
+        recentMessages: Array.isArray(options.retryContextMessages)
+          ? (requestExecutionMode === "fast" ? options.retryContextMessages.slice(-6) : options.retryContextMessages.slice(-20))
+          : addSelectedContextToRecentMessages(
+              contextData.recentMessages,
+              selectedContextForRequest,
+              visibleUserMessage,
+            ),
         memories: contextData.memories,
         fileReferences,
         imageAttachments: imageAttachmentsForRequest,
@@ -9519,7 +9886,16 @@ import {
           streamBubble = (targetChatId === currentChatId && API.canStreamResponses?.() !== false)
             ? (htmlFileGenerationRequired
               ? createFileGenerationStreamingBubble({ chatId: targetChatId, requestId, format: requestedFileFormat || "html" })
-              : createStreamingBubble({ loaderKind: requestLoaderKind, activityMode: requestActivityMode, loaderText: requestLoaderText, chatId: targetChatId, requestId }))
+              : createStreamingBubble({
+                  loaderKind: requestLoaderKind,
+                  activityMode: requestActivityMode,
+                  loaderText: requestLoaderText,
+                  chatId: targetChatId,
+                  requestId,
+                  executionMode: requestExecutionMode,
+                  plainTextEligible: true,
+                  insertAfter: options.isRetry ? options.targetAssistantBubble : null,
+                }))
             : null;
           if (streamBubble) {
             hideActivityIndicator(targetChatId);
@@ -9586,6 +9962,7 @@ import {
               },
               onFileArtifact(response) {
                 if (!isRequestStale(targetChatId, requestId)) {
+                  streamBubble?.setPlainTextEligible?.(false);
                   fileArtifactResponse = response;
                   const artifactFormat = response?.file?.format || response?.format || requestedFileFormat || "html";
                   ensureFileGenerationStreamBubble(artifactFormat)?.setArtifact?.(response.file);
@@ -9639,6 +10016,9 @@ import {
                 }
               },
               onRoute(route, routeMeta = {}) {
+                if (route === "web_search" || route === "file_generation" || route === "chart") {
+                  streamBubble?.setPlainTextEligible?.(false);
+                }
                 state.activityMode = route === "web_search"
                   ? "web_search"
                   : route === "file_generation"
@@ -9670,6 +10050,7 @@ import {
                 }
               },
               onWebSurfSources(payload) {
+                streamBubble?.setPlainTextEligible?.(false);
                 webSurfV2Sources = normalizeWebSurfV2Payload(payload);
                 streamBubble?.setWebSurfPresentation?.(webSurfV2Sources);
               },
@@ -9690,6 +10071,7 @@ import {
               onStructuredResponse(response) {
                 // Backend redirected a chart/tool request through orchestrator.
                 // Remove the streaming bubble and use the structured response instead.
+                streamBubble?.setPlainTextEligible?.(false);
                 structuredResponse = response;
               },
             }, ac.signal);
@@ -9765,17 +10147,46 @@ import {
               if (fullReply) {
                 const responseStatus = "complete";
                 if (!webSurfV2Completion) {
-                  await streamDraft.finalize(fullReply, {
+                  const plainMeta = {
+                    type: "text",
+                    plainTextEligible: true,
+                    executionMode: requestExecutionMode,
                     ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
                     responseStatus,
                     ...(options.continuationOf ? { continuationOf: options.continuationOf } : {}),
-                  });
-                  assistantPersisted = true;
+                  };
+                  if (options.isRetry && options.targetAssistantMessage) {
+                    await replaceLocalChatMessage(
+                      targetChatId,
+                      options.targetAssistantMessage.id,
+                      options.targetAssistantIndex,
+                      {
+                        content: fullReply,
+                        meta: plainMeta,
+                        clientRequestId: requestId,
+                      }
+                    );
+                    if (options.targetAssistantBubble) {
+                      options.targetAssistantBubble.remove();
+                    }
+                    assistantPersisted = true;
+                  } else {
+                    await streamDraft.finalize(fullReply, plainMeta);
+                    assistantPersisted = true;
+                  }
                 }
               }
             }
           }
         } catch (streamErr) {
+          if (options.isRetry && options.targetAssistantBubble) {
+            debugWarn("[UI] Retry stream error:", getSafeErrorMessage(streamErr));
+            chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"]`)?.remove();
+            options.targetAssistantBubble.style.display = "";
+            options.targetAssistantBubble._assistantActionBar?.resetRetryButton?.();
+            showToast("Couldn't complete retry. Try again.", "error");
+            throw streamErr;
+          }
           if (streamErr.name === "AbortError") {
             debugLog("[UI] Stream aborted by user");
             const partial = streamBubble?.getFullText?.() || "";
@@ -9867,13 +10278,37 @@ import {
           {
             ...(responseRenderMode ? { mode: responseRenderMode } : {}),
             clientRequestId: requestId,
+            executionMode: requestExecutionMode,
+            insertAfter: options.isRetry ? options.targetAssistantBubble : null,
           },
         );
         finalAssistantMeta = extractResponseMetaForSync(response, targetChatId);
         memoryResult = response.memory;
         responseSync = response.sync || null;
         imageInputResult = response?.image_input || null;
-        assistantPersisted = true;
+        if (options.isRetry && options.targetAssistantMessage) {
+          await replaceLocalChatMessage(
+            targetChatId,
+            options.targetAssistantMessage.id,
+            options.targetAssistantIndex,
+            {
+              content: fullReply,
+              meta: {
+                ...(finalAssistantMeta || {}),
+                type: "text",
+                plainTextEligible: true,
+                executionMode: requestExecutionMode,
+              },
+              clientRequestId: requestId,
+            }
+          );
+          if (options.targetAssistantBubble) {
+            options.targetAssistantBubble.remove();
+          }
+          assistantPersisted = true;
+        } else {
+          assistantPersisted = true;
+        }
       }
 
       if (!assistantPersisted && fullReply) {
@@ -9941,6 +10376,13 @@ import {
       maybeGenerateTitle(visibleUserMessage || apiMessage, fullReply, targetChatId);
     } catch (err) {
       stopMeasure("error");
+      if (options.isRetry && options.targetAssistantBubble) {
+        chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"]`)?.remove();
+        options.targetAssistantBubble.style.display = "";
+        options.targetAssistantBubble._assistantActionBar?.resetRetryButton?.();
+        showToast("Couldn't complete retry. Try again.", "error");
+        return;
+      }
       if (err.name === "AbortError") { /* user-initiated stop */ }
       else if (await maybeHandleProfileNameRequiredError(err, "chat.send")) {
         return;
@@ -11157,6 +11599,7 @@ import {
 
   async function startNewChat(options = {}) {
     debugLog("[UI] startNewChat");
+    stopCurrentSpeech();
     const stopMeasure = startPerf("ui.new_chat");
     if (ensureNameCapture()) {
       stopMeasure("blocked", { reason: "name_required" });

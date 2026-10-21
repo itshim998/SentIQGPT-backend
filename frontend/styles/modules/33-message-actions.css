@@ -60,6 +60,44 @@
   outline-offset: 2px;
 }
 
+.message-action-btn[aria-pressed="true"],
+.message-action-btn.is-active {
+  opacity: 1;
+  color: #beb5ef;
+  background: rgba(190, 171, 239, 0.12);
+  border-color: rgba(190, 171, 239, 0.32);
+}
+
+.message-action-btn.message-feedback-good[aria-pressed="true"],
+.message-action-btn.message-feedback-good.is-active {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.12);
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+.message-action-btn.message-feedback-bad[aria-pressed="true"],
+.message-action-btn.message-feedback-bad.is-active {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.message-action-btn.message-read-aloud-btn.is-speaking,
+.message-action-btn.message-read-aloud-btn[aria-pressed="true"] {
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.12);
+  border-color: rgba(96, 165, 250, 0.35);
+}
+
+.message-action-btn.is-loading svg {
+  animation: sentiq-action-spin 1s linear infinite;
+}
+
+@keyframes sentiq-action-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* Fine-pointer desktop: reveal without removing controls from keyboard order. */
 @media (hover: hover) and (pointer: fine) and (min-width: 769px) {
   .message[data-message-actions-version="6.4"] > .message-action-bar,
@@ -108,7 +146,7 @@
   }
 
   .message[data-message-actions-version="6.4"][data-message-actions-open="true"] > .message-action-bar {
-    max-height: 168px;
+    max-height: 240px;
     padding-top: 9px;
     opacity: 1;
     pointer-events: auto;
@@ -176,6 +214,10 @@
   .message[data-message-actions-version="6.4"] [data-message-action-zone="context"] {
     transition: none;
   }
+
+  .message-action-btn.is-loading svg {
+    animation: none;
+  }
 }
 
 @media (forced-colors: active) {
@@ -190,5 +232,12 @@
   .message-actions-trigger:focus-visible,
   .message[data-message-actions-version="6.4"] .message-action-btn:focus-visible {
     outline: 2px solid Highlight;
+  }
+
+  .message-action-btn.is-active,
+  .message-action-btn[aria-pressed="true"],
+  .message-action-btn.is-speaking {
+    border: 2px solid Highlight;
+    color: Highlight;
   }
 }
