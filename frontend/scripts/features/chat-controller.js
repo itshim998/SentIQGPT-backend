@@ -4663,14 +4663,23 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
     }
 
     if (renderInView) {
-      const { contentDiv } = appendMessageBubble("assistant", "", {
+      const { contentDiv, bubble } = appendMessageBubble("assistant", "", {
         type: "text",
         plainTextEligible: true,
         executionMode: renderOptions?.executionMode,
         clientRequestId: renderOptions?.clientRequestId,
       }, effectiveRenderOptions, {
         insertAfter: renderOptions?.insertAfter,
+        isStreaming: true,
       });
+      if (bubble) {
+        bubble._retryMetadata = {
+          originalPrompt: renderOptions?.originalPrompt || "",
+          executionMode: renderOptions?.executionMode || currentExecutionMode,
+          precedingContext: renderOptions?.precedingContext || [],
+          requestId: renderOptions?.clientRequestId || "",
+        };
+      }
       await typeMessage(assistantText, contentDiv, effectiveRenderOptions, assistantThinking);
       appendResponseTrustRow(contentDiv, responseTrust);
     }
@@ -6700,9 +6709,11 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
           },
         });
       } else if (meta?.type !== "generated-file") {
+        const isPendingStreaming = Boolean(ephemeral?.isStreaming || (!content && ephemeral?.animateReveal) || (!content && meta?.type === "text"));
         actionBar = attachAssistantActionBar(bubble, content || "", {
           isPlainTextEligible,
           executionMode: bubble.dataset.executionMode,
+          isStreaming: isPendingStreaming,
         });
       }
     }
@@ -7927,6 +7938,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
     const onRetry = typeof config.onRetry === "function" ? config.onRetry : null;
     let isPlainTextEligible = Boolean(config.isPlainTextEligible);
     let isStreaming = Boolean(config.isStreaming);
+    let isCompleted = !isStreaming;
     const baseCopyLabel = typeof config.copyLabel === "string" && config.copyLabel.trim()
       ? config.copyLabel.trim()
       : "Copy";
@@ -7938,6 +7950,12 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
 
     const actionBar = document.createElement("div");
     actionBar.className = "message-action-bar";
+    if (isStreaming || !isCompleted) {
+      actionBar.style.display = "none";
+      actionBar.setAttribute("aria-hidden", "true");
+      actionBar.classList.add("is-pending");
+      try { actionBar.inert = true; } catch {}
+    }
 
     const readAloudBtn = document.createElement("button");
     readAloudBtn.className = "message-action-btn message-read-aloud-btn";
@@ -8012,6 +8030,24 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
       readAloudBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>';
     }
 
+    function setReadAloudPlaying() {
+      readAloudBtn.classList.add("is-speaking");
+      readAloudBtn.setAttribute("aria-pressed", "true");
+      readAloudBtn.setAttribute("aria-label", "Pause reading aloud");
+      readAloudBtn.setAttribute("title", "Pause reading aloud");
+      setMessageCopyLabel(readAloudBtn, "Pause");
+      readAloudBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>';
+    }
+
+    function setReadAloudPaused() {
+      readAloudBtn.classList.remove("is-speaking");
+      readAloudBtn.setAttribute("aria-pressed", "false");
+      readAloudBtn.setAttribute("aria-label", "Resume reading aloud");
+      readAloudBtn.setAttribute("title", "Resume reading aloud");
+      setMessageCopyLabel(readAloudBtn, "Resume");
+      readAloudBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+    }
+
     function resetRetryButton() {
       isRetrying = false;
       retryBtn.disabled = false;
@@ -8024,7 +8060,22 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
 
     function refresh() {
       syncCopyButtonState(copyBtn, isCopyEnabled());
-      if (isPlainTextEligible && !isStreaming) {
+      if (isStreaming || !isCompleted) {
+        actionBar.style.display = "none";
+        actionBar.setAttribute("aria-hidden", "true");
+        actionBar.classList.add("is-pending");
+        try { actionBar.inert = true; } catch {}
+        if (readAloudBtn) {
+          readAloudBtn.style.display = "none";
+        }
+        return;
+      }
+      actionBar.style.display = "";
+      actionBar.removeAttribute("aria-hidden");
+      actionBar.classList.remove("is-pending");
+      try { actionBar.inert = false; } catch {}
+
+      if (isPlainTextEligible) {
         const text = getText();
         const isEnglish = isSpeechSynthesisSupported() && isConfidentEnglish(text);
         readAloudBtn.style.display = isEnglish ? "" : "none";
@@ -8035,6 +8086,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
 
     function markComplete() {
       isStreaming = false;
+      isCompleted = true;
       refresh();
     }
 
@@ -8062,17 +8114,21 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
       speakText(text, {
         button: readAloudBtn,
         onStart() {
-          readAloudBtn.classList.add("is-speaking");
-          readAloudBtn.setAttribute("aria-pressed", "true");
-          readAloudBtn.setAttribute("aria-label", "Stop reading aloud");
-          readAloudBtn.setAttribute("title", "Stop reading aloud");
-          setMessageCopyLabel(readAloudBtn, "Stop");
-          readAloudBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>';
+          setReadAloudPlaying();
+        },
+        onPause() {
+          setReadAloudPaused();
+        },
+        onResume() {
+          setReadAloudPlaying();
         },
         onEnd() {
           resetReadAloudState();
         },
         onError() {
+          resetReadAloudState();
+        },
+        onStop() {
           resetReadAloudState();
         },
       });
@@ -8182,14 +8238,17 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
     const messages = Array.isArray(chat?.messages) ? chat.messages : [];
     let assistantIndex = -1;
 
-    const requestId = bubble.dataset.requestId;
-    const messageId = bubble.dataset.messageId;
+    const inMemoryMetadata = bubble._retryMetadata || null;
+    const requestId = bubble.dataset.requestId || inMemoryMetadata?.requestId || "";
+    const messageId = bubble.dataset.messageId || "";
 
-    if (requestId) {
-      assistantIndex = messages.findIndex((m) => m.clientRequestId === requestId || m.id === `assistant-${requestId}`);
+    if (messageId) {
+      assistantIndex = messages.findIndex((m) => m.role === "assistant" && m.id === messageId);
     }
-    if (assistantIndex === -1 && messageId) {
-      assistantIndex = messages.findIndex((m) => m.id === messageId);
+    if (assistantIndex === -1 && requestId) {
+      assistantIndex = messages.findIndex(
+        (m) => m.role === "assistant" && (m.clientRequestId === requestId || m.id === `assistant-${requestId}` || m.meta?.clientRequestId === requestId)
+      );
     }
     if (assistantIndex === -1) {
       const allAssistantBubbles = Array.from(chatMessages.querySelectorAll(".message.assistant"));
@@ -8200,33 +8259,41 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
       }
     }
 
-    if (assistantIndex === -1) {
+    if (assistantIndex === -1 && !inMemoryMetadata) {
       showToast("Couldn't find the message to retry.", "error");
       return;
     }
 
-    const assistantMessage = messages[assistantIndex];
+    const assistantMessage = assistantIndex >= 0 ? messages[assistantIndex] : null;
     let userIndex = -1;
-    for (let i = assistantIndex - 1; i >= 0; i--) {
-      if (messages[i].role === "user") {
-        userIndex = i;
-        break;
+    if (requestId) {
+      userIndex = messages.findIndex(
+        (m) => m.role === "user" && (m.clientRequestId === requestId || m.id === `user-${requestId}` || m.meta?.clientRequestId === requestId)
+      );
+    }
+    if (userIndex === -1 && assistantIndex > 0) {
+      for (let i = assistantIndex - 1; i >= 0; i--) {
+        if (messages[i].role === "user") {
+          userIndex = i;
+          break;
+        }
       }
     }
 
-    if (userIndex === -1) {
+    if (userIndex === -1 && !inMemoryMetadata?.originalPrompt) {
       showToast("Couldn't find the original prompt to retry.", "error");
       return;
     }
 
-    const userMessage = messages[userIndex];
+    const userMessage = userIndex >= 0 ? messages[userIndex] : { content: inMemoryMetadata?.originalPrompt || "" };
     const originalPrompt = userMessage.content;
-    if (!originalPrompt) {
+    if (!originalPrompt || typeof originalPrompt !== "string" || !originalPrompt.trim()) {
       showToast("Original prompt is empty.", "error");
       return;
     }
 
     const originalExecutionMode = assistantMessage?.meta?.executionMode
+      || inMemoryMetadata?.executionMode
       || bubble.dataset.executionMode
       || (document.querySelector('[data-execution-mode="intuitive"].active') ? "intuitive" : "fast");
 
@@ -8234,6 +8301,15 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
       role: m.role,
       content: m.content,
     }));
+    const effectivePrecedingContext = userIndex >= 0
+      ? precedingContext
+      : (Array.isArray(inMemoryMetadata?.precedingContext) ? inMemoryMetadata.precedingContext : []);
+
+    const effectiveAssistantMessage = assistantMessage || {
+      id: messageId || (requestId ? `assistant-${requestId}` : `assistant-${Date.now()}`),
+      role: "assistant",
+      clientRequestId: requestId,
+    };
 
     bubble._isRetrying = true;
     const retryBtn = actionBar?.getRetryButton?.();
@@ -8251,10 +8327,10 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
         isRetry: true,
         retryMessage: originalPrompt,
         executionMode: originalExecutionMode,
-        retryContextMessages: precedingContext,
+        retryContextMessages: effectivePrecedingContext,
         targetAssistantBubble: bubble,
-        targetAssistantIndex: assistantIndex,
-        targetAssistantMessage: assistantMessage,
+        targetAssistantIndex: assistantIndex >= 0 ? assistantIndex : messages.length - 1,
+        targetAssistantMessage: effectiveAssistantMessage,
         targetChatId: chatId,
       });
     } catch (err) {
@@ -9338,6 +9414,9 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
     if (options.executionMode) bubble.dataset.executionMode = options.executionMode;
     const isPlainTextEligible = options.plainTextEligible !== false;
     bubble.dataset.plainTextEligible = isPlainTextEligible ? "true" : "false";
+    if (options.retryMetadata) {
+      bubble._retryMetadata = options.retryMetadata;
+    }
     const header = document.createElement("div");
     header.className = "message-header";
     const avatar = document.createElement("div");
@@ -9476,7 +9555,9 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
         scrollToBottom(true);
       }
       rafId = 0;
-      actionBar?.markComplete?.();
+      if (!interruptionNotice) {
+        actionBar?.markComplete?.();
+      }
       if (finalizeResolve) { finalizeResolve(); finalizeResolve = null; }
     }
 
@@ -9544,7 +9625,9 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
         });
       },
       markComplete() {
-        actionBar?.markComplete?.();
+        if (!interruptionNotice) {
+          actionBar?.markComplete?.();
+        }
       },
       setRenderMode(mode) {
         const nextMode = mode || null;
@@ -9905,9 +9988,27 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
                   executionMode: requestExecutionMode,
                   plainTextEligible: true,
                   insertAfter: options.isRetry ? options.targetAssistantBubble : null,
+                  retryMetadata: {
+                    originalPrompt: visibleUserMessage,
+                    executionMode: requestExecutionMode,
+                    precedingContext: Array.isArray(options.retryContextMessages)
+                      ? options.retryContextMessages
+                      : (Array.isArray(contextData?.recentMessages) ? contextData.recentMessages.map((m) => ({ role: m.role, content: m.content })) : []),
+                    requestId,
+                  },
                 }))
             : null;
           if (streamBubble) {
+            if (streamBubble.bubble && !streamBubble.bubble._retryMetadata) {
+              streamBubble.bubble._retryMetadata = {
+                originalPrompt: visibleUserMessage,
+                executionMode: requestExecutionMode,
+                precedingContext: Array.isArray(options.retryContextMessages)
+                  ? options.retryContextMessages
+                  : (Array.isArray(contextData?.recentMessages) ? contextData.recentMessages.map((m) => ({ role: m.role, content: m.content })) : []),
+                requestId,
+              };
+            }
             hideActivityIndicator(targetChatId);
             const activeState = getChatState(targetChatId);
             if (activeState) {
@@ -10226,7 +10327,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
             const partial = streamBubble?.getFullText?.() || "";
             const orphan = chatMessages?.querySelector(`.message.assistant[data-request-id="${requestId}"] .typing-active`);
             if (partial) {
-              await streamBubble.finish();
+              await streamBubble.finish({ interruptionNotice: "Streaming interrupted." });
               fullReply = partial;
               await streamDraft.finalize(fullReply, {
                 ...(responseRenderMode ? { renderMode: responseRenderMode } : {}),
@@ -10290,6 +10391,10 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
             clientRequestId: requestId,
             executionMode: requestExecutionMode,
             insertAfter: options.isRetry ? options.targetAssistantBubble : null,
+            originalPrompt: visibleUserMessage,
+            precedingContext: Array.isArray(options.retryContextMessages)
+              ? options.retryContextMessages
+              : (Array.isArray(contextData?.recentMessages) ? contextData.recentMessages.map((m) => ({ role: m.role, content: m.content })) : []),
           },
         );
         finalAssistantMeta = extractResponseMetaForSync(response, targetChatId);

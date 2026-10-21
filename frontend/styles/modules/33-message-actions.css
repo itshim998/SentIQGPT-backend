@@ -52,6 +52,11 @@
   margin-top: 2px;
 }
 
+.message-action-bar.is-pending,
+.message-action-bar[aria-hidden="true"] {
+  display: none !important;
+}
+
 /* Icon-only compact response action buttons (borderless, no bubbles) */
 .message-action-btn,
 .message[data-message-actions-version="6.4"] .message-action-btn {
