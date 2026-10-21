@@ -43,50 +43,157 @@
   color: var(--sentiq-text-heading, var(--text-heading));
 }
 
+.message-action-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 8px;
+  margin-top: 2px;
+}
+
+/* Icon-only compact response action buttons */
+.message-action-btn,
 .message[data-message-actions-version="6.4"] .message-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  margin: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.055);
+  color: #d1d7e3;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+  opacity: 1;
   transform: none;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 120ms ease,
+    box-shadow 140ms ease;
+}
+
+.message-action-btn svg,
+.message[data-message-actions-version="6.4"] .message-action-btn svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin="round";
+  display: block;
 }
 
 .message[data-message-actions-version="6.4"] .message-action-btn:hover,
-.message[data-message-actions-version="6.4"] .message-action-btn:active,
-.message[data-message-actions-version="6.4"] .message-action-btn:focus-visible {
+.message-action-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.28);
+  color: #ffffff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.32);
   transform: none;
 }
 
+.message[data-message-actions-version="6.4"] .message-action-btn:active,
+.message-action-btn:active {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #ffffff;
+  transform: scale(0.95);
+}
+
 .message[data-message-actions-version="6.4"] .message-action-btn:focus-visible,
+.message-action-btn:focus-visible,
 .message[data-message-actions-version="6.4"] [data-message-action-zone="context"]:is(button, a):focus-visible,
 .message[data-message-actions-version="6.4"] [data-message-action-zone="context"] :is(button, a):focus-visible {
-  outline: 2px solid rgba(190, 171, 239, 0.68);
+  outline: 2px solid rgba(190, 171, 239, 0.85);
   outline-offset: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(190, 171, 239, 0.5);
+  color: #ffffff;
+}
+
+.message-action-btn:disabled,
+.message-action-btn.is-disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.06);
 }
 
 .message-action-btn[aria-pressed="true"],
 .message-action-btn.is-active {
   opacity: 1;
   color: #beb5ef;
-  background: rgba(190, 171, 239, 0.12);
-  border-color: rgba(190, 171, 239, 0.32);
+  background: rgba(190, 171, 239, 0.16);
+  border-color: rgba(190, 171, 239, 0.42);
 }
 
 .message-action-btn.message-feedback-good[aria-pressed="true"],
 .message-action-btn.message-feedback-good.is-active {
   color: #34d399;
-  background: rgba(52, 211, 153, 0.12);
-  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(52, 211, 153, 0.16);
+  border-color: rgba(52, 211, 153, 0.48);
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.2);
+}
+
+.message-action-btn.message-feedback-good[aria-pressed="true"]:hover,
+.message-action-btn.message-feedback-good.is-active:hover {
+  background: rgba(52, 211, 153, 0.24);
+  border-color: rgba(52, 211, 153, 0.65);
+  color: #6ee7b7;
 }
 
 .message-action-btn.message-feedback-bad[aria-pressed="true"],
 .message-action-btn.message-feedback-bad.is-active {
   color: #f87171;
-  background: rgba(248, 113, 113, 0.12);
-  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.16);
+  border-color: rgba(248, 113, 113, 0.48);
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.2);
+}
+
+.message-action-btn.message-feedback-bad[aria-pressed="true"]:hover,
+.message-action-btn.message-feedback-bad.is-active:hover {
+  background: rgba(248, 113, 113, 0.24);
+  border-color: rgba(248, 113, 113, 0.65);
+  color: #fca5a5;
 }
 
 .message-action-btn.message-read-aloud-btn.is-speaking,
 .message-action-btn.message-read-aloud-btn[aria-pressed="true"] {
   color: #60a5fa;
-  background: rgba(96, 165, 250, 0.12);
-  border-color: rgba(96, 165, 250, 0.35);
+  background: rgba(96, 165, 250, 0.18);
+  border-color: rgba(96, 165, 250, 0.5);
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.22);
+}
+
+.message-action-btn.message-read-aloud-btn.is-speaking:hover,
+.message-action-btn.message-read-aloud-btn[aria-pressed="true"]:hover {
+  background: rgba(96, 165, 250, 0.26);
+  border-color: rgba(96, 165, 250, 0.7);
+  color: #93c5fd;
+}
+
+.message-action-btn.copied {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.16);
+  border-color: rgba(52, 211, 153, 0.48);
+}
+
+.message-action-btn.is-loading,
+.message-action-btn.message-retry-btn.is-loading {
+  color: #beb5ef;
+  background: rgba(190, 171, 239, 0.16);
+  border-color: rgba(190, 171, 239, 0.45);
+  cursor: wait;
 }
 
 .message-action-btn.is-loading svg {
@@ -100,7 +207,15 @@
 
 /* Fine-pointer desktop: reveal without removing controls from keyboard order. */
 @media (hover: hover) and (pointer: fine) and (min-width: 769px) {
-  .message[data-message-actions-version="6.4"] > .message-action-bar,
+  .message[data-message-actions-version="6.4"] > .message-action-bar {
+    opacity: 0.78;
+    pointer-events: auto;
+    transform: translateY(0);
+    transition:
+      opacity 150ms ease,
+      transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
   .message[data-message-actions-version="6.4"] [data-message-action-zone="context"] {
     opacity: 0;
     pointer-events: none;
@@ -112,7 +227,12 @@
 
   .message[data-message-actions-version="6.4"]:hover > .message-action-bar,
   .message[data-message-actions-version="6.4"]:focus-within > .message-action-bar,
-  .message[data-message-actions-version="6.4"][data-message-actions-open="true"] > .message-action-bar,
+  .message[data-message-actions-version="6.4"][data-message-actions-open="true"] > .message-action-bar {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+
   .message[data-message-actions-version="6.4"]:hover [data-message-action-zone="context"],
   .message[data-message-actions-version="6.4"]:focus-within [data-message-action-zone="context"],
   .message[data-message-actions-version="6.4"][data-message-actions-open="true"] [data-message-action-zone="context"] {
@@ -159,9 +279,12 @@
   }
 
   .message[data-message-actions-version="6.4"] .message-action-btn {
-    min-height: 40px;
-    padding: 8px 11px;
-    opacity: 0.88;
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    min-height: 38px;
+    padding: 0;
+    opacity: 1;
   }
 
   .message[data-message-actions-version="6.4"] [data-message-action-zone="context"] {
@@ -203,8 +326,11 @@
   }
 
   .message[data-message-actions-version="6.4"] .message-action-btn {
-    padding-inline: 10px;
-    font-size: 0.72rem;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+    padding: 0;
   }
 }
 
@@ -215,6 +341,12 @@
     transition: none;
   }
 
+  .message-action-btn,
+  .message[data-message-actions-version="6.4"] .message-action-btn {
+    transition: none;
+    transform: none !important;
+  }
+
   .message-action-btn.is-loading svg {
     animation: none;
   }
@@ -222,6 +354,7 @@
 
 @media (forced-colors: active) {
   .message-actions-trigger,
+  .message-action-btn,
   .message[data-message-actions-version="6.4"] .message-action-btn {
     border: 1px solid ButtonText;
     background: ButtonFace;
@@ -230,6 +363,7 @@
   }
 
   .message-actions-trigger:focus-visible,
+  .message-action-btn:focus-visible,
   .message[data-message-actions-version="6.4"] .message-action-btn:focus-visible {
     outline: 2px solid Highlight;
   }

@@ -7911,7 +7911,12 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
   }
 
   function setMessageCopyLabel(btn, label) {
-    const labelEl = btn?.querySelector(".message-action-label");
+    if (!btn) return;
+    if (label) {
+      btn.setAttribute("aria-label", label);
+      btn.setAttribute("title", label);
+    }
+    const labelEl = btn.querySelector(".message-action-label");
     if (labelEl) labelEl.textContent = label;
   }
 
@@ -7940,7 +7945,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
     readAloudBtn.setAttribute("aria-label", "Read aloud");
     readAloudBtn.setAttribute("title", "Read aloud");
     readAloudBtn.setAttribute("aria-pressed", "false");
-    readAloudBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg><span class="message-action-label">Read aloud</span>';
+    readAloudBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>';
     readAloudBtn.style.display = "none";
 
     const goodBtn = document.createElement("button");
@@ -7949,7 +7954,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
     goodBtn.setAttribute("aria-label", "Good response");
     goodBtn.setAttribute("title", "Good response");
     goodBtn.setAttribute("aria-pressed", "false");
-    goodBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg><span class="message-action-label">Good response</span>';
+    goodBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>';
 
     const badBtn = document.createElement("button");
     badBtn.className = "message-action-btn message-feedback-btn message-feedback-bad";
@@ -7957,22 +7962,21 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
     badBtn.setAttribute("aria-label", "Bad response");
     badBtn.setAttribute("title", "Bad response");
     badBtn.setAttribute("aria-pressed", "false");
-    badBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"></path></svg><span class="message-action-label">Bad response</span>';
+    badBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"></path></svg>';
 
     const retryBtn = document.createElement("button");
     retryBtn.className = "message-action-btn message-retry-btn";
     retryBtn.type = "button";
     retryBtn.setAttribute("aria-label", "Retry");
     retryBtn.setAttribute("title", "Retry");
-    retryBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg><span class="message-action-label">Retry</span>';
+    retryBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>';
 
     const copyBtn = document.createElement("button");
     copyBtn.className = "message-action-btn message-copy-btn";
     copyBtn.type = "button";
-    copyBtn.setAttribute("aria-label", "Copy");
-    copyBtn.setAttribute("title", "Copy");
-    copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span class="message-action-label"></span>';
-    setMessageCopyLabel(copyBtn, baseCopyLabel);
+    copyBtn.setAttribute("aria-label", baseCopyLabel);
+    copyBtn.setAttribute("title", baseCopyLabel);
+    copyBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
 
     if (isPlainTextEligible) {
       actionBar.append(readAloudBtn, goodBtn, badBtn, retryBtn, copyBtn);
@@ -8005,8 +8009,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
       readAloudBtn.setAttribute("aria-label", "Read aloud");
       readAloudBtn.setAttribute("title", "Read aloud");
       setMessageCopyLabel(readAloudBtn, "Read aloud");
-      const svg = readAloudBtn.querySelector("svg");
-      if (svg) svg.outerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>';
+      readAloudBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>';
     }
 
     function resetRetryButton() {
@@ -8014,6 +8017,8 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
       retryBtn.disabled = false;
       retryBtn.classList.remove("is-loading");
       retryBtn.removeAttribute("aria-busy");
+      retryBtn.setAttribute("aria-label", "Retry");
+      retryBtn.setAttribute("title", "Retry");
       setMessageCopyLabel(retryBtn, "Retry");
     }
 
@@ -8062,8 +8067,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
           readAloudBtn.setAttribute("aria-label", "Stop reading aloud");
           readAloudBtn.setAttribute("title", "Stop reading aloud");
           setMessageCopyLabel(readAloudBtn, "Stop");
-          const svg = readAloudBtn.querySelector("svg");
-          if (svg) svg.outerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>';
+          readAloudBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>';
         },
         onEnd() {
           resetReadAloudState();
@@ -8102,10 +8106,16 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
           await writeClipboardText(text);
         }
         copyBtn.classList.add("copied");
+        copyBtn.setAttribute("aria-label", "Copied");
+        copyBtn.setAttribute("title", "Copied");
+        copyBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
         setMessageCopyLabel(copyBtn, "Copied");
         if (resetTimer) clearTimeout(resetTimer);
         resetTimer = setTimeout(() => {
           copyBtn.classList.remove("copied");
+          copyBtn.setAttribute("aria-label", baseCopyLabel);
+          copyBtn.setAttribute("title", baseCopyLabel);
+          copyBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
           setMessageCopyLabel(copyBtn, baseCopyLabel);
         }, 1800);
       } catch (err) {

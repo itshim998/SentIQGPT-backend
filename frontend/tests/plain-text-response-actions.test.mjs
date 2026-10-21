@@ -40,16 +40,36 @@ assert.match(
   "Action buttons must be created in exact order: Read aloud, Good response, Bad response, Retry, Copy"
 );
 
-// 1.3 Exact visible labels for Good response and Bad response
-assert.match(
+// 1.3 Icon-only buttons with accessible aria-label and title attributes (no visible text labels)
+assert.doesNotMatch(
   chatController,
-  /<span class="message-action-label">Good response<\/span>/,
-  "Good response button must have exact visible text 'Good response'"
+  /<span class="message-action-label">(?:Read aloud|Good response|Bad response|Retry|Copy)<\/span>/,
+  "Action buttons must not contain visible text labels"
 );
 assert.match(
   chatController,
-  /<span class="message-action-label">Bad response<\/span>/,
-  "Bad response button must have exact visible text 'Bad response'"
+  /readAloudBtn\.setAttribute\("aria-label",\s*"Read aloud"\);[\s\S]*?readAloudBtn\.setAttribute\("title",\s*"Read aloud"\)/,
+  "Read aloud button must have aria-label and title"
+);
+assert.match(
+  chatController,
+  /goodBtn\.setAttribute\("aria-label",\s*"Good response"\);[\s\S]*?goodBtn\.setAttribute\("title",\s*"Good response"\)/,
+  "Good response button must have aria-label and title"
+);
+assert.match(
+  chatController,
+  /badBtn\.setAttribute\("aria-label",\s*"Bad response"\);[\s\S]*?badBtn\.setAttribute\("title",\s*"Bad response"\)/,
+  "Bad response button must have aria-label and title"
+);
+assert.match(
+  chatController,
+  /retryBtn\.setAttribute\("aria-label",\s*"Retry"\);[\s\S]*?retryBtn\.setAttribute\("title",\s*"Retry"\)/,
+  "Retry button must have aria-label and title"
+);
+assert.match(
+  chatController,
+  /copyBtn\.setAttribute\("aria-label",\s*baseCopyLabel\);[\s\S]*?copyBtn\.setAttribute\("title",\s*baseCopyLabel\)/,
+  "Copy button must have aria-label and title"
 );
 
 // 1.4 Mutual exclusivity and aria-pressed attributes
