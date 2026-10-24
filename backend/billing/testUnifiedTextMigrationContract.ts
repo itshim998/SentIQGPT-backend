@@ -25,7 +25,8 @@ const v1Migration = readFileSync(
   "utf8",
 );
 const dbRouter = readFileSync(resolve(repoRoot, "backend/dbRouter.ts"), "utf8");
-const server = readFileSync(resolve(repoRoot, "backend/server.ts"), "utf8");
+// The bootstrap delegates quota response handling to the legacy HTTP server.
+const server = readFileSync(resolve(repoRoot, "backend/serverLegacy.ts"), "utf8");
 
 assert.match(migration, /create table if not exists public\.unified_text_reservations_v2/i);
 assert.match(migration, /create table if not exists public\.unified_text_usage_events_v2/i);
