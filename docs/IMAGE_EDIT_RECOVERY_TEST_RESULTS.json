@@ -1,0 +1,268 @@
+{
+  "scope": "local isolated validation; no production test data",
+  "results": [
+    {
+      "name": "build",
+      "command": "npm run build",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 9264,
+      "finalRerun": true
+    },
+    {
+      "name": "image-editing",
+      "command": "npm run test:image-editing",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 7860,
+      "finalRerun": true,
+      "tests": 21,
+      "pass": 21,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "image-edit-billing",
+      "command": "npm run billing:test-image-editing",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2837
+    },
+    {
+      "name": "image-edit-sql",
+      "command": "npm run test:image-edit-sql",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2659,
+      "sqlAssertions": 84
+    },
+    {
+      "name": "deployment-contract",
+      "command": "npm run test:image-edit-deployment",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 3566,
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "migration-scopes",
+      "command": "npm run test:migrations",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 1787,
+      "tests": 12,
+      "pass": 12,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "testImagePolicyPass2",
+      "command": "ts-node --project tsconfig.backend.json backend/testImagePolicyPass2.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2095
+    },
+    {
+      "name": "billing/testImageCreditsPolicy",
+      "command": "ts-node --project tsconfig.backend.json backend/billing/testImageCreditsPolicy.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 3626
+    },
+    {
+      "name": "billing/testQuota",
+      "command": "ts-node --project tsconfig.backend.json backend/billing/testQuota.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2746
+    },
+    {
+      "name": "billing/testGuestTextTrial",
+      "command": "ts-node --project tsconfig.backend.json backend/billing/testGuestTextTrial.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2772
+    },
+    {
+      "name": "testCloudflareImageArchitecture",
+      "command": "ts-node --project tsconfig.backend.json backend/testCloudflareImageArchitecture.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 3660
+    },
+    {
+      "name": "testImageRoutingSafety",
+      "command": "ts-node --project tsconfig.backend.json backend/testImageRoutingSafety.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2967
+    },
+    {
+      "name": "testPaidImageTextRouting",
+      "command": "ts-node --project tsconfig.backend.json backend/testPaidImageTextRouting.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 1666
+    },
+    {
+      "name": "testIntuitiveImageRouting",
+      "command": "ts-node --project tsconfig.backend.json backend/testIntuitiveImageRouting.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2302
+    },
+    {
+      "name": "testImagePersistence",
+      "command": "ts-node --project tsconfig.backend.json backend/testImagePersistence.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2211
+    },
+    {
+      "name": "testImageStorageService",
+      "command": "ts-node --project tsconfig.backend.json backend/testImageStorageService.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2285
+    },
+    {
+      "name": "testGenerationLeaseRetryRegression",
+      "command": "ts-node --project tsconfig.backend.json backend/testGenerationLeaseRetryRegression.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 1466,
+      "tests": 9,
+      "pass": 9,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "testDurableGenerationScenarios",
+      "command": "ts-node --project tsconfig.backend.json backend/testDurableGenerationScenarios.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2419,
+      "tests": 17,
+      "pass": 17,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "testGenerationCleanupContracts",
+      "command": "ts-node --project tsconfig.backend.json backend/testGenerationCleanupContracts.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 1070
+    },
+    {
+      "name": "testToolContract",
+      "command": "ts-node --project tsconfig.backend.json backend/testToolContract.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 1604
+    },
+    {
+      "name": "testModelToolExecution",
+      "command": "ts-node --project tsconfig.backend.json backend/testModelToolExecution.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2400
+    },
+    {
+      "name": "testModelToolTransport",
+      "command": "ts-node --project tsconfig.backend.json backend/testModelToolTransport.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2303
+    },
+    {
+      "name": "frontend-aggregate",
+      "command": "npm run test:frontend",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 29830,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0,
+      "gates": 11
+    },
+    {
+      "name": "recovery-deployment",
+      "command": "npm run test:image-edit-recovery-deployment",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 4426,
+      "finalRerun": true,
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "priority5",
+      "command": "ts-node --project tsconfig.backend.json backend/testPriority5Stability.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 1240
+    },
+    {
+      "name": "token-allowances",
+      "command": "npm run billing:test-token-allowances",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 3657
+    },
+    {
+      "name": "unified-token-policy",
+      "command": "npm run billing:test-unified-text-v2",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 5880
+    },
+    {
+      "name": "unified-routing",
+      "command": "npm run test:unified-text-routing",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2987
+    },
+    {
+      "name": "quota-ui",
+      "command": "npm run test:quota-ui-contract",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 4408
+    },
+    {
+      "name": "two-shard-topology",
+      "command": "npm run test:shards",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2366,
+      "tests": 5,
+      "pass": 5,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "deployment-script-syntax",
+      "command": "node --check scripts/deployImageEditRecoveryMigrations.mjs",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 48,
+      "finalRerun": true
+    },
+    {
+      "name": "whitespace",
+      "command": "git diff --check",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 103
+    }
+  ],
+  "correctedDuringValidation": "Initial build/image tests found a TypeScript null-narrowing regression during refactoring. Explicit null guards corrected it; final reruns below supersede those failed attempts.",
+  "deploymentValidationFix": "Post-commit native history verification now uses a distinct dollar-quote delimiter. The isolated PostgreSQL test executes the full verification and rejects tampered stored statements."
+}

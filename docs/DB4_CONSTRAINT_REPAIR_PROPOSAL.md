@@ -1,5 +1,7 @@
 # DB4 constraint drift: proposed forward-only repair
 
+Status update, 2026-10-24: the proposal was subsequently implemented and verified using new CONTROL_ONLY version `20261024161000`. See [the recovery handoff](IMAGE_EDIT_RECOVERY_HANDOFF.md) and [live deployment evidence](IMAGE_EDIT_RECOVERY_DEPLOYMENT.json). The original proposal below records the earlier review state.
+
 Proposal only. No migration file was created and no database operation was executed for this proposal.
 
 The earlier production audit found the historical CONTROL_ONLY version `20260922120000_retire_db4_assigned_db.sql` recorded on DB1 while `user_db_map_assigned_db_check` still allowed assignments from 2 through 4. It reported zero DB4 mappings. Those observations are historical; recheck them immediately before any later approved repair. Runtime routing permits DB2 and DB3 only.

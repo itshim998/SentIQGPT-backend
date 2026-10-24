@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { HttpError } from "./httpErrors";
 import { executeImageEdit, type ImageEditingDependencies } from "./services/imageEditingService";
@@ -36,10 +36,10 @@ function fixture(plan: BillingPlanCode = "student_core") {
   const ledger = new Set<string>();
   const db: any = {
     rpc: async (name: string, args: any) => {
-      if (name === "claim_image_edit") {
+      if (name === "claim_image_edit" || name === "claim_image_edit_recovery") {
         if (!row) row = { request_id: args.p_request_id, image_id: randomUUID(), fingerprint: args.p_fingerprint,
           lease_token: args.p_lease_token, status: "claimed", acquired: true, source_image_id: args.p_source_image_id,
-          operation_metadata: args.p_metadata };
+          operation_metadata: args.p_metadata, operation: args.p_operation };
         else {
           if (row.fingerprint !== args.p_fingerprint) return { data: { conflict: true } };
           if (row.yielded) { row.lease_token = args.p_lease_token; row.yielded = false; }
@@ -240,6 +240,62 @@ test("a paid-plan change does not strand a stored result or re-run inference", a
   assert.equal(f.counts().calls,1);assert.equal(f.counts().charged,1);
 });
 
+test("incomplete checkpoints recover after source deletion without new inference or charges", async () => {
+  for (const status of ["storing", "generated"] as const) {
+    const f = fixture(); f.failSettlement(); await assert.rejects(f.run());
+    f.row().status = status; f.row().source_image_id = null;
+    f.deps.loadSource = async () => { throw new Error("Deleted source must not be read"); };
+    f.deps.recover = async () => { f.row().status = "generated"; };
+    await assert.rejects(f.run({ ...input, prompt: "changed request" }), code("image_edit_request_conflict"));
+    await assert.rejects(f.run({ ...input, sourceImageId: randomUUID() }), code("image_edit_request_conflict"));
+    const result = await f.run({ ...input, sourceImageId: "latest" });
+    assert.equal(result.source_image_id, sourceImageId);
+    assert.equal((await f.run()).image_id, result.image_id);
+    assert.equal(f.counts().calls, 1); assert.equal(f.counts().charged, 1);
+    assert.equal(f.counts().versions, 1); assert.equal(f.counts().messages, 1);
+  }
+});
+
+test("checkpoint recovery verifies storage before settlement and rejects Free, corruption and changed operation", async () => {
+  const f = fixture(); f.failSettlement(); await assert.rejects(f.run());
+  f.row().source_image_id = null;
+  f.deps.loadSource = async () => { throw new Error("Source is gone"); };
+  const counts = f.counts();
+  f.deps.billing.resolvePlanCodeForImageBilling = async () => "free";
+  await assert.rejects(f.run(), code("image_edit_paid_only"));
+  f.deps.billing.resolvePlanCodeForImageBilling = async () => "student_core";
+  await assert.rejects(f.run({ ...input, operation: "replace_background" }), code("image_edit_request_conflict"));
+  f.deps.verifyArtifact = async () => { throw new Error("SHA-256 integrity mismatch"); };
+  await assert.rejects(f.run(), /SHA-256 integrity mismatch/);
+  assert.equal(f.counts().reservations, counts.reservations); assert.equal(f.counts().charged, 0);
+  f.deps.verifyArtifact = async () => { throw new HttpError(409, "Missing output", { code: "image_edit_artifact_missing" }); };
+  await assert.rejects(f.run(), code("image_edit_artifact_missing"));
+  assert.equal(f.row().status, "failed"); assert.equal(f.counts().charged, 0); assert.equal(f.counts().calls, 1);
+});
+
+test("concurrent checkpoint recovery has one owner and does not duplicate settlement", async () => {
+  const f = fixture(); f.failSettlement(); await assert.rejects(f.run());
+  f.row().source_image_id = null;
+  let ready!: () => void, proceed!: () => void;
+  const started = new Promise<void>(resolve => { ready = resolve; });
+  const blocked = new Promise<void>(resolve => { proceed = resolve; });
+  f.deps.verifyArtifact = async () => { ready(); await blocked; };
+  const first = f.run(); await started;
+  await assert.rejects(f.run(), code("image_edit_in_progress"));
+  proceed(); await first;
+  assert.equal(f.counts().charged, 1); assert.equal(f.counts().calls, 1); assert.equal(f.counts().messages, 1);
+});
+
+test("stored checkpoint verification checks actual object bytes and SHA-256", async () => {
+  const bytes = Buffer.from("immutable edit output");
+  const db = { storage: { from: () => ({ download: async () => ({ data: new Blob([bytes]), error: null }) }) } } as any;
+  const artifact = { storagePath: "server-owned/path.webp", fileSizeBytes: bytes.length,
+    contentSha256: createHash("sha256").update(bytes).digest("hex") };
+  await verifyEditedImageArtifact(db, artifact);
+  await assert.rejects(verifyEditedImageArtifact(db, { ...artifact, contentSha256: "0".repeat(64) }), /integrity validation/);
+  await assert.rejects(verifyEditedImageArtifact(db, { ...artifact, fileSizeBytes: bytes.length + 1 }), /integrity validation/);
+});
+
 test("ownership, plan failures, queued cancellation and missing staged artifacts fail closed", async () => {
   const unavailable = fixture();
   unavailable.deps.billing.resolvePlanCodeForImageBilling = async () => { throw new Error("Billing unavailable"); };
@@ -266,7 +322,7 @@ test("staged artifact recovery avoids inference and relative source references s
   const db = f.ctx.userDb;
   const originalFrom = db.from;
   db.from = (table: string) => table === "image_edit_requests" ? ({
-    select: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { source_image_id: sourceImageId } }) }) }) }) }),
+    select: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: structuredClone(f.row()) }) }) }) }) }),
   }) : (table === "conversations" || table === "messages" || table === "chat_images")
     ? (() => {
       const query = originalFrom(table);

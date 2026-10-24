@@ -154,5 +154,59 @@ try {
   check(recoveredStage.status, "storing"); check(recoveredStage.acquired, true);
   await rejects(scalar(shard, "select record_image_edit_artifact($1,$2,$3) as value", [stagedRequest, stagedLease, stagedArtifact]));
   check((await scalar(shard, "select record_image_edit_artifact($1,$2,$3) as value", [stagedRequest, recoveryLease, stagedArtifact])).status, "generated");
-  console.log(`PASS: ${assertions} isolated PostgreSQL assertions (ledger, entitlements, quota ceiling, retry identity, lineage, RPC permissions, migration idempotency and DB boundaries).`);
+  await shard.exec(`create schema supabase_migrations; create table supabase_migrations.schema_migrations(version text primary key);
+    insert into supabase_migrations.schema_migrations values('20261024121000');`);
+  await shard.exec(sql('20261024162000_image_edit_artifact_recovery.sql'));
+  const recovery = (request, token, fingerprint='e'.repeat(64), owner=essential, operation='edit', value=request.artifact, sourceId=request.parent) => scalar(shard,
+    'select claim_image_edit_recovery($1,$2,$3,$4,$5,$6,$7,$8) as value',
+    [request.id,owner,chat,sourceId,fingerprint,operation,value,token]);
+  const checkpoint = async (generated=true) => {
+    const request={id:id(),parent:randomUUID(),lease:randomUUID()};
+    await shard.query("insert into chat_images(id,user_id,chat_id,image_url,storage_path) values($1,$2,$3,'https://cdn.example/source','source')",[request.parent,essential,chat]);
+    const metadata={prompt:'recover',operation:'edit',source_image_id:request.parent,source_sha256:'c'.repeat(64),client_request_id:request.id};
+    const r=await scalar(shard,"select claim_image_edit($1,$2,$3,$4,$5,'edit',$6,$7) as value",[request.id,essential,chat,request.parent,'e'.repeat(64),metadata,request.lease]);
+    request.artifact={...artifact,storagePath:`${essential}/${chat}/${r.image_id}.webp`};
+    await scalar(shard,"select transition_image_edit($1,$2,'invoking') as value",[request.id,request.lease]);
+    await scalar(shard,'select prepare_image_edit_artifact($1,$2,$3) as value',[request.id,request.lease,request.artifact]);
+    if(generated)await scalar(shard,'select record_image_edit_artifact($1,$2,$3) as value',[request.id,request.lease,request.artifact]);
+    await shard.query('delete from chat_images where id=$1',[request.parent]);
+    check(await scalar(shard,'select source_image_id as value from image_edit_requests where request_id=$1',[request.id]),null);
+    return request;
+  };
+  for(const generated of [false,true]){
+    const request=await checkpoint(generated);
+    check((await recovery(request,randomUUID())).acquired,false); // live lease
+    await shard.query("update image_edit_requests set lease_expires_at=now()-interval '1 second' where request_id=$1",[request.id]);
+    await rejects(recovery(request,randomUUID(),'e'.repeat(64),other));
+    check((await recovery(request,randomUUID(),'f'.repeat(64))).conflict,true);
+    check((await recovery(request,randomUUID(),'e'.repeat(64),essential,'replace_background')).conflict,true);
+    check((await recovery(request,randomUUID(),'e'.repeat(64),essential,'edit',{...request.artifact,provider:'other'})).conflict,true);
+    check((await recovery(request,randomUUID(),'e'.repeat(64),essential,'edit',request.artifact,randomUUID())).conflict,true);
+    await rejects(recovery(request,null));
+    const token=randomUUID(), competitor=randomUUID();
+    const recovered=await Promise.all([recovery(request,token),recovery(request,competitor)]);
+    check(recovered.map(r=>r.acquired),[true,false]);
+    // Lost claim response: the same token can repeat without stealing a lease.
+    check((await recovery(request,token)).acquired,true);
+    await rejects(scalar(shard,'select record_image_edit_artifact($1,$2,$3) as value',[request.id,request.lease,request.artifact]));
+    await scalar(shard,'select record_image_edit_artifact($1,$2,$3) as value',[request.id,token,request.artifact]);
+    // Lost checkpoint/completion responses: repeated calls do not duplicate rows.
+    await scalar(shard,'select record_image_edit_artifact($1,$2,$3) as value',[request.id,token,request.artifact]);
+    await Promise.all([1,2].map(()=>scalar(shard,'select complete_image_edit($1,$2) as value',[request.id,token])));
+    check(await scalar(shard,"select count(*)::int as value from messages where client_request_id=$1 and role='assistant'",[request.id]),1);
+    check(await scalar(shard,'select count(*)::int as value from chat_images where edit_request_id=$1',[request.id]),1);
+    check((await recovery(request,randomUUID())).status,'completed');
+  }
+  const nonexistent={id:id(),parent:parent,artifact};await rejects(recovery(nonexistent,randomUUID()));
+  const uninvoked=id(),uninvokedLease=randomUUID();await claim(uninvoked,uninvokedLease);
+  for(const request of [uninvoked,interrupted]){
+    await shard.query("update image_edit_requests set operation_metadata=operation_metadata || jsonb_build_object('source_image_id',$2::text,'operation','edit') where request_id=$1",[request,parent]);
+    await rejects(recovery({id:request,parent,artifact:null},randomUUID(),'a'.repeat(64))); // uninvoked or ambiguous/failed cannot recover
+  }
+  const missing=await checkpoint(true);
+  await shard.query('delete from chat_images where edit_request_id=$1',[missing.id]);
+  await rejects(recovery(missing,randomUUID())); // cannot resurrect a removed output version
+  check(await scalar(shard,"select has_function_privilege('authenticated','claim_image_edit_recovery(text,uuid,uuid,uuid,text,text,jsonb,uuid)','execute') as value"),false);
+  check(await scalar(shard,"select has_function_privilege('anon','claim_image_edit_recovery(text,uuid,uuid,uuid,text,text,jsonb,uuid)','execute') as value"),false);
+  console.log(`PASS: ${assertions} isolated PostgreSQL assertions (ledger, entitlements, quota ceiling, retry identity, lineage, source-deletion recovery, lease races, RPC permissions and DB boundaries).`);
 } finally { await control.close(); await shard.close(); }

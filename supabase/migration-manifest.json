@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-24T14:10:54.840Z",
-  "totalCanonicalMigrations": 85,
+  "generatedAt": "2026-10-24T16:06:03.296Z",
+  "totalCanonicalMigrations": 87,
   "topology": {
     "controlDatabases": [
       1
@@ -15,10 +15,10 @@
   },
   "counts": {
     "both": 9,
-    "controlOnly": 16,
-    "dataOnly": 60,
-    "controlTrackTotal": 25,
-    "dataTrackTotal": 69
+    "controlOnly": 17,
+    "dataOnly": 61,
+    "controlTrackTotal": 26,
+    "dataTrackTotal": 70
   },
   "migrations": [
     {
@@ -879,6 +879,26 @@
         "data"
       ],
       "checksum": "0d7cd7cf1d44575f7f97559242db141d7cb00b399fd9a02c0ecbbd5c36f95afd"
+    },
+    {
+      "version": "20261024161000",
+      "name": "repair_db4_assignment_constraint",
+      "filename": "20261024161000_repair_db4_assignment_constraint.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "5dbbb7aa98d4a1e0ad7a2956e184c93ac079c0367d0c36267295c251c834841f"
+    },
+    {
+      "version": "20261024162000",
+      "name": "image_edit_artifact_recovery",
+      "filename": "20261024162000_image_edit_artifact_recovery.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "1c544d7afe892dac7744d1b10b62fed44f699b949eb8f8fa9a2965a72a48aade"
     }
   ]
 }

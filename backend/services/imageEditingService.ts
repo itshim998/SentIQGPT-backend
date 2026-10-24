@@ -76,19 +76,22 @@ export async function executeImageEdit(raw: unknown, ctx: ImageEditingContext, d
   const requestId = `image-edit:${hash(JSON.stringify([ctx.userId, input.conversationId, input.clientRequestId]))}`;
   const mask = input.mask ? decodeEditMask(input.mask) : undefined;
   const previousResult = await ctx.userDb.from("image_edit_requests")
-    .select("request_id,image_id,status,fingerprint,source_image_id,operation_metadata,assistant_message_id,artifact")
+    .select("request_id,image_id,status,fingerprint,source_image_id,operation,operation_metadata,assistant_message_id,artifact")
     .eq("request_id", requestId).eq("user_id", ctx.userId).eq("conversation_id", input.conversationId).maybeSingle();
   if (previousResult.error) throw new HttpError(503, "Image source recovery is unavailable.", { code: "image_edit_recovery_unavailable", expose: true });
   const previous = previousResult.data;
-  if (previous?.status === "completed") {
-    // A completed action is bound to its original source hash. Replaying it must
+  const recoveringArtifact = previous != null && previous.artifact != null && ["storing", "generated"].includes(previous.status);
+  if (previous?.status === "completed" || recoveringArtifact) {
+    // A checkpointed action is bound to its original source hash. Recovery must
     // not depend on the continued existence of that parent file or invoke again.
     const sourceId = previous.operation_metadata?.source_image_id;
     const sourceHash = previous.operation_metadata?.source_sha256;
     if (typeof sourceId !== "string" || typeof sourceHash !== "string" || !/^[0-9a-f]{64}$/.test(sourceHash)) {
       throw new HttpError(503, "Stored image edit identity is unavailable.", { code: "image_edit_recovery_unavailable", expose: true });
     }
-    if ((input.sourceImageId !== "latest" && input.sourceImageId !== sourceId)
+    if (previous.operation !== input.operation || previous.operation_metadata?.operation !== input.operation
+        || previous.request_id !== requestId
+        || (input.sourceImageId !== "latest" && input.sourceImageId !== sourceId)
         || hash(JSON.stringify(requestMetadata(input, sourceId, sourceHash, mask ? hash(mask) : null))) !== previous.fingerprint) {
       throw new HttpError(409, "This request ID was already used for a different edit.", { code: "image_edit_request_conflict" });
     }
@@ -96,40 +99,50 @@ export async function executeImageEdit(raw: unknown, ctx: ImageEditingContext, d
       .eq("id", input.conversationId).eq("user_id", ctx.userId).maybeSingle();
     if (ownedConversation.error) throw new HttpError(503, "Conversation ownership could not be checked.", { code: "image_edit_recovery_unavailable", expose: true });
     if (!ownedConversation.data) throw new HttpError(404, "Conversation was not found.", { code: "image_edit_conversation_not_found" });
-    const artifact = previous.artifact as EditedImageArtifact | undefined;
-    if (!artifact || !previous.assistant_message_id || !previous.image_id) {
-      throw new HttpError(410, "This edit result is no longer available.", { code: "image_edit_result_deleted" });
+    if (recoveringArtifact) {
+      const artifact = previous.artifact as EditedImageArtifact;
+      if (!new RegExp(`^${ctx.userId}/${input.conversationId}/${previous.image_id}\\.(webp|png|jpe?g)$`).test(artifact.storagePath)
+          || !/^[0-9a-f]{64}$/.test(artifact.contentSha256) || !Number.isInteger(artifact.fileSizeBytes)
+          || artifact.fileSizeBytes < 1 || artifact.fileSizeBytes > 1048576) {
+        throw new HttpError(503, "Stored image edit identity is unavailable.", { code: "image_edit_recovery_unavailable", expose: true });
+      }
     }
-
-    // Image removal deletes the immutable object and its chat_images row, but a
-    // completed request remains as an idempotency tombstone. Never replay its
-    // obsolete public URL or invoke the provider again.
-    const { data: imageRow, error: imageError } = await ctx.userDb.from("chat_images")
-      .select("id,storage_path,image_url,content_sha256")
-      .eq("id", previous.image_id).eq("user_id", ctx.userId)
-      .eq("chat_id", input.conversationId).maybeSingle();
-    if (imageError) throw new HttpError(503, "Image result lookup is temporarily unavailable.", { code: "image_edit_recovery_unavailable", expose: true });
-    if (!imageRow || imageRow.storage_path !== artifact.storagePath
-        || imageRow.image_url !== artifact.imageUrl || imageRow.content_sha256 !== artifact.contentSha256) {
-      throw new HttpError(410, "This edit result is no longer available.", { code: "image_edit_result_deleted" });
-    }
-    const { data: messageRow, error: messageError } = await ctx.userDb.from("messages")
-      .select("id,storage_path")
-      .eq("id", previous.assistant_message_id).eq("conversation_id", input.conversationId)
-      .eq("role", "assistant").eq("message_type", "image").maybeSingle();
-    if (messageError) throw new HttpError(503, "Image message lookup is temporarily unavailable.", { code: "image_edit_recovery_unavailable", expose: true });
-    if (!messageRow || messageRow.storage_path !== artifact.storagePath) {
-      throw new HttpError(410, "This edit result is no longer available.", { code: "image_edit_result_deleted" });
-    }
-    try {
-      await (deps.verifyArtifact ?? verifyEditedImageArtifact)(ctx.storageDb, artifact);
-    } catch (error) {
-      if (error instanceof HttpError && error.code === "image_edit_artifact_missing") {
+    if (previous.status === "completed") {
+      const artifact = previous.artifact as EditedImageArtifact | undefined;
+      if (!artifact || !previous.assistant_message_id || !previous.image_id) {
         throw new HttpError(410, "This edit result is no longer available.", { code: "image_edit_result_deleted" });
       }
-      throw new HttpError(503, "Stored image verification is temporarily unavailable.", { code: "image_edit_recovery_unavailable", expose: true });
+
+      // Image removal deletes the immutable object and its chat_images row, but a
+      // completed request remains as an idempotency tombstone. Never replay its
+      // obsolete public URL or invoke the provider again.
+      const { data: imageRow, error: imageError } = await ctx.userDb.from("chat_images")
+        .select("id,storage_path,image_url,content_sha256")
+        .eq("id", previous.image_id).eq("user_id", ctx.userId)
+        .eq("chat_id", input.conversationId).maybeSingle();
+      if (imageError) throw new HttpError(503, "Image result lookup is temporarily unavailable.", { code: "image_edit_recovery_unavailable", expose: true });
+      if (!imageRow || imageRow.storage_path !== artifact.storagePath
+          || imageRow.image_url !== artifact.imageUrl || imageRow.content_sha256 !== artifact.contentSha256) {
+        throw new HttpError(410, "This edit result is no longer available.", { code: "image_edit_result_deleted" });
+      }
+      const { data: messageRow, error: messageError } = await ctx.userDb.from("messages")
+        .select("id,storage_path")
+        .eq("id", previous.assistant_message_id).eq("conversation_id", input.conversationId)
+        .eq("role", "assistant").eq("message_type", "image").maybeSingle();
+      if (messageError) throw new HttpError(503, "Image message lookup is temporarily unavailable.", { code: "image_edit_recovery_unavailable", expose: true });
+      if (!messageRow || messageRow.storage_path !== artifact.storagePath) {
+        throw new HttpError(410, "This edit result is no longer available.", { code: "image_edit_result_deleted" });
+      }
+      try {
+        await (deps.verifyArtifact ?? verifyEditedImageArtifact)(ctx.storageDb, artifact);
+      } catch (error) {
+        if (error instanceof HttpError && error.code === "image_edit_artifact_missing") {
+          throw new HttpError(410, "This edit result is no longer available.", { code: "image_edit_result_deleted" });
+        }
+        throw new HttpError(503, "Stored image verification is temporarily unavailable.", { code: "image_edit_recovery_unavailable", expose: true });
+      }
+      return response({ ...previous, source_image_id: sourceId }, true);
     }
-    return response({ ...previous, source_image_id: sourceId }, true);
   }
   if (input.sourceImageId === "latest") {
     // Bind relative references to the original source across replays, even after
@@ -146,19 +159,29 @@ export async function executeImageEdit(raw: unknown, ctx: ImageEditingContext, d
     input = { ...input, sourceImageId: sourceId };
   }
 
-  const source = await (deps.loadSource ?? loadOwnedEditSource)(ctx.userDb, ctx.storageDb, ctx.userId, input.conversationId, input.sourceImageId);
-  const edit = await validateEditInput(source, input.operation, mask);
-  assertImageEditSupported(models, input.operation);
-  const metadata = requestMetadata(input, input.sourceImageId, hash(source), edit.mask ? hash(edit.mask) : null);
-  const fingerprint = hash(JSON.stringify(metadata));
+  // Only a trusted durable checkpoint can bypass reading the original source.
+  // Fresh/claimed/invoking requests retain the existing ownership and file checks.
+  let edit: Awaited<ReturnType<typeof validateEditInput>> | undefined;
+  let metadata: ReturnType<typeof requestMetadata>;
+  if (recoveringArtifact) {
+    metadata = previous.operation_metadata;
+  } else {
+    const source = await (deps.loadSource ?? loadOwnedEditSource)(ctx.userDb, ctx.storageDb, ctx.userId, input.conversationId, input.sourceImageId);
+    edit = await validateEditInput(source, input.operation, mask);
+    assertImageEditSupported(models, input.operation);
+    metadata = requestMetadata(input, input.sourceImageId, hash(source), edit.mask ? hash(edit.mask) : null);
+  }
+  const fingerprint = recoveringArtifact ? previous.fingerprint : hash(JSON.stringify(metadata));
   const leaseToken = randomUUID();
-  let record = await rpc(ctx.userDb, "claim_image_edit", {
+  let record = await rpc(ctx.userDb, recoveringArtifact ? "claim_image_edit_recovery" : "claim_image_edit", {
     p_request_id: requestId, p_user_id: ctx.userId, p_conversation_id: input.conversationId,
-    p_source_image_id: input.sourceImageId, p_fingerprint: fingerprint, p_operation: input.operation,
-    p_metadata: metadata, p_lease_token: leaseToken,
+    p_source_image_id: recoveringArtifact ? metadata.source_image_id : input.sourceImageId,
+    p_fingerprint: fingerprint, p_operation: input.operation,
+    ...(recoveringArtifact ? { p_artifact: previous.artifact } : { p_metadata: metadata }), p_lease_token: leaseToken,
   });
   if (record.conflict) throw new HttpError(409, "This request ID was already used for a different edit.", { code: "image_edit_request_conflict" });
-  if (record.status === "completed") return response(record, true);
+  // A concurrent completion must pass the same row/message/Storage replay checks.
+  if (record.status === "completed") return executeImageEdit(raw, ctx, deps);
   if (record.status === "failed") {
     await deps.billing.releaseImageEditRequest(requestId);
     throw new HttpError(409, "This edit did not complete. Submit a new request ID to try again.", { code: "image_edit_new_request_required" });
@@ -175,6 +198,13 @@ export async function executeImageEdit(raw: unknown, ctx: ImageEditingContext, d
   // Bound queue + provider work below the durable lease and credit reservation TTL.
   const timer = setTimeout(() => controller.abort(new Error("Image edit timed out")), 5 * 60_000);
   try {
+    if (artifact) {
+      // Verify both generated and storing checkpoints before touching the ledger.
+      await (deps.verifyArtifact ?? verifyEditedImageArtifact)(ctx.storageDb, artifact);
+      if (record.status === "storing") {
+        await (deps.recover ?? recoverEditedImageResult)(ctx.userDb, ctx.storageDb, requestId, leaseToken, artifact);
+      }
+    }
     const cooldown = ctx.imageQuotaKey ? getQuotaInfo(ctx.imageQuotaKey) : undefined;
     if (!artifact && cooldown?.cooldownActive) {
       throw new HttpError(429, "Image generation cooldown is active.", { code: "image_edit_cooldown",
@@ -191,9 +221,6 @@ export async function executeImageEdit(raw: unknown, ctx: ImageEditingContext, d
     // fixes the successful model/cost; a paid-plan change must not strand it.
     if (!artifact && reservation.planCode !== plan) throw new HttpError(409, "Subscription changed during this edit. Submit a new request.", { code: "image_edit_plan_changed" });
     if (!artifact && reservation.status === "committed") throw new Error("Image edit reservation already settled without an artifact");
-    if (artifact && record.status === "storing") {
-      await (deps.recover ?? recoverEditedImageResult)(ctx.userDb, ctx.storageDb, requestId, leaseToken, artifact);
-    }
     if (!artifact) {
       const result = await (deps.route ?? routeImageGeneration)({
         prompt: input.operation === "replace_background"
@@ -232,7 +259,7 @@ export async function executeImageEdit(raw: unknown, ctx: ImageEditingContext, d
     });
     record = await rpc(ctx.userDb, "complete_image_edit", { p_request_id: requestId, p_lease_token: leaseToken });
     if (ctx.imageQuotaKey) commitImageQuotaSuccess(ctx.imageQuotaKey);
-    return response(record, Boolean(record.status === "completed" && reservation.idempotent));
+    return response({ ...record, source_image_id: record.source_image_id ?? metadata.source_image_id }, Boolean(record.status === "completed" && reservation.idempotent));
   } catch (error) {
     if (error instanceof HttpError && error.code === "image_edit_cooldown") {
       // Cooldown rejection is admission control, so keep the same request ID
