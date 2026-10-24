@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-24T16:06:03.296Z",
-  "totalCanonicalMigrations": 87,
+  "generatedAt": "2026-10-24T18:06:07.006Z",
+  "totalCanonicalMigrations": 88,
   "topology": {
     "controlDatabases": [
       1
@@ -16,9 +16,9 @@
   "counts": {
     "both": 9,
     "controlOnly": 17,
-    "dataOnly": 61,
+    "dataOnly": 62,
     "controlTrackTotal": 26,
-    "dataTrackTotal": 70
+    "dataTrackTotal": 71
   },
   "migrations": [
     {
@@ -899,6 +899,16 @@
         "data"
       ],
       "checksum": "1c544d7afe892dac7744d1b10b62fed44f699b949eb8f8fa9a2965a72a48aade"
+    },
+    {
+      "version": "20261024190000",
+      "name": "image_annotation_versions",
+      "filename": "20261024190000_image_annotation_versions.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "7552ce92f19c9ff110d774275627866aa11aa4bf4e565a10418d67254ad7b131"
     }
   ]
 }

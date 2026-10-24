@@ -649,7 +649,7 @@ export async function getChatImages(
       provider: row.provider,
       fileSizeBytes: row.file_size_bytes,
       createdAt: row.created_at,
-      sourceImageId: row.source_image_id || undefined,
+      sourceImageId: row.source_image_id || row.operation_metadata?.source_image_id || undefined,
       editRequestId: row.edit_request_id || undefined,
       operation: row.operation || undefined,
       operationMetadata: row.operation_metadata || undefined,

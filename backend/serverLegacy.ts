@@ -32,6 +32,9 @@ import { processMessageForMemory, compressMemories } from "./ai/MemoryProcessor"
 import { extractTextFromFile, validateFileUpload } from "./ai/FileIngestionHandler";
 import { routeImageGeneration } from "./tools/imageGeneration/imageRouter";
 import { executeImageEdit } from "./services/imageEditingService";
+import { saveImageAnnotation, IMAGE_ANNOTATION_SCHEMA_VERSION } from "./services/imageAnnotationService";
+import { SaveImageAnnotationSchema } from "./tools/imageGeneration/imageAnnotationContract";
+import { assertPaidImageEdit } from "./tools/imageGeneration/imageEditPolicy";
 import { ImageEditRequestSchema } from "./tools/imageGeneration/imageEditValidation";
 import { routeChartGeneration } from "./tools/chartGeneration/chartRouter";
 import { ensureHtmlDocument, getGeneratedFileMimeType, routeFileGeneration } from "./tools/fileGeneration/fileGenerator";
@@ -6704,6 +6707,46 @@ app.post(
       req.removeListener("aborted", onAbort);
       res.removeListener("close", onAbort);
     }
+  }),
+);
+
+app.get(
+  "/api/images/editor-capabilities",
+  verifyJWT({ allowGuest: false }),
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const requestUser = getRequestUser(req);
+    const userId = await getVerifiedUserId(req);
+    const identity = buildBillingIdentity(req, requestUser);
+    assertPaidImageEdit(await billingQuotaService.resolvePlanCodeForImageBilling(identity), userId, identity.isGuest);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "images.editor-capabilities");
+    const { data, error } = await userDb.rpc("get_image_annotation_schema_version");
+    res.json({ annotationSave: !error && data === IMAGE_ANNOTATION_SCHEMA_VERSION, annotationForAi: true,
+      generativeOperations: ["edit", "replace_background"], regionErase: false, backgroundRemoval: false });
+  }),
+);
+
+app.post(
+  "/api/images/annotations",
+  verifyJWT({ allowGuest: false }),
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const requestUser = getRequestUser(req);
+    const parsed = SaveImageAnnotationSchema.safeParse(req.body);
+    if (!parsed.success) throw new HttpError(400, "Invalid image markup request.", { code: "image_annotation_invalid_request" });
+    const userId = await getVerifiedUserId(req);
+    const identity = buildBillingIdentity(req, requestUser);
+    assertPaidImageEdit(await billingQuotaService.resolvePlanCodeForImageBilling(identity), userId, identity.isGuest);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "images.annotations");
+    await initializeUserSessionOrThrow(userDb, userId, "images.annotations");
+    await getOwnedConversationOrThrow(userDb, userId, parsed.data.conversationId, "images.annotations");
+    const controller = new AbortController();
+    const onAbort = () => { if (!res.writableEnded) controller.abort(new Error("Client disconnected")); };
+    req.once("aborted", onAbort); res.once("close", onAbort);
+    try {
+      res.json(await saveImageAnnotation(parsed.data, { userId, identity, userDb, storageDb: getImageStorageDatabase(), signal: controller.signal },
+        { billing: billingQuotaService }));
+    } finally { req.removeListener("aborted", onAbort); res.removeListener("close", onAbort); }
   }),
 );
 

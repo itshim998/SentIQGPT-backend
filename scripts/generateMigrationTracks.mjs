@@ -43,6 +43,7 @@ export const CONTROL_ONLY_VERSIONS = new Set([
 ]);
 
 export const DATA_ONLY_VERSIONS = new Set([
+  "20261024190000", // image_annotation_versions.sql
   "20261024162000", // image_edit_artifact_recovery.sql
   "20261024121000", // image_edit_versions.sql
   "20260330194000", // add_memory_scope_and_chat_id.sql

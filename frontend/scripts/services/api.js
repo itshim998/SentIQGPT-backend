@@ -491,6 +491,14 @@ async function editImage(request) {
   });
 }
 
+async function saveImageAnnotation(request) {
+  return apiRequest("/api/images/annotations", { method: "POST", body: JSON.stringify(request) });
+}
+
+async function getImageEditorCapabilities() {
+  return apiRequest("/api/images/editor-capabilities");
+}
+
 async function storeImage(chatId, imageData, prompt, provider) {
   return apiRequest("/api/images/store", {
     method: "POST",
@@ -842,7 +850,7 @@ async function getLiveResumeToken(sessionId) {
 
 window.SentIQAPI = {
   sendMessage, sendMessageStream, canStreamResponses, buildChatRequestContext, classifyMemory, compressMemories,
-  sendSelectionMessage, uploadFile, subscribeFileUpdates, clearFileSession, generateImage, storeImage, getChatImages, getImageQuota, editImage, deleteImage, generateTitle,
+  sendSelectionMessage, uploadFile, subscribeFileUpdates, clearFileSession, generateImage, storeImage, getChatImages, getImageQuota, editImage, deleteImage, saveImageAnnotation, getImageEditorCapabilities, generateTitle,
   getBillingPlans, getBillingMe, getBillingUsage, startBillingCheckout, verifyBillingCheckout, cancelBillingSubscription,
   getGeneratedFileAccessUrl, updateGeneratedHtmlFile, deleteGeneratedFile,
   getConversations, createConversation, getConversationMessages, deleteConversation, updateConversationTitle, syncChatMessages,

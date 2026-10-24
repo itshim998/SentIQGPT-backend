@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  EDIT_OPERATIONS, createEditPayload, creditCost, editError, versionChain,
+  EDIT_OPERATIONS, createEditPayload, createAnnotationPayload, createAnnotation, creditCost, editError, versionChain,
 } from "../scripts/features/image-editor.js";
 
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -67,7 +67,23 @@ assert.match(editor, /api\.getChatImages\(chatId\)/);
 assert.match(editor, /api\.editImage\(payload\)/);
 assert.match(editor, /crypto\?\.randomUUID/);
 assert.match(editor, /image credits on success/);
-assert.match(editor, /Marks are not saved to chat or sent to the AI/);
+assert.match(editor, /Saving a drawing uses no generation credits/);
+assert.match(editor, /api\.saveImageAnnotation\(payload\)/);
+assert.match(api, /apiRequest\("\/api\/images\/annotations"/);
+assert.match(api, /apiRequest\("\/api\/images\/editor-capabilities"/);
+const strokes = [{ color: "#FF0000", size: 6, points: [{ x: 0.2, y: 0.4 }, { x: 0.3, y: 0.6 }] }];
+const markup = createAnnotationPayload({ imageId: one, chatId: two, requestId: "markup-1", strokes });
+assert.deepEqual(Object.keys(markup).sort(), ["annotation", "clientRequestId", "conversationId", "sourceImageId"]);
+assert.equal(markup.annotation.strokes[0].color, "#ff0000");
+assert(!("prompt" in markup) && !("executionMode" in markup));
+const guided = createEditPayload({ imageId: one, chatId: two, requestId: "ai-1", instruction: "Change the marked area", operation: "edit", mode: "fast", annotation: createAnnotation(strokes) });
+assert.deepEqual(guided.annotation, markup.annotation);
+assert.throws(() => createAnnotation([{ ...strokes[0], color: 'url(https://example.com)' }]));
+assert.throws(() => createAnnotation([{ ...strokes[0], points: [{ x: Infinity, y: 0 }] }]));
+assert.throws(() => createAnnotation([{ ...strokes[0], points: Array.from({ length: 4097 }, () => ({ x: 0, y: 0 })) }]));
+assert.deepEqual(versionChain([
+  { id: two, sourceImageId: one, createdAt: "1" }, { id: three, operation_metadata: { source_image_id: one }, createdAt: "2" },
+], two).map(v => v.id), [two, three]);
 assert.doesNotMatch(editor, /data-edit-action="erase"/);
 assert.match(styles, /96-paid-image-editor\.css/);
 assert.match(sheet, /prefers-reduced-motion/);

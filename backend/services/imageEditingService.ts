@@ -13,6 +13,7 @@ import type { ImageEditRequest } from "../tools/imageGeneration/imageEditValidat
 import { loadOwnedEditSource, verifyEditedImageArtifact } from "../tools/imageGeneration/imageStorageService";
 import { persistEditedImageResult, recoverEditedImageResult, type EditedImageArtifact } from "./generatedImagePersistenceService";
 import { detectPromptInjection } from "../validation/schemas";
+import { renderImageAnnotation } from "../tools/imageGeneration/imageAnnotationRenderer";
 
 type EditRecord = {
   request_id: string; image_id: string; status: "claimed" | "invoking" | "storing" | "generated" | "completed" | "failed";
@@ -42,6 +43,7 @@ function requestMetadata(input: ImageEditRequest, sourceId: string, sourceHash: 
     prompt: input.prompt, operation: input.operation, source_image_id: sourceId,
     client_request_id: input.clientRequestId, source_sha256: sourceHash, mask_sha256: maskHash,
     size: input.size, execution_mode: input.executionMode,
+    ...(input.annotation ? { annotation: input.annotation } : {}),
   };
 }
 
@@ -169,6 +171,7 @@ export async function executeImageEdit(raw: unknown, ctx: ImageEditingContext, d
     const source = await (deps.loadSource ?? loadOwnedEditSource)(ctx.userDb, ctx.storageDb, ctx.userId, input.conversationId, input.sourceImageId);
     edit = await validateEditInput(source, input.operation, mask);
     assertImageEditSupported(models, input.operation);
+    if (input.annotation) edit = { ...edit, source: await renderImageAnnotation(source, input.annotation) };
     metadata = requestMetadata(input, input.sourceImageId, hash(source), edit.mask ? hash(edit.mask) : null);
   }
   const fingerprint = recoveringArtifact ? previous.fingerprint : hash(JSON.stringify(metadata));
@@ -222,9 +225,11 @@ export async function executeImageEdit(raw: unknown, ctx: ImageEditingContext, d
     if (!artifact && reservation.planCode !== plan) throw new HttpError(409, "Subscription changed during this edit. Submit a new request.", { code: "image_edit_plan_changed" });
     if (!artifact && reservation.status === "committed") throw new Error("Image edit reservation already settled without an artifact");
     if (!artifact) {
+      const instruction = input.operation === "replace_background"
+        ? `Replace the background of image 0 as follows: ${input.prompt}. Preserve the foreground subject.` : input.prompt;
       const result = await (deps.route ?? routeImageGeneration)({
-        prompt: input.operation === "replace_background"
-          ? `Replace the background of image 0 as follows: ${input.prompt}. Preserve the foreground subject.` : input.prompt,
+        prompt: input.annotation
+          ? `${instruction}\nThe source image contains user-drawn visual guidance. Follow the instructions using those marks as references; remove the guide marks from the final image.` : instruction,
         size: input.size, userId: ctx.userId, planCode: plan, executionMode: input.executionMode,
         requestKey: requestId, edit, signal: controller.signal,
         beforeInvoke: async () => {

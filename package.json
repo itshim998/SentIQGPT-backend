@@ -8,6 +8,8 @@
     "test:image-edit-sql": "node scripts/testImageEditSql.mjs",
     "test:image-edit-deployment": "node --test scripts/testImageEditDeployment.mjs",
     "test:image-edit-recovery-deployment": "node --test scripts/testImageEditRecoveryDeployment.mjs",
+    "test:image-annotations": "ts-node --project tsconfig.backend.json backend/testImageAnnotations.ts",
+    "test:image-annotation-sql": "node scripts/testImageAnnotationSql.mjs",
     "billing:test-image-editing": "ts-node --project tsconfig.backend.json backend/billing/testImageEditCredits.ts",
     "start": "node dist/backend/verifyNemotronDeploymentReadiness.js && node dist/backend/server.js",
     "dev": "ts-node --project tsconfig.backend.json backend/verifyNemotronDeploymentReadiness.ts && ts-node --project tsconfig.backend.json backend/server.ts",

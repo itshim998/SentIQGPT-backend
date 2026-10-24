@@ -383,6 +383,50 @@ test("edit chains preserve plan families and never include text-only fallbacks",
   assert.equal(calls, 0);
 });
 
+test("AI annotation sends rendered visual guidance, binds retries and preserves original source identity and model credit cost", async () => {
+  const f = fixture(); const annotation = { version: 1, strokes: [{ color: "#00ff00", size: 12, points: [{ x: 0.5, y: 0.5 }] }] };
+  const original = await source(), route = f.deps.route!;
+  f.deps.route = async args => {
+    assert(args.edit); assert.notEqual(createHash("sha256").update(args.edit.source).digest("hex"), createHash("sha256").update(original).digest("hex"));
+    const pixel = await sharp(args.edit.source).extract({ left: 400, top: 300, width: 1, height: 1 }).raw().toBuffer();
+    assert.deepEqual([...pixel], [0, 255, 0, 255]); assert.match(args.prompt, /user-drawn visual guidance/);
+    return route(args);
+  };
+  const request = { ...input, annotation };
+  await f.run(request); await f.run(request);
+  assert.equal(f.row().operation_metadata.source_sha256, createHash("sha256").update(original).digest("hex"));
+  await assert.rejects(f.run({ ...request, annotation: { ...annotation, strokes: [{ ...annotation.strokes[0], color: "#0000ff" }] } }), code("image_edit_request_conflict"));
+  assert.equal(f.counts().calls, 1); assert.equal(f.counts().charged, 1); assert.equal(f.counts().reservations, 1);
+});
+
+test("live-observed Pollinations JPEG envelopes, canonical metadata and failures preserve model/billing identity", async () => {
+  const oldFetch = globalThis.fetch, oldKey = process.env.POLLINATIONS_API_KEY;
+  process.env.POLLINATIONS_API_KEY = "fixture-key";
+  const jpeg = await sharp({ create: { width: 816, height: 816, channels: 3, background: "#00ff00" } }).jpeg().toBuffer();
+  let status = 200, model: string | null = "openai/gpt-image-2", timeout = false, calls = 0;
+  globalThis.fetch = async () => {
+    calls++; if (timeout) throw new Error("ambiguous network failure with private request details");
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (model) headers["x-model-used"] = model;
+    return new Response(JSON.stringify(status === 200 ? { created: 1, data: [{ b64_json: jpeg.toString("base64") }],
+      usage: { input_tokens: 279, output_tokens: 171 } } : { error: { message: "Missing image" } }), { status, headers });
+  };
+  try {
+    const provider = new PollinationsImageModelProvider("openai/gpt-image-2");
+    const context = { requestKey: "same", edit: { source: await source(), operation: "edit" as const } };
+    const result = await provider.generate("test", "512x512", undefined, context);
+    assert.equal((await sharp(Buffer.from(result.base64!, "base64")).metadata()).width, 816);
+    for (model of [null, "black-forest-labs/flux.1.1-pro", "microsoft/mai-image-2.6"]) {
+      await assert.rejects(provider.generate("test", undefined, undefined, context), (e: any) => e.outcome === "indeterminate");
+    }
+    status = 400;
+    await assert.rejects(provider.generate("test", undefined, undefined, context), (e: any) => e.outcome === "definitive" && e.statusCode === 400);
+    timeout = true;
+    await assert.rejects(provider.generate("test", undefined, undefined, context), (e: any) => e.outcome === "indeterminate" && !e.message.includes("private request"));
+    assert.equal(calls, 6, "the adapter does not repeat an ambiguous POST");
+  } finally { globalThis.fetch = oldFetch; if (oldKey === undefined) delete process.env.POLLINATIONS_API_KEY; else process.env.POLLINATIONS_API_KEY = oldKey; }
+});
+
 test("Cloudflare edit multipart uses validated binary reference below 512px", async () => {
   overrideCloudflareSlotsForTesting([{ slotIndex: 0, accountId: "account", apiToken: "secret" }]); resetCloudflareHealthState();
   let called = 0;

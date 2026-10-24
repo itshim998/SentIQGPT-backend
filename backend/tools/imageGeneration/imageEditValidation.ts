@@ -2,6 +2,7 @@ import sharp from "sharp";
 import { z } from "zod";
 import { HttpError } from "../../httpErrors";
 import type { ImageEditInput, ImageEditOperation } from "./types";
+import { ImageAnnotationSchema } from "./imageAnnotationContract";
 
 export const MAX_EDIT_BYTES = 8 * 1024 * 1024;
 export const MAX_EDIT_PIXELS = 16 * 1024 * 1024;
@@ -14,7 +15,9 @@ export const ImageEditRequestSchema = z.object({
   mask: z.string().max(Math.ceil(MAX_EDIT_BYTES * 4 / 3) + 128).optional(),
   size: z.enum(["256x256", "512x512", "1024x1024"]).default("1024x1024"),
   executionMode: z.enum(["fast", "intuitive"]).default("fast"),
-}).strict();
+  annotation: ImageAnnotationSchema.optional(),
+}).strict().refine(input => !input.annotation || ["edit", "replace_background"].includes(input.operation),
+  "Drawing guidance requires a supported reference-image edit.");
 export type ImageEditRequest = z.infer<typeof ImageEditRequestSchema>;
 
 /** Bound provider responses before JSON/base64 allocation. Never follow image URLs. */
