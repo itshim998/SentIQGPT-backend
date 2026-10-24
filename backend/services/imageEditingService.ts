@@ -10,7 +10,7 @@ import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
 import { assertPaidImageEdit, assertImageEditSupported, getImageEditModelIds } from "../tools/imageGeneration/imageEditPolicy";
 import { ImageEditRequestSchema, decodeEditMask, validateEditInput, validateEditRaster } from "../tools/imageGeneration/imageEditValidation";
 import type { ImageEditRequest } from "../tools/imageGeneration/imageEditValidation";
-import { loadOwnedEditSource } from "../tools/imageGeneration/imageStorageService";
+import { loadOwnedEditSource, verifyEditedImageArtifact } from "../tools/imageGeneration/imageStorageService";
 import { persistEditedImageResult, recoverEditedImageResult, type EditedImageArtifact } from "./generatedImagePersistenceService";
 import { detectPromptInjection } from "../validation/schemas";
 
@@ -27,6 +27,7 @@ export type ImageEditingDependencies = {
   loadSource?: typeof loadOwnedEditSource;
   persist?: typeof persistEditedImageResult;
   recover?: typeof recoverEditedImageResult;
+  verifyArtifact?: typeof verifyEditedImageArtifact;
 };
 
 export type ImageEditingContext = {
@@ -95,8 +96,38 @@ export async function executeImageEdit(raw: unknown, ctx: ImageEditingContext, d
       .eq("id", input.conversationId).eq("user_id", ctx.userId).maybeSingle();
     if (ownedConversation.error) throw new HttpError(503, "Conversation ownership could not be checked.", { code: "image_edit_recovery_unavailable", expose: true });
     if (!ownedConversation.data) throw new HttpError(404, "Conversation was not found.", { code: "image_edit_conversation_not_found" });
-    if (!previous.artifact || !previous.assistant_message_id) {
+    const artifact = previous.artifact as EditedImageArtifact | undefined;
+    if (!artifact || !previous.assistant_message_id || !previous.image_id) {
       throw new HttpError(410, "This edit result is no longer available.", { code: "image_edit_result_deleted" });
+    }
+
+    // Image removal deletes the immutable object and its chat_images row, but a
+    // completed request remains as an idempotency tombstone. Never replay its
+    // obsolete public URL or invoke the provider again.
+    const { data: imageRow, error: imageError } = await ctx.userDb.from("chat_images")
+      .select("id,storage_path,image_url,content_sha256")
+      .eq("id", previous.image_id).eq("user_id", ctx.userId)
+      .eq("chat_id", input.conversationId).maybeSingle();
+    if (imageError) throw new HttpError(503, "Image result lookup is temporarily unavailable.", { code: "image_edit_recovery_unavailable", expose: true });
+    if (!imageRow || imageRow.storage_path !== artifact.storagePath
+        || imageRow.image_url !== artifact.imageUrl || imageRow.content_sha256 !== artifact.contentSha256) {
+      throw new HttpError(410, "This edit result is no longer available.", { code: "image_edit_result_deleted" });
+    }
+    const { data: messageRow, error: messageError } = await ctx.userDb.from("messages")
+      .select("id,storage_path")
+      .eq("id", previous.assistant_message_id).eq("conversation_id", input.conversationId)
+      .eq("role", "assistant").eq("message_type", "image").maybeSingle();
+    if (messageError) throw new HttpError(503, "Image message lookup is temporarily unavailable.", { code: "image_edit_recovery_unavailable", expose: true });
+    if (!messageRow || messageRow.storage_path !== artifact.storagePath) {
+      throw new HttpError(410, "This edit result is no longer available.", { code: "image_edit_result_deleted" });
+    }
+    try {
+      await (deps.verifyArtifact ?? verifyEditedImageArtifact)(ctx.storageDb, artifact);
+    } catch (error) {
+      if (error instanceof HttpError && error.code === "image_edit_artifact_missing") {
+        throw new HttpError(410, "This edit result is no longer available.", { code: "image_edit_result_deleted" });
+      }
+      throw new HttpError(503, "Stored image verification is temporarily unavailable.", { code: "image_edit_recovery_unavailable", expose: true });
     }
     return response({ ...previous, source_image_id: sourceId }, true);
   }

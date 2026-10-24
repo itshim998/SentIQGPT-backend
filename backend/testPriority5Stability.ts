@@ -6,7 +6,8 @@ import { chunkText } from "./context/fileChunker";
 const root = path.resolve(__dirname, "..");
 const read = (relativePath: string) => fs.readFileSync(path.join(root, relativePath), "utf8");
 
-const server = read("backend/server.ts");
+// The bootstrap entrypoint loads serverLegacy, which owns HTTP lifecycle and rate limiting.
+const server = read("backend/serverLegacy.ts");
 const rateLimiter = read("backend/middleware/rateLimiter.ts");
 const imageRouter = read("backend/tools/imageGeneration/imageRouter.ts");
 const toolExecutor = read("backend/orchestrator/toolExecutor.ts");

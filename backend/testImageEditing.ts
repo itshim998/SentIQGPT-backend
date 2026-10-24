@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
+import { HttpError } from "./httpErrors";
 import { executeImageEdit, type ImageEditingDependencies } from "./services/imageEditingService";
 import { ImageEditRequestSchema, validateEditInput, validateEditRaster } from "./tools/imageGeneration/imageEditValidation";
 import { getImageEditModelIds, supportsImageEdit } from "./tools/imageGeneration/imageEditPolicy";
@@ -30,6 +31,8 @@ function fixture(plan: BillingPlanCode = "student_core") {
   let committed = false;
   let settleFail = false, completeFail = false, checkpointLost = false;
   let providerFail = false;
+  let unavailableOutput: "image" | "message" | "storage" | null = null;
+  let storageVerificationUnavailable = false;
   const ledger = new Set<string>();
   const db: any = {
     rpc: async (name: string, args: any) => {
@@ -56,7 +59,14 @@ function fixture(plan: BillingPlanCode = "student_core") {
     },
     from: (table: string) => {
       const q: any = { update: () => q, select: () => q, eq: () => q, in: () => q,
-        maybeSingle: async () => ({ data: table === "conversations" ? { id: conversationId } : structuredClone(row), error: null }),
+        maybeSingle: async () => ({ data: table === "conversations" ? { id: conversationId }
+          : table === "chat_images" ? (unavailableOutput === "image" ? null : {
+            id: row?.image_id, storage_path: row?.artifact?.storagePath,
+            image_url: row?.artifact?.imageUrl, content_sha256: row?.artifact?.contentSha256,
+          })
+          : table === "messages" ? (unavailableOutput === "message" ? null : {
+            id: row?.assistant_message_id, storage_path: row?.artifact?.storagePath,
+          }) : structuredClone(row), error: null }),
         then: (resolve: any) => { if (["claimed", "storing", "generated"].includes(row.status)) row.yielded = true; return Promise.resolve({ error: null }).then(resolve); } };
       return q;
     },
@@ -82,6 +92,12 @@ function fixture(plan: BillingPlanCode = "student_core") {
       releaseImageEditRequest: async () => { releases++; },
     },
     loadSource: async () => source(),
+    verifyArtifact: async () => {
+      if (unavailableOutput === "storage") {
+        throw new HttpError(409, "Stored artifact was removed.", { code: "image_edit_artifact_missing" });
+      }
+      if (storageVerificationUnavailable) throw new Error("Temporary storage outage");
+    },
     route: async (args) => {
       assert(reservations > 0, "credits must be reserved before invocation");
       await args.beforeInvoke?.(); calls++;
@@ -102,6 +118,8 @@ function fixture(plan: BillingPlanCode = "student_core") {
     counts: () => ({ calls, reservations, commits, releases, versions, messages, charged: ledger.size }),
     failSettlement: () => { settleFail = true; }, failCompletion: () => { completeFail = true; },
     loseCheckpoint: () => { checkpointLost = true; }, failProvider: () => { providerFail = true; },
+    removeOutput: (kind: "image" | "message" | "storage") => { unavailableOutput = kind; },
+    failOutputVerification: () => { storageVerificationUnavailable = true; },
     row: () => row };
 }
 
@@ -193,6 +211,24 @@ test("completed replay survives source deletion and still rejects changed input"
   await assert.rejects(f.run(), code("image_edit_paid_only"));
 });
 
+test("completed edit replay does not expose deleted image, message or Storage output", async () => {
+  for (const kind of ["image", "message", "storage"] as const) {
+    const f = fixture();
+    await f.run();
+    f.removeOutput(kind);
+    await assert.rejects(f.run(), code("image_edit_result_deleted"));
+    assert.equal(f.counts().calls, 1);
+    assert.equal(f.counts().reservations, 1);
+    assert.equal(f.counts().charged, 1);
+  }
+  const unavailable = fixture();
+  await unavailable.run();
+  unavailable.failOutputVerification();
+  await assert.rejects(unavailable.run(), code("image_edit_recovery_unavailable"));
+  assert.equal(unavailable.counts().calls, 1);
+  assert.equal(unavailable.counts().charged, 1);
+});
+
 test("a paid-plan change does not strand a stored result or re-run inference", async () => {
   const f=fixture("pro"); f.failSettlement();
   const request={...input,executionMode:"intuitive"};
@@ -231,7 +267,12 @@ test("staged artifact recovery avoids inference and relative source references s
   const originalFrom = db.from;
   db.from = (table: string) => table === "image_edit_requests" ? ({
     select: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { source_image_id: sourceImageId } }) }) }) }) }),
-  }) : table === "conversations" ? originalFrom(table) : (() => { throw new Error("Replay must not look up the new latest image"); })();
+  }) : (table === "conversations" || table === "messages" || table === "chat_images")
+    ? (() => {
+      const query = originalFrom(table);
+      if (table === "chat_images") query.order = () => { throw new Error("Replay must not look up the new latest image"); };
+      return query;
+    })() : (() => { throw new Error("Unexpected replay lookup"); })();
   try { assert.equal((await f.run({ ...input, sourceImageId: "latest" })).deduplicated, true); }
   finally { db.from = originalFrom; }
 });
