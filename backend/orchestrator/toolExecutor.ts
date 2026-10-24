@@ -593,6 +593,16 @@ async function execConversation(
           streaming: false,
         })
       : requiredCapabilities;
+    const isEligibleFastConversation =
+      profile.mode === "fast" &&
+      !hasFiles &&
+      !hasImages &&
+      !visualNeeded &&
+      !webSurfEvidence &&
+      !ctx.webSearchMode &&
+      !priorContext &&
+      automaticTools.length === 0;
+
     result = await handleChat({
       userMessage: input,
       recentMessages: ctx.recentMessages,
@@ -616,6 +626,7 @@ async function execConversation(
       webSurfAnswerPlan: webSurfEvidence?.answerIntelligence?.plan,
       webSurfAnswerSources: webSurfEvidence?.answerIntelligence?.sources,
       executionMode: profile.mode,
+      fastNaturalVoice: isEligibleFastConversation,
       modelToolContext: !intuitiveLaneActive && automaticTools.length > 0
         ? modelToolContext
         : undefined,

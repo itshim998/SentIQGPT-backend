@@ -1417,6 +1417,25 @@ const DEFAULT_SYSTEM_PROMPT =
   "- For medicines or health products: provide general factual information. " +
   "Do NOT provide diagnosis, treatment instructions, or medical advice.\n";
 
+export const FAST_NATURAL_VOICE_INSTRUCTIONS =
+  "STYLE & VOICE:\n" +
+  "Grounded, direct and quietly warm. Lead with the point; vary sentence rhythm naturally. " +
+  "Avoid canned openings, inflated praise, AI clichés, routine em dashes and unsolicited emojis. " +
+  "Match the user's tone and task, keep the response proportionate, and be candid about uncertainty. " +
+  "Use wit only when it fits.\n";
+
+export function isEligibleFastNaturalVoice(ctx: ChatContext): boolean {
+  if (ctx.fastNaturalVoice !== true) return false;
+  if (ctx.executionMode !== "fast") return false;
+  if (ctx.reasoningMode || ctx.mathMode) return false;
+  if (ctx.fileReferences && ctx.fileReferences.length > 0) return false;
+  if (ctx.imageAttachments && ctx.imageAttachments.length > 0) return false;
+  if (ctx.webSurfSourceIds && ctx.webSurfSourceIds.length > 0) return false;
+  if (ctx.webSurfAnswerPlan) return false;
+  if (ctx.routeEvidence && ctx.routeEvidence.length > 0) return false;
+  return true;
+}
+
 export type GroqReasoningEffort = "low" | "medium";
 
 const LOW_EFFORT_MAX_CHARS = 280;
@@ -1472,6 +1491,8 @@ export interface ChatContext {
   readonly webSurfAnswerPlan?: WebSurfAnswerPlan;
   /** Compact role metadata for the same frozen source registry. */
   readonly webSurfAnswerSources?: readonly WebSurfAnswerSourceContext[];
+  readonly executionMode?: ExecutionMode;
+  readonly fastNaturalVoice?: boolean;
 }
 
 export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
@@ -1587,6 +1608,10 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
       "- If the user asks to solve, read, debug, or analyze the image, use the image content as the problem statement.\n";
   }
 
+  if (isEligibleFastNaturalVoice(ctx)) {
+    SYSTEM_PROMPT += `\n${FAST_NATURAL_VOICE_INSTRUCTIONS}`;
+  }
+
   const safeDisplayName = ctx.trustedProfile?.displayName.replace(/\s+/g, " ").trim();
   const stableContext = safeDisplayName && !ctx.reasoningMode && !ctx.mathMode
     ? `The user's saved display name is ${safeDisplayName}. Use it naturally when helpful, but do not overuse it.`
@@ -1640,6 +1665,7 @@ export function buildChatPrompt(ctx: ChatContext): LLMAdapterCall {
     max_output_tokens: ctx.webSurfAnswerPlan?.maxOutputTokens,
     visible_answer_tokens: ctx.webSurfAnswerPlan?.maxOutputTokens,
     reasoning_effort: groqReasoningEffort,
+    execution_mode: ctx.executionMode,
     skip_wrappers: ctx.reasoningMode ?? false,
     image_attachments: ctx.imageAttachments,
     request_complexity: hasFiles || (ctx.routeEvidence?.length ?? 0) > 0 ? "heavy" : "normal",

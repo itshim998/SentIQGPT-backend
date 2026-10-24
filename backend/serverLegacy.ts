@@ -3069,6 +3069,14 @@ app.post(
         }),
       });
       const guestChatModelOverride = guestReservation.adapterModelOverride;
+      const guestPlainChatEligible =
+        executionProfile.mode === "fast" &&
+        !isReasoningQuery &&
+        !hasEffectiveWebSearchMode &&
+        !guestWebSurfV2 &&
+        guestContext.fileReferences.length === 0 &&
+        guestContext.imageAttachments.length === 0;
+
       let guestResult: Awaited<ReturnType<typeof handleChat>>;
       try {
         guestResult = await handleChat({
@@ -3090,6 +3098,8 @@ app.post(
           webSurfSourceIds: guestWebSurfV2?.synthesisSourceIds,
           webSurfAnswerPlan: guestWebSurfV2?.answerIntelligence?.plan,
           webSurfAnswerSources: guestWebSurfV2?.answerIntelligence?.sources,
+          executionMode: executionProfile.mode,
+          fastNaturalVoice: guestPlainChatEligible,
           requiredCapabilities: deriveRequiredModelCapabilities({
             hasImageInput: guestContext.imageAttachments.length > 0,
             automaticToolsRequested: false,
@@ -4102,6 +4112,19 @@ app.post(
           return;
         }
 
+        const automaticTools = guestWebSurfV2
+          ? []
+          : getAutomaticSentIQToolsForRoute(guestGeneralReservation, true, { fileReferences: guestCtx.fileReferences as any });
+        const guestPlainChatEligible =
+          executionProfile.mode === "fast" &&
+          !hasEffectiveWebSearchMode &&
+          !guestWebSurfV2 &&
+          !isMathReasoningQuery &&
+          !isBufferedReasoning &&
+          (guestCtx.fileReferences?.length ?? 0) === 0 &&
+          (guestCtx.imageAttachments?.length ?? 0) === 0 &&
+          automaticTools.length === 0;
+
         const call = buildChatPrompt({
           userMessage: guestUserMessage,
           recentMessages: guestCtx.recentMessages,
@@ -4121,11 +4144,10 @@ app.post(
           webSurfSourceIds: guestWebSurfV2?.synthesisSourceIds,
           webSurfAnswerPlan: guestWebSurfV2?.answerIntelligence?.plan,
           webSurfAnswerSources: guestWebSurfV2?.answerIntelligence?.sources,
+          executionMode: executionProfile.mode,
+          fastNaturalVoice: guestPlainChatEligible,
         });
         guestGeneralCallForRecovery = call;
-        const automaticTools = guestWebSurfV2
-          ? []
-          : getAutomaticSentIQToolsForRoute(guestGeneralReservation, true, { fileReferences: guestCtx.fileReferences as any });
         const toolTransport = automaticTools.length > 0
           ? resolveModelToolTransport(guestGeneralReservation, "streaming")
           : null;
@@ -4725,6 +4747,8 @@ app.post(
           userId,
           streaming: true,
           reasoningEffort: executionProfile.model.reasoningEffort,
+          executionMode: executionProfile.mode,
+          fastNaturalVoice: fastPlainChatEligible,
         });
         fastCallForRecovery = call;
         const adapterStream = await callLLMAdapterStream({
@@ -5606,6 +5630,15 @@ app.post(
       { model: modelOverride, fastPath: fastPathEligible },
     );
 
+    const signedGeneralPlainEligible =
+      executionProfile.mode === "fast" &&
+      !hasEffectiveWebSearchMode &&
+      !webSurfV2 &&
+      !hasFile &&
+      !hasImage &&
+      !isBufferedReasoning &&
+      requestedAutomaticTools.length === 0;
+
     let call: LLMAdapterCall;
     try {
       call = buildChatPrompt({
@@ -5628,6 +5661,8 @@ app.post(
         webSurfSourceIds: webSurfV2?.synthesisSourceIds,
         webSurfAnswerPlan: webSurfV2?.answerIntelligence?.plan,
         webSurfAnswerSources: webSurfV2?.answerIntelligence?.sources,
+        executionMode: executionProfile.mode,
+        fastNaturalVoice: signedGeneralPlainEligible,
       });
     } catch (error) {
       await releaseBillingReservation(directReservation);

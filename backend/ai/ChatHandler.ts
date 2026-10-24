@@ -194,10 +194,21 @@ export async function handleChat(args: {
   readonly allowedModelTools?: readonly SentIQToolName[];
   readonly requiredCapabilities?: readonly RequiredModelCapability[];
   readonly consumeFutureObligationId?: string;
+  readonly fastNaturalVoice?: boolean;
 }): Promise<ChatResponse> {
   if (!args.userMessage.trim()) {
     throw new Error("userMessage must be a non-empty string.");
   }
+
+  const isEligibleFastVoice =
+    args.fastNaturalVoice === true &&
+    args.executionMode === "fast" &&
+    !args.reasoningMode &&
+    !args.webSurfAnswerPlan &&
+    (args.webSurfSourceIds?.length ?? 0) === 0 &&
+    (args.fileReferences?.length ?? 0) === 0 &&
+    (args.imageAttachments?.length ?? 0) === 0 &&
+    (args.allowedModelTools?.length ?? 0) === 0;
 
   const ctx: ChatContext = {
     userMessage: args.userMessage,
@@ -219,6 +230,8 @@ export async function handleChat(args: {
     webSurfSourceIds: args.webSurfSourceIds,
     webSurfAnswerPlan: args.webSurfAnswerPlan,
     webSurfAnswerSources: args.webSurfAnswerSources,
+    executionMode: args.executionMode,
+    fastNaturalVoice: isEligibleFastVoice,
   };
 
   let baseCall: ReturnType<typeof buildChatPrompt>;
@@ -340,6 +353,8 @@ export async function handleChat(args: {
         modelOverride: args.modelOverride,
         userId: args.userId,
         reasoningMode: args.reasoningMode,
+        executionMode: args.executionMode,
+        fastNaturalVoice: isEligibleFastVoice,
       });
       const continuationCall = {
         ...continuationBaseCall,
