@@ -10,10 +10,11 @@
 //   - Retry mechanism for upload failures
 //   - Multi-DB aware (uses user's assigned database)
 
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import sharp from "sharp";
 import { getDedicatedImageStorageClient } from "./imageStorageClient";
+import { validateEditRaster, MAX_EDIT_BYTES } from "./imageEditValidation";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -66,6 +67,11 @@ export interface ChatImage {
   readonly provider?: string;
   readonly fileSizeBytes?: number;
   readonly createdAt: string;
+  readonly sourceImageId?: string;
+  readonly editRequestId?: string;
+  readonly operation?: string;
+  readonly operationMetadata?: Record<string, unknown>;
+  readonly contentSha256?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -207,8 +213,9 @@ async function assertValidImage(imageBuffer: Buffer): Promise<void> {
  * Compress image to target size using sharp.
  * Uses WebP first for generated images, with JPEG as a compatibility fallback.
  */
-async function compressImage(imageBuffer: Buffer): Promise<PreparedImage> {
+export async function compressImage(imageBuffer: Buffer): Promise<PreparedImage> {
   await assertValidImage(imageBuffer);
+  const preserveAlpha = Boolean((await sharp(imageBuffer).metadata()).hasAlpha);
 
   let quality = INITIAL_QUALITY;
   let prepared: PreparedImage = {
@@ -234,7 +241,15 @@ async function compressImage(imageBuffer: Buffer): Promise<PreparedImage> {
     };
   }
 
-  if (prepared.buffer.length > TARGET_MAX_SIZE_BYTES) {
+  if (prepared.buffer.length > TARGET_MAX_SIZE_BYTES && preserveAlpha) {
+    // Transparent artifacts must never enter the flattened JPEG fallback.
+    prepared = {
+      buffer: await sharp(imageBuffer).rotate()
+        .resize(1024, 1024, { fit: "inside", withoutEnlargement: true })
+        .webp({ quality: MIN_QUALITY, alphaQuality: 100 }).toBuffer(),
+      mimeType: "image/webp", extension: "webp",
+    };
+  } else if (prepared.buffer.length > TARGET_MAX_SIZE_BYTES) {
     prepared = {
       buffer: await sharp(imageBuffer)
         .rotate()
@@ -358,6 +373,7 @@ async function uploadToStorage(
   storagePath: string,
   imageBuffer: Buffer,
   contentType: string,
+  acceptIdenticalExisting = false,
 ): Promise<{ publicUrl: string; sizeBytes: number }> {
   let lastError: Error | null = null;
   const bucketName = getStorageBucketName();
@@ -380,7 +396,14 @@ async function uploadToStorage(
         });
       
       if (uploadError) {
-        throw new Error(uploadError.message);
+        if (acceptIdenticalExisting && /already exists|duplicate/i.test(uploadError.message)) {
+          const { data, error } = await supabaseClient.storage.from(bucketName).download(storagePath);
+          if (error || !data || data.size !== imageBuffer.length
+              || createHash("sha256").update(Buffer.from(await data.arrayBuffer())).digest("hex")
+                !== createHash("sha256").update(imageBuffer).digest("hex")) {
+            throw new Error("Existing image edit artifact does not match this request");
+          }
+        } else throw new Error(uploadError.message);
       }
       
       // Get public URL
@@ -409,6 +432,65 @@ async function uploadToStorage(
   }
   
   throw lastError || new Error("Upload failed after all retries");
+}
+
+/** Edits use immutable, deterministic objects. Metadata is checkpointed separately
+ * in a shard transaction; never delete on an uncertain database response. */
+export async function uploadEditedImageArtifact(
+  storageDb: SupabaseClient,
+  params: { userId: string; conversationId: string; imageId: string; bytes: Buffer; requireAlpha?: boolean;
+    beforeUpload?: (artifact: { imageUrl: string; storagePath: string; fileSizeBytes: number; contentSha256: string }) => Promise<void> },
+): Promise<{ imageUrl: string; storagePath: string; fileSizeBytes: number; contentSha256: string }> {
+  for (const id of [params.userId, params.conversationId, params.imageId]) {
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Invalid image edit storage identity");
+  }
+  const metadata = await validateEditRaster(params.bytes);
+  if (params.requireAlpha && (!metadata.hasAlpha || (await sharp(params.bytes).stats()).isOpaque)) {
+    throw new Error("Background removal did not return alpha transparency");
+  }
+  const prepared = await compressImage(params.bytes);
+  const storagePath = generateStoragePath(params.userId, params.conversationId, params.imageId, prepared.extension);
+  const { data: publicData } = storageDb.storage.from(getStorageBucketName()).getPublicUrl(storagePath);
+  if (!publicData?.publicUrl) throw new Error("Image edit storage URL is unavailable");
+  await params.beforeUpload?.({ imageUrl: publicData.publicUrl, storagePath, fileSizeBytes: prepared.buffer.length,
+    contentSha256: createHash("sha256").update(prepared.buffer).digest("hex") });
+  const uploaded = await uploadToStorage(storageDb, storagePath, prepared.buffer, prepared.mimeType, true);
+  return { imageUrl: uploaded.publicUrl, storagePath, fileSizeBytes: uploaded.sizeBytes,
+    contentSha256: createHash("sha256").update(prepared.buffer).digest("hex") };
+}
+
+export async function verifyEditedImageArtifact(storageDb: SupabaseClient,
+  artifact: { storagePath: string; fileSizeBytes: number; contentSha256: string }): Promise<void> {
+  const { data, error } = await storageDb.storage.from(getStorageBucketName()).download(artifact.storagePath);
+  if (error || !data) {
+    const { HttpError } = await import("../../httpErrors");
+    if (String((error as any)?.statusCode) === "404" || /not found|does not exist/i.test(error?.message || "")) {
+      throw new HttpError(409, "This edit's output was not stored. Submit a new request ID.", { code: "image_edit_artifact_missing" });
+    }
+    throw new HttpError(503, "Image edit storage recovery is temporarily unavailable.", { code: "image_edit_storage_unavailable", expose: true });
+  }
+  if (data.size > STORAGE_BUCKET_LIMIT_BYTES || data.size !== artifact.fileSizeBytes
+      || createHash("sha256").update(Buffer.from(await data.arrayBuffer())).digest("hex") !== artifact.contentSha256) {
+    throw new Error("Stored image edit artifact failed integrity validation");
+  }
+}
+
+/** Resolve an owned image through server metadata and Storage SDK only. */
+export async function loadOwnedEditSource(userDb: SupabaseClient, storageDb: SupabaseClient,
+  userId: string, conversationId: string, imageId: string): Promise<Buffer> {
+  const { data, error } = await userDb.from("chat_images").select("storage_path")
+    .eq("id", imageId).eq("user_id", userId).eq("chat_id", conversationId).maybeSingle();
+  if (error) throw new Error("Image source lookup failed");
+  if (!data?.storage_path || !data.storage_path.startsWith(`${userId}/${conversationId}/`)
+      || data.storage_path.includes("..") || data.storage_path.includes("\\")
+      || data.storage_path.includes(":") || /[?#%]/.test(data.storage_path)) {
+    const { HttpError } = await import("../../httpErrors");
+    throw new HttpError(404, "Source image was not found in this conversation.", { code: "image_edit_source_not_found" });
+  }
+  const { data: blob, error: storageError } = await storageDb.storage.from(getStorageBucketName()).download(data.storage_path);
+  if (storageError || !blob) throw new Error("Image source could not be loaded");
+  if (blob.size > MAX_EDIT_BYTES) throw new Error("Image source exceeds editing size limit");
+  return Buffer.from(await blob.arrayBuffer());
 }
 
 /**
@@ -549,7 +631,7 @@ export async function getChatImages(
   try {
     const { data, error } = await userDb
       .from("chat_images")
-      .select("id, image_url, storage_path, prompt, provider, file_size_bytes, created_at")
+      .select("id, image_url, storage_path, prompt, provider, file_size_bytes, created_at, source_image_id, edit_request_id, operation, operation_metadata, content_sha256")
       .eq("user_id", userId)
       .eq("chat_id", chatId)
       .order("created_at", { ascending: true });
@@ -567,6 +649,11 @@ export async function getChatImages(
       provider: row.provider,
       fileSizeBytes: row.file_size_bytes,
       createdAt: row.created_at,
+      sourceImageId: row.source_image_id || undefined,
+      editRequestId: row.edit_request_id || undefined,
+      operation: row.operation || undefined,
+      operationMetadata: row.operation_metadata || undefined,
+      contentSha256: row.content_sha256 || undefined,
     }));
   } catch (err) {
     console.error(`[ImageStorage] getChatImages.error userId=${userId} chatId=${chatId}`, err);

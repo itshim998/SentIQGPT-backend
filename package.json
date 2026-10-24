@@ -4,6 +4,10 @@
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.backend.json",
+    "test:image-editing": "ts-node --project tsconfig.backend.json backend/testImageEditing.ts",
+    "test:image-edit-sql": "node scripts/testImageEditSql.mjs",
+    "test:image-edit-deployment": "node --test scripts/testImageEditDeployment.mjs",
+    "billing:test-image-editing": "ts-node --project tsconfig.backend.json backend/billing/testImageEditCredits.ts",
     "start": "node dist/backend/verifyNemotronDeploymentReadiness.js && node dist/backend/server.js",
     "dev": "ts-node --project tsconfig.backend.json backend/verifyNemotronDeploymentReadiness.ts && ts-node --project tsconfig.backend.json backend/server.ts",
     "check:migrations": "ts-node --project tsconfig.backend.json backend/checkShardMigrations.ts",

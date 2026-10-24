@@ -70,6 +70,22 @@ export class ImageProviderFailure extends Error {
 export interface ImageProviderRequestContext {
   /** Stable across retries and request replays. Never log this value. */
   readonly requestKey: string;
+  /** Only server-materialized bytes; never a caller-supplied URL. */
+  readonly edit?: ImageEditInput;
+}
+
+export type ImageEditOperation = "edit" | "erase_region" | "replace_background" | "remove_background";
+
+export interface ImageEditInput {
+  readonly operation: ImageEditOperation;
+  readonly source: Buffer;
+  readonly mask?: Buffer;
+}
+
+export interface ImageEditCapabilities {
+  readonly reference: boolean;
+  readonly mask: boolean;
+  readonly transparency: boolean;
 }
 
 export function failureOutcomeForHttpStatus(status: number): ImageProviderFailureOutcome {
@@ -96,6 +112,7 @@ export function asImageProviderFailure(error: unknown): ImageProviderFailure {
 export interface ImageProvider {
   /** Human-readable provider name used in logs and responses. */
   readonly name: string;
+  readonly editCapabilities?: ImageEditCapabilities;
   /** Returns true when the provider has the credentials it needs. */
   isAvailable(): boolean;
   /** Generate an image. Throws on failure. */

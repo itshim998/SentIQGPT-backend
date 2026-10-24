@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-17T06:37:19.616Z",
-  "totalCanonicalMigrations": 83,
+  "generatedAt": "2026-10-24T14:10:54.840Z",
+  "totalCanonicalMigrations": 85,
   "topology": {
     "controlDatabases": [
       1
@@ -15,10 +15,10 @@
   },
   "counts": {
     "both": 9,
-    "controlOnly": 15,
-    "dataOnly": 59,
-    "controlTrackTotal": 24,
-    "dataTrackTotal": 68
+    "controlOnly": 16,
+    "dataOnly": 60,
+    "controlTrackTotal": 25,
+    "dataTrackTotal": 69
   },
   "migrations": [
     {
@@ -859,6 +859,26 @@
         "data"
       ],
       "checksum": "9471bd8d937ac81082a821a72a5c53e7fa052fac7af1b193450c9d579e04773f"
+    },
+    {
+      "version": "20261024120000",
+      "name": "paid_image_edit_ledger",
+      "filename": "20261024120000_paid_image_edit_ledger.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "1d593d41c9f082de622a131a54ffb940e401530c3fb58686bbd6ad5a44bee289"
+    },
+    {
+      "version": "20261024121000",
+      "name": "image_edit_versions",
+      "filename": "20261024121000_image_edit_versions.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "0d7cd7cf1d44575f7f97559242db141d7cb00b399fd9a02c0ecbbd5c36f95afd"
     }
   ]
 }

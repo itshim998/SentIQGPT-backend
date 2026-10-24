@@ -458,6 +458,8 @@ export class BillingQuotaService {
 
     const reservation = {
       requestId: args.requestId,
+      idempotent: normalizeBoolean(result?.idempotent),
+      status: result?.status as UsageReservation["status"],
       feature: args.feature,
       allowanceClass: isTextTokenFeature(args.feature)
         ? args.feature === "lite_text" ? "lite" as const : "standard" as const
@@ -896,6 +898,11 @@ export class BillingQuotaService {
         idempotent: normalizeBoolean(result?.idempotent),
       });
     }
+  }
+
+  async releaseImageEditRequest(requestId: string): Promise<void> {
+    if (!/^image-edit:[0-9a-f]{64}$/.test(requestId)) throw new Error("Invalid image edit request identity");
+    await this.repository.releaseReservation(requestId);
   }
 
   async release(reservation: UsageReservation | null | undefined, reason = "unchargeable_failure"): Promise<void> {

@@ -11,6 +11,7 @@
 // 8. Dedicated Supabase Storage Client, Binary/Metadata Separation, Cleanup & Deletion
 
 import assert from "node:assert/strict";
+import sharp from "sharp";
 import {
   getImageModelForPlan,
   resolveImageRoute,
@@ -48,10 +49,13 @@ import {
 import { ImageProviderFailure, type ImageModelPreference } from "./tools/imageGeneration/types";
 
 // 1x1 transparent PNG in base64
-const TINY_PNG_BASE64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlH0f8AAAAASUVORK5CYII=";
+let TINY_PNG_BASE64 = "";
 
 async function runAllTests(): Promise<void> {
+  // Generate a fully decodable fixture instead of relying on a malformed PNG
+  // literal whose libspng decoding varied between test runs.
+  TINY_PNG_BASE64 = (await sharp({ create: { width: 1, height: 1, channels: 4,
+    background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer()).toString("base64");
   console.log("=== RUNNING SENTIQ CLOUDFLARE & STORAGE ARCHITECTURE TEST SUITE ===\n");
 
   // =========================================================================

@@ -21,6 +21,9 @@
 //   - 5xx / timeout: transient cooldown on account/model
 
 import { createHash } from "node:crypto";
+import sharp from "sharp";
+import { IMAGE_EDIT_CAPABILITIES, assertProviderEditInput } from "../imageEditPolicy";
+import { readEditProviderResponse, validateEditInput } from "../imageEditValidation";
 import {
   ImageProviderFailure,
   failureOutcomeForHttpStatus,
@@ -174,6 +177,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 export class CloudflareImageProvider implements ImageProvider {
   readonly name: string;
   readonly modelId: string;
+  get editCapabilities() { return IMAGE_EDIT_CAPABILITIES[this.modelId]; }
   private readonly timeoutMs: number;
 
   constructor(modelId: CloudflareModelId, options?: { timeoutMs?: number }) {
@@ -194,6 +198,14 @@ export class CloudflareImageProvider implements ImageProvider {
     signal?: AbortSignal,
     context?: ImageProviderRequestContext,
   ): Promise<ImageProviderResult> {
+    let editSource: Buffer | undefined;
+    if (context?.edit) {
+      assertProviderEditInput(this, context.edit);
+      await validateEditInput(context.edit.source, context.edit.operation, context.edit.mask);
+      // Cloudflare requires each input dimension strictly smaller than 512.
+      editSource = await sharp(context.edit.source).rotate()
+        .resize(511, 511, { fit: "inside", withoutEnlargement: true }).png().toBuffer();
+    }
     if (signal?.aborted) {
       throw signal.reason instanceof Error ? signal.reason : new Error("Image generation aborted");
     }
@@ -244,6 +256,7 @@ export class CloudflareImageProvider implements ImageProvider {
             // Klein models require multipart/form-data
             const formData = new FormData();
             formData.append("prompt", prompt);
+            if (editSource) formData.append("input_image_0", new Blob([new Uint8Array(editSource)], { type: "image/png" }), "source.png");
             if (width) formData.append("width", String(width));
             if (height) formData.append("height", String(height));
             if (seed !== undefined) formData.append("seed", String(seed));
@@ -291,6 +304,7 @@ export class CloudflareImageProvider implements ImageProvider {
             };
           }
 
+          if (context?.edit) requestInit.redirect = "error";
           const response = await activeFetch(endpoint, requestInit);
 
           // Handle 429 Rate Limit
@@ -448,7 +462,7 @@ export class CloudflareImageProvider implements ImageProvider {
 
           // Case A: JSON response with base64 image data
           if (contentType.includes("application/json")) {
-            const json = (await response.json()) as CloudflareApiResponse;
+            const json = (context?.edit ? JSON.parse((await readEditProviderResponse(response)).toString("utf8")) : await response.json()) as CloudflareApiResponse;
 
             if (json.success === false && json.errors && json.errors.length > 0) {
               const firstErr = json.errors[0];
@@ -495,9 +509,9 @@ export class CloudflareImageProvider implements ImageProvider {
           }
 
           // Case B: Binary image bytes returned directly
-          const arrayBuffer = await response.arrayBuffer();
+          const arrayBuffer = context?.edit ? await readEditProviderResponse(response, 8 * 1024 * 1024) : await response.arrayBuffer();
           if (arrayBuffer.byteLength > 0) {
-            const base64 = Buffer.from(arrayBuffer).toString("base64");
+            const base64 = (Buffer.isBuffer(arrayBuffer) ? arrayBuffer : Buffer.from(arrayBuffer)).toString("base64");
             recordSuccessfulGeneration(slot.slotIndex, this.modelId);
             return { base64 };
           }
@@ -529,7 +543,7 @@ export class CloudflareImageProvider implements ImageProvider {
     }
 
     throw new ImageProviderFailure(
-      `Cloudflare model ${this.modelId} failed on all configured accounts: ${errors.join(" | ")}`,
+      context?.edit ? "Cloudflare image editing failed on all configured accounts" : `Cloudflare model ${this.modelId} failed on all configured accounts: ${errors.join(" | ")}`,
       "indeterminate",
     );
   }

@@ -224,7 +224,7 @@ export class BillingRepository {
       return data;
     }
 
-    const { data, error } = await this.db.rpc("reserve_usage", {
+    const { data, error } = await this.db.rpc(args.metadata?.image_edit === true ? "reserve_image_edit_usage" : "reserve_usage", {
       p_user_id: args.identity.userId,
       p_anonymous_key_hash: args.identity.userId ? null : args.identity.anonymousKeyHash,
       p_feature: args.feature,
@@ -338,6 +338,14 @@ export class BillingRepository {
     readonly route: string;
     readonly metadata?: Record<string, unknown>;
   }): Promise<any> {
+    if (args.metadata?.image_edit === true) {
+      const { data, error } = await this.db.rpc("commit_image_edit_usage", {
+        p_request_id: args.requestId, p_provider: args.provider, p_model: args.model,
+        p_route: args.route, p_metadata: args.metadata,
+      });
+      if (error || data?.committed !== true) throw new BillingRepositoryError("Image edit settlement is unavailable", "image_edit_settlement_failed");
+      return data;
+    }
     const isGuest = await this.isGuestTextReservation(args.requestId);
     const actualTokens = Math.max(1, Math.trunc(normalizeNumber(args.metadata?.actual_token_units, 1)));
 

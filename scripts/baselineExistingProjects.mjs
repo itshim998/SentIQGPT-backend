@@ -4,6 +4,7 @@ import crypto from "crypto";
 import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import { createClient } from "@supabase/supabase-js";
+import { validateMigrationTracks } from "./validateMigrationTracks.mjs";
 
 dotenv.config();
 
@@ -17,7 +18,6 @@ export const SCHEMA_VERIFICATION_REQUIREMENTS = {
     name: "Control DB (DB1)",
     requiredTables: ["user_db_map", "live_capacity_leases", "live_sessions"],
     requiredRpc: "verify_sentiq_control_startup",
-    expectedMigrationCount: 22,
   },
   2: {
     track: "data",
@@ -32,7 +32,6 @@ export const SCHEMA_VERIFICATION_REQUIREMENTS = {
       "generated_files",
     ],
     requiredRpc: "verify_sentiq_data_shard_startup",
-    expectedMigrationCount: 64,
   },
 };
 
@@ -159,9 +158,10 @@ async function baselineProject(dbNumber, trackDir) {
   const files = fs.readdirSync(trackDir).filter((f) => f.endsWith(".sql")).sort();
   const versions = files.map((f) => f.slice(0, 14));
 
-  if (versions.length !== reqs.expectedMigrationCount) {
+  const expectedVersions = validateMigrationTracks(ROOT_DIR).tracks[reqs.track].map((entry) => entry.version);
+  if (JSON.stringify(versions) !== JSON.stringify(expectedVersions)) {
     throw new Error(
-      `[Baseline Gate] Expected ${reqs.expectedMigrationCount} migrations in ${reqs.track} track, but found ${versions.length}.`
+      `[Baseline Gate] Track files differ from the validated ${reqs.track} manifest.`
     );
   }
 

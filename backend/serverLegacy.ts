@@ -31,6 +31,8 @@ import { classifyImageTextRendering, handleChat } from "./ai/ChatHandler";
 import { processMessageForMemory, compressMemories } from "./ai/MemoryProcessor";
 import { extractTextFromFile, validateFileUpload } from "./ai/FileIngestionHandler";
 import { routeImageGeneration } from "./tools/imageGeneration/imageRouter";
+import { executeImageEdit } from "./services/imageEditingService";
+import { ImageEditRequestSchema } from "./tools/imageGeneration/imageEditValidation";
 import { routeChartGeneration } from "./tools/chartGeneration/chartRouter";
 import { ensureHtmlDocument, getGeneratedFileMimeType, routeFileGeneration } from "./tools/fileGeneration/fileGenerator";
 import {
@@ -6670,6 +6672,38 @@ app.delete(
       throw new HttpError(503, "Stored file could not be removed. Please try again.", { code: "artifact_cleanup_failed" });
     }
     res.json({ success: true, file_id: fileId });
+  }),
+);
+
+app.post(
+  "/api/images/edit",
+  verifyJWT({ allowGuest: false }),
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const requestUser = getRequestUser(req);
+    const parsed = ImageEditRequestSchema.safeParse(req.body);
+    if (!parsed.success) throw new HttpError(400, "Invalid image editing request.", { code: "image_edit_invalid_request" });
+    if (detectPromptInjection(parsed.data.prompt)) throw new HttpError(400, "Image prompt rejected by safety filter.");
+    const userId = await getVerifiedUserId(req);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "images.edit");
+    await initializeUserSessionOrThrow(userDb, userId, "images.edit");
+    await getOwnedConversationOrThrow(userDb, userId, parsed.data.conversationId, "images.edit");
+    const controller = new AbortController();
+    const onAbort = () => { if (!res.writableEnded) controller.abort(new Error("Client disconnected")); };
+    req.once("aborted", onAbort);
+    res.once("close", onAbort);
+    try {
+      const result = await executeImageEdit(parsed.data, {
+        userId, identity: buildBillingIdentity(req, requestUser), userDb, storageDb: getImageStorageDatabase(),
+        signal: controller.signal, imageQuotaKey: getImageQuotaKey(req),
+      }, { billing: billingQuotaService });
+      const quota = await getImageQuotaDisplay(buildBillingIdentity(req, requestUser), getQuotaInfo(getImageQuotaKey(req)));
+      res.json({ ...result, conversation_id: parsed.data.conversationId, client_request_id: parsed.data.clientRequestId,
+        operation: parsed.data.operation, prompt: parsed.data.prompt, ...quota });
+    } finally {
+      req.removeListener("aborted", onAbort);
+      res.removeListener("close", onAbort);
+    }
   }),
 );
 

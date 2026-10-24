@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { getImageProviderOrder } from "./tools/imageGeneration/imageRouter";
+import { resolveImageRoute } from "./billing/modelEntitlementRouter";
 
 const root = resolve(__dirname, "..");
 const read = (relativePath: string) => readFileSync(resolve(root, relativePath), "utf8");
 
-const server = read("backend/server.ts");
+const server = read("backend/serverLegacy.ts");
 const toolExecutor = read("backend/orchestrator/toolExecutor.ts");
 const imageRouter = read("backend/tools/imageGeneration/imageRouter.ts");
 const imageTypes = read("backend/tools/imageGeneration/types.ts");
@@ -34,13 +36,24 @@ assert.match(imageTypes, /"kontext"/);
 assert.match(capabilitySelector, /import type \{ ImageModelPreference \}/);
 assert.match(imageToolContract, /requires_text_rendering: z\.boolean\(\)/);
 assert.match(imageToolContract, /\["prompt", "requires_text_rendering"\]/);
-assert.match(modelRouter, /getImageModelPreferenceForPlan\([\s\S]*requiresTextRendering: boolean/);
-assert.match(modelRouter, /if \(planCode === "free"\) return "dreamshaper"/);
-assert.match(modelRouter, /requiresTextRendering \? "gpt-image-2" : "zimage"/);
+assert.match(modelRouter, /export function getImageModelPreferenceForPlan/);
+assert.match(modelRouter, /export function resolveImageRoute/);
 assert(!modelRouter.includes("Readonly<Record<BillingPlanCode, ImageModelPreference>>"));
-assert.match(imageRouter, /PollinationsImageModelProvider\("klein", \{ enhance: true \}\)/);
-assert.match(imageRouter, /PollinationsImageModelProvider\("kontext"\)/);
-assert.match(imageRouter, /PollinationsImageModelProvider\("gpt-image-2"\)/);
+const schnell = "@cf/black-forest-labs/flux-1-schnell";
+const klein = "@cf/black-forest-labs/flux-2-klein-4b";
+const dreamshaper = "@cf/lykon/dreamshaper-8-lcm";
+for (const planCode of ["free", "student_core", "premium", "pro"] as const) {
+  for (const executionMode of ["fast", "intuitive"] as const) {
+    const expected = planCode === "free" ? [schnell, dreamshaper]
+      : planCode === "pro" && executionMode === "intuitive"
+        ? ["openai/gpt-image-2", "microsoft/mai-image-2.6", "black-forest-labs/flux.1.1-pro"]
+        : executionMode === "intuitive" ? [klein, schnell] : [schnell, klein];
+    assert.deepEqual(getImageProviderOrder("a simple scene", undefined, planCode, executionMode), expected);
+    for (const requiresTextRendering of [true, false]) {
+      assert.equal(resolveImageRoute({ planCode, executionMode, requiresTextRendering }).model, expected[0]);
+    }
+  }
+}
 assert(!imageRouter.includes("GptImageProvider"));
 assert(!existsSync(resolve(root, "backend/tools/imageGeneration/providers/gptImageProvider.ts")));
 
@@ -55,13 +68,11 @@ for (const source of [envExample, envTemplate]) {
   assert.match(source, /Plan-tier image routing is code-owned/);
   assert.match(source, /SENTIQ_POLLINATIONS_TOOL_TRANSPORT_ENABLED=true/);
 }
-assert.match(billingDocs, /Free[\s\S]*dreamshaper[\s\S]*flux/i);
-assert.match(billingDocs, /Essential[\s\S]*No[\s\S]*zimage[\s\S]*klein/i);
-assert.match(billingDocs, /Essential[\s\S]*Yes[\s\S]*gpt-image-2[\s\S]*kontext/i);
-assert.match(billingDocs, /Essential, Plus, and Pro therefore have identical model access/i);
+assert.match(billingDocs, /Weighted Image Credit Costs/);
+assert.match(billingDocs, /Pro[\s\S]*Intuitive[\s\S]*GPT-Image-2[\s\S]*MAI-Image-2\.6[\s\S]*FLUX 1\.1 Pro/i);
 assert.match(rolloutDocs, /auth\/control database only/i);
-assert.match(rolloutDocs, /Data shards 2–4: no migration required/i);
-assert.match(rolloutDocs, /Essential, Plus, and Pro have identical image-model access/i);
+assert.match(rolloutDocs, /No billing migration required/i);
+assert.match(rolloutDocs, /Final 8-Cell Routing Matrix/i);
 assert.match(migration, /RUN ON: Auth\/control database only/i);
 assert.match(migration, /DO NOT RUN ON: Data shards 2, 3, or 4/i);
 
