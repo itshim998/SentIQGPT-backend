@@ -184,6 +184,9 @@ jobs:
       - name: Execution profiles
         run: npm run test:execution-profiles
 
+      - name: Fast natural voice contract
+        run: npm run test:fast-natural-voice
+
       - name: Model capability routing
         run: npm run test:model-capability-routing
 

@@ -79,6 +79,7 @@
     "test:safety-timeout": "ts-node --project tsconfig.backend.json backend/testSafetyTimeoutPolicy.ts",
     "eval:golden": "ts-node --project tsconfig.backend.json backend/evalGoldenPrompts.ts",
     "eval:natural-voice": "ts-node --project tsconfig.backend.json backend/evalNaturalVoiceQuality.ts",
+    "eval:natural-voice:live": "ts-node --project tsconfig.backend.json backend/evalLiveNaturalVoice.ts",
     "billing:seed-plans": "ts-node --project tsconfig.backend.json backend/billing/seedPlans.ts",
     "billing:test-quota": "ts-node --project tsconfig.backend.json backend/billing/testQuota.ts && ts-node --project tsconfig.backend.json backend/billing/testGuestTextTrial.ts",
     "billing:test-token-allowances": "ts-node --project tsconfig.backend.json backend/billing/testTokenAllowances.ts && node --no-warnings frontend/tests/billing-token-usage.test.mjs",

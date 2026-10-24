@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import {
   buildChatPrompt,
-  callLLMAdapterSync,
   FAST_NATURAL_VOICE_INSTRUCTIONS,
   isEligibleFastNaturalVoice,
   type ChatContext,
@@ -246,7 +245,6 @@ export const EVALUATION_PROMPTS: readonly EvalCase[] = [
     notes: "Dedicated reasoning mode must NOT receive voice profile.",
   },
 ];
-
 // Stylistic evaluation heuristics
 export interface StyleMetrics {
   hasCannedOpening: boolean;
@@ -261,12 +259,12 @@ export interface StyleMetrics {
 }
 
 const CANNED_OPENINGS = [
-  /^(?:absolutely|certainly|sure thing|great question|that's a great question|i'd be happy to help|i'd love to help|let's dive into|welcome to|of course)[!.,:]/i,
-  /^(?:i(?:'m| am) thrilled to help|what a fantastic idea)/i,
+  /^(?:absolutely|certainly|sure thing|great question|that's a great question|i'd be happy to (?:help|assist)|i'd love to help|let's dive into|welcome to|of course)[!.,:]/i,
+  /^(?:i(?:'m| am) (?:thrilled|delighted|happy) to (?:help|assist)|what a fantastic idea)/i,
 ];
 
 const STOCK_CLOSINGS = [
-  /(?:let me know if you (?:need|have any|have further|require)|feel free to (?:ask|reach out)|hope this helps|hope that helps|i'm here to help)[!.]?\s*$/i,
+  /(?:let me know if you (?:need|have any|have further|require)[^.!?\n]*|feel free to (?:ask|reach out)[^.!?\n]*|hope (?:this|that) helps|i'm here to help)[!.]?\s*$/i,
 ];
 
 const AI_CLICHES = [
@@ -331,10 +329,170 @@ export function analyzeStyle(text: string): StyleMetrics {
   };
 }
 
-export async function runEvaluation(): Promise<void> {
-  console.log("===============================================================================");
-  console.log("SentIQ Chat — Fast Natural Voice Offline Evaluation (25 Representative Prompts)");
-  console.log("===============================================================================\n");
+export interface StyleFixture {
+  description: string;
+  text: string;
+  expected: Partial<StyleMetrics>;
+}
+
+export const STYLE_ANALYSIS_FIXTURES: readonly StyleFixture[] = [
+  // Canned openings: Positive fixtures
+  {
+    description: "Canned opening: 'Certainly!'",
+    text: "Certainly! Here are the steps to configure your database.",
+    expected: { hasCannedOpening: true },
+  },
+  {
+    description: "Canned opening: 'Great question!'",
+    text: "Great question! Let's explore the causes of Olbers' paradox.",
+    expected: { hasCannedOpening: true },
+  },
+  {
+    description: "Canned opening: 'Absolutely,'",
+    text: "Absolutely, I would be glad to help with that problem.",
+    expected: { hasCannedOpening: true },
+  },
+  {
+    description: "Canned opening: 'I'm thrilled to help'",
+    text: "I'm thrilled to help you build your new web application.",
+    expected: { hasCannedOpening: true },
+  },
+  {
+    description: "Canned opening: 'Sure thing!'",
+    text: "Sure thing! Let's dive into this issue together.",
+    expected: { hasCannedOpening: true },
+  },
+  // Canned openings: Negative fixtures (direct openings)
+  {
+    description: "Direct opening: Factual statement",
+    text: "The capital of Australia is Canberra.",
+    expected: { hasCannedOpening: false },
+  },
+  {
+    description: "Direct opening: Troubleshooting check",
+    text: "Check if the PostgreSQL service is listening on port 5432.",
+    expected: { hasCannedOpening: false },
+  },
+  {
+    description: "Direct opening: Constructive disagreement",
+    text: "No. Microservices are not automatically superior to a monolith for every project.",
+    expected: { hasCannedOpening: false },
+  },
+
+  // Stock closings: Positive fixtures
+  {
+    description: "Stock closing: 'Let me know if you need anything else!'",
+    text: "Your server configuration is updated. Let me know if you need anything else!",
+    expected: { hasStockClosing: true },
+  },
+  {
+    description: "Stock closing: 'Hope this helps.'",
+    text: "The syntax error was caused by a missing bracket. Hope this helps.",
+    expected: { hasStockClosing: true },
+  },
+  {
+    description: "Stock closing: 'Feel free to reach out'",
+    text: "Here is the summary of the meeting. Feel free to reach out if you have questions.",
+    expected: { hasStockClosing: true },
+  },
+  // Stock closings: Negative fixtures (direct conclusions)
+  {
+    description: "Direct closing: Actionable command",
+    text: "Run `npm run build` to verify the compiled bundle.",
+    expected: { hasStockClosing: false },
+  },
+  {
+    description: "Direct closing: Technical explanation end",
+    text: "This satisfies the invariant that timestamps are monotonically increasing.",
+    expected: { hasStockClosing: false },
+  },
+
+  // AI clichés: Positive fixtures
+  {
+    description: "AI cliché: 'In today's fast-paced world...'",
+    text: "In today's fast-paced world, software teams must deliver value rapidly.",
+    expected: { hasAiClichés: true },
+  },
+  {
+    description: "AI cliché: 'It's not just X; it's Y'",
+    text: "It's not just a database; it's an intelligent knowledge engine.",
+    expected: { hasAiClichés: true },
+  },
+  {
+    description: "AI cliché: 'delve into'",
+    text: "Let's delve into the nuances of quantum entanglement.",
+    expected: { hasAiClichés: true },
+  },
+  {
+    description: "AI cliché: 'a testament to'",
+    text: "The architectural design stands as a testament to modular design principles.",
+    expected: { hasAiClichés: true },
+  },
+  // AI clichés: Negative fixtures
+  {
+    description: "Natural phrasing without clichés",
+    text: "Modern teams deploy changes frequently using automated continuous integration.",
+    expected: { hasAiClichés: false },
+  },
+
+  // Em dash counts
+  {
+    description: "Multiple em dashes counted accurately",
+    text: "Canberra was chosen — not Sydney — because of historical rivalry — a classic compromise.",
+    expected: { emDashCount: 3 },
+  },
+  {
+    description: "Double hyphen em dashes counted",
+    text: "Step 1 -- initialize the database. Step 2 -- seed plans.",
+    expected: { emDashCount: 2 },
+  },
+  {
+    description: "Zero em dashes in clean text",
+    text: "Sydney and Melbourne were both major candidates for the capital.",
+    expected: { emDashCount: 0 },
+  },
+
+  // Emoji counts
+  {
+    description: "Emojis counted accurately",
+    text: "Congratulations on the launch! 🎉 Rocket ready 🚀✨",
+    expected: { emojiCount: 3 },
+  },
+  {
+    description: "Zero emojis in professional text",
+    text: "The shipment was delayed by 3 business days due to customs clearance.",
+    expected: { emojiCount: 0 },
+  },
+];
+
+export function testAnalyzeStyleFixtures(): number {
+  console.log("-------------------------------------------------------------------------------");
+  console.log("Part 1: Deterministic Style Heuristic Unit Tests (analyzeStyle fixtures)");
+  console.log("-------------------------------------------------------------------------------");
+
+  let passed = 0;
+  for (const fixture of STYLE_ANALYSIS_FIXTURES) {
+    const metrics = analyzeStyle(fixture.text);
+    for (const [key, expectedVal] of Object.entries(fixture.expected)) {
+      const actualVal = (metrics as unknown as Record<string, unknown>)[key];
+      assert.equal(
+        actualVal,
+        expectedVal,
+        `Fixture '${fixture.description}' failed on metric '${key}': expected ${expectedVal}, got ${actualVal}`,
+      );
+    }
+    passed += 1;
+    console.log(`  [OK] ${fixture.description}`);
+  }
+
+  console.log(`\nStyle Heuristic Unit Tests: ${passed}/${STYLE_ANALYSIS_FIXTURES.length} fixtures passed.\n`);
+  return passed;
+}
+
+export function testPromptContracts(): { totalCases: number; promptChecksPassed: number; eligibleCount: number; nonEligibleCount: number } {
+  console.log("-------------------------------------------------------------------------------");
+  console.log("Part 2: Fast Natural Voice Prompt Contract & Eligibility Verification (25 Prompts)");
+  console.log("-------------------------------------------------------------------------------");
 
   let totalCases = 0;
   let eligibleCount = 0;
@@ -376,63 +534,39 @@ export async function runEvaluation(): Promise<void> {
 
     promptChecksPassed += 1;
     console.log(
-      `[Case ${String(testCase.id).padStart(2, "0")}] ${testCase.category.padEnd(46, " ")} | Eligible: ${String(isEligible).padEnd(5)} | Profile in Prompt: ${String(hasVoiceProfile).padEnd(5)} | Status: OK`,
+      `  [Case ${String(testCase.id).padStart(2, "0")}] ${testCase.category.padEnd(46, " ")} | Eligible: ${String(isEligible).padEnd(5)} | Profile in Prompt: ${String(hasVoiceProfile).padEnd(5)} | Status: OK`,
     );
   }
 
-  console.log("\n-------------------------------------------------------------------------------");
-  console.log(`Prompt Contract Results: ${promptChecksPassed}/${totalCases} cases verified.`);
-  console.log(`- Eligible Fast text cases: ${eligibleCount}`);
-  console.log(`- Excluded specialised/intuitive control cases: ${nonEligibleCount}`);
-  console.log("-------------------------------------------------------------------------------\n");
+  return { totalCases, promptChecksPassed, eligibleCount, nonEligibleCount };
+}
 
-  // Sample actual model completions comparing baseline vs fast natural voice
-  console.log("Testing generation with simulation adapter for baseline vs natural voice comparison...");
-  const samplePrompts = [
-    { id: 1, prompt: "What is the capital of Australia, and why was it chosen over Sydney or Melbourne?" },
-    { id: 3, prompt: "Hey, how's it going today?" },
-    { id: 9, prompt: "Isn't microservices architecture always superior to a monolith for any new project?" },
-    { id: 13, prompt: "My elderly cat passed away yesterday after 15 years. My apartment feels completely empty." },
-    { id: 15, prompt: "Write a formal email to our client explaining that their shipment will be delayed by 3 business days due to customs clearance." },
-  ];
+export async function runEvaluation(): Promise<void> {
+  console.log("===============================================================================");
+  console.log("SentIQ Chat — Fast Natural Voice Prompt Contract & Style Heuristics Verification");
+  console.log("===============================================================================");
+  console.log("[SCOPE NOTICE]");
+  console.log("This deterministic test suite verifies prompt construction contracts, token");
+  console.log("accounting, route eligibility, and style-analysis heuristic detectors.");
+  console.log("It runs 100% deterministically with ZERO external model calls.");
+  console.log("Passing these checks confirms correct prompt assembly and heuristic classification;");
+  console.log("it does NOT assert or prove generated prose quality from an actual LLM.");
+  console.log("For empirical before-and-after model output evaluation, run:");
+  console.log("  SENTIQ_NATURAL_VOICE_LIVE_EVAL=1 npm run eval:natural-voice:live\n");
 
-  for (const sample of samplePrompts) {
-    const baselineCall = buildChatPrompt({
-      userMessage: sample.prompt,
-      executionMode: "fast",
-      fastNaturalVoice: false,
-      modelOverride: "gpt-oss-120b",
-    });
-
-    const naturalCall = buildChatPrompt({
-      userMessage: sample.prompt,
-      executionMode: "fast",
-      fastNaturalVoice: true,
-      modelOverride: "gpt-oss-120b",
-    });
-
-    try {
-      const baselineOutput = await callLLMAdapterSync({ ...baselineCall, use_simulation: true });
-      const naturalOutput = await callLLMAdapterSync({ ...naturalCall, use_simulation: true });
-
-      const baselineMetrics = analyzeStyle(baselineOutput);
-      const naturalMetrics = analyzeStyle(naturalOutput);
-
-      console.log(`\nSample ${sample.id}: "${sample.prompt.slice(0, 60)}..."`);
-      console.log(`  Baseline output (${baselineMetrics.wordCount} words):`);
-      console.log(`    "${baselineOutput.trim().slice(0, 120)}..."`);
-      console.log(`    [Metrics] Canned opening: ${baselineMetrics.hasCannedOpening}, Stock closing: ${baselineMetrics.hasStockClosing}, Em dashes: ${baselineMetrics.emDashCount}, Emojis: ${baselineMetrics.emojiCount}`);
-      console.log(`  Natural voice output (${naturalMetrics.wordCount} words):`);
-      console.log(`    "${naturalOutput.trim().slice(0, 120)}..."`);
-      console.log(`    [Metrics] Canned opening: ${naturalMetrics.hasCannedOpening}, Stock closing: ${naturalMetrics.hasStockClosing}, Em dashes: ${naturalMetrics.emDashCount}, Emojis: ${naturalMetrics.emojiCount}`);
-    } catch (simError) {
-      console.log(`  (Simulation run note: ${simError instanceof Error ? simError.message : simError})`);
-    }
-  }
+  const stylePassed = testAnalyzeStyleFixtures();
+  const contractResults = testPromptContracts();
 
   console.log("\n===============================================================================");
-  console.log("Evaluation completed successfully.");
+  console.log("Verification Summary:");
+  console.log(`- Style Heuristic Fixtures: ${stylePassed}/${STYLE_ANALYSIS_FIXTURES.length} passed.`);
+  console.log(`- Prompt Contract & Eligibility Cases: ${contractResults.promptChecksPassed}/${contractResults.totalCases} verified.`);
+  console.log(`  * Eligible Fast text cases: ${contractResults.eligibleCount}`);
+  console.log(`  * Excluded specialised/intuitive control cases: ${contractResults.nonEligibleCount}`);
+  console.log("- External Model Calls Made: 0 (deterministic offline verification)");
   console.log("===============================================================================");
+  console.log("Prompt contract and heuristic integrity checks completed successfully.");
+  console.log("===============================================================================\n");
 }
 
 if (require.main === module) {
