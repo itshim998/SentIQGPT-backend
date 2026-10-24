@@ -23,6 +23,8 @@ export const BOTH_VERSIONS = new Set([
 ]);
 
 export const CONTROL_ONLY_VERSIONS = new Set([
+  "20261024161000", // repair_db4_assignment_constraint.sql
+  "20261024120000", // paid_image_edit_ledger.sql
   "20260325214500", // user_db_map.sql
   "20260412102000", // restrict_user_db_map_assigned_db.sql
   "20260604120000", // billing_plans_usage_and_subscriptions.sql
@@ -41,6 +43,9 @@ export const CONTROL_ONLY_VERSIONS = new Set([
 ]);
 
 export const DATA_ONLY_VERSIONS = new Set([
+  "20261024190000", // image_annotation_versions.sql
+  "20261024162000", // image_edit_artifact_recovery.sql
+  "20261024121000", // image_edit_versions.sql
   "20260330194000", // add_memory_scope_and_chat_id.sql
   "20260406160000", // capacity_limits.sql
   "20260407030000", // chat_images_table.sql

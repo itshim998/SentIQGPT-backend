@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ExecutionMode } from "./executionProfile";
 
-export const SENTIQ_TOOL_REGISTRY_VERSION = "2026-08-paid-image-text-routing-v1";
+export const SENTIQ_TOOL_REGISTRY_VERSION = "2026-08-paid-image-text-routing-v2";
 export const MAX_TOOL_ARGUMENT_BYTES = 16 * 1024;
 export const MAX_TOOL_CALLS_PER_TURN = 4;
 
@@ -101,6 +101,10 @@ const schemas = {
   image_gen: z.object({
     prompt: boundedText,
     requires_text_rendering: z.boolean(),
+    edit: z.object({
+      sourceImageId: z.union([z.string().uuid(), z.literal("latest")]),
+      operation: z.enum(["edit", "replace_background", "erase_region", "remove_background"]),
+    }).strict().optional(),
   }).strict(),
   chart_gen: z.object({ request: boundedText }).strict(),
   file_gen: z.object({ request: boundedText, format: fileFormat.optional() }).strict(),
@@ -174,12 +178,16 @@ export const SENTIQ_TOOL_REGISTRY: readonly ToolDefinition[] = [
   }),
   definition({
     name: "image_gen",
-    description: "Generate a new image or visual asset. Use this for explicit image-generation requests instead of describing an image in chat text. Decide whether readable text must be rendered inside the generated pixels.",
+    description: "Generate a new image or edit an owned image. For editing, provide edit.sourceImageId from a real stored image in this conversation, or use 'latest' when the user targets the most recent image; never invent an ID or substitute text-to-image generation. Ask for clarification if the target is ambiguous. Editing requires Essential, Plus or Pro. Reference editing and background replacement are supported; region erasing and transparent background removal require verified model capabilities and may be rejected. Decide whether readable text must be rendered inside the generated pixels.",
     inputSchema: objectSchema({
       prompt: stringProperty("The image the user wants generated. Preserve all material visual and wording constraints."),
       requires_text_rendering: booleanProperty(
         "True only when the generated image must visibly render user-requested words, letters, numbers, captions, labels, signage, titles, slogans, logos, UI copy, or other readable text. False for purely visual scenes without required readable text.",
       ),
+      edit: objectSchema({
+        sourceImageId: stringProperty("Existing owned image UUID, or 'latest' for the most recent image in this conversation."),
+        operation: { type: "string", enum: ["edit", "replace_background", "erase_region", "remove_background"] },
+      }, ["sourceImageId", "operation"]),
     }, ["prompt", "requires_text_rendering"]),
     resultSchema: objectSchema({ image: { type: "object" } }, ["image"]),
     authorization: "entitled",

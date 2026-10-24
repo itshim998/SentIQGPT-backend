@@ -1,0 +1,71 @@
+{
+  "pushedCommit": "45e3f9d70118e7e6199bd55701fff81abe0825b8",
+  "ciRun": "https://github.com/itshim998/SentIQGPT-backend/actions/runs/40111338987",
+  "ciFailure": "Static contract reads backend/server.ts instead of backend/serverLegacy.ts; native PostgreSQL suite did not start",
+  "localCorrection": "backend/billing/testUnifiedTextMigrationContract.ts",
+  "correctionValidation": "node node_modules/ts-node/dist/bin.js --project tsconfig.backend.json backend/billing/testUnifiedTextMigrationContract.ts passed",
+  "furtherLocalChecks": [
+    {
+      "command": "npm run test:execution-profiles",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 3486
+    },
+    {
+      "command": "npm run test:fast-natural-voice",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2616
+    },
+    {
+      "command": "npm run test:model-capability-routing",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2901
+    },
+    {
+      "command": "npm run test:context-budget",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 5467
+    },
+    {
+      "command": "npm run test:request-budget-lifecycle",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 1591
+    },
+    {
+      "command": "npm run test:stream-lifecycle",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 1373
+    },
+    {
+      "command": "npm run test:guest-turn-robustness",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 10845
+    },
+    {
+      "command": "npm run test:protected-context-safety",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 3115
+    }
+  ],
+  "notExecutedLocally": [
+    "Native psql integration suites: no disposable native server/psql available",
+    "Docker production image build/runtime smoke: daemon not running"
+  ],
+  "build": {
+    "command": "npm run build",
+    "exitCode": 0,
+    "result": "PASS",
+    "durationMs": 9592
+  },
+  "changedFiles": [
+    "backend/billing/testUnifiedTextMigrationContract.ts",
+    "docs/IMAGE_EDIT_RECOVERY_CI_FOLLOWUP.json"
+  ]
+}

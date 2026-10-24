@@ -5,6 +5,8 @@
 import { handleChat, selectChatToolCalls } from "../ai/ChatHandler";
 import { createHash, randomUUID } from "crypto";
 import { routeImageGeneration } from "../tools/imageGeneration/imageRouter";
+import { executeImageEdit } from "../services/imageEditingService";
+import type { ImageEditOperation } from "../tools/imageGeneration/types";
 import type { ImageModelPreference } from "../tools/imageGeneration/types";
 import { routeChartGeneration } from "../tools/chartGeneration/chartRouter";
 import { routeFileGeneration } from "../tools/fileGeneration/fileGenerator";
@@ -740,12 +742,13 @@ export async function executeAutomaticModelToolCalls(
       },
       allowedTools,
       executeWebSurf: (query) => execWebSearch(query, ctx, profile, signal, originalUserRequest),
-      executeImage: (prompt, requiresTextRendering) => execImageGeneration(
+      executeImage: (prompt, requiresTextRendering, call) => execImageGeneration(
         prompt,
         ctx,
         profile,
         signal,
         requiresTextRendering,
+        call.arguments.edit as { sourceImageId: string; operation: ImageEditOperation } | undefined,
       ),
       executeChart: (request) => execChartGeneration(request, ctx, signal),
       executeFile: (request, format) => execFileGeneration(
@@ -1036,7 +1039,21 @@ export async function execImageGeneration(
   profile: ExecutionProfile,
   signal?: AbortSignal,
   requiresTextRendering = false,
+  edit?: { sourceImageId: string; operation: ImageEditOperation },
 ): Promise<StepResult> {
+  if (edit) {
+    if (!ctx.userId || !ctx.userDb || !ctx.billingIdentity || !ctx.conversationId || !ctx.clientRequestId) {
+      throw new Error("Image editing requires an authenticated conversation and request ID.");
+    }
+    const result = await executeImageEdit({
+      ...edit, prompt: input, conversationId: ctx.conversationId, clientRequestId: ctx.clientRequestId,
+      executionMode: profile.mode,
+    }, {
+      userId: ctx.userId, identity: ctx.billingIdentity, userDb: ctx.userDb,
+      storageDb: getImageStorageDatabase(), signal, imageQuotaKey: ctx.imageQuotaKey,
+    }, { billing: billingQuotaService });
+    return { step: 0, tool: "image_generation", reply: "Edited image.", image: { ...result, prompt: input } };
+  }
   const localQuota = ctx.imageQuotaKey ? getQuotaInfo(ctx.imageQuotaKey) : undefined;
   if (localQuota?.cooldownActive) {
     throw new Error("Image generation cooldown is active.");

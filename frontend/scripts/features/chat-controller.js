@@ -43,6 +43,7 @@ import {
 } from "./free-tool-execution-policy.mjs";
 import { isConfidentEnglish } from "./chat/language-detector.mjs";
 import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat/speech-synthesizer.mjs";
+import { createImageEditor } from "./image-editor.js";
 
 // ================================================================
 // 3. Chat UI Controller
@@ -6318,6 +6319,47 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
     ].join("");
   }
 
+  // Keep editor state outside the chat renderer so a canonical rehydration
+  // cannot interrupt an edit whose output has already been persisted.
+  let paidImageEditor = null;
+  function getPaidImageEditor() {
+    if (!paidImageEditor) {
+      paidImageEditor = createImageEditor({
+        api: API,
+        getContext: () => ({
+          authenticated: isAuthenticatedSession(),
+          conversationId: getCanonicalConversationIdForRequest(currentChatId),
+          executionMode: normalizeExecutionMode(effectiveExecutionMode || currentExecutionMode),
+        }),
+        onSaved: async (result, chatId) => {
+          syncImageQuotaFromServer(result);
+          await refreshCanonicalChatAfterImageGeneration(chatId);
+          scheduleChatListRefresh();
+        },
+        notify: showToast,
+      });
+    }
+    return paidImageEditor;
+  }
+
+  function attachImageEditorAction(actions, meta) {
+    if (!actions || !isAuthenticatedSession() || actions.querySelector(".image-edit-launch")) return;
+    const button = document.createElement("button");
+    button.className = "image-download-btn image-edit-launch";
+    button.type = "button";
+    button.textContent = "Edit";
+    button.title = "Edit image (Essential, Plus or Pro)";
+    button.setAttribute("aria-label", "Edit generated image");
+    button.addEventListener("click", () => {
+      void getPaidImageEditor().open({
+        imageId: meta?.imageId || "",
+        storagePath: meta?.storagePath || "",
+        imageUrl: meta?.imageUrl || "",
+      });
+    });
+    actions.prepend(button);
+  }
+
   function setImageLightboxScale(scale) {
     imageLightboxScale = Math.max(0.5, Math.min(3, Number(scale) || 1));
     const img = imageLightbox?.querySelector(".image-lightbox-img");
@@ -6537,6 +6579,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
           }
         });
         actions.appendChild(removeBtn);
+        attachImageEditorAction(actions, meta);
         contentDiv.appendChild(actions);
       }
 
@@ -11050,6 +11093,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
           pendingMeta.imageUrl = imageUrl;
           pendingMeta.provider = result.provider_used || "";
           pendingMeta.storagePath = result.storage_path || "";
+          pendingMeta.imageId = result.image_id || "";
           pendingMeta.fileSizeBytes = result.file_size_bytes || null;
           pendingMeta.isPending = false;
 
@@ -11106,6 +11150,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
               });
               actions.appendChild(removeBtn);
             }
+            attachImageEditorAction(actions, pendingMeta);
           }
 
           if (result.message_id) {
@@ -11127,6 +11172,7 @@ import { isSpeechSynthesisSupported, speakText, stopCurrentSpeech } from "./chat
             prompt,
             provider: result.provider_used || "",
             storagePath: result.storage_path || "",
+            imageId: result.image_id || "",
             fileSizeBytes: result.file_size_bytes || null,
             ...(result.message_id ? { messageId: result.message_id } : {}),
           };

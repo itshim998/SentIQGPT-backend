@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-17T06:37:19.616Z",
-  "totalCanonicalMigrations": 83,
+  "generatedAt": "2026-10-24T18:06:07.006Z",
+  "totalCanonicalMigrations": 88,
   "topology": {
     "controlDatabases": [
       1
@@ -15,10 +15,10 @@
   },
   "counts": {
     "both": 9,
-    "controlOnly": 15,
-    "dataOnly": 59,
-    "controlTrackTotal": 24,
-    "dataTrackTotal": 68
+    "controlOnly": 17,
+    "dataOnly": 62,
+    "controlTrackTotal": 26,
+    "dataTrackTotal": 71
   },
   "migrations": [
     {
@@ -859,6 +859,56 @@
         "data"
       ],
       "checksum": "9471bd8d937ac81082a821a72a5c53e7fa052fac7af1b193450c9d579e04773f"
+    },
+    {
+      "version": "20261024120000",
+      "name": "paid_image_edit_ledger",
+      "filename": "20261024120000_paid_image_edit_ledger.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "1d593d41c9f082de622a131a54ffb940e401530c3fb58686bbd6ad5a44bee289"
+    },
+    {
+      "version": "20261024121000",
+      "name": "image_edit_versions",
+      "filename": "20261024121000_image_edit_versions.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "0d7cd7cf1d44575f7f97559242db141d7cb00b399fd9a02c0ecbbd5c36f95afd"
+    },
+    {
+      "version": "20261024161000",
+      "name": "repair_db4_assignment_constraint",
+      "filename": "20261024161000_repair_db4_assignment_constraint.sql",
+      "scope": "CONTROL_ONLY",
+      "targetTracks": [
+        "control"
+      ],
+      "checksum": "5dbbb7aa98d4a1e0ad7a2956e184c93ac079c0367d0c36267295c251c834841f"
+    },
+    {
+      "version": "20261024162000",
+      "name": "image_edit_artifact_recovery",
+      "filename": "20261024162000_image_edit_artifact_recovery.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "1c544d7afe892dac7744d1b10b62fed44f699b949eb8f8fa9a2965a72a48aade"
+    },
+    {
+      "version": "20261024190000",
+      "name": "image_annotation_versions",
+      "filename": "20261024190000_image_annotation_versions.sql",
+      "scope": "DATA_ONLY",
+      "targetTracks": [
+        "data"
+      ],
+      "checksum": "7552ce92f19c9ff110d774275627866aa11aa4bf4e565a10418d67254ad7b131"
     }
   ]
 }

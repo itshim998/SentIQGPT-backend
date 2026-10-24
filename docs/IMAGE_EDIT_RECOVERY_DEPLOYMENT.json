@@ -1,0 +1,107 @@
+{
+  "scope": "forward_only_db4_and_artifact_recovery",
+  "apply": true,
+  "dryRun": false,
+  "status": "fully_applied_and_verified",
+  "databases": [
+    {
+      "db": 1,
+      "projectRef": "lzgohufdrqjdupfsvqlj",
+      "version": "20261024161000",
+      "scope": "CONTROL_ONLY",
+      "sha256": "5dbbb7aa98d4a1e0ad7a2956e184c93ac079c0367d0c36267295c251c834841f",
+      "historyBefore": 26,
+      "status": "already_applied_and_verified",
+      "assignmentBefore": {
+        "definition": "CHECK (((assigned_db >= 2) AND (assigned_db <= 3)))",
+        "invalid": 0,
+        "mappings": 5
+      },
+      "historyAfter": 26,
+      "rpcBodiesAndServiceOnlyAclVerified": true,
+      "unrelatedSchemaPreserved": true,
+      "assignmentAfter": {
+        "definition": "CHECK (((assigned_db >= 2) AND (assigned_db <= 3)))",
+        "invalid": 0,
+        "mappings": 5,
+        "mappingHashUnchanged": true,
+        "plansUnchanged": true
+      }
+    },
+    {
+      "db": 2,
+      "projectRef": "dyrwqeesibzzfifljklk",
+      "version": "20261024162000",
+      "scope": "DATA_ONLY",
+      "sha256": "1c544d7afe892dac7744d1b10b62fed44f699b949eb8f8fa9a2965a72a48aade",
+      "historyBefore": 70,
+      "status": "already_applied_and_verified",
+      "historyAfter": 70,
+      "rpcBodiesAndServiceOnlyAclVerified": true,
+      "unrelatedSchemaPreserved": true
+    },
+    {
+      "db": 3,
+      "projectRef": "fpklxhhsvjbjetkxqajg",
+      "version": "20261024162000",
+      "scope": "DATA_ONLY",
+      "sha256": "1c544d7afe892dac7744d1b10b62fed44f699b949eb8f8fa9a2965a72a48aade",
+      "historyBefore": 69,
+      "status": "applied_and_verified",
+      "historyAfter": 70,
+      "rpcBodiesAndServiceOnlyAclVerified": true,
+      "unrelatedSchemaPreserved": true
+    }
+  ],
+  "previousAttempt": {
+    "scope": "forward_only_db4_and_artifact_recovery",
+    "apply": true,
+    "dryRun": false,
+    "status": "failed_or_incomplete",
+    "databases": [
+      {
+        "db": 1,
+        "projectRef": "lzgohufdrqjdupfsvqlj",
+        "version": "20261024161000",
+        "scope": "CONTROL_ONLY",
+        "sha256": "5dbbb7aa98d4a1e0ad7a2956e184c93ac079c0367d0c36267295c251c834841f",
+        "historyBefore": 25,
+        "status": "applied_and_verified",
+        "assignmentBefore": {
+          "definition": "CHECK (((assigned_db >= 2) AND (assigned_db <= 4)))",
+          "invalid": 0,
+          "mappings": 5
+        },
+        "historyAfter": 26,
+        "rpcBodiesAndServiceOnlyAclVerified": true,
+        "unrelatedSchemaPreserved": true,
+        "assignmentAfter": {
+          "definition": "CHECK (((assigned_db >= 2) AND (assigned_db <= 3)))",
+          "invalid": 0,
+          "mappings": 5,
+          "mappingHashUnchanged": true,
+          "plansUnchanged": true
+        }
+      },
+      {
+        "db": 2,
+        "projectRef": "dyrwqeesibzzfifljklk",
+        "version": "20261024162000",
+        "scope": "DATA_ONLY",
+        "sha256": "1c544d7afe892dac7744d1b10b62fed44f699b949eb8f8fa9a2965a72a48aade",
+        "historyBefore": 69,
+        "status": "dry_run_verified"
+      },
+      {
+        "db": 3,
+        "projectRef": "fpklxhhsvjbjetkxqajg",
+        "version": "20261024162000",
+        "scope": "DATA_ONLY",
+        "sha256": "1c544d7afe892dac7744d1b10b62fed44f699b949eb8f8fa9a2965a72a48aade",
+        "historyBefore": 69,
+        "status": "dry_run_verified"
+      }
+    ],
+    "error": "DB2_management_HTTP_400"
+  }
+}

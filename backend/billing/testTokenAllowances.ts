@@ -243,7 +243,8 @@ async function main(): Promise<void> {
   assert.match(migration, /metadata ->> 'quota_policy_version' = 'standard-lite-tokens-v1'/);
   assert.match(billingRoutesSource, /tokens_remaining/);
   assert.match(billingRoutesSource, /window_start/);
-  assert.match(billingPanelSource, /Counts model input and generated output within your rolling allowance\./);
+  assert.match(billingPanelSource, /Includes input and output\./);
+  assert.match(billingPanelSource, /aria-description="Includes input and output\."/);
   assert.match(llmServiceSource, /PYTHON_LLM_QUOTA_ENFORCEMENT = False/);
 
   console.log("Standard/Lite token allowance checks passed.");

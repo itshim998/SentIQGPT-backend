@@ -5,13 +5,13 @@ import os from "os";
 import cp from "child_process";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import { validateMigrationTracks } from "./validateMigrationTracks.mjs";
 
 dotenv.config();
 
 const ROOT_DIR = path.resolve(process.cwd());
 const MANIFEST_PATH = path.join(ROOT_DIR, "supabase", "migration-manifest.json");
 const DATA_TRACK_DIR = path.join(ROOT_DIR, "supabase", "tracks", "data", "migrations");
-const EXPECTED_MIGRATION_COUNT = 68;
 
 export const REQUIRED_DATA_SHARD_TABLES = [
   "users",
@@ -29,23 +29,25 @@ function hashFile(filePath) {
 }
 
 export function validateDataTrackMigrations() {
+  const { tracks } = validateMigrationTracks(ROOT_DIR);
+  const expectedCount = tracks.data.length;
   if (!fs.existsSync(DATA_TRACK_DIR)) {
     throw new Error(`Data track migrations directory missing: ${DATA_TRACK_DIR}`);
   }
 
   const files = fs.readdirSync(DATA_TRACK_DIR).filter((f) => f.endsWith(".sql")).sort();
-  if (files.length !== EXPECTED_MIGRATION_COUNT) {
+  if (files.length !== expectedCount) {
     throw new Error(
-      `[Validation Gate] Expected exactly ${EXPECTED_MIGRATION_COUNT} migrations in data track, but found ${files.length}`
+      `[Validation Gate] Expected ${expectedCount} manifest migrations in data track, but found ${files.length}`
     );
   }
 
   const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8"));
   const manifestDataMigrations = manifest.migrations.filter((m) => m.targetTracks.includes("data"));
 
-  if (manifestDataMigrations.length !== EXPECTED_MIGRATION_COUNT) {
+  if (manifestDataMigrations.length !== expectedCount) {
     throw new Error(
-      `[Validation Gate] Manifest defines ${manifestDataMigrations.length} data migrations, expected ${EXPECTED_MIGRATION_COUNT}`
+      `[Validation Gate] Manifest defines ${manifestDataMigrations.length} data migrations, expected ${expectedCount}`
     );
   }
 
@@ -161,7 +163,6 @@ export function executeSupabaseCliPush({ workspacePath, connectionString, dryRun
     workspacePath,
     "--db-url",
     connectionString,
-    "--include-all",
     "--skip-vault",
   ];
 
@@ -190,6 +191,8 @@ export function executeSupabaseCliPush({ workspacePath, connectionString, dryRun
 }
 
 export async function verifyShardPostBootstrap(dbNumber) {
+  if (![2, 3].includes(dbNumber)) throw new Error("Only active data shards DB2 and DB3 may be verified");
+  const expectedCount = validateDataTrackMigrations().length;
   const url = process.env[`SUPABASE_URL_${dbNumber}`]?.trim();
   const key = process.env[`SUPABASE_SERVICE_ROLE_KEY_${dbNumber}`]?.trim();
 
@@ -229,25 +232,26 @@ export async function verifyShardPostBootstrap(dbNumber) {
 
   console.log(`  ✓ Startup verifier RPC passed! ok=${result.ok}, failures=${JSON.stringify(result.failures)}`);
 
-  const connStr = resolveDbConnectionString(dbNumber);
-  if (connStr) {
-    console.log(`[Verification] Checking native supabase_migrations.schema_migrations count on DB${dbNumber}...`);
-    try {
-      const out = cp.execSync(`npx supabase migration list --db-url "${connStr}"`, {
-        encoding: "utf8",
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      const parsed = JSON.parse(out);
-      const applied = parsed.migrations.filter((m) => m.remote);
-      console.log(`  ✓ Native schema_migrations contains exactly ${applied.length} applied versions`);
-      if (applied.length !== EXPECTED_MIGRATION_COUNT) {
-        throw new Error(`Expected ${EXPECTED_MIGRATION_COUNT} applied versions on DB${dbNumber}, but found ${applied.length}`);
-      }
-    } catch (err) {
-      if (err.message.includes("Expected")) throw err;
-      console.warn(`  (Note: could not query CLI migration list: ${err.message})`);
-    }
+  const token = process.env[`SUPABASE_ACCESS_TOKEN_${dbNumber}`]?.trim();
+  const ref = new URL(url).hostname.match(/^([a-z]{20})\.supabase\.co$/)?.[1];
+  if (!token || !ref || (process.env[`SUPABASE_PROJECT_ID_${dbNumber}`] && process.env[`SUPABASE_PROJECT_ID_${dbNumber}`] !== ref)) {
+    throw new Error(`[Verification] DB${dbNumber} native history requires matching project-specific credentials`);
   }
+  let historyResponse;
+  try {
+    historyResponse = await fetch(`https://api.supabase.com/v1/projects/${ref}/database/query`, {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(30000),
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "select version from supabase_migrations.schema_migrations order by version", read_only: true }),
+    });
+  } catch { throw new Error(`[Verification] DB${dbNumber} native history could not be reached`); }
+  if (!historyResponse.ok) throw new Error(`[Verification] DB${dbNumber} native history HTTP ${historyResponse.status}`);
+  const history = await historyResponse.json();
+  const expectedVersions = validateMigrationTracks(ROOT_DIR).tracks.data.map((entry) => entry.version);
+  if (!Array.isArray(history) || JSON.stringify(history.map((entry) => entry.version)) !== JSON.stringify(expectedVersions)) {
+    throw new Error(`[Verification] DB${dbNumber} native history differs from the ${expectedCount}-migration validated data track`);
+  }
+  console.log(`  ✓ Native schema_migrations matches all ${expectedCount} validated versions`);
 
   return result;
 }
@@ -255,6 +259,7 @@ export async function verifyShardPostBootstrap(dbNumber) {
 if (process.argv[1] && process.argv[1].endsWith("nativeDataTrackBootstrap.mjs")) {
   (async () => {
     const targetDb = process.argv[2] ? parseInt(process.argv[2], 10) : 2;
+    if (![2, 3].includes(targetDb)) throw new Error("Bootstrap targets are restricted to active data shards DB2 and DB3");
     const isApply = process.argv.includes("--apply");
     const isVerifyOnly = process.argv.includes("--verify-only");
 

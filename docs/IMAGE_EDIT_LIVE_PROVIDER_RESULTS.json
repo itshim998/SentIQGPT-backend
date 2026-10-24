@@ -1,0 +1,190 @@
+{
+  "scope": "direct authenticated providers; synthetic shapes only; no SentIQ quota ledger",
+  "maxInferenceAttempts": 4,
+  "automaticRetries": 0,
+  "startedAt": "2026-10-24T17:32:43.402Z",
+  "results": [
+    {
+      "label": "cloudflare-reference",
+      "requestedModel": "@cf/black-forest-labs/flux-2-klein-4b",
+      "attempted": true,
+      "status": 200,
+      "contentType": "application/json",
+      "modelUsed": null,
+      "modelRequested": null,
+      "fallbackTarget": null,
+      "numericUsageHeaders": {},
+      "image": {
+        "format": "jpeg",
+        "width": 256,
+        "height": 256,
+        "hasAlpha": false,
+        "bytes": 13881,
+        "sha256": "32bc7a5a6cab6838373232a534739f0ee9f4d2570494cf20a56e4e4bc9cc48b1"
+      },
+      "bodyKeys": [
+        "result",
+        "success",
+        "errors",
+        "messages"
+      ],
+      "bodyModel": null,
+      "result": "image_decoded",
+      "durationMs": 3095
+    },
+    {
+      "label": "pollinations-gpt-json",
+      "requestedModel": "openai/gpt-image-2",
+      "attempted": true,
+      "status": 200,
+      "contentType": "application/json",
+      "modelUsed": "openai/gpt-image-2",
+      "modelRequested": "openai/gpt-image-2",
+      "fallbackTarget": null,
+      "numericUsageHeaders": {
+        "x-usage-completion-image-tokens": "171",
+        "x-usage-prompt-image-tokens": "256",
+        "x-usage-prompt-text-tokens": "23"
+      },
+      "image": {
+        "format": "jpeg",
+        "width": 816,
+        "height": 816,
+        "hasAlpha": false,
+        "bytes": 21816,
+        "sha256": "eef59bfe4b752a0daba9074e13828f0ae07d00d5afd518ac17591e2a8144808a"
+      },
+      "bodyKeys": [
+        "created",
+        "data",
+        "usage"
+      ],
+      "usage": {
+        "input_tokens": 279,
+        "output_tokens": 171,
+        "total_tokens": 450,
+        "input_tokens_details": {
+          "text_tokens": 23,
+          "image_tokens": 256
+        }
+      },
+      "bodyModel": null,
+      "result": "image_decoded",
+      "durationMs": 20592
+    },
+    {
+      "label": "pollinations-gpt-multipart",
+      "requestedModel": "openai/gpt-image-2",
+      "attempted": true,
+      "status": 200,
+      "contentType": "application/json",
+      "modelUsed": "openai/gpt-image-2",
+      "modelRequested": "openai/gpt-image-2",
+      "fallbackTarget": null,
+      "numericUsageHeaders": {
+        "x-usage-completion-image-tokens": "171",
+        "x-usage-prompt-image-tokens": "256",
+        "x-usage-prompt-text-tokens": "23"
+      },
+      "image": {
+        "format": "jpeg",
+        "width": 816,
+        "height": 816,
+        "hasAlpha": false,
+        "bytes": 21386,
+        "sha256": "fce75114f49753ae4f5b9b63f5347ca8c978e87ab353ff484fb8d7f6266cba28"
+      },
+      "bodyKeys": [
+        "created",
+        "data",
+        "usage"
+      ],
+      "usage": {
+        "input_tokens": 279,
+        "output_tokens": 171,
+        "total_tokens": 450,
+        "input_tokens_details": {
+          "text_tokens": 23,
+          "image_tokens": 256
+        }
+      },
+      "bodyModel": null,
+      "result": "image_decoded",
+      "durationMs": 19454
+    },
+    {
+      "label": "pollinations-mai-multipart",
+      "requestedModel": "microsoft/mai-image-2.6",
+      "attempted": true,
+      "status": 200,
+      "contentType": "application/json",
+      "modelUsed": "microsoft/mai-image-2.6",
+      "modelRequested": "microsoft/mai-image-2.6",
+      "fallbackTarget": null,
+      "numericUsageHeaders": {
+        "x-usage-completion-image-tokens": "1024",
+        "x-usage-prompt-image-tokens": "64"
+      },
+      "image": {
+        "format": "jpeg",
+        "width": 1024,
+        "height": 1024,
+        "hasAlpha": false,
+        "bytes": 43380,
+        "sha256": "22d619a9617cedd408e4eb180e0b68ad361664e723d63bdea82a26e9c057ed02"
+      },
+      "bodyKeys": [
+        "created",
+        "data",
+        "usage"
+      ],
+      "usage": {
+        "input_tokens": 64,
+        "output_tokens": 1024,
+        "total_tokens": 1088,
+        "input_tokens_details": {
+          "text_tokens": 0,
+          "image_tokens": 64
+        }
+      },
+      "bodyModel": null,
+      "result": "image_decoded",
+      "durationMs": 22936
+    }
+  ],
+  "costs": {
+    "actualCurrencyCharges": "Not supplied by response headers; invoice/account debit not independently measured",
+    "pollinationsReportedUsage": {
+      "gptEach": {
+        "promptTextTokens": 23,
+        "promptImageTokens": 256,
+        "completionImageTokens": 171
+      },
+      "gptRequests": 2,
+      "mai": {
+        "promptImageTokens": 64,
+        "completionImageTokens": 1024
+      }
+    },
+    "estimatedPublishedBaseUsd": 0.054356,
+    "estimatedUsdWithRegistryMultiplier": 0.0408535,
+    "assumptions": "Published registry GPT rates 5/8/30 USD per million text/image-input/image-output tokens; MAI 5/8/38. Pollinations registry multiplier 0.75; Cloudflare one input/output tile at 0.000059/0.000287 USD. Free allocations, caching, discounts and actual debits not measured.",
+    "customerImageGenerationCredits": 0
+  },
+  "completedAt": "2026-10-24T17:33:49.546Z",
+  "invalidInputProbe": {
+    "status": 400,
+    "expectedStatus": 400,
+    "inferenceExpected": false,
+    "automaticRetries": 0
+  },
+  "visualInspection": "All four outputs preserve the blue circle and turn the original red rectangle green.",
+  "source": {
+    "format": "png",
+    "width": 256,
+    "height": 256,
+    "sha256": "81b32285d22211cb527e66e0f22408369ec9dda79a977161605af1dec36fb3a2"
+  },
+  "officialSourceCommit": "152962821cf7df4592e4b06b3153bcb1b76038a4",
+  "retryObservation": "Two equivalent GPT JSON/multipart requests with the same seed returned different output hashes; seed is not an upstream idempotency guarantee."
+}

@@ -1,0 +1,207 @@
+/* SentIQ Images — focused editor, aligned with the existing dark chat surfaces. */
+.sentiq-editor-backdrop {
+  position: fixed;
+  z-index: 12000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(3, 5, 11, .78);
+}
+.sentiq-editor-window {
+  width: min(1100px, 100%);
+  max-height: min(92dvh, 920px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(210, 212, 232, .21);
+  border-radius: 18px;
+  background: #10131e;
+  color: #f1f2f8;
+  box-shadow: 0 32px 110px rgba(0,0,0,.54);
+}
+.sentiq-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 26px;
+  border-bottom: 1px solid rgba(224,228,246,.09);
+}
+.sentiq-editor-header h2 {
+  margin: 3px 0 0;
+  font-size: clamp(1.14rem, 2vw, 1.5rem);
+  font-weight: 620;
+  letter-spacing: -.03em;
+  color: #f7f8ff;
+}
+.sentiq-editor-brand {
+  display: block;
+  color: #bcb3de;
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .025em;
+}
+.sentiq-editor-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(276px, .8fr);
+  min-height: 0;
+  overflow: auto;
+}
+.sentiq-editor-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  min-width: 0;
+  min-height: 360px;
+  padding: 24px;
+  background: #0b0e16;
+}
+.sentiq-editor-image-stage {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  max-height: 58dvh;
+  line-height: 0;
+}
+.sentiq-editor-photo {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 58dvh;
+  border-radius: 4px;
+  object-fit: contain;
+}
+.sentiq-editor-ink {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  touch-action: none;
+}
+.sentiq-editor-image-stage.is-drawing .sentiq-editor-ink {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+.sentiq-editor-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  max-width: 100%;
+}
+.sentiq-editor-history button {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(210,213,239,.18);
+  background: #181c2b;
+  color: #c2c9dd;
+  font: inherit;
+  font-size: .78rem;
+  min-height: 38px;
+}
+.sentiq-editor-history button[aria-pressed="true"] {
+  background: #30304c;
+  border-color: #ac9de2;
+  color: white;
+}
+.sentiq-editor-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 22px 25px 24px;
+  border-left: 1px solid rgba(225,229,247,.09);
+  min-width: 0;
+}
+.sentiq-editor-tabs { display: flex; gap: 5px; border-bottom: 1px solid rgba(226,229,249,.12); margin-bottom: 21px; }
+.sentiq-editor-tabs button {
+  flex: 1;
+  padding: 10px 4px;
+  min-height: 44px;
+  color: #afb8cc;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  font: inherit;
+  font-weight: 590;
+}
+.sentiq-editor-tabs button[aria-selected="true"] { border-bottom-color: #b8a7ec; color: #f1eaff; }
+.sentiq-editor-form { display: flex; flex-direction: column; gap: 11px; }
+.sentiq-editor-form[hidden] { display: none !important; }
+.sentiq-editor-form label { font-size: .83rem; font-weight: 570; color: #dce0ec; margin-top: 3px; }
+.sentiq-editor-form select, .sentiq-editor-form textarea {
+  width: 100%;
+  padding: 11px 12px;
+  min-height: 43px;
+  border-radius: 9px;
+  border: 1px solid rgba(223,225,248,.19);
+  background: #191e2d;
+  color: #f7f7ff;
+  font: inherit;
+}
+.sentiq-editor-form textarea { min-height: 120px; line-height: 1.55; resize: vertical; }
+.sentiq-editor-form textarea::placeholder { color: #8f99ad; }
+.sentiq-editor-cost { margin: 3px 0 0; font-size: .82rem; color: #d5c2fa; font-weight: 570; }
+.sentiq-editor-help { margin: 0 0 6px; color: #b3bdcf; font-size: .79rem; line-height: 1.55; }
+.sentiq-editor-form .sentiq-editor-primary {
+  width: 100%;
+  min-height: 45px;
+  border: 1px solid #bcb0e6;
+  border-radius: 9px;
+  background: #c4b5f3;
+  color: #161222;
+  font: inherit;
+  font-weight: 660;
+}
+.sentiq-editor-form .sentiq-editor-primary:hover { background: #d7ccff; }
+.sentiq-editor-close, .sentiq-editor-drawing-controls button {
+  padding: 9px 13px;
+  border: 1px solid rgba(222,225,247,.2);
+  border-radius: 9px;
+  background: #1f2534;
+  color: #ecedf9;
+  min-height: 42px;
+  font: inherit;
+}
+.sentiq-editor-drawing-controls { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
+.sentiq-editor-drawing-controls label { display: flex; gap: 7px; align-items: center; }
+.sentiq-editor-drawing-controls input[type="range"] { max-width: 90px; }
+.sentiq-editor-drawing-controls input[type="color"] { width: 32px; height: 30px; background: transparent; border: 0; padding: 0; }
+.sentiq-editor-status {
+  min-height: 22px;
+  margin: 17px 0 0;
+  font-size: .81rem;
+  color: #b5d9c2;
+  line-height: 1.5;
+}
+.sentiq-editor-status.is-error { color: #ffbcbc; }
+.sentiq-editor-backdrop :is(button,textarea,select,input):focus-visible {
+  outline: 2px solid #d3bcff;
+  outline-offset: 2px;
+}
+.sentiq-editor-backdrop .is-busy, .sentiq-editor-window.is-busy { cursor: progress; }
+.image-actions .image-edit-launch {
+  border: 1px solid rgba(188,166,239,.4);
+  color: #dfd3ff;
+  background: rgba(118,89,184,.12);
+}
+@media (max-width: 760px) {
+  .sentiq-editor-backdrop { padding: 0; }
+  .sentiq-editor-window { width: 100%; height: 100dvh; max-height: 100dvh; border-radius: 0; }
+  .sentiq-editor-header { padding: 14px 18px; }
+  .sentiq-editor-main { grid-template-columns: 1fr; }
+  .sentiq-editor-display { min-height: 200px; padding: 18px; }
+  .sentiq-editor-image-stage, .sentiq-editor-photo { max-height: 35dvh; }
+  .sentiq-editor-panel { padding: 14px 20px 26px; border-left: 0; border-top: 1px solid rgba(225,229,247,.09); }
+  .sentiq-editor-form textarea { min-height: 96px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sentiq-editor-backdrop *, .sentiq-editor-backdrop *::before, .sentiq-editor-backdrop *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
+@media (forced-colors: active) {
+  .sentiq-editor-window, .sentiq-editor-panel, .sentiq-editor-form select, .sentiq-editor-form textarea { border: 1px solid CanvasText; }
+  .sentiq-editor-history button[aria-pressed="true"], .sentiq-editor-tabs button[aria-selected="true"] { outline: 2px solid Highlight; }
+}

@@ -3,7 +3,43 @@ import {
   insertConversationMessage,
   type ConversationMessageRow,
 } from "./conversationService";
-import { uploadChatImage } from "../tools/imageGeneration/imageStorageService";
+import { uploadChatImage, uploadEditedImageArtifact, verifyEditedImageArtifact } from "../tools/imageGeneration/imageStorageService";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export type EditedImageArtifact = {
+  imageUrl: string; storagePath: string; fileSizeBytes: number; contentSha256: string; provider: string;
+};
+
+/** The shard transaction records both version lineage and a recovery checkpoint.
+ * The original file is never passed to an upload/delete operation. */
+export async function persistEditedImageResult(params: {
+  userDb: SupabaseClient; storageDb: SupabaseClient; userId: string; conversationId: string;
+  imageId: string; requestId: string; leaseToken: string; bytes: Buffer; provider: string; requireAlpha: boolean;
+}): Promise<EditedImageArtifact> {
+  const uploaded = await uploadEditedImageArtifact(params.storageDb, { ...params,
+    beforeUpload: async (artifact) => {
+      const { error } = await params.userDb.rpc("prepare_image_edit_artifact", {
+        p_request_id: params.requestId, p_lease_token: params.leaseToken, p_artifact: { ...artifact, provider: params.provider },
+      });
+      if (error) throw new Error("Edited image upload checkpoint could not be saved");
+    },
+  });
+  const artifact = { ...uploaded, provider: params.provider };
+  const { error } = await params.userDb.rpc("record_image_edit_artifact", {
+    p_request_id: params.requestId, p_lease_token: params.leaseToken, p_artifact: artifact,
+  });
+  if (error) throw new Error("Edited image checkpoint could not be saved");
+  return artifact;
+}
+
+export async function recoverEditedImageResult(userDb: SupabaseClient, storageDb: SupabaseClient,
+  requestId: string, leaseToken: string, artifact: EditedImageArtifact): Promise<void> {
+  await verifyEditedImageArtifact(storageDb, artifact);
+  const { error } = await userDb.rpc("record_image_edit_artifact", {
+    p_request_id: requestId, p_lease_token: leaseToken, p_artifact: artifact,
+  });
+  if (error) throw new Error("Edited image recovery checkpoint could not be saved");
+}
 
 type PersistGeneratedImageDependencies = {
   insertMessage?: typeof insertConversationMessage;

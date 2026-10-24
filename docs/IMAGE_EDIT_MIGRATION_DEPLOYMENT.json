@@ -1,0 +1,93 @@
+{
+  "status": "fully_migrated_and_verified",
+  "scope": "two_image_edit_migrations_only",
+  "mechanism": "Management API single PostgreSQL transaction (DDL + native migration history)",
+  "apply": false,
+  "dryRun": false,
+  "databases": [
+    {
+      "db": 1,
+      "projectRef": "lzgohufdrqjdupfsvqlj",
+      "role": "control",
+      "credentialsAvailable": true,
+      "status": "already_applied_and_verified",
+      "version": "20261024120000",
+      "filename": "20261024120000_paid_image_edit_ledger.sql",
+      "sha256": "1d593d41c9f082de622a131a54ffb940e401530c3fb58686bbd6ad5a44bee289",
+      "historyBefore": 25,
+      "pending": [],
+      "projectStatus": "ACTIVE_HEALTHY",
+      "region": "ap-northeast-2",
+      "backup": {
+        "pitr": false,
+        "availableCompleted": 0
+      },
+      "historyAfter": 25,
+      "verifiedFunctions": [
+        "reserve_image_edit_usage",
+        "commit_image_edit_usage"
+      ]
+    },
+    {
+      "db": 2,
+      "projectRef": "dyrwqeesibzzfifljklk",
+      "role": "data",
+      "credentialsAvailable": true,
+      "status": "already_applied_and_verified",
+      "version": "20261024121000",
+      "filename": "20261024121000_image_edit_versions.sql",
+      "sha256": "0d7cd7cf1d44575f7f97559242db141d7cb00b399fd9a02c0ecbbd5c36f95afd",
+      "historyBefore": 69,
+      "pending": [],
+      "projectStatus": "ACTIVE_HEALTHY",
+      "region": "ap-south-1",
+      "backup": {
+        "pitr": false,
+        "availableCompleted": 0
+      },
+      "historyAfter": 69,
+      "verifiedFunctions": [
+        "claim_image_edit",
+        "transition_image_edit",
+        "prepare_image_edit_artifact",
+        "record_image_edit_artifact",
+        "complete_image_edit"
+      ]
+    },
+    {
+      "db": 3,
+      "projectRef": "fpklxhhsvjbjetkxqajg",
+      "role": "data",
+      "credentialsAvailable": true,
+      "status": "already_applied_and_verified",
+      "version": "20261024121000",
+      "filename": "20261024121000_image_edit_versions.sql",
+      "sha256": "0d7cd7cf1d44575f7f97559242db141d7cb00b399fd9a02c0ecbbd5c36f95afd",
+      "historyBefore": 69,
+      "pending": [],
+      "projectStatus": "ACTIVE_HEALTHY",
+      "region": "ap-south-1",
+      "backup": {
+        "pitr": false,
+        "availableCompleted": 0
+      },
+      "historyAfter": 69,
+      "verifiedFunctions": [
+        "claim_image_edit",
+        "transition_image_edit",
+        "prepare_image_edit_artifact",
+        "record_image_edit_artifact",
+        "complete_image_edit"
+      ]
+    }
+  ],
+  "historicalDrift": [
+    {
+      "db": 1,
+      "version": "20260922120000",
+      "issue": "recorded_DB4_retirement_constraint_does_not_match_canonical_SQL",
+      "constraint_definition": "CHECK (((assigned_db >= 2) AND (assigned_db <= 4)))",
+      "retired_mapping_count": 0
+    }
+  ]
+}

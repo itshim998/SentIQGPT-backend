@@ -1,0 +1,191 @@
+{
+  "scope": "local, isolated, provider-mocked validation only; live probes recorded separately",
+  "results": [
+    {
+      "name": "build",
+      "command": "npm run build",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 10162
+    },
+    {
+      "name": "image-editing",
+      "command": "npm run test:image-editing",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 8201,
+      "tests": 23,
+      "pass": 23,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "annotations",
+      "command": "npm run test:image-annotations",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 3233,
+      "tests": 6,
+      "pass": 6,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "image-edit-billing",
+      "command": "npm run billing:test-image-editing",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2923
+    },
+    {
+      "name": "edit-sql",
+      "command": "npm run test:image-edit-sql",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2677,
+      "sqlAssertions": 84
+    },
+    {
+      "name": "annotation-sql",
+      "command": "npm run test:image-annotation-sql",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2739,
+      "sqlAssertions": 54
+    },
+    {
+      "name": "migration-scopes",
+      "command": "npm run test:migrations",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 1516,
+      "tests": 12,
+      "pass": 12,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "deployment-contract",
+      "command": "npm run test:image-edit-deployment",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 3620,
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "recovery-deployment",
+      "command": "npm run test:image-edit-recovery-deployment",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 4665,
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "image-credit-policy",
+      "command": "ts-node --project tsconfig.backend.json backend/billing/testImageCreditsPolicy.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 3383
+    },
+    {
+      "name": "quota",
+      "command": "npm run billing:test-quota",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 5176
+    },
+    {
+      "name": "cloudflare-generation",
+      "command": "ts-node --project tsconfig.backend.json backend/testCloudflareImageArchitecture.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 3755
+    },
+    {
+      "name": "image-routing",
+      "command": "npm run test:image-routing-safety",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 3334
+    },
+    {
+      "name": "generation-policy",
+      "command": "ts-node --project tsconfig.backend.json backend/testImagePolicyPass2.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2064
+    },
+    {
+      "name": "persistence",
+      "command": "ts-node --project tsconfig.backend.json backend/testImagePersistence.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2327
+    },
+    {
+      "name": "storage",
+      "command": "ts-node --project tsconfig.backend.json backend/testImageStorageService.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2418
+    },
+    {
+      "name": "lease-retry",
+      "command": "ts-node --project tsconfig.backend.json backend/testGenerationLeaseRetryRegression.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 1517,
+      "tests": 9,
+      "pass": 9,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "durable-recovery",
+      "command": "ts-node --project tsconfig.backend.json backend/testDurableGenerationScenarios.ts",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 2427,
+      "tests": 17,
+      "pass": 17,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "frontend-editor",
+      "command": "node --no-warnings frontend/tests/paid-image-editor.test.mjs",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 81
+    },
+    {
+      "name": "frontend",
+      "command": "npm run test:frontend",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 30364,
+      "gates": 11
+    },
+    {
+      "name": "probe-syntax",
+      "command": "node --check scripts/verifyImageEditProvidersLive.mjs",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 48
+    },
+    {
+      "name": "whitespace",
+      "command": "git diff --check",
+      "exitCode": 0,
+      "result": "PASS",
+      "durationMs": 127
+    }
+  ],
+  "finalSqlVerification": "After adding explicit PostgREST schema-reload notification, annotation SQL reran with 54 passing assertions and migration validation reran with 12 passing checks."
+}

@@ -31,6 +31,11 @@ import { classifyImageTextRendering, handleChat } from "./ai/ChatHandler";
 import { processMessageForMemory, compressMemories } from "./ai/MemoryProcessor";
 import { extractTextFromFile, validateFileUpload } from "./ai/FileIngestionHandler";
 import { routeImageGeneration } from "./tools/imageGeneration/imageRouter";
+import { executeImageEdit } from "./services/imageEditingService";
+import { saveImageAnnotation, IMAGE_ANNOTATION_SCHEMA_VERSION } from "./services/imageAnnotationService";
+import { SaveImageAnnotationSchema } from "./tools/imageGeneration/imageAnnotationContract";
+import { assertPaidImageEdit } from "./tools/imageGeneration/imageEditPolicy";
+import { ImageEditRequestSchema } from "./tools/imageGeneration/imageEditValidation";
 import { routeChartGeneration } from "./tools/chartGeneration/chartRouter";
 import { ensureHtmlDocument, getGeneratedFileMimeType, routeFileGeneration } from "./tools/fileGeneration/fileGenerator";
 import {
@@ -6670,6 +6675,78 @@ app.delete(
       throw new HttpError(503, "Stored file could not be removed. Please try again.", { code: "artifact_cleanup_failed" });
     }
     res.json({ success: true, file_id: fileId });
+  }),
+);
+
+app.post(
+  "/api/images/edit",
+  verifyJWT({ allowGuest: false }),
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const requestUser = getRequestUser(req);
+    const parsed = ImageEditRequestSchema.safeParse(req.body);
+    if (!parsed.success) throw new HttpError(400, "Invalid image editing request.", { code: "image_edit_invalid_request" });
+    if (detectPromptInjection(parsed.data.prompt)) throw new HttpError(400, "Image prompt rejected by safety filter.");
+    const userId = await getVerifiedUserId(req);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "images.edit");
+    await initializeUserSessionOrThrow(userDb, userId, "images.edit");
+    await getOwnedConversationOrThrow(userDb, userId, parsed.data.conversationId, "images.edit");
+    const controller = new AbortController();
+    const onAbort = () => { if (!res.writableEnded) controller.abort(new Error("Client disconnected")); };
+    req.once("aborted", onAbort);
+    res.once("close", onAbort);
+    try {
+      const result = await executeImageEdit(parsed.data, {
+        userId, identity: buildBillingIdentity(req, requestUser), userDb, storageDb: getImageStorageDatabase(),
+        signal: controller.signal, imageQuotaKey: getImageQuotaKey(req),
+      }, { billing: billingQuotaService });
+      const quota = await getImageQuotaDisplay(buildBillingIdentity(req, requestUser), getQuotaInfo(getImageQuotaKey(req)));
+      res.json({ ...result, conversation_id: parsed.data.conversationId, client_request_id: parsed.data.clientRequestId,
+        operation: parsed.data.operation, prompt: parsed.data.prompt, ...quota });
+    } finally {
+      req.removeListener("aborted", onAbort);
+      res.removeListener("close", onAbort);
+    }
+  }),
+);
+
+app.get(
+  "/api/images/editor-capabilities",
+  verifyJWT({ allowGuest: false }),
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const requestUser = getRequestUser(req);
+    const userId = await getVerifiedUserId(req);
+    const identity = buildBillingIdentity(req, requestUser);
+    assertPaidImageEdit(await billingQuotaService.resolvePlanCodeForImageBilling(identity), userId, identity.isGuest);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "images.editor-capabilities");
+    const { data, error } = await userDb.rpc("get_image_annotation_schema_version");
+    res.json({ annotationSave: !error && data === IMAGE_ANNOTATION_SCHEMA_VERSION, annotationForAi: true,
+      generativeOperations: ["edit", "replace_background"], regionErase: false, backgroundRemoval: false });
+  }),
+);
+
+app.post(
+  "/api/images/annotations",
+  verifyJWT({ allowGuest: false }),
+  aiRateLimiter,
+  asyncHandler(async (req, res) => {
+    const requestUser = getRequestUser(req);
+    const parsed = SaveImageAnnotationSchema.safeParse(req.body);
+    if (!parsed.success) throw new HttpError(400, "Invalid image markup request.", { code: "image_annotation_invalid_request" });
+    const userId = await getVerifiedUserId(req);
+    const identity = buildBillingIdentity(req, requestUser);
+    assertPaidImageEdit(await billingQuotaService.resolvePlanCodeForImageBilling(identity), userId, identity.isGuest);
+    const userDb = await resolveUserDatabaseOrThrow(userId, "images.annotations");
+    await initializeUserSessionOrThrow(userDb, userId, "images.annotations");
+    await getOwnedConversationOrThrow(userDb, userId, parsed.data.conversationId, "images.annotations");
+    const controller = new AbortController();
+    const onAbort = () => { if (!res.writableEnded) controller.abort(new Error("Client disconnected")); };
+    req.once("aborted", onAbort); res.once("close", onAbort);
+    try {
+      res.json(await saveImageAnnotation(parsed.data, { userId, identity, userDb, storageDb: getImageStorageDatabase(), signal: controller.signal },
+        { billing: billingQuotaService }));
+    } finally { req.removeListener("aborted", onAbort); res.removeListener("close", onAbort); }
   }),
 );
 

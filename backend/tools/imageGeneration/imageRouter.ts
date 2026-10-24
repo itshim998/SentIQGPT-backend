@@ -29,6 +29,7 @@ import {
   type ImageProvider,
   type ImageGenerationResult,
   type ImageProviderRequestContext,
+  type ImageEditInput,
 } from "./types";
 import {
   CloudflareImageProvider,
@@ -45,6 +46,7 @@ import { PollinationsProvider } from "./providers/pollinationsProvider";
 import { HuggingFaceProvider } from "./providers/huggingfaceProvider";
 import type { BillingPlanCode } from "../../billing/entitlementTypes";
 import { normalizeExecutionMode, type ExecutionMode } from "../../orchestrator/executionProfile";
+import { assertPaidImageEdit, assertProviderEditInput, assertImageEditSupported, getImageEditModelIds } from "./imageEditPolicy";
 
 export type { ImageModelPreference } from "./types";
 
@@ -312,6 +314,14 @@ export interface RouteImageGenerationArgs {
   readonly executionMode?: ExecutionMode | string;
   readonly requestKey?: string;
   readonly providers?: readonly ImageProvider[];
+  readonly edit?: ImageEditInput;
+  /** Durable checkpoint before the first model invocation, after queue admission. */
+  readonly beforeInvoke?: () => Promise<void>;
+}
+
+export function getProvidersForImageEdit(planCode: BillingPlanCode, executionMode?: string): readonly ImageProvider[] {
+  return getImageEditModelIds(planCode, executionMode).map((model) => model.startsWith("@cf/")
+    ? new CloudflareImageProvider(model) : new PollinationsImageModelProvider(model));
 }
 
 interface QueueItem {
@@ -410,6 +420,11 @@ function processQueue(): void {
 export async function routeImageGeneration(
   args: RouteImageGenerationArgs,
 ): Promise<ImageGenerationResult> {
+  if (args.edit) {
+    assertPaidImageEdit(args.planCode, args.userId);
+    assertImageEditSupported(getImageEditModelIds(args.planCode!, args.executionMode), args.edit.operation);
+    if (!args.requestKey) throw new Error("Image editing requires durable request identity");
+  }
   if (!args.prompt.trim()) {
     return { success: false, prompt: args.prompt, error: "Prompt is required" };
   }
@@ -468,11 +483,19 @@ async function executeImageGeneration(
   const startTime = Date.now();
   const providerMode = selectImageProviderMode(args.prompt, args.preferredModel);
 
-  const selectedProviders: readonly ImageProvider[] = args.providers ?? (
+  const selectedProviders: readonly ImageProvider[] = args.providers ?? (args.edit
+    ? getProvidersForImageEdit(args.planCode!, args.executionMode) : (
     args.planCode
       ? getProvidersForPlanAndMode(args.planCode, args.executionMode ?? "fast")
       : getProvidersForModelPreference(args.preferredModel)
-  );
+  ));
+  if (args.edit) {
+    const allowedModels = getImageEditModelIds(args.planCode!, args.executionMode);
+    if (selectedProviders.some((provider) => !allowedModels.includes(provider.name))) {
+      throw new Error("Image edit provider is outside the entitled model family");
+    }
+  }
+  let invocationCheckpointed = false;
 
   const requestKey = args.requestKey?.trim() || createHash("sha256")
     .update(args.userId?.trim() || "anonymous")
@@ -488,6 +511,7 @@ async function executeImageGeneration(
 
   for (const provider of selectedProviders) {
     throwIfAborted(args.signal);
+    if (args.edit) assertProviderEditInput(provider, args.edit);
     if (!provider.isAvailable()) {
       console.log(`[IMAGE] provider=${provider.name} skipped reason=not_configured`);
       errors.push(`${provider.name}: not configured`);
@@ -500,6 +524,10 @@ async function executeImageGeneration(
       continue;
     }
 
+    if (!invocationCheckpointed && args.beforeInvoke) {
+      await args.beforeInvoke();
+      invocationCheckpointed = true;
+    }
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         console.log(`[IMAGE] provider=${provider.name} attempt=${attempt}`);
@@ -507,7 +535,7 @@ async function executeImageGeneration(
           args.prompt,
           args.size,
           args.signal,
-          { requestKey },
+          { requestKey, ...(args.edit ? { edit: args.edit } : {}) },
         );
         throwIfAborted(args.signal);
         const elapsed = Date.now() - startTime;
@@ -531,8 +559,8 @@ async function executeImageGeneration(
         }
 
         if (is429(failure)) setCooldown(provider.name);
-        console.log(`[IMAGE] provider=${provider.name} failed outcome=${failure.outcome} error="${message}"`);
-        errors.push(`${provider.name}: ${message}`);
+        console.log(`[IMAGE] provider=${provider.name} failed outcome=${failure.outcome} error="${args.edit ? "Image edit failed" : message}"`);
+        errors.push(`${provider.name}: ${args.edit ? "Image edit failed" : message}`);
         break;
       }
     }

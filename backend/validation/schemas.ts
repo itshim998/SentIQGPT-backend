@@ -129,6 +129,12 @@ export const FileExtractRequestSchema = z.object({
 // --- Image Generation ---
 
 export const ImageGenerateRequestSchema = z.object({
+  // An edit must never be silently stripped into a text-only generation request.
+  edit: z.never().optional(),
+  sourceImageId: z.never().optional(),
+  source_image_id: z.never().optional(),
+  operation: z.never().optional(),
+  mask: z.never().optional(),
   prompt: z.string().min(1, "Prompt is required").max(2000, "Prompt too long"),
   style: z.string().max(100).optional(),
   size: z.enum(["256x256", "512x512", "1024x1024"]).optional(),
